@@ -649,6 +649,16 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  // Name -> assigned_branch, for the "which board does this ticket live on"
+  // rule below.
+  const techBranchByName = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const t of liveTechnicians) {
+      if (t.branch) map.set(t.name.trim().toLowerCase(), t.branch);
+    }
+    return map;
+  }, [liveTechnicians]);
+
   const visibleTickets = useMemo(() => {
     const selectedDate = plannerDate;
     // Statuses that explicitly mean the ticket is NOT yet scheduled for a
@@ -662,6 +672,21 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       if (v.startsWith("pt-")) return true; // PT-Preauthentication, PT-Preauthorization, etc.
       return false;
     };
+    // A ticket's "board" is the ASSIGNED TECHNICIAN's own home branch
+    // (profiles.assigned_branch) when one can be resolved — not the
+    // customer's ZIP-derived location. A job goes wherever the technician
+    // covering it is actually rostered, same as a manager checking "what's
+    // my team doing today" would expect; the customer's own service-area
+    // branch (ticket.location) is only the fallback for an unassigned
+    // ticket with no technician to key off of. Confirmed bug: a Montgomery
+    // technician (Percy Smith) covering a Birmingham-ZIP ticket by
+    // proximity had it vanish from Montgomery's own board entirely and
+    // only ever show on Birmingham's, since the filter used to match on
+    // the ticket's stored location alone.
+    const effectiveBranch = (ticket: PlannerTicket) => {
+      const techBranch = ticket.technician ? techBranchByName.get(ticket.technician.trim().toLowerCase()) : undefined;
+      return normalizeBranch(techBranch || ticket.location || ticket.city || ticket.branch);
+    };
     return plannerTickets.filter((ticket) => {
       // Must have an actual scheduled date — no fallback to created_at.
       // Anything else is "unscheduled" and stays off the planner.
@@ -669,11 +694,11 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       if (!ticketDate) return false;
       if (ticketDate !== selectedDate) return false;
       if (isPreScheduleStatus(ticket.status)) return false;
-      if (locations.size > 0 && !locations.has(normalizeBranch(ticket.location || ticket.city || ticket.branch))) return false;
+      if (locations.size > 0 && !locations.has(effectiveBranch(ticket))) return false;
       if (!showRescheduled && String(ticket.status || "").toLowerCase().includes("resched")) return false;
       return true;
     });
-  }, [plannerTickets, plannerDate, locations, showRescheduled]);
+  }, [plannerTickets, plannerDate, locations, showRescheduled, techBranchByName]);
 
   // Map-only filter — unchecking a technician in the legend hides their
   // pins/route from the "Assigned Locations Map" without touching the

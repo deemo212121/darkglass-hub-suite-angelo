@@ -759,6 +759,17 @@ export async function uploadDamageForm(companyId: string, employeeName: string, 
   return getDownloadURL(snapshot.ref);
 }
 
+export async function uploadVisitExceptionReportForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/visit-exception-reports`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "visit-exception-report")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
 export async function uploadContractorDataForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
   if (!isFirebaseReady() || !storage) {
     throw new Error("Firebase Storage not configured");

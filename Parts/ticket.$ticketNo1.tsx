@@ -1,14 +1,13 @@
-import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { AppHeader } from "@/components/Header";
+import { isFirebaseReady } from "@/lib/firebase/config";
 import { Footer } from "@/components/Footer";
-import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, placeEncompassOrder, isEncompassDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
+import { ALL_TECHNICIANS } from "@/lib/locations";
+import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
 import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
-import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone, ClipboardCheck, ChevronDown, X } from "lucide-react";
+import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { isFirebaseReady, auth as firebaseAuth } from "@/lib/firebase/config";
-import { getGmailConnectionStatus, disconnectGmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
-import { getRecentDropshipRecipients, recordDropshipRecipient, type DropshipRecipient } from "@/lib/supabase/dropshipRecipients";
 import { useIsPhone } from "@/lib/device";
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { MarconePartsOrderModal, type AddressBookEntry, type MarconePartLine } from "@/components/MarconePartsOrderModal";
@@ -16,11 +15,9 @@ import { TruckStockBatchModal, type TruckStockBatchSelection } from "@/component
 import { TicketSidebar } from "@/components/TicketSidebar";
 import { TIME_FRAMES } from "@/lib/timeframes";
 import { CLAIM_STATUSES, CLAIM_TOS, PAYMENT_METHODS } from "@/lib/claimDropdowns";
+import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import { resolveTierCode } from "@/lib/tierCodes";
-import { CANCEL_REASONS } from "@/lib/operationsBranchMetrics";
-import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
-import type { TechnicianOption } from "@/lib/supabase/users";
-import { computeOfficeDistanceMiles } from "@/lib/mapEngine";
+import { getLocationManagementCoordinates } from "@/components/LocationManagementPage";
 import {
   buildSquaretradeUrlFromToken,
   extractSquaretradeUrl,
@@ -42,9 +39,7 @@ import {
   getTicketVisits as sbGetTicketVisits,
   addTicketVisit as sbAddTicketVisit,
   updateTicketVisit as sbUpdateTicketVisit,
-  deleteTicketVisit as sbDeleteTicketVisit,
   updateTicketStatus as sbUpdateTicketStatus,
-  updateTicketMisdiagnosed as sbUpdateTicketMisdiagnosed,
   updateTicketAssignment as sbUpdateTicketAssignment,
   updateTicketCustomer as sbUpdateTicketCustomer,
   updateTicketFields as sbUpdateTicketFields,
@@ -54,12 +49,7 @@ import {
   deleteTicketPart as sbDeleteTicketPart,
 } from "@/lib/supabase/tickets";
 import { getTicketComments, addTicketComment } from "@/lib/supabase/comments";
-import { getTicketAlerts, addTicketAlert, removeTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
 import { getModelResources, saveModelResources } from "@/lib/supabase/modelResources";
-import { parseServicePerformed, composeServicePerformed, emptyServicePerformed } from "@/lib/servicePerformedNotes";
-import { usePersistedTab } from "@/lib/usePersistedTab";
-import { canManageMisdiagnosed } from "@/lib/roleLabels";
-
 // Product category options for the ticket Product Information dropdown.
 const PRODUCT_CATEGORY_OPTIONS = [
   "Air Conditioner", "Bed", "Coffee Machines", "Compactor", "Cooktop", "Dehumidifier",
@@ -85,25 +75,6 @@ const CLAIM_COMPANY_OPTIONS = [
   "ONPOINT WARRANTY", "SAFEWARE", "SERVICE POWER", "Speed Queen", "SQUARE TRADE", "SS",
   "SS 4930403", "SS 6488757",
 ];
-
-// Part Transaction's "Dist." (distributor) options. Most are national/
-// company-wide, but a location can have its own dedicated distributor
-// branch instead — when it does, only that location's own entries show,
-// not the generic list too (e.g. Birmingham and Montgomery both route
-// through the same shared Marcone/Encompass branch, so their tickets
-// should only ever see those two, never the unrelated national ones).
-const UNIVERSAL_PART_DISTRIBUTORS = [
-  "AIG", "Electrolux", "Encompass", "GE", "LG", "Marcone-162468", "Midea",
-  "Miele", "NSA", "OW", "SB", "Sharp", "SP", "Squaretrade", "SS",
-];
-const LOCATION_PART_DISTRIBUTORS: Record<string, string[]> = {
-  Birmingham: ["Marcone- Birmingham / Montgomery", "Encompass-Birmingham / Montgomery"],
-  Montgomery: ["Marcone- Birmingham / Montgomery", "Encompass-Birmingham / Montgomery"],
-};
-
-function partDistOptionsForLocation(location: string | null | undefined): string[] {
-  return LOCATION_PART_DISTRIBUTORS[(location || "").trim()] ?? UNIVERSAL_PART_DISTRIBUTORS;
-}
 
 // Map a ServicePower "Warranty Info" value to our AHS Warranty Type dropdown.
 //  - Sales fulfillment  -> In warranty
@@ -187,9 +158,6 @@ interface TicketData {
   product: string;
   tat: string;
   status: string;
-  /** Set by a manager-tier reviewer when the technician's diagnosis was
-   * wrong — see the Misdiagnosed checkbox in the ticket header. */
-  misdiagnosed?: boolean;
   schedule: string;
   contact: string;
   location: string;
@@ -209,11 +177,6 @@ interface TicketData {
   serialNo: string;
   modelVersion: string;
   redoTicketNo: string;
-  // Case number (NSA dispatch caseNumber, or manually entered on New
-  // Ticket) — see migration 0056. Its own column (tickets.case_number),
-  // separate from redoTicketNo/original_ticket_no above; the two used to
-  // share one column, which meant a ticket could never have both.
-  caseNumber: string;
   productCategory: string;
   purchaseDate: string;
   warrantyType: string;
@@ -241,20 +204,19 @@ interface TicketData {
   technician: string;
   customerNotes: Array<{ date: string; notes: string; by: string }>;
   servicerNotes: Array<{ notes: string; by: string }>;
-  // NSA-specific fields (only populated when ticketSource === "NSA")
-  nsaStatus?: string;
-  nsaRouteName?: string;
-  nsaGroupName?: string;
-  nsaDeductible?: string;
-  nsaScheduleAck?: string;
-  nsaSpecialInstructions?: string;
-  nsaValidCoverage?: string;
-  nsaRequiredCoverage?: string;
-  nsaRequiredPart?: string;
-  nsaPreAuth?: string;
-  nsaCaseNumber?: string;
-  nsaMasterCode?: string;
-  nsaCoverageExclusions?: string;
+}
+
+interface CompensationRow {
+  id: string;
+  item: string;
+  beneficiary: string;
+  amount: string;
+  rate: string;
+  activityDate: string;
+  requiresClaimOrCxPayment: string;
+  comment: string;
+  createdBy: string;
+  lastModifiedBy: string;
 }
 
 interface PartTransactionRow {
@@ -311,8 +273,6 @@ interface VisitLogEntry {
   by: string;
   scheduleDate: string;
   technician: string;
-  /** Optional assisting technician on a "Two Tech" job (Tech Payroll's per-visit second-tech count). */
-  secondTechnician?: string;
   timeSlot: string;
   activity: string;
   actionType: string;
@@ -330,8 +290,6 @@ interface VisitLogEntry {
   triageNote: string;
   status: string;
   note: string;
-  /** Set once a newer visit supersedes this one — blocks further edits. */
-  locked?: boolean;
 }
 
 type TicketCopyPayload = {
@@ -356,16 +314,13 @@ type TicketCopyPayload = {
   cxPreferredDate: string;
   callTakenDate: string;
   problemDescription: string;
-  caseNumber: string;
 };
 
 const TICKET_COPY_KEY_PREFIX = "ahs:ticket-copy:";
 const TICKET_AUDIT_KEY_PREFIX = "ahs:ticket-audit:";
 const TICKET_VISIT_LOG_KEY_PREFIX = "ahs:ticket-visit-log:";
 const TICKET_PART_LOG_KEY_PREFIX = "ahs:ticket-part-log:";
-const TICKET_ACTIVE_TAB_KEY_PREFIX = "ahs:ticket-active-tab:";
-type TicketDetailsTab = "general" | "tracking";
-const TICKET_DETAILS_TABS: TicketDetailsTab[] = ["general", "tracking"];
+const TICKET_ALERT_KEY_PREFIX = "ahs:ticket-alert:";
 
 function formatAuditValue(value: unknown) {
   if (value === null || value === undefined || value === "") return "—";
@@ -401,6 +356,10 @@ function getVisitLogKey(ticketNo: string) {
 
 function getPartLogKey(ticketNo: string) {
   return `${TICKET_PART_LOG_KEY_PREFIX}${ticketNo}`;
+}
+
+function getAlertKey(ticketNo: string) {
+  return `${TICKET_ALERT_KEY_PREFIX}${ticketNo}`;
 }
 
 function createEmptyPartDraft(): PartTransactionDraft {
@@ -470,6 +429,25 @@ function loadPartRows(ticketNo: string) {
 function savePartRows(ticketNo: string, rows: PartTransactionRow[]) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(getPartLogKey(ticketNo), JSON.stringify(rows));
+}
+
+function loadAlertMessages(ticketNo: string) {
+  if (typeof window === "undefined") return [] as Array<{id: string, text: string, by: string, timestamp: string}>;
+
+  const raw = window.localStorage.getItem(getAlertKey(ticketNo));
+  if (!raw) return [] as Array<{id: string, text: string, by: string, timestamp: string}>;
+
+  try {
+    const parsed = JSON.parse(raw) as Array<{id: string, text: string, by: string, timestamp: string}>;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [] as Array<{id: string, text: string, by: string, timestamp: string}>;
+  }
+}
+
+function saveAlertMessages(ticketNo: string, messages: Array<{id: string, text: string, by: string, timestamp: string}>) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(getAlertKey(ticketNo), JSON.stringify(messages));
 }
 
 function normalizePartRow(row: Partial<PartTransactionRow> & { id: string }): PartTransactionRow {
@@ -565,86 +543,6 @@ function summarizeVisitEntry(entry: VisitLogEntry) {
     .join(" | ");
 }
 
-// Change-log summaries always start with "Visit No: <value>" (see
-// summarizeVisitEntry above) — used to scope the per-visit Change Log to
-// just the visit being viewed instead of every visit on the ticket.
-function visitLogEntryMatchesVisitNo(summary: string, visitNo: string): boolean {
-  return summary.split(" | ")[0] === `Visit No: ${visitNo}`;
-}
-
-// Human-readable labels for the ticket-level fields/actions the DB trigger
-// (log_ticket_change, see 0001_init.sql) writes to ticket_audit_log. These
-// entries have no visit reference at all — they're plain "tickets.status/
-// schedule_date/assigned_tech_id changed" rows — so they're attributed to a
-// visit below purely by timing (see isNearAnyTimestamp).
-const TICKET_LEVEL_AUDIT_FIELDS = new Set(["status", "schedule_date", "assigned_tech_id"]);
-const AUDIT_FIELD_LABELS: Record<string, string> = {
-  status: "Ticket Status",
-  schedule_date: "Ticket Schedule Date",
-  assigned_tech_id: "Assigned Technician",
-};
-const AUDIT_ACTION_LABELS: Record<string, string> = {
-  status_change: "Status Change",
-  reschedule: "Rescheduled",
-  reassign: "Reassigned",
-};
-function formatAuditField(field: string): string {
-  return AUDIT_FIELD_LABELS[field] || field;
-}
-function formatAuditAction(action: string): string {
-  return AUDIT_ACTION_LABELS[action] || action;
-}
-
-// Two audit entries represent the SAME real-world edit if their content
-// matches and they happened within a minute of each other. Needed because
-// every edit produces two independent records of itself — an optimistic
-// local entry (client-generated id, persisted to localStorage instantly)
-// and the authoritative Supabase row (DB-generated id, `changed_by` a
-// resolved profile name) — which never share an id to dedupe on directly.
-// Without this, reloading the page after an edit re-fetches the Supabase
-// copy and appends it next to the still-cached local one instead of
-// recognizing them as one event.
-function isSameAuditEvent(a: AuditLogEntry, b: AuditLogEntry): boolean {
-  if (a.field !== b.field || a.action !== b.action || a.before !== b.before || a.after !== b.after) return false;
-  const ta = new Date(a.timestamp).getTime();
-  const tb = new Date(b.timestamp).getTime();
-  if (!Number.isFinite(ta) || !Number.isFinite(tb)) return a.id === b.id;
-  return Math.abs(ta - tb) <= 60000;
-}
-
-// Saving a visit (addVisitLogEntry) writes the visit row, then syncs the
-// ticket's own schedule/status from it in two follow-up calls — so a
-// reschedule/status_change trigger row lands within ~1s of that save. No
-// visit_id exists on ticket_audit_log to join on directly, so time
-// proximity is the only way to attribute these ticket-level rows back to
-// the visit that caused them. A generous window keeps this robust to
-// slower saves without risking bleed into a different visit — visits are
-// realistically never saved within seconds of each other.
-//
-// Anchors are the visit's own "Visit Log" entry timestamps (one per save,
-// always accurate) plus its created_at as a fallback for the original
-// add — NOT visit.updatedAt, which older rows never actually got bumped
-// for (see updateTicketVisit in supabase/tickets.ts, fixed to stamp it
-// going forward, but historical edits still only have a stale value there).
-const VISIT_AUDIT_CORRELATION_WINDOW_MS = 20000;
-function isNearAnyTimestamp(entryTimestamp: string, anchors: string[]): boolean {
-  const entryMs = new Date(entryTimestamp).getTime();
-  if (!Number.isFinite(entryMs)) return false;
-  return anchors.some((anchor) => {
-    const anchorMs = new Date(anchor).getTime();
-    return Number.isFinite(anchorMs) && Math.abs(entryMs - anchorMs) <= VISIT_AUDIT_CORRELATION_WINDOW_MS;
-  });
-}
-
-// Pulls one "Label: value" field back out of a summarizePartRow()-style
-// snapshot string (e.g. a deleted part's audit-log `before` value) — used
-// to show a deleted part's number/description without re-parsing the
-// whole snapshot.
-function snapshotField(summary: string, label: string): string {
-  const match = summary.match(new RegExp(`(?:^|\\| )${label}: ([^|]*)`));
-  return match ? match[1].trim() : "";
-}
-
 function renderVisitSummary(summary: string, comparedSummary?: string) {
   const summaryParts = summary.split(" | ");
   const comparedParts = comparedSummary?.split(" | ") ?? [];
@@ -668,48 +566,6 @@ function renderVisitSummary(summary: string, comparedSummary?: string) {
       })}
     </div>
   );
-}
-
-// Part Number color coding, driven by that part's status — RED = blocked,
-// YELLOW = in the customer's hands / on order, BLUE = installed,
-// GREEN = resolved/paid/ready, GREY = parked/inactive, GREY + strikethrough
-// = voided/write-off outcomes. Only the Part No text picks up the color;
-// the Part Status control/badge itself stays in its normal, unstyled look.
-const PART_STATUS_TEXT_COLOR: Record<string, string> = {
-  "Cancelled": "text-red-400",
-  "Need PO": "text-red-400",
-
-  "CX Home": "text-yellow-500",
-  "Cx Received": "text-yellow-500",
-  "PO Made": "text-yellow-500",
-
-  "Used": "text-blue-400",
-
-  "Claimed": "text-green-500",
-  "Hold for next vist": "text-green-500",
-  "PAID": "text-green-500",
-  "Part Ready": "text-green-500",
-  "SQT Received": "text-green-500",
-
-  "Back Order": "text-slate-400",
-  "Defective": "text-slate-400",
-  "Dropship": "text-slate-400",
-  "Hold for Estimation": "text-slate-400",
-  "In Review": "text-slate-400",
-  "Not Used & Stocked": "text-slate-400",
-  "PNN": "text-slate-400",
-  "Tech Pickup": "text-slate-400",
-  "Transfer to Another Ticket": "text-slate-400",
-
-  "RA - Defect": "text-slate-400 line-through decoration-2",
-  "RA- DMG": "text-slate-400 line-through decoration-2",
-  "RA - PNN": "text-slate-400 line-through decoration-2",
-  "RA - Qty Discrepancy": "text-slate-400 line-through decoration-2",
-  "Lost": "text-slate-400 line-through decoration-2",
-};
-
-function partStatusTextClass(status: string): string {
-  return PART_STATUS_TEXT_COLOR[status] || "";
 }
 
 function summarizePartRow(row: PartTransactionRow) {
@@ -755,6 +611,16 @@ function createAuditEntry(params: Omit<AuditLogEntry, "id" | "timestamp">): Audi
   };
 }
 
+const COMPENSATION_FIELD_LABELS: Record<keyof Omit<CompensationRow, "id" | "createdBy" | "lastModifiedBy">, string> = {
+  item: "Compensation Item",
+  beneficiary: "Beneficiary",
+  amount: "Amount",
+  rate: "Rate",
+  activityDate: "Activity Date",
+  requiresClaimOrCxPayment: "Requires Approved Claim / Requires Cx Payment",
+  comment: "Comment",
+};
+
 const PART_FIELD_LABELS: Record<keyof Omit<PartTransactionRow, "id" | "createdBy" | "lastModifiedBy">, string> = {
   partNo: "Part No",
   partDist: "Part Dist.",
@@ -784,13 +650,6 @@ const PART_FIELD_LABELS: Record<keyof Omit<PartTransactionRow, "id" | "createdBy
   cxPaid: "Cx Paid",
 };
 
-// Default technician pre-filled on a new visit log entry: Nashville tickets
-// default to the Nashville Admin placeholder, everything else defaults to
-// Memphis Admin (the original, still the fallback for every other branch).
-function defaultTechnicianForLocation(location: string | undefined | null): string {
-  return String(location || "").trim().toLowerCase() === "nashville" ? "Nashville Admin" : "Memphis Admin";
-}
-
 // Compute Turnaround Time (TAT): days elapsed since the ticket was created.
 // Accepts common date formats (ISO, MM/DD/YY, MM/DD/YYYY). Returns e.g. "3d".
 function computeTAT(created: string | undefined): string {
@@ -812,6 +671,35 @@ function computeTAT(created: string | undefined): string {
   const ms = Date.now() - createdDate.getTime();
   const days = Math.max(0, Math.floor(ms / (1000 * 60 * 60 * 24)));
   return `${days}d`;
+}
+
+// Haversine straight-line distance in miles between two lat/lng points.
+function milesBetween(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const R = 3958.8; // Earth radius in miles
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+// Resolve the office coordinates for a location: prefer Location Management
+// coordinates, fall back to the static LOCATIONS_DATA lat/lng.
+function getOfficeCoordinates(location: string): { lat: number; lng: number } | null {
+  const fromMgmt = getLocationManagementCoordinates(location);
+  if (fromMgmt) return fromMgmt;
+  const normalized = String(location || "").trim().toLowerCase();
+  const match = LOCATIONS_DATA.find((l) => l.location.trim().toLowerCase() === normalized);
+  if (match && match.lat && match.lng) {
+    const lat = parseFloat(match.lat);
+    const lng = parseFloat(match.lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+  }
+  return null;
 }
 
 const DEFAULT_TICKET: TicketData = {
@@ -839,7 +727,6 @@ const DEFAULT_TICKET: TicketData = {
   serialNo: "",
   modelVersion: "",
   redoTicketNo: "",
-  caseNumber: "",
   productCategory: "Dryer",
   purchaseDate: "04/11/2025",
   warrantyType: "In warranty",
@@ -1048,49 +935,24 @@ const TICKET_DATA: Record<string, TicketData> = {
 
 function ModelResourceButton(props: {
   label: string;
-  urls: string[];
+  url: string;
   onEdit: () => void;
 }) {
-  const { label, urls, onEdit } = props;
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const hasLinks = urls.length > 0;
-
-  useEffect(() => {
-    if (!open) return;
-    const onDocClick = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
-  }, [open]);
-
+  const { label, url, onEdit } = props;
+  const hasLink = Boolean(url && url.trim());
   return (
-    <div ref={containerRef} className="relative inline-flex items-center rounded-lg border border-slate-600/60 bg-slate-800/70 text-xs overflow-hidden">
-      {hasLinks ? (
-        urls.length === 1 ? (
-          <a
-            href={urls[0]}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-3 py-1 flex items-center gap-1.5 text-blue-300 hover:bg-blue-600/20 transition-colors"
-            title={urls[0]}
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-            <span className="font-semibold">{label}</span>
-          </a>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            className="px-3 py-1 flex items-center gap-1.5 text-blue-300 hover:bg-blue-600/20 transition-colors"
-            title={`${urls.length} ${label} links`}
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-            <span className="font-semibold">{label}</span>
-            <span className="text-[10px] uppercase tracking-wide text-blue-400/80">({urls.length})</span>
-          </button>
-        )
+    <div className="inline-flex items-center rounded-lg border border-slate-600/60 bg-slate-800/70 text-xs overflow-hidden">
+      {hasLink ? (
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="px-3 py-1 flex items-center gap-1.5 text-blue-300 hover:bg-blue-600/20 transition-colors"
+          title={url}
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+          <span className="font-semibold">{label}</span>
+        </a>
       ) : (
         <button
           type="button"
@@ -1103,33 +965,16 @@ function ModelResourceButton(props: {
           <span className="text-[10px] uppercase tracking-wide text-slate-500">Add</span>
         </button>
       )}
-      {hasLinks && (
+      {hasLink && (
         <button
           type="button"
           onClick={onEdit}
           className="px-2 py-1 border-l border-slate-600/60 text-slate-400 hover:text-slate-200 hover:bg-slate-700/60 transition-colors"
-          title={`Edit ${label} links`}
-          aria-label={`Edit ${label} links`}
+          title={`Edit ${label} link`}
+          aria-label={`Edit ${label} link`}
         >
           <Pencil className="h-3.5 w-3.5" />
         </button>
-      )}
-      {open && urls.length > 1 && (
-        <div className="absolute left-0 top-full mt-1 z-20 min-w-[220px] max-w-[360px] rounded-lg border border-slate-600/60 bg-slate-800 shadow-2xl py-1">
-          {urls.map((u, i) => (
-            <a
-              key={i}
-              href={u}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block px-3 py-1.5 text-blue-300 hover:bg-blue-600/20 truncate"
-              title={u}
-              onClick={() => setOpen(false)}
-            >
-              {label} {i + 1}
-            </a>
-          ))}
-        </div>
       )}
     </div>
   );
@@ -1159,7 +1004,6 @@ function buildTicketCopyPayload(ticket: TicketData): TicketCopyPayload {
     cxPreferredDate: ticket.scheduleDate || "",
     callTakenDate: ticket.postingDate,
     problemDescription: ticket.problemDescription,
-    caseNumber: ticket.caseNumber,
   };
 }
 
@@ -1176,44 +1020,27 @@ export const Route = createFileRoute("/ticket/$ticketNo")({
 function TicketDetailsPage() {
   const { ticketNo } = Route.useParams();
   const navigate = useNavigate();
-  const { email: currentUserEmail, ready: authReady, displayName: currentUserName, role: currentUserRole, extraRoles: currentUserExtraRoles, companyId: currentCompanyId, uid, isFrozen } = useAuth();
+  const { email: currentUserEmail, ready: authReady, displayName: currentUserName, role: currentUserRole, companyId: currentCompanyId, uid } = useAuth();
   // Tech-only required-field gating: technicians (and anyone using the mobile
-  // tech app) must fill Cause of Failure + Service Performed before saving a
+  // tech app) must fill Cause of Failure + Repair Notes before saving a
   // visit. On desktop / web for other roles these stay optional.
   const isPhone = useIsPhone();
   const isTechRole = useMemo(() => {
-    // Primary role AND extraRoles — a secondary TECHNICIAN role must gate
-    // this the same as a primary one, matching every other role check in
-    // this file (canManageMisdiagnosed, PART_LOCK_BYPASS_ROLES, etc.).
-    // Checking only currentUserRole let anyone with TECHNICIAN as a
-    // secondary role submit a visit on desktop with Cause of Failure /
-    // Service Performed left blank.
-    const roles = [currentUserRole, ...(currentUserExtraRoles ?? [])].map((r) => String(r || "").toUpperCase());
-    return roles.includes("TECHNICIAN");
-  }, [currentUserRole, currentUserExtraRoles]);
+    const r = String(currentUserRole || "").toUpperCase();
+    return r === "TECHNICIAN";
+  }, [currentUserRole]);
   const requireTechVisitFields = isPhone || isTechRole;
-  // Remembered per-ticket so a full page reload lands back on whichever
-  // tab (e.g. Service Tracking) the user had open, instead of resetting to
-  // General every time.
-  const [activeTab, setActiveTab] = usePersistedTab<TicketDetailsTab>(
-    `${TICKET_ACTIVE_TAB_KEY_PREFIX}${ticketNo}`,
-    TICKET_DETAILS_TABS,
-    "general",
-  );
+  const [activeTab, setActiveTab] = useState<"general" | "tracking" | "compensation" | "billing">("general");
   const [newServicerNote, setNewServicerNote] = useState("");
   const [servicerComments, setServicerComments] = useState<Array<{ id: string; body: string; authorName: string; authorRole: string; createdAt: string }>>([]);
   const [newVisitStatus, setNewVisitStatus] = useState("Visited");
   const [newVisitNote, setNewVisitNote] = useState("");
   const [newVisitScheduleDate, setNewVisitScheduleDate] = useState("");
   const [newVisitTechnician, setNewVisitTechnician] = useState("Memphis Admin");
-  // Optional assisting technician on a "Two Tech" job — feeds Tech Payroll's
-  // per-visit second-technician count, distinct from the "2 Man Job" repair_type.
-  const [newVisitSecondTechnician, setNewVisitSecondTechnician] = useState("");
   const [newVisitTimeSlot, setNewVisitTimeSlot] = useState("");
   const [newVisitActivity, setNewVisitActivity] = useState("");
   const [newVisitActionType, setNewVisitActionType] = useState("SCHEDULE");
   const [newVisitRepairStatus, setNewVisitRepairStatus] = useState("");
-  const [newVisitCancelReason, setNewVisitCancelReason] = useState("");
   const [newVisitRepairType, setNewVisitRepairType] = useState("");
   const [newVisitReclaim, setNewVisitReclaim] = useState("");
   const [newVisitVisited, setNewVisitVisited] = useState("Visited");
@@ -1227,13 +1054,10 @@ function TicketDetailsPage() {
   const [newVisitSchedNotes, setNewVisitSchedNotes] = useState("");
   const [selectedTicket, setSelectedTicket] = useState(ticketNo);
   
-  // Alert message system — real Supabase-backed (ticket_alerts), not
-  // localStorage, so an alert flagged for mobile can actually reach a
-  // technician's phone.
-  const [alertMessages, setAlertMessages] = useState<TicketAlert[]>([]);
+  // Alert message system
+  const [alertMessages, setAlertMessages] = useState<Array<{id: string, text: string, by: string, timestamp: string}>>([]);
   const [newAlertMessage, setNewAlertMessage] = useState("");
-  const [newAlertShowInternal, setNewAlertShowInternal] = useState(true);
-  const [newAlertMobilePopup, setNewAlertMobilePopup] = useState(false);
+  const [alertsLoaded, setAlertsLoaded] = useState(false);
   const [editingVisitId, setEditingVisitId] = useState<string | null>(null);
   const [visitFormMode, setVisitFormMode] = useState<"edit" | "view">("edit");
   const [isVisitModalOpen, setIsVisitModalOpen] = useState(false);
@@ -1248,102 +1072,21 @@ function TicketDetailsPage() {
   const [newRunningNoteVisibility, setNewRunningNoteVisibility] = useState<"internal" | "external">("internal");
   const [postingRunningNote, setPostingRunningNote] = useState(false);
   const [runningNotePostError, setRunningNotePostError] = useState<string | null>(null);
-  // NSA Estimates panel — NSA has no equivalent AHS UI to extend (unlike
-  // Running Notes/SP), so this is a standalone panel just for NSA tickets.
-  const [nsaEstimates, setNsaEstimates] = useState<Array<{
-    estimateID: number;
-    submissionStatusCode: string;
-    processedStatusCode: string;
-    totalAmount: number;
-    lines: Array<{ coverageTypeCode: string; amount: number }>;
-  }>>([]);
-  const [nsaEstimatesLoading, setNsaEstimatesLoading] = useState(false);
-  const [nsaEstimatesError, setNsaEstimatesError] = useState<string | null>(null);
   const [viewingVisitEntry, setViewingVisitEntry] = useState<VisitLogEntry | null>(null);
   const [isPartModalOpen, setIsPartModalOpen] = useState(false);
   const [viewingPartEntry, setViewingPartEntry] = useState<PartTransactionRow | null>(null);
   const [isPartListModalOpen, setIsPartListModalOpen] = useState(false);
-  // Per-row "Send" on the Part Transaction table — a free-text drop-ship
-  // request (e.g. "please ship this backordered part to our office")
-  // composed from the row's PO#/Part# plus the ticket branch's address
-  // (defaultShipTo, already computed for the Marcone modal above), edited
-  // and previewed before it actually goes out via the company's connected
-  // Gmail account (see /api/gmail?action=send-dropship-request).
-  // Usually one row, but a checkbox beside each row's Send button lets HR
-  // select several parts on the SAME PO and bulk them into one email
-  // (distributors often want one message listing every backordered part
-  // for a PO rather than a separate email per part).
-  const [dropshipRows, setDropshipRows] = useState<PartTransactionRow[]>([]);
-  const [dropshipSelectedIds, setDropshipSelectedIds] = useState<Set<string>>(new Set());
-  // Recent recipients (company-wide, see migration 0169) — lets HR pick a
-  // distributor they've sent to before instead of retyping it every time.
-  const [dropshipRecent, setDropshipRecent] = useState<DropshipRecipient[]>([]);
-  const [dropshipRecentError, setDropshipRecentError] = useState<string | null>(null);
-  const [dropshipTo, setDropshipTo] = useState("");
-  // CC is a set of confirmed "chips" (Enter/comma/blur commits the text
-  // box's current contents as one) rather than one free-typed string —
-  // avoids ambiguity over what counts as a separator between addresses.
-  const [dropshipCc, setDropshipCc] = useState<string[]>([]);
-  const [dropshipCcInput, setDropshipCcInput] = useState("");
-  const [dropshipSubject, setDropshipSubject] = useState("");
-  const [dropshipBody, setDropshipBody] = useState("");
-  const [dropshipSending, setDropshipSending] = useState(false);
-  const [dropshipError, setDropshipError] = useState<string | null>(null);
-  const [dropshipSent, setDropshipSent] = useState(false);
-  // Gmail connection status shown right in the Part Transaction toolbar —
-  // previously only visible/manageable from the Accounting Dashboard, which
-  // meant whoever needed to use "Send" here had no way to tell (or fix)
-  // whether it would actually work without navigating away first.
-  const [gmailStatus, setGmailStatus] = useState<GmailConnectionStatus | null>(null);
-  const [gmailStatusLoading, setGmailStatusLoading] = useState(false);
-  const [gmailConnecting, setGmailConnecting] = useState(false);
-  const [gmailDisconnecting, setGmailDisconnecting] = useState(false);
-  // Which deleted-part audit entry (by entry.id) currently has its full
-  // before-deletion snapshot expanded in the Part Transaction Log modal.
-  const [expandedDeletedPartLogId, setExpandedDeletedPartLogId] = useState<string | null>(null);
   const currentEditor = currentUserEmail ?? "Current User";
   const [auditEntries, setAuditEntries] = useState<AuditLogEntry[]>([]);
   const [auditEntriesLoaded, setAuditEntriesLoaded] = useState(false);
-  // Caller's Supabase profile id (for stamping ticket_audit_log.changed_by)
-  // and a profile-id -> display-name map (for rendering changed_by back to
-  // a readable name in the Change Log, since the column stores a UUID).
-  const [myProfileId, setMyProfileId] = useState<string | null>(null);
-  const [profileNameById, setProfileNameById] = useState<Record<string, string>>({});
-  // Real Supabase ticket UUID (tickets.id) — not part of the mapped
-  // TicketData shape, but needed to scope shared audit-log reads/writes
-  // (ticket_audit_log.ticket_id) to this ticket. Declared here (rather than
-  // alongside ticketData below) since effects earlier in this component
-  // already depend on it.
-  const [ticketDbId, setTicketDbId] = useState<string | null>(null);
   const [visitLogEntries, setVisitLogEntries] = useState<VisitLogEntry[]>([]);
   const [visitsLoaded, setVisitsLoaded] = useState(false);
-  // Visit History cards: the latest visit is expanded by default, every
-  // older one starts collapsed (header row only). This set holds ids whose
-  // expanded state has been manually flipped AWAY from that default — so
-  // isVisitExpanded below XORs membership against "is this the latest
-  // visit", rather than storing expanded/collapsed directly. That means the
-  // default (latest = open) always recomputes live off current data instead
-  // of needing to be seeded once when visitLogEntries first loads (which
-  // happens asynchronously) or re-seeded whenever a new visit is added.
-  const [visitExpandOverrides, setVisitExpandOverrides] = useState<Set<string>>(new Set());
-  const toggleVisitExpanded = (id: string) => {
-    setVisitExpandOverrides((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
   const [partRows, setPartRows] = useState<PartTransactionRow[]>([]);
   const [partRowsLoaded, setPartRowsLoaded] = useState(false);
   // Marcone Parts Order modal state — pre-filtered Marcone parts and the
   // pre-fetched address book. The modal owns its own form state; this only
   // gates open/closed + which parts to seed it with.
   const [marconeModal, setMarconeModal] = useState<{ open: boolean; parts: PartTransactionRow[] }>({ open: false, parts: [] });
-  // Encompass shares the exact same modal component (its UI was never
-  // Marcone-specific) — separate state since the two can each hold
-  // different in-flight selections independently.
-  const [encompassModal, setEncompassModal] = useState<{ open: boolean; parts: PartTransactionRow[] }>({ open: false, parts: [] });
   // Truck Stock batch modal — opens from the new Truck Stock button next
   // to Submit POs. Lets the user fulfill Need PO parts from an in-house
   // branch with one confirmation, instead of placing distributor POs.
@@ -1425,19 +1168,21 @@ function TicketDetailsPage() {
   // Marcone /parts/lookup state for the inline Add row's "Lookup" button.
   const [marconeLookupBusy, setMarconeLookupBusy] = useState(false);
   const [marconeLookupMsg, setMarconeLookupMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
-  // Which Part No the draft's current partDesc/partPrice/coreValue actually
-  // belong to — either the last part a Lookup was run for, or (when editing
-  // an existing row) that row's own saved part number. Lets handleMarconeLookup
-  // tell "re-checking the same part, don't clobber what's there" apart from
-  // "user typed a different Part No, this stale data is from the last part
-  // and must be replaced" — see handleMarconeLookup's guard below.
-  const lastMarconeFillPartNoRef = React.useRef<string | null>(null);
-  // Paired with the ref above: which Part Dist. that fill actually came
-  // from. Part No alone isn't enough — switching Part Dist. (e.g. Encompass
-  // -> Marcone) for the SAME part number must still be treated as stale and
-  // replaced, since the on-screen price/description belong to the OLD
-  // distributor's answer, not the one about to be looked up.
-  const lastMarconeFillDistRef = React.useRef<string | null>(null);
+  const [compensationRows, setCompensationRows] = useState<CompensationRow[]>([
+    {
+      id: "comp-1",
+      item: "Extra Labor",
+      beneficiary: "Anna Seo",
+      amount: "1",
+      rate: "",
+      activityDate: "05/29/2026",
+      requiresClaimOrCxPayment: "",
+      comment: "",
+      createdBy: currentEditor,
+      lastModifiedBy: currentEditor,
+    },
+  ]);
+
   // ServicePower status sending
   const [spStatus, setSpStatus] = useState("");
   const [spStatusSending, setSpStatusSending] = useState(false);
@@ -1450,17 +1195,6 @@ function TicketDetailsPage() {
   // Distance (miles) from the office location to this ticket's address.
   const [officeDistanceMiles, setOfficeDistanceMiles] = useState<number | null>(null);
 
-  // Company-wide map provider (see migration 0050) — set from /m/admin.
-  // This page has no embedded map, but the mileage figure below still goes
-  // through Google's Distance Matrix (real driving miles) in Google mode,
-  // or straight-line distance via Geoapify geocoding in Leaflet mode.
-  const [mapProvider, setMapProvider] = useState<MapProvider | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    getCompanyMapProvider().then((p) => { if (!cancelled) setMapProvider(p); });
-    return () => { cancelled = true; };
-  }, []);
-
   // Edit mode state for customer information
   const [isEditingCustomerInfo, setIsEditingCustomerInfo] = useState(false);
   const [editedCustomerInfo, setEditedCustomerInfo] = useState<Partial<TicketData>>({});
@@ -1472,18 +1206,16 @@ function TicketDetailsPage() {
   const [isEditingProductInfo, setIsEditingProductInfo] = useState(false);
   const [editedProductInfo, setEditedProductInfo] = useState<Partial<TicketData>>({});
 
-  // Per-model reference links (Exploded View / Service Bulletin / Tech Data
-  // Sheet), each supporting multiple URLs. Shared across every ticket
-  // carrying the same model number. Loaded from Supabase whenever the
-  // ticket's model changes.
+  // Per-model reference links (Exploded View / Service Bulletin). Shared
+  // across every ticket carrying the same model number. Loaded from Supabase
+  // whenever the ticket's model changes.
   const [modelResources, setModelResources] = useState<{
-    explodedViewUrls: string[];
-    serviceBulletinUrls: string[];
-    techDataSheetUrls: string[];
-  }>({ explodedViewUrls: [], serviceBulletinUrls: [], techDataSheetUrls: [] });
+    explodedViewUrl: string;
+    serviceBulletinUrl: string;
+  }>({ explodedViewUrl: "", serviceBulletinUrl: "" });
   const [modelResourceModal, setModelResourceModal] = useState<
     | null
-    | { kind: "exploded" | "bulletin" | "techDataSheet"; values: string[] }
+    | { kind: "exploded" | "bulletin"; value: string }
   >(null);
   const [modelResourceSaving, setModelResourceSaving] = useState(false);
 
@@ -1491,97 +1223,16 @@ function TicketDetailsPage() {
   const [isEditingScheduleInfo, setIsEditingScheduleInfo] = useState(false);
   const [editedScheduleInfo, setEditedScheduleInfo] = useState<Partial<TicketData>>({});
 
-  // Inline edit state for the Redo Ticket # input on the Visit Log
-  // sidebar. Persists to tickets.original_ticket_no via the same
-  // updateTicketFields path used by the Product Info edit form. Stored
-  // separately from the Product Info draft so a quick redo-number edit
-  // doesn't force the user into the full product-info modal.
-  const [editingRedoTicket, setEditingRedoTicket] = useState(false);
-  const [redoTicketDraft, setRedoTicketDraft] = useState("");
-  const [savingRedoTicket, setSavingRedoTicket] = useState(false);
-
-  // Resolve the caller's Supabase profile id once auth is ready — needed to
-  // stamp ticket_audit_log.changed_by on entries this browser writes.
-  useEffect(() => {
-    if (!authReady || !uid) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const { getMyProfileId } = await import("@/lib/supabase/users");
-        const id = await getMyProfileId(uid);
-        if (!cancelled) setMyProfileId(id);
-      } catch (err) {
-        console.error("Failed to resolve profile id for audit log:", err);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [authReady, uid]);
-
-  // Company roster for resolving ticket_audit_log.changed_by (a profile
-  // UUID) back to a readable name in the Change Log.
-  useEffect(() => {
-    if (!authReady) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const { getCompanyUsers } = await import("@/lib/supabase/users");
-        const rows = await getCompanyUsers();
-        if (cancelled) return;
-        const map: Record<string, string> = {};
-        rows.forEach((p: any) => { map[p.id] = p.display_name || p.email || p.id; });
-        setProfileNameById(map);
-      } catch (err) {
-        console.error("Failed to load profiles for audit log display:", err);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [authReady]);
-
-  // Merge in the shared (Supabase) audit trail for this ticket, so edits
-  // made from any device show up in the Change Log here too — not just the
-  // entries this specific browser wrote to localStorage.
-  useEffect(() => {
-    if (!ticketDbId) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const { getTicketAuditLog } = await import("@/lib/supabase/tickets");
-        const rows = await getTicketAuditLog({ ticketId: ticketDbId });
-        if (cancelled) return;
-        const mapped: AuditLogEntry[] = rows.map((r) => ({
-          id: r.id,
-          timestamp: r.createdAt,
-          by: (r.changedBy && profileNameById[r.changedBy]) || r.changedBy || "Unknown",
-          action: r.action,
-          field: r.field,
-          before: r.beforeValue ?? "—",
-          after: r.afterValue ?? "—",
-        }));
-        setAuditEntries((prev) => {
-          // Drop any prior entry that represents the same event as one of
-          // the Supabase rows (e.g. this browser's own optimistic echo of an
-          // edit it just made) — the Supabase copy replaces it rather than
-          // sitting alongside it.
-          const withoutDupes = prev.filter((e) => !mapped.some((m) => isSameAuditEvent(e, m)));
-          const merged = [...withoutDupes, ...mapped];
-          return merged.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-        });
-      } catch (err) {
-        console.error("Failed to load shared ticket audit log:", err);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [ticketDbId, profileNameById]);
-
   useEffect(() => {
     // Load audit entries from localStorage
     setAuditEntries(loadAuditEntries(ticketNo));
     setAuditEntriesLoaded(true);
-
+    
     // Reset loaded flags when ticket changes
     setVisitsLoaded(false);
     setPartRowsLoaded(false);
-
+    setAlertsLoaded(false);
+    
     // Load visits from Supabase (falls back to empty if none)
     sbGetTicketVisits(ticketNo)
       .then((visits) => {
@@ -1650,6 +1301,10 @@ function TicketDetailsPage() {
       setPartAddressBook(book);
     });
     
+    // Load alert messages from localStorage
+    setAlertMessages(loadAlertMessages(ticketNo));
+    setAlertsLoaded(true);
+    
     setEditingPartId(null);
     setPartDraft(createEmptyPartDraft());
     setIsEditingCustomerInfo(false);
@@ -1675,6 +1330,12 @@ function TicketDetailsPage() {
     // This effect intentionally does nothing (kept to preserve hook order).
     if (!partRowsLoaded) return;
   }, [partRows, partRowsLoaded, ticketNo]);
+
+  useEffect(() => {
+    // Save alert messages to localStorage whenever they change
+    if (!alertsLoaded) return;
+    saveAlertMessages(ticketNo, alertMessages);
+  }, [alertMessages, ticketNo, alertsLoaded]);
 
   useEffect(() => {
     // Listen for ticket data changes from Work Planner or other sources
@@ -1718,88 +1379,7 @@ function TicketDetailsPage() {
 
   const appendAuditEntry = (entry: Omit<AuditLogEntry, "id" | "timestamp">) => {
     setAuditEntries((entries) => [createAuditEntry(entry), ...entries]);
-
-    // Write through to the shared Supabase audit trail so this change shows
-    // up in the Change Log from any device, not just this browser's
-    // localStorage. Best-effort — the local entry above already renders
-    // instantly for this session regardless of how this turns out.
-    if (ticketDbId) {
-      (async () => {
-        try {
-          const { logTicketAuditEntry } = await import("@/lib/supabase/tickets");
-          await logTicketAuditEntry({
-            ticketId: ticketDbId,
-            action: entry.action,
-            field: entry.field,
-            beforeValue: entry.before,
-            afterValue: entry.after,
-            changedBy: myProfileId,
-          });
-        } catch (err) {
-          console.error("Failed to write shared audit log entry:", err);
-        }
-      })();
-    }
   };
-
-  const canFlagMisdiagnosed = canManageMisdiagnosed(currentUserRole, currentUserExtraRoles);
-
-  const toggleMisdiagnosed = async () => {
-    if (!ticket || !canFlagMisdiagnosed) return;
-    const next = !ticket.misdiagnosed;
-    const confirmed = confirm(
-      next
-        ? "Are you sure you want to flag this ticket as misdiagnosed?"
-        : "Are you sure you want to remove the misdiagnosed flag from this ticket?"
-    );
-    if (!confirmed) return;
-    setTicketData((prev) => (prev ? { ...prev, misdiagnosed: next } : prev));
-    try {
-      await sbUpdateTicketMisdiagnosed(ticketNo, next);
-    } catch (err) {
-      console.error("Failed to update misdiagnosed flag:", err);
-      setTicketData((prev) => (prev ? { ...prev, misdiagnosed: !next } : prev));
-      alert(`Failed to update misdiagnosed flag: ${err instanceof Error ? err.message : "Unknown error"}`);
-      return;
-    }
-    appendAuditEntry({
-      by: currentEditor,
-      action: next ? "Flagged as misdiagnosed" : "Unflagged as misdiagnosed",
-      field: "Misdiagnosed",
-      before: next ? "No" : "Yes",
-      after: next ? "Yes" : "No",
-    });
-  };
-
-  // Self-heal: the ticket's status should always mirror the latest visit's
-  // repair status. That invariant used to get silently broken by editing an
-  // older, not-yet-locked visit (see isLatestVisit above) — tickets that
-  // already drifted out of sync stay wrong forever otherwise, since nothing
-  // else re-checks this after the fact. Runs once visits have actually
-  // loaded, and only writes when there's a real mismatch to fix.
-  useEffect(() => {
-    if (!ticket || !visitsLoaded || !ticketDbId || visitLogEntries.length === 0) return;
-    const latest = visitLogEntries[0];
-    const latestStatus = latest.repairStatus?.trim();
-    if (!latestStatus || latestStatus === ticket.status) return;
-    const staleStatus = ticket.status;
-    (async () => {
-      try {
-        await sbUpdateTicketStatus(ticketNo, latestStatus);
-        setTicketData((prev) => (prev ? { ...prev, status: latestStatus } : prev));
-        appendAuditEntry({
-          by: "System",
-          action: "Resynced ticket status from latest visit",
-          field: "status",
-          before: staleStatus,
-          after: latestStatus,
-        });
-      } catch (err) {
-        console.error("Failed to resync ticket status from latest visit:", err);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visitsLoaded, visitLogEntries, ticketDbId]);
 
   const handleSendSpStatus = async () => {
     if (!spStatus) {
@@ -2029,70 +1609,15 @@ function TicketDetailsPage() {
     }
   };
 
+  const auditCountLabel = useMemo(() => `${auditEntries.length} change${auditEntries.length === 1 ? "" : "s"} logged`, [auditEntries.length]);
   const partAuditEntries = useMemo(
     () => auditEntries.filter((entry) => entry.field === "Part Transaction"),
     [auditEntries],
   );
-  // deletePartRow already logs a full before-deletion snapshot (via
-  // summarizePartRow) on every delete — this just surfaces those entries in
-  // the Part Transaction Log modal so a deleted part (and who deleted it)
-  // stays visible instead of silently vanishing once it's gone from partRows.
-  const deletedPartAuditEntries = useMemo(
-    () => partAuditEntries.filter((entry) => entry.action === "Deleted part transaction"),
-    [partAuditEntries],
-  );
-  // Who has flagged/unflagged this ticket as misdiagnosed, most recent
-  // first — shown inline next to the checkbox itself rather than folded
-  // into the visit-scoped change log below, since this isn't tied to any
-  // one visit.
-  const misdiagnosedAuditEntries = useMemo(
-    () => auditEntries.filter((entry) => entry.field === "Misdiagnosed"),
-    [auditEntries],
-  );
-  // Scoped to "Visit Log" entries; further narrowed to one specific visit
-  // (via visitLogEntryMatchesVisitNo) at the render site, same pattern as
-  // partAuditEntries below.
-  const visitAuditEntries = useMemo(
-    () => auditEntries.filter((entry) => entry.field === "Visit Log"),
-    [auditEntries],
-  );
-  // Ticket-level trigger rows (status/reschedule/reassign) — these have no
-  // visit reference, so they're matched to a specific visit by timing at
-  // the render site (see isNearAnyTimestamp) rather than filtered here.
-  const ticketLevelAuditEntries = useMemo(
-    () => auditEntries.filter((entry) => TICKET_LEVEL_AUDIT_FIELDS.has(entry.field)),
-    [auditEntries],
-  );
-  // Everything shown in a specific visit's Change Log: its own "Visit Log"
-  // entries plus whichever ticket-level status/reschedule rows happened
-  // right around that visit's save.
-  const visitChangeLogEntries = useMemo(() => {
-    if (!viewingVisitEntry) return [] as AuditLogEntry[];
-    const visitSpecific = visitAuditEntries.filter((e) =>
-      visitLogEntryMatchesVisitNo(e.before, viewingVisitEntry.visitNo) ||
-      visitLogEntryMatchesVisitNo(e.after, viewingVisitEntry.visitNo)
-    );
-    const anchors = [viewingVisitEntry.timestamp, ...visitSpecific.map((e) => e.timestamp)].filter(Boolean);
-    const ticketLevel = ticketLevelAuditEntries.filter((e) => isNearAnyTimestamp(e.timestamp, anchors));
-    return [...visitSpecific, ...ticketLevel].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-  }, [visitAuditEntries, ticketLevelAuditEntries, viewingVisitEntry]);
   const partCountLabel = useMemo(
     () => `${partRows.length} distinct record${partRows.length === 1 ? "" : "s"} found`,
     [partRows.length],
   );
-  // Live, read-only readout of parts currently marked "Used" - not a
-  // section of Service Performed (a tech doesn't type it in), attached
-  // only to the latest visit log entry (visitLogEntries[0]) wherever that
-  // visit is displayed. Parts don't reliably link to a specific visit
-  // (parts.visit_id is null on every real row in production), so this is
-  // ticket-wide rather than pretending to scope per visit.
-  const usedPartsText = useMemo(() => {
-    const used = partRows.filter((p) => p.status === "Used");
-    if (used.length === 0) return "";
-    return used
-      .map((p) => `- ${p.partNo || "?"} — ${p.partDesc || "part"}${p.quantity ? ` (qty ${p.quantity})` : ""}`)
-      .join("\n");
-  }, [partRows]);
 
   const handleTicketChange = (newTicketNo: string) => {
     if (newTicketNo.trim()) {
@@ -2116,37 +1641,9 @@ function TicketDetailsPage() {
     setSelectedTicket(ticketNo);
   }, [ticketNo]);
 
-  // Load photo count for the Claims Readiness checklist — visible to every
-  // role now, so this loads for everyone, not just Admin/Claims/BizOps.
-  // Uses listTicketPhotos from Firebase Storage — non-blocking, best-effort.
-  const [ticketPhotoCount, setTicketPhotoCount] = useState<number | null>(null);
-  useEffect(() => {
-    if (!authReady) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const { listTicketPhotos } = await import("@/lib/firebase/storage");
-        const cid = currentCompanyId || "COMP001";
-        // TicketPhotos.tsx (the Attachments tab and Mobile Tech App) both
-        // upload under category "service" — .../tickets/{ticketNo}/service/…
-        // — not the bare ticket folder, so this has to match that same
-        // subpath or listAll() finds nothing (subfolders are prefixes, not
-        // items) and the checklist always reads "no photos" even when there
-        // are some.
-        const photos = await listTicketPhotos(cid, `${ticketNo}/service`);
-        if (!cancelled) setTicketPhotoCount(photos.length);
-      } catch {
-        if (!cancelled) setTicketPhotoCount(0);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [ticketNo, authReady, currentCompanyId]);
-
   // Load ticket from centralized system
   const [ticketData, setTicketData] = useState<TicketData | null>(null);
-  // (ticketDbId is declared earlier alongside myProfileId/profileNameById —
-  // effects above this point already depend on it.)
-
+  
   useEffect(() => {
     // Load ticket from Supabase first; fall back to centralized/hardcoded.
     const loadTicketData = async () => {
@@ -2159,7 +1656,6 @@ function TicketDetailsPage() {
       if (!centralTicket) {
         centralTicket = getTicketByNumber(ticketNo) ?? null;
       }
-      setTicketDbId((centralTicket as any)?._id ?? null);
       if (centralTicket) {
         // Map centralized Ticket to TicketData format
         const mapped: TicketData = {
@@ -2169,7 +1665,6 @@ function TicketDetailsPage() {
           product: centralTicket.model,
           tat: computeTAT(centralTicket.created),
           status: centralTicket.status,
-          misdiagnosed: centralTicket.misdiagnosed === "Y",
           schedule: centralTicket.schedule,
           contact: centralTicket.contact || "",
           location: centralTicket.location,
@@ -2189,7 +1684,6 @@ function TicketDetailsPage() {
           serialNo: centralTicket.serial || "",
           modelVersion: (centralTicket as any).modelVersion || "",
           redoTicketNo: (centralTicket as any).originalTicketNo || "",
-          caseNumber: (centralTicket as any).caseNumber || "",
           productCategory: centralTicket.productType || "",
           purchaseDate: centralTicket.purchaseDate || "",
           warrantyType: mapServicePowerWarranty(centralTicket.warranty) || centralTicket.warranty,
@@ -2223,20 +1717,6 @@ function TicketDetailsPage() {
           technician: centralTicket.technician,
           customerNotes: [],
           servicerNotes: [],
-          // NSA-specific — fetched live from NSA API when ticketSource === "NSA"
-          nsaStatus: (centralTicket as any).nsaStatus || "",
-          nsaRouteName: (centralTicket as any).nsaRouteName || "",
-          nsaGroupName: (centralTicket as any).nsaGroupName || "",
-          nsaDeductible: (centralTicket as any).nsaDeductible || "",
-          nsaScheduleAck: (centralTicket as any).nsaScheduleAck || "",
-          nsaSpecialInstructions: (centralTicket as any).nsaSpecialInstructions || "",
-          nsaValidCoverage: (centralTicket as any).nsaValidCoverage || "",
-          nsaRequiredCoverage: (centralTicket as any).nsaRequiredCoverage || "",
-          nsaRequiredPart: (centralTicket as any).nsaRequiredPart || "",
-          nsaPreAuth: (centralTicket as any).nsaPreAuth || "",
-          nsaCaseNumber: (centralTicket as any).nsaCaseNumber || (centralTicket as any).originalTicketNo || "",
-          nsaMasterCode: (centralTicket as any).nsaMasterCode || "",
-          nsaCoverageExclusions: (centralTicket as any).nsaCoverageExclusions || "",
         };
         setTicketData(mapped);
       } else {
@@ -2258,17 +1738,6 @@ function TicketDetailsPage() {
     return () => window.removeEventListener("storage", handleStorageChange);
   }, [ticketNo, authReady]);
 
-  // Real alert messages — fetched once ticketDbId resolves above (the FK
-  // needs the real Supabase ticket id, not just the human ticket_no).
-  useEffect(() => {
-    if (!ticketDbId) return;
-    let cancelled = false;
-    getTicketAlerts(ticketDbId)
-      .then((rows) => { if (!cancelled) setAlertMessages(rows); })
-      .catch((err) => console.error("getTicketAlerts error:", err));
-    return () => { cancelled = true; };
-  }, [ticketDbId]);
-
   const ticket = ticketData;
 
   // Squaretrade tickets need a per-ticket appointment-completion URL so the
@@ -2283,14 +1752,13 @@ function TicketDetailsPage() {
     setSquaretradeUrlState(getSquaretradeUrl(ticketNo));
   }, [ticketNo]);
 
-  // Load per-model reference links (Exploded View / Service Bulletin / Tech
-  // Data Sheet) when the ticket's model changes. Shared across every ticket
-  // with the same model number — saving here updates the resource for all
-  // of them.
+  // Load per-model reference links (Exploded View / Service Bulletin) when
+  // the ticket's model changes. Shared across every ticket with the same
+  // model number — saving here updates the resource for all of them.
   useEffect(() => {
     const model = String(ticket?.model || "").trim();
     if (!model) {
-      setModelResources({ explodedViewUrls: [], serviceBulletinUrls: [], techDataSheetUrls: [] });
+      setModelResources({ explodedViewUrl: "", serviceBulletinUrl: "" });
       return;
     }
     let cancelled = false;
@@ -2298,9 +1766,8 @@ function TicketDetailsPage() {
       .then((res) => {
         if (cancelled) return;
         setModelResources({
-          explodedViewUrls: res.explodedViewUrls,
-          serviceBulletinUrls: res.serviceBulletinUrls,
-          techDataSheetUrls: res.techDataSheetUrls,
+          explodedViewUrl: res.explodedViewUrl || "",
+          serviceBulletinUrl: res.serviceBulletinUrl || "",
         });
       })
       .catch((err) => console.error("getModelResources error:", err));
@@ -2314,86 +1781,39 @@ function TicketDetailsPage() {
       alert("This ticket has no model number. Set a model first before linking resources.");
       return;
     }
-    const cleaned = modelResourceModal.values.map((v) => v.trim()).filter(Boolean);
+    const url = modelResourceModal.value.trim();
     setModelResourceSaving(true);
     try {
       const updated = await saveModelResources(model, {
-        explodedViewUrls: modelResourceModal.kind === "exploded" ? cleaned : modelResources.explodedViewUrls,
-        serviceBulletinUrls: modelResourceModal.kind === "bulletin" ? cleaned : modelResources.serviceBulletinUrls,
-        techDataSheetUrls: modelResourceModal.kind === "techDataSheet" ? cleaned : modelResources.techDataSheetUrls,
+        explodedViewUrl: modelResourceModal.kind === "exploded" ? url : modelResources.explodedViewUrl,
+        serviceBulletinUrl: modelResourceModal.kind === "bulletin" ? url : modelResources.serviceBulletinUrl,
       });
       setModelResources({
-        explodedViewUrls: updated.explodedViewUrls,
-        serviceBulletinUrls: updated.serviceBulletinUrls,
-        techDataSheetUrls: updated.techDataSheetUrls,
+        explodedViewUrl: updated.explodedViewUrl,
+        serviceBulletinUrl: updated.serviceBulletinUrl,
       });
       setModelResourceModal(null);
     } catch (err) {
       console.error("saveModelResources error:", err);
-      alert(`Failed to save links: ${err instanceof Error ? err.message : "Unknown error"}`);
+      alert(`Failed to save link: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setModelResourceSaving(false);
     }
   };
 
   // Auto-pull Call Service Information from ServicePower once the ticket has
-  // loaded. Runs once per ticket number. Skipped for NSA-sourced tickets
-  // (they don't exist in ServicePower and the call would corrupt the fields).
+  // loaded. Runs once per ticket number. Reads handleSyncCallInfo lazily via
+  // a ref so the effect doesn't need it in its dep list (the function closes
+  // over `ticketNo` already).
   useEffect(() => {
     if (!ticketData) return;
     if (autoSyncedRef.current === ticketNo) return;
-    // Skip SP auto-sync entirely for NSA tickets — SP doesn't know about them
-    // and the sync would overwrite ticketSource, account, etc. with blank/wrong values.
-    if (String(ticketData.ticketSource || "").toUpperCase().includes("NSA")) {
-      autoSyncedRef.current = ticketNo; // mark as "done" so it never retries
-      return;
-    }
     autoSyncedRef.current = ticketNo;
     // eslint-disable-next-line no-console
     console.log("[SP auto-sync] effect firing for ticket:", ticketNo);
     handleSyncCallInfo(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticketData, ticketNo]);
-
-  // Auto-fetch live NSA dispatch details when the ticket source is NSA.
-  // Populates the NSA Dispatch Information section without requiring a manual sync.
-  useEffect(() => {
-    if (!ticketData) return;
-    const src = String(ticketData.ticketSource || "").toUpperCase();
-    if (!src.includes("NSA")) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const { getNsaDispatch } = await import("@/lib/nsaApi");
-        const dispatch = await getNsaDispatch(ticketNo);
-        if (cancelled || !dispatch) return;
-        setTicketData((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            nsaStatus: dispatch.status ?? prev.nsaStatus,
-            nsaRouteName: dispatch.routeName ?? dispatch.route ?? prev.nsaRouteName,
-            nsaGroupName: dispatch.groupName ?? dispatch.group ?? prev.nsaGroupName,
-            nsaDeductible: dispatch.deductible != null ? String(dispatch.deductible) : prev.nsaDeductible,
-            nsaScheduleAck: dispatch.scheduleAck ?? dispatch.scheduleACK ?? prev.nsaScheduleAck,
-            nsaSpecialInstructions: dispatch.specialInstructions ?? prev.nsaSpecialInstructions,
-            nsaValidCoverage: dispatch.validCoverage ?? prev.nsaValidCoverage,
-            nsaRequiredCoverage: dispatch.requiredCoverage ?? prev.nsaRequiredCoverage,
-            nsaRequiredPart: dispatch.requiredPart != null ? String(dispatch.requiredPart) : prev.nsaRequiredPart,
-            nsaPreAuth: dispatch.preAuth ?? prev.nsaPreAuth,
-            nsaCaseNumber: dispatch.caseNumber ?? prev.nsaCaseNumber,
-            nsaMasterCode: dispatch.masterCode ?? prev.nsaMasterCode,
-            nsaCoverageExclusions: dispatch.coverageExclusions ?? prev.nsaCoverageExclusions,
-          };
-        });
-      } catch (err) {
-        // Non-fatal — NSA data is supplemental; ticket still works without it
-        console.warn("[NSA auto-fetch] failed:", err);
-      }
-    })();
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ticketData?.ticketSource, ticketNo]);
 
   // Pick a default Ship-To for the Marcone Parts Order modal: the ticket's
   // branch row in the address book if we have it; fall back to the
@@ -2419,17 +1839,95 @@ function TicketDetailsPage() {
   }, [partAddressBook, ticket?.location, currentUserEmail]);
 
 
-  // Compute DRIVING miles from the office to this ticket's address (shared
-  // with Need Claim List's bulk version — see computeOfficeDistanceMiles in
-  // mapEngine.ts for the full Google/Leaflet + Electrolux-override logic).
+  // Compute DRIVING miles from the office to this ticket's address using the
+  // Google Distance Matrix API (matches what Google Maps shows). Falls back
+  // through progressively looser destination strings so a slightly-off address
+  // still resolves instead of showing "— mi".
   useEffect(() => {
-    if (!ticket || !mapProvider) { setOfficeDistanceMiles(null); return; }
+    if (!ticket) { setOfficeDistanceMiles(null); return; }
+    const office = getOfficeCoordinates(ticket.location || ticket.city || "");
+    if (!office) { setOfficeDistanceMiles(null); return; }
+
+    // Candidate destination strings, most specific first.
+    const destinationCandidates = [
+      [ticket.address, ticket.city, ticket.state, ticket.zip, "USA"].filter(Boolean).join(", "),
+      [ticket.city, ticket.state, ticket.zip, "USA"].filter(Boolean).join(", "),
+      [ticket.zip, "USA"].filter(Boolean).join(", "),
+      [ticket.city, ticket.state, "USA"].filter(Boolean).join(", "),
+    ]
+      .map((s) => s.trim())
+      .filter((s) => s && s !== "USA");
+
+    if (destinationCandidates.length === 0) { setOfficeDistanceMiles(null); return; }
+
     let cancelled = false;
-    computeOfficeDistanceMiles(ticket, mapProvider).then((miles) => {
-      if (!cancelled) setOfficeDistanceMiles(miles);
-    });
+    const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
+
+    const computeDistance = () => {
+      const maps = (window as Window & { google?: any }).google?.maps;
+      if (!maps) return;
+      const service = new maps.DistanceMatrixService();
+      const originLatLng = new maps.LatLng(office.lat, office.lng);
+
+      const tryCandidate = (idx: number) => {
+        if (cancelled) return;
+        if (idx >= destinationCandidates.length) {
+          // Last resort: straight-line distance via geocoding the best string.
+          const geocoder = new maps.Geocoder();
+          geocoder.geocode({ address: destinationCandidates[0] }, (results: any, status: string) => {
+            if (cancelled) return;
+            if (status === "OK" && results?.[0]) {
+              const pos = results[0].geometry.location;
+              setOfficeDistanceMiles(milesBetween(office, { lat: pos.lat(), lng: pos.lng() }));
+            } else {
+              setOfficeDistanceMiles(null);
+            }
+          });
+          return;
+        }
+
+        service.getDistanceMatrix(
+          {
+            origins: [originLatLng],
+            destinations: [destinationCandidates[idx]],
+            travelMode: maps.TravelMode.DRIVING,
+            unitSystem: maps.UnitSystem.IMPERIAL,
+          },
+          (response: any, status: string) => {
+            if (cancelled) return;
+            const element = response?.rows?.[0]?.elements?.[0];
+            if (status === "OK" && element?.status === "OK" && element.distance?.value != null) {
+              // distance.value is in meters; convert to miles.
+              setOfficeDistanceMiles(element.distance.value / 1609.344);
+            } else {
+              tryCandidate(idx + 1);
+            }
+          },
+        );
+      };
+
+      tryCandidate(0);
+    };
+
+    if ((window as Window & { google?: any }).google?.maps) {
+      computeDistance();
+    } else if (apiKey) {
+      const existing = document.querySelector<HTMLScriptElement>('script[data-google-maps="ticket-distance"]');
+      if (existing) {
+        existing.addEventListener("load", computeDistance, { once: true });
+      } else {
+        const script = document.createElement("script");
+        script.dataset.googleMaps = "ticket-distance";
+        script.async = true;
+        script.defer = true;
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&v=3.52`;
+        script.onload = computeDistance;
+        document.head.appendChild(script);
+      }
+    }
+
     return () => { cancelled = true; };
-  }, [ticket?.account, ticket?.location, ticket?.address, ticket?.city, ticket?.state, ticket?.zip, mapProvider]);
+  }, [ticket?.location, ticket?.address, ticket?.city, ticket?.state, ticket?.zip]);
 
   // Compute related tickets: any OTHER company ticket sharing a key field with
   // this one (email, phone, zip, customer name, address, model, or serial).
@@ -2630,7 +2128,6 @@ function TicketDetailsPage() {
         serialNo: ticket.serialNo,
         modelVersion: ticket.modelVersion,
         redoTicketNo: ticket.redoTicketNo,
-        caseNumber: ticket.caseNumber,
         productCategory: ticket.productCategory,
         purchaseDate: ticket.purchaseDate,
         warrantyType: ticket.warrantyType,
@@ -2643,7 +2140,7 @@ function TicketDetailsPage() {
   const saveProductInfo = async () => {
     if (!ticket) return;
 
-    const fieldsToCheck: Array<keyof TicketData> = ["brand", "model", "serialNo", "modelVersion", "redoTicketNo", "caseNumber", "productCategory", "purchaseDate", "warrantyType", "claimCompany"];
+    const fieldsToCheck: Array<keyof TicketData> = ["brand", "model", "serialNo", "modelVersion", "redoTicketNo", "productCategory", "purchaseDate", "warrantyType", "claimCompany"];
     fieldsToCheck.forEach((field) => {
       const oldValue = formatAuditValue(ticket[field]);
       const newValue = formatAuditValue(editedProductInfo[field]);
@@ -2668,7 +2165,6 @@ function TicketDetailsPage() {
       serial: editedProductInfo.serialNo || ticket.serialNo,
       modelVersion: editedProductInfo.modelVersion ?? ticket.modelVersion,
       originalTicketNo: editedProductInfo.redoTicketNo ?? ticket.redoTicketNo,
-      caseNumber: editedProductInfo.caseNumber ?? ticket.caseNumber,
       productType: editedProductInfo.productCategory || ticket.productCategory,
       purchaseDate: editedProductInfo.purchaseDate || ticket.purchaseDate,
       warranty: editedProductInfo.warrantyType || ticket.warrantyType,
@@ -2689,7 +2185,6 @@ function TicketDetailsPage() {
         warranty: editedProductInfo.warrantyType ?? ticket.warrantyType,
         claimCompany: editedProductInfo.claimCompany ?? ticket.claimCompany,
         originalTicketNo: editedProductInfo.redoTicketNo ?? ticket.redoTicketNo,
-        caseNumber: editedProductInfo.caseNumber ?? ticket.caseNumber,
       });
     } catch (err) {
       console.error("Failed to persist product info:", err);
@@ -2770,53 +2265,6 @@ function TicketDetailsPage() {
     setEditedScheduleInfo({});
   };
 
-  // Start editing the Redo Ticket # inline. Seeds the draft with the
-  // value currently on the ticket so the user can append/replace.
-  const startEditingRedoTicket = () => {
-    setRedoTicketDraft(String(ticket?.redoTicketNo ?? ""));
-    setEditingRedoTicket(true);
-  };
-
-  const cancelEditingRedoTicket = () => {
-    setEditingRedoTicket(false);
-    setRedoTicketDraft("");
-  };
-
-  // Persist the Redo Ticket # to Supabase (tickets.original_ticket_no
-  // via updateTicketFields), update the in-memory ticket so the UI
-  // reflects the change without a reload, append an audit entry.
-  const saveRedoTicket = async () => {
-    if (!ticket) return;
-    const next = redoTicketDraft.trim();
-    const prev = String(ticket.redoTicketNo ?? "");
-    if (next === prev) {
-      setEditingRedoTicket(false);
-      return;
-    }
-    setSavingRedoTicket(true);
-    try {
-      await sbUpdateTicketFields(ticketNo, { originalTicketNo: next });
-      // Reflect change locally so the field re-renders immediately.
-      (ticket as any).redoTicketNo = next;
-      appendAuditEntry({
-        by: currentEditor,
-        action: "Updated Redo Ticket #",
-        field: "Redo Ticket #",
-        before: prev || "NONE",
-        after: next || "NONE",
-      });
-      setEditingRedoTicket(false);
-      setRedoTicketDraft("");
-    } catch (err) {
-      console.error("Failed to save Redo Ticket #", err);
-      alert(
-        `Failed to save Redo Ticket #: ${err instanceof Error ? err.message : "Unknown error"}`,
-      );
-    } finally {
-      setSavingRedoTicket(false);
-    }
-  };
-
   const addVisitLogEntry = async () => {
     if (visitFormMode === "view") {
       return;
@@ -2840,25 +2288,10 @@ function TicketDetailsPage() {
       }
       return;
     }
-    if (newVisitRepairStatus === "CL-Cancelled") {
-      if (!canSetCancelled) {
-        alert("Only a BizOps Manager can set Repair Status to CL-Cancelled.");
-        return;
-      }
-      if (!newVisitCancelReason.trim()) {
-        alert("A cancellation reason is required when Repair Status is CL-Cancelled.");
-        const el = document.getElementById("visit-cancel-reason-modal") as HTMLSelectElement | null;
-        if (el) {
-          el.scrollIntoView({ behavior: "smooth", block: "center" });
-          setTimeout(() => el.focus(), 80);
-        }
-        return;
-      }
-    }
-    // Cause of Failure (diagnosis) + Service Performed (resolution) are
-    // required before a technician can submit / complete a visit. Office
-    // roles on the web aren't blocked — only technicians and anyone using
-    // the mobile tech app must fill them in.
+    // Cause of Failure (diagnosis) + Repair Notes (resolution) are required
+    // before a technician can submit / complete a visit. Office roles on the
+    // web aren't blocked — only technicians and anyone using the mobile tech
+    // app must fill them in.
     if (requireTechVisitFields) {
       if (!newVisitDiagnosis.trim()) {
         alert("Cause of Failure (Tech) is required before a visit can be completed.");
@@ -2869,8 +2302,8 @@ function TicketDetailsPage() {
         }
         return;
       }
-      if (!parseServicePerformed(newVisitResolution).notes.trim()) {
-        alert("Service Performed (Tech) is required before a visit can be completed.");
+      if (!newVisitResolution.trim()) {
+        alert("Repair Notes (Tech) is required before a visit can be completed.");
         const el = document.getElementById("visit-resolution-modal") as HTMLTextAreaElement | null;
         if (el) {
           el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -2881,9 +2314,6 @@ function TicketDetailsPage() {
     }
 
     const existingVisit = editingVisitId ? visitLogEntries.find((entry) => entry.id === editingVisitId) ?? null : null;
-    // Normalize away the Parts Used hint / any in-progress label damage
-    // regardless of whether the field was blurred before Save was clicked.
-    const composedResolution = composeServicePerformed(parseServicePerformed(newVisitResolution));
 
     const visitEntry: VisitLogEntry = {
       ...(existingVisit ?? createVisitLogEntry({
@@ -2891,7 +2321,6 @@ function TicketDetailsPage() {
         by: currentEditor,
         scheduleDate: newVisitScheduleDate,
         technician: newVisitTechnician,
-        secondTechnician: newVisitSecondTechnician || undefined,
         timeSlot: newVisitTimeSlot,
         activity: newVisitActivity,
         actionType: newVisitActionType,
@@ -2904,17 +2333,15 @@ function TicketDetailsPage() {
         symptomCx: newVisitSymptomCx,
         diagnosis: newVisitDiagnosis,
         symptomTech: newVisitSymptomTech,
-        resolution: composedResolution,
+        resolution: newVisitResolution,
         nonCompletionReason: newVisitNonCompletionReason,
         triageNote: newVisitTriageNote,
         status: newVisitStatus,
         note: trimmedNote,
-        locked: false,
       })),
       by: currentEditor,
       scheduleDate: newVisitScheduleDate,
       technician: newVisitTechnician,
-      secondTechnician: newVisitSecondTechnician || undefined,
       timeSlot: newVisitTimeSlot,
       activity: newVisitActivity,
       actionType: newVisitActionType,
@@ -2927,7 +2354,7 @@ function TicketDetailsPage() {
       symptomCx: newVisitSymptomCx,
       diagnosis: newVisitDiagnosis,
       symptomTech: newVisitSymptomTech,
-      resolution: composedResolution,
+      resolution: newVisitResolution,
       nonCompletionReason: newVisitNonCompletionReason,
       triageNote: newVisitTriageNote,
       status: newVisitStatus,
@@ -2935,18 +2362,6 @@ function TicketDetailsPage() {
     };
 
     visitEntry.updatedAt = editingVisitId ? new Date().toISOString() : undefined;
-    visitEntry.updatedBy = editingVisitId ? (myProfileId ?? undefined) : undefined;
-
-    // A brand-new visit supersedes whichever visit was previously the latest
-    // (visitLogEntries[0] — the log is newest-first). Auto-mark that one as
-    // rescheduled and lock it so it can't be edited afterward — only the
-    // newest visit's repair status should ever drive the ticket status:
-    // e.g. adding V3 flips V2 to "OP-Reschedule Follow up" and locks it,
-    // while V3's own repair status becomes the ticket's status below.
-    const previousLatestVisit = !editingVisitId ? visitLogEntries[0] ?? null : null;
-    const supersededVisit: VisitLogEntry | null = previousLatestVisit
-      ? { ...previousLatestVisit, repairStatus: "OP-Reschedule Follow up", locked: true }
-      : null;
 
     // Persist the visit to Supabase
     try {
@@ -2957,45 +2372,17 @@ function TicketDetailsPage() {
         // adopt the DB-generated id so future edits target the right row
         visitEntry.id = saved.id;
       }
-      if (supersededVisit) {
-        await sbUpdateTicketVisit(supersededVisit.id, supersededVisit as any).catch((e) =>
-          console.warn("previous visit reschedule sync skipped:", e)
+      // Sync the ticket itself with this visit: schedule date, technician, slot.
+      await sbUpdateTicketAssignment(ticketNo, {
+        technician: newVisitTechnician,
+        scheduleDate: newVisitScheduleDate,
+        timeSlot: newVisitTimeSlot,
+      }).catch((e) => console.warn("assignment sync skipped:", e));
+      // Set the ticket's status from the visit's REPAIR STATUS (not the visit status).
+      if (newVisitRepairStatus) {
+        await sbUpdateTicketStatus(ticketNo, newVisitRepairStatus).catch((e) =>
+          console.warn("status update skipped:", e)
         );
-      }
-      // Only the LATEST visit should ever drive the ticket's status/
-      // assignment — adding a new visit always qualifies (it becomes the
-      // new latest), but editing an existing one only qualifies if it's
-      // still the current latest. Without this guard, editing an older
-      // visit (e.g. fixing a typo in V1's notes on a ticket that already
-      // has V2/V3) would silently overwrite the ticket's status/schedule
-      // with that older visit's values. Older visits added before the
-      // locking feature existed were never retroactively locked, so their
-      // Edit button is still clickable — this is the real backstop.
-      const isLatestVisit = !editingVisitId || editingVisitId === visitLogEntries[0]?.id;
-      if (isLatestVisit) {
-        // Sync the ticket itself with this visit: schedule date, technician, slot.
-        await sbUpdateTicketAssignment(ticketNo, {
-          technician: newVisitTechnician,
-          scheduleDate: newVisitScheduleDate,
-          timeSlot: newVisitTimeSlot,
-        }).catch((e) => console.warn("assignment sync skipped:", e));
-        // Set the ticket's status from the visit's REPAIR STATUS (not the visit status).
-        if (newVisitRepairStatus) {
-          await sbUpdateTicketStatus(ticketNo, newVisitRepairStatus).catch((e) =>
-            console.warn("status update skipped:", e)
-          );
-        }
-        // A CL-Cancelled status requires a reason — recorded in its own
-        // column (Ticket List's "Cancellation Reason" column), not embedded
-        // in Internal Note. Only BizOps Manager+ can actually reach this
-        // (see canSetCancelled below).
-        if (newVisitRepairStatus === "CL-Cancelled" && newVisitCancelReason) {
-          try {
-            await sbUpdateTicketFields(ticketNo, { cancellationReason: newVisitCancelReason });
-          } catch (e) {
-            console.warn("cancellation reason update skipped:", e);
-          }
-        }
       }
     } catch (err) {
       console.error("Failed to save visit:", err);
@@ -3008,10 +2395,7 @@ function TicketDetailsPage() {
         return entries.map((entry) => (entry.id === editingVisitId ? visitEntry : entry));
       }
 
-      const withReschedule = supersededVisit
-        ? entries.map((entry) => (entry.id === supersededVisit.id ? supersededVisit : entry))
-        : entries;
-      return [visitEntry, ...withReschedule];
+      return [visitEntry, ...entries];
     });
     appendAuditEntry({
       by: currentEditor,
@@ -3020,15 +2404,6 @@ function TicketDetailsPage() {
       before: existingVisit ? summarizeVisitEntry(existingVisit) : "—",
       after: summarizeVisitEntry(visitEntry),
     });
-    if (supersededVisit && previousLatestVisit) {
-      appendAuditEntry({
-        by: currentEditor,
-        action: "Auto-rescheduled prior visit",
-        field: "Visit Log",
-        before: `Visit ${previousLatestVisit.visitNo} - ${previousLatestVisit.repairStatus || "—"}`,
-        after: `Visit ${previousLatestVisit.visitNo} - OP-Reschedule Follow up`,
-      });
-    }
 
     clearVisitForm();
     setIsVisitModalOpen(false);
@@ -3040,13 +2415,11 @@ function TicketDetailsPage() {
     setNewVisitNote("");
     setNewVisitStatus("Visited");
     setNewVisitScheduleDate("");
-    setNewVisitTechnician(defaultTechnicianForLocation(ticket?.location));
-    setNewVisitSecondTechnician("");
+    setNewVisitTechnician("Memphis Admin");
     setNewVisitTimeSlot("");
     setNewVisitActivity("");
     setNewVisitActionType("SCHEDULE");
     setNewVisitRepairStatus("");
-    setNewVisitCancelReason("");
     setNewVisitRepairType("");
     setNewVisitReclaim("");
     setNewVisitVisited("Visited");
@@ -3054,7 +2427,7 @@ function TicketDetailsPage() {
     setNewVisitSymptomCx("");
     setNewVisitDiagnosis("");
     setNewVisitSymptomTech("");
-    setNewVisitResolution(composeServicePerformed(emptyServicePerformed()));
+    setNewVisitResolution("");
     setNewVisitNonCompletionReason("");
     setNewVisitTriageNote("");
     setNewVisitSchedNotes("");
@@ -3073,29 +2446,11 @@ function TicketDetailsPage() {
   const [runningNotesRawXml, setRunningNotesRawXml] = useState<string>("");
 
   // ---- ServicePower Running Notes ----------------------------------------
-  const isNsaTicket = String(ticket?.ticketSource || "").toUpperCase().includes("NSA");
-
   const loadRunningNotes = useCallback(async () => {
     if (!ticketNo) return;
     setRunningNotesLoading(true);
     setRunningNotesError(null);
     try {
-      if (isNsaTicket) {
-        // NSA has no equivalent of SP's getCallInfo raw-XML fallback, and
-        // nothing here scans for a Squaretrade-style URL on NSA tickets —
-        // clear it so a stale SP payload from a prior ticket view can't
-        // linger in the extractor's input.
-        setRunningNotesRawXml("");
-        const { fetchNsaRunningNotes } = await import("@/lib/nsaApi");
-        const result = await fetchNsaRunningNotes(ticketNo);
-        if (!result.success) {
-          setRunningNotesError(result.error || "Failed to load NSA communications.");
-          setRunningNotes([]);
-        } else {
-          setRunningNotes(result.notes);
-        }
-        return;
-      }
       const { fetchServicePowerNotes } = await import("@/lib/servicePowerNotes");
       const result = await fetchServicePowerNotes(ticketNo);
       // Stash both XML payloads concatenated so the URL extractor can
@@ -3119,7 +2474,7 @@ function TicketDetailsPage() {
     } finally {
       setRunningNotesLoading(false);
     }
-  }, [ticketNo, isNsaTicket]);
+  }, [ticketNo]);
 
   const openRunningNotesModal = () => {
     setIsRunningNotesOpen(true);
@@ -3136,34 +2491,6 @@ function TicketDetailsPage() {
     if (!ticketNo) return;
     void loadRunningNotes();
   }, [ticketNo, loadRunningNotes]);
-
-  const loadNsaEstimates = useCallback(async () => {
-    if (!ticketNo || !isNsaTicket) return;
-    setNsaEstimatesLoading(true);
-    setNsaEstimatesError(null);
-    try {
-      const { getNsaEstimates } = await import("@/lib/nsaApi");
-      const estimates = await getNsaEstimates(ticketNo);
-      setNsaEstimates(estimates.map((e) => ({
-        estimateID: e.estimateID,
-        submissionStatusCode: e.submissionStatusCode ?? "",
-        processedStatusCode: e.processedStatusCode ?? "",
-        totalAmount: e.totalAmount ?? 0,
-        lines: (e.lines ?? []).map((l) => ({ coverageTypeCode: l.coverageTypeCode, amount: l.amount })),
-      })));
-    } catch (err) {
-      setNsaEstimatesError(err instanceof Error ? err.message : String(err));
-      setNsaEstimates([]);
-    } finally {
-      setNsaEstimatesLoading(false);
-    }
-  }, [ticketNo, isNsaTicket]);
-
-  // Auto-fetch NSA Estimates the same way Customer Notes auto-fetches above.
-  useEffect(() => {
-    if (!ticketNo || !isNsaTicket) return;
-    void loadNsaEstimates();
-  }, [ticketNo, isNsaTicket, loadNsaEstimates]);
 
   // Auto-sync the per-ticket Squaretrade Appointment Completion URL from
   // ServicePower whenever notes refresh. Squaretrade typically embeds
@@ -3201,15 +2528,14 @@ function TicketDetailsPage() {
       date: formatSpNoteDate(n.date),
       notes: n.body,
       by: n.addedBy || "ServicePower",
-      isInternal: n.isInternal,
     }));
     const fromTicket = (ticket?.customerNotes ?? []) as Array<{ date: string; notes: string; by: string }>;
     // SP is the source of truth. If it returned at least one note, show
     // only those (de-duped by date+body). Only fall back to the
     // ticket-stored notes when SP came back empty.
-    const source = fromSp.length > 0 ? fromSp : fromTicket.map((n) => ({ ...n, isInternal: false }));
+    const source = fromSp.length > 0 ? fromSp : fromTicket;
     const seen = new Set<string>();
-    const merged: Array<{ date: string; notes: string; by: string; isInternal: boolean }> = [];
+    const merged: Array<{ date: string; notes: string; by: string }> = [];
     for (const note of source) {
       const key = `${(note.date || "").trim()}::${(note.notes || "").trim()}`;
       if (seen.has(key)) continue;
@@ -3229,9 +2555,6 @@ function TicketDetailsPage() {
   };
 
   const submitRunningNote = async () => {
-    // No addNsaCommunications wiring here — the UI hides this form for NSA
-    // tickets, but guard the handler too in case that ever changes.
-    if (isNsaTicket) return;
     const noteBody = newRunningNote.trim();
     if (!noteBody) return;
     setPostingRunningNote(true);
@@ -3275,12 +2598,6 @@ function TicketDetailsPage() {
   };
 
   const openVisitEditModal = (entry: VisitLogEntry) => {
-    // Locked (superseded) visits are still editable — notes, diagnosis,
-    // schedule, etc. can all be corrected — just not the Repair Status,
-    // which stays "OP-Reschedule Follow up" (see the Repair Status field
-    // below). isLatestVisit already keeps any edit to a non-latest visit
-    // from touching the ticket's live status/assignment, regardless of
-    // which fields changed, so this is safe to allow.
     loadVisitForEdit(entry);
     setIsVisitModalOpen(true);
   };
@@ -3288,34 +2605,22 @@ function TicketDetailsPage() {
   const loadVisitForEdit = (entry: VisitLogEntry) => {
     setVisitFormMode("edit");
     setEditingVisitId(entry.id);
-    // Preserve the entry's actual stored value for every field, including
-    // when it's blank — these four (status, actionType, visited,
-    // notCompleted) previously fell back to a non-blank default ("Visited"/
-    // "No") whenever the stored value was empty. status/visited/
-    // notCompleted have no visible form control at all, so that default
-    // silently overwrote a blank field with a fabricated value on every
-    // save, no matter what the user actually edited.
-    setNewVisitStatus(entry.status || "");
+    setNewVisitStatus(entry.status || "Visited");
     setNewVisitNote(entry.note || "");
     setNewVisitScheduleDate(entry.scheduleDate || "");
     setNewVisitTechnician(entry.technician || "");
-    setNewVisitSecondTechnician(entry.secondTechnician || "");
     setNewVisitTimeSlot(entry.timeSlot || "");
     setNewVisitActivity(entry.activity || "");
-    setNewVisitActionType(entry.actionType || "");
+    setNewVisitActionType(entry.actionType || "Visited");
     setNewVisitRepairStatus(entry.repairStatus || "");
     setNewVisitRepairType(entry.repairType || "");
     setNewVisitReclaim(entry.reclaim || "");
-    setNewVisitVisited(entry.visited || "");
-    setNewVisitNotCompleted(entry.notCompleted || "");
+    setNewVisitVisited(entry.visited || "Visited");
+    setNewVisitNotCompleted(entry.notCompleted || "No");
     setNewVisitSymptomCx(entry.symptomCx || "");
     setNewVisitDiagnosis(entry.diagnosis || "");
     setNewVisitSymptomTech(entry.symptomTech || "");
-    setNewVisitResolution(
-      entry.resolution
-        ? composeServicePerformed(parseServicePerformed(entry.resolution))
-        : composeServicePerformed(emptyServicePerformed()),
-    );
+    setNewVisitResolution(entry.resolution || "");
     setNewVisitNonCompletionReason(entry.nonCompletionReason || "");
     setNewVisitTriageNote(entry.triageNote || "");
     setNewVisitSchedNotes(entry.schedNotes || "");
@@ -3327,58 +2632,18 @@ function TicketDetailsPage() {
     setViewingVisitEntry(entry);
   };
 
-  const deleteVisitLogEntry = async (visitId: string) => {
+  const deleteVisitLogEntry = (visitId: string) => {
     if (!confirm("Remove this visit log entry?")) return;
 
     const entryToDelete = visitLogEntries.find((entry) => entry.id === visitId) ?? null;
-    if (!entryToDelete) return;
-
-    // Deleting the current latest visit (visitLogEntries[0] — newest-first)
-    // un-supersedes whichever visit is now the latest: unlock it and put its
-    // repair status back in the driver's seat for the ticket's status.
-    const wasLatest = visitLogEntries[0]?.id === visitId;
-    const remaining = visitLogEntries.filter((entry) => entry.id !== visitId);
-    const newLatest = wasLatest ? remaining[0] ?? null : null;
-    const unlockedVisit: VisitLogEntry | null = newLatest && newLatest.locked
-      ? { ...newLatest, locked: false }
-      : null;
-
-    try {
-      await sbDeleteTicketVisit(visitId);
-      if (unlockedVisit) {
-        await sbUpdateTicketVisit(unlockedVisit.id, unlockedVisit as any);
-        if (unlockedVisit.repairStatus) {
-          await sbUpdateTicketStatus(ticketNo, unlockedVisit.repairStatus).catch((e) =>
-            console.warn("status update skipped:", e)
-          );
-        }
-      }
-    } catch (err) {
-      console.error("Failed to delete visit:", err);
-      alert(`Failed to delete visit: ${err instanceof Error ? err.message : "Unknown error"}`);
-      return;
-    }
-
-    setVisitLogEntries((entries) => {
-      const next = entries.filter((entry) => entry.id !== visitId);
-      return unlockedVisit ? next.map((entry) => (entry.id === unlockedVisit.id ? unlockedVisit : entry)) : next;
-    });
+    setVisitLogEntries((entries) => entries.filter((entry) => entry.id !== visitId));
     appendAuditEntry({
       by: currentEditor,
       action: "Deleted visit log",
       field: "Visit Log",
-      before: summarizeVisitEntry(entryToDelete),
+      before: entryToDelete ? summarizeVisitEntry(entryToDelete) : "—",
       after: "Removed",
     });
-    if (unlockedVisit) {
-      appendAuditEntry({
-        by: currentEditor,
-        action: "Unlocked visit after deletion",
-        field: "Visit Log",
-        before: `Visit ${unlockedVisit.visitNo} - locked`,
-        after: `Visit ${unlockedVisit.visitNo} - unlocked, now the latest visit`,
-      });
-    }
 
     if (editingVisitId === visitId) {
       clearVisitForm();
@@ -3507,10 +2772,6 @@ function TicketDetailsPage() {
   // open the Marcone Parts Order modal for CSR review) from non-Marcone
   // parts (which go through the existing silent batch flow).
   const submitAllPOs = async () => {
-    if (!canOrderParts) {
-      alert("Only Parts Team Leader, Parts Manager, Admin, or Super Admin can submit part orders.");
-      return;
-    }
     // First, fix any parts that have PO numbers but incorrect status
     const partsToFix = partRows.filter(part => part.poNo && part.status !== 'PO Made');
     if (partsToFix.length > 0) {
@@ -3553,27 +2814,26 @@ function TicketDetailsPage() {
       return;
     }
 
-    // Split: Marcone and Encompass each go through their own review modal
-    // (same component, different data + submit handler); everything else
-    // takes the silent batch path so the user isn't blocked on confirming
-    // each distributor separately.
+    // Split: Marcone goes through the review modal; everything else takes
+    // the silent batch path so the user isn't blocked on confirming each
+    // distributor separately.
     const marconeParts = partsNeedingPO.filter((p) => isMarconeDist(p.partDist));
-    const encompassParts = partsNeedingPO.filter((p) => isEncompassDist(p.partDist));
-    const otherParts = partsNeedingPO.filter((p) => !isMarconeDist(p.partDist) && !isEncompassDist(p.partDist));
+    const otherParts = partsNeedingPO.filter((p) => !isMarconeDist(p.partDist));
 
-    // Kick off silent submission for everything else immediately; the modal
-    // opening doesn't need to wait on it. If sets are non-empty we surface
-    // a combined success message after the modal(s) close.
+    // Kick off non-Marcone silent submission immediately; the modal opening
+    // doesn't need to wait on it. If both sets are non-empty we surface a
+    // combined success message after the modal closes.
     let silentPoNumbers: string[] = [];
     if (otherParts.length > 0) {
       silentPoNumbers = await submitSilentPOs(otherParts);
     }
 
-    if (marconeParts.length > 0) setMarconeModal({ open: true, parts: marconeParts });
-    if (encompassParts.length > 0) setEncompassModal({ open: true, parts: encompassParts });
-    if (marconeParts.length > 0 || encompassParts.length > 0) return;
+    if (marconeParts.length > 0) {
+      setMarconeModal({ open: true, parts: marconeParts });
+      return;
+    }
 
-    // No Marcone/Encompass parts — show the silent-only result.
+    // No Marcone parts — show the silent-only result.
     if (silentPoNumbers.length > 0) {
       alert(`${silentPoNumbers.length} PO(s) created successfully:\n${silentPoNumbers.join('\n')}\n\nView them in Part Order page.`);
     }
@@ -3620,43 +2880,6 @@ function TicketDetailsPage() {
     alert(summary);
   };
 
-  // Handler the Encompass Parts Order modal calls when the user clicks
-  // Place Order. Mirrors handleMarconePlaceOrder exactly — same modal
-  // component, different vendor call underneath.
-  const handleEncompassPlaceOrder = async (payload: MarconeOrderPayload) => {
-    const result = await placeEncompassOrder(payload);
-    const { poNo, encompassOrderNo } = result;
-    for (const line of payload.lineItems) {
-      const after = [
-        `${line.partNumber}`,
-        `Status: PO Made`,
-        `PO #: ${poNo}`,
-        `Ship: ${payload.shipMethod}`,
-        encompassOrderNo ? `Encompass Order: ${encompassOrderNo}` : null,
-      ].filter(Boolean).join(" - ");
-      appendAuditEntry({
-        by: currentEditor,
-        action: "Submitted PO (Encompass Modal)",
-        field: "Part Transaction",
-        before: `${line.partNumber}`,
-        after,
-      });
-    }
-    try {
-      const parts = await sbGetTicketParts(ticketNo);
-      setPartRows(parts as any);
-    } catch (err) {
-      console.warn("Failed to refresh parts after Encompass order:", err);
-    }
-    setEncompassModal({ open: false, parts: [] });
-    const summary = [
-      `Encompass PO ${poNo} placed — ${payload.lineItems.length} part${payload.lineItems.length === 1 ? "" : "s"}.`,
-      encompassOrderNo ? `Encompass Order #: ${encompassOrderNo}` : null,
-      "ETA, tracking, and invoice # will populate once Encompass ships.",
-    ].filter(Boolean).join("\n");
-    alert(summary);
-  };
-
   // ── Truck Stock batch flow ──
   // Open the Truck Stock modal with every part on the ticket that
   // currently needs a PO. The modal itself fetches the matching
@@ -3679,26 +2902,18 @@ function TicketDetailsPage() {
     setTruckStockModal({ open: true, parts: candidates });
   };
 
-  // Pull the requested parts from truck_stock. Every pull — regardless of
-  // who requests it, including Admin/Parts Manager themselves — reserves
-  // the stock immediately (so a second requester can't also claim the same
-  // units) but leaves the Part Transaction line "Need PO" and lands a
-  // pending row in truck_stock_pull_requests. It only becomes PO Made once
-  // someone with approval authority acts on it from the Truck Stock
-  // Requests tab (see migration 0047 / truckStockRequests.ts) — submitting
-  // and approving are always separate steps, even for the same person.
+  // Pull the requested parts from truck_stock and stamp PO Made + auto
+  // PO No on each affected row. Quantities are decremented atomically
+  // inside decrementTruckStock so two open tabs can't oversell.
   const handleTruckStockBatchConfirm = async (selections: TruckStockBatchSelection[]) => {
-    if (!ticketDbId) return;
     const { decrementTruckStock } = await import("@/lib/supabase/truckStock");
-    const { createTruckStockPullRequest } = await import("@/lib/supabase/truckStockRequests");
-    const { notifyPartsManagerOfPullRequest } = await import("@/lib/truckStockNotify");
     const today = new Date().toISOString().slice(0, 10);
-    const updates: Array<{ partId: string; nextRow: PartTransactionRow; branch: string; pulled: number; storage: string; requestId?: string }> = [];
+    const updates: Array<{ partId: string; nextRow: PartTransactionRow; branch: string; pulled: number; storage: string }> = [];
 
-    // Step 1: reserve stock for each selection. If any one fails we stop
-    // and surface the error — earlier successful decrements stay applied
-    // (Supabase doesn't have a multi-row transactional client here, and
-    // the source rows are independent).
+    // Step 1: decrement stock for each selection. If any one fails we
+    // stop and surface the error — earlier successful decrements stay
+    // applied (Supabase doesn't have a multi-row transactional client
+    // here, and the source rows are independent).
     for (const sel of selections) {
       const part = truckStockModal.parts.find((p) => p.id === sel.partId);
       if (!part) continue;
@@ -3712,27 +2927,19 @@ function TicketDetailsPage() {
         throw new Error(`${part.partNo}: ${err instanceof Error ? err.message : String(err)}`);
       }
 
-      const noteAdd = `Truck Stock pull requested: ${sel.quantity} from ${sel.branch}${sel.storageLocation ? ` @ ${sel.storageLocation}` : ""} on ${today} — pending Parts Manager approval.`;
+      const autoPo = `INH-${sel.branch.replace(/\s+/g, "").slice(0, 4).toUpperCase()}-${Date.now().toString().slice(-6)}-${updates.length}`;
+      const noteAdd = `Pulled ${sel.quantity} from ${sel.branch}${sel.storageLocation ? ` @ ${sel.storageLocation}` : ""} on ${today}.`;
       const nextRow: PartTransactionRow = {
         ...part,
+        partDist: `In-House (${sel.branch})`,
+        status: "PO Made",
+        poNo: part.poNo || autoPo,
+        poDate: part.poDate || today,
+        quantity: String(sel.quantity),
         note: part.note ? `${part.note}\n${noteAdd}` : noteAdd,
         lastModifiedBy: currentEditor,
       };
-      const update: { partId: string; nextRow: PartTransactionRow; branch: string; pulled: number; storage: string; requestId?: string } =
-        { partId: sel.partId, nextRow, branch: sel.branch, pulled: sel.quantity, storage: sel.storageLocation };
-      updates.push(update);
-      try {
-        update.requestId = await createTruckStockPullRequest({
-          ticketId: ticketDbId,
-          partId: part.id,
-          partNo: part.partNo,
-          branch: sel.branch,
-          storageLocation: sel.storageLocation,
-          quantity: sel.quantity,
-        });
-      } catch (err) {
-        console.error(`Failed to create Truck Stock pull request for ${part.partNo}:`, err);
-      }
+      updates.push({ partId: sel.partId, nextRow, branch: sel.branch, pulled: sel.quantity, storage: sel.storageLocation });
     }
 
     // Step 2: persist each updated part row to Supabase.
@@ -3744,10 +2951,10 @@ function TicketDetailsPage() {
       }
       appendAuditEntry({
         by: currentEditor,
-        action: "Requested Truck Stock Pull",
+        action: "Pulled from Truck Stock",
         field: PART_FIELD_LABELS.status,
         before: "Need PO",
-        after: `${u.nextRow.partNo} - Pending Parts Manager approval - From: ${u.branch}${u.storage ? ` @ ${u.storage}` : ""}`,
+        after: `${u.nextRow.partNo} - Status: PO Made - PO #: ${u.nextRow.poNo} - From: ${u.branch}${u.storage ? ` @ ${u.storage}` : ""}`,
       });
     }
 
@@ -3760,22 +2967,47 @@ function TicketDetailsPage() {
     );
     setTruckStockModal({ open: false, parts: [] });
 
-    // Step 4: notify every Parts Manager a decision is needed.
-    for (const u of updates) {
-      void notifyPartsManagerOfPullRequest({
-        actorName: currentUserName || currentUserEmail || "Someone",
-        ticketNo,
-        partNo: u.nextRow.partNo,
-        qty: u.pulled,
-        branch: u.branch,
-        storageLocation: u.storage,
-        requestId: u.requestId,
-      });
+    // Step 4: notify the Parts Manager when the actor is Triage or a
+    // non-manager Parts user. Privileged roles (Parts Manager, Admin,
+    // etc.) don't trigger the alert since they're the audience. Fire
+    // one notification per unique source branch in this batch so the
+    // message is specific enough to act on.
+    try {
+      const { shouldNotifyOnTruckStockUse, notifyPartsManagerOfTruckStockUse } =
+        await import("@/lib/truckStockNotify");
+      if (
+        shouldNotifyOnTruckStockUse(currentUserRole, currentUserExtraRoles) &&
+        currentCompanyId &&
+        updates.length > 0
+      ) {
+        const byBranch = new Map<string, typeof updates>();
+        for (const u of updates) {
+          const arr = byBranch.get(u.branch) ?? [];
+          arr.push(u);
+          byBranch.set(u.branch, arr);
+        }
+        for (const [branch, group] of byBranch) {
+          void notifyPartsManagerOfTruckStockUse({
+            actorName: currentUserName ?? "",
+            actorEmail: currentUserEmail ?? "",
+            actorRole: String(currentUserRole ?? ""),
+            ticketNo,
+            branch,
+            items: group.map((g) => ({
+              partNo: g.nextRow.partNo,
+              qty: g.pulled,
+              branch: g.branch,
+              storageLocation: g.storage,
+            })),
+            companyId: currentCompanyId,
+          });
+        }
+      }
+    } catch (notifyErr) {
+      console.warn("Truck Stock parts-manager notify skipped:", notifyErr);
     }
 
-    alert(
-      `Requested ${updates.length} part${updates.length === 1 ? "" : "s"} from Truck Stock. The Parts Manager has been notified and needs to approve before ${updates.length === 1 ? "it's" : "they're"} marked PO Made.`,
-    );
+    alert(`Pulled ${updates.length} part${updates.length === 1 ? "" : "s"} from Truck Stock. Each is now PO Made with an INH-… PO number.`);
   };
 
   // ── Sync parts from ServicePower running notes ──
@@ -3911,16 +3143,13 @@ function TicketDetailsPage() {
         }
       }
 
-      // Reflect changes in the grid immediately. Newly inserted rows go at
-      // the end, not the front — P1..Pn are assigned by array position (see
-      // the `P{index + 1}` label in the parts table) and P1 must stay the
-      // oldest part.
+      // Reflect changes in the grid immediately.
       setPartRows((prev) => {
         const next = prev.map((row) => {
           const u = updates.find((x) => x.id === row.id);
           return u ? u.next : row;
         });
-        return [...next, ...insertedWithIds];
+        return [...insertedWithIds, ...next];
       });
 
       // Audit log entries so the timeline shows who imported what.
@@ -4156,39 +3385,32 @@ function TicketDetailsPage() {
     }
   }, [ticketNo, isAssurantClaimedTicket, partRows, currentEditor]);
 
-  // Alert message system — real Supabase-backed (ticket_alerts).
-  const addAlertMessage = async () => {
-    const text = newAlertMessage.trim();
-    if (!text || !ticketDbId) return;
-    try {
-      const alertEntry = await addTicketAlert(ticketDbId, {
-        text,
-        showInternal: newAlertShowInternal,
-        mobilePopup: newAlertMobilePopup,
-        createdBy: myProfileId,
-      });
+  // Alert message system
+  const addAlertMessage = () => {
+    if (newAlertMessage.trim()) {
+      const alertEntry = {
+        id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
+        text: newAlertMessage.trim(),
+        by: currentEditor,
+        timestamp: new Date().toLocaleString(),
+      };
       setAlertMessages((messages) => [alertEntry, ...messages]);
       appendAuditEntry({
         by: currentEditor,
         action: "Added alert message",
         field: "Alert Messages",
         before: "—",
-        after: text,
+        after: newAlertMessage.trim(),
       });
       setNewAlertMessage("");
-      setNewAlertShowInternal(true);
-      setNewAlertMobilePopup(false);
-    } catch (err) {
-      console.error("addAlertMessage failed:", err);
-      alert(`Failed to save alert: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
-  const removeAlertMessage = async (alertId: string) => {
+  const removeAlertMessage = (alertId: string) => {
     const alertToRemove = alertMessages.find((msg) => msg.id === alertId);
-    if (!alertToRemove || !confirm("Remove this alert message?")) return;
-    try {
-      await removeTicketAlert(alertId);
+    if (alertToRemove && confirm("Remove this alert message?")) {
       setAlertMessages((messages) => messages.filter((msg) => msg.id !== alertId));
       appendAuditEntry({
         by: currentEditor,
@@ -4197,9 +3419,6 @@ function TicketDetailsPage() {
         before: alertToRemove.text,
         after: "Removed",
       });
-    } catch (err) {
-      console.error("removeAlertMessage failed:", err);
-      alert(`Failed to remove alert: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -4237,11 +3456,8 @@ function TicketDetailsPage() {
       "CLAIMS_MANAGER",
       "PARTS",
       "PARTS_MANAGER",
-      "PARTS_TEAM_LEADER",
       "MANAGER",
-      "SENIOR_MANAGER",
       "ADMIN",
-      "SUPERADMIN",
       "BRANCH_MANAGER",
       "SENIOR_BRANCH_MANAGER",
       "BIZOPS_MANAGER",
@@ -4249,46 +3465,30 @@ function TicketDetailsPage() {
     ]),
     [],
   );
-  // currentUserExtraRoles comes from useAuth() (destructured above) — every
-  // multi-role check below piles up the caller's primary role and their
-  // extra_roles the same way.
-
-  // Live technician list for the Add Visit / Edit Schedule dropdowns —
-  // every ACTIVE technician (primary role TECHNICIAN/TECHNICIAN_MANAGER, or
-  // either in extra_roles, so multi-role users like Daven Hodge (BizOps +
-  // Tech) show up), sourced from getCompanyTechnicians() — the same
-  // is_active-filtered roster used by Work Planner and every other
-  // technician picker in the app. The ticket's own currently-assigned
-  // technician is always folded in, even if they're no longer an active
-  // TECHNICIAN-role user, so an existing assignment never silently
-  // disappears from its own dropdown.
-  const [liveTechnicians, setLiveTechnicians] = useState<TechnicianOption[]>([]);
+  // Track the caller's extra_roles separately so we can do multi-role
+  // checks without coupling to the auth provider shape. Loaded once on
+  // mount.
+  const [currentUserExtraRoles, setCurrentUserExtraRoles] = useState<string[]>([]);
   useEffect(() => {
-    if (!authReady) return;
+    if (!authReady || !uid) return;
     let cancelled = false;
     (async () => {
       try {
-        const { getCompanyTechnicians } = await import("@/lib/supabase/users");
-        const rows = await getCompanyTechnicians();
-        if (!cancelled) setLiveTechnicians(rows);
-      } catch (err) {
-        console.warn("technician roster load failed:", err);
-        if (!cancelled) setLiveTechnicians([]);
+        const { supabase } = await import("@/lib/supabase/client");
+        const { data } = await supabase
+          .from("profiles")
+          .select("extra_roles")
+          .eq("firebase_uid", uid)
+          .maybeSingle();
+        if (cancelled) return;
+        const extras = (data?.extra_roles as string[] | null) ?? [];
+        setCurrentUserExtraRoles(Array.isArray(extras) ? extras : []);
+      } catch {
+        if (!cancelled) setCurrentUserExtraRoles([]);
       }
     })();
     return () => { cancelled = true; };
-  }, [authReady]);
-  const technicianOptions = useMemo(() => {
-    const names = new Set<string>(liveTechnicians.map((t) => t.name));
-    // Memphis Admin / Nashville Admin (see defaultTechnicianForLocation
-    // above) are the per-branch catch-all placeholders, not real technician
-    // profiles -- always offer both rather than only showing whichever one
-    // this ticket already happens to be set to.
-    names.add("Memphis Admin");
-    names.add("Nashville Admin");
-    if (ticket?.technician) names.add(ticket.technician);
-    return Array.from(names).sort((a, b) => a.localeCompare(b));
-  }, [liveTechnicians, ticket?.technician]);
+  }, [authReady, uid]);
 
   const isClaimsRole = useMemo(() => {
     const primary = String(currentUserRole || "").toUpperCase();
@@ -4305,18 +3505,23 @@ function TicketDetailsPage() {
   // locked. Adding brand-new rows is also blocked when the lock is on.
   const partsEditDisabled = isTicketPartLocked && !isClaimsRole && !isNaveen;
 
-  // Claim Transaction section visibility — deliberately narrow: only
-  // Super Admin and the Claims department can see (or interact with) the
-  // claim transaction grid. Everyone else, including plain Admin/Manager/
-  // Branch-level roles, never sees the section. Naveen also retained as an
-  // explicit allow by name (matches the Part-lock allow-list semantics so
-  // the two surfaces stay symmetrical).
+  // Claim Transaction section visibility. Only the Claims department and
+  // Admin / Manager / Branch-level roles can see (or interact with) the
+  // claim transaction grid. Everyone else — CSR, technician, parts, triage
+  // — never sees the section. Naveen also retained as an explicit allow
+  // by name (matches the Part-lock allow-list semantics so the two
+  // surfaces stay symmetrical).
   const CLAIM_VIEW_ROLES = useMemo(
     () => new Set([
       "CLAIMS",
       "CLAIMS_MANAGER",
-      "CLAIMS_TEAM_LEADER",
+      "MANAGER",
+      "ADMIN",
       "SUPERADMIN",
+      "BRANCH_MANAGER",
+      "SENIOR_BRANCH_MANAGER",
+      "BIZOPS_MANAGER",
+      "BIZOPS_SENIOR_MANAGER",
     ]),
     [],
   );
@@ -4332,209 +3537,6 @@ function TicketDetailsPage() {
       CLAIM_VIEW_ROLES.has(String(r).toUpperCase()),
     );
   }, [currentUserRole, currentUserExtraRoles, CLAIM_VIEW_ROLES, isNaveen]);
-
-  // Claims Readiness — what's missing before this ticket can go to Claims.
-  // Visible to EVERY role (not just Admin/Claims/BizOps) since the whole
-  // point is helping whoever's working the ticket see what's left, not
-  // gatekeeping the information. Computed once here so both the compact
-  // header alert (next to the ticket actions) and the full checklist
-  // further down the page read the same values.
-  const claimsReadiness = useMemo(() => {
-    if (!ticket) return null;
-
-    // NOTE: ticket.problemDescription is the customer's original
-    // complaint, auto-populated from NSA/ServicePower at sync time — it
-    // exists before any service happens, so it can't be used as evidence a
-    // technician documented their work.
-    const hasServiceNotes = Boolean(
-      visitLogEntries.some(v => (v as any).resolution?.trim() || (v as any).diagnosis?.trim())
-    );
-    const hasPhotos = (ticketPhotoCount !== null && ticketPhotoCount > 0) ||
-      partRows.some(p => (p as any).inTracking);
-    const hasCorrectPartStatus = partRows.length === 0 || partRows.every(p => {
-      const s = String((p as any).status || "").toLowerCase();
-      return s && s !== "tech pickup" && s !== "need po" && s !== "";
-    });
-    // Same-day: the most recent visit must have been created/updated on
-    // the same calendar day as the visit's schedule date. Also passes if
-    // there's no visit yet (nothing to check).
-    const hasSameDayUpdate = (() => {
-      if (visitLogEntries.length === 0) return true; // no visit logged yet — N/A
-      const latest = visitLogEntries[0];
-      const schedDate = String((latest as any).scheduleDate || "").slice(0, 10);
-      if (!schedDate) return true; // no date set — can't evaluate
-      const ts = (latest as any).updatedAt || (latest as any).createdAt || (latest as any).timestamp;
-      if (!ts) return false;
-      const updatedDay = new Date(ts).toISOString().slice(0, 10);
-      const onTime = updatedDay === schedDate;
-      // Also check if photos were uploaded (if we have a photo count and
-      // the visit was today, photos being present means same-day upload is
-      // satisfied)
-      const visitWasToday = schedDate === new Date().toISOString().slice(0, 10);
-      const photosSatisfied = ticketPhotoCount !== null && ticketPhotoCount > 0 && visitWasToday;
-      return onTime || photosSatisfied;
-    })();
-    // Warranty case — check if case number / warranty agent note is present
-    const warrantyStatuses = [
-      "unsuccessful repair", "infestation", "physical damage",
-      "unrepairable", "model/serial mismatch", "no fault found",
-    ];
-    const needsWarrantyCall = visitLogEntries.some(v => {
-      const rs = String((v as any).repairStatus || "").toLowerCase();
-      return warrantyStatuses.some(w => rs.includes(w.split(" ")[0]));
-    });
-    const hasWarrantyCase = !needsWarrantyCall || Boolean(
-      visitLogEntries.some(v =>
-        (v as any).note?.toLowerCase().includes("case") ||
-        (v as any).note?.toLowerCase().includes("agent")
-      )
-    );
-
-    const items = [
-      {
-        label: "Warranty Call (if required)",
-        done: hasWarrantyCase,
-        detail: needsWarrantyCall
-          ? "Special scenario detected — ensure case number & agent name are in visit notes"
-          : "Not required for this ticket",
-        skip: !needsWarrantyCall,
-      },
-      {
-        label: "Service Notes Complete",
-        done: hasServiceNotes,
-        detail: "Diagnosis, issue found, part used/needed, repair result must be documented",
-      },
-      {
-        label: "Required Photos Uploaded",
-        done: hasPhotos,
-        detail: ticketPhotoCount === null
-          ? "Checking photo count…"
-          : ticketPhotoCount > 0
-            ? `${ticketPhotoCount} photo${ticketPhotoCount !== 1 ? "s" : ""} uploaded — work order, model/serial tag, installed parts, damage proof`
-            : "No photos found — work order, model/serial tag, installed parts, damage proof required",
-      },
-      {
-        label: "Part Status Correct",
-        done: hasCorrectPartStatus,
-        detail: partRows.length === 0 ? "No parts on this ticket" : "All parts marked with correct status (not stuck as Tech Pickup)",
-        // No parts ordered yet is a genuine "nothing to check" state, same
-        // as Warranty Call's skip — not evidence anything was actually
-        // verified correct.
-        skip: partRows.length === 0,
-      },
-      {
-        label: "Same-Day Updates",
-        done: hasSameDayUpdate,
-        detail: visitLogEntries.length === 0 ? "No visit logged yet" : "Notes, photos, part status, warranty info updated same day as visit",
-        // No visit yet means there's nothing to have been "same-day" about
-        // — not evidence anything was verified.
-        skip: visitLogEntries.length === 0,
-      },
-    ];
-
-    const allDone = items.every(i => i.skip || i.done);
-    const doneCount = items.filter(i => i.skip || i.done).length;
-    return { items, allDone, doneCount };
-  }, [ticket, visitLogEntries, partRows, ticketPhotoCount]);
-
-  // CSR-only accounts (agents, team leaders, CSR managers) should see
-  // the Part Transaction table but not the write-side toolbar (View
-  // Log / Sync Parts from Notes / Truck Stock / Submit POs / Update).
-  // Anyone with a Parts / Claims / Manager / Admin / Branch role — or
-  // a mixed CSR + one of those in extra_roles — still sees the buttons.
-  const CSR_ONLY_ROLES = useMemo(
-    () => new Set([
-      "CSR",
-      "CSR_AGENT",
-      "CSR_TEAM_LEADER",
-      "CSR_MANAGER",
-    ]),
-    [],
-  );
-  // Triage identifies the part a repair needs, so they can add/edit parts on
-  // an open ticket — but unlike PART_LOCK_BYPASS_ROLES above, they do NOT
-  // bypass the post-claim lock; once a ticket is Claimed / Data Closed it's
-  // still Parts/Claims/Manager-only. Kept as its own set (rather than folded
-  // into PART_LOCK_BYPASS_ROLES) specifically so the lock-bypass stays
-  // untouched for Triage.
-  const TRIAGE_PART_ROLES = useMemo(
-    () => new Set(["TRIAGE_USER", "TRIAGE_MANAGER"]),
-    [],
-  );
-  const canUsePartToolbar = useMemo(() => {
-    if (isNaveen) return true;
-    const primary = String(currentUserRole || "").toUpperCase();
-    const allRoles = [primary, ...currentUserExtraRoles.map((r) => String(r).toUpperCase())];
-    // If they hold ANY non-CSR role we consider valid for parts, allow it.
-    if (allRoles.some((r) => PART_LOCK_BYPASS_ROLES.has(r) || TRIAGE_PART_ROLES.has(r))) return true;
-    // If the user is *only* a CSR-family role, hide the toolbar.
-    if (allRoles.every((r) => CSR_ONLY_ROLES.has(r) || !r)) return false;
-    // Everyone else (Technician, Dispatcher, etc.) also loses the toolbar
-    // per current business rule.
-    return false;
-  }, [currentUserRole, currentUserExtraRoles, isNaveen, PART_LOCK_BYPASS_ROLES, TRIAGE_PART_ROLES, CSR_ONLY_ROLES]);
-
-  // Split of PART_LOCK_BYPASS_ROLES (plus Triage, see TRIAGE_PART_ROLES
-  // above) into two tiers — everyone who can see the Part Transaction
-  // toolbar (canUsePartToolbar) falls into one of these, but which specific
-  // actions they can actually use depends on which tier they're in. Team
-  // Leaders/Admins procure (Submit POs); the day-to-day Parts/Claims/
-  // Manager tier — plus Triage, who identifies the part during diagnosis,
-  // plus SUPERADMIN (a real per-company admin in this app, same tier as
-  // ADMIN for in-company operational data) — maintains the part records
-  // themselves (add/edit/delete/Update). SUPERADMIN is deliberately in
-  // both sets (order AND edit), same as any mixed-role user (e.g. primary
-  // ADMIN + extra_roles PARTS_MANAGER) gets the union of both, same as
-  // every other multi-role check in this file.
-  const PARTS_ORDER_ONLY_ROLES = useMemo(
-    () => new Set(["PARTS_TEAM_LEADER", "PARTS_MANAGER", "ADMIN", "SUPERADMIN"]),
-    [],
-  );
-  const PARTS_EDIT_ONLY_ROLES = useMemo(
-    () => new Set([
-      "PARTS",
-      "PARTS_MANAGER",
-      "CLAIMS",
-      "CLAIMS_MANAGER",
-      "MANAGER",
-      "SENIOR_MANAGER",
-      "BRANCH_MANAGER",
-      "SENIOR_BRANCH_MANAGER",
-      "BIZOPS_MANAGER",
-      "BIZOPS_SENIOR_MANAGER",
-      "TRIAGE_USER",
-      "TRIAGE_MANAGER",
-      "SUPERADMIN",
-    ]),
-    [],
-  );
-  const canOrderParts = useMemo(() => {
-    if (isNaveen) return true;
-    const primary = String(currentUserRole || "").toUpperCase();
-    const allRoles = [primary, ...currentUserExtraRoles.map((r) => String(r).toUpperCase())];
-    return allRoles.some((r) => PARTS_ORDER_ONLY_ROLES.has(r));
-  }, [currentUserRole, currentUserExtraRoles, isNaveen, PARTS_ORDER_ONLY_ROLES]);
-  const canEditParts = useMemo(() => {
-    if (isNaveen) return true;
-    const primary = String(currentUserRole || "").toUpperCase();
-    const allRoles = [primary, ...currentUserExtraRoles.map((r) => String(r).toUpperCase())];
-    return allRoles.some((r) => PARTS_EDIT_ONLY_ROLES.has(r));
-  }, [currentUserRole, currentUserExtraRoles, isNaveen, PARTS_EDIT_ONLY_ROLES]);
-
-  // Only BizOps Manager (+ BizOps Senior Manager, and the usual Admin/
-  // Superadmin platform override) may move a ticket to CL-Cancelled and
-  // record its Cancellation Reason. A CSR can still flag CL-Need Cancel and
-  // explain why in the free-text Internal Note — but the actual cancel + the
-  // structured reason only happen after BizOps verifies it.
-  const CANCEL_ROLES = useMemo(
-    () => new Set(["BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "ADMIN", "SUPERADMIN"]),
-    [],
-  );
-  const canSetCancelled = useMemo(() => {
-    const primary = String(currentUserRole || "").toUpperCase();
-    if (CANCEL_ROLES.has(primary)) return true;
-    return currentUserExtraRoles.some((r) => CANCEL_ROLES.has(String(r).toUpperCase()));
-  }, [currentUserRole, currentUserExtraRoles, CANCEL_ROLES]);
 
   const notifyUnauthorizedPartEdit = useCallback(async (attemptedRow: PartTransactionRow | null) => {
     if (!currentCompanyId) return;
@@ -4561,8 +3563,6 @@ function TicketDetailsPage() {
   const clearPartForm = () => {
     setEditingPartId(null);
     setPartDraft(createEmptyPartDraft());
-    lastMarconeFillPartNoRef.current = null;
-    lastMarconeFillDistRef.current = null;
   };
 
   // ── Marcone /parts/lookup — autofill Description / List Price / Core / Stock ──
@@ -4573,15 +3573,14 @@ function TicketDetailsPage() {
       setMarconeLookupMsg({ kind: "err", text: "Pick Part Dist. first." });
       return;
     }
-    // Marcone and Encompass are the only distributors we have an API for
-    // right now. Other distributors (GE, AIG, ...) need their own
-    // integrations.
-    const isMarcone = isMarconeDist(partDist);
-    const isEncompass = isEncompassDist(partDist);
-    if (!isMarcone && !isEncompass) {
+    // Marcone is the only distributor we have an API for right now. Other
+    // distributors (GE, AIG, Encompass, ...) need their own integrations.
+    const distLower = partDist.toLowerCase();
+    const isMarconeDist = distLower.startsWith("marcone");
+    if (!isMarconeDist) {
       setMarconeLookupMsg({
         kind: "err",
-        text: `Lookup not available for ${partDist}. Currently wired for Marcone and Encompass only.`,
+        text: `Lookup not available for ${partDist}. Currently wired for Marcone only.`,
       });
       return;
     }
@@ -4592,73 +3591,44 @@ function TicketDetailsPage() {
     setMarconeLookupBusy(true);
     setMarconeLookupMsg(null);
     try {
-      // The inline Lookup is for vendor info only now — in-house
+      const { marconeLookupPart } = await import("@/lib/marconeApi");
+      // The inline Lookup is for vendor (Marcone) info only now — in-house
       // truck-stock fulfilment is handled by the dedicated Truck Stock
       // button next to Submit POs. That separation keeps the Lookup
       // banner short and focused on what the distributor can supply.
-      //
-      // Patch the draft only for fields the user hasn't typed yet; never
-      // overwrite Part No, Visit ID, or the Part Dist. they picked. "Hasn't
-      // typed yet" only holds if the existing value actually belongs to
-      // THIS part number — otherwise it's stale leftover description/price
-      // from whatever part was looked up before the user changed Part No,
-      // and must be replaced rather than preserved.
-      const isRefetchOfSamePart =
-        lastMarconeFillPartNoRef.current === partNumber && lastMarconeFillDistRef.current === partDist;
+      const result = await marconeLookupPart({
+        partNumber,
+        quantity: Number(partDraft.quantity) || 1,
+      });
 
-      if (isMarcone) {
-        const { marconeLookupPart } = await import("@/lib/marconeApi");
-        const result = await marconeLookupPart({ partNumber, quantity: Number(partDraft.quantity) || 1 });
-        if (result.notFound) {
-          setMarconeLookupMsg({ kind: "err", text: `Marcone: ${partNumber} not found.` });
-          return;
-        }
-        if (!result.success || !result.data) {
-          setMarconeLookupMsg({ kind: "err", text: `Marcone error: ${result.error || "request failed"}` });
-          return;
-        }
-        const d = result.data;
-        setPartDraft((prev) => ({
-          ...prev,
-          partDesc: (isRefetchOfSamePart && prev.partDesc) || d.description || "",
-          partPrice: (isRefetchOfSamePart && prev.partPrice) || (d.netPrice ?? d.listPrice ?? "").toString(),
-          coreValue: (isRefetchOfSamePart && prev.coreValue) || (d.coreValue ?? "").toString(),
-        }));
-        lastMarconeFillPartNoRef.current = partNumber;
-        lastMarconeFillDistRef.current = partDist;
-        const stockLine = d.inStock ? "in stock" : "out of stock";
-        const discLine = d.isDiscontinued ? " · discontinued" : "";
+      if (result.notFound) {
         setMarconeLookupMsg({
-          kind: "ok",
-          text: `Found ${d.make || ""} ${d.partNumber || partNumber} · Marcone: ${stockLine}${discLine}.`,
+          kind: "err",
+          text: `Marcone: ${partNumber} not found.`,
         });
         return;
       }
-
-      // isEncompass
-      const { encompassLookupPart } = await import("@/lib/encompassApi");
-      const result = await encompassLookupPart({ partNumber });
-      if (result.notFound) {
-        setMarconeLookupMsg({ kind: "err", text: `Encompass: ${partNumber} not found.` });
-        return;
-      }
       if (!result.success || !result.data) {
-        setMarconeLookupMsg({ kind: "err", text: `Encompass error: ${result.error || "request failed"}` });
+        setMarconeLookupMsg({
+          kind: "err",
+          text: `Marcone error: ${result.error || "request failed"}`,
+        });
         return;
       }
       const d = result.data;
+      // Patch the draft only for fields the user hasn't typed yet; never
+      // overwrite Part No, Visit ID, or the Part Dist. they picked.
       setPartDraft((prev) => ({
         ...prev,
-        partDesc: (isRefetchOfSamePart && prev.partDesc) || d.description || "",
-        partPrice: (isRefetchOfSamePart && prev.partPrice) || (d.partPrice ?? d.listPrice ?? "").toString(),
-        coreValue: (isRefetchOfSamePart && prev.coreValue) || (d.corePrice ?? "").toString(),
+        partDesc: prev.partDesc || d.description || "",
+        partPrice: prev.partPrice || (d.netPrice ?? d.listPrice ?? "").toString(),
+        coreValue: prev.coreValue || (d.coreValue ?? "").toString(),
       }));
-      lastMarconeFillPartNoRef.current = partNumber;
-      lastMarconeFillDistRef.current = partDist;
       const stockLine = d.inStock ? "in stock" : "out of stock";
+      const discLine = d.isDiscontinued ? " · discontinued" : "";
       setMarconeLookupMsg({
         kind: "ok",
-        text: `Found ${d.mfgName || ""} ${d.partNumber || partNumber} · Encompass: ${stockLine}.`,
+        text: `Found ${d.make || ""} ${d.partNumber || partNumber} · Marcone: ${stockLine}${discLine}.`,
       });
     } catch (err) {
       setMarconeLookupMsg({
@@ -4681,18 +3651,6 @@ function TicketDetailsPage() {
   // that called syncMarconeOrderStatus({ silent: true }) on an interval.
   const [marconeRefreshingId, setMarconeRefreshingId] = useState<string | null>(null);
 
-  // Common shape both vendors' order-status responses get normalized into
-  // before the shared patch/promotion/audit logic below (which doesn't
-  // care which vendor the data came from).
-  type OrderStatusInfo = {
-    eta?: string;
-    invoiceNumber?: string;
-    invoiceDate?: string;
-    trackingNumbers?: string;
-    status?: string;
-    orderNumber?: string;
-  };
-
   // Core sync routine. `silent` controls UI feedback. Currently only the
   // manual button calls it (silent: false). Returns true when the row
   // picked up at least one new field.
@@ -4700,47 +3658,23 @@ function TicketDetailsPage() {
     row: PartTransactionRow,
     options: { silent: boolean },
   ): Promise<boolean> => {
-    const isMarcone = isMarconeDist(row.partDist);
-    const isEncompass = isEncompassDist(row.partDist);
-    if (!row.orderNo?.trim() || (!isMarcone && !isEncompass)) return false;
-    const vendorLabel = isMarcone ? "Marcone" : "Encompass";
+    if (!row.orderNo?.trim() || !isMarconeDist(row.partDist)) return false;
 
-    let info: OrderStatusInfo;
-    if (isMarcone) {
-      const { marconeOrderStatus } = await import("@/lib/marconeApi");
-      const result = await marconeOrderStatus({ orderNumber: row.orderNo.trim() });
-      if (!result.success || !result.data) {
-        if (!options.silent) {
-          alert(`Marcone order status failed: ${result.error || "no data returned"}`);
-        } else {
-          console.warn(`[marcone auto-sync] ${row.partNo} (${row.orderNo}) failed:`, result.error || "no data");
-        }
-        return false;
+    const { marconeOrderStatus } = await import("@/lib/marconeApi");
+    const result = await marconeOrderStatus({ orderNumber: row.orderNo.trim() });
+    if (!result.success || !result.data) {
+      if (!options.silent) {
+        alert(`Marcone order status failed: ${result.error || "no data returned"}`);
+      } else {
+        console.warn(
+          `[marcone auto-sync] ${row.partNo} (${row.orderNo}) failed:`,
+          result.error || "no data",
+        );
       }
-      info = result.data;
-    } else {
-      const { encompassOrderStatus } = await import("@/lib/encompassApi");
-      const result = await encompassOrderStatus({ referenceNumber: row.orderNo.trim() });
-      const record = result.records[0];
-      if (!result.success || !record) {
-        if (!options.silent) {
-          alert(`Encompass order status failed: ${result.error || "no data returned"}`);
-        } else {
-          console.warn(`[encompass auto-sync] ${row.partNo} (${row.orderNo}) failed:`, result.error || "no data");
-        }
-        return false;
-      }
-      const part = record.parts.find((p) => p.partNumber === row.partNo) || record.parts[0];
-      info = {
-        eta: part?.eta,
-        invoiceNumber: record.invoiceNumber,
-        invoiceDate: record.invoiceDate,
-        trackingNumbers: (part?.outboundTrackings || []).map((t) => t.trackingNumber).filter(Boolean).join(", ") || undefined,
-        status: part?.status,
-        orderNumber: record.orderNumber,
-      };
+      return false;
     }
 
+    const info = result.data;
     const patch: Record<string, unknown> = {};
     if (info.eta && info.eta !== row.eta) patch.eta = info.eta;
     if (info.invoiceNumber && info.invoiceNumber !== row.invoiceNo) patch.invoice_no = info.invoiceNumber;
@@ -4766,7 +3700,7 @@ function TicketDetailsPage() {
     if (Object.keys(patch).length === 0) {
       if (!options.silent) {
         alert(
-          `${vendorLabel} order ${info.orderNumber || row.orderNo} — status: ${info.status || "pending"}. ` +
+          `Marcone order ${info.orderNumber || row.orderNo} — status: ${info.status || "pending"}. ` +
           "No new ETA, invoice, or tracking yet.",
         );
       }
@@ -4786,8 +3720,8 @@ function TicketDetailsPage() {
     setPartRows((prev) => prev.map((r) => (r.id === row.id ? nextRow : r)));
 
     appendAuditEntry({
-      by: options.silent ? `Auto-sync (${vendorLabel})` : currentEditor,
-      action: options.silent ? `Auto-synced from ${vendorLabel}` : `Refreshed from ${vendorLabel}`,
+      by: options.silent ? "Auto-sync (Marcone)" : currentEditor,
+      action: options.silent ? "Auto-synced from Marcone" : "Refreshed from Marcone",
       field: "Part Transaction",
       before: `${row.partNo} - Status: ${row.status} - ETA: ${row.eta || "—"} - Tracking: ${row.inTracking || "—"} - Invoice: ${row.invoiceNo || "—"}`,
       after: `${row.partNo} - Status: ${nextStatus} - ETA: ${info.eta || row.eta || "—"} - Tracking: ${info.trackingNumbers || row.inTracking || "—"} - Invoice: ${info.invoiceNumber || row.invoiceNo || "—"}`,
@@ -4799,25 +3733,25 @@ function TicketDetailsPage() {
       if (info.invoiceNumber) updates.push(`Invoice #: ${info.invoiceNumber}`);
       if (info.trackingNumbers) updates.push(`Tracking: ${info.trackingNumbers}`);
       if (nextStatus !== row.status) updates.push(`Status: ${nextStatus}`);
-      alert(`Refreshed from ${vendorLabel} order ${info.orderNumber || row.orderNo}:\n${updates.join("\n")}`);
+      alert(`Refreshed from Marcone order ${info.orderNumber || row.orderNo}:\n${updates.join("\n")}`);
     }
     return true;
   };
 
   const refreshMarconeOrderStatus = async (row: PartTransactionRow) => {
     if (!row.orderNo?.trim()) {
-      alert("This part has no vendor Order # to refresh.");
+      alert("This part has no Marcone Order # to refresh.");
       return;
     }
-    if (!isMarconeDist(row.partDist) && !isEncompassDist(row.partDist)) {
-      alert("Refresh is only available for Marcone or Encompass parts.");
+    if (!isMarconeDist(row.partDist)) {
+      alert("Refresh from Marcone is only available for Marcone parts.");
       return;
     }
     setMarconeRefreshingId(row.id);
     try {
       await syncMarconeOrderStatus(row, { silent: false });
     } catch (err) {
-      alert(`Failed to refresh order status: ${err instanceof Error ? err.message : String(err)}`);
+      alert(`Failed to refresh from Marcone: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setMarconeRefreshingId(null);
     }
@@ -4858,10 +3792,6 @@ function TicketDetailsPage() {
   const dirtyRowCount = Object.keys(rowEdits).length;
 
   const saveAllRowEdits = async () => {
-    if (!canEditParts) {
-      alert("Your role can only order parts, not add or edit them. Ask a Parts/Claims/Manager-tier user to make this change.");
-      return;
-    }
     if (partsEditDisabled) {
       alert(`Parts are locked because this ticket is "${ticket?.status}". Only Parts / Claims / Admin / Manager / Branch Manager roles can edit them.`);
       return;
@@ -4928,12 +3858,6 @@ function TicketDetailsPage() {
       return;
     }
     setEditingPartId(row.id);
-    // The loaded description/price genuinely belong to this row's own Part
-    // No AND Part Dist. — treat it the same as a prior successful lookup for
-    // that pair, so clicking Lookup without changing either won't clobber
-    // the saved value.
-    lastMarconeFillPartNoRef.current = row.partNo || null;
-    lastMarconeFillDistRef.current = row.partDist || null;
     setPartDraft({
       partNo: row.partNo || "",
       partDist: row.partDist || "",
@@ -4965,10 +3889,6 @@ function TicketDetailsPage() {
   };
 
   const savePartRow = async () => {
-    if (!canEditParts) {
-      alert("Your role can only order parts, not add or edit them. Ask a Parts/Claims/Manager-tier user to make this change.");
-      return;
-    }
     // Friendly validation — alert which required fields are missing so the
     // user knows what to fill instead of getting a silent no-op. Part
     // Status used to require Visit ID too, but that blocks brand-new
@@ -5072,11 +3992,7 @@ function TicketDetailsPage() {
         before: "—",
         after: summarizePartRow(nextRow),
       });
-      // Append, don't prepend — P1..Pn are assigned by array position
-      // (see the `P{index + 1}` label in the parts table), and P1 must
-      // stay the oldest part. Prepending here used to bump every existing
-      // part's number up and relabel the brand-new part P1.
-      return [...rows, nextRow];
+      return [nextRow, ...rows];
     });
 
     // Auto-create/update PO in PO Management when part has "Need PO" status or becomes ordered
@@ -5088,220 +4004,7 @@ function TicketDetailsPage() {
     clearPartForm();
   };
 
-  // Its own independent connection slot (see migration 0168) — deliberately
-  // NOT resolved from the ticket's US/PH branch like Payroll payslips are,
-  // so a drop-ship request never goes out from whichever Payroll mailbox
-  // happens to be connected. An Admin can still connect the same account
-  // to both if they want; nothing forces it to differ.
-  const gmailRegion: GmailRegion = "PARTS";
-  const canConnectGmail = String(currentUserRole || "").toUpperCase() === "ADMIN" || String(currentUserRole || "").toUpperCase() === "SUPERADMIN";
-
-  const loadGmailStatus = useCallback(async () => {
-    setGmailStatusLoading(true);
-    try {
-      setGmailStatus(await getGmailConnectionStatus(gmailRegion));
-    } catch (err) {
-      console.error("Failed to load Gmail connection status:", err);
-    } finally {
-      setGmailStatusLoading(false);
-    }
-  }, [gmailRegion]);
-
-  useEffect(() => {
-    if (!authReady || !ticket) return;
-    void loadGmailStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authReady, !!ticket, gmailRegion]);
-
-  const handleConnectGmailHere = async () => {
-    setGmailConnecting(true);
-    try {
-      const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
-      if (!idToken) { alert("You need to be logged in to connect Gmail."); return; }
-      // A real navigation (not fetch) — Google's consent screen has to run in the top-level window.
-      window.location.href = `/api/gmail?action=connect&region=${gmailRegion}&idToken=${encodeURIComponent(idToken)}`;
-    } finally {
-      setGmailConnecting(false);
-    }
-  };
-
-  const handleDisconnectGmailHere = async () => {
-    if (!confirm(`Disconnect the Parts/Drop-Ship Gmail account? "Send" on part rows won't work until it's reconnected.`)) return;
-    setGmailDisconnecting(true);
-    try {
-      await disconnectGmail(gmailRegion);
-      await loadGmailStatus();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to disconnect Gmail.");
-    } finally {
-      setGmailDisconnecting(false);
-    }
-  };
-
-  const openDropshipModal = (rows: PartTransactionRow[]) => {
-    if (rows.length === 0) return;
-    setDropshipRows(rows);
-    setDropshipTo("");
-    setDropshipCc([]);
-    setDropshipCcInput("");
-    setDropshipError(null);
-    setDropshipSent(false);
-    setDropshipRecent([]);
-    setDropshipRecentError(null);
-    // Pre-fill from the most-recently-used recipient — most POs on the
-    // same ticket go to the same distributor, so this saves retyping on
-    // every single send. Guarded with functional updates so it never
-    // clobbers anything the user already started typing while this was
-    // still in flight; the "Recent" chips below still let them switch to
-    // a different distributor if this one's wrong for this PO.
-    getRecentDropshipRecipients().then((list) => {
-      setDropshipRecent(list);
-      if (list.length > 0) {
-        setDropshipTo((prev) => prev || list[0].toEmail);
-        setDropshipCc((prev) => (prev.length > 0 ? prev : list[0].ccEmails));
-      }
-    }).catch((err) => {
-      setDropshipRecentError(err instanceof Error ? err.message : "Couldn't load recent recipients.");
-    });
-    const primary = rows[0];
-    const isBulk = rows.length > 1;
-    setDropshipSubject(`Drop-Ship Request — PO# ${primary.poNo || "N/A"}`);
-    const addressLines = [
-      defaultShipTo.street1,
-      defaultShipTo.street2,
-      [defaultShipTo.city, defaultShipTo.state, defaultShipTo.zip].filter(Boolean).join(", "),
-    ].filter(Boolean);
-    setDropshipBody(
-      [
-        "Good day,",
-        "",
-        isBulk
-          ? "The following parts for the order below are currently on backorder. Could you please have these parts drop-shipped to our office."
-          : "The part for the order below is currently on backorder. Could you please have this part drop-shipped to our office.",
-        "",
-        "Order Details:",
-        `PO #: ${primary.poNo || "N/A"}`,
-        ...(isBulk
-          ? ["Parts:", "", ...rows.map((r) => `- ${r.partNo || "?"} - ${r.partDesc || "Part"}`)]
-          : [`PART #: ${primary.partNo || "N/A"}`]),
-        "Address:",
-        ...(addressLines.length > 0 ? addressLines : [defaultShipTo.name || "—"]),
-        "",
-        "Thank you,",
-        currentUserName || "",
-      ].join("\n"),
-    );
-  };
-  const closeDropshipModal = () => {
-    setDropshipRows([]);
-  };
-  const toggleDropshipSelect = (id: string) => {
-    setDropshipSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-  // Bulk-send only makes sense within one PO — mixing POs into a single
-  // email would misrepresent which parts belong to which order.
-  const openBulkDropshipModal = () => {
-    const rows = partRows.filter((r) => dropshipSelectedIds.has(r.id));
-    if (rows.length === 0) return;
-    const distinctPos = new Set(rows.map((r) => r.poNo || ""));
-    if (distinctPos.size > 1) {
-      alert("Selected parts have different PO #s. Bulk Send only works for parts on the same PO — select parts from one PO at a time.");
-      return;
-    }
-    openDropshipModal(rows);
-  };
-  const CC_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  // Commits whatever's currently typed into the CC box as chip(s) — split
-  // the same lenient way the server does (comma/semicolon/whitespace), so
-  // pasting a whole list at once and pressing Enter once still works.
-  const commitDropshipCcInput = () => {
-    const parts = dropshipCcInput
-      .split(/[,;\s]+/)
-      .map((p) => p.trim())
-      .filter((p) => p.length > 0);
-    if (parts.length === 0) return;
-    const valid = parts.filter((p) => CC_EMAIL_RE.test(p));
-    const invalid = parts.filter((p) => !CC_EMAIL_RE.test(p));
-    if (valid.length > 0) {
-      setDropshipCc((prev) => [...prev, ...valid.filter((p) => !prev.includes(p))]);
-    }
-    setDropshipCcInput(invalid.join(", "));
-    if (invalid.length === 0) setDropshipError(null);
-  };
-  const removeDropshipCc = (email: string) => {
-    setDropshipCc((prev) => prev.filter((e) => e !== email));
-  };
-  const applyDropshipRecent = (entry: DropshipRecipient) => {
-    setDropshipTo(entry.toEmail);
-    setDropshipCc(entry.ccEmails);
-    setDropshipCcInput("");
-  };
-
-  const handleSendDropshipRequest = async () => {
-    if (dropshipRows.length === 0) return;
-    const to = dropshipTo.trim();
-    if (!to) {
-      setDropshipError("Recipient email is required.");
-      return;
-    }
-    // Pick up anything still sitting in the CC box that wasn't committed
-    // with Enter/comma yet, so it isn't silently dropped on send.
-    const pendingCc = dropshipCcInput
-      .split(/[,;\s]+/)
-      .map((p) => p.trim())
-      .filter((p) => p.length > 0);
-    if (pendingCc.some((p) => !CC_EMAIL_RE.test(p))) {
-      setDropshipError(`Invalid CC email address: ${pendingCc.find((p) => !CC_EMAIL_RE.test(p))}`);
-      return;
-    }
-    const ccList = [...dropshipCc, ...pendingCc.filter((p) => !dropshipCc.includes(p))];
-    const cc = ccList.join(", ");
-    setDropshipSending(true);
-    setDropshipError(null);
-    try {
-      const idToken = await firebaseAuth?.currentUser?.getIdToken();
-      if (!idToken) throw new Error("Could not verify your session. Please re-login and try again.");
-      const res = await fetch("/api/gmail?action=send-dropship-request", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idToken, region: gmailRegion, to, cc, subject: dropshipSubject, body: dropshipBody }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Failed to send.");
-      setDropshipCc(ccList);
-      setDropshipCcInput("");
-      setDropshipSent(true);
-      setDropshipSelectedIds(new Set());
-      recordDropshipRecipient(to, ccList).catch((err) => {
-        setDropshipRecentError(
-          `Sent, but couldn't save "${to}" for next time: ${err instanceof Error ? err.message : "unknown error"}`,
-        );
-      });
-      const partsSummary = dropshipRows.map((r) => r.partNo || "?").join(", ");
-      appendAuditEntry({
-        by: currentEditor,
-        action: "Sent drop-ship request",
-        field: "Part Transaction",
-        before: "—",
-        after: `To: ${to}${cc ? ` (cc: ${cc})` : ""} — PO# ${dropshipRows[0].poNo || "N/A"}, Part# ${partsSummary}`,
-      });
-    } catch (err) {
-      setDropshipError(err instanceof Error ? err.message : "Failed to send.");
-    } finally {
-      setDropshipSending(false);
-    }
-  };
-
   const deletePartRow = async (rowId: string) => {
-    if (!canEditParts) {
-      alert("Your role can only order parts, not add or edit them. Ask a Parts/Claims/Manager-tier user to make this change.");
-      return;
-    }
     if (partsEditDisabled) {
       const row = partRows.find((r) => r.id === rowId) ?? null;
       alert(`Parts are locked because this ticket is "${ticket?.status}". Only the Claims department can delete them.`);
@@ -5443,6 +4146,31 @@ function TicketDetailsPage() {
     setClaimDraft(rest);
   };
 
+  const addCompensationRow = () => {
+    appendAuditEntry({
+      by: currentEditor,
+      action: "Added compensation row",
+      field: "Compensation Grid",
+      before: "—",
+      after: "Blank row created",
+    });
+    setCompensationRows((rows) => [
+      ...rows,
+      {
+        id: `comp-${Date.now()}`,
+        item: "",
+        beneficiary: "",
+        amount: "",
+        rate: "",
+        activityDate: "05/29/2026",
+        requiresClaimOrCxPayment: "",
+        comment: "",
+        createdBy: currentEditor,
+        lastModifiedBy: currentEditor,
+      },
+    ]);
+  };
+
   const copyToNewTicket = () => {
     if (!ticket) return;
 
@@ -5458,9 +4186,6 @@ function TicketDetailsPage() {
   // Open a small modal, type a teammate's name (or pick from suggestions),
   // and DM them the ticket number.
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
-  // Claims Readiness compact alert, up near the ticket actions — see
-  // claimsReadiness memo for the underlying computation.
-  const [claimsReadinessPopoverOpen, setClaimsReadinessPopoverOpen] = useState(false);
   const [shareQuery, setShareQuery] = useState("");
   const [shareMessage, setShareMessage] = useState("");
   const [shareContacts, setShareContacts] = useState<Array<{ id: string; display_name: string | null; email: string | null; role: string | null }>>([]);
@@ -5475,7 +4200,7 @@ function TicketDetailsPage() {
       try {
         const { getCompanyUsers } = await import("@/lib/supabase/users");
         const rows = await getCompanyUsers();
-        if (!cancelled) setShareContacts(rows.filter((r) => r.is_active) as any);
+        if (!cancelled) setShareContacts(rows as any);
       } catch (err) {
         if (!cancelled) setShareError(err instanceof Error ? err.message : String(err));
       }
@@ -5561,6 +4286,31 @@ function TicketDetailsPage() {
     void sendTicketToContact(target);
   };
 
+  const updateCompensationRow = (rowId: string, field: keyof Omit<CompensationRow, "id" | "createdBy" | "lastModifiedBy">, value: string) => {
+    setCompensationRows((rows) =>
+      rows.map((row) =>
+        row.id === rowId ? (() => {
+          const previousValue = row[field];
+          if (previousValue !== value) {
+            appendAuditEntry({
+              by: currentEditor,
+              action: "Updated compensation row",
+              field: COMPENSATION_FIELD_LABELS[field],
+              before: formatAuditValue(previousValue),
+              after: formatAuditValue(value),
+            });
+          }
+
+          return {
+            ...row,
+            [field]: value,
+            lastModifiedBy: currentEditor,
+          };
+        })() : row,
+      ),
+    );
+  };
+
   // Editable Part Transaction rows used both at the top of the table (Add
   // mode) and inline in place of a saved row (Edit mode). Keeping it as one
   // chunk lets us reuse the same inputs without duplication; rendering it in
@@ -5572,7 +4322,7 @@ function TicketDetailsPage() {
         <td className="px-2 py-1.5 text-slate-500 w-10" rowSpan={2}></td>
         <td className="px-1 py-1.5">
           <div className="flex gap-1">
-            <input value={partDraft.partNo} onChange={(e) => setPartDraft((d) => ({ ...d, partNo: e.target.value }))} className={`flex-1 min-w-0 rounded border border-white/15 bg-slate-950 px-2 py-1 font-semibold focus:outline-none focus:border-blue-500 ${partDraft.status ? partStatusTextClass(partDraft.status) : "text-white"}`} placeholder="Part No*" />
+            <input value={partDraft.partNo} onChange={(e) => setPartDraft((d) => ({ ...d, partNo: e.target.value }))} className="flex-1 min-w-0 rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Part No*" />
             <button
               type="button"
               onClick={handleMarconeLookup}
@@ -5605,9 +4355,23 @@ function TicketDetailsPage() {
             {partDraft.partDist.startsWith("In-House (") ? (
               <option value={partDraft.partDist}>{partDraft.partDist}</option>
             ) : null}
-            {partDistOptionsForLocation(ticket?.location).map((d) => (
-              <option key={d}>{d}</option>
-            ))}
+            <option>AIG</option>
+            <option>Electrolux</option>
+            <option>Encompass</option>
+            <option>Encompass-Birmingham / Montgomery</option>
+            <option>GE</option>
+            <option>LG</option>
+            <option>Marcone- Birmingham / Montgomery</option>
+            <option>Marcone-162468</option>
+            <option>Midea</option>
+            <option>Miele</option>
+            <option>NSA</option>
+            <option>OW</option>
+            <option>SB</option>
+            <option>Sharp</option>
+            <option>SP</option>
+            <option>Squaretrade</option>
+            <option>SS</option>
           </select>
         </td>
         <td className="px-1 py-1.5">
@@ -5658,16 +4422,13 @@ function TicketDetailsPage() {
             <option>CX Home</option>
             <option>Cx Received</option>
             <option>Defective</option>
-            <option>Dropship</option>
             <option>Hold for Estimation</option>
             <option>Hold for next vist</option>
-            <option>In Review</option>
             <option>Lost</option>
             <option>Need PO</option>
             <option>Not Used &amp; Stocked</option>
             <option>PAID</option>
             <option>Part Ready</option>
-            <option>PNN</option>
             <option>PO Made</option>
             <option>RA - Defect</option>
             <option>RA- DMG</option>
@@ -5675,7 +4436,6 @@ function TicketDetailsPage() {
             <option>RA - Qty Discrepancy</option>
             <option>SQT Received</option>
             <option>Tech Pickup</option>
-            <option>Transfer to Another Ticket</option>
             <option>Used</option>
           </select>
         </td>
@@ -5683,12 +4443,7 @@ function TicketDetailsPage() {
           <input value={partDraft.note} onChange={(e) => setPartDraft((d) => ({ ...d, note: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Note" />
         </td>
         <td className="px-1 py-1.5">
-          <select value={partDraft.visitId} onChange={(e) => setPartDraft((d) => ({ ...d, visitId: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500">
-            <option value="">Visit ID*</option>
-            {visitLogEntries.map((entry) => (
-              <option key={entry.id} value={entry.visitNo}>{entry.visitNo}</option>
-            ))}
-          </select>
+          <input value={partDraft.visitId} onChange={(e) => setPartDraft((d) => ({ ...d, visitId: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Visit ID*" />
         </td>
         <td className="px-1 py-1.5">
           <input value={partDraft.orderNo} onChange={(e) => setPartDraft((d) => ({ ...d, orderNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Order #" />
@@ -5726,19 +4481,13 @@ function TicketDetailsPage() {
           <button
             type="button"
             onClick={savePartRow}
-            disabled={partsEditDisabled || !canEditParts}
+            disabled={partsEditDisabled}
             className={`rounded border px-3 py-1 text-xs font-semibold transition ${
-              partsEditDisabled || !canEditParts
+              partsEditDisabled
                 ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
                 : "border-blue-400/40 bg-blue-600/30 text-blue-200 hover:bg-blue-600/50"
             }`}
-            title={
-              partsEditDisabled
-                ? "Locked: Parts / Claims / Manager roles only"
-                : !canEditParts
-                  ? "Your role can only order parts, not add or edit them."
-                  : (editingPartId ? "Update part" : "Add part")
-            }
+            title={partsEditDisabled ? "Locked: Parts / Claims / Manager roles only" : (editingPartId ? "Update part" : "Add part")}
           >
             {editingPartId ? "Update" : "Add"}
           </button>
@@ -5752,40 +4501,6 @@ function TicketDetailsPage() {
     </>
   );
 
-  // A locked (superseded) visit is still editable — notes, diagnosis,
-  // symptoms, resolution, etc. can all be corrected — but Repair Status,
-  // Schedule Date, and Technician stay frozen at whatever they were when
-  // superseded, since those three drive the ticket's own status/schedule/
-  // assignment and only the latest visit should ever be allowed to do that.
-  const editingLockedVisit = Boolean(
-    editingVisitId && visitLogEntries.find((entry) => entry.id === editingVisitId)?.locked
-  );
-
-  // A frozen technician's ticket access is also blocked server-side (see
-  // migration 0223's trg_block_frozen_ticket_write trigger) — this early
-  // return just keeps them from ever landing on a page they can't act on.
-  if (isFrozen) {
-    return (
-      <>
-        <AppHeader />
-        <main className="max-w-[1400px] mx-auto px-6 py-8 page-fade-in">
-          <div className="panel text-center max-w-md mx-auto">
-            <h1 className="text-xl font-semibold">Account frozen</h1>
-            <p className="text-sm text-muted-foreground mt-2">Your account has been frozen — you can still open Messages to complete any pending forms, but nothing else is available right now. Contact HR if you have questions.</p>
-            <Link
-              to="/m/$module/$submodule"
-              params={{ module: "admin", submodule: "internal-message-support" }}
-              className="btn btn-primary mt-4 inline-flex"
-            >
-              Go to Messages
-            </Link>
-          </div>
-        </main>
-        <Footer />
-      </>
-    );
-  }
-
   return (
     <>
       <AppHeader />
@@ -5793,15 +4508,8 @@ function TicketDetailsPage() {
           tracking sub-section anchors into view. */}
       <TicketSidebar activeTab={activeTab} setActiveTab={setActiveTab} />
       <main className="flex-1 bg-slate-950 py-6">
-        {/* Sticky positioning is anchored to the nearest ancestor that's
-            taller than this element itself — a dedicated wrapper div sized
-            exactly to this box's own height gives it nowhere to "stick"
-            (it scrolls away the instant its one-height-tall parent does).
-            So this box is a direct child of <main> (which spans the whole
-            page, well past this), not wrapped in its own solo container.
-            z-10, not z-20 — TicketSidebar's floating rail (fixed, z-20)
-            must stay above this box so its hover flyout isn't covered. */}
-        <div className="max-w-[1600px] mx-auto px-6 sticky top-[64px] z-10 bg-white/8 border border-white/15 rounded-xl p-5 text-white backdrop-blur-md">
+        <div className="max-w-[1600px] mx-auto px-6">
+          <div className="bg-white/8 border border-white/15 rounded-xl p-5 text-white backdrop-blur-md">
             <div className="mb-4 flex items-center gap-4">
               <label htmlFor="ticket-selector" className="text-slate-400 font-semibold whitespace-nowrap">Select Ticket:</label>
               <input
@@ -5833,94 +4541,42 @@ function TicketDetailsPage() {
               >
                 <Send className="h-4 w-4" />
               </button>
-
-              {/* Claims Readiness — compact alert next to the ticket
-                  actions, showing what's missing before this ticket can go
-                  to Claims. Visible to everyone; click for the short list
-                  of what's left (the full checklist with detail text is
-                  further down the page). */}
-              {claimsReadiness && (
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setClaimsReadinessPopoverOpen((v) => !v)}
-                    title="Claims Readiness"
-                    className={`inline-flex items-center gap-1.5 rounded border p-2 text-xs font-semibold transition ${
-                      claimsReadiness.allDone
-                        ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
-                        : "border-amber-400/40 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25"
-                    }`}
-                  >
-                    <ClipboardCheck className="h-4 w-4" />
-                    {claimsReadiness.doneCount}/{claimsReadiness.items.length}
-                  </button>
-                  {claimsReadinessPopoverOpen && (
-                    <div className="absolute left-0 top-full z-20 mt-1 w-72 rounded-lg border border-white/10 bg-slate-900 p-3 shadow-xl">
-                      <p className="text-xs font-semibold text-slate-200 mb-2">Claims Readiness</p>
-                      {claimsReadiness.allDone ? (
-                        <p className="text-xs text-emerald-300">✓ Ready for Claims</p>
-                      ) : (
-                        <ul className="space-y-1">
-                          {claimsReadiness.items.filter((item) => !item.skip && !item.done).map((item, i) => (
-                            <li key={i} className="text-xs text-rose-300">✗ {item.label}</li>
-                          ))}
-                        </ul>
-                      )}
+              
+              {/* Alert Messages Display - Inline beside controls */}
+              {alertMessages.length > 0 && (
+                <div className="flex items-center gap-2 flex-1">
+                  {alertMessages.slice(0, 1).map((alert) => (
+                    <div 
+                      key={alert.id} 
+                      className="bg-amber-500/30 border-2 border-amber-400/60 rounded px-4 py-2.5 flex items-center gap-3 flex-1 min-w-0 shadow-lg"
+                      title={`By ${alert.by} • ${alert.timestamp}`}
+                    >
+                      <span className="text-amber-200 font-bold text-sm whitespace-nowrap">⚠️ ALERT:</span>
+                      <span className="text-white font-semibold text-sm truncate flex-1">{alert.text}</span>
+                      <span className="text-amber-200/80 text-xs whitespace-nowrap hidden lg:inline font-medium">
+                        {alert.by.split('@')[0]} • {alert.timestamp.split(',')[0]}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removeAlertMessage(alert.id)}
+                        className="text-amber-200 hover:text-white transition text-sm font-bold whitespace-nowrap ml-2 hover:scale-110"
+                      >
+                        ✕
+                      </button>
                     </div>
+                  ))}
+                  {alertMessages.length > 1 && (
+                    <span className="text-amber-300 text-sm font-semibold whitespace-nowrap">+{alertMessages.length - 1} more</span>
                   )}
                 </div>
               )}
-
-              {/* Alert Messages Display - Inline beside controls. Only
-                  alerts flagged "Show internally" clutter this view — a
-                  mobile-popup-only alert stays out of the way here. */}
-              {(() => {
-                const internalAlerts = alertMessages.filter((a) => a.showInternal);
-                if (internalAlerts.length === 0) return null;
-                return (
-                  <div className="flex items-center gap-2 flex-1">
-                    {internalAlerts.slice(0, 1).map((alert) => {
-                      const by = (alert.createdBy && profileNameById[alert.createdBy]) || alert.createdBy || "Unknown";
-                      const when = alert.createdAt ? new Date(alert.createdAt).toLocaleString() : "";
-                      return (
-                        <div
-                          key={alert.id}
-                          className="bg-amber-500/30 border-2 border-amber-400/60 rounded px-4 py-2.5 flex items-center gap-3 flex-1 min-w-0 shadow-lg"
-                          title={`By ${by} • ${when}`}
-                        >
-                          <span className="text-amber-200 font-bold text-sm whitespace-nowrap">⚠️ ALERT:</span>
-                          <span className="text-white font-semibold text-sm truncate flex-1">{alert.text}</span>
-                          <span className="text-amber-200/80 text-xs whitespace-nowrap hidden lg:inline font-medium">
-                            {by.split('@')[0]} • {when.split(',')[0]}
-                          </span>
-                          {alert.mobilePopup && (
-                            <span className="hidden lg:inline shrink-0" title="Also pops up for technicians on mobile">
-                              <Smartphone className="h-3.5 w-3.5 text-amber-200/80" strokeWidth={2} />
-                            </span>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => removeAlertMessage(alert.id)}
-                            className="text-amber-200 hover:text-white transition text-sm font-bold whitespace-nowrap ml-2 hover:scale-110"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      );
-                    })}
-                    {internalAlerts.length > 1 && (
-                      <span className="text-amber-300 text-sm font-semibold whitespace-nowrap">+{internalAlerts.length - 1} more</span>
-                    )}
-                  </div>
-                );
-              })()}
             </div>
             <div>
-              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+              <div className="flex flex-col gap-2">
                 <h1 className="text-3xl font-bold text-white">Ticket #{ticketNo}</h1>
-
+                
                 {ticket ? (
-                  <div className="text-sm text-slate-300 leading-relaxed text-right">
+                  <div className="text-sm text-slate-300 leading-relaxed">
                     <span className="text-slate-400">Account</span>{" "}
                     {(() => {
                       // Squaretrade tickets jump to the appointment-completion
@@ -5932,21 +4588,24 @@ function TicketDetailsPage() {
                       // (falls back to the Squaretrade landing form when
                       // no token has been saved yet).
                       const accountName = String(ticket.account || "").toLowerCase().replace(/\s+/g, "");
-                      const isNSA = accountName.includes("nsa") || String(ticket.ticketSource || "").toUpperCase().includes("NSA");
-                      const isSquaretrade = !isNSA && accountName.includes("squaretrade");
+                      const isSquaretrade = accountName.includes("squaretrade");
                       const hasSaved = isSquaretrade && Boolean(squaretradeUrl);
-                      const href = isNSA
-                        ? "https://nationalservicealliance.com/login.php"
-                        : isSquaretrade
-                          ? resolveSquaretradeUrl(ticketNo)
-                          : `https://hub.servicepower.com/dashboard/workorders/${encodeURIComponent(ticketNo)}`;
-                      const title = isNSA
-                        ? "Open NSA Service Facility Portal"
-                        : isSquaretrade
-                          ? hasSaved
-                            ? "Open this ticket's Squaretrade appointment completion form in a new tab"
-                            : "Opens this work order in ServicePower HUB so you can read the Appointment Completion URL and paste it back here via the pencil icon."
-                          : "Open this work order in ServicePower HUB";
+                      // Squaretrade tickets jump straight to that ticket's
+                      // Appointment Completion form when we have it. When
+                      // we don't, we deep-link to the same work order in
+                      // ServicePower HUB — SP's SOAP API doesn't expose
+                      // the HUB-only conversation thread that contains
+                      // the URL, so landing on the right work order lets
+                      // claims read it off HUB and paste it via the
+                      // pencil icon.
+                      const href = isSquaretrade
+                        ? resolveSquaretradeUrl(ticketNo)
+                        : `https://hub.servicepower.com/dashboard/workorders/${encodeURIComponent(ticketNo)}`;
+                      const title = isSquaretrade
+                        ? hasSaved
+                          ? "Open this ticket's Squaretrade appointment completion form in a new tab"
+                          : "Opens this work order in ServicePower HUB so you can read the Appointment Completion URL and paste it back here via the pencil icon."
+                        : "Open this work order in ServicePower HUB";
                       return (
                         <>
                           <a
@@ -6001,45 +4660,15 @@ function TicketDetailsPage() {
                         </>
                       );
                     })()}
-                    {/* Misdiagnosed — manager-tier only. Flags that the tech's
-                        diagnosis was wrong, which is why the repair ran long.
-                        Who set/unset it is captured in the Change Log via
-                        appendAuditEntry -> logTicketAuditEntry. */}
-                    {canFlagMisdiagnosed && (
-                      <>
-                        <span className="mx-3 text-slate-600">•</span>
-                        <label
-                          className={`inline-flex items-center gap-1.5 cursor-pointer select-none align-middle ${ticket.misdiagnosed ? "text-red-300" : "text-slate-400"}`}
-                          title="Flag this ticket if the technician's diagnosis was wrong — visible only to managers/admins"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={Boolean(ticket.misdiagnosed)}
-                            onChange={toggleMisdiagnosed}
-                            className="h-3.5 w-3.5 rounded border-white/30 accent-red-500"
-                          />
-                          <span className="font-semibold">Misdiagnosed</span>
-                        </label>
-                        {misdiagnosedAuditEntries.length > 0 && (
-                          <span
-                            className="ml-1.5 text-xs text-slate-500 align-middle cursor-help"
-                            title={misdiagnosedAuditEntries
-                              .map((e) => `${e.after === "Yes" ? "Flagged" : "Unflagged"} by ${e.by} — ${new Date(e.timestamp).toLocaleString()}`)
-                              .join("\n")}
-                          >
-                            ({misdiagnosedAuditEntries[0].after === "Yes" ? "flagged" : "unflagged"} by {misdiagnosedAuditEntries[0].by}, {new Date(misdiagnosedAuditEntries[0].timestamp).toLocaleDateString()})
-                          </span>
-                        )}
-                      </>
-                    )}
                   </div>
                 ) : (
-                  <div className="w-full mt-3 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+                  <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
                     No ticket data is available for this number yet.
                   </div>
                 )}
               </div>
             </div>
+          </div>
         </div>
 
         {/* Tabs replaced by the floating TicketSidebar — kept here as a
@@ -6054,6 +4683,8 @@ function TicketDetailsPage() {
               {([
                 { tab: "general", label: "General" },
                 { tab: "tracking", label: "Tracking" },
+                { tab: "compensation", label: "Compensation" },
+                { tab: "billing", label: "Billing" },
               ] as const).map(({ tab, label }) => (
                 <button
                   key={tab}
@@ -6108,7 +4739,7 @@ function TicketDetailsPage() {
                       <CalendarDays className="h-4 w-4" />
                     </a>
                     <span
-                      className="rounded-md bg-emerald-700/30 border border-emerald-500/40 px-2.5 py-1 text-sm font-bold text-emerald-200"
+                      className="text-xs font-semibold text-slate-300"
                       title="Driving distance from office to customer"
                     >
                       {officeDistanceMiles != null ? `${officeDistanceMiles.toFixed(1)} mi` : "— mi"}
@@ -6146,53 +4777,20 @@ function TicketDetailsPage() {
               <div className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
                 <h4 className="font-semibold text-slate-300 text-sm">Customer</h4>
                 {!isEditingCustomerInfo ? (
-                  <>
-                    <div className="grid grid-cols-3 gap-4 text-sm">
-                      <div>
-                        <div className="text-slate-500 font-semibold text-xs">Name</div>
-                        <div className="text-white font-semibold mt-1">{ticket.firstName} {ticket.lastName}</div>
-                      </div>
-                      <div>
-                        <div className="text-slate-500 font-semibold text-xs">Phone</div>
-                        <div className="text-white font-semibold mt-1">{ticket.homePhone || ticket.cellPhone || "—"}</div>
-                      </div>
-                      <div>
-                        <div className="text-slate-500 font-semibold text-xs">Location</div>
-                        <div className="text-white font-semibold mt-1">{ticket.location || ticket.city || "—"}</div>
-                      </div>
+                  <div className="grid grid-cols-3 gap-4 text-sm">
+                    <div>
+                      <div className="text-slate-500 font-semibold text-xs">Name</div>
+                      <div className="text-white font-semibold mt-1">{ticket.firstName} {ticket.lastName}</div>
                     </div>
-                    {/* NSA-specific identifiers shown inside customer card */}
-                    {String(ticket.ticketSource || "").toUpperCase().includes("NSA") ? (
-                      <div className="grid grid-cols-3 gap-4 text-sm mt-3 pt-3 border-t border-orange-500/20">
-                        <div>
-                          <div className="text-slate-500 font-semibold text-xs">Account No</div>
-                          <div className="text-orange-300 font-semibold mt-1">
-                            {ticket.accountNo || "MEMPHISUAI"}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-slate-500 font-semibold text-xs">Case Number</div>
-                          <div className="text-white font-semibold mt-1">{ticket.caseNumber || ticket.nsaCaseNumber || "—"}</div>
-                        </div>
-                        <div>
-                          <div className="text-slate-500 font-semibold text-xs">Master Code</div>
-                          <div className="text-white font-semibold mt-1">{ticket.nsaMasterCode || String(ticket.ticketNo || "").slice(0, 3) || "—"}</div>
-                        </div>
-                      </div>
-                    ) : ticket.caseNumber ? (
-                      // Non-NSA ticket with a manually-entered case number
-                      // (New Ticket's "Case Number" field, tickets.case_number,
-                      // migration 0056) — same styling as the NSA callout
-                      // above, just without the NSA-only Account No / Master
-                      // Code fields, which don't apply here.
-                      <div className="grid grid-cols-3 gap-4 text-sm mt-3 pt-3 border-t border-white/10">
-                        <div>
-                          <div className="text-slate-500 font-semibold text-xs">Case Number</div>
-                          <div className="text-white font-semibold mt-1">{ticket.caseNumber}</div>
-                        </div>
-                      </div>
-                    ) : null}
-                  </>
+                    <div>
+                      <div className="text-slate-500 font-semibold text-xs">Phone</div>
+                      <div className="text-white font-semibold mt-1">{ticket.homePhone || ticket.cellPhone || "—"}</div>
+                    </div>
+                    <div>
+                      <div className="text-slate-500 font-semibold text-xs">Location</div>
+                      <div className="text-white font-semibold mt-1">{ticket.location || ticket.city || "—"}</div>
+                    </div>
+                  </div>
                 ) : (
                   <div className="grid grid-cols-3 gap-4 text-sm">
                     {/* Name is intentionally read-only — only address fields
@@ -6217,7 +4815,7 @@ function TicketDetailsPage() {
               </div>
 
               {/* Remaining Customer Details */}
-              <div className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
+              <div className="space-y-4 mb-8">
                 <h4 className="font-semibold text-slate-300">Contact Details</h4>
                 {!isEditingCustomerInfo ? (
                   <div className="grid grid-cols-2 gap-4 text-sm">
@@ -6348,28 +4946,22 @@ function TicketDetailsPage() {
               </div>
 
               {/* Product Information */}
-              <div className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
+              <div className="space-y-4 mb-8">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <h4 className="font-semibold text-slate-300">Product Information</h4>
                   <div className="flex items-center gap-2 flex-wrap">
                     {/* Per-model reference links — synced across every ticket
                         sharing this model number. Saving here updates them
-                        for all matching tickets at once. Each field can hold
-                        multiple links. */}
+                        for all matching tickets at once. */}
                     <ModelResourceButton
                       label="Exploded View"
-                      urls={modelResources.explodedViewUrls}
-                      onEdit={() => setModelResourceModal({ kind: "exploded", values: modelResources.explodedViewUrls.length ? modelResources.explodedViewUrls : [""] })}
+                      url={modelResources.explodedViewUrl}
+                      onEdit={() => setModelResourceModal({ kind: "exploded", value: modelResources.explodedViewUrl })}
                     />
                     <ModelResourceButton
                       label="Service Bulletin"
-                      urls={modelResources.serviceBulletinUrls}
-                      onEdit={() => setModelResourceModal({ kind: "bulletin", values: modelResources.serviceBulletinUrls.length ? modelResources.serviceBulletinUrls : [""] })}
-                    />
-                    <ModelResourceButton
-                      label="Tech Data Sheet"
-                      urls={modelResources.techDataSheetUrls}
-                      onEdit={() => setModelResourceModal({ kind: "techDataSheet", values: modelResources.techDataSheetUrls.length ? modelResources.techDataSheetUrls : [""] })}
+                      url={modelResources.serviceBulletinUrl}
+                      onEdit={() => setModelResourceModal({ kind: "bulletin", value: modelResources.serviceBulletinUrl })}
                     />
                     {!isEditingProductInfo ? (
                       <button
@@ -6417,10 +5009,6 @@ function TicketDetailsPage() {
                     <div>
                       <label className="text-slate-500 font-semibold">Redo Ticket #</label>
                       <div className="text-white mt-1">{ticket.redoTicketNo || "NONE"}</div>
-                    </div>
-                    <div>
-                      <label className="text-slate-500 font-semibold">Case Number</label>
-                      <div className="text-white mt-1">{ticket.caseNumber || "—"}</div>
                     </div>
                     <div>
                       <label className="text-slate-500 font-semibold">Product Category</label>
@@ -6494,15 +5082,6 @@ function TicketDetailsPage() {
                       />
                     </div>
                     <div>
-                      <label className="text-slate-400 font-semibold text-xs mb-1 block">Case Number</label>
-                      <input
-                        type="text"
-                        value={editedProductInfo.caseNumber ?? ""}
-                        onChange={(e) => setEditedProductInfo({ ...editedProductInfo, caseNumber: e.target.value })}
-                        className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-white text-sm focus:outline-none focus:border-blue-400"
-                      />
-                    </div>
-                    <div>
                       <label className="text-slate-400 font-semibold text-xs mb-1 block">Product Category</label>
                       <select
                         value={editedProductInfo.productCategory || ""}
@@ -6556,7 +5135,7 @@ function TicketDetailsPage() {
               </div>
 
               {/* Call Service Information */}
-              <div className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
+              <div className="space-y-4 mb-8">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <h4 className="font-semibold text-slate-300">Call Service Information</h4>
                   <div className="flex items-center gap-2">
@@ -6600,22 +5179,7 @@ function TicketDetailsPage() {
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <label className="text-slate-500 font-semibold">Account No</label>
-                    <div className="text-white mt-1">
-                      {String(ticket.ticketSource || "").toUpperCase().includes("NSA") ? (
-                        <a
-                          href="https://nationalservicealliance.com/login.php"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-orange-300 hover:text-orange-200 hover:underline font-semibold"
-                          title="Open NSA Portal"
-                        >
-                          {ticket.accountNo || "NSA"}
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-                        </a>
-                      ) : (
-                        ticket.accountNo || "—"
-                      )}
-                    </div>
+                    <div className="text-white mt-1">{ticket.accountNo || "—"}</div>
                   </div>
                   <div>
                     <label className="text-slate-500 font-semibold">Manufacture ID</label>
@@ -6627,22 +5191,7 @@ function TicketDetailsPage() {
                   </div>
                   <div>
                     <label className="text-slate-500 font-semibold">Ticket Source</label>
-                    <div className="text-white mt-1">
-                      {String(ticket.ticketSource || "").toUpperCase().includes("NSA") ? (
-                        <a
-                          href="https://nationalservicealliance.com/login.php"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-orange-300 hover:text-orange-200 hover:underline font-semibold"
-                          title="Open NSA Portal"
-                        >
-                          {ticket.ticketSource}
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-                        </a>
-                      ) : (
-                        ticket.ticketSource || "—"
-                      )}
-                    </div>
+                    <div className="text-white mt-1">{ticket.ticketSource || "—"}</div>
                   </div>
                   <div>
                     <label className="text-slate-500 font-semibold">Call Type</label>
@@ -6691,129 +5240,8 @@ function TicketDetailsPage() {
                 </div>
               </div>
 
-              {/* NSA Dispatch Information — only shown for NSA-sourced tickets */}
-              {String(ticket.ticketSource || "").toUpperCase().includes("NSA") && (
-                <div className="space-y-4 mb-8">
-                  {/* Section header */}
-                  <div className="flex items-center gap-2 border-b border-orange-500/20 pb-2">
-                    <h4 className="font-semibold text-slate-300">Call (Service) Information</h4>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-500/20 text-orange-300 border border-orange-500/30 uppercase tracking-wider">NSA</span>
-                    <a
-                      href="https://nationalservicealliance.com/login.php"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="ml-auto text-xs text-orange-300 hover:text-orange-200 hover:underline flex items-center gap-1"
-                    >
-                      Open NSA Portal
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-                    </a>
-                  </div>
-
-                  {/* Row 1 — identifiers */}
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <label className="text-slate-500 font-semibold">Ticket No</label>
-                      <div className="text-white mt-1 font-mono">{ticket.ticketNo || "—"}</div>
-                    </div>
-                    <div>
-                      <label className="text-slate-500 font-semibold">Posting Date</label>
-                      <div className="text-white mt-1">{ticket.postingDate || "—"}</div>
-                    </div>
-                    <div>
-                      <label className="text-slate-500 font-semibold">Account No</label>
-                      <div className="text-white mt-1">
-                        {ticket.accountNo || "MEMPHISUAI"}
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-slate-500 font-semibold">Case Number</label>
-                      <div className="text-white mt-1">{ticket.caseNumber || ticket.nsaCaseNumber || "—"}</div>
-                    </div>
-                    <div>
-                      <label className="text-slate-500 font-semibold">Master Code</label>
-                      <div className="text-white mt-1">{ticket.nsaMasterCode || String(ticket.ticketNo || "").slice(0, 3) || "—"}</div>
-                    </div>
-                    <div>
-                      <label className="text-slate-500 font-semibold">Cx Preferred Date</label>
-                      <div className="text-white mt-1">{ticket.schedulePeriod || "—"}</div>
-                    </div>
-                  </div>
-
-                  {/* Row 2 — NSA status + routing */}
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <label className="text-slate-500 font-semibold">NSA Status</label>
-                      <div className="text-orange-300 mt-1 font-semibold capitalize">{ticket.nsaStatus || ticket.callStatus || "—"}</div>
-                    </div>
-                    <div>
-                      <label className="text-slate-500 font-semibold">Route Name</label>
-                      <div className="text-white mt-1">{ticket.nsaRouteName || "—"}</div>
-                    </div>
-                    <div>
-                      <label className="text-slate-500 font-semibold">Group Name</label>
-                      <div className="text-white mt-1">{ticket.nsaGroupName || "—"}</div>
-                    </div>
-                    <div>
-                      <label className="text-slate-500 font-semibold">Deductible</label>
-                      <div className="text-white mt-1">{ticket.nsaDeductible || "—"}</div>
-                    </div>
-                    <div>
-                      <label className="text-slate-500 font-semibold">Schedule ACK</label>
-                      <div className="text-white mt-1">
-                        {ticket.nsaScheduleAck
-                          ? (() => { try { return new Date(ticket.nsaScheduleAck).toLocaleString(); } catch { return ticket.nsaScheduleAck; } })()
-                          : "—"}
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-slate-500 font-semibold">Required Part</label>
-                      <div className="text-white mt-1">{ticket.nsaRequiredPart === "Y" ? "Yes ✓" : ticket.nsaRequiredPart === "N" ? "No" : ticket.nsaRequiredPart || "—"}</div>
-                    </div>
-                  </div>
-
-                  {/* Special instructions — prominent amber box when present */}
-                  {ticket.nsaSpecialInstructions && (
-                    <div className="text-sm">
-                      <label className="text-slate-500 font-semibold">Special Instructions</label>
-                      <div className="text-amber-200 mt-1 text-xs bg-amber-950/30 rounded px-3 py-2 border border-amber-500/20 leading-relaxed">{ticket.nsaSpecialInstructions}</div>
-                    </div>
-                  )}
-
-                  {/* Problem Description isn't repeated here — the
-                      unconditional "Problem Description" section below
-                      (synced from ServicePower) already shows it for every
-                      ticket, NSA-sourced or not. */}
-
-                  {/* Coverage + Pre-Auth */}
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <label className="text-slate-500 font-semibold">Valid Coverage</label>
-                      <div className="text-white mt-1">{ticket.nsaValidCoverage || "—"}</div>
-                    </div>
-                    <div>
-                      <label className="text-slate-500 font-semibold">Required Coverage</label>
-                      <div className="text-white mt-1">{ticket.nsaRequiredCoverage || "—"}</div>
-                    </div>
-                  </div>
-
-                  {ticket.nsaCoverageExclusions && (
-                    <div className="text-sm">
-                      <label className="text-slate-500 font-semibold">Coverage Exclusions</label>
-                      <div className="text-slate-300 mt-1 text-xs bg-slate-800/40 rounded px-3 py-2 border border-slate-700">{ticket.nsaCoverageExclusions}</div>
-                    </div>
-                  )}
-
-                  {ticket.nsaPreAuth && (
-                    <div className="text-sm">
-                      <label className="text-slate-500 font-semibold">Pre-Auth</label>
-                      <div className="text-green-300 mt-1 font-mono text-xs bg-slate-800/60 rounded px-3 py-2 border border-slate-700">{ticket.nsaPreAuth}</div>
-                    </div>
-                  )}
-                </div>
-              )}
-
               {/* Schedule Information */}
-              <div className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
+              <div className="space-y-4 mb-8">
                 <div className="flex items-center justify-between">
                   <h4 className="font-semibold text-slate-300">Schedule Information</h4>
                   {!isEditingScheduleInfo ? (
@@ -6887,7 +5315,7 @@ function TicketDetailsPage() {
                         className="glass-input w-full mt-1"
                       >
                         <option value="">Not assigned</option>
-                        {technicianOptions.map((tech) => (
+                        {ALL_TECHNICIANS.map((tech) => (
                           <option key={tech} value={tech}>
                             {tech}
                           </option>
@@ -6918,14 +5346,14 @@ function TicketDetailsPage() {
                   <h4 className="font-semibold text-slate-300">Customer Notes</h4>
                   <div className="flex items-center gap-2">
                     {runningNotesLoading && (
-                      <span className="text-xs text-slate-400">Syncing from {isNsaTicket ? "NSA" : "ServicePower"}…</span>
+                      <span className="text-xs text-slate-400">Syncing from ServicePower…</span>
                     )}
                     <button
                       type="button"
                       onClick={() => void loadRunningNotes()}
                       disabled={runningNotesLoading}
                       className="rounded border border-white/15 px-2 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-white/30 hover:bg-white/5 disabled:opacity-60"
-                      title={isNsaTicket ? "Re-fetch the Communications log from NSA" : "Re-fetch the Running Notes thread from ServicePower"}
+                      title="Re-fetch the Running Notes thread from ServicePower"
                     >
                       Refresh
                     </button>
@@ -6933,152 +5361,24 @@ function TicketDetailsPage() {
                 </div>
                 {runningNotesError && (
                   <div className="rounded border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                    Couldn't sync from {isNsaTicket ? "NSA" : "ServicePower"}: {runningNotesError}
+                    Couldn't sync from ServicePower: {runningNotesError}
                   </div>
                 )}
-                <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+                <div className="space-y-3">
                   {displayedCustomerNotes.length === 0 && !runningNotesLoading && (
                     <p className="text-slate-500 text-sm">No customer notes yet for this work order.</p>
                   )}
                   {displayedCustomerNotes.map((note, idx) => (
-                    <div
-                      key={idx}
-                      className={`rounded-md border p-3 text-sm ${
-                        note.isInternal
-                          ? "border-amber-400/30 bg-amber-900/10"
-                          : "border-emerald-400/30 bg-emerald-900/10"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2 text-xs text-slate-400 mb-2">
-                        <div className="font-semibold text-slate-300">
-                          {note.by}
-                          <span className="ml-2 text-slate-500">{note.date}</span>
-                        </div>
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                            note.isInternal
-                              ? "bg-amber-400/20 text-amber-200"
-                              : "bg-emerald-400/20 text-emerald-200"
-                          }`}
-                        >
-                          {note.isInternal ? "Internal" : "External"}
-                        </span>
+                    <div key={idx} className="bg-slate-900/50 border border-white/10 rounded p-4 text-sm">
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="text-slate-400">{note.date}</div>
+                        <div className="text-blue-400">By: {note.by}</div>
                       </div>
                       <p className="text-slate-300 whitespace-pre-wrap">{note.notes}</p>
                     </div>
                   ))}
                 </div>
               </div>
-
-              {/* NSA Estimates — no existing AHS UI to extend (unlike Customer
-                  Notes/SP Running Notes above), so this is a standalone panel
-                  for NSA tickets only. */}
-              {isNsaTicket && (
-                <div className="space-y-4 mb-8">
-                  <div className="flex items-center justify-between gap-2">
-                    <h4 className="font-semibold text-slate-300">Estimates</h4>
-                    <div className="flex items-center gap-2">
-                      {nsaEstimatesLoading && (
-                        <span className="text-xs text-slate-400">Syncing from NSA…</span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => void loadNsaEstimates()}
-                        disabled={nsaEstimatesLoading}
-                        className="rounded border border-white/15 px-2 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-white/30 hover:bg-white/5 disabled:opacity-60"
-                        title="Re-fetch estimates from NSA"
-                      >
-                        Refresh
-                      </button>
-                    </div>
-                  </div>
-                  {nsaEstimatesError && (
-                    <div className="rounded border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                      Couldn't sync from NSA: {nsaEstimatesError}
-                    </div>
-                  )}
-                  <div className="space-y-3">
-                    {nsaEstimates.length === 0 && !nsaEstimatesLoading && (
-                      <p className="text-slate-500 text-sm">No estimates on file for this dispatch.</p>
-                    )}
-                    {nsaEstimates.map((est) => {
-                      const status = est.processedStatusCode || est.submissionStatusCode || "Unknown";
-                      const statusLine =
-                        status.toLowerCase() === "approved"
-                          ? "Current Estimate Approved: See Approval Email for Details."
-                          : status.toLowerCase() === "rejected" || status.toLowerCase() === "denied"
-                          ? "Current Estimate Rejected: See Rejection Email for Details."
-                          : `Current Estimate ${status}.`;
-                      return (
-                        <div key={est.estimateID} className="bg-slate-900/50 border border-white/10 rounded p-4 text-sm">
-                          <div className="flex justify-between items-start mb-2">
-                            <div
-                              className={
-                                status.toLowerCase() === "approved"
-                                  ? "text-emerald-400 font-semibold"
-                                  : status.toLowerCase() === "rejected" || status.toLowerCase() === "denied"
-                                  ? "text-red-400 font-semibold"
-                                  : "text-slate-300 font-semibold"
-                              }
-                            >
-                              {statusLine}
-                            </div>
-                            <div className="text-blue-400 font-semibold">
-                              Total: ${est.totalAmount.toFixed(2)}
-                            </div>
-                          </div>
-                          {est.lines.length > 0 && (
-                            <table className="w-full mt-2 text-xs">
-                              <tbody>
-                                {est.lines.map((line, idx) => (
-                                  <tr key={idx} className="border-t border-white/5">
-                                    <td className="py-1 text-slate-400">{line.coverageTypeCode}</td>
-                                    <td className="py-1 text-right text-slate-300">${line.amount.toFixed(2)}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Claims Readiness Checklist — visible to every role, see claimsReadiness above */}
-              {claimsReadiness && (
-                <div className="mb-8 rounded-xl border border-slate-700 overflow-hidden">
-                  <div className={`flex items-center justify-between px-4 py-3 ${claimsReadiness.allDone ? "bg-emerald-900/30 border-b border-emerald-700/30" : "bg-slate-900/60 border-b border-slate-700"}`}>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-slate-200">Claims Readiness</span>
-                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${claimsReadiness.allDone ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" : "bg-amber-500/20 text-amber-300 border border-amber-500/30"}`}>
-                        {claimsReadiness.doneCount}/{claimsReadiness.items.length}
-                      </span>
-                    </div>
-                    {claimsReadiness.allDone ? (
-                      <span className="text-xs text-emerald-400 font-semibold">✓ Ready for Claims</span>
-                    ) : (
-                      <span className="text-xs text-amber-400">{claimsReadiness.items.length - claimsReadiness.doneCount} item{claimsReadiness.items.length - claimsReadiness.doneCount !== 1 ? "s" : ""} pending</span>
-                    )}
-                  </div>
-                  <div className="divide-y divide-slate-800">
-                    {claimsReadiness.items.map((item, i) => (
-                      <div key={i} className={`flex items-start gap-3 px-4 py-3 text-sm ${item.skip ? "opacity-50" : ""}`}>
-                        <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${item.skip ? "bg-slate-700 text-slate-400" : item.done ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : "bg-rose-500/20 text-rose-400 border border-rose-500/40"}`}>
-                          {item.skip ? "—" : item.done ? "✓" : "✗"}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className={`font-semibold ${item.skip ? "text-slate-500" : item.done ? "text-slate-300" : "text-rose-300"}`}>
-                            {item.label}
-                          </div>
-                          <div className="text-slate-500 text-xs mt-0.5">{item.detail}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
 
               {/* Servicer Notes */}
               <div className="space-y-4 pb-12">
@@ -7199,527 +5499,35 @@ function TicketDetailsPage() {
               </div>
             </div>
 
-            {/* Part Transaction */}
-            <div id="section-part-transaction" className="scroll-mt-28">
-              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-                <div className="flex items-center gap-2">
-                  <h4 className="font-semibold text-slate-300">Part Transaction</h4>
-                  <div className="text-xs font-semibold text-blue-300">{partCountLabel}</div>
-                  {isTicketPartLocked ? (
-                    <span
-                      className={`ml-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
-                        partsEditDisabled
-                          ? "border-amber-400/40 bg-amber-500/15 text-amber-200"
-                          : "border-emerald-400/40 bg-emerald-500/15 text-emerald-200"
-                      }`}
-                      title={
-                        partsEditDisabled
-                          ? `Ticket is "${ticket?.status}". Only Claims can change parts.`
-                          : `Ticket is "${ticket?.status}". Claims-only edit window.`
-                      }
-                    >
-                      🔒 Locked — Claims only
-                    </span>
-                  ) : null}
-                </div>
-                {canUsePartToolbar && (
-                <div className="flex items-center gap-2">
-                  <button 
-                    type="button"
-                    onClick={() => {
-                      if (partRows.length === 0 && deletedPartAuditEntries.length === 0) {
-                        alert('No parts to view');
-                        return;
-                      }
-                      setIsPartListModalOpen(true);
-                    }}
-                    className="rounded border border-blue-400/40 bg-blue-600/20 px-3 py-1.5 text-xs font-semibold text-blue-200 transition hover:bg-blue-600/30"
-                    title="View all parts"
-                  >
-                    View Log
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => void syncPartsFromNotes()}
-                    disabled={partsEditDisabled || syncingNotesParts}
-                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
-                      partsEditDisabled || syncingNotesParts
-                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
-                        : "border-purple-400/40 bg-purple-600/20 text-purple-200 hover:bg-purple-600/30"
-                    }`}
-                    title={
-                      partsEditDisabled
-                        ? "Locked: Parts / Claims / Manager roles only"
-                        : "Import parts the warranty company announced in SP customer notes (Squaretrade / Allstate). Adds Need-PO rows for new parts and overlays tracking numbers onto existing ones."
-                    }
-                  >
-                    {syncingNotesParts ? "Syncing…" : "Sync Parts from Notes"}
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={openTruckStockBatch}
-                    disabled={partsEditDisabled}
-                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
-                      partsEditDisabled
-                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
-                        : "border-emerald-400/40 bg-emerald-600/20 text-emerald-200 hover:bg-emerald-600/30"
-                    }`}
-                    title={partsEditDisabled ? "Locked: Parts / Claims / Manager roles only" : "Fulfill Need PO parts from in-house Truck Stock"}
-                  >
-                    Truck Stock
-                  </button>
-                  <button
-                    type="button"
-                    onClick={submitAllPOs}
-                    disabled={partsEditDisabled || !canOrderParts}
-                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
-                      partsEditDisabled || !canOrderParts
-                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
-                        : "border-green-400/40 bg-green-600/20 text-green-200 hover:bg-green-600/30"
-                    }`}
-                    title={
-                      partsEditDisabled
-                        ? "Locked: Parts / Claims / Manager roles only"
-                        : !canOrderParts
-                          ? "Only Parts Team Leader, Parts Manager, Admin, or Super Admin can submit part orders."
-                          : "Submit POs for parts that need ordering"
-                    }
-                  >
-                    Submit POs
-                  </button>
-                  <button
-                    type="button"
-                    onClick={saveAllRowEdits}
-                    disabled={partsEditDisabled || !canEditParts || rowEditsSaving || dirtyRowCount === 0}
-                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
-                      partsEditDisabled || !canEditParts || dirtyRowCount === 0
-                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
-                        : "border-blue-400/40 bg-blue-600/30 text-blue-200 hover:bg-blue-600/50"
-                    }`}
-                    title={
-                      partsEditDisabled
-                        ? "Locked: Parts / Claims / Manager roles only"
-                        : !canEditParts
-                        ? "Your role can only order parts, not add or edit them."
-                        : dirtyRowCount === 0
-                        ? "Edit any cell in a part row, then click Update to save"
-                        : `Save changes to ${dirtyRowCount} part row${dirtyRowCount === 1 ? "" : "s"}`
-                    }
-                  >
-                    {rowEditsSaving
-                      ? "Saving…"
-                      : dirtyRowCount > 0
-                      ? `Update (${dirtyRowCount})`
-                      : "Update"}
-                  </button>
-                  {dropshipSelectedIds.size > 0 && (
-                    <button
-                      type="button"
-                      onClick={openBulkDropshipModal}
-                      disabled={partsEditDisabled || !canEditParts}
-                      className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
-                        partsEditDisabled || !canEditParts
-                          ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
-                          : "border-blue-400/40 bg-blue-600/30 text-blue-200 hover:bg-blue-600/50"
-                      }`}
-                      title="Email one drop-ship request listing all selected parts (must be the same PO)"
-                    >
-                      Send Selected ({dropshipSelectedIds.size})
-                    </button>
-                  )}
-                  {/* Auto-sync indicator removed — Marcone order status
-                      is now manual-refresh only via the per-row Refresh
-                      button. */}
-                  {/* Which Gmail account the per-row "Send" (drop-ship
-                      request) button will actually send from — previously
-                      only visible/manageable from the Accounting Dashboard. */}
-                  {gmailStatusLoading ? (
-                    <span className="text-[10px] text-slate-500">Gmail…</span>
-                  ) : gmailStatus?.connected ? (
-                    <span
-                      className="flex items-center gap-1 rounded border border-emerald-400/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-300"
-                      title={`Send emails from: ${gmailStatus.connectedEmail}`}
-                    >
-                      ✓ Gmail: {gmailStatus.connectedEmail}
-                      {canConnectGmail && (
-                        <button
-                          type="button"
-                          onClick={handleDisconnectGmailHere}
-                          disabled={gmailDisconnecting}
-                          className="ml-1 text-emerald-400/70 hover:text-emerald-200 disabled:opacity-50"
-                          title="Disconnect the Parts/Drop-Ship Gmail account"
-                        >
-                          ×
-                        </button>
-                      )}
-                    </span>
-                  ) : canConnectGmail ? (
-                    <button
-                      type="button"
-                      onClick={handleConnectGmailHere}
-                      disabled={gmailConnecting}
-                      className="rounded border border-white/15 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:bg-slate-700 disabled:opacity-50"
-                      title={'Connect the Parts/Drop-Ship Gmail account "Send" will email from'}
-                    >
-                      {gmailConnecting ? "Connecting…" : "Connect Gmail"}
-                    </button>
-                  ) : (
-                    <span className="text-[10px] text-slate-500" title="An Admin needs to connect Gmail before Send will work">
-                      Gmail not connected — ask an Admin
-                    </span>
-                  )}
-                </div>
-                )}
-              </div>
-              {partsEditDisabled ? (
-                <div className="mb-3 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                  This ticket is <span className="font-semibold">{ticket?.status}</span>. Part Transactions are locked.
-                  Only Parts / Claims / Admin / Manager / Branch Manager roles can edit them. Any attempt will alert Naveen, Ian, and Tina.
-                </div>
-              ) : null}
-
-              <div className="overflow-x-auto border border-white/10 rounded-lg">
-                <table className="w-full text-xs pt-compact" style={{ minWidth: "1180px" }}>
-                  {/* Two-row header */}
-                  <thead>
-                    <tr className="bg-slate-800 border-b border-white/10 text-slate-300">
-                      <th className="px-2 py-2 text-left font-semibold w-10" rowSpan={2}>ID</th>
-                      <th className="px-2 py-2 text-left font-semibold">Part No*</th>
-                      <th className="px-2 py-2 text-left font-semibold">Part Dist.*</th>
-                      <th className="px-2 py-2 text-left font-semibold">Part Description</th>
-                      <th className="px-2 py-2 text-left font-semibold">PO No</th>
-                      <th className="px-2 py-2 text-left font-semibold">P/O Date</th>
-                      <th className="px-2 py-2 text-left font-semibold">Invoice No</th>
-                      <th className="px-2 py-2 text-left font-semibold">Invoice Date</th>
-                      <th className="px-2 py-2 text-left font-semibold">Qty*</th>
-                      <th className="px-2 py-2 text-left font-semibold">Part Price</th>
-                      <th className="px-2 py-2 text-left font-semibold">Core Value</th>
-                      <th className="px-2 py-2 text-left font-semibold">Ship Cost</th>
-                      <th className="px-2 py-2 text-left font-semibold">Markup</th>
-                      <th className="px-2 py-2 text-left font-semibold">Claim To</th>
-                    </tr>
-                    <tr className="bg-slate-800/70 border-b border-white/10 text-slate-400">
-                      <th className="px-2 py-2 text-left font-semibold">Part Status*</th>
-                      <th className="px-2 py-2 text-left font-semibold">Note</th>
-                      <th className="px-2 py-2 text-left font-semibold">Visit ID*</th>
-                      <th className="px-2 py-2 text-left font-semibold">Order #</th>
-                      <th className="px-2 py-2 text-left font-semibold">ETA</th>
-                      <th className="px-2 py-2 text-left font-semibold">In Tracking #</th>
-                      <th className="px-2 py-2 text-left font-semibold">RA Date</th>
-                      <th className="px-2 py-2 text-left font-semibold">RA #</th>
-                      <th className="px-2 py-2 text-left font-semibold">Out Tracking #</th>
-                      <th className="px-2 py-2 text-left font-semibold">Credit #</th>
-                      <th className="px-2 py-2 text-left font-semibold">Total (Markup)</th>
-                      <th className="px-2 py-2 text-left font-semibold">Hold</th>
-                      <th className="px-2 py-2 text-left font-semibold">Cx Paid</th>
-                      <th className="px-2 py-2 text-left font-semibold">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {/* ── Add inline row (hidden while editing — the editor
-                          appears in-place at the row being edited so the
-                          page does not jump to the top) ── */}
-                    {editingPartId ? null : renderPartDraftRows()}
-
-                    {/* ── Saved rows — every cell is an editable input. The
-                          user types changes that buffer into rowEdits; the
-                          global Update button (next to Submit POs) flushes
-                          them to Supabase. There is no separate "edit
-                          mode" or Edit button anymore. ── */}
-                    {partRows.length === 0 ? (
-                      <tr>
-                        <td colSpan={15} className="px-4 py-6 text-center text-slate-500">No parts recorded yet</td>
-                      </tr>
-                    ) : (
-                      partRows.map((row, index) => {
-                        const isDirty = !!rowEdits[row.id];
-                        const cellWrap = "px-1 py-1";
-                        const inputCls = "w-full rounded border border-white/10 bg-slate-950/80 px-2 py-1 text-white focus:outline-none focus:border-blue-500 disabled:opacity-50";
-                        const selectCls = inputCls;
-                        const val = <K extends keyof PartTransactionRow>(field: K) => getRowValue(row, field);
-                        const set = <K extends keyof PartTransactionRow>(field: K, v: PartTransactionRow[K]) =>
-                            updateRowField(row.id, field, v);
-                        return (
-                        <React.Fragment key={row.id}>
-                          <tr className={`align-top transition-colors ${isDirty ? "bg-blue-500/10" : "bg-slate-900/30"}`}>
-                            <td className="px-2 py-1.5 text-slate-400 font-semibold w-10" rowSpan={2}>
-                              P{index + 1}
-                              {isDirty ? (
-                                <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-blue-400" title="Unsaved changes — click Update to save" />
-                              ) : null}
-                            </td>
-                            <td className={cellWrap}><input value={String(val("partNo") ?? "")} onChange={(e) => set("partNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={`w-full rounded border border-white/10 bg-slate-950/80 px-2 py-1 font-semibold focus:outline-none focus:border-blue-500 disabled:opacity-50 ${val("status") ? partStatusTextClass(String(val("status"))) : "text-blue-300"}`} placeholder="Part No*" /></td>
-                            <td className={cellWrap}>
-                              <select value={String(val("partDist") ?? "")} onChange={(e) => set("partDist", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={selectCls}>
-                                <option value="">Dist.*</option>
-                                {String(val("partDist") ?? "").startsWith("In-House (") ? <option value={String(val("partDist"))}>{String(val("partDist"))}</option> : null}
-                                {partDistOptionsForLocation(ticket?.location).map((d) => (
-                                  <option key={d}>{d}</option>
-                                ))}
-                              </select>
-                            </td>
-                            <td className={cellWrap}><input value={String(val("partDesc") ?? "")} onChange={(e) => set("partDesc", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Description" /></td>
-                            <td className={cellWrap}><input value={String(val("poNo") ?? "")} onChange={(e) => set("poNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="PO No" /></td>
-                            <td className={cellWrap}><input type="date" value={String(val("poDate") ?? "")} onChange={(e) => set("poDate", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} /></td>
-                            <td className={cellWrap}><input value={String(val("invoiceNo") ?? "")} onChange={(e) => set("invoiceNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Invoice No" /></td>
-                            <td className={cellWrap}><input type="date" value={String(val("invoiceDate") ?? "")} onChange={(e) => set("invoiceDate", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} /></td>
-                            <td className={cellWrap}><input value={String(val("quantity") ?? "")} onChange={(e) => set("quantity", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={`${inputCls} w-16`} placeholder="Qty*" /></td>
-                            <td className={cellWrap}><input value={String(val("partPrice") ?? "")} onChange={(e) => set("partPrice", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="$0.00" /></td>
-                            <td className={cellWrap}><input value={String(val("coreValue") ?? "")} onChange={(e) => set("coreValue", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="$0.00" /></td>
-                            <td className={cellWrap}><input value={String(val("shipCost") ?? "")} onChange={(e) => set("shipCost", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="$0.00" /></td>
-                            <td className={cellWrap}>
-                              <select value={String(val("markup") ?? "0")} onChange={(e) => set("markup", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={selectCls}>
-                                {Array.from({ length: 21 }, (_, i) => i * 5).map((v) => (
-                                  <option key={v} value={String(v)}>{v}%</option>
-                                ))}
-                              </select>
-                            </td>
-                            <td className={cellWrap}><input value={String(val("claimTo") ?? "")} onChange={(e) => set("claimTo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Claim To" /></td>
-                          </tr>
-                          <tr className={`align-top border-b border-white/5 ${isDirty ? "bg-blue-500/5" : "bg-slate-900/20"}`}>
-                            <td className={cellWrap}>
-                              <select value={String(val("status") ?? "")} onChange={(e) => set("status", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={`${selectCls} text-blue-300 font-semibold`}>
-                                <option value="">Status*</option>
-                                <option>Back Order</option>
-                                <option>Cancelled</option>
-                                <option>Claimed</option>
-                                <option>CX Home</option>
-                                <option>Cx Received</option>
-                                <option>Defective</option>
-                                <option>Dropship</option>
-                                <option>Hold for Estimation</option>
-                                <option>Hold for next vist</option>
-                                <option>In Review</option>
-                                <option>Lost</option>
-                                <option>Need PO</option>
-                                <option>Not Used &amp; Stocked</option>
-                                <option>PAID</option>
-                                <option>Part Ready</option>
-                                <option>PNN</option>
-                                <option>PO Made</option>
-                                <option>RA - Defect</option>
-                                <option>RA- DMG</option>
-                                <option>RA - PNN</option>
-                                <option>RA - Qty Discrepancy</option>
-                                <option>SQT Received</option>
-                                <option>Tech Pickup</option>
-                                <option>Transfer to Another Ticket</option>
-                                <option>Used</option>
-                              </select>
-                            </td>
-                            <td className={cellWrap}><input value={String(val("note") ?? "")} onChange={(e) => set("note", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Note" /></td>
-                            <td className={cellWrap}>
-                              <select value={String(val("visitId") ?? "")} onChange={(e) => set("visitId", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={selectCls}>
-                                <option value="">Visit ID*</option>
-                                {visitLogEntries.map((entry) => (
-                                  <option key={entry.id} value={entry.visitNo}>{entry.visitNo}</option>
-                                ))}
-                                {/* Stale value from before this became a dropdown, or a
-                                    since-deleted visit — keep it selectable so it isn't
-                                    silently blanked out. */}
-                                {String(val("visitId") ?? "") && !visitLogEntries.some((entry) => entry.visitNo === String(val("visitId") ?? "")) && (
-                                  <option value={String(val("visitId") ?? "")}>{String(val("visitId"))} (not found)</option>
-                                )}
-                              </select>
-                            </td>
-                            <td className={cellWrap}><input value={String(val("orderNo") ?? "")} onChange={(e) => set("orderNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Order #" /></td>
-                            <td className={cellWrap}><input type="date" value={String(val("eta") ?? "")} onChange={(e) => set("eta", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} /></td>
-                            <td className={cellWrap}><input value={String(val("inTracking") ?? "")} onChange={(e) => set("inTracking", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="In Track #" /></td>
-                            <td className={cellWrap}><input type="date" value={String(val("raDate") ?? "")} onChange={(e) => set("raDate", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} /></td>
-                            <td className={cellWrap}><input value={String(val("raNo") ?? "")} onChange={(e) => set("raNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="RA #" /></td>
-                            <td className={cellWrap}><input value={String(val("outTracking") ?? "")} onChange={(e) => set("outTracking", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Out Track #" /></td>
-                            <td className={cellWrap}><input value={String(val("creditNo") ?? "")} onChange={(e) => set("creditNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Credit #" /></td>
-                            <td className="px-2 py-1.5 text-slate-300">{val("totalMarkup") ? `$${val("totalMarkup")}` : "—"}</td>
-                            <td className={cellWrap}>
-                              <input type="checkbox" checked={val("hold") === "Hold"} onChange={(e) => set("hold", e.target.checked ? "Hold" : "No")} disabled={partsEditDisabled || !canEditParts} className="accent-blue-500" />
-                            </td>
-                            <td className={cellWrap}>
-                              <input type="checkbox" checked={val("cxPaid") === "Paid"} onChange={(e) => set("cxPaid", e.target.checked ? "Paid" : "No")} disabled={partsEditDisabled || !canEditParts} className="accent-blue-500" />
-                            </td>
-                            <td className="px-2 py-1.5 whitespace-nowrap">
-                              {row.orderNo && (isMarconeDist(row.partDist) || isEncompassDist(row.partDist)) ? (
-                                <button
-                                  type="button"
-                                  onClick={() => refreshMarconeOrderStatus(row)}
-                                  disabled={marconeRefreshingId === row.id}
-                                  className="rounded border border-amber-400/40 bg-amber-500/15 px-2 py-1 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 mr-1 disabled:opacity-40"
-                                  title={`Pull ETA / invoice / tracking from ${isMarconeDist(row.partDist) ? "Marcone" : "Encompass"} for order ${row.orderNo}`}
-                                >
-                                  {marconeRefreshingId === row.id ? "…" : "Refresh"}
-                                </button>
-                              ) : null}
-                              <button
-                                type="button"
-                                onClick={() => openDropshipModal([row])}
-                                disabled={partsEditDisabled || !canEditParts}
-                                className={`rounded border px-2 py-1 text-xs font-semibold transition mr-1 ${
-                                  partsEditDisabled || !canEditParts
-                                    ? "border-white/10 bg-slate-900 text-slate-500 cursor-not-allowed"
-                                    : "border-blue-400/30 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20"
-                                }`}
-                                title={
-                                  partsEditDisabled
-                                    ? "Locked: Parts / Claims / Manager roles only"
-                                    : !canEditParts
-                                      ? "Your role can only order parts, not add or edit them."
-                                      : "Email a drop-ship request for this part"
-                                }
-                              >
-                                Send
-                              </button>
-                              <input
-                                type="checkbox"
-                                checked={dropshipSelectedIds.has(row.id)}
-                                onChange={() => toggleDropshipSelect(row.id)}
-                                disabled={partsEditDisabled || !canEditParts}
-                                className="accent-blue-500 mr-1 align-middle"
-                                title="Select for Bulk Send (parts on the same PO)"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => deletePartRow(row.id)}
-                                disabled={partsEditDisabled || !canEditParts}
-                                className={`rounded border px-2 py-1 text-xs font-semibold transition ${
-                                  partsEditDisabled || !canEditParts
-                                    ? "border-white/10 bg-slate-900 text-slate-500 cursor-not-allowed"
-                                    : "border-rose-400/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
-                                }`}
-                                title={
-                                  partsEditDisabled
-                                    ? "Locked: Parts / Claims / Manager roles only"
-                                    : !canEditParts
-                                      ? "Your role can only order parts, not add or edit them."
-                                      : "Delete part"
-                                }
-                              >
-                                Delete
-                              </button>
-                            </td>
-                          </tr>
-                        </React.Fragment>
-                        );
-                      })
-                    )}
-                  </tbody>
-                  {partRows.length > 0 && (() => {
-                    const totals = partRows.reduce((acc, r) => {
-                      const qty = parseFloat(r.quantity) || 0;
-                      acc.qty += qty;
-                      acc.partPrice += (parseFloat(r.partPrice) || 0) * (qty || 1);
-                      acc.coreValue += parseFloat(r.coreValue) || 0;
-                      acc.shipCost += parseFloat(r.shipCost) || 0;
-                      acc.markup += parseFloat(r.markup) || 0;
-                      return acc;
-                    }, { qty: 0, partPrice: 0, coreValue: 0, shipCost: 0, markup: 0 });
-                    const grand = totals.partPrice + totals.coreValue + totals.shipCost + totals.markup;
-                    const money = (n: number) => `$${n.toFixed(2)}`;
-                    return (
-                      <tfoot>
-                        <tr className="bg-yellow-200 text-slate-900 font-semibold text-[11px]">
-                          <td className="px-2 py-1.5 uppercase tracking-wide" colSpan={8}>Total</td>
-                          <td className="px-2 py-1.5">{totals.qty}</td>
-                          <td className="px-2 py-1.5">{money(totals.partPrice)}</td>
-                          <td className="px-2 py-1.5">{money(totals.coreValue)}</td>
-                          <td className="px-2 py-1.5">{money(totals.shipCost)}</td>
-                          <td className="px-2 py-1.5">{money(totals.markup)}</td>
-                          <td className="px-2 py-1.5 text-right" colSpan={20}>
-                            <span className="mr-2 text-slate-700">Grand Total:</span>
-                            <span className="text-slate-900">{money(grand)}</span>
-                          </td>
-                        </tr>
-                      </tfoot>
-                    );
-                  })()}
-                </table>
-              </div>
-            </div>
-
             {/* Visit Log */}
             <div id="section-visit-log" className="scroll-mt-28">
-              <div className="mb-4 rounded-lg border border-amber-400/20 bg-amber-500/5 p-5">
-                <div className="text-sm font-semibold uppercase tracking-[0.16em] text-amber-300">
-                  Problem Description
-                </div>
-                <div className="mt-2 whitespace-pre-wrap text-base leading-relaxed text-slate-200">
-                  {ticket?.problemDescription?.trim() ||
-                    "No problem description on file for this work order."}
-                </div>
-              </div>
               <h4 className="font-semibold text-slate-300 mb-4">Visit Log</h4>
-              <div className="flex flex-wrap gap-6 text-sm">
+              <div className="space-y-4 text-sm">
                 <div>
                   <label className="text-slate-500 font-semibold">Phone</label>
                   <div className="text-white mt-1">{ticket?.homePhone || ticket?.cellPhone || "—"}</div>
                 </div>
-                <div className="min-w-[200px]">
-                  <div className="flex items-center justify-between gap-2">
-                    <label className="text-slate-500 font-semibold">Redo Ticket #</label>
-                    {!editingRedoTicket && (
-                      <button
-                        type="button"
-                        onClick={startEditingRedoTicket}
-                        className="rounded-md border border-blue-400/40 bg-blue-500/20 px-2 py-0.5 text-[11px] font-semibold text-blue-200 transition hover:bg-blue-500/30"
-                        title="Update the linked redo ticket number"
-                      >
-                        Edit
-                      </button>
-                    )}
-                  </div>
-                  {editingRedoTicket ? (
-                    <div className="mt-1 flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={redoTicketDraft}
-                        onChange={(e) => setRedoTicketDraft(e.target.value)}
-                        placeholder="e.g. 015789584139"
-                        className="flex-1 rounded-md border border-white/15 bg-slate-950 px-3 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                        autoFocus
-                      />
-                      <button
-                        type="button"
-                        onClick={() => void saveRedoTicket()}
-                        disabled={savingRedoTicket}
-                        className="rounded-md border border-emerald-400/40 bg-emerald-500/20 px-3 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/30 disabled:opacity-50"
-                      >
-                        {savingRedoTicket ? "Saving…" : "Save"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={cancelEditingRedoTicket}
-                        disabled={savingRedoTicket}
-                        className="rounded-md border border-white/15 bg-slate-950/90 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-slate-200/40 disabled:opacity-50"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="text-white mt-1">{ticket?.redoTicketNo?.trim() || "NONE"}</div>
-                  )}
+                <div>
+                  <label className="text-slate-500 font-semibold">Chat</label>
+                  <button className="text-blue-400 hover:text-blue-300 font-semibold">Open Chat</button>
                 </div>
                 <div>
-                  <label className="text-slate-500 font-semibold">Case Number</label>
-                  <div className="text-white mt-1">{ticket?.caseNumber?.trim() || "—"}</div>
+                  <label className="text-slate-500 font-semibold">Redo Ticket #</label>
+                  <div className="text-white mt-1">NONE</div>
                 </div>
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
                 <button type="button" onClick={openVisitCreateModal} className="rounded-md border border-blue-400/40 bg-blue-500/20 px-4 py-2 text-sm font-semibold text-blue-200 transition hover:bg-blue-500/30">
                   Add Visit
                 </button>
-                {/* NSA has no button here — its Communication log is
-                    read-only (no posting), so it would be fully redundant
-                    with the inline Customer Notes section below, which
-                    already shows the exact same data. SP's Running Notes
-                    modal stays since it's also where you post a new note. */}
-                {!isNsaTicket && (
-                  <button
-                    type="button"
-                    onClick={openRunningNotesModal}
-                    className="rounded-md border border-emerald-400/40 bg-emerald-500/20 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/30"
-                    title="View / post ServicePower Running Notes for this work order"
-                  >
-                    Running Notes
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={openRunningNotesModal}
+                  className="rounded-md border border-emerald-400/40 bg-emerald-500/20 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/30"
+                  title="View / post ServicePower Running Notes for this work order"
+                >
+                  Running Notes
+                </button>
               </div>
               <div className="mt-4 rounded-lg border border-white/10 bg-slate-900/50 p-4">
                 {visitFormMode === "view" ? (
@@ -7755,85 +5563,38 @@ function TicketDetailsPage() {
                           orderedIds.map((id, i) => [id, `V${i + 1}`])
                         );
 
-                        const latestVisitId = orderedIds[orderedIds.length - 1];
-
-                        return [...visitLogEntries].reverse().map((entry) => {
-                        // XOR against the default (latest = expanded, everything
-                        // else collapsed) — see visitExpandOverrides' declaration.
-                        const isExpanded = visitExpandOverrides.has(entry.id) !== (entry.id === latestVisitId);
-                        return (
+                        return [...visitLogEntries].reverse().map((entry) => (
                         <div key={entry.id} className="rounded-md border border-white/10 bg-slate-950/70 p-4 text-sm">
-                          <button
-                            type="button"
-                            onClick={() => toggleVisitExpanded(entry.id)}
-                            className="flex w-full flex-wrap items-start justify-between gap-2 text-left"
-                            aria-expanded={isExpanded}
-                          >
+                          <div className="flex flex-wrap items-start justify-between gap-2">
                             <div className="flex items-center gap-3">
-                              {/* Fixed inline colors, not Tailwind's theme-swept blue-*
-                                  classes — guarantees this stays readable in both dark
-                                  and light mode instead of depending on the light-mode
-                                  CSS overrides happening to land on good contrast. */}
-                              <div
-                                className="flex h-10 w-14 shrink-0 items-center justify-center rounded-md text-lg font-extrabold border-2"
-                                style={{ backgroundColor: "#2563eb", color: "#ffffff", borderColor: "#93c5fd" }}
-                              >
+                              <div className="flex h-8 w-12 items-center justify-center rounded-md bg-blue-500/20 text-xs font-bold text-blue-300 border border-blue-400/30">
                                 {visitLabelById.get(entry.id) ?? entry.visitNo}
                               </div>
                               <div>
-                                <div className="flex items-center gap-2">
-                                  <span className="font-semibold text-blue-300">{entry.actionType} / {entry.repairStatus || "No status"}</span>
-                                  {entry.locked ? (
-                                    <span title="A newer visit has superseded this one — locked from further edits." className="inline-flex items-center gap-1 rounded-full border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
-                                      <Lock className="h-2.5 w-2.5" /> Locked
-                                    </span>
-                                  ) : null}
-                                </div>
-                                <div className="text-xs text-slate-400">
-                                  {new Date(entry.timestamp).toLocaleString()}
-                                  {entry.updatedAt ? (
-                                    <span className="text-amber-300/80">
-                                      {" "}·{" "}
-                                      {entry.updatedBy
-                                        ? `Updated ${new Date(entry.updatedAt).toLocaleString()} by ${profileNameById[entry.updatedBy] || entry.updatedBy}`
-                                        : `Auto-rescheduled ${new Date(entry.updatedAt).toLocaleString()} (superseded by a newer visit)`}
-                                    </span>
-                                  ) : null}
-                                </div>
+                                <div className="font-semibold text-blue-300">{entry.actionType} / {entry.repairStatus || "No status"}</div>
+                                <div className="text-xs text-slate-400">{new Date(entry.timestamp).toLocaleString()}</div>
                               </div>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <div className="text-xs font-semibold text-slate-300">{entry.by}</div>
-                              <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
-                            </div>
-                          </button>
-                          {isExpanded && (
-                          <>
+                            <div className="text-xs font-semibold text-slate-300">{entry.by}</div>
+                          </div>
                           {entry.updatedAt ? (
-                            /* Schedule Information — the edited timestamp already shows at
-                               the top of the card, so this box just highlights the current
-                               schedule/tech/time slot instead of repeating it. */
-                            <div className="mt-2 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2">
-                              <div className="grid gap-2 text-sm md:grid-cols-3">
-                                <div><span className="font-semibold text-amber-200">Schedule:</span> <span className="font-semibold text-white">{entry.scheduleDate || "—"}</span></div>
-                                <div><span className="font-semibold text-amber-200">Technician:</span> <span className="font-semibold text-white">{entry.technician || "—"}</span></div>
-                                <div><span className="font-semibold text-amber-200">Time Slot:</span> <span className="font-semibold text-white">{entry.timeSlot || "—"}</span></div>
-                                {entry.secondTechnician ? (
-                                  <div><span className="font-semibold text-amber-200">2nd Technician:</span> <span className="font-semibold text-white">{entry.secondTechnician}</span></div>
-                                ) : null}
+                            <div className="mt-2 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs">
+                              <div className="font-semibold text-amber-200">
+                                Edited: {new Date(entry.updatedAt).toLocaleString()}
+                                {entry.updatedBy ? ` by ${entry.updatedBy}` : ""}
                               </div>
-                            </div>
-                          ) : (
-                            /* Schedule Information */
-                            <div className="mt-3 grid gap-2 text-xs text-slate-300 md:grid-cols-3">
-                              <div><span className="font-semibold text-slate-400">Schedule:</span> {entry.scheduleDate || "—"}</div>
-                              <div><span className="font-semibold text-slate-400">Technician:</span> {entry.technician || "—"}</div>
-                              <div><span className="font-semibold text-slate-400">Time Slot:</span> {entry.timeSlot || "—"}</div>
-                              {entry.secondTechnician ? (
-                                <div><span className="font-semibold text-slate-400">2nd Technician:</span> {entry.secondTechnician}</div>
+                              {entry.updateReason ? (
+                                <div className="mt-1 text-amber-100/90">{entry.updateReason}</div>
                               ) : null}
                             </div>
-                          )}
+                          ) : null}
+                          
+                          {/* Schedule Information */}
+                          <div className="mt-3 grid gap-2 text-xs text-slate-300 md:grid-cols-3">
+                            <div><span className="font-semibold text-slate-400">Schedule:</span> {entry.scheduleDate || "—"}</div>
+                            <div><span className="font-semibold text-slate-400">Technician:</span> {entry.technician || "—"}</div>
+                            <div><span className="font-semibold text-slate-400">Time Slot:</span> {entry.timeSlot || "—"}</div>
+                          </div>
 
                           {/* CSR Notes - Only show if has content */}
                           {(entry.schedNotes || entry.symptomCx) ? (
@@ -7849,7 +5610,7 @@ function TicketDetailsPage() {
                           ) : null}
 
                           {/* Tech Notes - Only show if has content */}
-                          {(entry.diagnosis || entry.resolution || entry.repairType || (usedPartsText && entry.id === visitLogEntries[0]?.id)) ? (
+                          {(entry.diagnosis || entry.resolution || entry.repairType) ? (
                             <div className="mt-3 rounded-md border border-green-500/20 bg-green-500/5 p-3 space-y-2">
                               <div className="text-xs font-semibold uppercase tracking-wider text-green-300">Technician Information</div>
                               {entry.repairType ? (
@@ -7859,10 +5620,7 @@ function TicketDetailsPage() {
                                 <p className="text-sm text-slate-200"><span className="font-semibold text-slate-400">Cause of Failure:</span> {entry.diagnosis}</p>
                               ) : null}
                               {entry.resolution ? (
-                                <p className="text-sm text-slate-200"><span className="font-semibold text-slate-400">Service Performed:</span> {entry.resolution}</p>
-                              ) : null}
-                              {usedPartsText && entry.id === visitLogEntries[0]?.id ? (
-                                <p className="text-sm text-slate-200 whitespace-pre-wrap"><span className="font-semibold text-slate-400">Parts Used:</span> {"\n"}{usedPartsText}</p>
+                                <p className="text-sm text-slate-200"><span className="font-semibold text-slate-400">Repair Notes:</span> {entry.resolution}</p>
                               ) : null}
                             </div>
                           ) : null}
@@ -7885,23 +5643,15 @@ function TicketDetailsPage() {
                             <button type="button" onClick={() => loadVisitForView(entry)} className="rounded-md border border-white/15 bg-slate-900/90 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-slate-200/40">
                               View
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => openVisitEditModal(entry)}
-                              title={entry.locked ? `Visit ${entry.visitNo} was superseded — Repair Status, Schedule Date, and Technician are locked, but everything else can still be edited.` : undefined}
-                              className="rounded-md border border-blue-400/40 bg-blue-500/15 px-3 py-1.5 text-xs font-semibold text-blue-200 transition hover:bg-blue-500/25"
-                            >
+                            <button type="button" onClick={() => openVisitEditModal(entry)} className="rounded-md border border-blue-400/40 bg-blue-500/15 px-3 py-1.5 text-xs font-semibold text-blue-200 transition hover:bg-blue-500/25">
                               Edit
                             </button>
                             <button type="button" onClick={() => deleteVisitLogEntry(entry.id)} className="rounded-md border border-rose-400/40 bg-rose-500/15 px-3 py-1.5 text-xs font-semibold text-rose-200 transition hover:bg-rose-500/25">
                               Delete
                             </button>
                           </div>
-                          </>
-                          )}
                         </div>
-                        );
-                      });
+                      ));
                       })()
                     )}
                   </div>
@@ -7936,29 +5686,14 @@ function TicketDetailsPage() {
                       ) : null}
                       <fieldset disabled={visitFormMode === "view"} className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                         <div className="space-y-1.5">
-                          <label htmlFor="visit-schedule-date-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-                            Schedule Date{editingLockedVisit ? <span className="ml-1.5 text-[10px] uppercase tracking-wide text-amber-400">Locked</span> : null}
-                          </label>
-                          <input id="visit-schedule-date-modal" type="date" disabled={editingLockedVisit} value={newVisitScheduleDate} onChange={(event) => setNewVisitScheduleDate(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed" />
+                          <label htmlFor="visit-schedule-date-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Schedule Date</label>
+                          <input id="visit-schedule-date-modal" type="date" value={newVisitScheduleDate} onChange={(event) => setNewVisitScheduleDate(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
                         </div>
                         <div className="space-y-1.5">
-                          <label htmlFor="visit-technician-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-                            Technician{editingLockedVisit ? <span className="ml-1.5 text-[10px] uppercase tracking-wide text-amber-400">Locked</span> : null}
-                          </label>
-                          <select id="visit-technician-modal" disabled={editingLockedVisit} value={newVisitTechnician} onChange={(event) => setNewVisitTechnician(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed">
+                          <label htmlFor="visit-technician-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Technician</label>
+                          <select id="visit-technician-modal" value={newVisitTechnician} onChange={(event) => setNewVisitTechnician(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
                             <option value="">— select —</option>
-                            {technicianOptions.map((technician) => (
-                              <option key={technician} value={technician}>{technician}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="space-y-1.5">
-                          <label htmlFor="visit-second-technician-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-                            2nd Technician{editingLockedVisit ? <span className="ml-1.5 text-[10px] uppercase tracking-wide text-amber-400">Locked</span> : null}
-                          </label>
-                          <select id="visit-second-technician-modal" disabled={editingLockedVisit} value={newVisitSecondTechnician} onChange={(event) => setNewVisitSecondTechnician(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed">
-                            <option value="">— none —</option>
-                            {technicianOptions.map((technician) => (
+                            {ALL_TECHNICIANS.map((technician) => (
                               <option key={technician} value={technician}>{technician}</option>
                             ))}
                           </select>
@@ -7992,21 +5727,17 @@ function TicketDetailsPage() {
                         <div className="space-y-1.5">
                           <label htmlFor="visit-repair-status-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
                             Repair Status <span className="text-rose-400">*</span>
-                            {editingLockedVisit ? <span className="ml-1.5 text-[10px] uppercase tracking-wide text-amber-400">Locked</span> : null}
                           </label>
                           <select
                             id="visit-repair-status-modal"
-                            disabled={editingLockedVisit}
                             value={newVisitRepairStatus}
                             onChange={(event) => setNewVisitRepairStatus(event.target.value)}
-                            className={`w-full rounded-md border bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed ${
+                            className={`w-full rounded-md border bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 ${
                               newVisitRepairStatus.trim() ? "border-white/15" : "border-rose-400/40"
                             }`}
                           >
                             <option value="">— select —</option>
-                            {/* Only BizOps Manager+ may move a ticket to CL-Cancelled — everyone
-                                else can still flag CL-Need Cancel and explain why in Internal Note. */}
-                            {canSetCancelled && <option>CL-Cancelled</option>}
+                            <option>CL-Cancelled</option>
                             <option>CL-Claimed</option>
                             <option>CL-Data-Closed</option>
                             <option>CL-Need Cancel</option>
@@ -8025,33 +5756,12 @@ function TicketDetailsPage() {
                             <option>TR-Need Triage</option>
                           </select>
                         </div>
-                        {newVisitRepairStatus === "CL-Cancelled" && canSetCancelled ? (
-                          <div className="space-y-1.5">
-                            <label htmlFor="visit-cancel-reason-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-                              Cancellation Reason <span className="text-rose-400">*</span>
-                            </label>
-                            <select
-                              id="visit-cancel-reason-modal"
-                              value={newVisitCancelReason}
-                              onChange={(event) => setNewVisitCancelReason(event.target.value)}
-                              className={`w-full rounded-md border bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 ${
-                                newVisitCancelReason.trim() ? "border-white/15" : "border-rose-400/40"
-                              }`}
-                            >
-                              <option value="">— select —</option>
-                              {CANCEL_REASONS.map((reason) => (
-                                <option key={reason} value={reason}>{reason}</option>
-                              ))}
-                            </select>
-                          </div>
-                        ) : null}
                         <div className="space-y-1.5">
                           <label htmlFor="visit-repair-type-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Repair Type (2nd Tech)</label>
                           <select id="visit-repair-type-modal" value={newVisitRepairType} onChange={(event) => setNewVisitRepairType(event.target.value)} className="w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
                             <option value="">— select —</option>
                             <option>2 Man Job</option>
                             <option>Back Tub</option>
-                            <option>Drum Replacement</option>
                             <option>Major Repair</option>
                             <option>Panel 60 Over</option>
                             <option>Panel 80 Over</option>
@@ -8076,11 +5786,8 @@ function TicketDetailsPage() {
                           <textarea id="visit-diagnosis-modal" value={newVisitDiagnosis} onChange={(event) => setNewVisitDiagnosis(event.target.value)} className={`min-h-18 w-full rounded-md border bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 ${requireTechVisitFields && !newVisitDiagnosis.trim() ? "border-rose-500/50" : "border-white/15"}`} />
                         </div>
                         <div className="space-y-1.5 xl:col-span-3">
-                          <label htmlFor="visit-resolution-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Service Performed (Tech){requireTechVisitFields ? <span className="text-rose-400"> *</span> : null}</label>
-                          <textarea id="visit-resolution-modal" rows={10} value={newVisitResolution} onChange={(event) => setNewVisitResolution(event.target.value)} onBlur={() => setNewVisitResolution((v) => composeServicePerformed(parseServicePerformed(v)))} className={`min-h-18 w-full rounded-md border bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 ${requireTechVisitFields && !parseServicePerformed(newVisitResolution).notes.trim() ? "border-rose-500/50" : "border-white/15"}`} />
-                          {usedPartsText && (!editingVisitId || editingVisitId === visitLogEntries[0]?.id) ? (
-                            <p className="mt-2 whitespace-pre-wrap text-xs text-slate-400"><span className="font-semibold">Parts Used (auto, from the Parts tab):</span> {"\n"}{usedPartsText}</p>
-                          ) : null}
+                          <label htmlFor="visit-resolution-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Repair Notes (Tech){requireTechVisitFields ? <span className="text-rose-400"> *</span> : null}</label>
+                          <textarea id="visit-resolution-modal" value={newVisitResolution} onChange={(event) => setNewVisitResolution(event.target.value)} className={`min-h-18 w-full rounded-md border bg-slate-950/90 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 ${requireTechVisitFields && !newVisitResolution.trim() ? "border-rose-500/50" : "border-white/15"}`} />
                         </div>
                         <div className="space-y-1.5 xl:col-span-3">
                           <label htmlFor="visit-non-completion-reason-modal" className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Non-Completion Reason</label>
@@ -8140,7 +5847,8 @@ function TicketDetailsPage() {
                     </div>
 
                     <div className="mt-3 rounded-md border border-amber-400/20 bg-amber-900/10 px-3 py-2 text-[11px] text-amber-200/90">
-                      ServicePower's Servicer Web Service only returns notes pushed through their public API. Status auto-events and notes typed by staff in SP HUB live in SP's internal application and aren't accessible from our integration.
+                      ServicePower's Servicer Web Service only returns notes pushed through their public API. Status auto-events
+                      and notes typed by staff in SP HUB live in SP's internal application and aren't accessible from our integration.
                     </div>
 
                     <div className="mt-4 space-y-3 max-h-[40vh] overflow-y-auto rounded-lg border border-white/10 bg-slate-950/40 p-3">
@@ -8265,10 +5973,7 @@ function TicketDetailsPage() {
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Visit Details</p>
                       <h3 className="text-xl font-bold text-white">{viewingVisitEntry.actionType} / {viewingVisitEntry.repairStatus || "No status"}</h3>
-                      <p className="mt-1 text-sm text-slate-400">
-                        {new Date(viewingVisitEntry.timestamp).toLocaleString()}
-                        {viewingVisitEntry.by ? ` by ${viewingVisitEntry.by}` : ""}
-                      </p>
+                      <p className="mt-1 text-sm text-slate-400">{new Date(viewingVisitEntry.timestamp).toLocaleString()} by {viewingVisitEntry.by}</p>
                     </div>
                     <button
                       type="button"
@@ -8282,9 +5987,8 @@ function TicketDetailsPage() {
                   {viewingVisitEntry.updatedAt ? (
                     <div className="mt-3 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-sm">
                       <div className="font-semibold text-amber-200">
-                        {viewingVisitEntry.updatedBy
-                          ? `Updated: ${new Date(viewingVisitEntry.updatedAt).toLocaleString()} by ${profileNameById[viewingVisitEntry.updatedBy] || viewingVisitEntry.updatedBy}`
-                          : `Auto-rescheduled: ${new Date(viewingVisitEntry.updatedAt).toLocaleString()} (superseded by a newer visit)`}
+                        Edited: {new Date(viewingVisitEntry.updatedAt).toLocaleString()}
+                        {viewingVisitEntry.updatedBy ? ` by ${viewingVisitEntry.updatedBy}` : ""}
                       </div>
                       {viewingVisitEntry.updateReason ? (
                         <div className="mt-1 text-amber-100/90">{viewingVisitEntry.updateReason}</div>
@@ -8299,9 +6003,6 @@ function TicketDetailsPage() {
                       <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Date:</span> {viewingVisitEntry.scheduleDate || "—"}</div>
                       <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Technician:</span> {viewingVisitEntry.technician || "—"}</div>
                       <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Time Slot:</span> {viewingVisitEntry.timeSlot || "—"}</div>
-                      {viewingVisitEntry.secondTechnician ? (
-                        <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">2nd Technician:</span> {viewingVisitEntry.secondTechnician}</div>
-                      ) : null}
                     </div>
                   </div>
 
@@ -8321,7 +6022,7 @@ function TicketDetailsPage() {
                   ) : null}
 
                   {/* Technician Information */}
-                  {(viewingVisitEntry.repairType || viewingVisitEntry.diagnosis || viewingVisitEntry.resolution || (usedPartsText && viewingVisitEntry.id === visitLogEntries[0]?.id)) ? (
+                  {(viewingVisitEntry.repairType || viewingVisitEntry.diagnosis || viewingVisitEntry.resolution) ? (
                     <div className="mt-4">
                       <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-green-300">Technician Information</div>
                       <div className="space-y-3 text-sm text-slate-200">
@@ -8332,10 +6033,7 @@ function TicketDetailsPage() {
                           <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Cause of Failure:</span> {viewingVisitEntry.diagnosis}</div>
                         ) : null}
                         {viewingVisitEntry.resolution ? (
-                          <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Service Performed:</span> {viewingVisitEntry.resolution}</div>
-                        ) : null}
-                        {usedPartsText && viewingVisitEntry.id === visitLogEntries[0]?.id ? (
-                          <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2 whitespace-pre-wrap"><span className="font-semibold text-slate-400">Parts Used:</span> {"\n"}{usedPartsText}</div>
+                          <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Repair Notes:</span> {viewingVisitEntry.resolution}</div>
                         ) : null}
                       </div>
                     </div>
@@ -8363,19 +6061,17 @@ function TicketDetailsPage() {
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
                       <div>
                         <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Change Log</div>
-                        <div className="text-sm text-slate-300">Changes to this visit</div>
+                        <div className="text-sm text-slate-300">Every tracked edit on this ticket</div>
                       </div>
-                      <div className="text-xs font-semibold text-blue-300">
-                        {visitChangeLogEntries.length} change{visitChangeLogEntries.length === 1 ? "" : "s"} logged
-                      </div>
+                      <div className="text-xs font-semibold text-blue-300">{auditCountLabel}</div>
                     </div>
                     <div className="mt-4 space-y-3">
-                      {visitChangeLogEntries.length === 0 ? (
+                      {auditEntries.length === 0 ? (
                         <div className="px-4 py-8 text-center text-slate-400">
                           No tracked changes yet.
                         </div>
                       ) : (
-                        visitChangeLogEntries.map((entry) => (
+                        auditEntries.map((entry) => (
                           <div key={entry.id} className="border border-white/10 rounded-lg bg-slate-900/30 hover:bg-slate-900/50 transition">
                             {/* Header Row */}
                             <div className="grid grid-cols-4 gap-3 px-4 py-3 border-b border-white/10 bg-blue-900/20">
@@ -8389,11 +6085,11 @@ function TicketDetailsPage() {
                               </div>
                               <div>
                                 <div className="text-xs text-blue-300 font-semibold mb-1">Action</div>
-                                <div className="text-sm text-slate-300">{formatAuditAction(entry.action)}</div>
+                                <div className="text-sm text-slate-300">{entry.action}</div>
                               </div>
                               <div>
                                 <div className="text-xs text-blue-300 font-semibold mb-1">Field</div>
-                                <div className="text-sm text-slate-300">{formatAuditField(entry.field)}</div>
+                                <div className="text-sm text-slate-300">{entry.field}</div>
                               </div>
                             </div>
                             
@@ -8416,6 +6112,342 @@ function TicketDetailsPage() {
                 </div>
               </div>
             ) : null}
+
+            {/* Part Transaction */}
+            <div id="section-part-transaction" className="scroll-mt-28">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                <div className="flex items-center gap-2">
+                  <h4 className="font-semibold text-slate-300">Part Transaction</h4>
+                  <div className="text-xs font-semibold text-blue-300">{partCountLabel}</div>
+                  {isTicketPartLocked ? (
+                    <span
+                      className={`ml-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                        partsEditDisabled
+                          ? "border-amber-400/40 bg-amber-500/15 text-amber-200"
+                          : "border-emerald-400/40 bg-emerald-500/15 text-emerald-200"
+                      }`}
+                      title={
+                        partsEditDisabled
+                          ? `Ticket is "${ticket?.status}". Only Claims can change parts.`
+                          : `Ticket is "${ticket?.status}". Claims-only edit window.`
+                      }
+                    >
+                      🔒 Locked — Claims only
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      if (partRows.length === 0) {
+                        alert('No parts to view');
+                        return;
+                      }
+                      setIsPartListModalOpen(true);
+                    }}
+                    className="rounded border border-blue-400/40 bg-blue-600/20 px-3 py-1.5 text-xs font-semibold text-blue-200 transition hover:bg-blue-600/30"
+                    title="View all parts"
+                  >
+                    View Log
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => void syncPartsFromNotes()}
+                    disabled={partsEditDisabled || syncingNotesParts}
+                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
+                      partsEditDisabled || syncingNotesParts
+                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
+                        : "border-purple-400/40 bg-purple-600/20 text-purple-200 hover:bg-purple-600/30"
+                    }`}
+                    title={
+                      partsEditDisabled
+                        ? "Locked: Parts / Claims / Manager roles only"
+                        : "Import parts the warranty company announced in SP customer notes (Squaretrade / Allstate). Adds Need-PO rows for new parts and overlays tracking numbers onto existing ones."
+                    }
+                  >
+                    {syncingNotesParts ? "Syncing…" : "Sync Parts from Notes"}
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={openTruckStockBatch}
+                    disabled={partsEditDisabled}
+                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
+                      partsEditDisabled
+                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
+                        : "border-emerald-400/40 bg-emerald-600/20 text-emerald-200 hover:bg-emerald-600/30"
+                    }`}
+                    title={partsEditDisabled ? "Locked: Parts / Claims / Manager roles only" : "Fulfill Need PO parts from in-house Truck Stock"}
+                  >
+                    Truck Stock
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={submitAllPOs}
+                    disabled={partsEditDisabled}
+                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
+                      partsEditDisabled
+                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
+                        : "border-green-400/40 bg-green-600/20 text-green-200 hover:bg-green-600/30"
+                    }`}
+                    title={partsEditDisabled ? "Locked: Parts / Claims / Manager roles only" : "Submit POs for parts that need ordering"}
+                  >
+                    Submit POs
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveAllRowEdits}
+                    disabled={partsEditDisabled || rowEditsSaving || dirtyRowCount === 0}
+                    className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
+                      partsEditDisabled || dirtyRowCount === 0
+                        ? "border-white/10 bg-slate-800 text-slate-500 cursor-not-allowed"
+                        : "border-blue-400/40 bg-blue-600/30 text-blue-200 hover:bg-blue-600/50"
+                    }`}
+                    title={
+                      partsEditDisabled
+                        ? "Locked: Parts / Claims / Manager roles only"
+                        : dirtyRowCount === 0
+                        ? "Edit any cell in a part row, then click Update to save"
+                        : `Save changes to ${dirtyRowCount} part row${dirtyRowCount === 1 ? "" : "s"}`
+                    }
+                  >
+                    {rowEditsSaving
+                      ? "Saving…"
+                      : dirtyRowCount > 0
+                      ? `Update (${dirtyRowCount})`
+                      : "Update"}
+                  </button>
+                  {/* Auto-sync indicator removed — Marcone order status
+                      is now manual-refresh only via the per-row Refresh
+                      button. */}
+                </div>
+              </div>
+              {partsEditDisabled ? (
+                <div className="mb-3 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                  This ticket is <span className="font-semibold">{ticket?.status}</span>. Part Transactions are locked.
+                  Only Parts / Claims / Admin / Manager / Branch Manager roles can edit them. Any attempt will alert Naveen, Ian, and Tina.
+                </div>
+              ) : null}
+
+              <div className="overflow-x-auto border border-white/10 rounded-lg">
+                <table className="w-full text-xs pt-compact" style={{ minWidth: "1180px" }}>
+                  {/* Two-row header */}
+                  <thead>
+                    <tr className="bg-slate-800 border-b border-white/10 text-slate-300">
+                      <th className="px-2 py-2 text-left font-semibold w-10" rowSpan={2}>ID</th>
+                      <th className="px-2 py-2 text-left font-semibold">Part No*</th>
+                      <th className="px-2 py-2 text-left font-semibold">Part Dist.*</th>
+                      <th className="px-2 py-2 text-left font-semibold">Part Description</th>
+                      <th className="px-2 py-2 text-left font-semibold">PO No</th>
+                      <th className="px-2 py-2 text-left font-semibold">P/O Date</th>
+                      <th className="px-2 py-2 text-left font-semibold">Invoice No</th>
+                      <th className="px-2 py-2 text-left font-semibold">Invoice Date</th>
+                      <th className="px-2 py-2 text-left font-semibold">Qty*</th>
+                      <th className="px-2 py-2 text-left font-semibold">Part Price</th>
+                      <th className="px-2 py-2 text-left font-semibold">Core Value</th>
+                      <th className="px-2 py-2 text-left font-semibold">Ship Cost</th>
+                      <th className="px-2 py-2 text-left font-semibold">Markup</th>
+                      <th className="px-2 py-2 text-left font-semibold">Claim To</th>
+                    </tr>
+                    <tr className="bg-slate-800/70 border-b border-white/10 text-slate-400">
+                      <th className="px-2 py-2 text-left font-semibold">Part Status*</th>
+                      <th className="px-2 py-2 text-left font-semibold">Note</th>
+                      <th className="px-2 py-2 text-left font-semibold">Visit ID*</th>
+                      <th className="px-2 py-2 text-left font-semibold">Order #</th>
+                      <th className="px-2 py-2 text-left font-semibold">ETA</th>
+                      <th className="px-2 py-2 text-left font-semibold">In Tracking #</th>
+                      <th className="px-2 py-2 text-left font-semibold">RA Date</th>
+                      <th className="px-2 py-2 text-left font-semibold">RA #</th>
+                      <th className="px-2 py-2 text-left font-semibold">Out Tracking #</th>
+                      <th className="px-2 py-2 text-left font-semibold">Credit #</th>
+                      <th className="px-2 py-2 text-left font-semibold">Total (Markup)</th>
+                      <th className="px-2 py-2 text-left font-semibold">Hold</th>
+                      <th className="px-2 py-2 text-left font-semibold">Cx Paid</th>
+                      <th className="px-2 py-2 text-left font-semibold">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {/* ── Add inline row (hidden while editing — the editor
+                          appears in-place at the row being edited so the
+                          page does not jump to the top) ── */}
+                    {editingPartId ? null : renderPartDraftRows()}
+
+                    {/* ── Saved rows — every cell is an editable input. The
+                          user types changes that buffer into rowEdits; the
+                          global Update button (next to Submit POs) flushes
+                          them to Supabase. There is no separate "edit
+                          mode" or Edit button anymore. ── */}
+                    {partRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={15} className="px-4 py-6 text-center text-slate-500">No parts recorded yet</td>
+                      </tr>
+                    ) : (
+                      partRows.map((row, index) => {
+                        const isDirty = !!rowEdits[row.id];
+                        const cellWrap = "px-1 py-1";
+                        const inputCls = "w-full rounded border border-white/10 bg-slate-950/80 px-2 py-1 text-white focus:outline-none focus:border-blue-500 disabled:opacity-50";
+                        const selectCls = inputCls;
+                        const val = <K extends keyof PartTransactionRow>(field: K) => getRowValue(row, field);
+                        const set = <K extends keyof PartTransactionRow>(field: K, v: PartTransactionRow[K]) =>
+                            updateRowField(row.id, field, v);
+                        return (
+                        <React.Fragment key={row.id}>
+                          <tr className={`align-top transition-colors ${isDirty ? "bg-blue-500/10" : "bg-slate-900/30"}`}>
+                            <td className="px-2 py-1.5 text-slate-400 font-semibold w-10" rowSpan={2}>
+                              P{index + 1}
+                              {isDirty ? (
+                                <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-blue-400" title="Unsaved changes — click Update to save" />
+                              ) : null}
+                            </td>
+                            <td className={cellWrap}><input value={String(val("partNo") ?? "")} onChange={(e) => set("partNo", e.target.value)} disabled={partsEditDisabled} className={`${inputCls} text-blue-300 font-semibold`} placeholder="Part No*" /></td>
+                            <td className={cellWrap}>
+                              <select value={String(val("partDist") ?? "")} onChange={(e) => set("partDist", e.target.value)} disabled={partsEditDisabled} className={selectCls}>
+                                <option value="">Dist.*</option>
+                                {String(val("partDist") ?? "").startsWith("In-House (") ? <option value={String(val("partDist"))}>{String(val("partDist"))}</option> : null}
+                                <option>AIG</option>
+                                <option>Electrolux</option>
+                                <option>Encompass</option>
+                                <option>Encompass-Birmingham / Montgomery</option>
+                                <option>GE</option>
+                                <option>LG</option>
+                                <option>Marcone- Birmingham / Montgomery</option>
+                                <option>Marcone-162468</option>
+                                <option>Midea</option>
+                                <option>Miele</option>
+                                <option>NSA</option>
+                                <option>OW</option>
+                                <option>SB</option>
+                                <option>Sharp</option>
+                                <option>SP</option>
+                                <option>Squaretrade</option>
+                                <option>SS</option>
+                              </select>
+                            </td>
+                            <td className={cellWrap}><input value={String(val("partDesc") ?? "")} onChange={(e) => set("partDesc", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Description" /></td>
+                            <td className={cellWrap}><input value={String(val("poNo") ?? "")} onChange={(e) => set("poNo", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="PO No" /></td>
+                            <td className={cellWrap}><input type="date" value={String(val("poDate") ?? "")} onChange={(e) => set("poDate", e.target.value)} disabled={partsEditDisabled} className={inputCls} /></td>
+                            <td className={cellWrap}><input value={String(val("invoiceNo") ?? "")} onChange={(e) => set("invoiceNo", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Invoice No" /></td>
+                            <td className={cellWrap}><input type="date" value={String(val("invoiceDate") ?? "")} onChange={(e) => set("invoiceDate", e.target.value)} disabled={partsEditDisabled} className={inputCls} /></td>
+                            <td className={cellWrap}><input value={String(val("quantity") ?? "")} onChange={(e) => set("quantity", e.target.value)} disabled={partsEditDisabled} className={`${inputCls} w-16`} placeholder="Qty*" /></td>
+                            <td className={cellWrap}><input value={String(val("partPrice") ?? "")} onChange={(e) => set("partPrice", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="$0.00" /></td>
+                            <td className={cellWrap}><input value={String(val("coreValue") ?? "")} onChange={(e) => set("coreValue", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="$0.00" /></td>
+                            <td className={cellWrap}><input value={String(val("shipCost") ?? "")} onChange={(e) => set("shipCost", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="$0.00" /></td>
+                            <td className={cellWrap}>
+                              <select value={String(val("markup") ?? "0")} onChange={(e) => set("markup", e.target.value)} disabled={partsEditDisabled} className={selectCls}>
+                                {Array.from({ length: 21 }, (_, i) => i * 5).map((v) => (
+                                  <option key={v} value={String(v)}>{v}%</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className={cellWrap}><input value={String(val("claimTo") ?? "")} onChange={(e) => set("claimTo", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Claim To" /></td>
+                          </tr>
+                          <tr className={`align-top border-b border-white/5 ${isDirty ? "bg-blue-500/5" : "bg-slate-900/20"}`}>
+                            <td className={cellWrap}>
+                              <select value={String(val("status") ?? "")} onChange={(e) => set("status", e.target.value)} disabled={partsEditDisabled} className={`${selectCls} text-blue-300 font-semibold`}>
+                                <option value="">Status*</option>
+                                <option>Back Order</option>
+                                <option>Cancelled</option>
+                                <option>Claimed</option>
+                                <option>CX Home</option>
+                                <option>Cx Received</option>
+                                <option>Defective</option>
+                                <option>Hold for Estimation</option>
+                                <option>Hold for next vist</option>
+                                <option>Lost</option>
+                                <option>Need PO</option>
+                                <option>Not Used &amp; Stocked</option>
+                                <option>PAID</option>
+                                <option>Part Ready</option>
+                                <option>PO Made</option>
+                                <option>RA - Defect</option>
+                                <option>RA- DMG</option>
+                                <option>RA - PNN</option>
+                                <option>RA - Qty Discrepancy</option>
+                                <option>SQT Received</option>
+                                <option>Tech Pickup</option>
+                                <option>Used</option>
+                              </select>
+                            </td>
+                            <td className={cellWrap}><input value={String(val("note") ?? "")} onChange={(e) => set("note", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Note" /></td>
+                            <td className={cellWrap}><input value={String(val("visitId") ?? "")} onChange={(e) => set("visitId", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Visit ID*" /></td>
+                            <td className={cellWrap}><input value={String(val("orderNo") ?? "")} onChange={(e) => set("orderNo", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Order #" /></td>
+                            <td className={cellWrap}><input type="date" value={String(val("eta") ?? "")} onChange={(e) => set("eta", e.target.value)} disabled={partsEditDisabled} className={inputCls} /></td>
+                            <td className={cellWrap}><input value={String(val("inTracking") ?? "")} onChange={(e) => set("inTracking", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="In Track #" /></td>
+                            <td className={cellWrap}><input type="date" value={String(val("raDate") ?? "")} onChange={(e) => set("raDate", e.target.value)} disabled={partsEditDisabled} className={inputCls} /></td>
+                            <td className={cellWrap}><input value={String(val("raNo") ?? "")} onChange={(e) => set("raNo", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="RA #" /></td>
+                            <td className={cellWrap}><input value={String(val("outTracking") ?? "")} onChange={(e) => set("outTracking", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Out Track #" /></td>
+                            <td className={cellWrap}><input value={String(val("creditNo") ?? "")} onChange={(e) => set("creditNo", e.target.value)} disabled={partsEditDisabled} className={inputCls} placeholder="Credit #" /></td>
+                            <td className="px-2 py-1.5 text-slate-300">{val("totalMarkup") ? `$${val("totalMarkup")}` : "—"}</td>
+                            <td className={cellWrap}>
+                              <input type="checkbox" checked={val("hold") === "Hold"} onChange={(e) => set("hold", e.target.checked ? "Hold" : "No")} disabled={partsEditDisabled} className="accent-blue-500" />
+                            </td>
+                            <td className={cellWrap}>
+                              <input type="checkbox" checked={val("cxPaid") === "Paid"} onChange={(e) => set("cxPaid", e.target.checked ? "Paid" : "No")} disabled={partsEditDisabled} className="accent-blue-500" />
+                            </td>
+                            <td className="px-2 py-1.5 whitespace-nowrap">
+                              {row.orderNo && isMarconeDist(row.partDist) ? (
+                                <button
+                                  type="button"
+                                  onClick={() => refreshMarconeOrderStatus(row)}
+                                  disabled={marconeRefreshingId === row.id}
+                                  className="rounded border border-amber-400/40 bg-amber-500/15 px-2 py-1 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 mr-1 disabled:opacity-40"
+                                  title={`Pull ETA / invoice / tracking from Marcone for order ${row.orderNo}`}
+                                >
+                                  {marconeRefreshingId === row.id ? "…" : "Refresh"}
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => deletePartRow(row.id)}
+                                disabled={partsEditDisabled}
+                                className={`rounded border px-2 py-1 text-xs font-semibold transition ${
+                                  partsEditDisabled
+                                    ? "border-white/10 bg-slate-900 text-slate-500 cursor-not-allowed"
+                                    : "border-rose-400/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
+                                }`}
+                                title={partsEditDisabled ? "Locked: Parts / Claims / Manager roles only" : "Delete part"}
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        </React.Fragment>
+                        );
+                      })
+                    )}
+                  </tbody>
+                  {partRows.length > 0 && (() => {
+                    const totals = partRows.reduce((acc, r) => {
+                      const qty = parseFloat(r.quantity) || 0;
+                      acc.qty += qty;
+                      acc.partPrice += (parseFloat(r.partPrice) || 0) * (qty || 1);
+                      acc.coreValue += parseFloat(r.coreValue) || 0;
+                      acc.shipCost += parseFloat(r.shipCost) || 0;
+                      acc.markup += parseFloat(r.markup) || 0;
+                      return acc;
+                    }, { qty: 0, partPrice: 0, coreValue: 0, shipCost: 0, markup: 0 });
+                    const grand = totals.partPrice + totals.coreValue + totals.shipCost + totals.markup;
+                    const money = (n: number) => `$${n.toFixed(2)}`;
+                    return (
+                      <tfoot>
+                        <tr className="bg-yellow-200 text-slate-900 font-semibold text-[11px]">
+                          <td className="px-2 py-1.5 uppercase tracking-wide" colSpan={8}>Total</td>
+                          <td className="px-2 py-1.5">{totals.qty}</td>
+                          <td className="px-2 py-1.5">{money(totals.partPrice)}</td>
+                          <td className="px-2 py-1.5">{money(totals.coreValue)}</td>
+                          <td className="px-2 py-1.5">{money(totals.shipCost)}</td>
+                          <td className="px-2 py-1.5">{money(totals.markup)}</td>
+                          <td className="px-2 py-1.5 text-right" colSpan={20}>
+                            <span className="mr-2 text-slate-700">Grand Total:</span>
+                            <span className="text-slate-900">{money(grand)}</span>
+                          </td>
+                        </tr>
+                      </tfoot>
+                    );
+                  })()}
+                </table>
+              </div>
+            </div>
             {canSeeClaimTransaction && (
             <div id="section-claim-transaction" className="scroll-mt-28">
               <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
@@ -8429,7 +6461,7 @@ function TicketDetailsPage() {
                     </span>
                   ) : null}
                   {officeDistanceMiles != null ? (
-                    <span className="rounded-md bg-emerald-700/30 border border-emerald-500/40 px-2.5 py-1 text-sm font-bold text-emerald-200">
+                    <span className="rounded-md bg-emerald-700/30 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-semibold text-emerald-200">
                       {officeDistanceMiles.toFixed(1)} mi
                     </span>
                   ) : null}
@@ -8906,9 +6938,14 @@ function TicketDetailsPage() {
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex-1">
                                 <div className="flex items-center gap-2 mb-2">
-                                  <h4 className={`text-base font-semibold ${part.status ? partStatusTextClass(part.status) : "text-white"}`}>{part.partNo}</h4>
+                                  <h4 className="text-base font-semibold text-white">{part.partNo}</h4>
                                   {part.status ? (
-                                    <span className="rounded border border-white/15 bg-white/5 px-2 py-0.5 text-xs font-semibold text-slate-300">
+                                    <span className={`rounded px-2 py-0.5 text-xs font-semibold ${
+                                      part.status === 'PO Made' ? 'bg-green-500/20 text-green-300' :
+                                      part.status === 'Need PO' ? 'bg-amber-500/20 text-amber-300' :
+                                      part.status === 'Tech Pickup' ? 'bg-blue-500/20 text-blue-300' :
+                                      'bg-slate-500/20 text-slate-300'
+                                    }`}>
                                       {part.status}
                                     </span>
                                   ) : null}
@@ -8943,62 +6980,6 @@ function TicketDetailsPage() {
                       ))
                     )}
                   </div>
-
-                  {/* Deleted parts — same audit trail deletePartRow already
-                      writes on every delete, just surfaced here so a removed
-                      part (and who removed it) doesn't just vanish. */}
-                  {deletedPartAuditEntries.length > 0 && (
-                    <div className="mt-6 border-t border-white/10 pt-4">
-                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-                        Deleted Parts
-                      </p>
-                      <p className="text-sm text-slate-400 mt-1 mb-3">
-                        {deletedPartAuditEntries.length} deleted part{deletedPartAuditEntries.length === 1 ? '' : 's'}
-                      </p>
-                      <div className="space-y-3">
-                        {deletedPartAuditEntries.map((entry) => {
-                          const expanded = expandedDeletedPartLogId === entry.id;
-                          const partNo = snapshotField(entry.before, "Part No") || "(no part #)";
-                          const partDesc = snapshotField(entry.before, "Part Desc");
-                          return (
-                            <div key={entry.id} className="border border-red-500/20 rounded-lg bg-red-950/10">
-                              <div className="px-4 py-3">
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="flex-1">
-                                    <div className="flex items-center gap-2 mb-1">
-                                      <h4 className="text-base font-semibold text-slate-400 line-through decoration-2">{partNo}</h4>
-                                      <span className="rounded border border-red-400/30 bg-red-500/10 px-2 py-0.5 text-xs font-semibold text-red-300">
-                                        Deleted
-                                      </span>
-                                    </div>
-                                    {partDesc ? <div className="text-sm text-slate-400 mb-1">{partDesc}</div> : null}
-                                    <div className="text-xs text-slate-500">
-                                      Deleted by <span className="text-slate-300">{entry.by}</span> on {new Date(entry.timestamp).toLocaleString()}
-                                    </div>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    className="rounded border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:bg-white/10"
-                                    onClick={() => setExpandedDeletedPartLogId(expanded ? null : entry.id)}
-                                  >
-                                    {expanded ? "Hide Snapshot" : "View Snapshot"}
-                                  </button>
-                                </div>
-                                {expanded && (
-                                  <div className="mt-3 border-t border-white/10 pt-3">
-                                    <div className="text-xs text-slate-400 font-semibold mb-2">
-                                      Full record at time of deletion
-                                    </div>
-                                    {renderVisitSummary(entry.before)}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
             ) : null}
@@ -9010,18 +6991,7 @@ function TicketDetailsPage() {
                   <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-4">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Part Details</p>
-                      <h3 className="flex items-center gap-2 text-xl font-bold">
-                        <span className={viewingPartEntry.status ? partStatusTextClass(viewingPartEntry.status) : "text-white"}>
-                          {viewingPartEntry.partNo}
-                        </span>
-                        {viewingPartEntry.status ? (
-                          <span className="rounded border border-white/15 bg-white/5 px-2 py-0.5 text-xs font-semibold text-slate-300">
-                            {viewingPartEntry.status}
-                          </span>
-                        ) : (
-                          <span className="text-sm font-normal text-slate-400">No status</span>
-                        )}
-                      </h3>
+                      <h3 className="text-xl font-bold text-white">{viewingPartEntry.partNo} — {viewingPartEntry.status || "No status"}</h3>
                       <p className="text-sm text-slate-400 mt-1">Added {new Date(viewingPartEntry.id).toLocaleString()} by {viewingPartEntry.createdBy}</p>
                     </div>
                     <button
@@ -9037,12 +7007,7 @@ function TicketDetailsPage() {
                   <div className="mt-4">
                     <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Part Information</div>
                     <div className="grid gap-3 md:grid-cols-3 text-sm text-slate-200">
-                      <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2">
-                        <span className="font-semibold text-slate-400">Part No:</span>{" "}
-                        <span className={viewingPartEntry.status ? `font-semibold ${partStatusTextClass(viewingPartEntry.status)}` : undefined}>
-                          {viewingPartEntry.partNo || "—"}
-                        </span>
-                      </div>
+                      <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Part No:</span> {viewingPartEntry.partNo || "—"}</div>
                       <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Distributor:</span> {viewingPartEntry.partDist || "—"}</div>
                       <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Description:</span> {viewingPartEntry.partDesc || "—"}</div>
                       <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2"><span className="font-semibold text-slate-400">Status:</span> {viewingPartEntry.status || "—"}</div>
@@ -9216,37 +7181,243 @@ function TicketDetailsPage() {
                   value={newAlertMessage}
                   onChange={(e) => setNewAlertMessage(e.target.value)}
                 />
-                <button
+                <button 
                   onClick={addAlertMessage}
                   className="bg-amber-600 hover:bg-amber-700 text-white font-semibold py-2 px-4 rounded text-sm transition"
                 >
                   Add
                 </button>
               </div>
-              <div className="flex items-center gap-5 mt-3">
-                <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={newAlertShowInternal}
-                    onChange={(e) => setNewAlertShowInternal(e.target.checked)}
-                    className="accent-amber-500"
-                  />
-                  Show internally (top of this ticket page)
-                </label>
-                <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={newAlertMobilePopup}
-                    onChange={(e) => setNewAlertMobilePopup(e.target.checked)}
-                    className="accent-amber-500"
-                  />
-                  Send as popup to technician on mobile
-                </label>
-              </div>
             </div>
           </div>
         )}
 
+        {activeTab === "compensation" && (
+          <div className="space-y-6">
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                <div>
+                  <label className="block text-slate-500 font-semibold mb-2">Default Date:</label>
+                  <div className="text-white bg-slate-950/70 border border-white/10 rounded px-3 py-2">05/29/2026</div>
+                </div>
+                <div>
+                  <label className="block text-slate-500 font-semibold mb-2">Schedule Date</label>
+                  <div className="text-white bg-slate-950/70 border border-white/10 rounded px-3 py-2">Today</div>
+                </div>
+                <div className="flex items-end">
+                  <button
+                    onClick={addCompensationRow}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded text-sm transition"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto border border-white/10 rounded-lg">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-blue-900/50 border-b border-blue-500/30">
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Compensation Item</th>
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Beneficiary</th>
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Amount</th>
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Rate</th>
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Activity Date</th>
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Requires Approved Claim / Requires Cx Payment</th>
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Comment</th>
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Created by</th>
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Last Modified by</th>
+                    <th className="px-4 py-3 text-left font-semibold text-blue-300">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {compensationRows.map((row) => (
+                    <tr key={row.id} className="border-b border-white/5 align-top hover:bg-white/5">
+                      <td className="px-4 py-3">
+                        <input
+                          value={row.item}
+                          onChange={(e) => updateCompensationRow(row.id, "item", e.target.value)}
+                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                          placeholder="Compensation item"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <select
+                          value={row.beneficiary}
+                          onChange={(e) => updateCompensationRow(row.id, "beneficiary", e.target.value)}
+                          title="Select technician"
+                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="">Select technician</option>
+                          {ALL_TECHNICIANS.map((technician) => (
+                            <option key={technician} value={technician}>
+                              {technician}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          value={row.amount}
+                          onChange={(e) => updateCompensationRow(row.id, "amount", e.target.value)}
+                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                          placeholder="Amount"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          value={row.rate}
+                          onChange={(e) => updateCompensationRow(row.id, "rate", e.target.value)}
+                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                          placeholder="Rate"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          value={row.activityDate}
+                          onChange={(e) => updateCompensationRow(row.id, "activityDate", e.target.value)}
+                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                          placeholder="Activity date"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          value={row.requiresClaimOrCxPayment}
+                          onChange={(e) => updateCompensationRow(row.id, "requiresClaimOrCxPayment", e.target.value)}
+                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                          placeholder="Yes / No"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          value={row.comment}
+                          onChange={(e) => updateCompensationRow(row.id, "comment", e.target.value)}
+                          className="w-full bg-slate-900 border border-white/10 rounded px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                          placeholder="Comment"
+                        />
+                      </td>
+                      <td className="px-4 py-3 text-slate-300">{row.createdBy}</td>
+                      <td className="px-4 py-3 text-slate-300">{row.lastModifiedBy}</td>
+                      <td className="px-4 py-3 text-slate-300">
+                        <button className="text-blue-400 hover:text-blue-300 font-semibold">Edit</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "billing" && (
+          <div className="space-y-6">
+            <div className="rounded-xl border border-white/15 bg-white/8 p-5 text-white backdrop-blur-md">
+              <div className="text-lg font-semibold text-blue-200">Billing Information</div>
+              <div className="mt-3 rounded-md border border-white/10 bg-slate-900/90 px-3 py-2 text-sm font-semibold text-white">Paid in full</div>
+              <div className="mt-2 text-sm font-semibold text-blue-200/90">0 distinct record found</div>
+              <div className="mt-4 max-w-sm">
+                <label htmlFor="billing-search" className="block text-xs font-semibold uppercase tracking-[0.04em] text-slate-400">search in result</label>
+                <input
+                  id="billing-search"
+                  type="text"
+                  readOnly
+                  value=""
+                  className="mt-2 w-full rounded-md border border-white/15 bg-slate-900/90 px-3 py-2 text-sm text-white focus:outline-none"
+                />
+              </div>
+              <div className="mt-4 overflow-x-auto rounded-lg border border-white/10">
+                <table className="w-full min-w-[1400px] text-left text-sm">
+                  <thead>
+                    <tr className="bg-blue-900/50 text-blue-200">
+                      <th className="px-4 py-3">ID</th>
+                      <th className="px-4 py-3">Visit ID*</th>
+                      <th className="px-4 py-3">Cx Email</th>
+                      <th className="px-4 py-3">Cx Name*</th>
+                      <th className="px-4 py-3">Labor Fee*</th>
+                      <th className="px-4 py-3">Part Fee*</th>
+                      <th className="px-4 py-3">Diag(Trip) Fee*</th>
+                      <th className="px-4 py-3">Others Fee*</th>
+                      <th className="px-4 py-3">Tax Rate*</th>
+                      <th className="px-4 py-3">Tax</th>
+                      <th className="px-4 py-3">Deduction</th>
+                      <th className="px-4 py-3">Total</th>
+                      <th className="px-4 py-3">Payment*</th>
+                      <th className="px-4 py-3">C. Card #</th>
+                      <th className="px-4 py-3">App. Code</th>
+                      <th className="px-4 py-3">Sign</th>
+                      <th className="px-4 py-3">Comment</th>
+                      <th className="px-4 py-3">Tx Date</th>
+                      <th className="px-4 py-3">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/10">
+                    <tr className="bg-slate-900/70 text-slate-200">
+                      <td className="px-4 py-3"></td>
+                      <td className="px-4 py-3">V1</td>
+                      <td className="px-4 py-3">jonshaw@lakesidechurch.ws</td>
+                      <td className="px-4 py-3">Jon Shaw</td>
+                      <td className="px-4 py-3">Tax</td>
+                      <td className="px-4 py-3">Tax</td>
+                      <td className="px-4 py-3">Tax</td>
+                      <td className="px-4 py-3">Tax</td>
+                      <td className="px-4 py-3">%</td>
+                      <td className="px-4 py-3">$0.00</td>
+                      <td className="px-4 py-3">0.00</td>
+                      <td className="px-4 py-3"></td>
+                      <td className="px-4 py-3"></td>
+                      <td className="px-4 py-3"></td>
+                      <td className="px-4 py-3"></td>
+                      <td className="px-4 py-3"></td>
+                      <td className="px-4 py-3"></td>
+                      <td className="px-4 py-3">05/14/2026</td>
+                      <td className="px-4 py-3 text-blue-300 font-semibold">Add</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-white/15 bg-white/8 p-5 text-white backdrop-blur-md">
+              <div className="text-lg font-semibold text-blue-200">Estimations</div>
+              <div className="mt-4 overflow-x-auto rounded-lg border border-white/10">
+                <table className="w-full min-w-[1100px] text-left text-sm">
+                  <thead>
+                    <tr className="bg-blue-900/50 text-blue-200">
+                      <th className="px-4 py-3">ID</th>
+                      <th className="px-4 py-3">Estimated</th>
+                      <th className="px-4 py-3">Type</th>
+                      <th className="px-4 py-3">Labor Fee</th>
+                      <th className="px-4 py-3">Part Fee</th>
+                      <th className="px-4 py-3">Diagnose Fee</th>
+                      <th className="px-4 py-3">Others Fee</th>
+                      <th className="px-4 py-3">Tax Rate (%)</th>
+                      <th className="px-4 py-3">Tax Fee</th>
+                      <th className="px-4 py-3">Deduction</th>
+                      <th className="px-4 py-3">Refund</th>
+                      <th className="px-4 py-3">Total</th>
+                      <th className="px-4 py-3">Confirmed</th>
+                      <th className="px-4 py-3">Created by</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/10">
+                    <tr className="bg-slate-900/70 text-slate-200">
+                      <td className="px-4 py-3" colSpan={14}></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button className="rounded-md border border-white/15 bg-slate-900/90 px-4 py-2 text-sm font-semibold text-white transition hover:border-slate-200/40">
+                  Close
+                </button>
+                <button className="rounded-md border border-white/15 bg-slate-900/90 px-4 py-2 text-sm font-semibold text-white transition hover:border-slate-200/40">
+                  List
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         </div>
       </main>
 
@@ -9329,15 +7500,14 @@ function TicketDetailsPage() {
         </div>
       ) : null}
 
-      {/* Per-model resource link editor (Exploded View / Service Bulletin /
-          Tech Data Sheet) — each can hold multiple links. */}
+      {/* Per-model resource link editor (Exploded View / Service Bulletin) */}
       {modelResourceModal ? (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl border border-white/15 bg-slate-900 p-5 text-white shadow-2xl">
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-200">
-                  {modelResourceModal.kind === "exploded" ? "Exploded View links" : modelResourceModal.kind === "bulletin" ? "Service Bulletin links" : "Tech Data Sheet links"}
+                  {modelResourceModal.kind === "exploded" ? "Exploded View link" : "Service Bulletin link"}
                 </h3>
                 <p className="mt-0.5 text-[11px] text-slate-400">
                   Shared with every ticket using model{" "}
@@ -9353,206 +7523,47 @@ function TicketDetailsPage() {
               </button>
             </div>
 
-            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">URLs</label>
-            <div className="mt-1 space-y-2 max-h-64 overflow-y-auto pr-1">
-              {modelResourceModal.values.map((v, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <input
-                    type="url"
-                    value={v}
-                    onChange={(e) => {
-                      const next = [...modelResourceModal.values];
-                      next[i] = e.target.value;
-                      setModelResourceModal({ ...modelResourceModal, values: next });
-                    }}
-                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleSaveModelResource(); } }}
-                    placeholder="https://…"
-                    autoFocus={i === 0}
-                    className="flex-1 rounded border border-white/15 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-400"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const next = modelResourceModal.values.filter((_, idx) => idx !== i);
-                      setModelResourceModal({ ...modelResourceModal, values: next.length ? next : [""] });
-                    }}
-                    className="shrink-0 rounded border border-white/15 bg-slate-950 p-2 text-slate-400 hover:text-rose-300 hover:border-rose-400/40"
-                    title="Remove this link"
-                    aria-label="Remove this link"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={() => setModelResourceModal({ ...modelResourceModal, values: [...modelResourceModal.values, ""] })}
-              className="mt-2 text-xs font-semibold text-blue-300 hover:text-blue-200"
-            >
-              + Add another link
-            </button>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">URL</label>
+            <input
+              type="url"
+              value={modelResourceModal.value}
+              onChange={(e) => setModelResourceModal({ ...modelResourceModal, value: e.target.value })}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleSaveModelResource(); } }}
+              placeholder="https://…"
+              autoFocus
+              className="mt-1 w-full rounded border border-white/15 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-400"
+            />
 
-            <div className="mt-4 flex items-center justify-end gap-2">
+            <div className="mt-4 flex items-center justify-between gap-2">
               <button
                 type="button"
-                onClick={() => setModelResourceModal(null)}
-                className="rounded-lg border border-white/15 bg-slate-950 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:border-slate-200/40"
+                onClick={() => setModelResourceModal({ ...modelResourceModal, value: "" })}
+                className="text-xs text-slate-400 hover:text-rose-300"
+                title="Clear the saved link"
               >
-                Cancel
+                Clear link
               </button>
-              <button
-                type="button"
-                onClick={handleSaveModelResource}
-                disabled={modelResourceSaving || !ticket?.model}
-                className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
-              >
-                {modelResourceSaving ? "Saving…" : "Save"}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setModelResourceModal(null)}
+                  className="rounded-lg border border-white/15 bg-slate-950 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:border-slate-200/40"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveModelResource}
+                  disabled={modelResourceSaving || !ticket?.model}
+                  className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
+                >
+                  {modelResourceSaving ? "Saving…" : "Save"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
       ) : null}
-
-      {/* Part Transaction row "Send" — a drop-ship request email, previewed
-          and edited here before it actually goes out via the company's
-          connected Gmail account. */}
-      {dropshipRows.length > 0 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={closeDropshipModal}>
-          <div className="w-full max-w-lg rounded-lg border border-white/10 bg-slate-900 p-6" onClick={(e) => e.stopPropagation()}>
-            <h3 className="mb-1 text-lg font-bold text-white">Send Drop-Ship Request</h3>
-            <p className="mb-4 text-xs text-slate-400">
-              PO# {dropshipRows[0].poNo || "N/A"}
-              {dropshipRows.length > 1
-                ? ` · ${dropshipRows.length} parts`
-                : ` · Part# ${dropshipRows[0].partNo || "N/A"}`}
-            </p>
-
-            {dropshipSent ? (
-              <>
-                <p className="mb-4 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-sm text-emerald-300">
-                  Sent to {dropshipTo}{dropshipCc.length > 0 ? ` (cc: ${dropshipCc.join(", ")})` : ""}.
-                </p>
-                {dropshipRecentError && (
-                  <p className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-300">
-                    {dropshipRecentError}
-                  </p>
-                )}
-                <div className="flex justify-end">
-                  <button type="button" onClick={closeDropshipModal} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500">
-                    Done
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Recipient</label>
-                    <input
-                      type="email"
-                      value={dropshipTo}
-                      onChange={(e) => setDropshipTo(e.target.value)}
-                      placeholder="distributor@example.com"
-                      className="mt-1 w-full rounded-md border border-white/15 bg-slate-950 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
-                    />
-                    {dropshipRecent.length > 0 && (
-                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                        <span className="text-[10px] text-slate-500">Recent:</span>
-                        {dropshipRecent.map((entry) => (
-                          <button
-                            key={entry.toEmail}
-                            type="button"
-                            onClick={() => applyDropshipRecent(entry)}
-                            className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-slate-300 hover:border-blue-400/40 hover:text-white"
-                            title={entry.ccEmails.length > 0 ? `CC: ${entry.ccEmails.join(", ")}` : "No CC saved"}
-                          >
-                            {entry.toEmail}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {dropshipRecentError && (
-                      <p className="mt-1 text-[11px] text-amber-400">{dropshipRecentError}</p>
-                    )}
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">CC (optional)</label>
-                    <div className="mt-1 flex w-full flex-wrap items-center gap-1.5 rounded-md border border-white/15 bg-slate-950 px-2 py-1.5 focus-within:border-blue-500">
-                      {dropshipCc.map((email) => (
-                        <span key={email} className="flex items-center gap-1 rounded bg-white/10 px-2 py-1 text-xs text-white">
-                          {email}
-                          <button
-                            type="button"
-                            onClick={() => removeDropshipCc(email)}
-                            className="text-slate-400 hover:text-white"
-                            aria-label={`Remove ${email}`}
-                          >
-                            ×
-                          </button>
-                        </span>
-                      ))}
-                      <input
-                        type="text"
-                        value={dropshipCcInput}
-                        onChange={(e) => setDropshipCcInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === ",") {
-                            e.preventDefault();
-                            commitDropshipCcInput();
-                          } else if (e.key === "Backspace" && dropshipCcInput === "" && dropshipCc.length > 0) {
-                            removeDropshipCc(dropshipCc[dropshipCc.length - 1]);
-                          }
-                        }}
-                        onBlur={commitDropshipCcInput}
-                        placeholder={dropshipCc.length > 0 ? "Add another..." : "you@company.com"}
-                        className="min-w-[10rem] flex-1 bg-transparent px-1 py-0.5 text-sm text-white focus:outline-none"
-                      />
-                    </div>
-                    <p className="mt-1 text-[11px] text-slate-500">Press Enter after each address to add it.</p>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Subject</label>
-                    <input
-                      type="text"
-                      value={dropshipSubject}
-                      onChange={(e) => setDropshipSubject(e.target.value)}
-                      className="mt-1 w-full rounded-md border border-white/15 bg-slate-950 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Message (preview — edit before sending)</label>
-                    <textarea
-                      value={dropshipBody}
-                      onChange={(e) => setDropshipBody(e.target.value)}
-                      rows={12}
-                      className="mt-1 w-full rounded-md border border-white/15 bg-slate-950 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none whitespace-pre-wrap"
-                    />
-                  </div>
-                </div>
-
-                {dropshipError && (
-                  <p className="mt-3 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{dropshipError}</p>
-                )}
-
-                <div className="mt-5 flex justify-end gap-2">
-                  <button type="button" onClick={closeDropshipModal} className="rounded-md border border-white/15 px-4 py-2 text-sm text-slate-300 hover:bg-white/5">
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSendDropshipRequest}
-                    disabled={dropshipSending || !dropshipTo.trim()}
-                    className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
-                  >
-                    {dropshipSending ? "Sending…" : "Send"}
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Marcone Parts Order modal — opens when Submit POs catches at least
           one Marcone part. Non-Marcone parts already went through the
@@ -9574,26 +7585,6 @@ function TicketDetailsPage() {
         onPlaceOrder={handleMarconePlaceOrder}
       />
 
-      {/* Encompass Parts Order modal — same component as Marcone's (its UI
-          was never vendor-specific), opens when Submit POs catches at
-          least one Encompass part. */}
-      <MarconePartsOrderModal
-        open={encompassModal.open}
-        onClose={() => setEncompassModal({ open: false, parts: [] })}
-        parts={encompassModal.parts.map((p): MarconePartLine => ({
-          id: p.id,
-          partNo: p.partNo,
-          partDesc: p.partDesc,
-          partPrice: p.partPrice,
-          coreValue: p.coreValue,
-          quantity: p.quantity,
-        }))}
-        ticketNo={ticketNo}
-        defaultShipTo={defaultShipTo}
-        addressBook={partAddressBook}
-        onPlaceOrder={handleEncompassPlaceOrder}
-      />
-
       {/* Truck Stock batch modal — opens from the Truck Stock button next
           to Submit POs. Fulfils Need PO parts from in-house branches
           instead of placing distributor POs. */}
@@ -9601,7 +7592,6 @@ function TicketDetailsPage() {
         open={truckStockModal.open}
         onClose={() => setTruckStockModal({ open: false, parts: [] })}
         ticketNo={ticketNo}
-        ticketBranch={ticket?.location || ""}
         parts={truckStockModal.parts.map((p) => ({
           id: p.id,
           partNo: p.partNo,
@@ -9616,8 +7606,7 @@ function TicketDetailsPage() {
             .from("truck_stock")
             .select("*")
             .in("part_no", trimmed)
-            .gt("quantity", 0)
-            .eq("status", "in_stock");
+            .gt("quantity", 0);
           if (error) {
             console.warn("truck stock batch fetch error:", error.message);
             return [];
@@ -9631,7 +7620,6 @@ function TicketDetailsPage() {
             quantity: Number(r.quantity ?? 0),
             storageLocation: r.storage_location ?? "",
             notes: r.notes ?? "",
-            status: r.status === "in_use" ? "in_use" : "in_stock",
             updatedAt: r.updated_at ?? undefined,
           }));
         }}

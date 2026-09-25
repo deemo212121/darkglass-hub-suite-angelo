@@ -9,7 +9,7 @@
 import { supabase } from "./client";
 import { createNotification } from "./notifications";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
-import { INACTIVE_BRANCHES } from "@/lib/locations";
+import { INACTIVE_BRANCHES, normalizeLocationForRegionMatch } from "@/lib/locations";
 
 // "training" and "on_hold" added for EOD/EOM hiring reports (0048); "phone_screening",
 // "withdrawn", and "cancelled" added (and "on_hold" removed) by 0221_hr_candidates_status_update.sql.
@@ -802,6 +802,142 @@ export async function getLatestFieldEdits(): Promise<Map<string, FieldEdit>> {
 }
 
 // =====================================================================
+// Call/Text Attempts (per-event log — see 0308_hr_candidate_attempts.sql)
+// =====================================================================
+
+/**
+ * Logs one call/text attempt as its own dated row, independent of the
+ * candidate's current `status`. Needed because re-setting status to
+ * "attempt" while a candidate is ALREADY "attempt" is a no-op in
+ * hr_update_candidate_status() (see that function's same-status guard) —
+ * without this separate log, a 2nd/3rd attempt on the same candidate
+ * would leave zero trace anywhere, and the Generate Report tile's
+ * "Attempt" count could never reflect more than "is this candidate
+ * currently at Attempt status right now".
+ *
+ * Capped at one per candidate per (Central-time) calendar day by a real DB
+ * unique constraint (0309_hr_candidate_attempts_one_per_day.sql) — the
+ * caller should already be disabling the button once
+ * CandidateAttemptSummary.lastAttemptedAt is today, but this still guards
+ * against a double-click/second-HR-user race, surfaced here as a plain,
+ * readable message instead of a raw Postgres error.
+ */
+export async function logCandidateAttempt(candidateId: string): Promise<void> {
+  const { error } = await supabase.from("hr_candidate_attempts").insert({ candidate_id: candidateId });
+  if (error) {
+    if (error.code === "23505") throw new Error("An attempt was already logged for this candidate today — try again tomorrow.");
+    throw new Error(error.message);
+  }
+}
+
+export interface CandidateAttemptSummary {
+  count: number;
+  lastAttemptedAt: string;
+}
+
+const CANDIDATE_ATTEMPTS_PAGE_SIZE = 1000;
+
+/** All-time attempt count + most recent attempt date, per candidate — powers the "Log Attempt (N)" button on the Hiring table. */
+export async function getCandidateAttemptSummaries(): Promise<Map<string, CandidateAttemptSummary>> {
+  const map = new Map<string, CandidateAttemptSummary>();
+  for (let from = 0; ; from += CANDIDATE_ATTEMPTS_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("hr_candidate_attempts")
+      .select("candidate_id, created_at")
+      .order("created_at", { ascending: false })
+      .range(from, from + CANDIDATE_ATTEMPTS_PAGE_SIZE - 1);
+    if (error) {
+      // 42P01 = table doesn't exist yet (0308 not applied) — no attempts to show.
+      if (error.code === "42P01") return map;
+      console.error("getCandidateAttemptSummaries error:", error.message);
+      return map;
+    }
+    for (const r of (data ?? []) as any[]) {
+      const existing = map.get(r.candidate_id);
+      if (existing) existing.count += 1;
+      else map.set(r.candidate_id, { count: 1, lastAttemptedAt: r.created_at }); // newest-first order — first row seen per candidate is its latest
+    }
+    if (!data || data.length < CANDIDATE_ATTEMPTS_PAGE_SIZE) break;
+  }
+  return map;
+}
+
+/**
+ * How many attempts count within [fromDate, toDate] inclusive — what the
+ * Hiring tab's Generate Report tile's "Attempt" row shows. Matches exactly
+ * what the EOD/EOM Hiring Report grid's own Call Attempt column shows for
+ * each day: real hr_candidate_attempts rows, EXCEPT for any (day, section,
+ * branch/department) bucket that has a manual override typed into that
+ * grid (0310) — the override REPLACES the real count for just that one
+ * day+group instead of stacking on top of it, so editing Call Attempt down
+ * on the grid is reflected up here too. Only EOD-scoped manual entries are
+ * considered — an EOM/monthly override has no single day to attribute
+ * within an arbitrary date range, so it's left out of this range-scoped
+ * total (it still applies to its own EOM report).
+ *
+ * `fromDate`/`toDate` are "YYYY-MM-DD"; the range covers the whole of both
+ * end days regardless of time-of-day.
+ */
+export async function getAttemptCountInRange(fromDate: string, toDate: string): Promise<number> {
+  // ---- Real attempts, bucketed the same way the grid buckets rows: (day, section, group) ----
+  let attemptRows: any[] | null;
+  let attemptErr: { code?: string; message: string } | null;
+  ({ data: attemptRows, error: attemptErr } = await supabase
+    .from("hr_candidate_attempts")
+    .select("attempt_date, candidate:candidate_id (position, branch, department)")
+    .gte("attempt_date", fromDate)
+    .lte("attempt_date", toDate));
+  if (isMissingColumnError(attemptErr)) {
+    // 0309 (attempt_date) not applied yet -- fall back to created_at, date-sliced client-side (UTC, not Central -- degrades gracefully until 0309 is run).
+    ({ data: attemptRows, error: attemptErr } = await supabase
+      .from("hr_candidate_attempts")
+      .select("created_at, candidate:candidate_id (position, branch, department)")
+      .gte("created_at", `${fromDate}T00:00:00`)
+      .lte("created_at", `${toDate}T23:59:59.999`));
+  }
+  if (attemptErr) {
+    if (attemptErr.code === "42P01") return 0; // 0308 not applied yet
+    console.error("getAttemptCountInRange (attempts) error:", attemptErr.message);
+    return 0;
+  }
+
+  const autoByKey = new Map<string, number>();
+  for (const r of (attemptRows ?? []) as any[]) {
+    const day: string = r.attempt_date ?? (r.created_at as string).slice(0, 10);
+    const c = r.candidate;
+    if (!c) continue; // candidate since deleted
+    const section: HiringReportSection = isPhBranch(c.branch) ? "philippine_staff" : usSectionFor(c.position);
+    const groupKey = section === "philippine_staff" ? normalizePhDepartment(c.department) : normalizeLocationForRegionMatch(c.branch || "") || UNSET_LABEL;
+    const key = `${day}||${section}||${groupKey}`;
+    autoByKey.set(key, (autoByKey.get(key) ?? 0) + 1);
+  }
+
+  // ---- Manual EOD Call Attempt overrides whose period_key falls in range ----
+  const overrideByKey = new Map<string, number>();
+  const { data: manualRows, error: manualErr } = await supabase
+    .from("hr_hiring_report_manual_entries")
+    .select("period_key, section, group_key, call_attempt")
+    .eq("period_type", "eod")
+    .gte("period_key", fromDate)
+    .lte("period_key", toDate)
+    .not("call_attempt", "is", null);
+  if (manualErr) {
+    // 42P01 = table missing (0273 not applied); missing-column = 0310 not applied -- either way, no overrides to apply yet.
+    if (manualErr.code !== "42P01" && !isMissingColumnError(manualErr)) console.error("getAttemptCountInRange (manual entries) error:", manualErr.message);
+  } else {
+    for (const m of (manualRows ?? []) as any[]) {
+      overrideByKey.set(`${m.period_key}||${m.section}||${m.group_key}`, m.call_attempt);
+    }
+  }
+
+  let total = 0;
+  for (const key of new Set([...autoByKey.keys(), ...overrideByKey.keys()])) {
+    total += overrideByKey.has(key) ? overrideByKey.get(key)! : (autoByKey.get(key) ?? 0);
+  }
+  return total;
+}
+
+// =====================================================================
 // Staff Needed (per Position + Branch, manually entered by HR)
 // =====================================================================
 
@@ -1182,6 +1318,13 @@ export async function getEomHiringReport(yearMonth: string): Promise<EodHiringRo
 //     not whichever signature slot currently holds recipient_id) CURRENT
 //     assigned_branch/department -- explicitly the recipient's own branch,
 //     not the sender's, per the user's own instruction.
+//   - Call Attempt: hr_candidate_attempts (0308) rows whose created_at
+//     falls inside the period, grouped by the attempted candidate's
+//     CURRENT position/branch/department -- every logged attempt counts,
+//     not just candidates currently at status="attempt" (repeat attempts
+//     on an already-"attempt" candidate don't change their status, so a
+//     status-based count would only ever show 0-or-1 per candidate
+//     regardless of how many times they were actually called).
 //   - Budget/Sponsored/Others: hr_hiring_report_manual_entries (migration
 //     0273), typed in by hand per (period, section, row).
 //   - New Hire: same count as Hired (no separate source found for it as
@@ -1211,6 +1354,17 @@ function normalizePhDepartment(department: string | null | undefined): string {
   return PH_DEPARTMENT_ALIASES[raw.toLowerCase()] || raw;
 }
 
+// Module-scope (not just getHiringReportSections-local) so
+// getAttemptCountInRange can group real attempts into the exact same
+// Position→Branch/Department buckets the EOD/EOM grid itself uses — needed
+// so a Call Attempt manual override entered on that grid can correctly
+// replace just that one day+group's contribution to the Hiring tab's
+// range-scoped "Attempt" KPI tile, without the two ever drifting out of
+// sync from having two separate copies of this bucketing logic.
+const isPhBranch = (branch: string | null | undefined) => !!branch && PH_BRANCH_SET.has(branch);
+const usSectionFor = (position: string | null | undefined): HiringReportSection =>
+  (position || "").trim().toLowerCase() === "parts manager" ? "parts_manager" : "technician";
+
 export interface HiringReportRow {
   groupKey: string; // branch (technician/parts_manager) or department (philippine_staff)
   staffNeeded: number;
@@ -1223,6 +1377,8 @@ export interface HiringReportRow {
   /** Counted separately per warning_form's warningCategory (HR-only classification, not the document's printed reasons) — a warning with no category chosen counts toward neither column. */
   timeCardWarningCount: number;
   employeeErrorManipulationCount: number;
+  /** Count of hr_candidate_attempts rows (0308) logged for this group's candidates within the period — every logged attempt counts, not just candidates currently sitting at status="attempt" (see logCandidateAttempt's own comment on why that status alone can't tell attempts apart). */
+  callAttemptCount: number;
   budget: number | null;
   sponsored: number | null;
   others: number | null;
@@ -1270,6 +1426,7 @@ function blankHiringReportRow(groupKey: string): HiringReportRow {
     terminatedResigned: 0,
     timeCardWarningCount: 0,
     employeeErrorManipulationCount: 0,
+    callAttemptCount: 0,
     budget: null,
     sponsored: null,
     others: null,
@@ -1302,12 +1459,33 @@ export async function getHiringReportSections(periodType: HiringReportPeriodType
     return all;
   })();
 
+  const attemptsPromise = (async () => {
+    const all: any[] = [];
+    const PAGE = 1000;
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from("hr_candidate_attempts")
+        .select("candidate:candidate_id (position, branch, department)")
+        .gte("created_at", start)
+        .lt("created_at", end)
+        .range(from, from + PAGE - 1);
+      if (error) {
+        if (error.code === "42P01") break; // 0308 not applied yet
+        throw new Error(error.message);
+      }
+      all.push(...(data ?? []));
+      if (!data || data.length < PAGE) break;
+    }
+    return all;
+  })();
+
   const [
     { data: cands, error: candErr },
     targets,
     forwardsExact,
     forwardsMonthly,
     hiredHistory,
+    attempts,
     manualEntries,
     { data: allProfiles, error: profErr },
     warningResult,
@@ -1317,6 +1495,7 @@ export async function getHiringReportSections(periodType: HiringReportPeriodType
     getCvForwardDetails(start, end),
     getCvForwardDetails(monthStart, monthEnd),
     hiredHistoryPromise,
+    attemptsPromise,
     getHiringReportManualEntries(periodType, periodKey),
     supabase.from("profiles").select("id, assigned_branch, department, employee_info, role"),
     supabase.from("hr_signable_documents").select("form_data, created_at").eq("document_type", "warning_form").gte("created_at", start).lt("created_at", end),
@@ -1326,16 +1505,22 @@ export async function getHiringReportSections(periodType: HiringReportPeriodType
   const warnings: any[] = warningResult.error ? [] : (warningResult.data ?? []);
 
   const profileById = new Map((allProfiles ?? []).map((p: any) => [p.id, p]));
-  const isPhBranch = (branch: string | null | undefined) => !!branch && PH_BRANCH_SET.has(branch);
 
   const rows: Record<HiringReportSection, Map<string, HiringReportRow>> = {
     technician: new Map(),
     parts_manager: new Map(),
     philippine_staff: new Map(),
   };
+  // technician/parts_manager group by BRANCH — real branch values arrive in
+  // two different spellings depending on where they were typed/picked from
+  // ("Jackson, TN" vs. "Jackson,TN", see normalizeLocationForRegionMatch's
+  // own doc comment) and would otherwise split into two separate rows for
+  // what's really one branch. philippine_staff groups by DEPARTMENT, which
+  // has no such comma-spacing quirk, so it's left as-is.
   const ensure = (section: HiringReportSection, groupKey: string): HiringReportRow => {
     const map = rows[section];
-    const key = groupKey || UNSET_LABEL;
+    const normalized = section === "philippine_staff" ? groupKey : normalizeLocationForRegionMatch(groupKey);
+    const key = normalized || UNSET_LABEL;
     if (!map.has(key)) map.set(key, blankHiringReportRow(key));
     return map.get(key)!;
   };
@@ -1347,9 +1532,6 @@ export async function getHiringReportSections(periodType: HiringReportPeriodType
   for (const b of US_BRANCH_NAMES) ensure("technician", b);
   for (const b of US_BRANCH_NAMES) ensure("parts_manager", b);
   for (const d of PH_DEPARTMENT_DEFAULTS) ensure("philippine_staff", d);
-
-  const usSectionFor = (position: string | null): HiringReportSection =>
-    (position || "").trim().toLowerCase() === "parts manager" ? "parts_manager" : "technician";
 
   for (const t of targets) {
     if (isPhBranch(t.branch)) continue; // Staff Need targets are US-branch only in practice
@@ -1377,6 +1559,17 @@ export async function getHiringReportSections(periodType: HiringReportPeriodType
       const row = ensure(usSectionFor(r.position), r.branch || UNSET_LABEL);
       row.hired += 1;
       if (startDate) row.hiredStartDates.push(startDate);
+    }
+  }
+
+  // ---- Call Attempts: hr_candidate_attempts (0308), grouped by each attempted candidate's CURRENT position/branch/department ----
+  for (const a of attempts as any[]) {
+    const c = a.candidate;
+    if (!c) continue; // candidate since deleted -- attempt row still exists (candidate_id FK is on delete cascade, so this shouldn't normally happen, but skip rather than misattribute)
+    if (isPhBranch(c.branch)) {
+      ensure("philippine_staff", normalizePhDepartment(c.department)).callAttemptCount += 1;
+    } else {
+      ensure(usSectionFor(c.position), c.branch || UNSET_LABEL).callAttemptCount += 1;
     }
   }
 
@@ -1434,12 +1627,19 @@ export async function getHiringReportSections(periodType: HiringReportPeriodType
     if (isEmployeeError) row.employeeErrorManipulationCount += 1;
   }
 
-  // ---- Manual entries (Budget/Sponsored/Others) ----
+  // ---- Manual entries (Budget/Sponsored/Others, + Staff Need for Philippine Staff only — see HiringReportManualEntry.staffNeeded) ----
   for (const m of manualEntries) {
     const row = ensure(m.section, m.groupKey);
     row.budget = m.budget;
     row.sponsored = m.sponsored;
     row.others = m.others;
+    if (m.section === "philippine_staff" && m.staffNeeded != null) row.staffNeeded = m.staffNeeded;
+    // Call Attempt: a typed-in value overrides the real hr_candidate_attempts
+    // count above — needed to backfill periods from before that table
+    // existed (0308 shipped today), same "manual wins when set" treatment
+    // Philippine Staff's Staff Need gets. Leaving it blank keeps the real
+    // auto-count, which is already accurate for today onward.
+    if (m.callAttempt != null) row.callAttemptCount = m.callAttempt;
   }
 
   const sortRows = (map: Map<string, HiringReportRow>) => Array.from(map.values()).sort((a, b) => a.groupKey.localeCompare(b.groupKey));
@@ -1471,22 +1671,54 @@ export interface HiringReportManualEntry {
   budget: number | null;
   sponsored: number | null;
   others: number | null;
+  /** Philippine Staff's Staff Need — department rows have no real "position"
+   *  to key a staffing_targets row on, so it's typed in by hand here instead
+   *  (migration 0304), same as Budget/Sponsored/Others. Technician/Parts
+   *  Manager's Staff Need still comes from staffing_targets; this is never
+   *  set for those two sections. */
+  staffNeeded: number | null;
+  /** Manual override for the Call Attempt column (migration 0310) — wins
+   *  over the real hr_candidate_attempts count when set, for backfilling
+   *  periods before that table existed. See HiringReportRow.callAttemptCount. */
+  callAttempt: number | null;
 }
 
 async function getHiringReportManualEntries(periodType: HiringReportPeriodType, periodKey: string): Promise<HiringReportManualEntry[]> {
-  const { data, error } = await supabase
+  let data: any[] | null;
+  let error: { code?: string; message: string } | null;
+  ({ data, error } = await supabase
     .from("hr_hiring_report_manual_entries")
-    .select("section, group_key, budget, sponsored, others")
+    .select("section, group_key, budget, sponsored, others, staff_needed, call_attempt")
     .eq("period_type", periodType)
-    .eq("period_key", periodKey);
+    .eq("period_key", periodKey));
+  if (isMissingColumnError(error)) {
+    // 0310 not applied yet — fall back without call_attempt.
+    ({ data, error } = await supabase
+      .from("hr_hiring_report_manual_entries")
+      .select("section, group_key, budget, sponsored, others, staff_needed")
+      .eq("period_type", periodType)
+      .eq("period_key", periodKey));
+  }
+  if (isMissingColumnError(error)) {
+    // 0304 not applied yet either — fall back without staff_needed too.
+    ({ data, error } = await supabase
+      .from("hr_hiring_report_manual_entries")
+      .select("section, group_key, budget, sponsored, others")
+      .eq("period_type", periodType)
+      .eq("period_key", periodKey));
+  }
   if (error) {
     if (error.code === "42P01") return []; // 0273 not applied yet
     throw new Error(error.message);
   }
-  return (data ?? []).map((r: any) => ({ section: r.section, groupKey: r.group_key, budget: r.budget, sponsored: r.sponsored, others: r.others }));
+  return (data ?? []).map((r: any) => ({
+    section: r.section, groupKey: r.group_key, budget: r.budget, sponsored: r.sponsored, others: r.others,
+    staffNeeded: r.staff_needed ?? null,
+    callAttempt: r.call_attempt ?? null,
+  }));
 }
 
-export type HiringReportManualEntryFields = Partial<Pick<HiringReportManualEntry, "budget" | "sponsored" | "others">>;
+export type HiringReportManualEntryFields = Partial<Pick<HiringReportManualEntry, "budget" | "sponsored" | "others" | "staffNeeded" | "callAttempt">>;
 
 export async function upsertHiringReportManualEntry(
   periodType: HiringReportPeriodType,
@@ -1499,6 +1731,8 @@ export async function upsertHiringReportManualEntry(
   if ("budget" in fields) patch.budget = fields.budget;
   if ("sponsored" in fields) patch.sponsored = fields.sponsored;
   if ("others" in fields) patch.others = fields.others;
+  if ("staffNeeded" in fields) patch.staff_needed = fields.staffNeeded;
+  if ("callAttempt" in fields) patch.call_attempt = fields.callAttempt;
   const { error } = await supabase.from("hr_hiring_report_manual_entries").upsert(patch, { onConflict: "company_id,period_type,period_key,section,group_key" });
   if (error) throw new Error(error.message);
 }

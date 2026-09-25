@@ -33,7 +33,7 @@ import { LayoutGrid, Eye } from "lucide-react";
 import { MODULES, type ModuleDef, type SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { canAccessSubmodule } from "@/lib/submoduleAccess";
-import { ROLE_OPTIONS } from "@/lib/roleLabels";
+import { ROLE_OPTIONS, isModuleAllowed, isModuleAllowedForTrainee, isModuleAllowedForFrozen } from "@/lib/roleLabels";
 
 const SUPER_ROLES = new Set(["SUPERADMIN", "SUPERSUPERADMIN"]);
 
@@ -128,9 +128,20 @@ export function ModuleNavigator() {
       return canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee, isFrozen);
     });
 
-  // A module only gets a pill if it has at least one submodule this viewer
-  // can actually open — an empty dropdown isn't useful to show.
-  const visibleModules = MODULES.filter((m) => visibleSubmodulesFor(m).length > 0);
+  // Same module-level "Whole Module" front-door gate home.tsx's tile grid
+  // checks before ever listing a module (see home.tsx line ~67) —
+  // canAccessSubmodule/isSubmoduleAllowed only enforces this for CSR-
+  // restricted roles, so without this explicit check here a module hidden
+  // via Accessibility Management's "Whole Module" box for a non-CSR role
+  // would still show up in this floating strip even though the home page
+  // and the module route itself both block it.
+  const moduleAllowed = (m: ModuleDef) =>
+    isModuleAllowed(role, m.slug, extraRoles) && isModuleAllowedForTrainee(isTrainee, m.slug) && isModuleAllowedForFrozen(isFrozen, m.slug);
+
+  // A module only gets a pill if its front door is open AND it has at
+  // least one submodule this viewer can actually open — an empty dropdown
+  // isn't useful to show.
+  const visibleModules = MODULES.filter((m) => moduleAllowed(m) && visibleSubmodulesFor(m).length > 0);
 
   const cancelClose = () => {
     if (closeTimer.current !== null) {

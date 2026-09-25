@@ -1,0 +1,130 @@
+DARKGLASS HUB SUITE - PROGRESS UPDATE
+Covering: July 17, 2026
+
+
+NEW: FILLABLE TAX FORMS (W-4 / W-8BEN / W-9) - FILL, SIGN, AND TRACK IN-APP
+-----------------------------------------------------
+- New "W-8 / W-9 / W-4 Forms" HR tab. HR sends a link, the recipient
+  fills in and signs the real official IRS PDF right in the browser
+  (not a redrawn lookalike - the actual form, with entry fields placed
+  exactly where they belong), and the completed form comes back to HR
+  automatically.
+- For the W-4 specifically, HR can go back afterward and fill in the
+  "Employer's Only" section without needing the employee to resubmit
+  anything.
+- Added a COE (Certificate of Employment) Sent History log with a PDF
+  preview, so HR can see what's already gone out.
+- Fixed exported COE/Warning Form PDFs printing at roughly 4x their
+  correct physical size - they now generate as proper US Letter pages.
+
+
+NEW: JOTFORM SUBMISSIONS + ONE UNIFIED FILE SUBMISSIONS VIEW
+-----------------------------------------------------
+- Documents submitted through Jotform now automatically get pulled in
+  as real PDFs, stored, and tracked - updating live, with the ability
+  to soft-delete/restore.
+- The Onboarding Documents tab now shows Jotform submissions and the
+  new signed W-4/W-8BEN/W-9 forms together in one filterable list,
+  instead of two separate panels.
+- Added a bulk-upload option for documents that don't come through
+  Jotform at all.
+
+
+CERTIFICATE OF EMPLOYMENT REBUILT + CLICKABLE HR DASHBOARD TILES
+-----------------------------------------------------
+- COE rebuilt to match the official reference letter: new body text
+  and Office Use box, honorific/pronoun fields, an Authorized
+  Representative signer whose title/email now auto-fill on selection,
+  and dates written out in full (e.g. "July 17, 2026").
+- Every tile on the HR dashboard is now clickable and jumps straight
+  to the relevant tab or filter - previously only the Attendance tile
+  worked that way.
+
+
+NSA TICKETS: COMMUNICATION LOG NOW SHOWS ON THE TICKET PAGE
+-----------------------------------------------------
+- NSA tickets now show their customer contact history (calls/texts
+  plus service notes) on the ticket detail page, matching what
+  ServicePower tickets already had.
+- Caught partway through that NSA's own site actually combines two
+  separate data feeds into that one log - fixed so ours matches
+  entry-for-entry.
+- Ended up removing the separate pop-up version of this once it became
+  clear it was just showing the exact same information a second time -
+  the inline Customer Notes section on the page was already covering
+  it, and that section was given a scrollable, cleaner card layout so
+  a long history doesn't push the whole page out.
+
+
+NEW: NSA ESTIMATES PANEL ON THE TICKET PAGE
+-----------------------------------------------------
+- New panel showing an NSA ticket's approval status, total amount, and
+  the Labor/Parts/Other breakdown, pulled live from NSA - verified
+  against a real dispatch to match NSA's own numbers exactly.
+
+
+NEW: NSA PARTS NOW SYNC AUTOMATICALLY, EVERY HOUR
+-----------------------------------------------------
+- Previously, pulling new parts in from NSA was a manual, one-off
+  action - if NSA added a part after we'd already checked a ticket
+  once, nothing here would ever know about it.
+- The app now checks every open NSA ticket once an hour and
+  automatically pulls in anything new, logging it the same way a
+  manual pull already did (Change Log entry included). Deliberately
+  scoped to parts only - NOT other ticket fields like status or
+  schedule, since auto-overwriting something a staff member manually
+  corrected would be a worse problem to introduce.
+- Tested against real tickets, including a real "NSA added a part"
+  scenario, before turning this on.
+
+
+TICKET PHOTOS: FASTER UPLOADS, SMALLER FILE SIZES
+-----------------------------------------------------
+- Photos are now automatically resized and compressed before upload
+  (targeting ~1MB each) instead of uploading the original, often much
+  larger camera file. iPhone HEIC photos are now also handled
+  correctly instead of failing to upload.
+- Multiple photos now upload at the same time with live progress per
+  photo, instead of one at a time - and if one photo fails, the rest
+  of the batch no longer silently stops with it.
+
+
+OTHER FIXES
+-----------------------------------------------------
+- Fixed a wrong-branch assignment bug: a customer in Villa Ridge, MO
+  was being routed to a branch 137 miles away instead of the correct
+  one 36 miles away, because the matching logic found a same-named
+  town in a different state and didn't check that the state actually
+  matched. Fixed for both NSA and ServicePower tickets, since they
+  share this logic.
+- Enlarged the mileage badge on the ticket page (previously easy to
+  miss).
+- Removed a duplicated Problem Description panel showing twice on NSA
+  tickets.
+- Fixed 3 Claims Readiness checklist items that were marking a
+  freshly-pulled, not-yet-serviced ticket as "mostly complete" when it
+  wasn't.
+- Fixed the Automated Forms dropdown menu on the HR dashboard
+  rendering behind other page content instead of on top of it.
+- Continued hardening the deploy process against a Windows-only build
+  failure (a leftover process holding a file lock during deploy) -
+  deploys should now recover on their own instead of needing a manual
+  retry.
+
+
+TEAMMATE UPDATES MERGED IN
+-----------------------------------------------------
+- Pulled in a large batch of teammate work (the Jotform pipeline, the
+  new tax forms, and the COE/HR dashboard work above all came in this
+  way) and reconciled it against what's already built here, file by
+  file, to avoid overwriting anything or reintroducing already-fixed
+  bugs.
+- Everything committed and pushed to GitHub.
+
+
+SUGGESTED NEXT / STILL NEEDS DOING
+-----------------------------------------------------
+- Several new database migrations still need to be run manually in
+  the Supabase SQL Editor before today's features (the tax forms, COE
+  send history, the editable COE letter template, and the hourly NSA
+  parts sync) will work.

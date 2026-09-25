@@ -28,21 +28,22 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Pencil, Check, Loader2, Filter, CalendarDays, ListChecks, ClipboardList, Paperclip, Flag, History, X, BarChart3, AlertTriangle, Umbrella, FileText } from "lucide-react";
+import { ChevronLeft, Pencil, Check, Loader2, Filter, CalendarDays, ListChecks, ClipboardList, Paperclip, Flag, History, X, BarChart3, AlertTriangle, Umbrella, FileText, HeartPulse, ListTodo } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
-import { ROLE_LABELS } from "@/lib/roleLabels";
+import { ROLE_LABELS, TECHNICIAN_PAY_ROLES, normalizeRole } from "@/lib/roleLabels";
 import { getCompanyUsers, getEmployeeInfoByProfileIds, type ProfileRow } from "@/lib/supabase/users";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { visibleEmployeeMonitoringProfileIds } from "@/lib/notifyRouting";
 import { getCompanyTimecardEntries, getProfileIdByFirebaseUid, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getAttendanceNotes, upsertAttendanceNote, upsertAttendanceHrNote, uploadAttendanceNoteAttachment, removeAttendanceNoteAttachment, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
-import { getCompanyPtoRequests, type PtoRequestRow } from "@/lib/supabase/pto";
+import { getCompanyPtoRequests, sickYearWindow, sickDaysUsed, SICK_LEAVE_ANNUAL_ALLOWANCE, type PtoRequestRow } from "@/lib/supabase/pto";
 import { HrCalendarTab } from "@/components/HrCalendarTab";
 import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
 import { TicketTimeDisputesTab } from "@/components/TicketTimeDisputesTab";
 import { PtoManagementTab } from "@/components/PtoManagementTab";
 import { CorrectionsTab } from "@/components/CorrectionsTab";
+import { VisitExceptionReportTab } from "@/components/VisitExceptionReportTab";
 import { HolidayCalendarTab } from "@/components/HolidayCalendarTab";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabase/companyHolidays";
@@ -144,7 +145,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   // Monitoring already mount (TicketAttendanceTab.tsx takes no props and
   // fetches its own data), added as a third view so HR can check on-site
   // check-ins without leaving this page.
-  const [view, setView] = useState<"list" | "calendar" | "ticketAttendance" | "ticketTimeDisputes" | "ptoManagement" | "corrections" | "holidays">("list");
+  const [view, setView] = useState<"list" | "calendar" | "ticketAttendance" | "ticketTimeDisputes" | "ptoManagement" | "corrections" | "holidays" | "visitExceptions" | "exceededSickDays" | "pendingExplanations">("list");
   const [statsCardHidden, setStatsCardHidden] = useState(false);
   const [dateFrom, setDateFrom] = useState(todayISO());
   const [dateTo, setDateTo] = useState(todayISO());
@@ -158,7 +159,10 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   // multi-select (empty set = no restriction), Note is tri-state (All/Has
   // note/No note). Same pattern Ticket Attendance's own header filters use.
   type TriState = "all" | "has" | "none";
-  type FilterMenuKey = "name" | "role" | "branch" | "manager" | "notes" | "hrNote" | "correction";
+  type FilterMenuKey =
+    | "name" | "role" | "branch" | "manager" | "notes" | "hrNote" | "correction"
+    | "peName" | "peRole" | "peBranch" | "peManager"
+    | "esdName" | "esdRole" | "esdBranch" | "esdManager" | "esdStatus";
   const [openFilterMenu, setOpenFilterMenu] = useState<FilterMenuKey | null>(null);
   const [nameFilter, setNameFilter] = useState<Set<string>>(new Set());
   const [roleFilter, setRoleFilter] = useState<Set<string>>(new Set());
@@ -167,6 +171,29 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   const [notesColFilter, setNotesColFilter] = useState<TriState>("all");
   const [hrStatusFilter, setHrStatusFilter] = useState<Set<string>>(new Set());
   const [correctionFilter, setCorrectionFilter] = useState<TriState>("all");
+
+  // Pending Explanations — its own independent Date range/Search/column
+  // funnels, separate from the List tab's (switching tabs never changes
+  // what another tab was showing).
+  const [peDateFrom, setPeDateFrom] = useState(todayISO());
+  const [peDateTo, setPeDateTo] = useState(todayISO());
+  const [peSearch, setPeSearch] = useState("");
+  const [peNameFilter, setPeNameFilter] = useState<Set<string>>(new Set());
+  const [peRoleFilter, setPeRoleFilter] = useState<Set<string>>(new Set());
+  const [peBranchFilter, setPeBranchFilter] = useState<Set<string>>(new Set());
+  const [peManagerFilter, setPeManagerFilter] = useState<Set<string>>(new Set());
+
+  // Exceeded Sick Days — its own independent "as of" date (a single-day
+  // snapshot, not a range: sick balance is a tenure-year total, not a
+  // per-day thing) + Search + column funnels, including a Status funnel
+  // for the Pending Request/Fully Decided badge.
+  const [esdAsOfDate, setEsdAsOfDate] = useState(todayISO());
+  const [esdSearch, setEsdSearch] = useState("");
+  const [esdNameFilter, setEsdNameFilter] = useState<Set<string>>(new Set());
+  const [esdRoleFilter, setEsdRoleFilter] = useState<Set<string>>(new Set());
+  const [esdBranchFilter, setEsdBranchFilter] = useState<Set<string>>(new Set());
+  const [esdManagerFilter, setEsdManagerFilter] = useState<Set<string>>(new Set());
+  const [esdStatusFilter, setEsdStatusFilter] = useState<TriState>("all");
 
   useEffect(() => {
     if (!uid) return;
@@ -222,12 +249,20 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   const [pendingCorrections, setPendingCorrections] = useState<TimecardCorrectionRow[]>([]);
   const load = () => {
     if (dateTo < dateFrom) return; // invalid range mid-edit (e.g. only "From" typed so far) — wait for a valid one
+    // Pending Explanations has its own independent date range now — fetch
+    // the union of both so one shared load covers whatever either tab is
+    // currently showing, instead of a second full fetch per tab. An
+    // invalid (mid-edit) pe range just falls back to the List tab's own
+    // range for this union.
+    const peValid = peDateTo >= peDateFrom;
+    const from = peValid && peDateFrom < dateFrom ? peDateFrom : dateFrom;
+    const to = peValid && peDateTo > dateTo ? peDateTo : dateTo;
     setLoading(true);
     Promise.all([
-      getCompanyTimecardEntries(dateFrom, dateTo),
-      getAttendanceNotes(dateFrom, dateTo),
-      getCompanyHolidaysInRange(dateFrom, dateTo),
-      getPendingCorrectionsInRange(dateFrom, dateTo),
+      getCompanyTimecardEntries(from, to),
+      getAttendanceNotes(from, to),
+      getCompanyHolidaysInRange(from, to),
+      getPendingCorrectionsInRange(from, to),
     ])
       .then(([tc, n, hol, pending]) => {
         setEntries(tc);
@@ -242,7 +277,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateFrom, dateTo]);
+  }, [dateFrom, dateTo, peDateFrom, peDateTo]);
 
   // Keyed "profileId|date" — check-in and notes are both per (profile, day),
   // same as everything else on this page once it spans more than one day.
@@ -303,19 +338,43 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     [visibleProfiles]
   );
 
+  // Shared by every tab's own Name/Role/Branch/Manager narrowing (List,
+  // Pending Explanations, Exceeded Sick Days) — same filter shape, just fed
+  // each tab's own independent search text + filter Sets.
+  const filterProfilesBy = (
+    list: ProfileRow[],
+    searchQ: string,
+    nameSet: Set<string>,
+    roleSet: Set<string>,
+    branchSet: Set<string>,
+    managerSet: Set<string>
+  ) => {
+    const q = searchQ.trim().toLowerCase();
+    return list
+      .filter((p) => p.is_active)
+      .filter((p) => !q || (p.display_name || p.email).toLowerCase().includes(q))
+      .filter((p) => nameSet.size === 0 || nameSet.has(p.display_name || p.email))
+      .filter((p) => roleSet.size === 0 || roleSet.has(p.role))
+      .filter((p) => branchSet.size === 0 || (p.assigned_branch && branchSet.has(p.assigned_branch)))
+      .filter((p) => managerSet.size === 0 || (p.manager_name && managerSet.has(p.manager_name)));
+  };
+
   // Name/Role/Branch/Manager filters don't depend on the date — narrow the
   // (scope-narrowed) roster once, then apply the per-day checks (rest day/
   // leave/check-in) per date in the range against that same narrowed list.
-  const activeFilteredProfiles = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return visibleProfiles
-      .filter((p) => p.is_active)
-      .filter((p) => !q || (p.display_name || p.email).toLowerCase().includes(q))
-      .filter((p) => nameFilter.size === 0 || nameFilter.has(p.display_name || p.email))
-      .filter((p) => roleFilter.size === 0 || roleFilter.has(p.role))
-      .filter((p) => branchFilter.size === 0 || (p.assigned_branch && branchFilter.has(p.assigned_branch)))
-      .filter((p) => managerFilter.size === 0 || (p.manager_name && managerFilter.has(p.manager_name)));
-  }, [visibleProfiles, search, nameFilter, roleFilter, branchFilter, managerFilter]);
+  const activeFilteredProfiles = useMemo(
+    () => filterProfilesBy(visibleProfiles, search, nameFilter, roleFilter, branchFilter, managerFilter),
+    [visibleProfiles, search, nameFilter, roleFilter, branchFilter, managerFilter]
+  );
+  const peActiveFilteredProfiles = useMemo(
+    () => filterProfilesBy(visibleProfiles, peSearch, peNameFilter, peRoleFilter, peBranchFilter, peManagerFilter),
+    [visibleProfiles, peSearch, peNameFilter, peRoleFilter, peBranchFilter, peManagerFilter]
+  );
+  const esdActiveFilteredProfiles = useMemo(
+    () => filterProfilesBy(visibleProfiles, esdSearch, esdNameFilter, esdRoleFilter, esdBranchFilter, esdManagerFilter),
+    [visibleProfiles, esdSearch, esdNameFilter, esdRoleFilter, esdBranchFilter, esdManagerFilter]
+  );
+  const peRangeDates = useMemo(() => (peDateTo >= peDateFrom ? enumerateDates(peDateFrom, peDateTo) : []), [peDateFrom, peDateTo]);
 
   const absentRows: AbsentRow[] = useMemo(() => {
     const rows: AbsentRow[] = [];
@@ -323,6 +382,8 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       const dow = new Date(d + "T00:00:00").getDay();
       for (const p of activeFilteredProfiles) {
         if ((p.off_days ?? []).includes(dow)) continue; // scheduled rest day
+        const hireDate = hireDateByProfileId.get(p.id);
+        if (hireDate && d < hireDate) continue; // not hired yet as of this date
         if (isOnLeave(p.id, d)) continue; // approved PTO/leave
         if (isCompanyHoliday(d)) continue; // company holiday
         if (checkedInSet.has(`${p.id}|${d}`)) continue; // checked in that day
@@ -349,7 +410,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       (a, b) => a.date.localeCompare(b.date) || (a.profile.display_name || a.profile.email).localeCompare(b.profile.display_name || b.profile.email)
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rangeDates, activeFilteredProfiles, checkedInSet, noteByKey, notesColFilter, hrStatusFilter, correctionFilter, ptoRequests, holidayDates, pendingCorrectionByKey, pendingPtoRequests]);
+  }, [rangeDates, activeFilteredProfiles, checkedInSet, noteByKey, notesColFilter, hrStatusFilter, correctionFilter, ptoRequests, holidayDates, pendingCorrectionByKey, pendingPtoRequests, hireDateByProfileId]);
 
   const onLeaveCount = useMemo(() => {
     let count = 0;
@@ -387,6 +448,113 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     }
     return Array.from(groups.entries());
   }, [absentRows]);
+
+  // "Pending Explanations / Excuses" — a To-Do view of the same underlying
+  // absence data absentRows computes, but ignoring the List tab's own
+  // Notes/HR Status/Correction column filters (this view's whole point IS
+  // "no HR Status set yet", so that condition is hardcoded here rather than
+  // becoming another pickable option in that filter menu). Has its own
+  // independent Date range/Search/Name/Role/Branch/Manager filters (pe*),
+  // separate from the List tab's — see load()'s union-range comment for
+  // how the underlying entries/notes/holidays/corrections data still
+  // covers whatever this tab's own range is.
+  const pendingExplanationRows: AbsentRow[] = useMemo(() => {
+    const rows: AbsentRow[] = [];
+    for (const d of peRangeDates) {
+      const dow = new Date(d + "T00:00:00").getDay();
+      for (const p of peActiveFilteredProfiles) {
+        if ((p.off_days ?? []).includes(dow)) continue;
+        const hireDate = hireDateByProfileId.get(p.id);
+        if (hireDate && d < hireDate) continue;
+        if (isOnLeave(p.id, d)) continue;
+        if (isCompanyHoliday(d)) continue;
+        if (checkedInSet.has(`${p.id}|${d}`)) continue;
+        const entry = noteByKey.get(`${p.id}|${d}`);
+        const hrNote = entry?.hrNote || "";
+        if (hrNote) continue; // already explained/reviewed — nothing pending here
+        rows.push({ profile: p, date: d, note: entry?.content || "", hrNote, pendingItem: pendingItemFor(p.id, d) });
+      }
+    }
+    return rows.sort(
+      (a, b) => a.date.localeCompare(b.date) || (a.profile.display_name || a.profile.email).localeCompare(b.profile.display_name || b.profile.email)
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peRangeDates, peActiveFilteredProfiles, checkedInSet, noteByKey, ptoRequests, holidayDates, pendingCorrectionByKey, pendingPtoRequests, hireDateByProfileId]);
+
+  const groupedPendingExplanationRows = useMemo(() => {
+    const groups = new Map<string, AbsentRow[]>();
+    for (const r of pendingExplanationRows) {
+      const list = groups.get(r.date) ?? [];
+      list.push(r);
+      groups.set(r.date, list);
+    }
+    return Array.from(groups.entries());
+  }, [pendingExplanationRows]);
+
+  // "Exceeded Sick Days" — technician-tier employees who've used (approved
+  // or still-pending — sickDaysUsed counts anything not denied/cancelled,
+  // so a pending request already counts toward "used" here) more Sick
+  // Leave than their SICK_LEAVE_ANNUAL_ALLOWANCE for their current tenure
+  // year (see pto.ts's sickYearWindow/sickDaysUsed — same allowance math
+  // HrCalendarTab/Master List already show per person). hasPendingRequest
+  // is surfaced separately so HR can see at a glance which over-limit rows
+  // still have a request awaiting review vs. ones that are already fully
+  // decided.
+  interface SickDaysExceededRow {
+    profile: ProfileRow;
+    used: number;
+    allowance: number;
+    hasPendingRequest: boolean;
+    requests: PtoRequestRow[];
+  }
+  const fmtSickDays = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+
+  // Sick Leave remaining/allowance per person — same badge HrCalendarTab
+  // already shows next to a name, reused here so HR sees the balance right
+  // where they're reviewing an absence, not just on the Exceeded Sick Days
+  // tab. Everyone, not just technicians — the allowance itself isn't
+  // technician-specific (see pto.ts's sickYearWindow).
+  const sickBalanceByProfileId = useMemo(() => {
+    const map = new Map<string, { remaining: number; allowance: number }>();
+    for (const p of visibleProfiles) {
+      if (!p.is_active) continue;
+      const window = sickYearWindow(hireDateByProfileId.get(p.id) || null, p.created_at || null);
+      if (!window) continue;
+      const myRequests = ptoRequests.filter((r) => r.profileId === p.id && r.ptoType === "sick");
+      const used = sickDaysUsed(myRequests, window);
+      map.set(p.id, { remaining: Math.max(0, window.allowance - used), allowance: window.allowance });
+    }
+    return map;
+  }, [visibleProfiles, ptoRequests, hireDateByProfileId]);
+  const exceededSickDaysRows: SickDaysExceededRow[] = useMemo(() => {
+    const rows: SickDaysExceededRow[] = [];
+    for (const p of esdActiveFilteredProfiles) {
+      if (!TECHNICIAN_PAY_ROLES.has(normalizeRole(p.role))) continue;
+      // "As of" esdAsOfDate, not always today — sickYearWindow's onDate
+      // param picks which tenure year (and its allowance/used totals)
+      // applies as of that date, per the user's own call on how the date
+      // field should behave for a tenure-year balance instead of a range.
+      const window = sickYearWindow(hireDateByProfileId.get(p.id) || null, p.created_at || null, esdAsOfDate);
+      if (!window) continue;
+      const myRequests = ptoRequests.filter((r) => r.profileId === p.id && r.ptoType === "sick");
+      const used = sickDaysUsed(myRequests, window);
+      if (used <= window.allowance) continue;
+      const requestsInWindow = myRequests.filter(
+        (r) => r.status !== "denied" && r.status !== "cancelled" && r.startDate >= window.start && r.startDate < window.end
+      );
+      const hasPendingRequest = requestsInWindow.some((r) => r.status === "pending");
+      if (esdStatusFilter === "has" && !hasPendingRequest) continue;
+      if (esdStatusFilter === "none" && hasPendingRequest) continue;
+      rows.push({
+        profile: p,
+        used,
+        allowance: window.allowance,
+        hasPendingRequest,
+        requests: requestsInWindow.sort((a, b) => a.startDate.localeCompare(b.startDate)),
+      });
+    }
+    return rows.sort((a, b) => b.used - b.allowance - (a.used - a.allowance) || (a.profile.display_name || a.profile.email).localeCompare(b.profile.display_name || b.profile.email));
+  }, [esdActiveFilteredProfiles, ptoRequests, hireDateByProfileId, esdAsOfDate, esdStatusFilter]);
 
   // Shape HrCalendarTab expects — same (scope-narrowed) roster this page
   // already loads, just remapped field names.
@@ -700,7 +868,22 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     const isEditing = editingId === key;
     return (
       <tr key={key} className="border-b border-white/5">
-        <td className="py-2 pr-3 text-white font-medium whitespace-nowrap">{p.display_name || p.email}</td>
+        <td className="py-2 pr-3 text-white font-medium whitespace-nowrap">
+          <span className="flex items-center gap-1.5">
+            {p.display_name || p.email}
+            {(() => {
+              const sick = sickBalanceByProfileId.get(p.id);
+              return sick ? (
+                <span
+                  className="bg-teal-500/20 text-teal-300 px-1 py-0.5 rounded text-[9px] font-semibold shrink-0"
+                  title={`Sick Leave remaining/allowance: ${sick.remaining}/${sick.allowance}`}
+                >
+                  {sick.remaining}/{sick.allowance}
+                </span>
+              ) : null;
+            })()}
+          </span>
+        </td>
         <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{ROLE_LABELS[p.role] || p.role}</td>
         <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{p.assigned_branch || "—"}</td>
         <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{p.manager_name || "—"}</td>
@@ -926,6 +1109,27 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           >
             <Flag className="h-3.5 w-3.5" /> Holiday Calendar
           </button>
+          <button
+            type="button"
+            onClick={() => setView("visitExceptions")}
+            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "visitExceptions" ? "bg-primary/20 text-primary" : ""}`}
+          >
+            <AlertTriangle className="h-3.5 w-3.5" /> Visit Exception Report
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("exceededSickDays")}
+            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "exceededSickDays" ? "bg-primary/20 text-primary" : ""}`}
+          >
+            <HeartPulse className="h-3.5 w-3.5" /> Exceeded Sick Days
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("pendingExplanations")}
+            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "pendingExplanations" ? "bg-primary/20 text-primary" : ""}`}
+          >
+            <ListTodo className="h-3.5 w-3.5" /> Pending Explanations
+          </button>
         </div>
 
         {view === "calendar" && (
@@ -941,6 +1145,149 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         {view === "corrections" && <CorrectionsTab />}
 
         {view === "holidays" && <HolidayCalendarTab myProfileId={myProfileId} />}
+
+        {view === "visitExceptions" && <VisitExceptionReportTab />}
+
+        {view === "exceededSickDays" && (
+          <div className="panel p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <h2 className="text-base font-semibold">Exceeded Sick Days</h2>
+              <span className="text-xs text-slate-400">({exceededSickDaysRows.length})</span>
+            </div>
+            <p className="text-xs text-slate-400 mb-4">
+              Technicians who've used more Sick Leave than their {SICK_LEAVE_ANNUAL_ALLOWANCE}-day annual allowance for their tenure year as of the date below. "Used" already counts pending (not yet decided) requests, not just approved ones — a Pending badge means at least one of those requests is still awaiting review.
+            </p>
+            <div className="mb-4 flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">As Of</label>
+                <input type="date" value={esdAsOfDate} onChange={(e) => setEsdAsOfDate(e.target.value)} className="glass-input" />
+              </div>
+              {esdAsOfDate !== todayISO() && (
+                <button type="button" onClick={() => setEsdAsOfDate(todayISO())} className="btn text-sm px-3 py-1.5">Today</button>
+              )}
+              <div className="flex-1 min-w-[180px]">
+                <label className="block text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Search</label>
+                <input type="text" value={esdSearch} onChange={(e) => setEsdSearch(e.target.value)} placeholder="Employee name…" className="glass-input w-full" />
+              </div>
+            </div>
+            {loading ? (
+              <p className="text-sm text-slate-400 text-center py-8">Loading…</p>
+            ) : exceededSickDaysRows.length === 0 ? (
+              <p className="text-sm text-slate-500 text-center py-8">No one is currently over their Sick Leave allowance.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-slate-400 border-b border-white/10 text-left">
+                      <th className="py-2 pr-3 relative">{renderMultiSelectFilterHeader("esdName", "Name", nameOptions, esdNameFilter, setEsdNameFilter)}</th>
+                      <th className="py-2 pr-3 relative">{renderMultiSelectFilterHeader("esdRole", "Role", roleOptions, esdRoleFilter, setEsdRoleFilter, (v) => ROLE_LABELS[v] || v)}</th>
+                      <th className="py-2 pr-3 relative">{renderMultiSelectFilterHeader("esdBranch", "Branch", branchOptions, esdBranchFilter, setEsdBranchFilter)}</th>
+                      <th className="py-2 pr-3 relative">{renderMultiSelectFilterHeader("esdManager", "Manager", managerOptions, esdManagerFilter, setEsdManagerFilter)}</th>
+                      <th className="py-2 pr-3">Used / Allowance</th>
+                      <th className="py-2 pr-3">Over By</th>
+                      <th className="py-2 pr-3 relative">{renderTriStateFilterHeader("esdStatus", "Status", esdStatusFilter, setEsdStatusFilter, "Pending Request", "Fully Decided")}</th>
+                      <th className="py-2">Sick Requests This Year</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {exceededSickDaysRows.map((r) => (
+                      <tr key={r.profile.id} className="border-b border-white/5 align-top">
+                        <td className="py-2 pr-3 text-white font-medium whitespace-nowrap">{r.profile.display_name || r.profile.email}</td>
+                        <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{ROLE_LABELS[r.profile.role] || r.profile.role}</td>
+                        <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{r.profile.assigned_branch || "—"}</td>
+                        <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{r.profile.manager_name || "—"}</td>
+                        <td className="py-2 pr-3 text-red-300 font-semibold whitespace-nowrap">{fmtSickDays(r.used)} / {r.allowance}</td>
+                        <td className="py-2 pr-3 text-red-300 font-semibold whitespace-nowrap">{fmtSickDays(r.used - r.allowance)}</td>
+                        <td className="py-2 pr-3">
+                          {r.hasPendingRequest ? (
+                            <span className="inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40">Pending Request</span>
+                          ) : (
+                            <span className="inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold bg-slate-500/20 text-slate-300 border border-slate-500/40">Fully Decided</span>
+                          )}
+                        </td>
+                        <td className="py-2">
+                          <ul className="space-y-0.5">
+                            {r.requests.map((req) => (
+                              <li key={req.id} className="text-xs text-slate-300 whitespace-nowrap">
+                                {req.startDate}{req.endDate !== req.startDate ? ` – ${req.endDate}` : ""}{" "}
+                                <span className={req.status === "pending" ? "text-amber-300" : "text-emerald-300"}>({req.status})</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {view === "pendingExplanations" && (
+          <div className="panel p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <h2 className="text-base font-semibold">Pending Explanations / Excuses</h2>
+              <span className="text-xs text-slate-400">({pendingExplanationRows.length})</span>
+            </div>
+            <p className="text-xs text-slate-400 mb-4">
+              A To-Do list of absences in the selected date range that still don't have an HR Status set — either the employee needs to provide a reason, or a manager still needs to review one. Add the HR Status here and it disappears from this list.
+            </p>
+            <div className="mb-4 flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">From</label>
+                <input type="date" value={peDateFrom} onChange={(e) => setPeDateFrom(e.target.value)} className="glass-input" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">To</label>
+                <input type="date" value={peDateTo} onChange={(e) => setPeDateTo(e.target.value)} className="glass-input" />
+              </div>
+              {!(peDateFrom === todayISO() && peDateTo === todayISO()) && (
+                <button type="button" onClick={() => { setPeDateFrom(todayISO()); setPeDateTo(todayISO()); }} className="btn text-sm px-3 py-1.5">Today</button>
+              )}
+              <div className="flex-1 min-w-[180px]">
+                <label className="block text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Search</label>
+                <input type="text" value={peSearch} onChange={(e) => setPeSearch(e.target.value)} placeholder="Employee name…" className="glass-input w-full" />
+              </div>
+            </div>
+            {loading ? (
+              <p className="text-sm text-slate-400 text-center py-8">Loading…</p>
+            ) : pendingExplanationRows.length === 0 ? (
+              <p className="text-sm text-slate-500 text-center py-8">Nothing pending — every absence in range already has an HR Status.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-slate-400 border-b border-white/10 text-left">
+                      <th className="py-2 pr-3 relative">{renderMultiSelectFilterHeader("peName", "Name", nameOptions, peNameFilter, setPeNameFilter)}</th>
+                      <th className="py-2 pr-3 relative">{renderMultiSelectFilterHeader("peRole", "Role", roleOptions, peRoleFilter, setPeRoleFilter, (v) => ROLE_LABELS[v] || v)}</th>
+                      <th className="py-2 pr-3 relative">{renderMultiSelectFilterHeader("peBranch", "Branch", branchOptions, peBranchFilter, setPeBranchFilter)}</th>
+                      <th className="py-2 pr-3 relative">{renderMultiSelectFilterHeader("peManager", "Manager", managerOptions, peManagerFilter, setPeManagerFilter)}</th>
+                      <th className="py-2 pr-3">Note</th>
+                      <th className="py-2 pr-3">HR Status</th>
+                      <th className="py-2 pr-3">Request</th>
+                      <th className="py-2">Attachment</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {peRangeDates.length > 1
+                      ? groupedPendingExplanationRows.map(([groupDate, rows]) => (
+                          <Fragment key={groupDate}>
+                            <tr className="bg-white/10 border-t-2 border-b border-blue-500/30">
+                              <td colSpan={7} className="py-3 px-2 text-base font-bold text-blue-300 uppercase tracking-wide">
+                                {groupDate} <span className="text-slate-400 font-normal normal-case text-sm">({rows.length})</span>
+                              </td>
+                            </tr>
+                            {rows.map(renderAbsentRow)}
+                          </Fragment>
+                        ))
+                      : pendingExplanationRows.map(renderAbsentRow)}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
 
         {view === "list" && !loading && (
           statsCardHidden ? (

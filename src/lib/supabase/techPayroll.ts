@@ -23,6 +23,7 @@
 
 import { supabase } from "./client";
 import { mileageEffectiveTotal } from "./mileage";
+import { statusGroupOf } from "@/lib/ticketData";
 
 /** repair_type value used as the fallback rate for a completed visit with no repair_type set. */
 export const DEFAULT_REPAIR_TYPE = "Default Amount";
@@ -328,6 +329,44 @@ export async function getTechCompletedRepairCounts(
     else counts.set(key, { technician: c.technician, repairType, branch: c.location, count: 1 });
   }
   return Array.from(counts.values());
+}
+
+/**
+ * Cancelled-ticket counts per technician for a period — for the Technician
+ * Performance Report's "Cancelled" column. Unlike getTechCompletedCandidates
+ * (which only looks at tickets already filtered to a completed status),
+ * this reads the same raw tickets.schedule_date-scoped rows but keeps only
+ * the ones whose status has actually reached the terminal "cancelled"
+ * bucket (statusGroupOf === "cancelled" — CL-Cancelled, not the still-
+ * pending "CL-Need Cancel" request state, see ticketData.ts's own
+ * statusGroupOf comment). Grouped by the same free-text tickets.technician
+ * field every other per-technician count in this file uses.
+ */
+export async function getTechCancelledTicketCounts(startDate: string, endDate: string): Promise<{ technician: string; count: number }[]> {
+  if (!startDate || !endDate) return [];
+  const ticketRows: any[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data: page, error } = await supabase
+      .from("tickets")
+      .select("technician, status, schedule_date")
+      .gte("schedule_date", startDate)
+      .lte("schedule_date", endDate)
+      .not("technician", "is", null)
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getTechCancelledTicketCounts error:", error.message);
+      return [];
+    }
+    ticketRows.push(...(page ?? []));
+    if (!page || page.length < PAGE_SIZE) break;
+  }
+  const counts = new Map<string, number>();
+  for (const t of ticketRows) {
+    const technician = String(t.technician || "").trim();
+    if (!technician || statusGroupOf(t.status) !== "cancelled") continue;
+    counts.set(technician, (counts.get(technician) ?? 0) + 1);
+  }
+  return Array.from(counts.entries()).map(([technician, count]) => ({ technician, count }));
 }
 
 /**

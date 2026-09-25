@@ -28,11 +28,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, Pencil, Loader2, Eye, X, Search } from "lucide-react";
 import { getCompanyTicketAttendance, type TicketAttendanceRow } from "@/lib/supabase/technicianWhereabouts";
-import { getCompanyTimecardEntries, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
+import { getCompanyTimecardEntries, getMyProfileSchedule, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getAttendanceNotes, upsertAttendanceNote, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import { useAuth } from "@/lib/auth";
+import { getServerNow, zonedDateKey, type ScheduleTimezone } from "@/lib/serverTime";
 
 const FULL_ACCESS_ROLES = new Set(["SUPERADMIN", "TECHNICAL_DIRECTOR", "TECHNICAL_ASSISTANT_DIRECTOR"]);
 const MANAGER_TIER_ROLES = new Set(["SENIOR_BRANCH_MANAGER", "BRANCH_MANAGER"]);
@@ -87,7 +88,7 @@ function fmtTime(iso: string): string {
 }
 
 export function MobileTicketAttendanceView({ profileId }: { profileId: string | null }) {
-  const { companyId } = useAuth();
+  const { companyId, uid } = useAuth();
   const [loading, setLoading] = useState(true);
   const [allProfiles, setAllProfiles] = useState<ProfileRow[]>([]);
   const [ticketRows, setTicketRows] = useState<TicketAttendanceRow[]>([]);
@@ -112,10 +113,33 @@ export function MobileTicketAttendanceView({ profileId }: { profileId: string | 
   const [viewAsPickerOpen, setViewAsPickerOpen] = useState(false);
   const [viewAsSearch, setViewAsSearch] = useState("");
 
-  const todayKey = useMemo(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  }, []);
+  // "Today" per the SERVER's clock, in the viewer's own scheduled
+  // timezone — NOT the device clock (this used to be a plain `new Date()`
+  // computation). A technician whose phone's date/time is wrong would
+  // otherwise see "No tickets scheduled today" for a ticket that's
+  // genuinely scheduled for the real today — confirmed bug (Percy Smith,
+  // Columbus). Same server-clock source Home's own "Assigned Today"
+  // list/MobileHeaderClock/Time Clock punches already use (serverTime.ts).
+  const [todayKey, setTodayKey] = useState(() => zonedDateKey(new Date(), "CST"));
+  useEffect(() => {
+    if (!uid) return;
+    let cancelled = false;
+    let scheduleTimezone: ScheduleTimezone = "CST";
+    const sync = async () => {
+      try {
+        const serverNow = await getServerNow();
+        if (!cancelled) setTodayKey(zonedDateKey(serverNow, scheduleTimezone));
+      } catch {
+        if (!cancelled) setTodayKey(zonedDateKey(new Date(), scheduleTimezone));
+      }
+    };
+    getMyProfileSchedule(uid)
+      .then((s) => { scheduleTimezone = s.scheduleTimezone; })
+      .catch(() => { /* best-effort — falls back to CST */ })
+      .finally(() => { if (!cancelled) void sync(); });
+    const tick = window.setInterval(sync, 5 * 60_000);
+    return () => { cancelled = true; window.clearInterval(tick); };
+  }, [uid]);
 
   const load = async () => {
     if (!profileId) {
@@ -144,7 +168,7 @@ export function MobileTicketAttendanceView({ profileId }: { profileId: string | 
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileId]);
+  }, [profileId, todayKey]);
 
   const realViewer = useMemo(() => allProfiles.find((p) => p.id === profileId) ?? null, [allProfiles, profileId]);
   const isFullAccessReal = realViewer ? heldRoles(realViewer).some((r) => FULL_ACCESS_ROLES.has(r)) : false;

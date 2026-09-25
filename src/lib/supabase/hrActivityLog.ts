@@ -4,6 +4,7 @@ import { supabase } from "./client";
 export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   candidate_added: "Added candidate",
   candidate_status_changed: "Changed candidate status",
+  candidate_attempt_logged: "Logged call/text attempt",
   candidate_deleted: "Deleted candidate",
   candidate_cv_forwarded: "Forwarded CV",
   staffing_target_updated: "Updated Staff Needed",

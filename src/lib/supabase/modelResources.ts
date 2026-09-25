@@ -1,27 +1,36 @@
 /**
  * Per-model reference links shared across every ticket carrying the same
  * model number. Surfaced on the ticket detail's Product Information section
- * via two buttons: Exploded View and Service Bulletin.
+ * via three buttons: Exploded View, Service Bulletin, and Tech Data Sheet.
+ * Each field can hold multiple links.
  *
- * Backed by the `model_resources` table (migration 0019). Company-scoped via
- * RLS — every user in the company sees the same links.
+ * Backed by the `model_resources` table (migration 0019, arrays added in
+ * 0311). Company-scoped via RLS — every user in the company sees the same
+ * links.
  */
 import { supabase } from "./client";
 
 export interface ModelResources {
   model: string;
-  explodedViewUrl: string;
-  serviceBulletinUrl: string;
+  explodedViewUrls: string[];
+  serviceBulletinUrls: string[];
+  techDataSheetUrls: string[];
   updatedAt?: string;
 }
 
 const EMPTY: Omit<ModelResources, "model"> = {
-  explodedViewUrl: "",
-  serviceBulletinUrl: "",
+  explodedViewUrls: [],
+  serviceBulletinUrls: [],
+  techDataSheetUrls: [],
 };
 
 function normalizeModel(value: string): string {
   return String(value || "").trim().toUpperCase();
+}
+
+function normalizeUrls(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((v) => String(v || "").trim()).filter(Boolean);
 }
 
 /** Read the resources row for a model. Returns blanks if none exists. */
@@ -31,7 +40,7 @@ export async function getModelResources(model: string): Promise<ModelResources> 
 
   const { data, error } = await supabase
     .from("model_resources")
-    .select("model, exploded_view_url, service_bulletin_url, updated_at")
+    .select("model, exploded_view_urls, service_bulletin_urls, tech_data_sheet_urls, updated_at")
     .eq("model", key)
     .maybeSingle();
 
@@ -43,19 +52,20 @@ export async function getModelResources(model: string): Promise<ModelResources> 
 
   return {
     model: data.model,
-    explodedViewUrl: data.exploded_view_url || "",
-    serviceBulletinUrl: data.service_bulletin_url || "",
+    explodedViewUrls: normalizeUrls(data.exploded_view_urls),
+    serviceBulletinUrls: normalizeUrls(data.service_bulletin_urls),
+    techDataSheetUrls: normalizeUrls(data.tech_data_sheet_urls),
     updatedAt: data.updated_at,
   };
 }
 
 /**
- * Upsert resources for a model. Pass empty strings to clear a link. The DB
+ * Upsert resources for a model. Pass an empty array to clear a field. The DB
  * unique index on (company_id, model) makes this idempotent.
  */
 export async function saveModelResources(
   model: string,
-  fields: { explodedViewUrl?: string; serviceBulletinUrl?: string },
+  fields: { explodedViewUrls?: string[]; serviceBulletinUrls?: string[]; techDataSheetUrls?: string[] },
 ): Promise<ModelResources> {
   const key = normalizeModel(model);
   if (!key) throw new Error("saveModelResources requires a model");
@@ -71,8 +81,9 @@ export async function saveModelResources(
   const payload: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
   };
-  if (fields.explodedViewUrl !== undefined) payload.exploded_view_url = fields.explodedViewUrl || null;
-  if (fields.serviceBulletinUrl !== undefined) payload.service_bulletin_url = fields.serviceBulletinUrl || null;
+  if (fields.explodedViewUrls !== undefined) payload.exploded_view_urls = normalizeUrls(fields.explodedViewUrls);
+  if (fields.serviceBulletinUrls !== undefined) payload.service_bulletin_urls = normalizeUrls(fields.serviceBulletinUrls);
+  if (fields.techDataSheetUrls !== undefined) payload.tech_data_sheet_urls = normalizeUrls(fields.techDataSheetUrls);
 
   if (existing?.id) {
     const { error } = await supabase

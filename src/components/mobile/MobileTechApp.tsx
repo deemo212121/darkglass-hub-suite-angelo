@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+﻿import { Fragment, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
 import { setDesktopOverride } from "@/lib/device";
@@ -130,8 +130,20 @@ import {
   composeServicePerformed,
   emptyServicePerformed,
 } from "@/lib/servicePerformedNotes";
-import type { Ticket } from "@/lib/ticketData";
+import { statusGroupOf, type Ticket } from "@/lib/ticketData";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
+
+// Chromium's native <input type="date"/"time"> only opens the picker
+// popup when the calendar/clock ICON itself is clicked — clicking
+// anywhere else in the field just places a text cursor in that segment
+// for manual typing. showPicker() (Chrome/Edge 99+) opens it
+// programmatically, so wiring it to onClick makes the whole field open
+// the popup, not just the small icon. Optional-chained since Safari/
+// Firefox don't support it yet — falls back to the native icon-only
+// behavior there instead of throwing.
+const openNativePicker = (e: React.MouseEvent<HTMLInputElement>) => {
+  (e.currentTarget as HTMLInputElement & { showPicker?: () => void }).showPicker?.();
+};
 
 type View =
   | "roster"
@@ -236,23 +248,34 @@ function openDays(t: Ticket): number {
   return Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000));
 }
 
-// A "done"/closed ticket for the To Do vs Done split.
+// A "done"/closed ticket for the To Do vs Done split. Delegates to the
+// app's own statusGroupOf (ticketData.ts) instead of a separate ad hoc
+// substring check — the old check here was `status.includes("cl-")`,
+// which matched EVERY "CL-"-prefixed status including still-open ones
+// like "CL-Ready to Complete" (ready to be marked complete, not actually
+// complete yet), "CL-Need Cancel", and "CL-Parts Back Ordered" — silently
+// dropping those tickets off a technician's Today/To Do list entirely.
+// Confirmed bug: Percy Smith (Montgomery) couldn't find/submit a
+// "CL-Ready to Complete" ticket that was very much still his to finish.
+// Cancelled tickets count as done too — nothing left for the technician
+// to do on one either.
 function isDone(status: string): boolean {
-  const s = (status || "").toLowerCase();
-  return s.includes("complete") || s.includes("closed") || s.includes("cl-") || s.includes("claim");
+  const group = statusGroupOf(status);
+  return group === "completed" || group === "cancelled";
 }
 
 // Same "is this ticket's schedule today" match RouteMapView's ticket
 // filter uses (ISO or US-format schedule string) — pulled out so Home's
-// "Assigned Today" list uses the identical definition of "today".
-function isScheduledToday(t: Ticket): boolean {
+// "Assigned Today" list uses the identical definition of "today". Takes
+// `todayIso` explicitly (the SERVER's date, in the technician's own
+// scheduled timezone — see the `todayIso` state this file computes via
+// getServerNow()/zonedDateKey) rather than reading the device clock
+// itself: a technician whose phone's date/time is wrong, or who's near a
+// midnight rollover in a different zone than their branch, would
+// otherwise see yesterday's/tomorrow's tickets under "Today".
+function isScheduledToday(t: Ticket, todayIso: string): boolean {
   const rawDate = String(t.schedule || (t as any).schedule_date || "").trim();
   if (!rawDate) return false;
-  const today = new Date();
-  const yyyy = today.getFullYear();
-  const mm = String(today.getMonth() + 1).padStart(2, "0");
-  const dd = String(today.getDate()).padStart(2, "0");
-  const todayIso = `${yyyy}-${mm}-${dd}`;
   if (rawDate.startsWith(todayIso)) return true;
   const usMatch = rawDate.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
   if (usMatch) {
@@ -457,6 +480,30 @@ export function MobileTechApp() {
   // already use — see serverTime.ts).
   const [myAssignedBranch, setMyAssignedBranch] = useState("");
   const [myScheduleTimezone, setMyScheduleTimezone] = useState<ScheduleTimezone>("CST");
+  // "Today" per the SERVER's clock, in the technician's own scheduled
+  // timezone — NOT `new Date()` (device-local). A technician whose phone's
+  // date/time is off (or just sitting near midnight in a different zone
+  // than their branch) would otherwise see yesterday's or tomorrow's
+  // tickets under "Today" — confirmed bug (Tywon Ross, Jackson MS, saw
+  // 9/23 tickets under Today on 9/24). Same server-clock source the header
+  // clock and Time Clock punches already use (serverTime.ts). Synced once
+  // on mount and re-synced periodically so it still rolls over correctly
+  // if the app is left open across midnight.
+  const [todayIso, setTodayIso] = useState(() => zonedDateKey(new Date(), "CST"));
+  useEffect(() => {
+    let cancelled = false;
+    const sync = async () => {
+      try {
+        const serverNow = await getServerNow();
+        if (!cancelled) setTodayIso(zonedDateKey(serverNow, myScheduleTimezone));
+      } catch {
+        if (!cancelled) setTodayIso(zonedDateKey(new Date(), myScheduleTimezone));
+      }
+    };
+    void sync();
+    const tick = window.setInterval(sync, 5 * 60_000);
+    return () => { cancelled = true; window.clearInterval(tick); };
+  }, [myScheduleTimezone]);
   useEffect(() => {
     if (!uid) return;
     let cancelled = false;
@@ -644,6 +691,27 @@ export function MobileTechApp() {
     _persisted.tab ?? "today",
   );
   const [search, setSearch] = useState("");
+  // The Search tab searches every ticket in the company, not just this
+  // technician's own (myTickets is deliberately scoped to keep the initial
+  // load light — see the fetch effect above). Loaded lazily, once, the
+  // first time the tech actually opens Search, rather than on every app
+  // load, so plain technicians still get the cheap name-scoped fetch by
+  // default.
+  const [allTickets, setAllTickets] = useState<Ticket[] | null>(null);
+  const [allTicketsLoading, setAllTicketsLoading] = useState(false);
+  useEffect(() => {
+    if (tab !== "search" || allTickets !== null || allTicketsLoading) return;
+    let cancelled = false;
+    setAllTicketsLoading(true);
+    getCompanyTickets()
+      .then((rows) => { if (!cancelled) setAllTickets(rows); })
+      .catch((e) => {
+        console.error("Mobile: failed to load all-company tickets for search", e);
+        if (!cancelled) setAllTickets([]);
+      })
+      .finally(() => { if (!cancelled) setAllTicketsLoading(false); });
+    return () => { cancelled = true; };
+  }, [tab, allTickets, allTicketsLoading]);
   const [activeTicketNo, setActiveTicketNo] = useState<string | null>(
     _persisted.activeTicketNo ?? null,
   );
@@ -1152,24 +1220,28 @@ export function MobileTechApp() {
   // Home landing page's "Assigned Today" list — same tickets To Do would
   // show, further narrowed to today's schedule date.
   const todaysTickets = useMemo(
-    () => myTickets.filter((t) => !isDone(t.status) && isScheduledToday(t)),
-    [myTickets]
+    () => myTickets.filter((t) => !isDone(t.status) && isScheduledToday(t, todayIso)),
+    [myTickets, todayIso]
   );
 
   const visibleTickets = useMemo(() => {
-    let list = tab === "today" ? todaysTickets : myTickets;
+    // Search reaches every ticket in the company (once allTickets has
+    // loaded), not just this technician's own — falls back to myTickets
+    // while the company-wide fetch is still in flight so something useful
+    // shows immediately.
+    let list = tab === "search" ? (allTickets ?? myTickets) : tab === "today" ? todaysTickets : myTickets;
     if (tab === "todo") list = list.filter((t) => !isDone(t.status));
     else if (tab === "done") list = list.filter((t) => isDone(t.status));
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter((t) =>
-        [t.ticketNo, t.customer, t.city, t.model, t.status, t.location].some((v) =>
+        [t.ticketNo, t.customer, t.city, t.model, t.status, t.location, t.technician].some((v) =>
           (v || "").toLowerCase().includes(q)
         )
       );
     }
     return list;
-  }, [myTickets, todaysTickets, tab, search]);
+  }, [myTickets, todaysTickets, allTickets, tab, search]);
 
   const activeTicket = useMemo(
     () => tickets.find((t) => t.ticketNo === activeTicketNo) || null,
@@ -1449,6 +1521,7 @@ export function MobileTechApp() {
         {effectiveView === "tickets" && (
           <TicketsView
             loading={loading}
+            searchLoading={allTicketsLoading}
             tickets={visibleTickets}
             tab={tab}
             setTab={setTab}
@@ -2093,6 +2166,7 @@ function RosterView({
 
 function TicketsView({
   loading,
+  searchLoading,
   tickets,
   tab,
   setTab,
@@ -2119,6 +2193,8 @@ function TicketsView({
   onBackToOwn,
 }: {
   loading: boolean;
+  /** True while the Search tab's company-wide ticket fetch is in flight (separate from `loading`, which only covers the initial name/branch-scoped load). */
+  searchLoading: boolean;
   tickets: Ticket[];
   tab: "today" | "todo" | "done" | "search";
   setTab: (t: "today" | "todo" | "done" | "search") => void;
@@ -2249,6 +2325,7 @@ function TicketsView({
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search ticket, customer, city..."
           />
+          {searchLoading && <div className="mtech-empty" style={{ padding: "0.5rem 0.25rem" }}>Loading all company tickets…</div>}
         </div>
       )}
 
@@ -3274,22 +3351,23 @@ function DetailsTab({
   authorName: string;
   authorRole: string;
 }) {
-  // Per-model reference links (Exploded View / Service Bulletin) — same
-  // model_resources data the desktop ticket page's Product Information
-  // section shows, just never wired up on mobile before. Shared across
-  // every ticket carrying this model number, so a tech adding one in the
-  // field also benefits everyone else on the same model.
+  // Per-model reference links (Exploded View / Service Bulletin / Tech Data
+  // Sheet) — same model_resources data the desktop ticket page's Product
+  // Information section shows, just never wired up on mobile before. Each
+  // field can hold multiple links. Shared across every ticket carrying this
+  // model number, so a tech adding one in the field also benefits everyone
+  // else on the same model.
   const [modelResources, setModelResources] = useState<ModelResources>({
-    model: "", explodedViewUrl: "", serviceBulletinUrl: "",
+    model: "", explodedViewUrls: [], serviceBulletinUrls: [], techDataSheetUrls: [],
   });
-  const [editingResource, setEditingResource] = useState<"exploded" | "bulletin" | null>(null);
+  const [editingResource, setEditingResource] = useState<"exploded" | "bulletin" | "techDataSheet" | null>(null);
   const [resourceDraft, setResourceDraft] = useState("");
   const [savingResource, setSavingResource] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     if (!ticket.model) {
-      setModelResources({ model: "", explodedViewUrl: "", serviceBulletinUrl: "" });
+      setModelResources({ model: "", explodedViewUrls: [], serviceBulletinUrls: [], techDataSheetUrls: [] });
       return;
     }
     getModelResources(ticket.model)
@@ -3298,9 +3376,9 @@ function DetailsTab({
     return () => { cancelled = true; };
   }, [ticket.model]);
 
-  const beginEditResource = (kind: "exploded" | "bulletin") => {
+  const beginAddResource = (kind: "exploded" | "bulletin" | "techDataSheet") => {
     setEditingResource(kind);
-    setResourceDraft(kind === "exploded" ? modelResources.explodedViewUrl : modelResources.serviceBulletinUrl);
+    setResourceDraft("");
   };
   const cancelEditResource = () => {
     setEditingResource(null);
@@ -3308,17 +3386,37 @@ function DetailsTab({
   };
   const saveEditResource = async () => {
     if (!editingResource || !ticket.model) return;
+    const url = resourceDraft.trim();
+    if (!url) { cancelEditResource(); return; }
     setSavingResource(true);
     try {
       const updated = await saveModelResources(ticket.model, {
-        explodedViewUrl: editingResource === "exploded" ? resourceDraft.trim() : modelResources.explodedViewUrl,
-        serviceBulletinUrl: editingResource === "bulletin" ? resourceDraft.trim() : modelResources.serviceBulletinUrl,
+        explodedViewUrls: editingResource === "exploded" ? [...modelResources.explodedViewUrls, url] : modelResources.explodedViewUrls,
+        serviceBulletinUrls: editingResource === "bulletin" ? [...modelResources.serviceBulletinUrls, url] : modelResources.serviceBulletinUrls,
+        techDataSheetUrls: editingResource === "techDataSheet" ? [...modelResources.techDataSheetUrls, url] : modelResources.techDataSheetUrls,
       });
       setModelResources(updated);
       cancelEditResource();
     } catch (err) {
       console.error("saveModelResources error:", err);
       alert(`Failed to save link: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingResource(false);
+    }
+  };
+  const removeResourceUrl = async (kind: "exploded" | "bulletin" | "techDataSheet", url: string) => {
+    if (!ticket.model) return;
+    setSavingResource(true);
+    try {
+      const updated = await saveModelResources(ticket.model, {
+        explodedViewUrls: kind === "exploded" ? modelResources.explodedViewUrls.filter((u) => u !== url) : modelResources.explodedViewUrls,
+        serviceBulletinUrls: kind === "bulletin" ? modelResources.serviceBulletinUrls.filter((u) => u !== url) : modelResources.serviceBulletinUrls,
+        techDataSheetUrls: kind === "techDataSheet" ? modelResources.techDataSheetUrls.filter((u) => u !== url) : modelResources.techDataSheetUrls,
+      });
+      setModelResources(updated);
+    } catch (err) {
+      console.error("saveModelResources error:", err);
+      alert(`Failed to remove link: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setSavingResource(false);
     }
@@ -3349,29 +3447,43 @@ function DetailsTab({
       <div className="mtech-section-title">Product Information</div>
       {ticket.model && (
         <div className="mtech-visit-actions" style={{ flexWrap: "wrap" }}>
-          {(["exploded", "bulletin"] as const).map((kind) => {
-            const label = kind === "exploded" ? "Exploded View" : "Service Bulletin";
-            const url = kind === "exploded" ? modelResources.explodedViewUrl : modelResources.serviceBulletinUrl;
-            return url ? (
-              <a
-                key={kind}
-                href={url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mtech-btn mtech-btn-primary"
-                style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", textDecoration: "none" }}
-              >
-                <ExternalLink size={14} /> {label}
-              </a>
-            ) : (
-              <button
-                key={kind}
-                type="button"
-                className="mtech-btn"
-                onClick={() => beginEditResource(kind)}
-              >
-                + Add {label}
-              </button>
+          {(["exploded", "bulletin", "techDataSheet"] as const).map((kind) => {
+            const label = kind === "exploded" ? "Exploded View" : kind === "bulletin" ? "Service Bulletin" : "Tech Data Sheet";
+            const urls = kind === "exploded" ? modelResources.explodedViewUrls : kind === "bulletin" ? modelResources.serviceBulletinUrls : modelResources.techDataSheetUrls;
+            return (
+              <Fragment key={kind}>
+                {urls.map((url, i) => (
+                  <span key={`${kind}-${i}`} style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem" }}>
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mtech-btn mtech-btn-primary"
+                      style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", textDecoration: "none" }}
+                    >
+                      <ExternalLink size={14} /> {label}{urls.length > 1 ? ` ${i + 1}` : ""}
+                    </a>
+                    <button
+                      type="button"
+                      className="mtech-btn"
+                      style={{ padding: "0.25rem 0.5rem" }}
+                      disabled={savingResource}
+                      title={`Remove this ${label} link`}
+                      aria-label={`Remove this ${label} link`}
+                      onClick={() => void removeResourceUrl(kind, url)}
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+                <button
+                  type="button"
+                  className="mtech-btn"
+                  onClick={() => beginAddResource(kind)}
+                >
+                  + Add {label}
+                </button>
+              </Fragment>
             );
           })}
         </div>
@@ -3379,7 +3491,7 @@ function DetailsTab({
       {editingResource && (
         <div className="mtech-visit-edit">
           <label className="mtech-visit-edit-label">
-            {editingResource === "exploded" ? "Exploded View" : "Service Bulletin"} link
+            {editingResource === "exploded" ? "Exploded View" : editingResource === "bulletin" ? "Service Bulletin" : "Tech Data Sheet"} link
           </label>
           <input
             className="mtech-visit-edit-input"
@@ -5001,24 +5113,19 @@ function HomeTicketStatsCard({
   );
 }
 
-// One Time In/Out/Meal In/Out card on the Home landing page. Several
-// states: a plain tappable card showing "—" (nothing punched yet), or —
-// once armed by a first tap — an inline "Yes / No" confirm in the same
-// slot to actually punch (so committing a clock event never needs a native
-// browser popup); once punched, a plain (non-tappable) card with the
-// recorded value and — while still the most-recently-made punch, see
-// canEditPunch — a small X to self-correct a stray tap, which itself arms
-// a second "Remove? Yes / No" confirm in the same slot before anything is
-// actually cleared.
+// One Time In/Out/Meal In/Out card on the Home landing page. A plain
+// tappable card showing "—" (nothing punched yet) punches immediately on
+// tap — no confirm step, so a single tap reliably saves. Once punched, a
+// plain (non-tappable) card with the recorded value and — while still the
+// most-recently-made punch, see canEditPunch — a small X to self-correct a
+// stray tap, which arms a "Remove? Yes / No" confirm in the same slot
+// before anything is actually cleared.
 function ClockCard({
   label,
   value,
   valueClass,
-  armed,
   canAct,
-  confirmLabel,
   onTap,
-  onCancel,
   removable,
   removeArmed,
   removing,
@@ -5029,11 +5136,8 @@ function ClockCard({
   label: string;
   value: string;
   valueClass: "in" | "out" | "meal";
-  armed: boolean;
   canAct: boolean;
-  confirmLabel: string;
   onTap: () => void;
-  onCancel: () => void;
   removable: boolean;
   removeArmed: boolean;
   removing: boolean;
@@ -5041,17 +5145,6 @@ function ClockCard({
   onConfirmRemove: () => void;
   onCancelRemove: () => void;
 }) {
-  if (armed) {
-    return (
-      <div className="mtech-timecard-card mtech-timecard-card-confirm">
-        <div className="mtech-timecard-card-confirm-label">{confirmLabel}</div>
-        <div className="mtech-timecard-card-confirm-actions">
-          <button type="button" className="mtech-timecard-confirm-btn mtech-timecard-confirm-yes" onClick={onTap}>Yes</button>
-          <button type="button" className="mtech-timecard-confirm-btn mtech-timecard-confirm-no" onClick={onCancel}>No</button>
-        </div>
-      </div>
-    );
-  }
   if (removeArmed) {
     return (
       <div className="mtech-timecard-card mtech-timecard-card-confirm">
@@ -6195,30 +6288,12 @@ function MobileHomeView({
   const canMealIn = !loadError && !!entry.checkIn && !entry.checkOut && !entry.mealStart && !saving;
   const canMealOut = !loadError && !!entry.mealStart && !entry.mealEnd && !saving;
 
-  // Which card is currently showing its inline "Yes / No" confirm —
-  // at most one at a time. Auto-disarms after a few seconds so an armed
-  // card doesn't sit there indefinitely if the user taps away.
-  type ArmedCard = "checkIn" | "checkOut" | "mealStart" | "mealEnd" | null;
-  const [armedCard, setArmedCard] = useState<ArmedCard>(null);
-  const armTimerRef = useRef<number | null>(null);
-
-  const arm = (card: ArmedCard) => {
-    if (armTimerRef.current) window.clearTimeout(armTimerRef.current);
-    setArmedCard(card);
-    armTimerRef.current = window.setTimeout(() => setArmedCard(null), 4000);
-  };
-  const disarm = () => {
-    if (armTimerRef.current) window.clearTimeout(armTimerRef.current);
-    setArmedCard(null);
-  };
-  useEffect(() => () => { if (armTimerRef.current) window.clearTimeout(armTimerRef.current); }, []);
-
-  // Self-correct an accidental punch, right from the Home card — separate
-  // arm/confirm state from armedCard above (that one arms a NEW punch;
-  // this one arms REMOVING an existing one), so the two prompts can never
-  // collide in the same slot. See canEditPunch's doc comment for which
-  // punch is actually removable at any moment (only the most-recently-made
-  // one in the Check In -> Meal In -> Meal Out -> Check Out chain).
+  // Self-correct an accidental punch, right from the Home card — this arms
+  // REMOVING an existing punch (separate from actually making one below,
+  // which now fires immediately on tap, no confirm step). See
+  // canEditPunch's doc comment for which punch is actually removable at any
+  // moment (only the most-recently-made one in the Check In -> Meal In ->
+  // Meal Out -> Check Out chain).
   type RemoveConfirmCard = "checkIn" | "checkOut" | "mealStart" | "mealEnd" | null;
   const [confirmRemoveCard, setConfirmRemoveCard] = useState<RemoveConfirmCard>(null);
   const [clearingField, setClearingField] = useState<PunchField | null>(null);
@@ -6245,7 +6320,6 @@ function MobileHomeView({
         await clearPunch(scheduleProfileId, todayKey, field);
       }
       setEntry((prev) => ({ ...prev, [field]: "" }));
-      disarm();
     } catch (e) {
       console.error("MobileHomeView: clear punch failed", e);
       alert(`Failed to remove: ${e instanceof Error ? e.message : "Unknown error"}`);
@@ -6256,41 +6330,30 @@ function MobileHomeView({
 
   const handleTimeIn = () => {
     if (!canTimeIn) return;
-    if (armedCard !== "checkIn") { arm("checkIn"); return; }
-    disarm();
     void persistPunch("checkIn");
   };
 
   const handleTimeOut = () => {
     if (!canTimeOut) return;
-    if (armedCard !== "checkOut") { arm("checkOut"); return; }
-    disarm();
     void persistPunch("checkOut");
   };
 
   const handleMealIn = () => {
     if (!canMealIn) return;
-    if (armedCard !== "mealStart") {
-      if ((!requiredCheckIn || !requiredCheckOut) && !workingHours) {
-        alert("No scheduled shift is set for your account. Contact your admin to set your required schedule.");
-        return;
-      }
-      const scheduledShift = resolveScheduledShiftHours(requiredCheckIn, requiredCheckOut, workingHours, mealMinutes);
-      if (scheduledShift <= 6) {
-        alert(`Meal break is only available for scheduled shifts of more than 6 hours. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`);
-        return;
-      }
-      arm("mealStart");
+    if ((!requiredCheckIn || !requiredCheckOut) && !workingHours) {
+      alert("No scheduled shift is set for your account. Contact your admin to set your required schedule.");
       return;
     }
-    disarm();
+    const scheduledShift = resolveScheduledShiftHours(requiredCheckIn, requiredCheckOut, workingHours, mealMinutes);
+    if (scheduledShift <= 6) {
+      alert(`Meal break is only available for scheduled shifts of more than 6 hours. Your scheduled shift is ${scheduledShift.toFixed(1)} hours.`);
+      return;
+    }
     void persistPunch("mealStart");
   };
 
   const handleMealOut = () => {
     if (!canMealOut) return;
-    if (armedCard !== "mealEnd") { arm("mealEnd"); return; }
-    disarm();
     void persistPunch("mealEnd");
   };
 
@@ -6383,32 +6446,32 @@ function MobileHomeView({
       <div className="mtech-timecard-summary mtech-home-clockrow">
         <ClockCard
           label="Time In" value={entry.checkIn ? entry.checkIn.slice(0, 5) : ""} valueClass="in"
-          armed={armedCard === "checkIn"} canAct={canTimeIn} confirmLabel="Time In now?"
-          onTap={handleTimeIn} onCancel={disarm}
+          canAct={canTimeIn}
+          onTap={handleTimeIn}
           removable={!!entry.checkIn && canEditPunch(entry, "checkIn")}
           removeArmed={confirmRemoveCard === "checkIn"} removing={clearingField === "checkIn"}
           onRequestRemove={() => armRemove("checkIn")} onConfirmRemove={() => void handleClearPunch("checkIn")} onCancelRemove={cancelRemove}
         />
         <ClockCard
           label="Meal In" value={entry.mealStart ? entry.mealStart.slice(0, 5) : ""} valueClass="meal"
-          armed={armedCard === "mealStart"} canAct={canMealIn} confirmLabel="Meal In now?"
-          onTap={handleMealIn} onCancel={disarm}
+          canAct={canMealIn}
+          onTap={handleMealIn}
           removable={!!entry.mealStart && canEditPunch(entry, "mealStart")}
           removeArmed={confirmRemoveCard === "mealStart"} removing={clearingField === "mealStart"}
           onRequestRemove={() => armRemove("mealStart")} onConfirmRemove={() => void handleClearPunch("mealStart")} onCancelRemove={cancelRemove}
         />
         <ClockCard
           label="Meal Out" value={entry.mealEnd ? entry.mealEnd.slice(0, 5) : ""} valueClass="meal"
-          armed={armedCard === "mealEnd"} canAct={canMealOut} confirmLabel="Meal Out now?"
-          onTap={handleMealOut} onCancel={disarm}
+          canAct={canMealOut}
+          onTap={handleMealOut}
           removable={!!entry.mealEnd && canEditPunch(entry, "mealEnd")}
           removeArmed={confirmRemoveCard === "mealEnd"} removing={clearingField === "mealEnd"}
           onRequestRemove={() => armRemove("mealEnd")} onConfirmRemove={() => void handleClearPunch("mealEnd")} onCancelRemove={cancelRemove}
         />
         <ClockCard
           label="Time Out" value={entry.checkOut ? entry.checkOut.slice(0, 5) : ""} valueClass="out"
-          armed={armedCard === "checkOut"} canAct={canTimeOut} confirmLabel="Time Out now?"
-          onTap={handleTimeOut} onCancel={disarm}
+          canAct={canTimeOut}
+          onTap={handleTimeOut}
           removable={!!entry.checkOut && canEditPunch(entry, "checkOut")}
           removeArmed={confirmRemoveCard === "checkOut"} removing={clearingField === "checkOut"}
           onRequestRemove={() => armRemove("checkOut")} onConfirmRemove={() => void handleClearPunch("checkOut")} onCancelRemove={cancelRemove}
@@ -8986,19 +9049,19 @@ function MobileTimeCorrectionView({ userName, profileId, prefillDate }: { userNa
 
       <div className="mtech-panel" style={{ marginTop: 0 }}>
         <div className="mtech-section-title" style={{ marginTop: 0 }}>Date</div>
-        <input className="mtech-bill-input full" type="date" value={correctionDate} onChange={(e) => setCorrectionDate(e.target.value)} />
+        <input className="mtech-bill-input full" type="date" value={correctionDate} onChange={(e) => setCorrectionDate(e.target.value)} onClick={openNativePicker} />
 
         <div className="mtech-section-title">Corrected Check In</div>
-        <input className="mtech-bill-input full" type="time" value={correctedCheckIn} onChange={(e) => setCorrectedCheckIn(e.target.value)} />
+        <input className="mtech-bill-input full" type="time" value={correctedCheckIn} onChange={(e) => setCorrectedCheckIn(e.target.value)} onClick={openNativePicker} />
 
         <div className="mtech-section-title">Corrected Check Out</div>
-        <input className="mtech-bill-input full" type="time" value={correctedCheckOut} onChange={(e) => setCorrectedCheckOut(e.target.value)} />
+        <input className="mtech-bill-input full" type="time" value={correctedCheckOut} onChange={(e) => setCorrectedCheckOut(e.target.value)} onClick={openNativePicker} />
 
         <div className="mtech-section-title">Corrected Meal Start</div>
-        <input className="mtech-bill-input full" type="time" value={correctedMealStart} onChange={(e) => setCorrectedMealStart(e.target.value)} />
+        <input className="mtech-bill-input full" type="time" value={correctedMealStart} onChange={(e) => setCorrectedMealStart(e.target.value)} onClick={openNativePicker} />
 
         <div className="mtech-section-title">Corrected Meal End</div>
-        <input className="mtech-bill-input full" type="time" value={correctedMealEnd} onChange={(e) => setCorrectedMealEnd(e.target.value)} />
+        <input className="mtech-bill-input full" type="time" value={correctedMealEnd} onChange={(e) => setCorrectedMealEnd(e.target.value)} onClick={openNativePicker} />
 
         <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>Fill in only the field(s) that were wrong — the rest is left as recorded.</p>
 

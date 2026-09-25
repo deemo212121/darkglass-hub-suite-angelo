@@ -392,9 +392,30 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     mapRef.current.setMapTypeId(mapMode === "satellite" ? maps.MapTypeId.SATELLITE : maps.MapTypeId.ROADMAP);
   }, [mapMode, mapReady, mapProvider]);
 
+  // Same "which board does this ticket live on" rule Work Planner uses —
+  // the ASSIGNED TECHNICIAN's own home branch (profiles.assigned_branch)
+  // when one resolves, not the customer's ZIP-derived location. A job goes
+  // wherever the technician covering it is actually rostered; the
+  // customer's own service-area branch is only the fallback for an
+  // unassigned ticket. Confirmed bug: a Montgomery technician covering a
+  // Birmingham-ZIP ticket by proximity had it vanish from Montgomery's own
+  // map filter entirely and only ever show under Birmingham.
+  const techBranchByName = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const t of liveTechnicians) {
+      if (t.branch) map.set(t.name.trim().toLowerCase(), t.branch);
+    }
+    return map;
+  }, [liveTechnicians]);
+
   const dayTickets = useMemo(() => {
+    const effectiveBranch = (ticket: (typeof tickets)[number]) => {
+      const techName = String((ticket as any).technician_name || ticket.technician || "").trim();
+      const techBranch = techName ? techBranchByName.get(techName.toLowerCase()) : undefined;
+      return normalizeLocationName(techBranch || ticket.location || ticket.customer_city || ticket.city || "Richmond, VA");
+    };
     const filtered = selectedLocation
-      ? tickets.filter((ticket) => normalizeLocationName(ticket.location || ticket.customer_city || ticket.city || "Richmond, VA") === selectedLocation)
+      ? tickets.filter((ticket) => effectiveBranch(ticket) === selectedLocation)
       : tickets;
 
     // What counts as "pending" — i.e. work that hasn't been closed out.
@@ -494,7 +515,7 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     // "Filter by Technician" (that would be a one-way trap: uncheck them
     // once, their name vanishes since it was only ever there via ticket-
     // derived matching, no way left to re-check them back on).
-  }, [tickets, selectedLocation, mapDate, mapDateEnd, dateRangeMode, showOtherDayTickets, hideUnassigned]);
+  }, [tickets, selectedLocation, mapDate, mapDateEnd, dateRangeMode, showOtherDayTickets, hideUnassigned, techBranchByName]);
 
   const visibleTickets = useMemo(() => {
     // Apply filters based on current filter mode

@@ -6,14 +6,24 @@
  * with a shared notes box, an Urgency call, and a Pending Tickets/Number
  * of Techs snapshot for the selected day.
  *
- * Edit rights (mirrors can_edit_branch_daily_report() in migration 0284 —
- * kept in sync by hand, real enforcement is the RLS policy, this is just
- * for disabling controls the request would be rejected for anyway):
+ * Edit rights (mirrors can_edit_branch_daily_report() in migration 0284,
+ * updated by 0307 for the fallback tier below — kept in sync by hand,
+ * real enforcement is the RLS policy, this is just for disabling controls
+ * the request would be rejected for anyway):
  *   - HR and above: every branch, everything.
  *   - Senior Branch Manager: notes + urgency, but only for branches
  *     assigned to them.
  *   - Branch Manager: notes only (never urgency), only their own
  *     assigned_branch.
+ *   - No active Branch Manager at a branch: whichever active
+ *     technician(s) at that branch hold its highest present technician-pay
+ *     tier (Technician < Technician Manager < Technical Assistant
+ *     Director < Technical Director) get notes-only rights too, same as a
+ *     real Branch Manager would — otherwise a branch with the role vacant
+ *     has nobody local who can post an update at all. Never urgency,
+ *     same as Branch Manager. If several people share the branch's
+ *     highest present tier, all of them qualify (role+branch based, not
+ *     tied to one specific person).
  *   - Everyone else with access to this page: read-only.
  */
 import { useEffect, useMemo, useState } from "react";
@@ -58,6 +68,17 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 const HR_AND_ABOVE = new Set(["HR", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"]);
 const hasRole = (role: string | null, extraRoles: string[], set: Set<string>) =>
   (role && set.has(normalizeRole(role))) || extraRoles.some((r) => set.has(normalizeRole(r)));
+
+// Fallback-editor tier order for a branch with no active Branch Manager —
+// see can_edit_branch_daily_report() in migration 0307 for the
+// server-enforced twin of this. Primary role only, same convention
+// techsFor() below already uses (not role-or-extra-roles).
+const TECHNICIAN_TIER_ORDER: Record<string, number> = {
+  TECHNICIAN: 0,
+  TECHNICIAN_MANAGER: 1,
+  TECHNICAL_ASSISTANT_DIRECTOR: 2,
+  TECHNICAL_DIRECTOR: 3,
+};
 
 export function BranchDailyReportPage({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
@@ -113,10 +134,37 @@ export function BranchDailyReportPage({ mod }: { mod: ModuleDef; sub: SubModuleD
     [assignments, me],
   );
 
+  // Branches with an active Branch Manager already covered — every other
+  // branch's highest present technician-pay tier gets fallback edit rights.
+  const branchesWithActiveBranchManager = useMemo(() => {
+    const set = new Set<string>();
+    for (const u of users) {
+      if (u.is_active && normalizeRole(u.role) === "BRANCH_MANAGER" && u.assigned_branch) set.add(u.assigned_branch);
+    }
+    return set;
+  }, [users]);
+  const highestTechTierByBranch = useMemo(() => {
+    const best = new Map<string, number>();
+    for (const u of users) {
+      if (!u.is_active || !u.assigned_branch) continue;
+      const tier = TECHNICIAN_TIER_ORDER[normalizeRole(u.role)];
+      if (tier === undefined) continue;
+      const current = best.get(u.assigned_branch);
+      if (current === undefined || tier > current) best.set(u.assigned_branch, tier);
+    }
+    return best;
+  }, [users]);
+  const isFallbackTechEditor = (branch: string) => {
+    if (!me || branchesWithActiveBranchManager.has(branch) || me.assigned_branch !== branch) return false;
+    const myTier = TECHNICIAN_TIER_ORDER[normalizeRole(me.role)];
+    return myTier !== undefined && myTier === highestTechTierByBranch.get(branch);
+  };
+
   const canEditNotes = (branch: string) => {
     if (isHrAndAbove) return true;
     if (isSeniorBranchManager && myAssignedBranches.has(branch)) return true;
     if (isBranchManager && me?.assigned_branch === branch) return true;
+    if (isFallbackTechEditor(branch)) return true;
     return false;
   };
   const canEditUrgency = (branch: string) => isHrAndAbove || (isSeniorBranchManager && myAssignedBranches.has(branch));
@@ -242,7 +290,7 @@ export function BranchDailyReportPage({ mod }: { mod: ModuleDef; sub: SubModuleD
           )}
         </div>
         <p className="text-xs text-muted-foreground mb-6">
-          Branches grouped by their Senior Branch Manager. Branch Managers add updates for their own branch; Senior Branch Managers review, set Urgency, and can add updates for every branch assigned to them.
+          Branches grouped by their Senior Branch Manager. Branch Managers add updates for their own branch; Senior Branch Managers review, set Urgency, and can add updates for every branch assigned to them. A branch with no Branch Manager falls back to its highest-tier technician for updates.
         </p>
 
         <div className="panel mb-6 p-4 flex flex-wrap items-center gap-3">

@@ -41,19 +41,29 @@
  *
  * Export CSV / Download Import Template / Import Excel all share one
  * column arrangement (per an explicit reference spreadsheet): Name,
- * Variance, [Date — import template only], Redo, Total Completion,
- * Average Completion, Mileage, Working Days, Off Days, Unexcused Off Days
+ * Variance, Damage Assessment, [Date — import template only], Minor Ticket,
+ * Major Ticket, Redo, Total Completion, Average Completion, Reschedule,
+ * NCNS, Cancelled, Mileage, Working Days, Off Days, Unexcused Off Days
  * Total 2026, Hours Worked, Location, Manager, Tier — plus this report's
- * own extra analytical columns (Technician ID, Redo Rate %, Miles/Ticket,
- * Tickets/Hour, the 3 threshold alerts) appended after, not dropped.
+ * own extra analytical columns (Redo Rate %, Miles/Ticket, Tickets/Hour,
+ * the 3 threshold alerts) appended after, not dropped.
  * "Off Days" = scheduled weekly RDOs within the period (profiles.off_days),
- * not days actually missed. "Unexcused Off Days Total 2026" is a blank,
- * manually-filled column by design — this app has no excused/unexcused
- * absence tracking yet, so there's nothing live to put there; it's not
- * parsed back out on import (same as Location/Manager/Tier). "Variance" =
- * this technician's Total Completion vs. the average of every technician
- * CURRENTLY in view (filteredRows), as a signed %, colored green/red in
- * the .xlsx export (CSV can't carry color).
+ * not days actually missed. "Unexcused Off Days Total 2026" and "NCNS" are
+ * blank, manually-filled columns by design — this app has no excused/
+ * unexcused absence tracking or no-call-no-show tracking yet, so there's
+ * nothing live to put there; neither is parsed back out on import (same as
+ * Location/Manager/Tier). "Variance" = this technician's Total Completion
+ * vs. the average of every technician CURRENTLY in view (filteredRows), as
+ * a signed %, colored green/red in the .xlsx export (CSV can't carry
+ * color). "Damage Assessment" = count of "damage" signable documents (the
+ * HR-initiated Damage/Part Loss/Tool Penalty payroll-deduction agreement,
+ * see damageAssessmentCount on TechPerfRow) sent to this technician in the
+ * period — NOT a technician self-report. "Reschedule" = ticket_reschedules
+ * rows this technician themselves created (mobile app's own action) in the
+ * period. "Cancelled" = this technician's assigned tickets that reached a
+ * terminal CL-Cancelled status in the period (see
+ * getTechCancelledTicketCounts) — distinct from "CL-Need Cancel", which is
+ * still a pending request, not yet cancelled.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -64,9 +74,12 @@ import { ChevronDown, ChevronLeft, Download, Upload, RefreshCw, X, MapPin, UserS
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { BrandedLoader } from "@/components/BrandedLoader";
+import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
-import { getTechCompletedRepairCounts, getTechCompletedTicketsDaily, getTechRedoTickets, type TechCompletedTicketDaily } from "@/lib/supabase/techPayroll";
+import { getTechCompletedRepairCounts, getTechCompletedTicketsDaily, getTechRedoTickets, getTechCancelledTicketCounts, type TechCompletedTicketDaily } from "@/lib/supabase/techPayroll";
 import { getMileageEntries, mileageEffectiveTotal } from "@/lib/supabase/mileage";
+import { getCompanyTicketReschedules } from "@/lib/supabase/ticketReschedules";
+import { getSignableDocuments } from "@/lib/supabase/signableDocuments";
 import { getCompanyTimecardEntries, calcWorkedHours, computeMealTimeCredit, startOfWeekSunday, addDaysISO } from "@/lib/supabase/timecards";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
@@ -184,7 +197,7 @@ function MultiSelect({
 }
 
 type PeriodMode = "weekly" | "monthly" | "custom";
-type SortKey = "techId" | "name" | "location" | "manager" | "tier" | "daysWorked" | "hoursWorked" | "totalTickets" | "minorTicketCount" | "majorTicketCount" | "redoCount" | "redoRatePct" | "miles" | "milesPerTicket" | "ticketsPerHour";
+type SortKey = "techId" | "name" | "location" | "manager" | "tier" | "daysWorked" | "hoursWorked" | "totalTickets" | "minorTicketCount" | "majorTicketCount" | "redoCount" | "redoRatePct" | "miles" | "milesPerTicket" | "ticketsPerHour" | "rescheduleCount" | "cancelledCount" | "damageAssessmentCount";
 type GroupBy = "none" | "location" | "manager" | "tier";
 
 interface TechPerfRow {
@@ -214,6 +227,19 @@ interface TechPerfRow {
   /** Raw weekday indices (profiles.off_days) backing offDaysCount — kept
    *  on the row too so the Off Days popup can list the actual dates. */
   offDays: number[];
+  /** Count of ticket_reschedules rows this technician themselves created
+   *  in the period (migration 0215 — the mobile app's own "Reschedule" +
+   *  typed reason action on a ticket they're on). */
+  rescheduleCount: number;
+  /** Count of this technician's assigned tickets that reached a terminal
+   *  CL-Cancelled-style status (statusGroupOf === "cancelled") within the
+   *  period — see getTechCancelledTicketCounts. */
+  cancelledCount: number;
+  /** Count of "damage" signable documents (the HR-initiated Damage/Part
+   *  Loss/Tool Penalty payroll-deduction agreement, NOT a technician self-
+   *  report — see FillDamagePage.tsx) sent to this technician in the
+   *  period. */
+  damageAssessmentCount: number;
   highRedoAlert: boolean;
   routeMileageAlert: boolean;
   lowUtilizationAlert: boolean;
@@ -312,6 +338,13 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const [managerFilter, setManagerFilter] = useState<string[]>([]);
   const [tierFilter, setTierFilter] = useState<string[]>([]);
   const [groupBy, setGroupBy] = useState<GroupBy>("none");
+  // Ref to the (default, ungrouped) table's horizontal-scroll container so
+  // a floating scrollbar pinned to the bottom of the viewport can mirror
+  // its scroll position — same pattern TicketList.tsx uses, needed here
+  // too now that this table has 20+ columns. If Group By is active there
+  // can be more than one table on screen; this only tracks whichever one
+  // mounts last, same acceptable limitation as elsewhere this pattern's used.
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [selectedTechId, setSelectedTechId] = useState<string | null>(null);
@@ -331,7 +364,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     setLoading(true);
     setError(null);
     try {
-      const [allUsers, composition, repairCounts, redoMap, mileageEntries, timecardEntries, dailyCompleted, overrides] = await Promise.all([
+      const [allUsers, composition, repairCounts, redoMap, mileageEntries, timecardEntries, dailyCompleted, overrides, reschedules, cancelledCounts, damageDocs] = await Promise.all([
         getCompanyUsers(),
         getCsrTeamComposition().catch(() => null),
         getTechCompletedRepairCounts(periodStart, periodEnd),
@@ -340,11 +373,32 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         getCompanyTimecardEntries(periodStart, periodEnd),
         getTechCompletedTicketsDaily(periodStart, periodEnd),
         getTechnicianPerformanceOverrides(periodStart, periodEnd),
+        getCompanyTicketReschedules(periodStart, periodEnd),
+        getTechCancelledTicketCounts(periodStart, periodEnd),
+        getSignableDocuments("damage").catch(() => []),
       ]);
       setUsers(allUsers);
       setCsrComposition(composition);
       setDailyTickets(dailyCompleted);
       setDailyOverrides(overrides);
+
+      const rescheduleByProfileId = new Map<string, number>();
+      for (const r of reschedules) rescheduleByProfileId.set(r.profileId, (rescheduleByProfileId.get(r.profileId) ?? 0) + 1);
+
+      const cancelledByName = new Map<string, number>();
+      for (const c of cancelledCounts) cancelledByName.set(c.technician.trim().toLowerCase(), c.count);
+
+      // "damage" signable documents sent to this technician (recipientId)
+      // within the period — createdAt is a timestamp, so compared as a
+      // plain date-string prefix against periodStart/periodEnd, same
+      // convention dailyTickets' own date filtering already uses.
+      const damageByProfileId = new Map<string, number>();
+      for (const d of damageDocs) {
+        if (!d.recipientId) continue;
+        const dateKey = d.createdAt.slice(0, 10);
+        if (dateKey < periodStart || dateKey > periodEnd) continue;
+        damageByProfileId.set(d.recipientId, (damageByProfileId.get(d.recipientId) ?? 0) + 1);
+      }
 
       const techs = allUsers.filter((u) => u.is_active && TECHNICIAN_PAY_ROLES.has(normalizeRole(u.role)));
       const dimensionByName = new Map<string, { location: string; manager: string; tier: string }>();
@@ -567,6 +621,9 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           ticketsPerHour,
           offDaysCount: countOffDaysInRange(t.off_days, periodStart, periodEnd),
           offDays: t.off_days ?? [],
+          rescheduleCount: rescheduleByProfileId.get(t.id) ?? 0,
+          cancelledCount: cancelledByName.get(nameKey) ?? 0,
+          damageAssessmentCount: damageByProfileId.get(t.id) ?? 0,
           highRedoAlert: redoRatePct != null && redoRatePct > 5,
           routeMileageAlert: milesPerTicket != null && milesPerTicket > 30,
           lowUtilizationAlert: weeklyEquivalentHours < 32,
@@ -722,6 +779,9 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         case "totalTickets": return r.totalTickets;
         case "minorTicketCount": return r.minorTicketCount;
         case "majorTicketCount": return r.majorTicketCount;
+        case "rescheduleCount": return r.rescheduleCount;
+        case "cancelledCount": return r.cancelledCount;
+        case "damageAssessmentCount": return r.damageAssessmentCount;
         case "redoCount": return r.redoCount;
         case "redoRatePct": return r.redoRatePct ?? -1;
         case "miles": return r.miles;
@@ -799,13 +859,14 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     exportToCSV(
       "technician_performance",
       [
-        "Name", "Variance", "Minor Ticket", "Major Ticket", "Redo", "Total Completion", "Average Completion", "Mileage",
-        "Working Days", "Off Days", "Unexcused Off Days Total 2026", "Hours Worked", "Location", "Manager", "Tier",
+        "Name", "Variance", "Damage Assessment", "Minor Ticket", "Major Ticket", "Redo", "Total Completion", "Average Completion",
+        "Reschedule", "NCNS", "Cancelled", "Mileage", "Working Days", "Off Days", "Unexcused Off Days Total 2026",
+        "Hours Worked", "Location", "Manager", "Tier",
         "Redo Rate %", "Miles/Ticket", "Tickets/Hour", "High Redo", "Route Mileage Audit", "Low Utilization",
       ],
       sortedRows.map((r) => [
-        r.name, fmtVariance(varianceByRowId.get(r.id) ?? null), r.minorTicketCount, r.majorTicketCount, r.redoCount, r.totalTickets,
-        r.daysWorked > 0 ? fmt1(r.totalTickets / r.daysWorked) : "—", fmt1(r.miles), r.daysWorked, r.offDaysCount,
+        r.name, fmtVariance(varianceByRowId.get(r.id) ?? null), r.damageAssessmentCount, r.minorTicketCount, r.majorTicketCount, r.redoCount, r.totalTickets,
+        r.daysWorked > 0 ? fmt1(r.totalTickets / r.daysWorked) : "—", r.rescheduleCount, "", r.cancelledCount, fmt1(r.miles), r.daysWorked, r.offDaysCount,
         "", fmt1(r.hoursWorked), r.location, r.manager, r.tier,
         r.redoRatePct != null ? fmt1(r.redoRatePct) : "—", r.milesPerTicket != null ? fmt1(r.milesPerTicket) : "—",
         r.ticketsPerHour != null ? fmt1(r.ticketsPerHour) : "—", r.highRedoAlert ? "Yes" : "", r.routeMileageAlert ? "Yes" : "", r.lowUtilizationAlert ? "Yes" : "",
@@ -843,12 +904,16 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       sheet.columns = [
         { header: "Name", key: "name", width: 26 },
         { header: "Variance", key: "variance", width: 12 },
+        { header: "Damage Assessment", key: "damageAssessment", width: 18 },
         { header: "Date", key: "date", width: 12 },
         { header: "Minor Ticket", key: "minorTicket", width: 14 },
         { header: "Major Ticket", key: "majorTicket", width: 14 },
         { header: "Redo", key: "redoCount", width: 10 },
         { header: "Total Completion", key: "totalTickets", width: 16 },
         { header: "Average Completion", key: "avgCompletion", width: 18 },
+        { header: "Reschedule", key: "reschedule", width: 12 },
+        { header: "NCNS", key: "ncns", width: 12 },
+        { header: "Cancelled", key: "cancelled", width: 12 },
         { header: "Mileage", key: "miles", width: 12 },
         { header: "Working Days", key: "daysWorked", width: 14 },
         { header: "Off Days", key: "offDays", width: 12 },
@@ -901,26 +966,30 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         // Completion/Redo/Mileage/Hours Worked), blank means "no change"
         // on import, so leaving them blank is what makes re-importing an
         // untouched row a true no-op instead of silently re-asserting a
-        // number as a permanent override. The rest (Variance, Minor/Major
-        // Ticket, Average Completion, Working Days, Off Days) are period-
-        // level, not per-day, figures that aren't read back on import at
-        // all — repeating them on every one of a technician's day rows
-        // read as if they were themselves per-day data, so they're blank
-        // here too and shown once instead, in the reference block below.
-        // Unexcused Off Days Total 2026 is always blank (no live source,
-        // see this file's header comment) — a place for HR to type a
-        // number by hand, not something this export or the importer
-        // reads back.
+        // number as a permanent override. The rest (Variance, Damage
+        // Assessment, Minor/Major Ticket, Average Completion, Reschedule,
+        // Cancelled, Working Days, Off Days) are period-level, not per-day,
+        // figures that aren't read back on import at all — repeating them
+        // on every one of a technician's day rows read as if they were
+        // themselves per-day data, so they're blank here too and shown
+        // once instead, in the reference block below. NCNS and Unexcused
+        // Off Days Total 2026 are always blank (no live source, see this
+        // file's header comment) — a place for HR to type a number by
+        // hand, not something this export or the importer reads back.
         for (let date = periodStart; date <= periodEnd; date = addDaysISO(date, 1)) {
           sheet.addRow({
             name: r.name,
             variance: "",
+            damageAssessment: "",
             date,
             minorTicket: "",
             majorTicket: "",
             redoCount: "",
             totalTickets: "",
             avgCompletion: "",
+            reschedule: "",
+            ncns: "",
+            cancelled: "",
             miles: "",
             daysWorked: "",
             offDays: "",
@@ -952,11 +1021,14 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         const row = sheet.addRow({
           name: r.name,
           variance: fmtVariance(variance),
+          damageAssessment: r.damageAssessmentCount,
           minorTicket: r.minorTicketCount,
           majorTicket: r.majorTicketCount,
           redoCount: r.redoCount,
           totalTickets: r.totalTickets,
           avgCompletion: r.daysWorked > 0 ? fmt1(r.totalTickets / r.daysWorked) : "—",
+          reschedule: r.rescheduleCount,
+          cancelled: r.cancelledCount,
           miles: fmt1(r.miles),
           daysWorked: r.daysWorked,
           offDays: r.offDaysCount,
@@ -1382,17 +1454,21 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                     </span>
                   </div>
                 )}
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto" ref={tableScrollRef}>
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-white/10 bg-white/5">
                         <th className={thClass} onClick={() => toggleSort("name")}>Name{sortIndicator("name")}</th>
                         <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Variance</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("damageAssessmentCount")}>Damage Assessment{sortIndicator("damageAssessmentCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("minorTicketCount")}>Minor Ticket{sortIndicator("minorTicketCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("majorTicketCount")}>Major Ticket{sortIndicator("majorTicketCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("redoCount")}>Redo{sortIndicator("redoCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("totalTickets")}>Total Completion{sortIndicator("totalTickets")}</th>
                         <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Average Completion</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("rescheduleCount")}>Reschedule{sortIndicator("rescheduleCount")}</th>
+                        <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">NCNS</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("cancelledCount")}>Cancelled{sortIndicator("cancelledCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("miles")}>Mileage{sortIndicator("miles")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("daysWorked")}>Working Days{sortIndicator("daysWorked")}</th>
                         <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Off Days</th>
@@ -1409,7 +1485,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                     </thead>
                     <tbody>
                       {groupRows.length === 0 ? (
-                        <tr><td colSpan={18} className="px-4 py-8 text-center text-muted-foreground text-sm">No technicians match.</td></tr>
+                        <tr><td colSpan={23} className="px-4 py-8 text-center text-muted-foreground text-sm">No technicians match.</td></tr>
                       ) : (
                         groupRows.map((r) => {
                           const variance = varianceByRowId.get(r.id) ?? null;
@@ -1431,6 +1507,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                             <td className={`px-3 py-2 text-right font-semibold ${variance == null ? "text-muted-foreground" : variance > 0 ? "text-emerald-400" : variance < 0 ? "text-red-400" : "text-muted-foreground"}`}>
                               {fmtVariance(variance)}
                             </td>
+                            <td className="px-3 py-2 text-right">{r.damageAssessmentCount}</td>
                             <td className="px-3 py-2 text-right">{r.minorTicketCount}</td>
                             <td className="px-3 py-2 text-right">{r.majorTicketCount}</td>
                             <td className="px-3 py-2 text-right">{r.redoCount}</td>
@@ -1449,6 +1526,9 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                               )}
                             </td>
                             <td className="px-3 py-2 text-right">{r.daysWorked > 0 ? fmt1(r.totalTickets / r.daysWorked) : "—"}</td>
+                            <td className="px-3 py-2 text-right">{r.rescheduleCount}</td>
+                            <td className="px-3 py-2 text-right text-muted-foreground">—</td>
+                            <td className="px-3 py-2 text-right">{r.cancelledCount}</td>
                             <td className="px-3 py-2 text-right">
                               {r.miles > 0 ? (
                                 <button
@@ -1504,6 +1584,13 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
             ))}
           </div>
         )}
+
+        {/* Floating horizontal scrollbar — pinned to the bottom of the
+            viewport so the user can scroll this wide table sideways
+            without first scrolling all the way down. Hides itself
+            automatically when the table's own native scrollbar comes into
+            view. */}
+        <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
       </main>
 
       {ticketListFor && (

@@ -1,0 +1,2389 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@layer utilities {
+  .animate-spin-reverse {
+    animation: spin 1s linear infinite reverse;
+  }
+  .animate-spin-fast {
+    animation: spin 0.8s linear infinite;
+  }
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-panel: var(--panel);
+  --color-panel-border: var(--panel-border);
+  --font-display: "Space Grotesk", system-ui, sans-serif;
+  --font-sans: "Inter", system-ui, sans-serif;
+}
+
+:root {
+  --radius: 0.625rem;
+  /* Deep navy gradient background */
+  --background: oklch(0.18 0.04 260);
+  --foreground: oklch(0.98 0.005 250);
+  --card: oklch(0.22 0.04 260);
+  --card-foreground: oklch(0.98 0.005 250);
+  --popover: oklch(0.22 0.04 260);
+  --popover-foreground: oklch(0.98 0.005 250);
+  --primary: oklch(0.62 0.22 255);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.28 0.04 260);
+  --secondary-foreground: oklch(0.98 0.005 250);
+  --muted: oklch(0.28 0.04 260);
+  --muted-foreground: oklch(0.72 0.02 260);
+  --accent: oklch(0.62 0.22 255);
+  --accent-foreground: oklch(0.99 0 0);
+  --destructive: oklch(0.62 0.24 27);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(0.98 0.005 250 / 0.15);
+  --input: oklch(0.98 0.005 250 / 0.1);
+  --ring: oklch(0.62 0.22 255);
+  --panel: oklch(0.98 0.005 250 / 0.08);
+  --panel-border: oklch(0.98 0.005 250 / 0.15);
+}
+
+/* ─── LIGHT THEME ─────────────────────────────────────────────────────────
+   Activated by <html data-theme="light">. Overrides the CSS variables and,
+   below, the most common hardcoded Tailwind dark utility classes so existing
+   components flip without per-component edits. */
+:root[data-theme="light"] {
+  --background: #ede3cf;
+  --foreground: oklch(0.22 0.03 260);
+  --card: #fdf8f0;
+  --card-foreground: oklch(0.22 0.03 260);
+  --popover: #fdf8f0;
+  --popover-foreground: oklch(0.22 0.03 260);
+  --primary: oklch(0.55 0.22 255);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: #f7efdf;
+  --secondary-foreground: oklch(0.22 0.03 260);
+  --muted: #f7efdf;
+  --muted-foreground: oklch(0.45 0.02 260);
+  --accent: oklch(0.55 0.22 255);
+  --accent-foreground: oklch(0.99 0 0);
+  --destructive: oklch(0.58 0.24 27);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(0.22 0.03 260 / 0.15);
+  --input: oklch(0.22 0.03 260 / 0.06);
+  --ring: oklch(0.55 0.22 255);
+  --panel: #fdf8f0;
+  --panel-border: oklch(0.22 0.03 260 / 0.12);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html, body {
+    min-height: 100vh;
+  }
+  body {
+    color: var(--color-foreground);
+    background:
+      radial-gradient(1200px 600px at 10% -10%, oklch(0.35 0.15 260 / 0.5), transparent 60%),
+      radial-gradient(900px 500px at 100% 0%, oklch(0.42 0.18 230 / 0.35), transparent 60%),
+      linear-gradient(180deg, oklch(0.16 0.04 260) 0%, oklch(0.12 0.03 265) 100%);
+    background-attachment: fixed;
+    font-family: var(--font-sans);
+  }
+  :root[data-theme="light"] body {
+    background:
+      radial-gradient(1200px 600px at 10% -10%, oklch(0.85 0.10 180 / 0.20), transparent 60%),
+      radial-gradient(900px 500px at 100% 0%, oklch(0.85 0.08 175 / 0.15), transparent 60%),
+      linear-gradient(180deg, #fdf8f0 0%, #ede3cf 100%);
+    background-attachment: fixed;
+  }
+  h1, h2, h3, h4 { font-family: var(--font-display); letter-spacing: -0.01em; }
+}
+
+@layer components {
+  .panel {
+    background: var(--color-panel);
+    border: 1px solid var(--color-panel-border);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    border-radius: 10px;
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+  .panel.overflow-x-auto {
+    overflow-x: auto;
+  }
+  .panel-tight { padding: 1rem; margin-bottom: 1rem; }
+  .glass-input {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--color-panel-border);
+    color: var(--color-foreground);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    width: 100%;
+    font-size: 0.875rem;
+    outline: none;
+    transition: border-color .15s, background .15s;
+  }
+  .glass-input:focus {
+    border-color: var(--color-primary);
+    background: rgba(255, 255, 255, 0.12);
+  }
+  select.glass-input,
+  button.glass-input {
+    background: rgba(15, 23, 42, 0.96);
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+  .glass-input::placeholder { color: rgba(255, 255, 255, 0.5); }
+  select.glass-input option { background: #1f2937; color: #fff; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    padding: 0.5rem 0.9rem; border-radius: 8px; font-size: 0.875rem; font-weight: 500;
+    border: 1px solid var(--color-panel-border);
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--color-foreground);
+    transition: all .15s; cursor: pointer;
+  }
+  .btn:hover { background: rgba(255, 255, 255, 0.14); }
+  .btn-primary {
+    background: linear-gradient(135deg, #5b7eff, #4c5ac0);
+    color: #fff; border-color: transparent;
+  }
+  .btn-primary:hover { filter: brightness(1.1); }
+  .btn-danger {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.5);
+    color: #f87171;
+  }
+
+  .google-map-canvas {
+    position: absolute;
+    inset: 0;
+  }
+
+  .data-table {
+    width: 100%; border-collapse: collapse;
+    background: #fff; color: #1f2937;
+    font-size: 0.875rem;
+    table-layout: auto;
+  }
+  .data-table tbody tr {
+    display: table-row;
+    height: auto;
+  }
+  .data-table th {
+    background: #f3f4f6; text-align: left;
+    padding: 0.75rem 0.6rem; font-weight: 700;
+    border-bottom: 2px solid #d1d5db; white-space: nowrap;
+    font-size: 0.75rem;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .data-table th:first-child { min-width: 100px; }
+  .data-table {
+    border-radius: 8px; overflow: hidden;
+  }
+  .data-table tbody {
+    background: #fff;
+  }
+  .data-table td {
+    padding: 0.6rem 0.6rem; border-bottom: 1px solid #e5e7eb;
+    word-break: break-word;
+    white-space: normal;
+  }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table tbody tr:hover td { background: #f9fafb; }
+  .data-table .editable-cell {
+    width: 100%; padding: 0.4rem 0.5rem; border: 1px solid #d1d5db; border-radius: 4px;
+    font-size: 0.875rem; background: #fff; color: #1f2937; font-family: inherit;
+  }
+  .data-table .editable-cell:focus {
+    outline: none; border-color: #3b82f6; background: #f0f9ff; box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+  }
+
+  .filter-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0,1fr));
+    gap: 0.75rem;
+  }
+  @media (max-width: 1200px) { .filter-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+  @media (max-width: 768px) { .filter-grid { grid-template-columns: 1fr; } }
+
+  .module-card {
+    background: var(--color-panel);
+    border: 1px solid var(--color-panel-border);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    border-radius: 14px;
+    padding: 1.5rem;
+    cursor: pointer;
+    transition: transform .2s, border-color .2s, background .2s;
+  }
+  .module-card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(91, 126, 255, 0.5);
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  .calendar-panel {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 10px;
+    padding: 1.2rem;
+    color: #fff;
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+  }
+
+  .control-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+    margin-bottom: 0.8rem;
+  }
+
+  .control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .control-group label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #e5e7eb;
+  }
+
+  .month-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+  }
+
+  .month-arrow {
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    background: rgba(17, 24, 39, 0.95);
+    color: #fff;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+
+  .month-arrow:hover {
+    border-color: rgba(96, 165, 250, 0.8);
+    background: rgba(30, 64, 175, 0.35);
+  }
+
+  .month-banner {
+    margin: 0.25rem 0 0.85rem;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #bfdbfe;
+  }
+
+  .option-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 0.85rem;
+    flex-wrap: wrap;
+  }
+
+  .show-group {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    font-size: 0.88rem;
+    flex-wrap: wrap;
+  }
+
+  .toggle-btn {
+    padding: 0.55rem 0.9rem;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    background: rgba(17, 24, 39, 0.95);
+    color: #fff;
+    font-size: 0.84rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+  }
+
+  .toggle-btn.active {
+    border-color: rgba(96, 165, 250, 0.8);
+    background: rgba(30, 64, 175, 0.35);
+  }
+
+  .meta-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin: 0.5rem 0 0.8rem;
+    flex-wrap: wrap;
+  }
+
+  .count-text {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #bfdbfe;
+  }
+
+  .table-wrap {
+    overflow-x: auto;
+  }
+
+  table.work-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    color: #1f2937;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .work-table th,
+  .work-table td {
+    border: 1px solid #d1d5db;
+    padding: 0.6rem 0.7rem;
+    font-size: 0.79rem;
+    white-space: nowrap;
+    text-align: center;
+  }
+
+  .work-table th {
+    background: #f3f4f6;
+    font-weight: 700;
+  }
+
+  .work-table td:nth-child(1),
+  .work-table td:nth-child(8) {
+    text-align: left;
+  }
+
+  .hidden-col {
+    display: none;
+  }
+
+  .calendar-grid {
+    display: none;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 0.85rem;
+  }
+
+  .calendar-grid.is-active {
+    display: grid;
+  }
+
+  .work-calendar-grid {
+    display: grid;
+    gap: 0;
+    color: #1f2937;
+    background: #fff;
+    border: 1px solid #1f2937;
+    overflow: hidden;
+  }
+
+  .work-calendar-head-row,
+  .work-calendar-row {
+    display: grid;
+    grid-template-columns: 64px repeat(7, minmax(0, 1fr));
+  }
+
+  .work-calendar-period-head,
+  .work-calendar-day-head,
+  .work-calendar-period-cell,
+  .work-calendar-cell {
+    border-right: 1px solid #374151;
+    border-bottom: 1px solid #374151;
+  }
+
+  .work-calendar-period-head,
+  .work-calendar-period-cell {
+    background: #edf0f5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #374151;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .work-calendar-day-head {
+    background: #1f2937;
+    color: #fff;
+    padding: 0.75rem 0.5rem;
+    text-align: center;
+    font-size: 0.72rem;
+    font-weight: 700;
+    border-top: none;
+  }
+
+  .work-calendar-week-block {
+    display: grid;
+  }
+
+  .work-calendar-cell {
+    min-height: 120px;
+    background: #fff;
+    padding: 0.35rem 0.45rem 0.4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .work-calendar-cell.is-outside {
+    background: #f3f4f6;
+    color: #9ca3af;
+  }
+
+  .work-calendar-cell.is-weekend {
+    background: #f2f2f2;
+  }
+
+  .work-calendar-cell-top {
+    display: flex;
+    justify-content: flex-end;
+    min-height: 1rem;
+  }
+
+  .work-calendar-day-number {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #111827;
+  }
+
+  .work-calendar-day-number.is-muted {
+    color: #9ca3af;
+  }
+
+  .work-calendar-day-number.is-weekend {
+    color: #dc2626;
+  }
+
+  .work-calendar-ticket-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .work-calendar-empty {
+    min-height: 1rem;
+  }
+
+  .work-calendar-empty-state {
+    grid-column: 1 / -1;
+    padding: 2rem 1rem;
+    text-align: center;
+    color: #6b7280;
+    background: #fff;
+  }
+
+  .work-calendar-empty-state-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #111827;
+  }
+
+  .work-calendar-empty-state-copy {
+    margin-top: 0.35rem;
+    font-size: 0.85rem;
+  }
+
+  .work-calendar-ticket {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    justify-content: flex-start;
+    min-width: 0;
+    text-decoration: none;
+    line-height: 1.05;
+  }
+
+  .work-calendar-ticket:hover .work-calendar-ticket-no {
+    text-decoration: underline;
+  }
+
+  .work-calendar-ticket-no {
+    font-size: 0.67rem;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #d946ef;
+  }
+
+  .work-calendar-ticket-no.is-am {
+    color: #ef4444;
+  }
+
+  .work-calendar-ticket-no.is-pm {
+    color: #a855f7;
+  }
+
+  .work-calendar-ticket-time {
+    font-size: 0.62rem;
+    font-weight: 700;
+    color: #6b7280;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .ticket-link {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #2563eb;
+    text-decoration: none;
+  }
+
+  .ticket-link:hover {
+    text-decoration: underline;
+  }
+
+  .ticket-form-container {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 10px;
+    padding: 2rem;
+    color: #fff;
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    width: 100%;
+    margin: 0;
+  }
+
+  .ticket-form-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 2rem;
+    padding-bottom: 1rem;
+    border-bottom: 2px solid rgba(96, 165, 250, 0.3);
+  }
+
+  .ticket-form-header h2 {
+    color: #60a5fa;
+    margin: 0;
+    font-size: 1.8rem;
+  }
+
+  .ticket-form-kicker {
+    margin: 0 0 0.25rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #93c5fd;
+  }
+
+  .ticket-form-badge {
+    padding: 0.6rem 0.85rem;
+    border-radius: 999px;
+    border: 1px solid rgba(96, 165, 250, 0.3);
+    background: rgba(30, 41, 59, 0.7);
+    color: #bfdbfe;
+    font-size: 0.85rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .ticket-form {
+    display: block;
+  }
+
+  .ticket-form-section {
+    background: rgba(30, 41, 59, 0.5);
+    border: 1px solid rgba(96, 165, 250, 0.2);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .ticket-form-section-title {
+    color: #60a5fa;
+    font-size: 1.2rem;
+    font-weight: 600;
+    margin: 0 0 1.5rem 0;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid rgba(96, 165, 250, 0.2);
+  }
+
+  .ticket-form-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .ticket-form-grid-3 {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .form-group.full-width {
+    grid-column: 1 / -1;
+  }
+
+  .form-group-inline {
+    justify-content: flex-end;
+    padding-top: 0.25rem;
+    grid-column: span 3;
+  }
+
+  .form-label.required::after {
+    content: " *";
+    color: #ef4444;
+  }
+
+  .form-input,
+  .form-select,
+  .form-textarea {
+    padding: 0.75rem;
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(96, 165, 250, 0.3);
+    border-radius: 6px;
+    color: #e2e8f0;
+    font-size: 0.95rem;
+    outline: none;
+    transition: all 0.2s;
+    width: 100%;
+  }
+
+  .form-input:focus,
+  .form-select:focus,
+  .form-textarea:focus {
+    border-color: #60a5fa;
+    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.1);
+  }
+
+  .form-select {
+    cursor: pointer;
+  }
+
+  .form-select option {
+    background: #1e293b;
+    color: #e2e8f0;
+  }
+
+  .form-textarea {
+    min-height: 120px;
+    resize: vertical;
+    font-family: inherit;
+  }
+
+  .form-checkbox-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+  }
+
+  .form-checkbox {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: #3b82f6;
+  }
+
+  /* Date input calendar icon styling - white icon */
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: brightness(0) invert(1);
+    cursor: pointer;
+  }
+
+  input[type="date"],
+  input[type="datetime-local"],
+  input[type="time"] {
+    color-scheme: dark;
+  }
+
+  .ticket-form-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: flex-end;
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid rgba(96, 165, 250, 0.2);
+  }
+
+  .ticket-form-status {
+    margin-right: auto;
+    align-self: center;
+    color: #bfdbfe;
+    font-weight: 600;
+    min-height: 1.5rem;
+  }
+
+  .todo-panel {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 10px;
+    padding: 1.25rem;
+    color: #fff;
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+  }
+
+  .todo-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    color: #cbd5e1;
+    font-size: 0.88rem;
+    align-items: center;
+  }
+
+  .todo-meta-item {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    flex-wrap: wrap;
+  }
+
+  .todo-meta-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: #93c5fd;
+  }
+
+  .todo-branch-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem;
+    min-width: 220px;
+    padding: 0.62rem 0.8rem;
+    border-radius: 8px;
+    border: 1px solid rgba(96, 165, 250, 0.25);
+    background: rgba(15, 23, 42, 0.9);
+    color: #fff;
+    cursor: pointer;
+  }
+
+  .todo-branch-menu {
+    position: absolute;
+    top: calc(100% + 0.4rem);
+    left: 0;
+    z-index: 40;
+    min-width: 220px;
+    max-height: 18rem;
+    overflow-y: auto;
+    border-radius: 8px;
+    border: 1px solid rgba(96, 165, 250, 0.25);
+    background: rgba(15, 23, 42, 0.98);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
+  }
+
+  .todo-branch-option {
+    width: 100%;
+    text-align: left;
+    padding: 0.62rem 0.8rem;
+    border: 0;
+    background: transparent;
+    color: #e5e7eb;
+    cursor: pointer;
+  }
+
+  .todo-branch-option:hover,
+  .todo-branch-option.is-active {
+    background: rgba(59, 130, 246, 0.18);
+    color: #fff;
+  }
+
+  .todo-meta-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem 0.65rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    background: #dbeafe;
+    color: #1d4ed8;
+  }
+
+  .todo-meta-count {
+    color: #bfdbfe;
+    font-weight: 600;
+  }
+
+  table.todo-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    color: #1f2937;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .todo-table th,
+  .todo-table td {
+    border: 1px solid #d1d5db;
+    padding: 0.75rem;
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+
+  .todo-table th {
+    background: #f3f4f6;
+    font-weight: 700;
+    text-align: center;
+  }
+
+  .todo-table td {
+    text-align: center;
+  }
+
+  .todo-left,
+  .todo-ticket-no {
+    text-align: left;
+  }
+
+  .todo-ticket-no {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-weight: 700;
+    color: #2563eb;
+  }
+
+  .todo-empty {
+    text-align: center;
+    color: #64748b;
+    font-style: italic;
+    padding: 1.5rem 1rem;
+  }
+
+  .work-planner-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    padding: 1.5rem;
+  }
+
+  .work-planner-controls {
+    background: rgba(17, 24, 39, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 1.25rem;
+  }
+
+  .work-planner-header {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 0.15rem;
+  }
+
+  .control-group {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.55rem;
+    position: relative;
+    flex: 0 0 auto;
+  }
+
+  .control-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .control-select-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+  }
+
+  .control-select, .control-input {
+    padding: 0.5rem 0.7rem;
+    background: rgba(2, 6, 23, 0.8);
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    color: #e2e8f0;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    width: 100%;
+  }
+
+  .control-select {
+    min-width: 180px;
+    appearance: none;
+    padding-right: 2rem;
+  }
+
+  .control-select-chevron {
+    position: absolute;
+    right: 0.65rem;
+    pointer-events: none;
+    color: #94a3b8;
+  }
+
+  .control-select:focus, .control-input:focus {
+    outline: none;
+    border-color: #60a5fa;
+    box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.1);
+  }
+
+  .checkbox-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0;
+    white-space: nowrap;
+  }
+
+  .checkbox-group input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: #3b82f6;
+  }
+
+  .checkbox-group span {
+    color: #e2e8f0;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+
+  .status-legend {
+    background: rgba(17, 24, 39, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .legend-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #94a3b8;
+    text-transform: uppercase;
+    margin-bottom: 0.75rem;
+  }
+
+  .legend-items {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    color: #cbd5e1;
+  }
+
+  .legend-color {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+  }
+
+  .color-pending { background: #f59e0b; }
+  .color-ready { background: #10b981; }
+  .color-completed { background: #6366f1; }
+  .color-claimed { background: #ef4444; }
+
+  .schedule-date-control {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-bottom: 0;
+    flex-wrap: nowrap;
+  }
+
+  .schedule-date {
+    min-width: 132px;
+    text-align: center;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #e0e7ff;
+    background: rgba(99, 102, 241, 0.1);
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+  }
+
+  .schedule-date-arrow {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    background: rgba(15, 23, 42, 0.85);
+    color: #e0e7ff;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+  }
+
+  .schedule-date-arrow:hover {
+    background: rgba(99, 102, 241, 0.18);
+    border-color: rgba(129, 140, 248, 0.65);
+    transform: translateY(-1px);
+  }
+
+  .tech-schedule {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .tech-column {
+    background: rgba(17, 24, 39, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .tech-header {
+    background: rgba(99, 102, 241, 0.2);
+    border-bottom: 1px solid rgba(99, 102, 241, 0.3);
+    padding: 0.85rem;
+    font-weight: 600;
+    color: #e0e7ff;
+    font-size: 0.9rem;
+  }
+
+  .tech-header-count {
+    color: #bfdbfe;
+    font-weight: 700;
+  }
+
+  .time-slot {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    padding: 0.75rem;
+    min-height: 92px;
+  }
+
+  .time-slot-label {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #94a3b8;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+    padding: 0.25rem 0;
+  }
+
+  .time-slot-empty {
+    font-size: 0.75rem;
+    color: #64748b;
+    border: 1px dashed rgba(148, 163, 184, 0.25);
+    border-radius: 4px;
+    padding: 0.5rem;
+    text-align: center;
+  }
+
+  .work-order-card {
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 4px;
+    padding: 0.65rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .work-order-card:hover {
+    background: rgba(30, 41, 59, 1);
+    border-color: rgba(148, 163, 184, 0.4);
+  }
+
+  .work-order-card[draggable="true"] { cursor: grab; }
+  .work-order-card[draggable="true"]:active { cursor: grabbing; }
+
+  .work-order-ticket {
+    display: block;
+    font-weight: 600;
+    color: #60a5fa;
+    margin-bottom: 0.2rem;
+    cursor: pointer;
+    text-decoration: underline;
+    transition: all 0.2s;
+  }
+
+  .work-order-ticket:hover {
+    color: #93c5fd;
+    text-decoration-thickness: 2px;
+  }
+
+  .work-order-address {
+    color: #cbd5e1;
+    font-size: 0.7rem;
+  }
+
+  .work-order-customer {
+    color: #94a3b8;
+    font-size: 0.7rem;
+    margin-top: 0.2rem;
+  }
+
+  .work-order-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.2rem 0.45rem;
+    background: rgba(59, 130, 246, 0.12);
+    border-radius: 999px;
+    color: #cfe3ff;
+    font-weight: 600;
+    margin-top: 0.35rem;
+    line-height: 1.2;
+  }
+
+  .work-order-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    flex: 0 0 8px;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35);
+  }
+
+  .tone-tech-0 { background: #f59e0b; }
+  .tone-tech-1 { background: #10b981; }
+  .tone-tech-2 { background: #6366f1; }
+  .tone-tech-3 { background: #8b5cf6; }
+  .tone-tech-4 { background: #ec4899; }
+  .tone-tech-5 { background: #3b82f6; }
+
+  .map-section {
+    background: rgba(17, 24, 39, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+    min-height: 500px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .map-section-title {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #e0e7ff;
+    text-transform: uppercase;
+    margin-bottom: 1rem;
+  }
+
+  .map-shell {
+    height: 100%;
+    min-height: 450px;
+    position: relative;
+    border-radius: 4px;
+    overflow: hidden;
+    background: #e5e3df;
+  }
+
+  .google-map-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    min-height: 450px;
+  }
+
+  .map-placeholder-inner {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    background: rgba(15, 23, 42, 0.45);
+    color: #cbd5e1;
+    z-index: 3;
+  }
+
+  .map-placeholder-icon {
+    margin-bottom: 0.5rem;
+  }
+
+  .map-type-toggle {
+    position: absolute;
+    top: 1rem;
+    left: 1rem;
+    z-index: 10;
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .map-type-btn {
+    padding: 0.5rem 1rem;
+    background: rgba(2, 6, 23, 0.7);
+    color: #94a3b8;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 500;
+  }
+
+  .map-type-btn.active {
+    background: rgba(2, 6, 23, 0.9);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+
+  .pin-navigator {
+    position: absolute;
+    bottom: 1rem;
+    right: 1rem;
+    z-index: 10;
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    background: rgba(2, 6, 23, 0.85);
+    padding: 0.75rem;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .pin-nav-btn {
+    padding: 0.4rem 0.6rem;
+    background: rgba(255, 255, 255, 0.1);
+    color: #94a3b8;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  .pin-nav-info {
+    color: #94a3b8;
+    font-size: 0.85rem;
+    min-width: 80px;
+    text-align: center;
+  }
+
+  .map-pins-container {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 2;
+  }
+
+  .map-pin {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+    pointer-events: all;
+    transform: translate(-50%, -100%);
+    transition: transform 0.15s;
+    border: 0;
+    background: transparent;
+  }
+
+  .map-pin-pos-0 { left: 14%; top: 18%; }
+  .map-pin-pos-1 { left: 26%; top: 24%; }
+  .map-pin-pos-2 { left: 38%; top: 16%; }
+  .map-pin-pos-3 { left: 52%; top: 28%; }
+  .map-pin-pos-4 { left: 67%; top: 20%; }
+  .map-pin-pos-5 { left: 79%; top: 32%; }
+  .map-pin-pos-6 { left: 18%; top: 48%; }
+  .map-pin-pos-7 { left: 32%; top: 42%; }
+  .map-pin-pos-8 { left: 46%; top: 52%; }
+  .map-pin-pos-9 { left: 59%; top: 44%; }
+  .map-pin-pos-10 { left: 73%; top: 54%; }
+  .map-pin-pos-11 { left: 86%; top: 46%; }
+  .map-pin-pos-12 { left: 22%; top: 68%; }
+  .map-pin-pos-13 { left: 39%; top: 74%; }
+  .map-pin-pos-14 { left: 60%; top: 70%; }
+  .map-pin-pos-15 { left: 82%; top: 66%; }
+
+  .map-pin:hover {
+    transform: translate(-50%, -105%) scale(1.15);
+    z-index: 10;
+  }
+
+  .pin-bubble {
+    padding: 0.35rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #fff;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    flex-direction: column;
+  }
+
+  .pin-initials { min-width: 1rem; line-height: 1; }
+  .pin-time { font-size: 0.65rem; opacity: 0.9; line-height: 1; }
+
+  .pin-tail {
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    margin-top: -1px;
+  }
+
+  .legend-for-map {
+    position: absolute;
+    top: 4rem;
+    left: 1rem;
+    background: rgba(10, 15, 30, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    font-size: 0.75rem;
+    color: #cbd5e1;
+    z-index: 30;
+    max-width: 200px;
+    max-height: 400px;
+    overflow-y: auto;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+  }
+
+  .legend-for-map-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.4rem;
+  }
+
+  .legend-for-map-item:last-child { margin-bottom: 0; }
+
+  .legend-color-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+
+  .summary-section {
+    background: rgba(17, 24, 39, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .section-title {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #e0e7ff;
+    text-transform: uppercase;
+    margin-bottom: 1rem;
+  }
+
+  .summary-table,
+  .changed-tickets-table,
+  .unverified-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+  }
+
+  .summary-table thead,
+  .changed-tickets-table thead,
+  .unverified-table thead {
+    background: rgba(99, 102, 241, 0.1);
+  }
+
+  .summary-table th,
+  .changed-tickets-table th,
+  .unverified-table th {
+    text-align: left;
+    padding: 0.6rem;
+    color: #93c5fd;
+    font-weight: 600;
+    border-bottom: 1px solid rgba(99, 102, 241, 0.3);
+  }
+
+  .summary-table td,
+  .changed-tickets-table td,
+  .unverified-table td {
+    padding: 0.6rem;
+    color: #cbd5e1;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .summary-table tbody tr:hover,
+  .changed-tickets-table tbody tr:hover,
+  .unverified-table tbody tr:hover {
+    background: rgba(99, 102, 241, 0.1);
+  }
+
+  .unverified-section {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+  }
+
+  .unverified-section .section-title {
+    color: #fca5a5;
+  }
+
+  .no-records {
+    text-align: center;
+    color: #64748b;
+    padding: 1.5rem;
+    font-style: italic;
+  }
+
+  .detail-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 200;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+  }
+
+  .detail-overlay.open { display: flex; }
+
+  .detail-modal {
+    background: #1e293b;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 10px;
+    width: 700px;
+    max-width: 95vw;
+    max-height: 92vh;
+    overflow-y: auto;
+    color: #f1f5f9;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  }
+
+  .detail-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.85rem 1.1rem;
+    background: #0f172a;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+
+  .detail-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .detail-ticket-no {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #fff;
+  }
+
+  .detail-ticket-link {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .detail-ticket-link:hover { color: #93c5fd; }
+
+  .google-btn {
+    padding: 0.28rem 0.7rem;
+    background: #4285f4;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.76rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .google-btn:hover { background: #3b78de; }
+
+  .modal-close-btn {
+    background: transparent;
+    border: none;
+    color: #64748b;
+    font-size: 1.4rem;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0.1rem 0.3rem;
+  }
+
+  .modal-close-btn:hover { color: #fff; }
+
+  .detail-body { padding: 1rem 1.1rem; }
+
+  .detail-row {
+    display: flex;
+    gap: 1.5rem;
+    margin-bottom: 0.65rem;
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .detail-field { display: flex; flex-direction: column; gap: 0.25rem; }
+  .detail-field.grow { flex: 1; }
+
+  .detail-label {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .detail-value { font-size: 0.9rem; color: #e2e8f0; }
+
+  .detail-divider { border: none; border-top: 1px solid rgba(255, 255, 255, 0.1); }
+
+  .schedule-box {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .status-pill-detail {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+
+  @media (max-width: 1024px) {
+    .tech-schedule { grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 768px) {
+    .work-planner-container { padding: 0.75rem; }
+    .work-planner-header { gap: 0.75rem; }
+    .control-select { min-width: 150px; }
+    .tech-schedule { grid-template-columns: 1fr; }
+    .legend-items { gap: 0.75rem; }
+    .map-shell { min-height: 420px; }
+  }
+
+  .calendar-day {
+    background: rgba(17, 24, 39, 0.9);
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 8px;
+    padding: 0.75rem;
+  }
+
+  .day-title {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: #bfdbfe;
+    margin-bottom: 0.45rem;
+  }
+
+  .day-count {
+    font-size: 0.78rem;
+    color: #cbd5e1;
+    margin-bottom: 0.5rem;
+  }
+
+  .ticket-chip {
+    font-size: 0.76rem;
+    padding: 0.35rem 0.45rem;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 6px;
+    margin-bottom: 0.35rem;
+    background: rgba(30, 41, 59, 0.85);
+  }
+
+  @media (max-width: 768px) {
+    .month-arrow {
+      width: 32px;
+      height: 32px;
+    }
+
+    table.work-table {
+      min-width: 1300px;
+    }
+
+    .work-calendar-grid {
+      overflow-x: auto;
+    }
+
+    .work-calendar-head-row,
+    .work-calendar-row {
+      min-width: 1160px;
+    }
+
+    .ticket-form-header {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .ticket-form-grid,
+    .ticket-form-grid-3 {
+      grid-template-columns: 1fr;
+    }
+
+    .form-group-inline {
+      grid-column: auto;
+      justify-content: flex-start;
+      padding-top: 0;
+    }
+
+    .ticket-form-actions {
+      flex-wrap: wrap;
+      justify-content: stretch;
+    }
+
+    .ticket-form-actions .btn {
+      flex: 1 1 100%;
+      justify-content: center;
+    }
+
+    .ticket-form-status {
+      width: 100%;
+      margin-right: 0;
+    }
+  }
+}
+
+/* ─── LIGHT THEME — hardcoded Tailwind dark-class overrides ────────────────
+   The app uses many literal dark utilities (bg-slate-900, text-slate-300,
+   bg-blue-900/50, etc.). These !important overrides remap the most common ones
+   to light equivalents when light mode is active, so components flip without
+   editing each one. Scoped under [data-theme="light"] so dark mode is untouched. */
+:root[data-theme="light"] {
+  /* Surfaces */
+  --lt-surface: #fdf8f0;
+  --lt-surface-2: #f7efdf;
+  --lt-surface-3: #ede3cf;
+  --lt-text: #1e293b;
+  --lt-text-2: #475569;
+  --lt-text-3: #64748b;
+  --lt-border: rgba(15, 23, 42, 0.12);
+}
+
+:root[data-theme="light"] .bg-slate-950,
+:root[data-theme="light"] .bg-slate-900,
+:root[data-theme="light"] .bg-slate-900\/50,
+:root[data-theme="light"] .bg-slate-900\/60,
+:root[data-theme="light"] .bg-slate-900\/80,
+:root[data-theme="light"] .bg-slate-900\/90,
+:root[data-theme="light"] .bg-slate-800,
+:root[data-theme="light"] .bg-slate-800\/50 {
+  background-color: var(--lt-surface) !important;
+}
+
+:root[data-theme="light"] .bg-blue-900\/20,
+:root[data-theme="light"] .bg-blue-900\/30,
+:root[data-theme="light"] .bg-blue-900\/50 {
+  background-color: var(--lt-surface-2) !important;
+}
+
+:root[data-theme="light"] .text-white,
+:root[data-theme="light"] .text-slate-100,
+:root[data-theme="light"] .text-slate-200 {
+  color: var(--lt-text) !important;
+}
+
+:root[data-theme="light"] .text-slate-300,
+:root[data-theme="light"] .text-slate-400 {
+  color: var(--lt-text-2) !important;
+}
+
+:root[data-theme="light"] .text-slate-500,
+:root[data-theme="light"] .text-muted-foreground {
+  color: var(--lt-text-3) !important;
+}
+
+/* Keep blue/colored accent text readable on light */
+:root[data-theme="light"] .text-blue-300,
+:root[data-theme="light"] .text-blue-400 {
+  color: #2563eb !important;
+}
+
+/* Borders */
+:root[data-theme="light"] .border-white\/10,
+:root[data-theme="light"] .border-white\/20,
+:root[data-theme="light"] .border-white\/5,
+:root[data-theme="light"] .border-slate-600,
+:root[data-theme="light"] .border-slate-700 {
+  border-color: var(--lt-border) !important;
+}
+
+/* Hover states */
+:root[data-theme="light"] .hover\:bg-white\/5:hover,
+:root[data-theme="light"] .hover\:bg-white\/8:hover,
+:root[data-theme="light"] .hover\:bg-white\/10:hover {
+  background-color: var(--lt-surface-2) !important;
+}
+
+/* Table header bands that use blue-900 */
+:root[data-theme="light"] thead tr.bg-blue-900\/50,
+:root[data-theme="light"] thead tr.bg-blue-900\/30 {
+  background-color: var(--lt-surface-3) !important;
+}
+
+/* Glass inputs in light mode */
+:root[data-theme="light"] .glass-input {
+  background-color: #fdf8f0 !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+
+/* Panels get a solid light surface */
+:root[data-theme="light"] .panel {
+  background: rgba(253, 248, 240, 0.90) !important;
+  border-color: var(--lt-border) !important;
+}
+
+/* Date inputs back to light color-scheme */
+:root[data-theme="light"] input[type="date"],
+:root[data-theme="light"] input[type="datetime-local"],
+:root[data-theme="light"] input[type="time"] {
+  color-scheme: light;
+}
+
+/* App header in light */
+:root[data-theme="light"] header {
+  background-color: rgba(255, 255, 255, 0.9) !important;
+}
+
+/* ─── LIGHT THEME — white surfaces, white text & gradients ─────────────────
+   Catches the high-volume cases that vanish on a light background:
+   solid bg-white, bg-white/N translucent fills, text-white (+ opacity variants),
+   white borders, and dark slate/blue gradient endpoints. */
+
+/* Solid white containers → light surface with a visible border */
+:root[data-theme="light"] .bg-white {
+  background-color: var(--lt-surface) !important;
+  border-color: var(--lt-border);
+}
+
+/* Translucent white fills (bg-white/2 … /20) → subtle light tints */
+:root[data-theme="light"] .bg-white\/2,
+:root[data-theme="light"] .bg-white\/3,
+:root[data-theme="light"] .bg-white\/5,
+:root[data-theme="light"] .bg-white\/8 {
+  background-color: rgba(15, 23, 42, 0.03) !important;
+}
+:root[data-theme="light"] .bg-white\/10,
+:root[data-theme="light"] .bg-white\/15,
+:root[data-theme="light"] .bg-white\/20 {
+  background-color: rgba(15, 23, 42, 0.06) !important;
+}
+
+/* White text → dark ink. Opacity variants map to graded grays so hierarchy
+   (labels, hints, dividers) is preserved instead of all going solid black. */
+:root[data-theme="light"] .text-white { color: var(--lt-text) !important; }
+:root[data-theme="light"] .text-white\/75,
+:root[data-theme="light"] .text-white\/70 { color: var(--lt-text-2) !important; }
+:root[data-theme="light"] .text-white\/60,
+:root[data-theme="light"] .text-white\/50,
+:root[data-theme="light"] .text-white\/45,
+:root[data-theme="light"] .text-white\/40 { color: var(--lt-text-3) !important; }
+:root[data-theme="light"] .text-white\/30,
+:root[data-theme="light"] .text-white\/25,
+:root[data-theme="light"] .text-white\/20 { color: rgba(15, 23, 42, 0.35) !important; }
+
+/* White borders/dividers → faint dark borders */
+:root[data-theme="light"] .border-white,
+:root[data-theme="light"] .border-white\/30,
+:root[data-theme="light"] .border-white\/25,
+:root[data-theme="light"] .border-white\/40,
+:root[data-theme="light"] .divide-white\/10 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--lt-border) !important;
+}
+
+/* Ring colors that use white */
+:root[data-theme="light"] .ring-white\/10,
+:root[data-theme="light"] .ring-white\/20 {
+  --tw-ring-color: var(--lt-border) !important;
+}
+
+/* Dark gradient endpoints → light equivalents (avatars, banners, cards) */
+:root[data-theme="light"] .from-slate-950,
+:root[data-theme="light"] .from-slate-900,
+:root[data-theme="light"] .from-slate-800 {
+  --tw-gradient-from: var(--lt-surface-2) var(--tw-gradient-from-position) !important;
+}
+:root[data-theme="light"] .via-slate-900,
+:root[data-theme="light"] .via-slate-800 {
+  --tw-gradient-via: var(--lt-surface-2) var(--tw-gradient-via-position) !important;
+}
+:root[data-theme="light"] .to-slate-950,
+:root[data-theme="light"] .to-slate-900 {
+  --tw-gradient-to: var(--lt-surface-3) var(--tw-gradient-to-position) !important;
+}
+
+/* Placeholder text stays legible on light inputs */
+:root[data-theme="light"] ::placeholder {
+  color: var(--lt-text-3) !important;
+  opacity: 1;
+}
+
+/* SVG icons that inherit white via currentColor on dark surfaces */
+:root[data-theme="light"] .text-white svg { color: inherit; }
+
+/* ─── LIGHT THEME — high-opacity white text + faint labels (gap fixes) ─────
+   Catches text-white/80–/95 (dashboard card titles, descriptions) and darkens
+   the faint slate label grays so field labels stay legible on light. */
+:root[data-theme="light"] .text-white\/95,
+:root[data-theme="light"] .text-white\/90,
+:root[data-theme="light"] .text-white\/85,
+:root[data-theme="light"] .text-white\/80 {
+  color: var(--lt-text) !important;
+}
+
+/* Field labels & captions: make the faint grays readable on light.
+   These are intentionally a touch darker than the generic /400 mapping. */
+:root[data-theme="light"] label.text-slate-400,
+:root[data-theme="light"] label.text-slate-500,
+:root[data-theme="light"] .uppercase.tracking-\[0\.18em\],
+:root[data-theme="light"] .uppercase.tracking-\[0\.16em\],
+:root[data-theme="light"] .uppercase.tracking-\[0\.12em\],
+:root[data-theme="light"] .uppercase.tracking-\[0\.08em\] {
+  color: var(--lt-text-2) !important;
+}
+
+/* Dashboard card titles specifically (uppercase + wide tracking + semibold).
+   Ensure they're solid dark ink, not washed out. */
+:root[data-theme="light"] h3.uppercase {
+  color: var(--lt-text) !important;
+}
+
+/* Arrow icons on cards that were text-white */
+:root[data-theme="light"] .group .text-white {
+  color: var(--lt-text-2) !important;
+}
+
+/* ─── LIGHT THEME — arbitrary rgba(255,255,255,…) inline backgrounds ───────
+   Dashboard cards (and similar) use Tailwind arbitrary values like
+   bg-[rgba(255,255,255,0.08)] which can't be remapped by named-class selectors.
+   Target the escaped arbitrary classes directly. */
+:root[data-theme="light"] .bg-\[rgba\(255\2c 255\2c 255\2c 0\.08\)\],
+:root[data-theme="light"] .bg-\[rgba\(255\2c 255\2c 255\2c 0\.12\)\] {
+  background-color: rgba(255, 255, 255, 0.9) !important;
+}
+:root[data-theme="light"] .border-\[rgba\(255\2c 255\2c 255\2c 0\.15\)\] {
+  border-color: var(--lt-border) !important;
+}
+:root[data-theme="light"] .hover\:bg-\[rgba\(255\2c 255\2c 255\2c 0\.12\)\]:hover {
+  background-color: #f7efdf !important;
+}
+
+/* Card icon tiles using bg-white/10 already covered; ensure their icon ink is dark */
+:root[data-theme="light"] .bg-white\/10.text-white,
+:root[data-theme="light"] .bg-white\/10 .text-white {
+  color: var(--lt-text-2) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIGHT THEME — COMPREHENSIVE SWEEP (attribute selectors)
+   Catches ALL opacity variants of each dark shade in one rule using [class*=]
+   so no variant slips through (bg-slate-950/80, /70, /95, etc.). This replaces
+   the need to enumerate every opacity. Scoped to [data-theme="light"].
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Dark slate / blue surface backgrounds → light surfaces (all opacity variants) */
+:root[data-theme="light"] [class*="bg-slate-950"],
+:root[data-theme="light"] [class*="bg-slate-900"],
+:root[data-theme="light"] [class*="bg-slate-800"] {
+  background-color: var(--lt-surface) !important;
+}
+:root[data-theme="light"] [class*="bg-slate-700"],
+:root[data-theme="light"] [class*="bg-slate-600"] {
+  background-color: var(--lt-surface-2) !important;
+}
+:root[data-theme="light"] [class*="bg-blue-900"],
+:root[data-theme="light"] [class*="bg-blue-950"] {
+  background-color: var(--lt-surface-2) !important;
+}
+
+/* Dark text → readable ink (all variants) */
+:root[data-theme="light"] [class*="text-white"] { color: var(--lt-text) !important; }
+:root[data-theme="light"] [class*="text-slate-100"],
+:root[data-theme="light"] [class*="text-slate-200"] { color: var(--lt-text) !important; }
+:root[data-theme="light"] [class*="text-slate-300"],
+:root[data-theme="light"] [class*="text-slate-400"] { color: var(--lt-text-2) !important; }
+:root[data-theme="light"] [class*="text-slate-500"],
+:root[data-theme="light"] [class*="text-slate-600"] { color: var(--lt-text-3) !important; }
+
+/* But keep text that is meant to be dark (on light chips) dark — slate-700/900 */
+:root[data-theme="light"] [class*="text-slate-700"],
+:root[data-theme="light"] [class*="text-slate-800"],
+:root[data-theme="light"] [class*="text-slate-900"] { color: var(--lt-text) !important; }
+
+/* White/light borders → faint dark (all opacity variants) */
+:root[data-theme="light"] [class*="border-white"] { border-color: var(--lt-border) !important; }
+
+/* Accent text stays colored & readable */
+:root[data-theme="light"] [class*="text-blue-3"],
+:root[data-theme="light"] [class*="text-blue-4"] { color: #2563eb !important; }
+:root[data-theme="light"] [class*="text-green-3"],
+:root[data-theme="light"] [class*="text-green-4"] { color: #16a34a !important; }
+:root[data-theme="light"] [class*="text-amber-3"],
+:root[data-theme="light"] [class*="text-amber-4"],
+:root[data-theme="light"] [class*="text-yellow-3"] { color: #d97706 !important; }
+:root[data-theme="light"] [class*="text-rose-3"],
+:root[data-theme="light"] [class*="text-rose-4"],
+:root[data-theme="light"] [class*="text-red-3"],
+:root[data-theme="light"] [class*="text-red-4"] { color: #dc2626 !important; }
+
+/* INLINE STYLE dark backgrounds (144 components use style={{background:"rgb(2..)"/"#1.."}}).
+   Inline styles beat CSS classes, so we can't override them via class selectors.
+   These two rules target elements whose inline style sets a dark background and
+   neutralize them. NOTE: limited — only catches common patterns. */
+:root[data-theme="light"] [style*="background:#1"],
+:root[data-theme="light"] [style*="background: #1"],
+:root[data-theme="light"] [style*="background:rgb(2"],
+:root[data-theme="light"] [style*="background: rgb(2"],
+:root[data-theme="light"] [style*="background-color:#1"],
+:root[data-theme="light"] [style*="background-color: #1"],
+:root[data-theme="light"] [style*="background-color:rgb(2"],
+:root[data-theme="light"] [style*="background-color: rgb(2"] {
+  background-color: var(--lt-surface) !important;
+  background-image: none !important;
+}
+
+/* ── Keep white text on genuinely colored backgrounds (buttons, badges) ──────
+   The broad text-white remap above would also darken text on blue/green/red
+   buttons where white is correct. Re-assert white when the element ALSO has a
+   saturated colored background. */
+:root[data-theme="light"] [class*="bg-blue-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-blue-6"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-blue-7"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-green-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-green-6"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-red-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-red-6"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-rose-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-amber-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-emerald-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-violet-5"][class*="text-white"],
+:root[data-theme="light"] [class*="bg-primary"][class*="text-white"],
+:root[data-theme="light"] .btn[class*="bg-blue"] {
+  color: #ffffff !important;
+}
+:root[data-theme="light"] [class*="bg-blue-5"],
+:root[data-theme="light"] [class*="bg-blue-6"],
+:root[data-theme="light"] [class*="bg-blue-7"] {
+  background-color: #2563eb !important;
+}
+
+/* ─── LIGHT THEME — Team Messenger chat bubbles ──────────────────────────────
+   The broad bg-blue-5* sweep above turns sent bubbles solid vivid blue.
+   The bg-slate-950* sweep turns received bubbles white-on-white.
+   Re-assert proper light-mode bubble colors for both. */
+
+/* Sent bubble (isMe): soft blue tint, dark readable text */
+:root[data-theme="light"] .rounded-2xl[class*="bg-blue-500"] {
+  background-color: #dbeafe !important; /* blue-100 */
+  border-color: #93c5fd !important;     /* blue-300 */
+  color: #1e3a5f !important;            /* deep navy text */
+}
+
+/* Sender/timestamp label inside sent bubble */
+:root[data-theme="light"] .rounded-2xl[class*="bg-blue-500"] .text-slate-400 {
+  color: #3b6ea5 !important;
+}
+
+/* Received bubble: light grey surface, dark text */
+:root[data-theme="light"] .rounded-2xl[class*="bg-slate-950"] {
+  background-color: #f1f0ee !important; /* warm off-white */
+  border-color: #d6d3cd !important;
+  color: #1e293b !important;
+}
+
+/* Sender/timestamp label inside received bubble */
+:root[data-theme="light"] .rounded-2xl[class*="bg-slate-950"] .text-slate-400 {
+  color: #64748b !important;
+}
+
+/* System message bubble */
+:root[data-theme="light"] .rounded-2xl[class*="bg-white\/5"] {
+  background-color: #e8e6e1 !important;
+  border-color: #d1cec8 !important;
+  color: #475569 !important;
+}
+
+/* ─── LIGHT THEME — Inline ticket number chips in Team Messenger ─────────────
+   The chip uses bg-blue-500/20 (near-transparent on light) + text-blue-300
+   (too pale to read on white). Override both to a legible light-mode chip. */
+:root[data-theme="light"] a[class*="bg-blue-500"][class*="text-blue-300"],
+:root[data-theme="light"] span[class*="bg-blue-500"][class*="text-blue-300"] {
+  background-color: #dbeafe !important; /* blue-100 — visible tinted surface */
+  color: #1d4ed8 !important;            /* blue-700 — legible dark blue ink  */
+}
+:root[data-theme="light"] a[class*="bg-blue-500"][class*="text-blue-300"]:hover,
+:root[data-theme="light"] span[class*="bg-blue-500"][class*="text-blue-300"]:hover {
+  background-color: #bfdbfe !important; /* blue-200 on hover */
+  color: #1e40af !important;            /* blue-800 on hover */
+}
+
+/* ─── LIGHT THEME — White logo visibility ────────────────────────────────────
+   The logo PNG is white and disappears on light backgrounds. In light mode,
+   wrap it in a dark rounded pill so it stays visible without editing the asset.
+   The padding scales relative to the img size via em units. */
+:root[data-theme="light"] .logo-img {
+  background-color: #1e293b !important;
+  border-radius: 10px !important;
+  padding: 5px !important;
+  box-sizing: content-box !important;
+  display: inline-block !important;
+}
+
+/* Fallback: catch the logo img even without the logo-img class,
+   by targeting any small img directly inside the header link */
+:root[data-theme="light"] header img,
+:root[data-theme="light"] header a > img {
+  background-color: #1e293b !important;
+  border-radius: 10px !important;
+  padding: 5px !important;
+  box-sizing: content-box !important;
+}
+
+/* ─── LIGHT THEME — App header background ────────────────────────────────────
+   The sticky header uses bg-[oklch(0.16_0.04_260/0.7)] (dark navy) which
+   doesn't match any Tailwind class selector sweep. Target the header element
+   directly so it picks up the warm ivory surface tint in light mode. */
+:root[data-theme="light"] header.sticky {
+  background-color: rgba(253, 248, 240, 0.85) !important;
+  border-bottom-color: rgba(15, 23, 42, 0.10) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIGHT THEME — COMPREHENSIVE MODAL / POPUP / OVERLAY SWEEP
+   Covers all remaining dark-mode-only surfaces found across the codebase:
+   modals, drawers, sheets, popovers, selects, inner panels, overlays.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* 1. Modal/drawer/sheet OVERLAY (fixed inset-0 bg-black/*)
+      Soften the scrim — full black is too harsh on a light background */
+:root[data-theme="light"] [class*="fixed"][class*="inset-0"][class*="bg-black"] {
+  background-color: rgba(30, 41, 59, 0.45) !important;
+}
+
+/* 2. Shadcn UI primitives — Select dropdown, Popover, Dialog overlay
+      These render as Radix portals on <body> and use bg-slate-950 text-white */
+:root[data-theme="light"] [data-radix-popper-content-wrapper] [class*="bg-slate-950"],
+:root[data-theme="light"] [data-radix-select-viewport],
+:root[data-theme="light"] [role="listbox"],
+:root[data-theme="light"] [role="dialog"] [class*="bg-slate-9"],
+:root[data-theme="light"] [data-radix-select-content] {
+  background-color: var(--lt-surface) !important;
+  color: var(--lt-text) !important;
+  border-color: var(--lt-border) !important;
+}
+
+/* 3. Select item hover state */
+:root[data-theme="light"] [data-radix-select-item]:hover,
+:root[data-theme="light"] [data-radix-select-item][data-highlighted] {
+  background-color: var(--lt-surface-2) !important;
+  color: var(--lt-text) !important;
+}
+
+/* 4. Popover content */
+:root[data-theme="light"] [data-radix-popover-content] {
+  background-color: var(--lt-surface) !important;
+  color: var(--lt-text) !important;
+  border-color: var(--lt-border) !important;
+}
+
+/* 5. Inner modal panels — bg-slate-900 (solid, no opacity suffix)
+      The sweep catches bg-slate-900/* variants but solid bg-slate-900 is also
+      caught by [class*="bg-slate-900"] — should already work. Belt + suspenders
+      for any that slip through via inline style or direct className string. */
+:root[data-theme="light"] .bg-slate-900 {
+  background-color: var(--lt-surface) !important;
+}
+:root[data-theme="light"] .bg-slate-950 {
+  background-color: var(--lt-surface) !important;
+}
+:root[data-theme="light"] .bg-slate-800 {
+  background-color: var(--lt-surface-2) !important;
+}
+
+/* 6. Ticket column filter dropdowns and TicketList inline dropdowns
+      (absolute positioned bg-slate-900 panels) */
+:root[data-theme="light"] .absolute[class*="bg-slate-900"],
+:root[data-theme="light"] .absolute[class*="bg-slate-950"] {
+  background-color: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+  box-shadow: 0 8px 24px rgba(30,41,59,0.12) !important;
+}
+
+/* 7. AnnouncementBanner (bg-slate-950/95) */
+:root[data-theme="light"] [class*="bg-slate-950"][class*="border-amber"] {
+  background-color: #fffbeb !important;
+  border-color: #fbbf24 !important;
+  color: var(--lt-text) !important;
+}
+
+/* 8. TicketSidebar panel (bg-slate-900/60 backdrop-blur) */
+:root[data-theme="light"] [class*="bg-slate-900"][class*="backdrop-blur"] {
+  background-color: rgba(253, 248, 240, 0.92) !important;
+  border-color: var(--lt-border) !important;
+}
+
+/* 9. TeamMessenger search bar, composer, thread details panels */
+:root[data-theme="light"] [class*="bg-slate-950"][class*="rounded-xl"],
+:root[data-theme="light"] [class*="bg-slate-950"][class*="rounded-2xl"] {
+  background-color: var(--lt-surface) !important;
+  border-color: var(--lt-border) !important;
+  color: var(--lt-text) !important;
+}
+
+/* 10. glass-input inside modals — ensure textarea/inputs are light */
+:root[data-theme="light"] textarea.glass-input,
+:root[data-theme="light"] input.glass-input {
+  background-color: var(--lt-surface) !important;
+  color: var(--lt-text) !important;
+  border-color: var(--lt-border) !important;
+}
+:root[data-theme="light"] textarea.glass-input::placeholder,
+:root[data-theme="light"] input.glass-input::placeholder {
+  color: var(--lt-text-3) !important;
+}
+
+/* 11. bg-white/5, bg-white/[0.02], bg-white/[0.03] system/info panels */
+:root[data-theme="light"] [class*="bg-white/5"],
+:root[data-theme="light"] [class*="bg-white/[0.02]"],
+:root[data-theme="light"] [class*="bg-white/[0.03]"],
+:root[data-theme="light"] [class*="bg-white/[0.04]"] {
+  background-color: var(--lt-surface-2) !important;
+}
+
+/* 12. Select native element option background (browser-rendered) */
+:root[data-theme="light"] select option {
+  background-color: var(--lt-surface) !important;
+  color: var(--lt-text) !important;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   LIGHT THEME — ticket-page & header readability fixes
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* #1 Header nav: icons + button/label text were near-invisible on the ivory
+   header (transparent-white fills + light-gray icons). Force readable dark. */
+:root[data-theme="light"] header button,
+:root[data-theme="light"] header a[href] { color: #1e293b !important; }
+:root[data-theme="light"] header svg { color: #334155 !important; }
+/* keep the colored account avatar + its initials intact */
+:root[data-theme="light"] header .bg-\[var\(--color-primary\)\],
+:root[data-theme="light"] header .bg-\[var\(--color-primary\)\] * { color: #ffffff !important; }
+
+/* #2/#3 Emerald (Send ticket, Add Visit, Truck Stock, Submit POs) — pale
+   emerald text/fills vanish on light. Darken text, deepen fills/borders. */
+:root[data-theme="light"] .text-emerald-200,
+:root[data-theme="light"] .text-emerald-300,
+:root[data-theme="light"] .text-emerald-400,
+:root[data-theme="light"] .text-green-200,
+:root[data-theme="light"] .text-green-300,
+:root[data-theme="light"] .text-green-400 { color: #047857 !important; }
+:root[data-theme="light"] .bg-emerald-500\/15,
+:root[data-theme="light"] .bg-emerald-500\/20,
+:root[data-theme="light"] .bg-green-500\/15,
+:root[data-theme="light"] .bg-green-500\/20 { background-color: rgba(16, 185, 129, 0.16) !important; }
+:root[data-theme="light"] .border-emerald-400\/40,
+:root[data-theme="light"] .border-emerald-500\/30,
+:root[data-theme="light"] .border-green-400\/40 { border-color: rgba(5, 150, 105, 0.55) !important; }
+
+/* Blue accent chips/buttons (Copy, View Log) + section headings */
+:root[data-theme="light"] .text-blue-300,
+:root[data-theme="light"] .text-blue-400 { color: #1d4ed8 !important; }
+:root[data-theme="light"] .bg-blue-500\/15,
+:root[data-theme="light"] .bg-blue-500\/20 { background-color: rgba(37, 99, 235, 0.14) !important; }
+
+/* Purple (Sync Parts from Notes) + cyan + amber utility text */
+:root[data-theme="light"] .text-purple-200,
+:root[data-theme="light"] .text-purple-300 { color: #6d28d9 !important; }
+:root[data-theme="light"] .bg-purple-500\/15,
+:root[data-theme="light"] .bg-purple-500\/20 { background-color: rgba(124, 58, 237, 0.14) !important; }
+:root[data-theme="light"] .text-cyan-200,
+:root[data-theme="light"] .text-cyan-300 { color: #0e7490 !important; }
+:root[data-theme="light"] .text-amber-200,
+:root[data-theme="light"] .text-amber-300,
+:root[data-theme="light"] .text-yellow-200,
+:root[data-theme="light"] .text-yellow-300 { color: #b45309 !important; }
+
+/* Section titles that render pale-blue on the ivory card (e.g. General
+   Information, Billing Information, "N distinct records found"). */
+:root[data-theme="light"] .text-blue-500,
+:root[data-theme="light"] .text-blue-600 { color: #1e40af !important; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   Part Transaction — compact density so all columns fit without side-scroll
+   ════════════════════════════════════════════════════════════════════════ */
+.pt-compact { font-size: 11px !important; line-height: 1.25 !important; }
+.pt-compact th,
+.pt-compact td { padding: 2px 4px !important; }
+.pt-compact input,
+.pt-compact select,
+.pt-compact textarea {
+  padding: 2px 4px !important;
+  font-size: 11px !important;
+  min-width: 0 !important;
+  width: 100% !important;
+  height: auto !important;
+}
+/* Date inputs are the widest offenders — cap them */
+.pt-compact input[type="date"] { max-width: 118px !important; }
+/* Numeric-ish short fields stay tight */
+.pt-compact input[placeholder="1"],
+.pt-compact input[placeholder="RA #"],
+.pt-compact input[placeholder*="Track"] { max-width: 90px !important; }
+/* Kill any hardcoded min-widths on inner cells that fight the compaction */
+.pt-compact [class*="min-w-"] { min-width: 0 !important; }
+
+/* ── Blue tinted action buttons (Copy icon, Add Visit, View Log) — the pale
+   blue-200 text on faint fills was almost invisible on light. Boost contrast. */
+:root[data-theme="light"] .text-blue-200 { color: #1e3a8a !important; }
+:root[data-theme="light"] .bg-blue-500\/15,
+:root[data-theme="light"] .bg-blue-500\/20,
+:root[data-theme="light"] .bg-blue-500\/25 { background-color: rgba(37, 99, 235, 0.20) !important; }
+:root[data-theme="light"] .border-blue-400\/40,
+:root[data-theme="light"] .border-blue-500\/30 { border-color: rgba(30, 58, 138, 0.5) !important; }
+
+/* ── Light slate shades (used as light-on-dark text) become readable on the
+   now-light surfaces they sit on in light mode — e.g. the Messages dropdown. */
+:root[data-theme="light"] .text-slate-100,
+:root[data-theme="light"] .text-slate-200 { color: var(--lt-text) !important; }
+:root[data-theme="light"] .text-slate-300 { color: var(--lt-text-2) !important; }
+:root[data-theme="light"] .text-slate-400 { color: var(--lt-text-3) !important; }
+
+/* ── Truck Stock (and similar) — light-mode readability for sky/emerald/amber
+   tints + /10-opacity fills that weren't previously covered. ─────────────── */
+:root[data-theme="light"] .text-emerald-100 { color: #047857 !important; }
+:root[data-theme="light"] .text-sky-100,
+:root[data-theme="light"] .text-sky-200,
+:root[data-theme="light"] .text-sky-300 { color: #0369a1 !important; }
+:root[data-theme="light"] .bg-sky-500\/10,
+:root[data-theme="light"] .bg-sky-500\/15,
+:root[data-theme="light"] .bg-sky-500\/20 { background-color: rgba(2, 132, 199, 0.14) !important; }
+:root[data-theme="light"] .border-sky-400\/30,
+:root[data-theme="light"] .border-sky-400\/40 { border-color: rgba(3, 105, 161, 0.5) !important; }
+:root[data-theme="light"] .bg-emerald-500\/10 { background-color: rgba(16, 185, 129, 0.14) !important; }
+:root[data-theme="light"] .bg-amber-500\/10,
+:root[data-theme="light"] .bg-amber-500\/15 { background-color: rgba(217, 119, 6, 0.14) !important; }
+:root[data-theme="light"] .text-amber-100 { color: #b45309 !important; }
+:root[data-theme="light"] .border-amber-400\/40 { border-color: rgba(180, 83, 9, 0.5) !important; }
+:root[data-theme="light"] .bg-blue-500\/10 { background-color: rgba(37, 99, 235, 0.12) !important; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   LIGHT THEME — full scan gap-fills
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Native date/time calendar icon: dark theme inverts it to white; the light
+   block only reset color-scheme, so the glyph stayed white & invisible. Clear
+   the invert filter in light mode so the calendar icon shows dark. */
+:root[data-theme="light"] input[type="date"]::-webkit-calendar-picker-indicator,
+:root[data-theme="light"] input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+:root[data-theme="light"] input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: none !important;
+  opacity: 0.85 !important;
+}
+
+/* Color families that were used across the app but had no light-mode mapping —
+   their pale 100–300 shades were near-white and vanished on light surfaces. */
+:root[data-theme="light"] .text-orange-100,
+:root[data-theme="light"] .text-orange-200,
+:root[data-theme="light"] .text-orange-300 { color: #c2410c !important; }
+:root[data-theme="light"] .text-rose-100,
+:root[data-theme="light"] .text-rose-200,
+:root[data-theme="light"] .text-rose-300 { color: #be123c !important; }
+:root[data-theme="light"] .text-violet-100,
+:root[data-theme="light"] .text-violet-200,
+:root[data-theme="light"] .text-violet-300 { color: #6d28d9 !important; }
+:root[data-theme="light"] .text-teal-100,
+:root[data-theme="light"] .text-teal-200,
+:root[data-theme="light"] .text-teal-300 { color: #0f766e !important; }
+:root[data-theme="light"] .text-indigo-100,
+:root[data-theme="light"] .text-indigo-200,
+:root[data-theme="light"] .text-indigo-300 { color: #4338ca !important; }
+:root[data-theme="light"] .text-pink-100,
+:root[data-theme="light"] .text-pink-200,
+:root[data-theme="light"] .text-pink-300 { color: #be185d !important; }
+:root[data-theme="light"] .text-lime-100,
+:root[data-theme="light"] .text-lime-200,
+:root[data-theme="light"] .text-lime-300 { color: #4d7c0f !important; }
+:root[data-theme="light"] .text-fuchsia-100,
+:root[data-theme="light"] .text-fuchsia-200,
+:root[data-theme="light"] .text-fuchsia-300 { color: #a21caf !important; }
+/* Reinforce pale red / yellow text shades (used heavily) on light surfaces. */
+:root[data-theme="light"] .text-red-100,
+:root[data-theme="light"] .text-red-200,
+:root[data-theme="light"] .text-red-300 { color: #b91c1c !important; }
+:root[data-theme="light"] .text-yellow-100,
+:root[data-theme="light"] .text-yellow-200,
+:root[data-theme="light"] .text-yellow-300 { color: #a16207 !important; }
+
+/* Matching translucent fills for those families so pill/chip backgrounds stay
+   subtle-but-visible in light mode. */
+:root[data-theme="light"] .bg-orange-500\/10,
+:root[data-theme="light"] .bg-orange-500\/15,
+:root[data-theme="light"] .bg-orange-500\/20 { background-color: rgba(194, 65, 12, 0.12) !important; }
+:root[data-theme="light"] .bg-rose-500\/10,
+:root[data-theme="light"] .bg-rose-500\/15,
+:root[data-theme="light"] .bg-rose-500\/20 { background-color: rgba(190, 18, 60, 0.12) !important; }
+:root[data-theme="light"] .bg-violet-500\/10,
+:root[data-theme="light"] .bg-violet-500\/15,
+:root[data-theme="light"] .bg-violet-500\/20 { background-color: rgba(109, 40, 217, 0.12) !important; }
+:root[data-theme="light"] .bg-teal-500\/10,
+:root[data-theme="light"] .bg-teal-500\/15,
+:root[data-theme="light"] .bg-teal-500\/20 { background-color: rgba(15, 118, 110, 0.12) !important; }
+:root[data-theme="light"] .bg-indigo-500\/10,
+:root[data-theme="light"] .bg-indigo-500\/15,
+:root[data-theme="light"] .bg-indigo-500\/20 { background-color: rgba(67, 56, 202, 0.12) !important; }
+
+/* ── Repair Statuses page: its scoped <style> hardcodes white/light-gray header
+   text (title, subtitle, back button, "records found", notes) for a dark bg,
+   so they were invisible on the light gradient. Override in light mode. */
+:root[data-theme="light"] .repair-title { color: var(--lt-text) !important; }
+:root[data-theme="light"] .repair-subtitle,
+:root[data-theme="light"] .notes { color: var(--lt-text-2) !important; }
+:root[data-theme="light"] .result-info { color: #1d4ed8 !important; }
+:root[data-theme="light"] .back-btn {
+  color: var(--lt-text) !important;
+  background: rgba(15, 23, 42, 0.06) !important;
+  border-color: rgba(15, 23, 42, 0.15) !important;
+}
