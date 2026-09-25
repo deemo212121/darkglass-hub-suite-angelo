@@ -1116,6 +1116,24 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // so it can also be rendered from Attendance Monitoring's own tab of
   // the same name.
 
+  // Every period-scoped fetch below (timecard entries, tech repair/assigned
+  // counts, manual pay items, mileage, second-tech counts, category
+  // overrides, review/sent marks, hourly-OT overrides, company holidays —
+  // roughly a dozen independent useEffects, each firing its own request on
+  // genStart/genEnd and setting its own piece of state whenever IT resolves)
+  // races every other one: none of them are awaited together, so a
+  // technician's row/detail modal opened between two of these settling
+  // computes off whatever partial combination happened to be in state at
+  // that instant — a different "snapshot" every time depending on network
+  // timing, not a real change in the underlying data. periodDataLoading
+  // counts how many of these are still in flight for the CURRENT
+  // genStart/genEnd so callers (the payroll table's row-open action) can
+  // block opening a technician's detail until every one of them has
+  // actually settled and the numbers are the single, final, correct value.
+  const [periodDataLoading, setPeriodDataLoading] = useState(0);
+  const beginPeriodLoad = useCallback(() => setPeriodDataLoading((c) => c + 1), []);
+  const endPeriodLoad = useCallback(() => setPeriodDataLoading((c) => Math.max(0, c - 1)), []);
+
   const [salaryEntries, setSalaryEntries] = useState<SalaryEntry[]>([]);
   const [timecardEntries, setTimecardEntries] = useState<TimecardEntry[]>([]);
   const [payrollRuns, setPayrollRuns] = useState<PayrollRun[]>([]);
@@ -1671,12 +1689,28 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // reflected in the real payrollRows calculation right away.
   const refreshTechCustomPayItems = useCallback(async () => {
     if (!genStart || !genEnd || genStart > genEnd) return;
+    // Fires on every custom-line add/edit/delete inside an open Tech
+    // Activity Report modal — the modal's own customItems list (a SEPARATE
+    // per-technician fetch, getTechCustomPayItems) updates immediately/
+    // optimistically, but the bulk techIncludablePay/techWeightedRegularRate
+    // (and everything derived from them: companyHourlyOtTotal,
+    // stateHourlyOtTotal, the auto-refresh effect in TechActivityReportModal)
+    // still reflect the PRE-edit data until this refetch actually lands.
+    // Counted in periodDataLoading like the period's other bulk loads so the
+    // modal knows not to trust/auto-save off the side panel's numbers during
+    // that gap — without this, editing a custom line could get an auto-saved
+    // Hourly+OT override fired off a stale weighted rate, then overwritten
+    // again moments later once this settles, looking like the total kept
+    // "randomly" changing on its own.
+    beginPeriodLoad();
     try {
       setTechCustomPayItemsAll(await getAllTechCustomPayItemsForPeriod(genStart, genEnd));
     } catch (err) {
       console.error("Failed to refresh tech custom pay items:", err);
+    } finally {
+      endPeriodLoad();
     }
-  }, [genStart, genEnd]);
+  }, [genStart, genEnd, beginPeriodLoad, endPeriodLoad]);
 
   // Not period-scoped (see carryoverRepairCounts' own comment) — loaded once
   // on mount and re-run after Generate Payroll consumes a batch, so a row
@@ -1721,6 +1755,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // part of the period was silently missing from every hours/pay total
     // that reads timecardEntries (hoursMap, workingDaysCountByProfile) —
     // not a rare edge case, just whichever rows happened to fall past 1000.
+    beginPeriodLoad();
     try {
       const all: TimecardEntry[] = [];
       for (let from = 0; ; from += PAGE_SIZE) {
@@ -1738,8 +1773,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     } catch (error) {
       console.error("Failed to load attendance for selected payroll period:", error instanceof Error ? error.message : error);
       setTimecardEntries([]);
+    } finally {
+      endPeriodLoad();
     }
-  }, [genStart, genEnd]);
+  }, [genStart, genEnd, beginPeriodLoad, endPeriodLoad]);
 
   // Only the partial calendar week BEFORE genStart (empty when genStart is
   // already a Sunday, the normal case) — fetched separately from
@@ -1760,6 +1797,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       return;
     }
     let cancelled = false;
+    beginPeriodLoad();
     (async () => {
       try {
         const all: TimecardEntry[] = [];
@@ -1778,12 +1816,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       } catch (error) {
         console.error("Failed to load pre-period week seed attendance:", error instanceof Error ? error.message : error);
         if (!cancelled) setWeekSeedTimecardEntries([]);
+      } finally {
+        endPeriodLoad();
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [genStart]);
+  }, [genStart, beginPeriodLoad, endPeriodLoad]);
 
   useEffect(() => {
     reloadTimecardEntries();
@@ -1796,14 +1836,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       return;
     }
     let cancelled = false;
+    beginPeriodLoad();
     getTechCompletedRepairCounts(genStart, genEnd)
       .then((counts) => { if (!cancelled) setTechRepairCounts(counts); })
       .catch((err) => {
         console.error("Failed to load tech completed-repair counts:", err);
         if (!cancelled) setTechRepairCounts([]);
-      });
+      })
+      .finally(() => endPeriodLoad());
     return () => { cancelled = true; };
-  }, [genStart, genEnd]);
+  }, [genStart, genEnd, beginPeriodLoad, endPeriodLoad]);
 
   // Tech Payroll's assigned-visit counts (Assigned/Ratio/Avg. Comp. columns)
   // and Finance's manually entered LDT/Mileage/Training values, same period.
@@ -1813,14 +1855,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       return;
     }
     let cancelled = false;
+    beginPeriodLoad();
     getTechAssignedCounts(genStart, genEnd)
       .then((counts) => { if (!cancelled) setTechAssignedCounts(counts); })
       .catch((err) => {
         console.error("Failed to load tech assigned counts:", err);
         if (!cancelled) setTechAssignedCounts(new Map());
-      });
+      })
+      .finally(() => endPeriodLoad());
     return () => { cancelled = true; };
-  }, [genStart, genEnd]);
+  }, [genStart, genEnd, beginPeriodLoad, endPeriodLoad]);
 
   useEffect(() => {
     if (!genStart || !genEnd || genStart > genEnd) {
@@ -1828,14 +1872,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       return;
     }
     let cancelled = false;
+    beginPeriodLoad();
     getTechManualPayItems(genStart, genEnd)
       .then((items) => { if (!cancelled) setTechManualPayItems(items); })
       .catch((err) => {
         console.error("Failed to load tech manual pay items:", err);
         if (!cancelled) setTechManualPayItems([]);
-      });
+      })
+      .finally(() => endPeriodLoad());
     return () => { cancelled = true; };
-  }, [genStart, genEnd]);
+  }, [genStart, genEnd, beginPeriodLoad, endPeriodLoad]);
 
   // Same period-scoped, company-wide fetch as techManualPayItems above, for
   // the "(custom program)" lines on the Tech Activity Report — including
@@ -1849,14 +1895,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       return;
     }
     let cancelled = false;
+    beginPeriodLoad();
     getAllTechCustomPayItemsForPeriod(genStart, genEnd)
       .then((items) => { if (!cancelled) setTechCustomPayItemsAll(items); })
       .catch((err) => {
         console.error("Failed to load tech custom pay items:", err);
         if (!cancelled) setTechCustomPayItemsAll([]);
-      });
+      })
+      .finally(() => endPeriodLoad());
     return () => { cancelled = true; };
-  }, [genStart, genEnd]);
+  }, [genStart, genEnd, beginPeriodLoad, endPeriodLoad]);
 
   // Real logged mileage (Mileage tab) per technician for this period —
   // the DEFAULT for the Mileage line's Value before Finance has ever
@@ -1869,14 +1917,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       return;
     }
     let cancelled = false;
+    beginPeriodLoad();
     getTechAutoMileageTotals(genStart, genEnd)
       .then((totals) => { if (!cancelled) setTechAutoMileageByProfile(totals); })
       .catch((err) => {
         console.error("Failed to load tech auto mileage totals:", err);
         if (!cancelled) setTechAutoMileageByProfile(new Map());
-      });
+      })
+      .finally(() => endPeriodLoad());
     return () => { cancelled = true; };
-  }, [genStart, genEnd, mileageEntries]);
+  }, [genStart, genEnd, mileageEntries, beginPeriodLoad, endPeriodLoad]);
 
   // Forces a FRESH photo re-check (bypassing the cache above) for every
   // ticket dated inside the selected payroll period, whenever that period
@@ -1926,14 +1976,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       return;
     }
     let cancelled = false;
+    beginPeriodLoad();
     getTechSecondCounts(genStart, genEnd)
       .then((counts) => { if (!cancelled) setTechSecondCounts(counts); })
       .catch((err) => {
         console.error("Failed to load tech second-technician counts:", err);
         if (!cancelled) setTechSecondCounts(new Map());
-      });
+      })
+      .finally(() => endPeriodLoad());
     return () => { cancelled = true; };
-  }, [genStart, genEnd]);
+  }, [genStart, genEnd, beginPeriodLoad, endPeriodLoad]);
 
   // Finance's manual corrections to auto-counted categories (Tech Activity
   // Report's editable Value cells) — take precedence over the live count
@@ -1944,14 +1996,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       return;
     }
     let cancelled = false;
+    beginPeriodLoad();
     getTechCategoryOverrides(genStart, genEnd)
       .then((overrides) => { if (!cancelled) setTechCategoryOverrides(overrides); })
       .catch((err) => {
         console.error("Failed to load tech category overrides:", err);
         if (!cancelled) setTechCategoryOverrides([]);
-      });
+      })
+      .finally(() => endPeriodLoad());
     return () => { cancelled = true; };
-  }, [genStart, genEnd]);
+  }, [genStart, genEnd, beginPeriodLoad, endPeriodLoad]);
 
   // Per-technician "Reviewed" marks for the picked pay period (see the
   // Office Payroll review wizard + payroll_review_marks, migration 0218).
@@ -2004,12 +2058,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       setHourlyOtOverrides(new Map());
       return;
     }
+    beginPeriodLoad();
     try {
       setHourlyOtOverrides(await getHourlyOtOverrides(genStart, genEnd));
     } catch (err) {
       console.error("Failed to load hourly + OT pay-mode overrides:", err);
+    } finally {
+      endPeriodLoad();
     }
-  }, [genStart, genEnd]);
+  }, [genStart, genEnd, beginPeriodLoad, endPeriodLoad]);
   useEffect(() => { void loadHourlyOtOverrides(); }, [loadHourlyOtOverrides]);
 
   // Company holidays for the picked period (migration 0252) — used to pay
@@ -2023,12 +2080,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       setCompanyHolidays([]);
       return;
     }
+    beginPeriodLoad();
     try {
       setCompanyHolidays(await getCompanyHolidaysInRange(genStart, genEnd));
     } catch (err) {
       console.error("Failed to load company holidays:", err);
+    } finally {
+      endPeriodLoad();
     }
-  }, [genStart, genEnd]);
+  }, [genStart, genEnd, beginPeriodLoad, endPeriodLoad]);
   useEffect(() => { void loadCompanyHolidays(); }, [loadCompanyHolidays]);
 
   // ── Derived data ─────────────────────────────────────────────────────────────
@@ -2815,6 +2875,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     if (num === row.techManual[field]) return;
     const key = `${row.employee.id}:${field}`;
     setSavingManualKey(key);
+    // trainingValue feeds techIncludablePay/techWeightedRegularRate (see
+    // that computation's own comment) — counted in periodDataLoading, same
+    // reasoning as refreshTechCustomPayItems above, so a State-mode
+    // auto-refresh doesn't fire off the stale pre-edit weighted rate.
+    beginPeriodLoad();
     try {
       await upsertTechManualPayItem({
         profileId: row.employee.id,
@@ -2830,6 +2895,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setSavingManualKey(null);
+      endPeriodLoad();
     }
   };
 
@@ -2843,6 +2909,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const count = Number(value) || 0;
     const key = `${profileId}:${category}`;
     setSavingCategoryOverrideKey(key);
+    // Category counts feed tech.grossPay -> techIncludablePay/
+    // techWeightedRegularRate — same periodDataLoading reasoning as
+    // refreshTechCustomPayItems/handleManualPayBlur above.
+    beginPeriodLoad();
     try {
       await upsertTechCategoryOverride(profileId, genStart, genEnd, category, count);
       setTechCategoryOverrides(await getTechCategoryOverrides(genStart, genEnd));
@@ -2850,6 +2920,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setSavingCategoryOverrideKey(null);
+      endPeriodLoad();
     }
   };
 
@@ -4515,12 +4586,20 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               <td className="px-4 py-3 font-medium">
                                 <button
                                   type="button"
+                                  disabled={periodDataLoading > 0}
                                   onClick={() => { setDetailEmployee(row.employee); setWizardStep("detail"); }}
-                                  title={`assigned_branch: ${row.employee.assigned_branch || "(blank)"} · profile id: ${row.employee.id}`}
-                                  className="text-blue-400 hover:text-blue-300 hover:underline"
+                                  title={
+                                    periodDataLoading > 0
+                                      ? "Still loading this period's attendance/ticket data — wait a moment so the numbers shown are final, not a partial snapshot."
+                                      : `assigned_branch: ${row.employee.assigned_branch || "(blank)"} · profile id: ${row.employee.id}`
+                                  }
+                                  className="text-blue-400 hover:text-blue-300 hover:underline disabled:opacity-50 disabled:cursor-wait disabled:no-underline"
                                 >
                                   {row.employee.full_name}
                                 </button>
+                                {periodDataLoading > 0 && (
+                                  <Loader2 className="ml-1 inline h-3 w-3 animate-spin text-slate-500" />
+                                )}
                                 {row.employee.isTrainee && (
                                   <span className="ml-1.5 shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-300">Trainee</span>
                                 )}
@@ -5908,6 +5987,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             hireDate={employeeInfoByProfileId.get(activityRow.employee.id)?.hireDate || null}
             periodStart={genStart}
             periodEnd={genEnd}
+            periodDataSettling={periodDataLoading > 0}
             techRepairRates={techRepairRates}
             onRatesChanged={refreshTechRepairRates}
             onCustomItemsChanged={refreshTechCustomPayItems}
