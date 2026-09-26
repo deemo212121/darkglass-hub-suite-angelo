@@ -207,6 +207,15 @@ const csrMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "reschedule-requests",
+      title: "Reschedule Requests",
+      description: "Technicians who reported a same-day reschedule — view only, add notes.",
+      custom: "csr-reschedule-requests" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
       slug: "csr-daily-report",
       title: "CSR Daily Report",
       description: "CSR agent performance — tasks, schedule, attempts, mistakes.",

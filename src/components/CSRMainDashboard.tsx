@@ -31,6 +31,7 @@ import { ChevronLeft, Loader2, Send } from "lucide-react";
 import { BrandedLoader } from "@/components/BrandedLoader";
 import { CsrTeamComposition } from "@/components/CsrTeamComposition";
 import { WorkHoursPanel } from "@/components/WorkHoursPanel";
+import { CsrFlashTechGrid } from "@/components/CsrFlashTechGrid";
 import { CSRToDoListContent } from "@/components/CSRToDoList";
 import { CSR_DAILY_REPORT_TASKS, todayIso } from "@/components/CSRTeamDailyReport";
 import { useAuth } from "@/lib/auth";
@@ -43,7 +44,7 @@ import { createCsrMistakeLogEntry } from "@/lib/supabase/csrMistakeLog";
 
 const MANAGER_TIER_ROLES = new Set(["ADMIN", "SUPERADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"]);
 
-type Tab = "todo" | "team-list" | "team-composition";
+type Tab = "todo" | "team-list" | "team-composition" | "flash-tech-grid";
 
 interface TeamRow {
   profile: ProfileRow;
@@ -86,6 +87,7 @@ export function CSRMainDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef })
     { key: "todo", label: "To Do List" },
     ...(isManagerTier || isTeamLeader ? [{ key: "team-list" as Tab, label: "Team List" }] : []),
     ...(isManagerTier ? [{ key: "team-composition" as Tab, label: "Team Composition" }] : []),
+    { key: "flash-tech-grid", label: "Flash Tech Grid" },
   ];
 
   return (
@@ -125,6 +127,7 @@ export function CSRMainDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef })
             <WorkHoursPanel filterProfile={isCsrProfileFilter} emptyMessage="No active CSR Associates or Team Leaders found." />
           </div>
         )}
+        {tab === "flash-tech-grid" && <CsrFlashTechGrid />}
       </main>
     </div>
   );
