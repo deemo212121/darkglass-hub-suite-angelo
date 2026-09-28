@@ -33,6 +33,8 @@ export interface PartOrderRow {
   warranty: string;
   /** Same value as `status` above (kept for callers that read it by this name) — the ticket's overall Repair Status. */
   repairStatus: string;
+  /** tickets.status_changed_by — a profiles.id (UUID), stamped automatically by a Postgres audit trigger whenever tickets.status changes. Resolve against a profiles list for a display name; null for a row nothing has ever changed the status of. */
+  statusChangedBy: string | null;
 }
 
 // Supabase caps an unbounded select at 1000 rows — both `parts` and
@@ -69,7 +71,7 @@ export async function getPartOrderRows(): Promise<PartOrderRow[]> {
       for (let from = 0; ; from += PAGE_SIZE) {
         const { data, error } = await supabase
           .from("tickets")
-          .select("id, ticket_no, location, schedule_date, warranty, status")
+          .select("id, ticket_no, location, schedule_date, warranty, status, status_changed_by")
           .order("id", { ascending: true })
           .range(from, from + PAGE_SIZE - 1);
         if (error) {
@@ -97,6 +99,7 @@ export async function getPartOrderRows(): Promise<PartOrderRow[]> {
     const location = t.location ?? "";
     const scheduleDate = t.schedule_date ?? "";
     const warranty = t.warranty ?? "";
+    const statusChangedBy = t.status_changed_by ?? null;
     const parts = partsByTicketId.get(t.id) ?? [];
     if (parts.length === 0) {
       // No part logged for this ticket yet in Service Tracking — still
@@ -115,6 +118,7 @@ export async function getPartOrderRows(): Promise<PartOrderRow[]> {
         scheduleDate,
         warranty,
         repairStatus: "TR-Need PO",
+        statusChangedBy,
       });
       continue;
     }
@@ -132,10 +136,158 @@ export async function getPartOrderRows(): Promise<PartOrderRow[]> {
         scheduleDate,
         warranty,
         repairStatus: "TR-Need PO",
+        statusChangedBy,
       });
     }
   }
   return rows;
+}
+
+export interface PendingPoAsOfRow {
+  ticketNo: string;
+  location: string;
+  scheduleDate: string;
+  /** The ticket's status right now — may differ from "TR-Need PO" if it was processed after the cutoff. */
+  currentStatus: string;
+  /** Current status_changed_by, not reconstructed-as-of-cutoff — accurate
+   *  for the common case (nothing's changed since), but for a ticket that
+   *  moved off TR-Need PO again sometime after the cutoff, this reflects
+   *  that LATER change instead of whoever actually set it to TR-Need PO
+   *  historically. Good enough for "who to follow up with", not a legal
+   *  record. */
+  statusChangedBy: string | null;
+}
+
+/**
+ * Every ticket whose Repair Status, reconstructed AS OF the exact instant
+ * `cutoffIso`, was "TR-Need PO" — the real "unprocessed POs before 2PM
+ * CST" the PO Team's Daily Report spec calls for (see ReportPartsDaily.tsx),
+ * not just "whatever's TR-Need PO right now" (getPartOrderRows above),
+ * which drifts as PO staff work through the queue over the course of the
+ * day.
+ *
+ * Reconstructed from ticket_audit_log (a Postgres trigger logs every
+ * tickets.status change with a timestamp, see getTicketAuditLog in
+ * tickets.ts): a ticket's status at the cutoff is its CURRENT status,
+ * UNLESS at least one status change happened strictly AFTER the cutoff —
+ * in which case it's the before_value of the EARLIEST such change (the
+ * status right before the first change that happened after the moment
+ * being asked about). A cutoff in the future (e.g. today before 2PM CST
+ * has actually arrived) naturally has no "after cutoff" changes yet, so
+ * this gracefully degrades to "current status" — the best available
+ * answer for a moment that hasn't happened yet.
+ */
+export async function getPendingPoTicketsAsOf(cutoffIso: string): Promise<PendingPoAsOfRow[]> {
+  const [ticketsAll, laterChanges] = await Promise.all([
+    (async () => {
+      const all: any[] = [];
+      for (let from = 0; ; from += PAGE_SIZE) {
+        const { data, error } = await supabase
+          .from("tickets")
+          .select("id, ticket_no, location, schedule_date, status, status_changed_by")
+          .order("id", { ascending: true })
+          .range(from, from + PAGE_SIZE - 1);
+        if (error) {
+          console.error("getPendingPoTicketsAsOf tickets error:", error.message);
+          throw new Error(error.message);
+        }
+        all.push(...(data ?? []));
+        if (!data || data.length < PAGE_SIZE) break;
+      }
+      return all;
+    })(),
+    (async () => {
+      const all: any[] = [];
+      for (let from = 0; ; from += PAGE_SIZE) {
+        const { data, error } = await supabase
+          .from("ticket_audit_log")
+          .select("ticket_id, before_value, created_at")
+          .eq("field", "status")
+          .gt("created_at", cutoffIso)
+          .order("created_at", { ascending: true })
+          .range(from, from + PAGE_SIZE - 1);
+        if (error) {
+          console.error("getPendingPoTicketsAsOf audit log error:", error.message);
+          throw new Error(error.message);
+        }
+        all.push(...(data ?? []));
+        if (!data || data.length < PAGE_SIZE) break;
+      }
+      return all;
+    })(),
+  ]);
+
+  // laterChanges is sorted ascending by created_at, so the first entry
+  // seen per ticket_id is the earliest AFTER-cutoff change — its
+  // before_value is exactly the status at the cutoff.
+  const statusAtCutoffByTicketId = new Map<string, string>();
+  for (const c of laterChanges as any[]) {
+    if (!statusAtCutoffByTicketId.has(c.ticket_id)) statusAtCutoffByTicketId.set(c.ticket_id, c.before_value ?? "");
+  }
+
+  return (ticketsAll as any[])
+    .map((t) => ({
+      ticketNo: t.ticket_no ?? "",
+      location: t.location ?? "",
+      scheduleDate: t.schedule_date ?? "",
+      currentStatus: t.status ?? "",
+      statusChangedBy: t.status_changed_by ?? null,
+      statusAtCutoff: statusAtCutoffByTicketId.get(t.id) ?? (t.status ?? ""),
+    }))
+    .filter((t) => t.statusAtCutoff === "TR-Need PO")
+    .map(({ statusAtCutoff, ...rest }) => rest);
+}
+
+const IN_CHUNK = 200;
+
+/**
+ * Who entered each PO number, from ticket_audit_log — parts.created_by is
+ * never populated, but the ticket page logs every part save with the
+ * user's id. A PO counts as "processed" by whoever first saved it: an
+ * "Added part transaction" entry whose snapshot carries `PO No: X`, or an
+ * "Updated part transaction" entry on the PO No field. Returns a map keyed
+ * `${ticketNo}|${poNo}` → profiles.id.
+ */
+export async function getPoProcessors(ticketNos: string[]): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const uniqueNos = Array.from(new Set(ticketNos.filter(Boolean)));
+  if (uniqueNos.length === 0) return result;
+
+  const ticketNoById = new Map<string, string>();
+  for (let i = 0; i < uniqueNos.length; i += IN_CHUNK) {
+    const { data, error } = await supabase.from("tickets").select("id, ticket_no").in("ticket_no", uniqueNos.slice(i, i + IN_CHUNK));
+    if (error) throw new Error(error.message);
+    for (const t of data ?? []) ticketNoById.set(t.id, t.ticket_no);
+  }
+
+  const ids = Array.from(ticketNoById.keys());
+  const entries: any[] = [];
+  for (let i = 0; i < ids.length; i += IN_CHUNK) {
+    const { data, error } = await supabase
+      .from("ticket_audit_log")
+      .select("ticket_id, action, field, after_value, changed_by, created_at")
+      .in("ticket_id", ids.slice(i, i + IN_CHUNK))
+      .in("action", ["Added part transaction", "Updated part transaction"])
+      .not("changed_by", "is", null)
+      .order("created_at", { ascending: true });
+    if (error) throw new Error(error.message);
+    entries.push(...(data ?? []));
+  }
+  entries.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+
+  for (const e of entries) {
+    let poNo = "";
+    if (e.action === "Updated part transaction" && e.field === "PO No") {
+      poNo = String(e.after_value ?? "");
+    } else if (e.action === "Added part transaction") {
+      poNo = /PO No: (.*?) \|/.exec(String(e.after_value ?? ""))?.[1] ?? "";
+    }
+    poNo = poNo.trim();
+    if (!poNo || poNo === "—") continue;
+    const key = `${ticketNoById.get(e.ticket_id)}|${poNo}`;
+    if (!result.has(key)) result.set(key, e.changed_by);
+  }
+  return result;
 }
 
 /** Distinct real part_dist values currently in use, for the Part Dist. filter dropdown. */

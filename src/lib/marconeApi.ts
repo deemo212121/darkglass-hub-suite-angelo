@@ -94,6 +94,54 @@ export async function marconeRequest<T = unknown>(
   );
 }
 
+// ─── Package tracking ───────────────────────────────────────────────────────
+
+export interface MarconeDeliveryInfo {
+  /** YYYY-MM-DD of the carrier's "Delivered" scan, in the carrier's local time. */
+  deliveredDate?: string;
+  deliveredLocation?: string;
+  /** Latest scan of any kind, for packages not delivered yet. */
+  lastEvent?: string;
+}
+
+/**
+ * Carrier tracking via Marcone's /orders/trackpackage (FedEx + UPS only).
+ * Works for any FedEx/UPS number, not just packages Marcone shipped.
+ * Calls the bridge directly rather than through marconeRequest: an unknown
+ * or mistyped tracking number returns HTTP 500 from Marcone, which would
+ * otherwise count toward the API-health "endpoint is failing" admin alerts.
+ */
+export async function marconeTrackDelivery(trackingNumber: string): Promise<MarconeApiResult<MarconeDeliveryInfo>> {
+  const tn = trackingNumber.trim();
+  if (!tn) return { success: false, error: "trackingNumber is required" };
+  const env = (import.meta as any).env || {};
+  const custNo = Number(env.VITE_MARCONE_ACCOUNT_NUMBER || env.VITE_MARCONE_CUST_NO || 0) || undefined;
+  try {
+    const result = await postJson<MarconeApiResult<{ events?: { dateTime?: string; description?: string; city?: string; state?: string }[]; errorMessage?: string }>>({
+      action: "request",
+      path: "/orders/trackpackage",
+      method: "POST",
+      body: { custNo, trackingNumber: tn },
+    });
+    if (!result.success) return { success: false, status: result.status, error: result.data?.errorMessage || result.error };
+    const events = (result.data?.events ?? []).filter((e) => e.dateTime);
+    events.sort((a, b) => String(b.dateTime).localeCompare(String(a.dateTime)));
+    const delivered = events.find((e) => /deliver/i.test(e.description ?? "") && !/out for|attempt|exception|scheduled/i.test(e.description ?? ""));
+    const place = (e: { city?: string; state?: string }) => [e.city, e.state].filter(Boolean).join(", ");
+    return {
+      success: true,
+      status: result.status,
+      data: {
+        deliveredDate: delivered ? String(delivered.dateTime).slice(0, 10) : undefined,
+        deliveredLocation: delivered ? place(delivered) || undefined : undefined,
+        lastEvent: events[0]?.description,
+      },
+    };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 // ─── Parts ──────────────────────────────────────────────────────────────────
 
 /**

@@ -18,24 +18,34 @@
  * The Overview tab's old chart section (KPI tiles, branch bar chart,
  * Value & Aging/Status Distribution/Warranty panels) was replaced with
  * "PO Team's Daily Report" — Tickets/Parts Ordered computed live from
- * parts.po_date, Pending Tickets/Internal Note entered by hand (one row
- * per day, not per branch — see partsPoTeamDailyLog.ts).
+ * parts.po_date; Pending Tickets is "unprocessed POs (TR-Need PO) as of
+ * 2PM CST" reconstructed from ticket_audit_log's status-change history
+ * (see getPendingPoTicketsAsOf in partOrder.ts) — not just whatever's
+ * TR-Need PO at page-load time, which would drift as the PO team works
+ * through the queue over the day. Staff Changes Counter — PO Team below
+ * it breaks Tickets/Parts Ordered down per Parts Order staffer by
+ * matching each ticket's branch against that staffer's own
+ * profiles.assigned_branch; Pending Tickets is the same company-wide
+ * count on every row. Internal Note is the one field still entered by
+ * hand, per (staffer, day) — see partsPoTeamStaffDailyLog.ts.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Loader2, LayoutDashboard, CheckCheck, Building2, ClipboardList, RotateCcw, Download, Package, PackageX, Users, Hourglass } from "lucide-react";
+import { ChevronLeft, Loader2, LayoutDashboard, CheckCheck, Building2, ClipboardList, RotateCcw, Download, Package, PackageX, Users, Hourglass, Truck, Inbox, AlertTriangle, SearchX, ShieldAlert } from "lucide-react";
 import { BrandedLoader } from "@/components/BrandedLoader";
+import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from "recharts";
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getPartsInventoryRows, type PartInventoryRow } from "@/lib/supabase/partsInventory";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getPartsDailyIssues, upsertPartsDailyIssue, type PartsDailyIssueEntry } from "@/lib/supabase/partsDailyIssuesLog";
-import { getPartsPoTeamDailyLog, upsertPartsPoTeamDailyEntry, type PartsPoTeamDailyEntry } from "@/lib/supabase/partsPoTeamDailyLog";
 import { getPartsPoTeamStaffDailyLog, upsertPartsPoTeamStaffDailyEntry, type PartsPoTeamStaffDailyEntry } from "@/lib/supabase/partsPoTeamStaffDailyLog";
+import { getPendingPoTicketsAsOf, getPoProcessors, type PendingPoAsOfRow } from "@/lib/supabase/partOrder";
+import { zonedWallClockToUtcIso } from "@/lib/serverTime";
 import { normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
 import { getPartsDoneActivity, type PartsDoneActivityRow } from "@/lib/supabase/partsDoneActivityLog";
 import { getBranchProgress, type BranchProgress } from "@/lib/partsBranchProgress";
@@ -66,6 +76,7 @@ const KPI_TILE_COLORS = {
   blue: { border: "border-l-blue-500", bg: "bg-blue-500/5", iconBg: "bg-blue-500/15", text: "text-blue-400" },
   red: { border: "border-l-red-500", bg: "bg-red-500/5", iconBg: "bg-red-500/15", text: "text-red-400" },
   rose: { border: "border-l-rose-500", bg: "bg-rose-500/5", iconBg: "bg-rose-500/15", text: "text-rose-400" },
+  amber: { border: "border-l-amber-500", bg: "bg-amber-500/5", iconBg: "bg-amber-500/15", text: "text-amber-400" },
 } as const;
 
 // Shared by this page's "Download XLSX" button — same shape as
@@ -229,6 +240,9 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<PartInventoryRow[]>([]);
   const [staff, setStaff] = useState<ProfileRow[]>([]);
+  // Full unfiltered roster — needed to resolve status_changed_by (whoever
+  // changed a ticket's Repair Status could be anyone, not just PO staff).
+  const [allProfiles, setAllProfiles] = useState<ProfileRow[]>([]);
   const [issuesLog, setIssuesLog] = useState<PartsDailyIssueEntry[]>([]);
 
   const [dateFrom, setDateFrom] = useState(daysAgoIso(29));
@@ -343,6 +357,7 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
         ]);
         if (cancelled) return;
         setRows(partRows);
+        setAllProfiles(profiles);
         setStaff(profiles.filter((p) => p.is_active && isPartsOrderProfile(p)));
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load Part Daily Report.");
@@ -448,20 +463,16 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
   const getDailyBranchStats = (branch: string, date: string) =>
     dailyBranchStats.get(`${branch}|${date}`) || { collections: 0, pickups: 0, ra: 0, receives: 0, pendingRa: 0 };
 
-  // PO Team roster — Parts Order staff only (isPartsOrderProfile). No.
-  // Tickets/Parts/Pending here are the SAME company-wide numbers as the
-  // PO Team's Daily Report tiles above (ticketsOrdered/partsOrdered/
-  // poTeamPendingTickets, same poTeamDateFrom/poTeamDateTo range) — parts
-  // rows carry no staff-attribution field (parts.created_by isn't
-  // populated), so there's no real way to break those down per person;
-  // this just lists who's on the PO team for the period, not per-person
-  // counts.
+  // PO Team roster — Parts Order staff only (isPartsOrderProfile). Their
+  // per-person Tickets/Parts Ordered come from getStaffPoSummary below
+  // (branch-attributed); Pending Tickets is the same pendingTicketsCompanyWide
+  // value shown on every row.
   const staffChangesCounter = useMemo(() => {
     return staff
       .map((p) => ({
         id: p.id,
         name: p.display_name || p.email || "—",
-        role: ROLE_LABELS[normalizeRole(p.role)] || p.role,
+        role: ROLE_LABELS.PARTS_ORDER,
         branch: p.assigned_branch || p.department || "—",
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -498,43 +509,26 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
 
   // PO Team's Daily Report — replaces the old chart section. Tickets/Parts
   // Ordered are computed live from parts.po_date (real "when the PO was
-  // placed" data), summed across the selected range. Pending Tickets and
-  // Internal Note have no live source (Pending Tickets would need a
-  // same-day 2PM CST snapshot this app doesn't take), so the PO Team
-  // enters both by hand — one row per day (partsPoTeamDailyLog.ts).
-  // Pending Tickets sums whatever's been entered for each day in range;
-  // Internal Note is a single field tied to Date To (the most recent day
-  // in the range) — editing it only ever writes that one day's row.
-  const [poTeamDateFrom, setPoTeamDateFrom] = useState(todayIso());
-  const [poTeamDateTo, setPoTeamDateTo] = useState(todayIso());
-  const [poTeamEntries, setPoTeamEntries] = useState<PartsPoTeamDailyEntry[]>([]);
-  const [poTeamSaving, setPoTeamSaving] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    getPartsPoTeamDailyLog(poTeamDateFrom, poTeamDateTo)
-      .then((entries) => { if (!cancelled) setPoTeamEntries(entries); })
-      .catch((err) => console.error("Failed to load PO Team's Daily Report entries:", err));
-    return () => { cancelled = true; };
-  }, [poTeamDateFrom, poTeamDateTo]);
-  const poTeamIsSingleDay = poTeamDateFrom === poTeamDateTo;
-  const poTeamPendingTickets = useMemo(() => poTeamEntries.reduce((sum, e) => sum + e.pendingTickets, 0), [poTeamEntries]);
-  const savePoTeamEntryField = async (patch: Partial<Pick<PartsPoTeamDailyEntry, "pendingTickets">>) => {
-    setPoTeamSaving(true);
-    try {
-      await upsertPartsPoTeamDailyEntry(poTeamDateTo, patch);
-      setPoTeamEntries((prev) => {
-        const idx = prev.findIndex((e) => e.date === poTeamDateTo);
-        if (idx === -1) return [...prev, { date: poTeamDateTo, pendingTickets: 0, internalNote: "", ...patch }];
-        const next = [...prev];
-        next[idx] = { ...next[idx], ...patch };
-        return next;
-      });
-    } catch (err) {
-      console.error("Failed to save PO Team's Daily Report entry:", err);
-    } finally {
-      setPoTeamSaving(false);
-    }
+  // placed" data), summed across the selected range. Pending Tickets (see
+  // pendingTicketsCompanyWide below) is reconstructed as of 2PM CST on
+  // Date To specifically, not date-ranged the same way — it's "unprocessed
+  // as of a moment", not "something that happened within a range".
+  const kpi = {
+    collections: collectionsRows.length,
+    pickups: pickupRows.length,
+    ra: raRows.length,
+    receives: receivesRows.length,
+    pendingRa: returnPendingRows.filter(
+      (r) => !r.raNo.trim() && !!r.invoiceDate && inRange(r.invoiceDate, dateFrom, dateTo) && (branchFilter.size === 0 || branchFilter.has(r.location)),
+    ).length,
+    issues: filteredIssuesLog.reduce((sum, e) => sum + (e.issues || 0), 0),
+    lost: filteredIssuesLog.reduce((sum, e) => sum + (e.lost || 0), 0),
+    notRecovered: filteredIssuesLog.reduce((sum, e) => sum + (e.notRecovered || 0), 0),
+    totalWarnings: filteredIssuesLog.reduce((sum, e) => sum + (e.totalWarnings || 0), 0),
   };
+
+  const poTeamDateFrom = dateFrom;
+  const poTeamDateTo = dateTo;
   const poTeamOrderedRows = useMemo(
     () => rows.filter((r) => inRange(r.poDate, poTeamDateFrom, poTeamDateTo) && (branchFilter.size === 0 || branchFilter.has(r.location))),
     [rows, poTeamDateFrom, poTeamDateTo, branchFilter]
@@ -542,54 +536,182 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
   const ticketsOrdered = useMemo(() => new Set(poTeamOrderedRows.map((r) => r.ticketNo).filter(Boolean)).size, [poTeamOrderedRows]);
   const partsOrdered = useMemo(() => poTeamOrderedRows.reduce((sum, r) => sum + (r.quantity || 1), 0), [poTeamOrderedRows]);
 
-  // Staff Changes Counter — PO Team's own per-person tally (migration
-  // 0310). No live source for any of these (parts.created_by isn't
-  // populated), so a lead enters Tickets/Parts/Pending and a note by hand
-  // per (staffer, day) — same manual-tally pattern as Daily Branch
-  // Activity's Issues/Lost/etc., just keyed by profile_id instead of
-  // branch. Editable inline when the range is a single day; summed
-  // read-only (Tickets/Parts/Pending) across the range otherwise, with
-  // Internal Note always tied to Date To specifically.
+  // Each of the 3 tiles is clickable — opens a modal listing exactly the
+  // rows that number is counting, so "0"/"17" is never just a trust-me
+  // number. Ticket Ordered dedupes poTeamOrderedRows down to one row per
+  // ticket (the count itself is a distinct-ticket count); Parts Ordered
+  // shows the real per-part line items (the count sums their quantity);
+  // Pending Tickets lists the as-of-2PM-CST TR-Need PO population.
+  const [detailModal, setDetailModal] = useState<{
+    title: string;
+    /** Which column the popup's own date range filters on. */
+    dateLabel: string;
+    columns: string[];
+    rows: { key: string; cells: string[]; ticketNo: string; date: string }[];
+  } | null>(null);
+  const [detailDateFrom, setDetailDateFrom] = useState("");
+  const [detailDateTo, setDetailDateTo] = useState("");
+  const [detailColFilters, setDetailColFilters] = useState<Record<number, Set<string>>>({});
+  const openDetailModal = (modal: NonNullable<typeof detailModal>) => {
+    setDetailDateFrom("");
+    setDetailDateTo("");
+    setDetailColFilters({});
+    setDetailModal(modal);
+  };
+  const detailVisibleRows = useMemo(() => {
+    if (!detailModal) return [];
+    return detailModal.rows.filter((r) => {
+      if (detailDateFrom || detailDateTo) {
+        if (!r.date) return false;
+        if (detailDateFrom && r.date < detailDateFrom) return false;
+        if (detailDateTo && r.date > detailDateTo) return false;
+      }
+      for (const [i, selected] of Object.entries(detailColFilters)) {
+        if (selected.size > 0 && !selected.has(r.cells[Number(i)])) return false;
+      }
+      return true;
+    });
+  }, [detailModal, detailDateFrom, detailDateTo, detailColFilters]);
+  // Who entered each PO (see getPoProcessors) — fetched once per set of
+  // ticket numbers and reused across both popups.
+  const poProcessorsCache = useRef<{ key: string; promise: Promise<Map<string, string>> } | null>(null);
+  const loadPoProcessors = () => {
+    const ticketNos = Array.from(new Set(poTeamOrderedRows.map((r) => r.ticketNo).filter(Boolean))).sort();
+    const key = ticketNos.join(",");
+    if (poProcessorsCache.current?.key !== key) {
+      const promise = getPoProcessors(ticketNos).catch((err) => {
+        console.error("Failed to load PO processors:", err);
+        poProcessorsCache.current = null;
+        return new Map<string, string>();
+      });
+      poProcessorsCache.current = { key, promise };
+    }
+    return poProcessorsCache.current!.promise;
+  };
+  const processedByName = (processors: Map<string, string>, r: PartInventoryRow) => {
+    const id = processors.get(`${r.ticketNo}|${r.poNo.trim()}`);
+    if (!id) return "Not recorded";
+    const p = allProfiles.find((x) => x.id === id);
+    return p?.display_name || p?.email || "Unknown";
+  };
+  const [detailLoading, setDetailLoading] = useState(false);
+  const openTicketsOrderedDetail = async () => {
+    setDetailLoading(true);
+    const processors = await loadPoProcessors();
+    setDetailLoading(false);
+    const byTicket = new Map<string, PartInventoryRow[]>();
+    for (const r of poTeamOrderedRows) {
+      if (!r.ticketNo) continue;
+      const arr = byTicket.get(r.ticketNo);
+      if (arr) arr.push(r);
+      else byTicket.set(r.ticketNo, [r]);
+    }
+    openDetailModal({
+      title: "No. of Tickets Ordered",
+      dateLabel: "PO Date",
+      columns: ["Ticket #", "Location", "PO Date", "Processed By"],
+      rows: Array.from(byTicket.values()).map((parts) => {
+        const r = parts[0];
+        const names = Array.from(new Set(parts.map((p) => processedByName(processors, p)).filter((n) => n !== "Not recorded")));
+        return { key: r.id, ticketNo: r.ticketNo, date: dateOnly(r.poDate), cells: [r.ticketNo, r.location || "—", dateOnly(r.poDate) || "—", names.join(", ") || "Not recorded"] };
+      }),
+    });
+  };
+  const openPartsOrderedDetail = async () => {
+    setDetailLoading(true);
+    const processors = await loadPoProcessors();
+    setDetailLoading(false);
+    openDetailModal({
+      title: "No. of Parts Ordered",
+      dateLabel: "PO Date",
+      columns: ["Ticket #", "Location", "PO Date", "Part No", "Description", "Qty", "PO No", "Processed By"],
+      rows: poTeamOrderedRows.map((r) => ({
+        key: r.id,
+        ticketNo: r.ticketNo,
+        date: dateOnly(r.poDate),
+        cells: [r.ticketNo, r.location || "—", dateOnly(r.poDate) || "—", r.partNo || "—", r.partDesc || "—", String(r.quantity || 1), r.poNo || "—", processedByName(processors, r)],
+      })),
+    });
+  };
+  const openPendingTicketsDetail = () => {
+    const nameById = new Map(allProfiles.map((p) => [p.id, p.display_name || p.email || "Unknown"]));
+    openDetailModal({
+      title: `No. of Pending Tickets — TR-Need PO as of 2PM CST, ${poTeamDateTo}`,
+      dateLabel: "Schedule Date",
+      columns: ["Ticket #", "Location", "Schedule Date", "Status", "Changed By"],
+      rows: pendingPoTickets.map((r) => ({
+        key: r.ticketNo,
+        ticketNo: r.ticketNo,
+        date: dateOnly(r.scheduleDate),
+        cells: [r.ticketNo, r.location || "—", r.scheduleDate || "—", r.currentStatus || "—", (r.statusChangedBy && nameById.get(r.statusChangedBy)) || "—"],
+      })),
+    });
+  };
+
+  // Staff Changes Counter — PO Team, per person.
+  // No. of Tickets/Parts Ordered ARE attributable after all — not to a
+  // specific person who clicked submit (parts.created_by still isn't
+  // populated), but to whichever PO staffer owns that ticket's branch
+  // (profiles.assigned_branch, matched against the ticket's own
+  // location) — same branch-ownership convention the rest of this app
+  // already uses for Parts staff. Scoped to the same poTeamDateFrom/
+  // poTeamDateTo range as PO Team's Daily Report above (parts.po_date).
+  //
+  // No. of Pending Tickets is the real spec ("unprocessed POs before 2PM
+  // CST") — every row shows the same count, reconstructed AS OF 2PM CST
+  // on Date To (not just "whatever's TR-Need PO right now", which drifts
+  // as PO staff work through the queue over the day) via
+  // getPendingPoTicketsAsOf/ticket_audit_log — it's the shared queue
+  // everyone on the team is pulling from, not something owned by one
+  // person.
+  const [pendingPoTickets, setPendingPoTickets] = useState<PendingPoAsOfRow[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const [y, mo, d] = poTeamDateTo.split("-").map(Number);
+    const cutoffIso = zonedWallClockToUtcIso(y, mo, d, 14, 0, "CST");
+    getPendingPoTicketsAsOf(cutoffIso)
+      .then((r) => { if (!cancelled) setPendingPoTickets(r); })
+      .catch((err) => console.error("Failed to load pending PO tickets:", err));
+    return () => { cancelled = true; };
+  }, [poTeamDateTo]);
+  const pendingTicketsCompanyWide = pendingPoTickets.length;
+
+  // Internal Note is the one genuinely manual field left — no live source
+  // for a free-text note, entered by hand per (staffer, day), always tied
+  // to Date To (see the "PO Team's Daily Report" note above on why a
+  // single text field can't sum across a range).
   const [staffPoEntries, setStaffPoEntries] = useState<PartsPoTeamStaffDailyEntry[]>([]);
   const [staffPoSavingKey, setStaffPoSavingKey] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
-    getPartsPoTeamStaffDailyLog(poTeamDateFrom, poTeamDateTo)
+    getPartsPoTeamStaffDailyLog(poTeamDateTo, poTeamDateTo)
       .then((entries) => { if (!cancelled) setStaffPoEntries(entries); })
       .catch((err) => console.error("Failed to load PO Team staff daily entries:", err));
     return () => { cancelled = true; };
-  }, [poTeamDateFrom, poTeamDateTo]);
-  const staffPoEntriesByProfile = useMemo(() => {
-    const map = new Map<string, PartsPoTeamStaffDailyEntry[]>();
-    for (const e of staffPoEntries) {
-      const arr = map.get(e.profileId);
-      if (arr) arr.push(e);
-      else map.set(e.profileId, [e]);
-    }
-    return map;
-  }, [staffPoEntries]);
-  const getStaffPoSummary = (profileId: string) => {
-    const entries = staffPoEntriesByProfile.get(profileId) ?? [];
+  }, [poTeamDateTo]);
+  const getStaffPoSummary = (profileId: string, branchLabel: string) => {
+    const branch = branchLabel.trim().toLowerCase();
+    const staffRows = branch && branch !== "—" ? poTeamOrderedRows.filter((r) => (r.location || "").trim().toLowerCase() === branch) : [];
     return {
-      ticketsOrdered: entries.reduce((s, e) => s + e.ticketsOrdered, 0),
-      partsOrdered: entries.reduce((s, e) => s + e.partsOrdered, 0),
-      pendingTickets: entries.reduce((s, e) => s + e.pendingTickets, 0),
-      internalNote: entries.find((e) => e.date === poTeamDateTo)?.internalNote ?? "",
+      ticketsOrdered: new Set(staffRows.map((r) => r.ticketNo).filter(Boolean)).size,
+      partsOrdered: staffRows.reduce((sum, r) => sum + (r.quantity || 1), 0),
+      pendingTickets: pendingTicketsCompanyWide,
+      internalNote: staffPoEntries.find((e) => e.profileId === profileId && e.date === poTeamDateTo)?.internalNote ?? "",
     };
   };
-  const saveStaffPoField = async (profileId: string, patch: Partial<Pick<PartsPoTeamStaffDailyEntry, "ticketsOrdered" | "partsOrdered" | "pendingTickets" | "internalNote">>) => {
+  const saveStaffInternalNote = async (profileId: string, internalNote: string) => {
     setStaffPoSavingKey(profileId);
     try {
-      await upsertPartsPoTeamStaffDailyEntry(profileId, poTeamDateTo, patch);
+      await upsertPartsPoTeamStaffDailyEntry(profileId, poTeamDateTo, { internalNote });
       setStaffPoEntries((prev) => {
         const idx = prev.findIndex((e) => e.profileId === profileId && e.date === poTeamDateTo);
-        if (idx === -1) return [...prev, { profileId, date: poTeamDateTo, ticketsOrdered: 0, partsOrdered: 0, pendingTickets: 0, internalNote: "", ...patch }];
+        if (idx === -1) return [...prev, { profileId, date: poTeamDateTo, ticketsOrdered: 0, partsOrdered: 0, pendingTickets: 0, internalNote }];
         const next = [...prev];
-        next[idx] = { ...next[idx], ...patch };
+        next[idx] = { ...next[idx], internalNote };
         return next;
       });
     } catch (err) {
-      console.error("Failed to save PO Team staff entry:", err);
+      console.error("Failed to save PO Team staff note:", err);
     } finally {
       setStaffPoSavingKey(null);
     }
@@ -640,53 +762,46 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
         <div className="panel p-4 border-l-4 border-l-indigo-500 mb-6">
           <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
             <p className="text-sm font-semibold text-indigo-300 flex items-center gap-2"><ClipboardList className="h-4 w-4" /> PO Team's Daily Report</p>
-            <div className="flex items-end gap-3">
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date From</label>
-                <input type="date" value={poTeamDateFrom} onChange={(e) => setPoTeamDateFrom(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date To</label>
-                <input type="date" value={poTeamDateTo} onChange={(e) => setPoTeamDateTo(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
-              </div>
-              {poTeamSaving && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground mb-2" />}
-            </div>
+            <span className="text-xs text-muted-foreground">{poTeamDateFrom} – {poTeamDateTo}</span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-            <div className={`panel p-4 border-l-4 ${KPI_TILE_COLORS.emerald.border} ${KPI_TILE_COLORS.emerald.bg} flex items-center gap-3`}>
+            <button
+              type="button"
+              onClick={openTicketsOrderedDetail}
+              disabled={detailLoading}
+              className={`panel p-4 border-l-4 ${KPI_TILE_COLORS.emerald.border} ${KPI_TILE_COLORS.emerald.bg} flex items-center gap-3 text-left hover:brightness-125 transition cursor-pointer disabled:cursor-wait disabled:opacity-70`}
+            >
               <div className={`rounded-full ${KPI_TILE_COLORS.emerald.iconBg} p-2 shrink-0`}><ClipboardList className={`h-4 w-4 ${KPI_TILE_COLORS.emerald.text}`} /></div>
               <div className="min-w-0">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5 truncate">No. of Tickets Ordered</p>
                 <p className={`text-2xl font-bold ${KPI_TILE_COLORS.emerald.text}`}>{ticketsOrdered}</p>
               </div>
-            </div>
-            <div className={`panel p-4 border-l-4 ${KPI_TILE_COLORS.violet.border} ${KPI_TILE_COLORS.violet.bg} flex items-center gap-3`}>
+            </button>
+            <button
+              type="button"
+              onClick={openPartsOrderedDetail}
+              disabled={detailLoading}
+              className={`panel p-4 border-l-4 ${KPI_TILE_COLORS.violet.border} ${KPI_TILE_COLORS.violet.bg} flex items-center gap-3 text-left hover:brightness-125 transition cursor-pointer disabled:cursor-wait disabled:opacity-70`}
+            >
               <div className={`rounded-full ${KPI_TILE_COLORS.violet.iconBg} p-2 shrink-0`}><Package className={`h-4 w-4 ${KPI_TILE_COLORS.violet.text}`} /></div>
               <div className="min-w-0">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5 truncate">No. of Parts Ordered</p>
                 <p className={`text-2xl font-bold ${KPI_TILE_COLORS.violet.text}`}>{partsOrdered}</p>
               </div>
-            </div>
-            <div className={`panel p-4 border-l-4 ${KPI_TILE_COLORS.orange.border} ${KPI_TILE_COLORS.orange.bg} flex items-center gap-3`}>
+            </button>
+            <button
+              type="button"
+              onClick={openPendingTicketsDetail}
+              className={`panel p-4 border-l-4 ${KPI_TILE_COLORS.orange.border} ${KPI_TILE_COLORS.orange.bg} flex items-center gap-3 text-left hover:brightness-125 transition cursor-pointer`}
+            >
               <div className={`rounded-full ${KPI_TILE_COLORS.orange.iconBg} p-2 shrink-0`}><Hourglass className={`h-4 w-4 ${KPI_TILE_COLORS.orange.text}`} /></div>
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5 truncate">No. of Pending Tickets</p>
-                {poTeamIsSingleDay ? (
-                  <input
-                    type="number"
-                    min={0}
-                    value={poTeamPendingTickets}
-                    onChange={(e) => setPoTeamEntries([{ date: poTeamDateTo, pendingTickets: Number(e.target.value) || 0, internalNote: "" }])}
-                    onBlur={(e) => savePoTeamEntryField({ pendingTickets: Number(e.target.value) || 0 })}
-                    className={`w-full bg-transparent text-2xl font-bold ${KPI_TILE_COLORS.orange.text} focus:outline-none`}
-                  />
-                ) : (
-                  <p className={`text-2xl font-bold ${KPI_TILE_COLORS.orange.text}`} title="Sum of each day's entry in this range — narrow to one day to edit">{poTeamPendingTickets}</p>
-                )}
+                <p className={`text-2xl font-bold ${KPI_TILE_COLORS.orange.text}`}>{pendingTicketsCompanyWide}</p>
               </div>
-            </div>
+            </button>
           </div>
-          <p className="text-[11px] text-muted-foreground mt-3">Tickets/Parts Ordered are automatic (parts.po_date within {poTeamDateFrom} – {poTeamDateTo}, respecting the Branch filter below). Pending Tickets is entered by hand, one row per day — narrow to a single day to edit it directly.</p>
+          <p className="text-[11px] text-muted-foreground mt-3">Tickets/Parts Ordered are automatic (parts.po_date within {poTeamDateFrom} – {poTeamDateTo}, using the date range and Branch filter at the top). Pending Tickets is a count of unprocessed POs (TR-Need PO) reconstructed as of 2PM CST on {poTeamDateTo} — not just whatever's still TR-Need PO right now.</p>
         </div>
 
         <div className="panel p-0 border-l-4 border-l-blue-500 mb-4">
@@ -694,7 +809,7 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
             <p className="text-sm font-semibold text-blue-300 flex items-center gap-2"><Users className="h-4 w-4" /> Staff Changes Counter — PO Team</p>
             <span className="text-xs text-muted-foreground">{staffChangesCounter.length} Parts Order staff</span>
           </div>
-          <p className="text-xs text-muted-foreground px-4 pb-3">Same {poTeamDateFrom} – {poTeamDateTo} range as PO Team's Daily Report above. No live source for any of these (parts.created_by isn't populated), so they're entered by hand per person, per day — editable directly when the range is a single day; summed across the range otherwise ({poTeamIsSingleDay ? "editing now" : "narrow to a single day to edit"}). Internal Note always applies to {poTeamDateTo}.</p>
+          <p className="text-xs text-muted-foreground px-4 pb-3">Tickets/Parts Ordered: same {poTeamDateFrom} – {poTeamDateTo} range as PO Team's Daily Report above, attributed to whoever owns that ticket's branch. Pending Tickets is the same unprocessed-as-of-2PM-CST count for everyone — the shared queue, not owned by one person. Internal Note is the one manual field, always applied to {poTeamDateTo}.</p>
           {staffChangesCounter.length === 0 ? (
             <p className="text-xs text-muted-foreground px-4 pb-4">No active Parts Order staff found.</p>
           ) : (
@@ -712,54 +827,20 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
                 </thead>
                 <tbody>
                   {staffChangesCounter.map((s) => {
-                    const summary = getStaffPoSummary(s.id);
+                    const summary = getStaffPoSummary(s.id, s.branch);
                     const saving = staffPoSavingKey === s.id;
                     return (
                       <tr key={s.id} className="border-b border-white/5 hover:bg-white/5">
                         <td className="px-4 py-2 font-medium whitespace-nowrap">{s.name}</td>
                         <td className="px-2 py-2 text-muted-foreground whitespace-nowrap">{s.role}</td>
-                        {poTeamIsSingleDay ? (
-                          <>
-                            <td className="px-2 py-2 text-center">
-                              <input
-                                type="number"
-                                min={0}
-                                defaultValue={summary.ticketsOrdered}
-                                onBlur={(e) => saveStaffPoField(s.id, { ticketsOrdered: Number(e.target.value) || 0 })}
-                                className="glass-input text-xs py-0.5 px-1.5 rounded w-16 text-center text-emerald-300 font-medium"
-                              />
-                            </td>
-                            <td className="px-2 py-2 text-center">
-                              <input
-                                type="number"
-                                min={0}
-                                defaultValue={summary.partsOrdered}
-                                onBlur={(e) => saveStaffPoField(s.id, { partsOrdered: Number(e.target.value) || 0 })}
-                                className="glass-input text-xs py-0.5 px-1.5 rounded w-16 text-center text-violet-300 font-medium"
-                              />
-                            </td>
-                            <td className="px-2 py-2 text-center">
-                              <input
-                                type="number"
-                                min={0}
-                                defaultValue={summary.pendingTickets}
-                                onBlur={(e) => saveStaffPoField(s.id, { pendingTickets: Number(e.target.value) || 0 })}
-                                className="glass-input text-xs py-0.5 px-1.5 rounded w-16 text-center text-orange-300 font-medium"
-                              />
-                            </td>
-                          </>
-                        ) : (
-                          <>
-                            <td className="px-2 py-2 text-center text-emerald-300 font-semibold">{summary.ticketsOrdered}</td>
-                            <td className="px-2 py-2 text-center text-violet-300 font-semibold">{summary.partsOrdered}</td>
-                            <td className="px-2 py-2 text-center text-orange-300 font-semibold">{summary.pendingTickets}</td>
-                          </>
-                        )}
+                        <td className="px-2 py-2 text-center text-emerald-300 font-semibold">{summary.ticketsOrdered}</td>
+                        <td className="px-2 py-2 text-center text-violet-300 font-semibold">{summary.partsOrdered}</td>
+                        <td className="px-2 py-2 text-center text-orange-300 font-semibold">{summary.pendingTickets}</td>
                         <td className="px-4 py-2">
                           <input
                             type="text"
                             defaultValue={summary.internalNote}
-                            onBlur={(e) => saveStaffPoField(s.id, { internalNote: e.target.value })}
+                            onBlur={(e) => saveStaffInternalNote(s.id, e.target.value)}
                             placeholder="Manually entered…"
                             className="glass-input text-xs py-0.5 px-1.5 rounded w-full min-w-[160px]"
                           />
@@ -772,6 +853,28 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
               </table>
             </div>
           )}
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 2xl:grid-cols-9 gap-3 mb-6">
+          {[
+            { l: "Pickups", v: kpi.pickups, icon: Truck, cls: KPI_TILE_COLORS.violet },
+            { l: "Collections", v: kpi.collections, icon: Package, cls: KPI_TILE_COLORS.emerald },
+            { l: "Receives", v: kpi.receives, icon: Inbox, cls: KPI_TILE_COLORS.blue },
+            { l: "Pending RA", v: kpi.pendingRa, icon: Hourglass, cls: KPI_TILE_COLORS.amber },
+            { l: "RA Created", v: kpi.ra, icon: RotateCcw, cls: KPI_TILE_COLORS.orange },
+            { l: "Issues", v: kpi.issues, icon: AlertTriangle, cls: KPI_TILE_COLORS.red },
+            { l: "Lost", v: kpi.lost, icon: PackageX, cls: KPI_TILE_COLORS.rose },
+            { l: "Not Recovered", v: kpi.notRecovered, icon: SearchX, cls: KPI_TILE_COLORS.red },
+            { l: "Total Warnings", v: kpi.totalWarnings, icon: ShieldAlert, cls: KPI_TILE_COLORS.amber },
+          ].map(({ l, v, icon: Icon, cls }) => (
+            <div key={l} className={`panel p-3 border-l-4 ${cls.border} ${cls.bg} flex items-center gap-2.5`} title={l}>
+              <div className={`rounded-full ${cls.iconBg} p-2 shrink-0`}><Icon className={`h-4 w-4 ${cls.text}`} /></div>
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5 truncate">{l}</p>
+                <p className={`text-2xl font-bold ${cls.text}`}>{v}</p>
+              </div>
+            </div>
+          ))}
         </div>
 
         <div className="mt-4">
@@ -1342,6 +1445,86 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
         </div>
         )}
       </main>
+
+      {detailModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setDetailModal(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg w-full max-w-[min(1400px,96vw)] max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-white/10 shrink-0 flex-wrap">
+              <div>
+                <h3 className="text-base font-bold text-white">{detailModal.title}</h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {detailVisibleRows.length === detailModal.rows.length
+                    ? `${detailModal.rows.length} row${detailModal.rows.length === 1 ? "" : "s"}`
+                    : `${detailVisibleRows.length} of ${detailModal.rows.length} rows`}
+                </p>
+              </div>
+              <div className="flex items-end gap-3 ml-auto">
+                <div className="flex flex-col gap-1">
+                  <label htmlFor="detail-date-from" className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">{detailModal.dateLabel} From</label>
+                  <input id="detail-date-from" type="date" value={detailDateFrom} onChange={(e) => setDetailDateFrom(e.target.value)} className="glass-input text-sm py-1 px-2 rounded-md [color-scheme:dark]" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label htmlFor="detail-date-to" className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">{detailModal.dateLabel} To</label>
+                  <input id="detail-date-to" type="date" value={detailDateTo} onChange={(e) => setDetailDateTo(e.target.value)} className="glass-input text-sm py-1 px-2 rounded-md [color-scheme:dark]" />
+                </div>
+                {(detailDateFrom || detailDateTo || Object.values(detailColFilters).some((s) => s.size > 0)) && (
+                  <button
+                    type="button"
+                    onClick={() => { setDetailDateFrom(""); setDetailDateTo(""); setDetailColFilters({}); }}
+                    className="btn text-xs px-3 py-1.5"
+                  >
+                    Clear filters
+                  </button>
+                )}
+                <button onClick={() => setDetailModal(null)} className="text-slate-400 hover:text-white transition p-1 self-start" aria-label="Close">✕</button>
+              </div>
+            </div>
+            <div className="overflow-y-auto overflow-x-hidden">
+              {detailModal.rows.length === 0 ? (
+                <p className="text-sm text-slate-400 px-5 py-8 text-center">No rows in this count.</p>
+              ) : (
+                <table className="w-full table-auto text-xs">
+                  <thead className="sticky top-0 bg-slate-900 z-10">
+                    <tr className="border-b border-white/10 text-muted-foreground">
+                      {detailModal.columns.map((c, i) => (
+                        <th key={c} className="text-left font-semibold px-3 py-2 whitespace-nowrap">
+                          <span className="inline-flex items-center">
+                            {c}
+                            <TicketColumnFilter
+                              options={detailModal.rows.map((r) => r.cells[i])}
+                              selected={detailColFilters[i] ?? new Set()}
+                              onChange={(next) => setDetailColFilters((prev) => ({ ...prev, [i]: next }))}
+                              label={`Filter by ${c}`}
+                            />
+                          </span>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detailVisibleRows.length === 0 && (
+                      <tr><td colSpan={detailModal.columns.length} className="px-3 py-8 text-center text-slate-400">No rows match these filters.</td></tr>
+                    )}
+                    {detailVisibleRows.map((r) => (
+                      <tr key={r.key} className="border-b border-white/5 hover:bg-white/5 align-top">
+                        {r.cells.map((cell, i) => (
+                          <td key={i} className="px-3 py-2 text-slate-200 break-words">
+                            {i === 0 ? (
+                              <a href={`/ticket/${r.ticketNo}`} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline font-mono font-semibold">
+                                {cell}
+                              </a>
+                            ) : cell}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
