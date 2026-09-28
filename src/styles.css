@@ -53,7 +53,11 @@
     }
   }
   .page-fade-in {
-    animation: fade-up 0.35s cubic-bezier(0.4, 0, 0.2, 1) both;
+    /* No `both` fill-mode — see .mtech-scroll's own comment above for why a
+       lingering transform after this ends silently breaks `position:
+       fixed` for every modal nested anywhere under a page using this
+       class (this wraps most desktop page shells, e.g. m.$module.tsx). */
+    animation: fade-up 0.35s cubic-bezier(0.4, 0, 0.2, 1);
   }
 }
 
@@ -1913,7 +1917,7 @@ input::-ms-clear {
 }
 @media (prefers-reduced-motion: no-preference) {
   .mtech-bottom-tab-active::before {
-    animation: mtech-fade-up 0.15s var(--mt-ease) both;
+    animation: mtech-fade-up 0.15s var(--mt-ease);
   }
 }
 .mtech-bottom-tab-icon {
@@ -2177,7 +2181,15 @@ input::-ms-clear {
      this replays on every switch — one animation covers every screen
      without touching the switching logic itself. */
   .mtech-scroll {
-    animation: mtech-fade-up 0.25s var(--mt-ease) both;
+    /* No `forwards`/`both` fill-mode: once this finishes, the element must
+       fall back to having no transform at all (not `translateY(0)`, which
+       is still a real transform value). A lingering transform here turns
+       .mtech-scroll into a containing block for any `position: fixed`
+       descendant — every sign/approval modal on this page renders inline
+       (no portal), so a stray transform meant every one of them centered
+       against this scrollable column's full height instead of the
+       viewport, forcing a scroll to actually reach it. */
+    animation: mtech-fade-up 0.25s var(--mt-ease);
   }
 }
 .mtech-empty {
@@ -5270,7 +5282,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 @media (prefers-reduced-motion: no-preference) {
   .mtech-home-onsite-list,
   .mtech-home-onsite-empty {
-    animation: mtech-fade-up 0.2s var(--mt-ease) both;
+    animation: mtech-fade-up 0.2s var(--mt-ease);
   }
 }
 .mtech-home-onsite-row {
@@ -5872,7 +5884,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 @media (prefers-reduced-motion: no-preference) {
   .mtech-timecard-card-confirm {
-    animation: mtech-fade-up 0.18s var(--mt-ease) both;
+    animation: mtech-fade-up 0.18s var(--mt-ease);
   }
 }
 .mtech-timecard-card-confirm-label {
@@ -6141,7 +6153,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   color: #fbbf24;
 }
 
-/* ── Team Approvals (Trainee / Corrections / PTO, manager stage only) ──── */
+/* ── Team Approvals (Trainee / Corrections / PTO / Ticket Dispute, manager stage only) ──── */
 .mtech-approvals-tabs {
   display: flex;
   gap: 0.4rem;
@@ -8449,7 +8461,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 @media (prefers-reduced-motion: no-preference) {
   .mtech-bottom-tab-active::before {
-    animation: mtech-fade-up 0.15s var(--mt-ease) both;
+    animation: mtech-fade-up 0.15s var(--mt-ease);
   }
 }
 .mtech-bottom-tab-icon {
@@ -8713,7 +8725,15 @@ a.mtech-phone-link:active { opacity: 0.7; }
      this replays on every switch — one animation covers every screen
      without touching the switching logic itself. */
   .mtech-scroll {
-    animation: mtech-fade-up 0.25s var(--mt-ease) both;
+    /* No `forwards`/`both` fill-mode: once this finishes, the element must
+       fall back to having no transform at all (not `translateY(0)`, which
+       is still a real transform value). A lingering transform here turns
+       .mtech-scroll into a containing block for any `position: fixed`
+       descendant — every sign/approval modal on this page renders inline
+       (no portal), so a stray transform meant every one of them centered
+       against this scrollable column's full height instead of the
+       viewport, forcing a scroll to actually reach it. */
+    animation: mtech-fade-up 0.25s var(--mt-ease);
   }
 }
 .mtech-empty {
@@ -11804,7 +11824,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 @media (prefers-reduced-motion: no-preference) {
   .mtech-home-onsite-list,
   .mtech-home-onsite-empty {
-    animation: mtech-fade-up 0.2s var(--mt-ease) both;
+    animation: mtech-fade-up 0.2s var(--mt-ease);
   }
 }
 .mtech-home-onsite-row {
@@ -12406,7 +12426,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
 }
 @media (prefers-reduced-motion: no-preference) {
   .mtech-timecard-card-confirm {
-    animation: mtech-fade-up 0.18s var(--mt-ease) both;
+    animation: mtech-fade-up 0.18s var(--mt-ease);
   }
 }
 .mtech-timecard-card-confirm-label {
@@ -12675,7 +12695,7 @@ a.mtech-phone-link:active { opacity: 0.7; }
   color: #fbbf24;
 }
 
-/* ── Team Approvals (Trainee / Corrections / PTO, manager stage only) ──── */
+/* ── Team Approvals (Trainee / Corrections / PTO / Ticket Dispute, manager stage only) ──── */
 .mtech-approvals-tabs {
   display: flex;
   gap: 0.4rem;

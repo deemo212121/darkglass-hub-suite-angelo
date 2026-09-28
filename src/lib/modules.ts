@@ -767,7 +767,7 @@ const partsMod: ModuleDef = {
     },
     {
       slug: "part-daily-report",
-      title: "Part Daily Report",
+      title: "PO Daily Report",
       description: "Parts staff performance — collections, RA, receives per branch.",
       custom: "report-parts-daily" as any,
       fields: [],
@@ -1602,7 +1602,7 @@ const reportMod: ModuleDef = {
     },
     {
       slug: "report-parts-daily",
-      title: "Part Daily Report",
+      title: "PO Daily Report",
       description: "Parts staff performance — collections, RA, receives per branch.",
       custom: "report-parts-daily" as any,
       fields: [],
