@@ -266,9 +266,14 @@ const csrMod: ModuleDef = {
     },
     // Same shortcut-copy pattern as Branch/Technician's own tiles below —
     // reuses HR's exact page (dispatch is by `custom` alone), just
-    // reachable from here too.
+    // reachable from here too. Own slug ("csr-candidate-reviews", not the
+    // bare "candidate-reviews" every other module's copy shares) so its
+    // role gate can be scoped to just this CSR-reachable copy — a CSR
+    // Associate (CSR_AGENT) shouldn't see it here, but HR's own copy (and
+    // every other module's) stays open as before, since they're gated by
+    // the shared "candidate-reviews" slug instead.
     {
-      slug: "candidate-reviews",
+      slug: "csr-candidate-reviews",
       title: "Candidate Reviews",
       description: "Candidates forwarded to you for review — view their CV and leave your interviewer notes.",
       custom: "candidate-reviews" as any,

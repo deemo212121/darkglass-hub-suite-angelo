@@ -44,7 +44,9 @@ import { STATE_MIN_WAGE_2026 } from "@/lib/stateMinWage";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
-import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, isCarIqEligible, mileageRateForCarIq } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, isCarIqEligible, mileageRateForCarIq, CAR_IQ_MILEAGE_RATE_WITH, CAR_IQ_MILEAGE_RATE_WITHOUT } from "@/lib/roleLabels";
+import { getCompanyCarIqHistory, addCarIqHistoryEntry, updateCarIqHistoryEffectiveDate, carIqEntryEffectiveOn, carIqSwitchDatesInRange, type CarIqHistoryEntry } from "@/lib/supabase/carIqHistory";
+import { getCarIqMileageRates, setCarIqMileageRates } from "@/lib/supabase/companySettings";
 import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, computeMealTimeCredit, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
 import { payGraceMinutesFor } from "@/lib/attendanceGrace";
 import { updatePayrollLineItemExtra, updatePayrollLineItemPaid } from "@/lib/supabase/payslips";
@@ -316,6 +318,21 @@ export interface EmployeePayrollRow {
    */
   mileageRateOverride: number | null;
   /**
+   * Car IQ History (migration 0323) — set when this technician's Car IQ
+   * on/off status actually CHANGED partway through the selected period, so
+   * mileageRateOverride's single rate doesn't cover the whole period.
+   * `date` is the switch's effective date; `rateBefore`/`rateAfter` are the
+   * $/mi rate in effect on each side of it. null when the status was
+   * constant throughout (the common case — no split needed). Surfaced as a
+   * warning + a one-click "add the other rate's mileage as a custom line"
+   * button on the Tech Activity Report modal (TechActivityReportModal.tsx)
+   * — there's no reliable day-by-day mileage breakdown to auto-split an
+   * existing total by date, so the second line's mileage figure is still
+   * typed in by whoever's running payroll, same as the Mileage figure
+   * always has been.
+   */
+  carIqSwitch: { date: string; rateBefore: number; rateAfter: number } | null;
+  /**
    * Tech Payroll only — hoursWorked × hourlyRate, plus overtimeHours ×
    * hourlyRate × 1.5, using the same hourly rate Finance sets via the
    * employee's payroll detail (salary_entries) that office employees
@@ -512,8 +529,12 @@ function computeHoursMap(
     // see timecards.ts's computeMealTimeCredit. Merged directly into the raw
     // hours BEFORE the weekly split runs below, so it naturally lands as
     // Regular or Overtime with no separate "meal" bucket in the totals.
+    // PH staff (one office, not deployed across US states/field sites) never
+    // get this credit regardless of role — their meal break is unpaid,
+    // already subtracted from the raw check-in-to-check-out span by
+    // calcWorkedHours above, and stays subtracted.
     let mealCredit = 0;
-    if (emp) {
+    if (emp && emp.country !== "PH") {
       const mealAlwaysPaid = isMealAlwaysPaidRole(emp.role, emp.extraRoles);
       mealCredit = computeMealTimeCredit({ checkIn: tc.check_in, checkOut: tc.check_out, mealStart: tc.meal_start || "", mealEnd: tc.meal_end || "" }, mealAlwaysPaid);
     }
@@ -1226,6 +1247,33 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // expanded run view — read straight from profiles.employee_info (the same
   // JSON blob the Employee Information tab edits), not duplicated anywhere.
   const [employeeInfoByProfileId, setEmployeeInfoByProfileId] = useState<Map<string, EmployeeInfo>>(new Map());
+  const [carIqHistory, setCarIqHistory] = useState<CarIqHistoryEntry[]>([]);
+  // Company-configurable Car IQ mileage rates (migration 0324) — falls back
+  // to roleLabels.ts's hardcoded defaults until a company sets its own, so
+  // a rate change never again needs a code deploy.
+  const [carIqRateWith, setCarIqRateWith] = useState(CAR_IQ_MILEAGE_RATE_WITH);
+  const [carIqRateWithout, setCarIqRateWithout] = useState(CAR_IQ_MILEAGE_RATE_WITHOUT);
+  const [carIqRatesSaving, setCarIqRatesSaving] = useState(false);
+  useEffect(() => {
+    getCarIqMileageRates()
+      .then((rates) => {
+        if (rates.with != null) setCarIqRateWith(rates.with);
+        if (rates.without != null) setCarIqRateWithout(rates.without);
+      })
+      .catch((err) => console.error("Failed to load Car IQ mileage rates:", err));
+  }, []);
+  async function handleSaveCarIqRates(rateWith: number, rateWithout: number) {
+    setCarIqRatesSaving(true);
+    try {
+      await setCarIqMileageRates(rateWith, rateWithout);
+      setCarIqRateWith(rateWith);
+      setCarIqRateWithout(rateWithout);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save Car IQ mileage rates.");
+    } finally {
+      setCarIqRatesSaving(false);
+    }
+  }
 
   // Car IQ tab (2026-09-24) — tracks which technician-tier employees (any
   // TECHNICIAN_PAY_ROLES tier: plain Technician through Branch
@@ -1272,19 +1320,52 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     if (carIqStatusFilter === "no" && hasCarIq) return false;
     return true;
   });
-  async function handleToggleCarIq(profileId: string, nextValue: boolean) {
+  async function handleToggleCarIq(profileId: string, nextValue: boolean, effectiveDate?: string) {
     setCarIqSaving(profileId);
     try {
+      const date = effectiveDate || new Date().toISOString().slice(0, 10);
+      const changedByName = displayName || email || null;
       await setEmployeeHasCarIq(profileId, nextValue);
+      // Logs this change to car_iq_history (migration 0323) too, so a
+      // payroll period spanning this date can detect the switch and flag
+      // its mileage line for a split — employee_info.hasCarIq alone only
+      // ever tells you the CURRENT status, not when it last changed.
+      // Defaults to today; pass effectiveDate to backfill the real
+      // install/removal date instead (see handleSetCarIqStartDate below).
+      const savedEntry = await addCarIqHistoryEntry(profileId, date, nextValue, changedByName);
       setEmployeeInfoByProfileId((prev) => {
         const next = new Map(prev);
         next.set(profileId, { ...(next.get(profileId) ?? {}), hasCarIq: nextValue });
         return next;
       });
+      setCarIqHistory((prev) => [...prev.filter((e) => !(e.profileId === profileId && e.effectiveDate === date)), savedEntry]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save Car IQ status.");
     } finally {
       setCarIqSaving(null);
+    }
+  }
+
+  // For a status that was already set before car_iq_history existed (or was
+  // otherwise never logged) — no entry to edit yet, so this creates the
+  // first one at whatever real date the admin enters, at the CURRENT status
+  // (rawHasCarIq), rather than assuming it started "today".
+  const handleSetCarIqStartDate = (profileId: string, rawHasCarIq: boolean, date: string) => {
+    if (!date) return;
+    void handleToggleCarIq(profileId, rawHasCarIq, date);
+  };
+
+  const [carIqDateSaving, setCarIqDateSaving] = useState<string | null>(null);
+  async function handleUpdateCarIqStartDate(entry: CarIqHistoryEntry, newDate: string) {
+    if (!newDate || newDate === entry.effectiveDate) return;
+    setCarIqDateSaving(entry.profileId);
+    try {
+      await updateCarIqHistoryEffectiveDate(entry.id, newDate);
+      setCarIqHistory((prev) => prev.map((e) => (e.id === entry.id ? { ...e, effectiveDate: newDate } : e)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update Car IQ start date.");
+    } finally {
+      setCarIqDateSaving(null);
     }
   }
 
@@ -1620,6 +1701,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           .then(setEmployeeInfoByProfileId)
           .catch((err) => console.error("Failed to load employee bank info:", err));
       }
+      getCompanyCarIqHistory()
+        .then(setCarIqHistory)
+        .catch((err) => console.error("Failed to load Car IQ history:", err));
 
       setEmployees(((empRes.data ?? []) as any[]).map((p) => {
         const { department, roleLabel } = getRoleDepartmentBreakdown(p.role);
@@ -2519,7 +2603,23 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // manual.mileagePay, since the whole point of locking it is that
     // Finance shouldn't need to re-touch this technician's mileage line
     // just to pick up a Car IQ status set after their last edit.
-    const mileageRateOverride = mileageRateForCarIq(employeeInfoByProfileId.get(emp.id)?.hasCarIq);
+    const mileageRateOverride = mileageRateForCarIq(employeeInfoByProfileId.get(emp.id)?.hasCarIq, carIqRateWith, carIqRateWithout);
+    // A switch date strictly inside the period means mileageRateOverride's
+    // single "current status" rate doesn't actually cover every day of it —
+    // only the very last switch matters here (a second switch back within
+    // the same period is rare enough that flagging just the latest one and
+    // letting Finance sort out the detail manually is enough).
+    const carIqSwitchDates = carIqSwitchDatesInRange(carIqHistory, emp.id, genStart, genEnd);
+    const carIqSwitch = carIqSwitchDates.length === 0 ? null : (() => {
+      const switchDate = carIqSwitchDates[carIqSwitchDates.length - 1];
+      const dayBefore = addDaysISO(switchDate, -1);
+      const beforeEntry = carIqEntryEffectiveOn(carIqHistory, emp.id, dayBefore);
+      const afterEntry = carIqEntryEffectiveOn(carIqHistory, emp.id, switchDate);
+      const rateBefore = mileageRateForCarIq(beforeEntry?.hasCarIq ?? null, carIqRateWith, carIqRateWithout);
+      const rateAfter = mileageRateForCarIq(afterEntry?.hasCarIq ?? null, carIqRateWith, carIqRateWithout);
+      if (rateBefore == null || rateAfter == null || rateBefore === rateAfter) return null;
+      return { date: switchDate, rateBefore, rateAfter };
+    })();
     const effectiveMileagePay =
       mileageRateOverride != null
         ? effectiveMileage * mileageRateOverride
@@ -2708,6 +2808,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               owIncentivePct: manual?.owIncentivePct ?? 0,
             },
             mileageRateOverride,
+            carIqSwitch,
             techHourlyPay,
             techHourlyPayCompanyOnly,
             techHourlyPayStraight,
@@ -2733,8 +2834,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // mid-period raise now pays each day at that day's own rate instead of
     // one flat rate (whichever was latest as of genEnd) for the whole period.
     const officeDailyPay = blendedDailyPay(dailyHoursByEmployeeId.get(emp.id), hours, (date) => hourlyRateOnDate(emp.id, date, hourlyRate), hourlyRate);
+    // PH staff have no OT premium — straight pay at the same rate for every
+    // hour, which is exactly what blendedDailyPay's straightAllHours already
+    // is (totalHours * rate, no 1.5x split needed).
     const officeGrossPay = isFixed && annualSalary
-      ? perCutoffSalary(annualSalary)
+      ? perCutoffSalary(annualSalary, emp.country === "PH")
+      : emp.country === "PH"
+      ? officeDailyPay.straightAllHours
       : officeDailyPay.regularPay + officeDailyPay.overtimePayAt1_5x;
     const officeRow: EmployeePayrollRow = {
       employee: emp,
@@ -2753,6 +2859,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       twoTechCount: 0,
       techManual: { ldtCount: 0, ldtPay: 0, mileage: 0, mileagePay: 0, trainingValue: 0, trainingPay: 0, owIncentivePct: 0 },
       mileageRateOverride: null,
+      carIqSwitch: null,
       techHourlyPay: 0,
       techHourlyPayCompanyOnly: 0,
       techHourlyPayStraight: 0,
@@ -3017,7 +3124,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         overtime_hours: r.overtimeHours,
         hourly_rate: r.hourlyRateUSD,
         regular_pay: r.compensationType === "fixed" ? r.grossPayUSD : r.hoursWorked * r.hourlyRateUSD,
-        overtime_pay: r.compensationType === "fixed" ? 0 : r.overtimeHours * r.hourlyRateUSD * 1.5,
+        // PH has no OT premium — straight pay, same rate as regular hours —
+        // so overtime_pay + regular_pay still sums to gross_pay (grossPayUSD,
+        // itself already straightAllHours for PH; see officeGrossPay above).
+        overtime_pay: r.compensationType === "fixed" ? 0 : r.overtimeHours * r.hourlyRateUSD * (r.employee.country === "PH" ? 1 : 1.5),
         gross_pay: r.grossPayUSD,
         net_pay: r.grossPayUSD, // simplified — no deductions model
         currency: "USD",
@@ -3228,8 +3338,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // Technicians/Branch-Managers/Tech Managers/Technical Directors aren't
       // required to punch Meal In/Out, but their meal break is still paid —
       // merged directly into each day's raw hours BEFORE the weekly split
-      // runs, same as computeHoursMap/EmployeePayrollDetailModal.
-      const mealAlwaysPaid = isMealAlwaysPaidRole(emp.role, emp.extraRoles);
+      // runs, same as computeHoursMap/EmployeePayrollDetailModal. PH staff
+      // never get this credit regardless of role — see computeHoursMap above.
+      const isPhPayrollEmp = emp.country === "PH";
+      const mealAlwaysPaid = !isPhPayrollEmp && isMealAlwaysPaidRole(emp.role, emp.extraRoles);
       const split = splitRegularOvertimeWeekly(
         [...seedRows, ...attendanceRows].map((r) => ({
           date: r.date,
@@ -3252,7 +3364,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             mealEnd: r.mealEnd,
             hours: r.hoursWorked,
             rate,
-            amount: regular * rate + overtime * rate * 1.5,
+            amount: regular * rate + overtime * rate * (isPhPayrollEmp ? 1 : 1.5),
           };
         });
     })();
@@ -4674,7 +4786,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               <td className="px-4 py-3 text-center text-slate-400">
                                 {row.employee.mealMinutes ? `${row.employee.mealMinutes} min` : "—"}
                               </td>
-                              <td className="px-4 py-3 text-center text-slate-300" title={row.compensationType === "fixed" && row.annualSalary ? `$${perCutoffSalary(row.annualSalary).toFixed(2)}/cutoff` : undefined}>
+                              <td className="px-4 py-3 text-center text-slate-300" title={row.compensationType === "fixed" && row.annualSalary ? `$${perCutoffSalary(row.annualSalary, row.employee.country === "PH").toFixed(2)}/cutoff` : undefined}>
                                 {rateLabel(row)}
                               </td>
                               <td className="px-4 py-3 text-right font-semibold text-green-300">
@@ -5762,8 +5874,33 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             <div className="px-4 py-4 border-b border-white/10">
               <h2 className="font-semibold text-sm">Car IQ</h2>
               <p className="text-[10px] text-muted-foreground mt-0.5">
-                Which technicians (any tier — Technician, Branch Manager, Senior Branch Manager, Tech Manager, Technical Director, Assistant Technical Director — primary or secondary role) have a company-installed Car IQ vehicle tracking device — drives their mileage rate ($0.20/mi with Car IQ, $0.40/mi without). Toggling here only updates this record; the Mileage rate on their Tech Activity Report is still entered by hand.
+                Which technicians (any tier — Technician, Branch Manager, Senior Branch Manager, Tech Manager, Technical Director, Assistant Technical Director — primary or secondary role) have a company-installed Car IQ vehicle tracking device — drives their mileage rate (${carIqRateWith.toFixed(2)}/mi with Car IQ, ${carIqRateWithout.toFixed(2)}/mi without, editable below). Toggling here only updates this record; the Mileage rate on their Tech Activity Report is still entered by hand.
               </p>
+              <div className="flex flex-wrap items-end gap-3 mt-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Rate With Car IQ ($/mi)</label>
+                  <input
+                    key={`with:${carIqRateWith}`}
+                    type="number" min={0} step={0.01}
+                    defaultValue={carIqRateWith}
+                    disabled={carIqRatesSaving}
+                    onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= 0 && v !== carIqRateWith) void handleSaveCarIqRates(v, carIqRateWithout); }}
+                    className="glass-input text-sm py-1.5 px-3 rounded-md w-32"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Rate Without Car IQ ($/mi)</label>
+                  <input
+                    key={`without:${carIqRateWithout}`}
+                    type="number" min={0} step={0.01}
+                    defaultValue={carIqRateWithout}
+                    disabled={carIqRatesSaving}
+                    onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= 0 && v !== carIqRateWithout) void handleSaveCarIqRates(carIqRateWith, v); }}
+                    className="glass-input text-sm py-1.5 px-3 rounded-md w-32"
+                  />
+                </div>
+                {carIqRatesSaving && <Loader2 className="h-4 w-4 animate-spin text-slate-400 mb-1.5" />}
+              </div>
             </div>
 
             <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex items-center gap-3">
@@ -5817,12 +5954,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         </select>
                       </div>
                     </th>
+                    <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase" title="When the current status took effect — editable if it was logged after the fact under the wrong date.">Start Date</th>
+                    <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Modified By</th>
                   </tr>
                 </thead>
                 <tbody>
                   {carIqFilteredEmployees.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="px-4 py-8 text-center text-muted-foreground text-sm">
+                      <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">
                         {carIqEligibleEmployees.length === 0
                           ? "No active technician-tier employee on file."
                           : "No one matches the current search/filters."}
@@ -5842,6 +5981,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                       // exactly like a locked one.
                       const rawHasCarIq = employeeInfoByProfileId.get(emp.id)?.hasCarIq;
                       const saving = carIqSaving === emp.id;
+                      const latestCarIqEntry = carIqEntryEffectiveOn(carIqHistory, emp.id, new Date().toISOString().slice(0, 10));
+                      const dateSaving = carIqDateSaving === emp.id;
                       return (
                         <tr key={emp.id} className="border-b border-white/5 hover:bg-white/5">
                           <td className="px-4 py-3 font-medium whitespace-nowrap">{emp.full_name}</td>
@@ -5873,6 +6014,37 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               </div>
                             </div>
                           </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            {latestCarIqEntry ? (
+                              <div className="flex items-center gap-1.5">
+                                {dateSaving && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
+                                <input
+                                  key={`${latestCarIqEntry.id}:${latestCarIqEntry.effectiveDate}`}
+                                  type="date"
+                                  defaultValue={latestCarIqEntry.effectiveDate}
+                                  disabled={dateSaving}
+                                  onBlur={(e) => void handleUpdateCarIqStartDate(latestCarIqEntry, e.target.value)}
+                                  className="glass-input text-xs py-1 px-1.5 rounded-md"
+                                />
+                              </div>
+                            ) : rawHasCarIq !== undefined ? (
+                              <div className="flex items-center gap-1.5">
+                                {dateSaving && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
+                                <input
+                                  key={`${emp.id}:blank`}
+                                  type="date"
+                                  defaultValue=""
+                                  disabled={dateSaving}
+                                  title="This status was set before start dates were tracked — pick the real date it actually started."
+                                  onBlur={(e) => handleSetCarIqStartDate(emp.id, rawHasCarIq, e.target.value)}
+                                  className="glass-input text-xs py-1 px-1.5 rounded-md"
+                                />
+                              </div>
+                            ) : (
+                              <span className="text-slate-600 italic text-xs">—</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-slate-300 whitespace-nowrap text-xs">{latestCarIqEntry?.changedByName || "—"}</td>
                         </tr>
                       );
                     })
@@ -5900,6 +6072,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           workingHours={detailEmployee.workingHours}
           mealMinutes={detailEmployee.mealMinutes}
           offDays={detailEmployee.offDays}
+          country={detailEmployee.country}
           graceMinutes={payGraceMinutesFor(detailEmployee.country)}
           initialStart={genStart || undefined}
           initialEnd={genEnd || undefined}

@@ -235,15 +235,21 @@ export function isCarIqEligible(role: string | null | undefined, extraRoles?: st
   return hasAnyTechnicianPayRole(role, extraRoles);
 }
 
-/** Mileage reimbursement rate ($/mi) with a company-installed Car IQ tracking device. */
+/** Default mileage reimbursement rate ($/mi) with a company-installed Car IQ tracking device — used until a company sets its own via companySettings.ts's setCarIqMileageRates (migration 0320). */
 export const CAR_IQ_MILEAGE_RATE_WITH = 0.2;
-/** Mileage reimbursement rate ($/mi) without one. */
+/** Default mileage reimbursement rate ($/mi) without one. */
 export const CAR_IQ_MILEAGE_RATE_WITHOUT = 0.4;
 
-/** null when no Car IQ status is on file yet (Mileage rate stays branch-driven/editable). */
-export function mileageRateForCarIq(hasCarIq: boolean | null | undefined): number | null {
-  if (hasCarIq === true) return CAR_IQ_MILEAGE_RATE_WITH;
-  if (hasCarIq === false) return CAR_IQ_MILEAGE_RATE_WITHOUT;
+/**
+ * null when no Car IQ status is on file yet (Mileage rate stays branch-
+ * driven/editable). rateWith/rateWithout default to the constants above,
+ * so an existing caller that hasn't been updated to pass the company's own
+ * configured rates (companySettings.ts's getCarIqMileageRates) keeps
+ * working exactly as before.
+ */
+export function mileageRateForCarIq(hasCarIq: boolean | null | undefined, rateWith: number = CAR_IQ_MILEAGE_RATE_WITH, rateWithout: number = CAR_IQ_MILEAGE_RATE_WITHOUT): number | null {
+  if (hasCarIq === true) return rateWith;
+  if (hasCarIq === false) return rateWithout;
   return null;
 }
 

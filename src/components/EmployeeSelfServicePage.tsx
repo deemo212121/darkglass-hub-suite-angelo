@@ -916,6 +916,9 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         );
         if (cancelled) return;
         const rate = selectedPayslip.hourlyRate;
+        // Same US/PH split as AccountingDashboard.tsx's payrollRows — PH has
+        // no OT premium, straight pay at the same rate as regular hours.
+        const isPhEmployee = companyProfiles.find((p) => p.id === myProfileId)?.assigned_branch === "Philippines";
         const daily: PayslipDailyRow[] = rows
           .filter((r) => r.hoursWorked > 0)
           .map((r) => {
@@ -929,7 +932,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
               mealEnd: r.mealEnd,
               hours: r.hoursWorked,
               rate,
-              amount: regular * rate + overtime * rate * 1.5,
+              amount: regular * rate + overtime * rate * (isPhEmployee ? 1 : 1.5),
             };
           });
         setPayslipDailyRows(daily);

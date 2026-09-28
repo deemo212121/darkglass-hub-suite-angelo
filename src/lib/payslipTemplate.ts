@@ -375,7 +375,7 @@ export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
       </thead>
       <tbody>
         <tr>
-          <td class="amount">${employee.compensationType === "fixed" && employee.annualSalary ? `$${employee.annualSalary.toLocaleString()}/yr ($${perCutoffSalary(employee.annualSalary).toFixed(2)}/cutoff)` : `$${employee.hourlyRate.toFixed(2)}`}</td>
+          <td class="amount">${employee.compensationType === "fixed" && employee.annualSalary ? `$${employee.annualSalary.toLocaleString()}/yr ($${perCutoffSalary(employee.annualSalary, !employee.isUS).toFixed(2)}/cutoff)` : `$${employee.hourlyRate.toFixed(2)}`}</td>
           <td class="amount">${employee.counts}</td>
           <td class="amount">${employee.totalHours.toFixed(2)}</td>
           <td class="amount">${employee.average.toFixed(2)}</td>

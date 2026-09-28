@@ -73,7 +73,9 @@ import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Columns3, Loader2, Plus, Search, Trash2, X } from "lucide-react";
 import { BrandedLoader } from "@/components/BrandedLoader";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
-import { getCompanyUsers, getEmployeeInfoByProfileIds, type ProfileRow, type EmployeeInfo } from "@/lib/supabase/users";
+import { useAuth } from "@/lib/auth";
+import { normalizeRole } from "@/lib/roleLabels";
+import { getCompanyUsers, getMyProfileId, getEmployeeInfoByProfileIds, type ProfileRow, type EmployeeInfo } from "@/lib/supabase/users";
 import { getCsrTeamComposition, type CsrTeamRow, type CsrTeamMemberRow } from "@/lib/supabase/csrTeams";
 import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, sickYearWindow, sickDaysUsed, type PtoRequestRow } from "@/lib/supabase/pto";
 import { getCompanySalaryEntries, entryEffectiveOn, type SalaryEntryRow } from "@/lib/supabase/salary";
@@ -149,6 +151,20 @@ function groupOfBucket(bucket: ReturnType<typeof classify>): CsrActionGroup | nu
   return null;
 }
 const DETAILS_PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 500];
+
+// Same manager-tier set CSRMainDashboard.tsx's Team List tab uses — a
+// CSR_TEAM_LEADER (not in this set) only ever sees their own team's rows
+// below (see visibleTeams), everyone in this set sees every team.
+const MANAGER_TIER_ROLES = new Set(["ADMIN", "SUPERADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"]);
+
+// Same check as CSRMainDashboard.tsx's isCsrProfileFilter — the Mistake
+// Log's Name dropdown for a manager-tier viewer lists every CSR Associate/
+// Team Leader company-wide (not just whoever's currently on a configured
+// team), so a not-yet-assigned agent can still be logged.
+function isCsrRosterProfile(p: ProfileRow): boolean {
+  const extras = p.extra_roles || [];
+  return p.role === "CSR_AGENT" || p.role === "CSR_TEAM_LEADER" || extras.includes("CSR_AGENT") || extras.includes("CSR_TEAM_LEADER");
+}
 
 // America/Chicago, not raw UTC — matches the rest of the app's day-boundary
 // convention (see flashTechOpenAlerts.ts's own chicagoDateIso and its header
@@ -298,6 +314,18 @@ interface Row {
 export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
+
+  // A CSR_TEAM_LEADER only ever sees their own team's rows below (see
+  // visibleTeams) — every manager-tier role (and any secondary/extra role
+  // in that tier) sees every team, same as CSRMainDashboard.tsx's Team List
+  // tab already does for its own team-scoped view.
+  const { uid, role: myRole, extraRoles: myExtraRoles, ready: authReady } = useAuth();
+  const isManagerTier = MANAGER_TIER_ROLES.has(normalizeRole(myRole)) || (myExtraRoles || []).some((r) => MANAGER_TIER_ROLES.has(normalizeRole(r)));
+  const [myProfileId, setMyProfileId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!authReady || !uid) return;
+    void getMyProfileId(uid).then(setMyProfileId);
+  }, [authReady, uid]);
 
   // reportDate doubles as the range's start date; rangeEnd defaults equal
   // to it (a single day) — most of this page's editable cells only make
@@ -506,7 +534,7 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
     const map = new Map<string, Row[]>();
     for (const m of members) {
       const profile = profileById.get(m.profileId);
-      if (!profile) continue;
+      if (!profile || !profile.is_active) continue;
       const arr = map.get(m.teamId) ?? [];
       arr.push({ profile, isLeader: m.isLeader });
       map.set(m.teamId, arr);
@@ -516,6 +544,28 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
     }
     return map;
   }, [members, profileById]);
+
+  // The team(s) a CSR_TEAM_LEADER actually leads (isLeader on their own
+  // csr_team_members row) — null for a manager-tier viewer, who isn't
+  // scoped at all (see visibleTeams below).
+  const myTeamIds = useMemo(() => {
+    if (isManagerTier || !myProfileId) return null;
+    return new Set(members.filter((m) => m.profileId === myProfileId && m.isLeader).map((m) => m.teamId));
+  }, [isManagerTier, myProfileId, members]);
+  // Manager tier sees every team; a Team Leader sees only their own —
+  // matches CSRMainDashboard.tsx's Team List tab scoping exactly.
+  const visibleTeams = useMemo(() => {
+    if (isManagerTier || !myTeamIds) return teams;
+    return teams.filter((t) => myTeamIds.has(t.id));
+  }, [teams, isManagerTier, myTeamIds]);
+
+  // Mistake Log's "Name" dropdown — a Team Leader can only log a mistake
+  // against someone on their own team; a manager-tier viewer sees every CSR
+  // Associate/Team Leader company-wide, not just whoever's on a team yet.
+  const mistakeLogNameOptions = useMemo(() => {
+    if (isManagerTier) return profiles.filter((p) => p.is_active && isCsrRosterProfile(p));
+    return visibleTeams.flatMap((team) => (rowsByTeam.get(team.id) ?? []).map((r) => r.profile));
+  }, [isManagerTier, profiles, visibleTeams, rowsByTeam]);
 
   // Per-profile Schedule/Update entries for the "Activities" drill-down
   // modal — same dedup as computeLiveActionCounts (earliest occurrence per
@@ -613,7 +663,8 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
   // the per-agent rows above them.
   const gridTotals = useMemo(() => {
     let totalCsr = 0, handleTk = 0, schedule = 0, attempt = 0, updateSum = 0, gh = 0;
-    for (const rows of rowsByTeam.values()) {
+    for (const team of visibleTeams) {
+      const rows = rowsByTeam.get(team.id) ?? [];
       for (const { profile } of rows) {
         totalCsr++;
         const e = entries.get(profile.id);
@@ -626,7 +677,7 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
       }
     }
     return { totalCsr, handleTk, schedule, attempt, update: updateSum, gh };
-  }, [rowsByTeam, entries, liveActionCounts, ghCounts]);
+  }, [visibleTeams, rowsByTeam, entries, liveActionCounts, ghCounts]);
 
   const extTotals = useMemo(() => {
     let am = 0, pm = 0;
@@ -824,13 +875,15 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
 
         <div className="flex flex-col xl:flex-row gap-4 items-start">
         <div className="flex-1 min-w-0">
-        {teams.length === 0 ? (
+        {visibleTeams.length === 0 ? (
           <div className="panel p-8 text-center text-sm text-muted-foreground">
-            No CSR teams set up yet — add teams and place staff on them from CSR Dashboard's Team Composition tool first.
+            {teams.length === 0
+              ? "No CSR teams set up yet — add teams and place staff on them from CSR Dashboard's Team Composition tool first."
+              : "You aren't set as the leader of any CSR team yet — ask a CSR Manager to assign you one from Team Composition."}
           </div>
         ) : (
           <div className="space-y-6">
-            {teams.map((team) => {
+            {visibleTeams.map((team) => {
               const rows = rowsByTeam.get(team.id) ?? [];
               if (rows.length === 0) return null;
               return (
@@ -1092,7 +1145,7 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
                             className="glass-input text-[11px] py-0.5 px-1 rounded-md w-full"
                           >
                             {person && <option value={person.id}>{person.display_name || person.username || person.email}</option>}
-                            {profiles.filter((p) => p.id !== m.profileId).map((p) => (
+                            {mistakeLogNameOptions.filter((p) => p.id !== m.profileId).map((p) => (
                               <option key={p.id} value={p.id}>{p.display_name || p.username || p.email}</option>
                             ))}
                           </select>
@@ -1144,7 +1197,7 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
               <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Name</label>
               <select value={newMistakeProfileId} onChange={(e) => setNewMistakeProfileId(e.target.value)} className="glass-input mt-1 block">
                 <option value="">Select…</option>
-                {profiles.map((p) => (
+                {mistakeLogNameOptions.map((p) => (
                   <option key={p.id} value={p.id}>{p.display_name || p.username || p.email}</option>
                 ))}
               </select>

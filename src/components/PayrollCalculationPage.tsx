@@ -173,6 +173,12 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
       // regular-hours room left for the days they DID work and trigger
       // "overtime" well under a real 40-hour week. See
       // CSR_WEEKLY_OVERTIME_THRESHOLD.
+      // PH staff work out of one office, not deployed across US states/field
+      // sites — no state-minimum-wage concept applies to them, their meal
+      // break is unpaid (deducted from worked hours, never credited back
+      // regardless of role), and overtime is straight/flat pay at the same
+      // rate as regular hours, no 1.5× premium.
+      const isPhPayroll = profileCountry(p) === "PH";
       const flatThreshold = usesFlatWeeklyOvertimeThreshold(p.role, p.extra_roles);
       const dutyHours = flatThreshold
         ? CSR_WEEKLY_OVERTIME_THRESHOLD
@@ -198,7 +204,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
       // see timecards.ts's computeMealTimeCredit. Merged directly into
       // rawByDate BEFORE the weekly split runs below, so it naturally lands
       // as Regular or Overtime with no separate "meal" bucket in the totals.
-      const mealAlwaysPaid = isMealAlwaysPaidRole(p.role, p.extra_roles);
+      const mealAlwaysPaid = !isPhPayroll && isMealAlwaysPaidRole(p.role, p.extra_roles);
       const rawByDate = new Map<string, number>();
       for (const day of [...seedDayEntries, ...dayEntries]) {
         if (!day.checkIn || !day.checkOut) continue;
@@ -236,10 +242,10 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
         overtimeHours += ot;
         if (!isFixed) {
           const rate = rateEffectiveOn(history, date);
-          grossPay += reg * rate + ot * rate * OT_MULTIPLIER;
+          grossPay += reg * rate + ot * rate * (isPhPayroll ? 1 : OT_MULTIPLIER);
         }
       }
-      if (isFixed && currentEntry?.annualSalary) grossPay = perCutoffSalary(currentEntry.annualSalary);
+      if (isFixed && currentEntry?.annualSalary) grossPay = perCutoffSalary(currentEntry.annualSalary, isPhPayroll);
       const { department, roleLabel } = getRoleDepartmentBreakdown(p.role);
       return {
         profileId: p.id,
@@ -498,6 +504,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
           workingHours={detailProfile.working_hours}
           mealMinutes={detailProfile.meal_minutes}
           offDays={detailProfile.off_days || undefined}
+          country={profileCountry(detailProfile)}
           graceMinutes={payGraceMinutesFor(profileCountry(detailProfile))}
           initialStart={startDate || undefined}
           initialEnd={endDate || undefined}

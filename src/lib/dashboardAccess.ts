@@ -39,22 +39,32 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   // (Team List: Manager + Team Leader; Team Composition: Manager only) —
   // that's UI-level tab visibility, not a second role gate here.
   "csr-dashboard": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
-  // Same CSR-wide audience — every CSR role fills this in daily.
-  "daily-report": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
-  // Self-entry counterpart to "daily-report" above — same audience. Replaces
-  // the old "self-service" tally tile (CsrSelfServiceTally.tsx, deleted);
-  // CSR_MANAGER additionally gets the aggregated cross-agent view here
-  // (CsrGhTracker.tsx's own isCsrManagerRole check), everyone else the
-  // agent-facing one.
+  // Manager tier, plus Team Leader (scoped to just their own team inside
+  // CSRTeamDailyReport.tsx itself — a Team Leader sees only their own
+  // team's rows there, never every team). A plain CSR Associate (CSR_AGENT)
+  // still doesn't fill this in or see it at all, per explicit request.
+  "daily-report": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_TEAM_LEADER"],
+  // Self-entry counterpart to "daily-report" above — same audience as it
+  // USED to be (every CSR role); this one still needs CSR_AGENT, since
+  // agents are the ones logging their own GH numbers here. Replaces the old
+  // "self-service" tally tile (CsrSelfServiceTally.tsx, deleted); CSR_MANAGER
+  // additionally gets the aggregated cross-agent view here (CsrGhTracker.tsx's
+  // own isCsrManagerRole check), everyone else the agent-facing one.
   "gh-tracker": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
-  // Live per-branch LTP aging snapshot (CsrLtpReport.tsx) — same CSR-wide
-  // audience as daily-report/gh-tracker; a read-only report, so every CSR
-  // role can view it, not just managers.
-  "ltp-report": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
+  // Manager tier only, same as daily-report — neither a plain CSR Associate
+  // nor a CSR Team Leader sees this per-branch aging report either.
+  "ltp-report": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"],
   // Reschedule Requests (custom: "csr-reschedule-requests") — same CSR-wide
-  // audience as daily-report/gh-tracker; view-only there too (no
-  // approve/reject, just Phone DX/Rerouted/Notes annotation).
+  // audience as gh-tracker; view-only there too (no approve/reject, just
+  // Phone DX/Rerouted/Notes annotation).
   "reschedule-requests": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
+  // CSR module's own-slug copy of Candidate Reviews (modules.ts's
+  // csrMod.submodules — "csr-candidate-reviews", not the bare
+  // "candidate-reviews" every other module's copy shares) — Manager tier
+  // only, per explicit request; HR's own copy (and every other module's) is
+  // unaffected, since they're gated by the shared "candidate-reviews" slug
+  // instead of this one.
+  "csr-candidate-reviews": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"],
   "hr-dashboard": ["ADMIN", "HR"],
   // HR module's Paperworks page (custom: "hr-paperworks") — the Automated
   // Forms group that used to live inside hr-dashboard's own sidebar. Same
@@ -118,6 +128,7 @@ const CSR_MODULE_SUBMODULE_SLUGS = new Set([
   "call-tracker",
   "csr-status-summary",
   "reschedule-requests",
+  "csr-candidate-reviews",
 ]);
 
 export function getDashboardRoleGate(subSlug: string): string[] | null {

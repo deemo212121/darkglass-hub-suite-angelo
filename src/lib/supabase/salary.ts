@@ -12,8 +12,10 @@ import { supabase } from "./client";
 export type SalaryChangeReason = "promotion" | "demotion" | "adjustment" | "initial" | "training_rate";
 export type CompensationType = "hourly" | "fixed";
 
-/** Bi-weekly cutoffs — every 2 weeks, 26 per year. Fixed-salary pay per cutoff is always annual / 26, regardless of how many days a given payroll run actually covers — see migration 0118 (originally written assuming semi-monthly/24; the company's actual fixed-salary cadence is bi-weekly). */
+/** Bi-weekly cutoffs — every 2 weeks, 26 per year. US fixed-salary pay per cutoff is always annual / 26, regardless of how many days a given payroll run actually covers — see migration 0118 (originally written assuming semi-monthly/24; the US company's actual fixed-salary cadence is bi-weekly). */
 export const CUTOFFS_PER_YEAR = 26;
+/** PH's own fixed-salary cadence is semi-monthly (1st-15th, 16th-end of month), not the US's bi-weekly — 24 cutoffs/year, not 26. See perCutoffSalary's isPH parameter. */
+export const PH_CUTOFFS_PER_YEAR = 24;
 export const MONTHS_PER_YEAR = 12;
 
 export interface SalaryEntryRow {
@@ -171,8 +173,8 @@ export function currentRate(history: SalaryEntryRow[]): number {
 }
 
 /** Per-cutoff pay for a fixed annual salary — always annual / 26, regardless of the exact period a payroll run covers (see migration 0118's header comment). */
-export function perCutoffSalary(annualSalary: number): number {
-  return annualSalary / CUTOFFS_PER_YEAR;
+export function perCutoffSalary(annualSalary: number, isPH: boolean = false): number {
+  return annualSalary / (isPH ? PH_CUTOFFS_PER_YEAR : CUTOFFS_PER_YEAR);
 }
 
 /** Monthly pay for a fixed annual salary — annual / 12. */

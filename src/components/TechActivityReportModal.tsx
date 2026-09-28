@@ -106,7 +106,7 @@ export function TechActivityReportModal({
   hourlyOtModeBusy,
   periodDataSettling,
 }: Props) {
-  const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay, techHourlyPayStraight, techHourlyPayOtPremium, techWeightedRegularRate, techGuaranteedSalaryTarget, techHolidayPremium, techIncludablePay, mileageRateOverride } = row;
+  const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay, techHourlyPayStraight, techHourlyPayOtPremium, techWeightedRegularRate, techGuaranteedSalaryTarget, techHolidayPremium, techIncludablePay, mileageRateOverride, carIqSwitch } = row;
   const branch = employee.assigned_branch || "";
 
   // Live Company-vs-State comparison for the Hourly Pay figure — fetched
@@ -454,6 +454,29 @@ export function TechActivityReportModal({
       alert(`Failed to add line: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
   };
+  // Car IQ History (migration 0319) detected this technician's Car IQ
+  // status changed partway through the period — mileageRateOverride's
+  // single rate above only covers one side of that switch, so the OTHER
+  // side's mileage needs its own line at its own rate. There's no reliable
+  // day-by-day mileage breakdown to auto-split the existing total by date
+  // (see AccountingDashboard.tsx's carIqSwitch computation), so this adds a
+  // blank, pre-labeled/pre-rated custom line and leaves the actual mileage
+  // figure for whoever's running payroll to type in, same as the regular
+  // Mileage figure always has been. Not wage-includable, matching the
+  // regular Mileage line (a reimbursement, not part of the FLSA weighted
+  // rate — see techIncludablePay, AccountingDashboard.tsx).
+  const handleAddCarIqSplitLine = async () => {
+    if (!carIqSwitch) return;
+    try {
+      const created = await addTechCustomPayItem(employee.id, periodStart, periodEnd, customItems.length);
+      const label = `Mileage (Car IQ $${carIqSwitch.rateAfter.toFixed(2)}/mi, from ${carIqSwitch.date})`;
+      await updateTechCustomPayItem(created.id, { label, rate: carIqSwitch.rateAfter, isWageIncludable: false });
+      setCustomItems((prev) => [...prev, { ...created, label, rate: carIqSwitch.rateAfter, isWageIncludable: false }]);
+      onCustomItemsChanged();
+    } catch (err) {
+      alert(`Failed to add Car IQ mileage line: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  };
   const handleCustomLineBlur = async (item: TechCustomPayItem, fields: { label?: string; value?: number; rate?: number; isWageIncludable?: boolean }) => {
     setSavingCustomId(item.id);
     try {
@@ -728,6 +751,26 @@ export function TechActivityReportModal({
                       </tr>
                     );
                   })}
+
+                  {carIqSwitch && (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-2 bg-amber-950/30 border-y border-amber-500/30">
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <p className="text-[11px] text-amber-300">
+                            Car IQ status changed on {carIqSwitch.date} this period — the Mileage line above (${carIqSwitch.rateBefore.toFixed(2)}/mi) only covers days before that.
+                            Add a second line at ${carIqSwitch.rateAfter.toFixed(2)}/mi for the mileage driven from {carIqSwitch.date} onward.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => void handleAddCarIqSplitLine()}
+                            className="shrink-0 px-2.5 py-1 rounded bg-amber-600/80 hover:bg-amber-600 text-white text-[11px] font-semibold whitespace-nowrap"
+                          >
+                            + Add Car IQ mileage line
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
 
                   {visibleCategoryPayments.map(({ type, count, rate, payment }) => {
                     const savingValue = savingCategoryOverrideKey === `${employee.id}:${type}`;
