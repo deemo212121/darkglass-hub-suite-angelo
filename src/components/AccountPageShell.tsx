@@ -1,7 +1,7 @@
-import { Link } from "@tanstack/react-router";
-import { StableNavigate as Navigate } from "@/lib/StableNavigate";
+import { Link, Navigate } from "@tanstack/react-router";
 import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
+import { useRedirectGuard } from "@/lib/useRedirectGuard";
 import { ChevronLeft } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -15,8 +15,11 @@ export function AccountPageShell({
   children: ReactNode;
 }) {
   const { ready, email } = useAuth();
+  // Guards the <Navigate> below against firing more than once per distinct
+  // target — see useRedirectGuard.ts for why this is necessary.
+  const redirectOnce = useRedirectGuard();
   if (!ready) return null;
-  if (!email) return <Navigate to="/landing" replace />;
+  if (!email) return redirectOnce("/landing") ? <Navigate to="/landing" replace /> : null;
   return (
     <>
       <AppHeader />

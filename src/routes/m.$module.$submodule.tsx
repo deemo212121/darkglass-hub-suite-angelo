@@ -1,5 +1,5 @@
-import { createFileRoute, Link, Outlet, notFound, useLocation } from "@tanstack/react-router";
-import { StableNavigate as Navigate } from "@/lib/StableNavigate";
+import { createFileRoute, Link, Navigate, Outlet, notFound, useLocation } from "@tanstack/react-router";
+import { useRedirectGuard } from "@/lib/useRedirectGuard";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { OverallStatusPage } from "@/components/OverallStatusPage";
@@ -181,6 +181,9 @@ function SubModule() {
   // always returns { mod, sub } or throws notFound() first).
   const { mod, sub } = Route.useLoaderData() as { mod: ModuleDef; sub: SubModuleDef };
   const location = useLocation();
+  // Guards every <Navigate> below against firing more than once per
+  // distinct target — see useRedirectGuard.ts for why this is necessary.
+  const redirectOnce = useRedirectGuard();
 
   // Role gates that also need to honor a secondary role (profiles.
   // extra_roles) — a Parts Manager who's ALSO been given Admin as a
@@ -239,7 +242,7 @@ function SubModule() {
   const moduleAllowedRoles = (mod.slug === "dashboard" || mod.slug === "hr" || mod.slug === "accounting" || mod.slug === "csr" || (sub as any).custom === "receiving-status") ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
 
   if (!ready) return null;
-  if (!email) return <Navigate to="/landing" replace />;
+  if (!email) return redirectOnce("/landing") ? <Navigate to="/landing" replace /> : null;
 
   // Trainees only see Employee Self-Service — checked first, before any
   // role-based gate below, since it doesn't depend on role or extra_roles
@@ -250,7 +253,7 @@ function SubModule() {
   // restriction while it's set, not something a leftover permission grant
   // can quietly punch a hole in.
   if (!isSubmoduleAllowedForTrainee(isTrainee, mod.slug, sub.slug)) {
-    return <Navigate to="/home" replace />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
   // Frozen accounts only see Messages — same absolute, override-proof
@@ -290,7 +293,7 @@ function SubModule() {
   // the hidden tiles by typing the URL directly. Skipped entirely when an
   // admin has explicitly overridden this exact submodule's roles.
   if (!explicitModuleOverride && !isSubmoduleAllowed(role, mod.slug, sub.slug, extraRoles)) {
-    return <Navigate to="/home" replace />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
   // Check admin access using Firebase role — primary role OR a secondary
@@ -330,7 +333,7 @@ function SubModule() {
     !isActivityLogSubmodule &&
     !isWhereaboutsSubmodule
   ) {
-    return <Navigate to="/home" replace />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
   // Check user management access using Firebase role — same primary-or-
@@ -342,7 +345,7 @@ function SubModule() {
   const hasUserManagementAccess = hasDashboardAccess(userManagementAllowedRoles, role, extraRoles);
 
   if (isUserManagementSubmodule && !hasUserManagementAccess) {
-    return <Navigate to="/home" replace />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
   // Activity Logs — same carve-out pattern as User Management above.
@@ -350,7 +353,7 @@ function SubModule() {
   const hasActivityLogAccess = hasDashboardAccess(activityLogAllowedRoles, role, extraRoles);
 
   if (isActivityLogSubmodule && !hasActivityLogAccess) {
-    return <Navigate to="/home" replace />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
   // Technician Whereabouts — same carve-out pattern as User Management/
@@ -359,7 +362,7 @@ function SubModule() {
   const hasWhereaboutsAccess = hasDashboardAccess(whereaboutsAllowedRoles, role, extraRoles);
 
   if (isWhereaboutsSubmodule && !hasWhereaboutsAccess) {
-    return <Navigate to="/home" replace />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
   // Company Settings is narrower than the general admin-module gate above —
@@ -368,7 +371,7 @@ function SubModule() {
   const hasCompanySettingsAccess = isCompanySuperAdminRole(role, extraRoles);
 
   if (sub.custom === "company-settings" && !hasCompanySettingsAccess) {
-    return <Navigate to="/home" replace />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
   const hasNestedUserRoute = sub.custom === "user-management" && location.pathname.split("/").filter(Boolean).length > 3;
@@ -390,7 +393,7 @@ function SubModule() {
     hasDashboardAccess(moduleAllowedRoles, role, extraRoles);
 
   if (moduleAllowedRoles && !moduleAccessOk) {
-    return <Navigate to="/home" replace />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
   return (
