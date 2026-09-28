@@ -554,15 +554,38 @@ export function ReportTriageDaily({ mod, sub }: { mod: ModuleDef; sub: SubModule
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           {[
             { label: "Completed", value: kpi.completed, color: "text-green-300", icon: <CheckCircle2 className="h-4 w-4" /> },
-            { label: "Remaining", value: kpi.remaining, color: "text-yellow-300", icon: <Clock className="h-4 w-4" /> },
+            {
+              label: "Remaining", value: kpi.remaining, color: "text-yellow-300", icon: <Clock className="h-4 w-4" />,
+              // Opens Ticket List filtered to every live TR- status (both
+              // stages — the same two statuses isTriageStatus/STAGE_ORDER
+              // track) — matches exactly what this KPI counts, via the same
+              // ?status= deep link TicketOperationReport uses, widened to a
+              // comma-separated list (see TicketList.tsx's
+              // matchesStatusFilterValue).
+              onClick: () => window.open(`/m/tickets/ticket-list?status=${encodeURIComponent("TR-Need Triage,TR-Need PO")}`, "_blank", "noopener,noreferrer"),
+            },
             { label: "Triage Staff", value: kpi.staff, color: "text-blue-300", icon: <Users className="h-4 w-4" /> },
             { label: "Avg Triage Time", value: kpi.avgTime, color: "text-purple-300", icon: <Timer className="h-4 w-4" /> },
           ].map((k) => (
-            <div key={k.label} className="panel p-4 text-center">
-              <div className="flex justify-center mb-1 text-muted-foreground">{k.icon}</div>
-              <p className={`text-2xl font-bold ${k.color}`}>{k.value}</p>
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{k.label}</p>
-            </div>
+            k.onClick ? (
+              <button
+                key={k.label}
+                type="button"
+                onClick={k.onClick}
+                title="Open these tickets in Ticket List"
+                className="panel p-4 text-center hover:bg-white/5 transition cursor-pointer"
+              >
+                <div className="flex justify-center mb-1 text-muted-foreground">{k.icon}</div>
+                <p className={`text-2xl font-bold ${k.color}`}>{k.value}</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{k.label}</p>
+              </button>
+            ) : (
+              <div key={k.label} className="panel p-4 text-center">
+                <div className="flex justify-center mb-1 text-muted-foreground">{k.icon}</div>
+                <p className={`text-2xl font-bold ${k.color}`}>{k.value}</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">{k.label}</p>
+              </div>
+            )
           ))}
         </div>
 

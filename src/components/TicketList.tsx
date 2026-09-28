@@ -336,6 +336,19 @@ function parseTicketDate(value: string) {
   return "";
 }
 
+// The Repair Status filter value may be a comma-separated list of exact
+// statuses, not just one — e.g. Triage Daily Report's "Remaining" KPI deep
+// links here with ?status=TR-Need Triage,TR-Need PO, since "Remaining"
+// covers both TR- stages at once. Same convention as every other single-
+// status ?status= deep link (TicketOperationReport, etc.), just widened to
+// accept more than one; a single value (dropdown selection, most deep
+// links) behaves exactly as before. Blank filter value matches everything.
+function matchesStatusFilterValue(ticketStatus: string | null | undefined, filterValue: string): boolean {
+  const needles = filterValue.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (needles.length === 0) return true;
+  return needles.includes(String(ticketStatus || "").trim().toLowerCase());
+}
+
 function isWithinDateRange(value: string, startDate: string, endDate: string) {
   const normalized = parseTicketDate(value);
   if (!normalized) return false;
@@ -649,7 +662,9 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   // ?ticketNo=<no> so the linked ticket shows up immediately instead of
   // landing on the unfiltered full list — same convention as Part
   // History's own ?uniqueId= deep link. The Tickets → Operation page's
-  // status counters link here the same way via ?status=<exact status>.
+  // status counters link here the same way via ?status=<exact status>, and
+  // Triage Daily Report's Remaining KPI via a comma-separated list of exact
+  // statuses (?status=TR-Need Triage,TR-Need PO — see matchesStatusFilterValue).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const ticketNo = params.get("ticketNo");
@@ -826,7 +841,6 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const filteredItems = useMemo(() => {
     const query = debouncedSearchQuery.toLowerCase();
     const norm = (v: string | null | undefined) => String(v ?? "").trim().toLowerCase();
-    const repairNeedle = norm(repairStatusFilter);
     const locationNeedle = norm(locationFilter);
     const sourceNeedle = norm(ticketSourceFilter);
     return SAMPLE_TICKETS.filter((ticket) => {
@@ -834,7 +848,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
       // only show tickets whose location is in the allowed set.
       const matchesAccess = allowedLocations === null || allowedLocations.includes(ticket.location);
       const matchesSearch = !query || [ticket.ticketNo, ticket.customer, ticket.city, ticket.phone, ticket.model, ticket.location, ticket.status, ticket.ticketSource || ""].some((value) => value.toLowerCase().includes(query));
-      const matchesRepairStatus = !repairNeedle || norm(ticket.status) === repairNeedle;
+      const matchesRepairStatus = matchesStatusFilterValue(ticket.status, repairStatusFilter);
       // Filter by Posting date (ticket.created) so this agrees with the
       // Posting column's own funnel filter instead of silently filtering by
       // Schedule date under an unlabeled "date range" control.
@@ -867,7 +881,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     for (const ticket of SAMPLE_TICKETS) {
       const matchesAccess = allowedLocations === null || allowedLocations.includes(ticket.location);
       const matchesSearch = !query || [ticket.ticketNo, ticket.customer, ticket.city, ticket.phone, ticket.model, ticket.location, ticket.status, ticket.ticketSource || ""].some((v) => v.toLowerCase().includes(query));
-      const matchesRepairStatus = !repairStatusFilter || ticket.status === repairStatusFilter;
+      const matchesRepairStatus = matchesStatusFilterValue(ticket.status, repairStatusFilter);
       const matchesDate = (!startDateFilter && !endDateFilter) || isWithinDateRange(ticket.created, startDateFilter, endDateFilter);
       const matchesLocation = !locationFilter || ticket.location === locationFilter;
       const matchesSource = !ticketSourceFilter || (ticket.ticketSource || "") === ticketSourceFilter;
