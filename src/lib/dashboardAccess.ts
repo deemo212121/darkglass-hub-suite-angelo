@@ -41,11 +41,18 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   "csr-dashboard": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
   // Same CSR-wide audience — every CSR role fills this in daily.
   "daily-report": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
-  // Self-entry counterpart to "daily-report" above — same audience, since
-  // it just tallies into the same row a lead could otherwise type in.
-  "self-service": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
+  // Self-entry counterpart to "daily-report" above — same audience. Replaces
+  // the old "self-service" tally tile (CsrSelfServiceTally.tsx, deleted);
+  // CSR_MANAGER additionally gets the aggregated cross-agent view here
+  // (CsrGhTracker.tsx's own isCsrManagerRole check), everyone else the
+  // agent-facing one.
+  "gh-tracker": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
+  // Live per-branch LTP aging snapshot (CsrLtpReport.tsx) — same CSR-wide
+  // audience as daily-report/gh-tracker; a read-only report, so every CSR
+  // role can view it, not just managers.
+  "ltp-report": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
   // Reschedule Requests (custom: "csr-reschedule-requests") — same CSR-wide
-  // audience as daily-report/self-service; view-only there too (no
+  // audience as daily-report/gh-tracker; view-only there too (no
   // approve/reject, just Phone DX/Rerouted/Notes annotation).
   "reschedule-requests": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
   "hr-dashboard": ["ADMIN", "HR"],
@@ -105,6 +112,8 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
 const CSR_MODULE_SUBMODULE_SLUGS = new Set([
   "csr-dashboard",
   "daily-report",
+  "gh-tracker",
+  "ltp-report",
   "csr-daily-report",
   "call-tracker",
   "csr-status-summary",

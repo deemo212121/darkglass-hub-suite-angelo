@@ -240,13 +240,30 @@ export function DailyActivityPage({
       const visibleProfiles = visibleProfileIds ? profiles.filter((p) => visibleProfileIds.has(p.id)) : profiles;
 
       const byUser = new Map<string, ActivityRow>();
-      for (const entry of auditLog) {
+      // getTicketAuditLog returns newest-first — walked in reverse below so
+      // the first time a (user, ticket, day, action-type) combination is
+      // seen is chronologically the EARLIEST one, not just whichever came
+      // first in array order. Multiple audit rows for the same ticket/action
+      // on the same day (e.g. a status saved twice, an edit re-triggering
+      // the same status_change) collapse into that single first occurrence
+      // — a ticket touched 3x for the same action in one day should count
+      // as 1 action taken, not 3.
+      const seenKeys = new Set<string>();
+      for (let i = auditLog.length - 1; i >= 0; i--) {
+        const entry = auditLog[i];
         const who = entry.changedBy;
         if (!who) continue;
         if (visibleProfileIds && !visibleProfileIds.has(who)) continue;
         const profile = profileById.get(who);
         if (!profile || profile.is_active === false) continue;
         if (filterProfile && !filterProfile(profile)) continue;
+
+        const bucket = classify(entry);
+        const day = new Date(entry.createdAt).toISOString().slice(0, 10);
+        const dedupeKey = `${who}|${entry.ticketId}|${day}|${bucket}`;
+        if (seenKeys.has(dedupeKey)) continue;
+        seenKeys.add(dedupeKey);
+
         if (!byUser.has(who)) {
           byUser.set(who, {
             userId: who,
@@ -259,7 +276,6 @@ export function DailyActivityPage({
           });
         }
         const row = byUser.get(who)!;
-        const bucket = classify(entry);
         row.counts[bucket] += 1;
         row.total += 1;
         row.entries.push({ ticketNo: ticketMeta.get(entry.ticketId) || "—", bucket, when: entry.createdAt });
