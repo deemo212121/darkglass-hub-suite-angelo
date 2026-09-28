@@ -49,6 +49,13 @@ export interface DirectDepositFormData {
   dateSigned: string;
   /** Raw canvas PNG as a data: URL — see w4FormTemplate.ts's header comment for why this is stored alongside the durable Firebase Storage signature URL. */
   signatureDataUrl: string;
+  /** "File on Behalf" (HR already has the employee's bank details in hand
+   *  — emailed, handed over in person — and types them in directly rather
+   *  than sending a fill link) — same convention ssnCardFormTemplate.ts/
+   *  driversLicenseFormTemplate.ts already use: no real signature was
+   *  drawn, so the document shows who filed it instead of a forged one. */
+  filedByHr?: boolean;
+  filedByHrName?: string;
 }
 
 export interface DirectDepositSignature {
@@ -145,7 +152,13 @@ export function buildDirectDepositBodyMarkup(data: DirectDepositFormData, logoDa
 
       <p class="ddep-notice">US In Home Services is hereby authorized to directly deposit my pay to the account listed above. This authorization will remain in effect until I modify or cancel it in writing.</p>
 
+      ${data.filedByHr
+        ? `<p class="ddep-notice">Filed by HR (${blank(data.filedByHrName || "")}) on behalf of ${blank(data.employeeName)} — no employee signature was collected for this submission.</p>
       <div class="ddep-sign-row">
+        <div class="ddep-sign-name">Filed by: <strong>${blank(data.filedByHrName || "")}</strong></div>
+        <div class="ddep-sign-date">Date: ${signature ? escapeHtml(fmtDate(signature.signedAt)) : ""}</div>
+      </div>`
+        : `<div class="ddep-sign-row">
         <div class="ddep-sign-name">
           <span class="ddep-sig-label">Contractor's Signature:</span>
           <span class="ddep-sig-value-wrap">
@@ -154,7 +167,7 @@ export function buildDirectDepositBodyMarkup(data: DirectDepositFormData, logoDa
           </span>
         </div>
         <div class="ddep-sign-date">Date: ${signature ? escapeHtml(fmtDate(signature.signedAt)) : ""}</div>
-      </div>
+      </div>`}
     </div>
   `;
 }

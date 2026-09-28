@@ -177,7 +177,7 @@ import { fillDamagePdf } from "@/lib/damagePdfFill";
 import { buildContractorDataBodyMarkup, contractorDataStyles, BLANK_EMERGENCY_CONTACT, type ContractorDataFormData } from "@/lib/contractorDataFormTemplate";
 import { buildContractorDataUsBodyMarkup, contractorDataUsStyles, BLANK_EMERGENCY_CONTACT_US, type ContractorDataUsFormData } from "@/lib/contractorDataUsFormTemplate";
 import { buildVehicleUseAgreementBodyMarkup, vehicleUseAgreementStyles, type VehicleUseAgreementFormData } from "@/lib/vehicleUseAgreementFormTemplate";
-import { buildDirectDepositBodyMarkup, directDepositStyles, type DirectDepositFormData } from "@/lib/directDepositFormTemplate";
+import { buildDirectDepositBodyMarkup, directDepositStyles, DIRECT_DEPOSIT_STATES, DIRECT_DEPOSIT_COUNTRIES, DIRECT_DEPOSIT_ACCOUNT_TYPES, type DirectDepositFormData } from "@/lib/directDepositFormTemplate";
 import type { I9FormData } from "@/lib/i9FormTemplate";
 import { fillI9Pdf } from "@/lib/i9PdfFill";
 import type { SubstanceScreeningFormData } from "@/lib/substanceScreeningFormTemplate";
@@ -11990,6 +11990,131 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(directDepositRecipientSearch.toLowerCase())),
     [employees, directDepositRecipientSearch]
   );
+
+  // "File on Behalf" — same reasoning as SSN Card's own version above: HR
+  // already has the technician's bank details (emailed, handed over in
+  // person) and would rather type them in directly than send a fill-link
+  // and wait. Creates the document and signs it in one step, same PDF
+  // pipeline the employee's own Fill page uses, just with no signature pad
+  // — filedByHr/filedByHrName in formData tell buildDirectDepositBodyMarkup
+  // to show who filed it instead of a forged signature.
+  const [directDepositFileForRecipientId, setDirectDepositFileForRecipientId] = useState("");
+  const [directDepositFileForRecipientSearch, setDirectDepositFileForRecipientSearch] = useState("");
+  const [directDepositFileForRecipientDropdownOpen, setDirectDepositFileForRecipientDropdownOpen] = useState(false);
+  const [directDepositFileForFirstName, setDirectDepositFileForFirstName] = useState("");
+  const [directDepositFileForMiddleName, setDirectDepositFileForMiddleName] = useState("");
+  const [directDepositFileForLastName, setDirectDepositFileForLastName] = useState("");
+  const [directDepositFileForStreetAddress, setDirectDepositFileForStreetAddress] = useState("");
+  const [directDepositFileForCity, setDirectDepositFileForCity] = useState("");
+  const [directDepositFileForState, setDirectDepositFileForState] = useState("");
+  const [directDepositFileForZipCode, setDirectDepositFileForZipCode] = useState("");
+  const [directDepositFileForCountry, setDirectDepositFileForCountry] = useState("");
+  const [directDepositFileForBankName, setDirectDepositFileForBankName] = useState("");
+  const [directDepositFileForAccountNumber, setDirectDepositFileForAccountNumber] = useState("");
+  const [directDepositFileForRoutingNumber, setDirectDepositFileForRoutingNumber] = useState("");
+  const [directDepositFileForAccountType, setDirectDepositFileForAccountType] = useState("");
+  const [directDepositFiling, setDirectDepositFiling] = useState(false);
+  const [directDepositFilingError, setDirectDepositFilingError] = useState<string | null>(null);
+  const filteredDirectDepositFileForRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(directDepositFileForRecipientSearch.toLowerCase())),
+    [employees, directDepositFileForRecipientSearch]
+  );
+  const resetDirectDepositFileForForm = () => {
+    setDirectDepositFileForRecipientId("");
+    setDirectDepositFileForRecipientSearch("");
+    setDirectDepositFileForFirstName("");
+    setDirectDepositFileForMiddleName("");
+    setDirectDepositFileForLastName("");
+    setDirectDepositFileForStreetAddress("");
+    setDirectDepositFileForCity("");
+    setDirectDepositFileForState("");
+    setDirectDepositFileForZipCode("");
+    setDirectDepositFileForCountry("");
+    setDirectDepositFileForBankName("");
+    setDirectDepositFileForAccountNumber("");
+    setDirectDepositFileForRoutingNumber("");
+    setDirectDepositFileForAccountType("");
+  };
+
+  const handleFileDirectDepositForHr = async () => {
+    if (!directDepositFileForRecipientId || !uid) return;
+    const recipient = employees.find((e) => e.id === directDepositFileForRecipientId);
+    if (!recipient) { setDirectDepositFilingError("Select a technician first."); return; }
+    if (!directDepositFileForFirstName.trim() || !directDepositFileForLastName.trim()) { setDirectDepositFilingError("Enter the employee's first and last name."); return; }
+    if (!directDepositFileForBankName.trim() || !directDepositFileForAccountNumber.trim() || !directDepositFileForRoutingNumber.trim() || !directDepositFileForAccountType) {
+      setDirectDepositFilingError("Fill in the bank name, account #, routing #, and account type.");
+      return;
+    }
+
+    setDirectDepositFiling(true);
+    setDirectDepositFilingError(null);
+    let createdDocId: string | null = null;
+    try {
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["direct_deposit"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Direct Deposit Authorization on file. File another one anyway?`)) {
+        return;
+      }
+
+      const doc = await createSignableDocument({
+        documentType: "direct_deposit",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: recipient.id,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+      createdDocId = doc.id;
+      const companyId = doc.companyId;
+
+      const signedAt = new Date().toISOString();
+      const filedByHrName = displayName || "HR";
+      const finalData: DirectDepositFormData = {
+        employeeId: recipient.id,
+        employeeName: [directDepositFileForFirstName, directDepositFileForMiddleName, directDepositFileForLastName].filter(Boolean).join(" ").trim() || recipient.name,
+        firstName: directDepositFileForFirstName.trim(),
+        middleName: directDepositFileForMiddleName.trim(),
+        lastName: directDepositFileForLastName.trim(),
+        streetAddress: directDepositFileForStreetAddress.trim(),
+        city: directDepositFileForCity.trim(),
+        state: directDepositFileForState,
+        zipCode: directDepositFileForZipCode.trim(),
+        country: directDepositFileForCountry,
+        bankName: directDepositFileForBankName.trim(),
+        accountNumber: directDepositFileForAccountNumber.trim(),
+        routingNumber: directDepositFileForRoutingNumber.trim(),
+        accountType: directDepositFileForAccountType,
+        dateSigned: signedAt,
+        signatureDataUrl: "",
+        filedByHr: true,
+        filedByHrName,
+      };
+      // No real signature — HR typed this in, the employee never drew
+      // anything. url: "" is safe here specifically because the template
+      // checks filedByHr before ever rendering a <img src>.
+      const entry = { name: `Filed by HR — ${filedByHrName}`, url: "", signedAt };
+
+      const logo = directDepositLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!directDepositLogoDataUrl) setDirectDepositLogoDataUrl(logo);
+      const pdfBlob = await captureHtmlToPdfBlob(buildDirectDepositBodyMarkup(finalData, logo, entry), directDepositStyles);
+      const pdfUrl = await uploadDirectDepositForm(companyId, finalData.employeeName, pdfBlob);
+
+      await signDocument(doc.id, "employee", entry, pdfUrl, finalData as unknown as Record<string, any>);
+
+      void logActivity({ action: "direct_deposit_filed_by_hr", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      resetDirectDepositFileForForm();
+      await loadSentDirectDepositForms();
+    } catch (err) {
+      // A row created but never signed would otherwise sit as a phantom
+      // "Awaiting Completion" the employee can't actually complete (there's
+      // no fill link for it) — clean it up rather than leave it stuck.
+      if (createdDocId) {
+        try { await deleteSignableDocument(createdDocId); } catch { /* best effort */ }
+      }
+      setDirectDepositFilingError(err instanceof Error ? err.message : "Failed to file this Direct Deposit Authorization.");
+    } finally {
+      setDirectDepositFiling(false);
+    }
+  };
 
   const buildDirectDepositPreviewData = (employeeName: string): DirectDepositFormData => ({
     employeeId: "",
@@ -31586,6 +31711,117 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </div>
             )}
           </div>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-visible mt-4 relative z-10">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">File on Behalf</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Already have their name/address/bank account info (emailed, handed to you in person)? Enter it directly here instead of sending a link — it's saved as complete right away, with no employee signature collected.</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-2xl">
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Technician</label>
+            <input
+              type="text"
+              value={directDepositFileForRecipientSearch}
+              onChange={(e) => { setDirectDepositFileForRecipientSearch(e.target.value); setDirectDepositFileForRecipientId(""); setDirectDepositFileForRecipientDropdownOpen(true); }}
+              onFocus={() => setDirectDepositFileForRecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setDirectDepositFileForRecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {directDepositFileForRecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredDirectDepositFileForRecipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredDirectDepositFileForRecipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => { setDirectDepositFileForRecipientId(e.id); setDirectDepositFileForRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`); setDirectDepositFileForRecipientDropdownOpen(false); }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${directDepositFileForRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">First Name</label>
+              <input type="text" value={directDepositFileForFirstName} onChange={(e) => setDirectDepositFileForFirstName(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Middle Name</label>
+              <input type="text" value={directDepositFileForMiddleName} onChange={(e) => setDirectDepositFileForMiddleName(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Last Name</label>
+              <input type="text" value={directDepositFileForLastName} onChange={(e) => setDirectDepositFileForLastName(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1 sm:col-span-2">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Street Address</label>
+              <input type="text" value={directDepositFileForStreetAddress} onChange={(e) => setDirectDepositFileForStreetAddress(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">City</label>
+              <input type="text" value={directDepositFileForCity} onChange={(e) => setDirectDepositFileForCity(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">State</label>
+              <select value={directDepositFileForState} onChange={(e) => setDirectDepositFileForState(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md">
+                <option value="">Please Select</option>
+                {DIRECT_DEPOSIT_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Zip Code</label>
+              <input type="text" value={directDepositFileForZipCode} onChange={(e) => setDirectDepositFileForZipCode(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Country</label>
+              <select value={directDepositFileForCountry} onChange={(e) => setDirectDepositFileForCountry(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md">
+                <option value="">Please Select</option>
+                {DIRECT_DEPOSIT_COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Name of Bank</label>
+              <input type="text" value={directDepositFileForBankName} onChange={(e) => setDirectDepositFileForBankName(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Type of Account</label>
+              <select value={directDepositFileForAccountType} onChange={(e) => setDirectDepositFileForAccountType(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md">
+                <option value="">Please Select</option>
+                {DIRECT_DEPOSIT_ACCOUNT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Account #</label>
+              <input type="text" value={directDepositFileForAccountNumber} onChange={(e) => setDirectDepositFileForAccountNumber(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">9-Digit Routing #</label>
+              <input type="text" value={directDepositFileForRoutingNumber} onChange={(e) => setDirectDepositFileForRoutingNumber(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+          </div>
+
+          {directDepositFilingError && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{directDepositFilingError}</p>}
+          <button onClick={() => void handleFileDirectDepositForHr()} disabled={!directDepositFileForRecipientId || directDepositFiling} className="btn text-sm px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50 w-fit">
+            {directDepositFiling ? "Filing…" : "File This Direct Deposit Authorization"}
+          </button>
         </div>
       </div>
 

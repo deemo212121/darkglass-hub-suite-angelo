@@ -85,6 +85,7 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   contractor_addendum_finalized: "Finalized Master Independent Contractor Subcontractor Agreement Addendum",
   direct_deposit_sent: "Sent Direct Deposit Authorization form",
   direct_deposit_signed: "Submitted Direct Deposit Authorization form",
+  direct_deposit_filed_by_hr: "Filed Direct Deposit Authorization on behalf of employee",
   jotform_submission_deleted: "Deleted Jotform submission",
   jotform_submission_restored: "Restored Jotform submission",
   part_receive_marked_received: "Marked part received",

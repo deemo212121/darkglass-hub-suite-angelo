@@ -844,10 +844,10 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     else { setSortKey(key); setSortDir("asc"); }
   };
 
-  const top5Chart = useMemo(
+  const top10Chart = useMemo(
     () => [...filteredRows]
       .sort((a, b) => b.totalTickets - a.totalTickets)
-      .slice(0, 5)
+      .slice(0, 10)
       .map((r) => ({ name: r.name.split(" ")[0] || r.name, fullName: r.name, value: r.totalTickets })),
     [filteredRows],
   );
@@ -1456,14 +1456,14 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                 </div>
               </div>
             )}
-            {top5Chart.length > 0 && (
+            {top10Chart.length > 0 && (
               <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
                 <div className="flex items-center gap-1.5 mb-4">
                   <Star className="h-4 w-4 text-emerald-400" />
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Top 5 Technicians (Total Tickets)</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Top 10 Technicians (Total Tickets)</p>
                 </div>
                 <ResponsiveContainer width="100%" height={200} debounce={200}>
-                  <BarChart data={top5Chart} margin={{ left: -10 }}>
+                  <BarChart data={top10Chart} margin={{ left: -10 }}>
                     <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} />
                     <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
                     <Tooltip
@@ -1473,7 +1473,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                       labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName ?? ""}
                     />
                     <Bar dataKey="value" radius={[4, 4, 0, 0]} name="Total Tickets">
-                      {top5Chart.map((_, i) => <Cell key={i} fill={CHART_BAR_FILL} />)}
+                      {top10Chart.map((_, i) => <Cell key={i} fill={CHART_BAR_FILL} />)}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
