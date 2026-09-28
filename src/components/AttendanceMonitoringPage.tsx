@@ -98,6 +98,15 @@ const PTO_TYPE_LABELS: Record<PtoType, string> = {
   bereavement: "Bereavement",
 };
 
+// Time-Off Management's two sub-tabs (formerly one flat "PTO Requests"
+// list) — per explicit request, Paid Leave is Vacation only; Unpaid Leave
+// is Personal/Unpaid/Sick. Holiday and Bereavement weren't named in that
+// split; grouped into Unpaid Leave here (same "$0 pay, non-absent" shape
+// as Unpaid/Personal) rather than silently dropped from both tabs — flag
+// this if Holiday/Bereavement should actually land somewhere else.
+const PAID_LEAVE_PTO_TYPES: PtoType[] = ["vacation"];
+const UNPAID_LEAVE_PTO_TYPES: PtoType[] = ["personal", "unpaid", "sick", "holiday", "bereavement"];
+
 function toISODate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -346,6 +355,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     ATTENDANCE_TABS,
     "daily-attendance",
   );
+  // Time-Off Management's own Paid Leave / Unpaid Leave sub-tabs — see
+  // PAID_LEAVE_PTO_TYPES / UNPAID_LEAVE_PTO_TYPES above.
+  const [ptoLeaveTab, setPtoLeaveTab] = useState<"paid" | "unpaid">("paid");
   // Floating left quick-nav — same pattern as Accounting Dashboard's:
   // collapsed (icon-only) by default so it stays out of the way of this
   // page's already-wide tables, expands to show labels via the chevron.
@@ -774,6 +786,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     if (teamScopedIds === null) return ptoRequests;
     return ptoRequests.filter((r) => teamScopedIds.has(r.profileId));
   }, [ptoRequests, teamScopedIds]);
+
+  // Time-Off Management tab's Paid Leave / Unpaid Leave split — only the
+  // two request lists inside that tab use this; ptoPendingApproval (KPI
+  // tile) and anything else keeps reading visiblePtoRequests directly.
+  const leaveTabPtoRequests = useMemo(() => {
+    const types = ptoLeaveTab === "paid" ? PAID_LEAVE_PTO_TYPES : UNPAID_LEAVE_PTO_TYPES;
+    return visiblePtoRequests.filter((r) => types.includes(r.ptoType));
+  }, [visiblePtoRequests, ptoLeaveTab]);
 
   const entriesByKey = useMemo(() => {
     const map = new Map<string, CompanyTimecardEntry>();
@@ -1528,7 +1548,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const tabConfig = [
     { id: "corrections", label: "Corrections", Icon: FileText },
     { id: "daily-attendance", label: "Daily Attendance", Icon: Clock },
-    { id: "pto-management", label: "PTO Management", Icon: Calendar },
+    { id: "pto-management", label: "Time-Off Management", Icon: Calendar },
     { id: "ticket-attendance", label: "Ticket Attendance", Icon: FileText },
     { id: "ticket-dispute", label: "Ticket Dispute", Icon: AlertTriangle },
     { id: "trainee-attendance", label: "Trainee Attendance", Icon: Clock },
@@ -2319,7 +2339,25 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
           {activeTab === "pto-management" && (
             <div className="space-y-6">
-              <div className="flex justify-end">
+              <div className="flex items-center justify-between">
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setPtoLeaveTab("paid")}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${
+                      ptoLeaveTab === "paid" ? "bg-blue-600 text-white" : "bg-white/5 text-slate-400 hover:bg-white/10"
+                    }`}
+                  >
+                    Paid Leave
+                  </button>
+                  <button
+                    onClick={() => setPtoLeaveTab("unpaid")}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${
+                      ptoLeaveTab === "unpaid" ? "bg-blue-600 text-white" : "bg-white/5 text-slate-400 hover:bg-white/10"
+                    }`}
+                  >
+                    Unpaid Leave
+                  </button>
+                </div>
                 <button onClick={() => setShowPtoForm(true)} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition">
                   + New PTO Request
                 </button>
@@ -2341,9 +2379,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   <tbody>
                     {loading ? (
                       <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
-                    ) : visiblePtoRequests.filter(r => r.status === "pending").length === 0 ? (
+                    ) : leaveTabPtoRequests.filter(r => r.status === "pending").length === 0 ? (
                       <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">No pending PTO requests.</td></tr>
-                    ) : visiblePtoRequests.filter(r => r.status === "pending").map((request) => {
+                    ) : leaveTabPtoRequests.filter(r => r.status === "pending").map((request) => {
                       // request.managerId is a snapshot resolved once at
                       // submission time — if the requester's manager_name
                       // has since changed, canReviewPtoStage's fallback
@@ -2463,11 +2501,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6">
                 <h2 className="text-lg font-bold text-white mb-4">PTO History</h2>
                 <div className="space-y-3">
-                  {visiblePtoRequests.filter(r => r.status !== "pending").length === 0 ? (
+                  {leaveTabPtoRequests.filter(r => r.status !== "pending").length === 0 ? (
                     <div className="text-center py-8">
                       <p className="text-slate-400 text-sm">No PTO history yet</p>
                     </div>
-                  ) : visiblePtoRequests.filter(r => r.status !== "pending").map((request) => (
+                  ) : leaveTabPtoRequests.filter(r => r.status !== "pending").map((request) => (
                     <div key={request.id} className="bg-slate-800/50 border border-white/10 rounded-lg p-4">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
