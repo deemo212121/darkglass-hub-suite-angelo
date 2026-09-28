@@ -11,7 +11,7 @@
  */
 
 import { supabase } from "./client";
-import type { Ticket } from "@/lib/ticketData";
+import { statusGroupOf, type Ticket } from "@/lib/ticketData";
 import { mapSource, mapSourceFromTicketNumber } from "@/lib/mfgSource";
 import { syncMileageForTicketDay } from "./mileage";
 
@@ -1641,6 +1641,111 @@ export async function getPartsByTicketIds(ticketIds: string[]): Promise<Map<stri
     }
   });
   return out;
+}
+
+export interface PartSuggestion {
+  partNo: string;
+  partDesc: string;
+  /** How many distinct past tickets (completed only) used this part — counted once per ticket even if the part appears on multiple visits/rows there. */
+  count: number;
+  /** Up to 3 example ticket numbers this came from, for a "seen on TKT-..." hint. */
+  sampleTicketNos: string[];
+}
+
+const PART_SUGGESTION_STOPWORDS = new Set([
+  "the", "and", "with", "from", "this", "that", "have", "has", "not", "does",
+  "unit", "will", "when", "what", "cannot", "cant", "wont", "make", "makes",
+  "making", "working", "work", "noise", "customer", "states", "said", "says",
+  "reports", "reported", "also", "into", "your", "their", "there", "about",
+]);
+
+/** Longest, most distinctive words (4+ letters, not a filler word) in a free-text problem description — used to find past tickets with a similar-sounding complaint even on a different model. Deliberately small (top 2) so the ilike search stays specific instead of matching almost everything. */
+function distinctiveKeywords(text: string, max = 2): string[] {
+  const words = Array.from(new Set((text.toLowerCase().match(/[a-z]{4,}/g) ?? [])
+    .filter((w) => !PART_SUGGESTION_STOPWORDS.has(w))));
+  return words.sort((a, b) => b.length - a.length).slice(0, max);
+}
+
+/**
+ * Parts used on past COMPLETED tickets (statusGroupOf === "completed") that
+ * either share this ticket's exact model number, or whose problem
+ * description contains one of this ticket's most distinctive keywords —
+ * for the ticket detail page's "Add Part" row, per the user's explicit
+ * call: when triaging, show what parts fixed the same model or the same
+ * kind of problem before.
+ *
+ * Ranked by how many distinct past tickets used each part (a part on 5
+ * different tickets ranks above one seen only once), capped to the top 8.
+ * Model and keyword matches are merged into one ranked list rather than
+ * shown separately — a part that shows up via both signals is real
+ * corroboration, not double-counted (still just +1 per ticket).
+ */
+export async function getPartSuggestions(model: string, problemDescription: string, excludeTicketNo?: string): Promise<PartSuggestion[]> {
+  const cleanModel = model.trim();
+  const keywords = distinctiveKeywords(problemDescription || "");
+  if (!cleanModel && keywords.length === 0) return [];
+
+  const escapeIlike = (v: string) => v.replace(/[%_]/g, (m) => `\\${m}`);
+
+  const queries: Promise<Ticket[]>[] = [];
+  if (cleanModel) {
+    queries.push(
+      (async () => {
+        const { data, error } = await supabase.from("tickets").select(SELECT).eq("model", cleanModel).limit(PAGE_SIZE);
+        if (error) { console.error("getPartSuggestions (model) error:", error.message); return []; }
+        return (data ?? []).map(rowToTicket);
+      })()
+    );
+  }
+  for (const kw of keywords) {
+    queries.push(
+      (async () => {
+        const { data, error } = await supabase
+          .from("tickets")
+          .select(SELECT)
+          .ilike("problem_description", `%${escapeIlike(kw)}%`)
+          .limit(200);
+        if (error) { console.error("getPartSuggestions (keyword) error:", error.message); return []; }
+        return (data ?? []).map(rowToTicket);
+      })()
+    );
+  }
+
+  const results = await Promise.all(queries);
+  const byId = new Map<string, Ticket>();
+  for (const rows of results) {
+    for (const t of rows) {
+      if (t.ticketNo === excludeTicketNo) continue;
+      if (statusGroupOf(t.status) !== "completed") continue;
+      byId.set(String((t as any)._id || t.ticketNo), t);
+    }
+  }
+  if (byId.size === 0) return [];
+
+  const ids = Array.from(byId.keys());
+  const partsByTicket = await getPartsByTicketIds(ids);
+  const tally = new Map<string, PartSuggestion>();
+  for (const [tid, t] of byId) {
+    const parts = partsByTicket.get(tid) ?? [];
+    const seenOnThisTicket = new Set<string>();
+    for (const p of parts) {
+      const partNo = (p.partNo || "").trim();
+      if (!partNo) continue;
+      const key = partNo.toUpperCase();
+      if (seenOnThisTicket.has(key)) continue;
+      seenOnThisTicket.add(key);
+      const existing = tally.get(key);
+      if (existing) {
+        existing.count += 1;
+        if (existing.sampleTicketNos.length < 3) existing.sampleTicketNos.push(t.ticketNo);
+      } else {
+        tally.set(key, { partNo, partDesc: p.partDesc || "", count: 1, sampleTicketNos: [t.ticketNo] });
+      }
+    }
+  }
+  return Array.from(tally.values())
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8);
 }
 
 /** Get all visits for a ticket (newest first). */

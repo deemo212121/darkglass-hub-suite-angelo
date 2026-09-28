@@ -52,6 +52,8 @@ import {
   addTicketPart as sbAddTicketPart,
   updateTicketPart as sbUpdateTicketPart,
   deleteTicketPart as sbDeleteTicketPart,
+  getPartSuggestions,
+  type PartSuggestion,
 } from "@/lib/supabase/tickets";
 import { getTicketComments, addTicketComment } from "@/lib/supabase/comments";
 import { getTicketAlerts, addTicketAlert, removeTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
@@ -1487,6 +1489,13 @@ function TicketDetailsPage() {
   >(null);
   const [modelResourceSaving, setModelResourceSaving] = useState(false);
 
+  // Part suggestions for the Add Part row — past COMPLETED tickets sharing
+  // this model number or a similar-sounding problem description. Loaded
+  // once the ticket's model/problem description are known; re-runs if
+  // either changes (e.g. after editing Product Information).
+  const [partSuggestions, setPartSuggestions] = useState<PartSuggestion[]>([]);
+  const [partSuggestionsLoading, setPartSuggestionsLoading] = useState(false);
+
   // Edit mode state for schedule information
   const [isEditingScheduleInfo, setIsEditingScheduleInfo] = useState(false);
   const [editedScheduleInfo, setEditedScheduleInfo] = useState<Partial<TicketData>>({});
@@ -2306,6 +2315,25 @@ function TicketDetailsPage() {
       .catch((err) => console.error("getModelResources error:", err));
     return () => { cancelled = true; };
   }, [ticket?.model]);
+
+  // Part suggestions — past completed tickets sharing this model or a
+  // similar-sounding problem. Re-runs on model/problem description change
+  // (e.g. right after editing Product Information/Problem Description).
+  useEffect(() => {
+    const model = String(ticket?.model || "").trim();
+    const problem = String(ticket?.problemDescription || "").trim();
+    if (!model && !problem) {
+      setPartSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    setPartSuggestionsLoading(true);
+    getPartSuggestions(model, problem, ticket?.ticketNo)
+      .then((rows) => { if (!cancelled) setPartSuggestions(rows); })
+      .catch((err) => console.error("getPartSuggestions error:", err))
+      .finally(() => { if (!cancelled) setPartSuggestionsLoading(false); });
+    return () => { cancelled = true; };
+  }, [ticket?.model, ticket?.problemDescription, ticket?.ticketNo]);
 
   const handleSaveModelResource = async () => {
     if (!modelResourceModal) return;
@@ -5592,6 +5620,33 @@ function TicketDetailsPage() {
           {marconeLookupMsg ? (
             <div className={`mt-1 text-[10px] ${marconeLookupMsg.kind === "ok" ? "text-emerald-300" : "text-rose-300"}`}>
               {marconeLookupMsg.text}
+            </div>
+          ) : null}
+          {/* Suggested parts from past COMPLETED tickets sharing this model
+              number or a similar-sounding problem description — click a
+              chip to fill Part No/Description, then Lookup for current
+              price/stock. */}
+          {partSuggestionsLoading ? (
+            <div className="mt-1 text-[10px] text-slate-500">Checking past tickets for suggestions…</div>
+          ) : partSuggestions.length > 0 ? (
+            <div className="mt-1.5">
+              <div className="text-[9px] uppercase tracking-wide text-slate-500 mb-0.5">Suggested (from past tickets)</div>
+              <div className="flex flex-wrap gap-1">
+                {partSuggestions.map((s) => (
+                  <button
+                    key={s.partNo}
+                    type="button"
+                    disabled={partsEditDisabled}
+                    onClick={() => setPartDraft((d) => ({ ...d, partNo: s.partNo, partDesc: s.partDesc || d.partDesc }))}
+                    title={`Used on ${s.sampleTicketNos.join(", ")}${s.sampleTicketNos.length < s.count ? ` and ${s.count - s.sampleTicketNos.length} more` : ""}`}
+                    className="rounded border border-emerald-400/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                  >
+                    {s.partNo}
+                    {s.partDesc ? ` — ${s.partDesc.length > 28 ? `${s.partDesc.slice(0, 28)}…` : s.partDesc}` : ""}
+                    <span className="text-emerald-400/70"> ×{s.count}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           ) : null}
         </td>
