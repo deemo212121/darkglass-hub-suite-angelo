@@ -898,7 +898,7 @@ type AccountingDashboardTabId = "overview" | "payroll" | "mileage" | "payrollDis
 const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; Icon: typeof History }[] = [
   { id: "flashTech", label: "Flash Tech", Icon: RouteIcon },
   { id: "mileage", label: "Mileage", Icon: MapPin },
-  { id: "payroll", label: "Office Payroll", Icon: DollarSign },
+  { id: "payroll", label: "Payroll", Icon: DollarSign },
   { id: "payrollDisputes", label: "Payroll Disputes", Icon: AlertCircle },
   { id: "reports", label: "Reports", Icon: FileText },
   { id: "ticketAttendance", label: "Ticket Attendance", Icon: FileText },
@@ -2560,7 +2560,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // isTechPortion row if they hold TECHNICIAN as a secondary role AND
   // actually have tech pay to show (skip a noisy $0 row for someone who
   // merely holds the role but did no tech work this period).
-  const payrollRows: EmployeePayrollRow[] = employees.filter((emp) => emp.isActive).flatMap((emp) => {
+  // A deactivated employee is still included when they actually have hours
+  // owed for the selected period (hoursMap only ever gets an entry from a
+  // real punch or credited PTO in that window — see computeHoursMap above)
+  // — e.g. deactivated 9/1 but this period runs 8/27–9/12 and they worked
+  // several of those days before being let go. Their pay for that period
+  // shouldn't silently vanish just because their account is inactive today;
+  // the row is labeled "(Deactivated)" (see EmployeePayrollRow.employee.isActive)
+  // so it's still obvious they're no longer active.
+  const payrollRows: EmployeePayrollRow[] = employees.filter((emp) => emp.isActive || hoursMap.has(emp.id)).flatMap((emp) => {
     const comp = latestCompMap.get(emp.id);
     const isFixed = comp?.compensation_type === "fixed";
     const hourlyRate = isFixed ? 0 : comp?.hourly_rate ?? emp.hourly_rate ?? 0;
@@ -4714,6 +4722,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 )}
                                 {row.employee.isTrainee && (
                                   <span className="ml-1.5 shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-300">Trainee</span>
+                                )}
+                                {!row.employee.isActive && (
+                                  <span
+                                    className="ml-1.5 shrink-0 rounded-full border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-300"
+                                    title="Deactivated since this row was pulled up — still shown because they have hours owed for this period."
+                                  >
+                                    Deactivated
+                                  </span>
                                 )}
                                 {(() => {
                                   const mark = reviewMarks.get(row.employee.id);

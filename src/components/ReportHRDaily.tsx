@@ -1639,7 +1639,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // address, etc. with a partial save.
   const [employeeInfoByProfileId, setEmployeeInfoByProfileId] = useState<Map<string, EmployeeInfo>>(new Map());
 
-  const [confirmDialog, setConfirmDialog] = useState<{ show: boolean; employeeId: string; employeeName: string; newStatus: EmploymentStatus } | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ show: boolean; employeeId: string; employeeName: string; newStatus: EmploymentStatus; effectiveDate: string } | null>(null);
 
   const loadEmployees = async () => {
     setEmployeesLoading(true);
@@ -15904,13 +15904,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleUpdateEmployeeStatus = (id: string, newStatus: EmploymentStatus) => {
     if (newStatus === "terminated" || newStatus === "resigned" || newStatus === "inactive") {
       const employee = employees.find(e => e.id === id);
-      if (employee) setConfirmDialog({ show: true, employeeId: id, employeeName: employee.name, newStatus });
+      // Defaults to today, but the confirm dialog's own date input lets this
+      // be corrected before saving — e.g. HR processing a termination a few
+      // days after the person's actual last day shouldn't stamp the
+      // Separation Date with "today" instead of when they really left.
+      if (employee) setConfirmDialog({ show: true, employeeId: id, employeeName: employee.name, newStatus, effectiveDate: today });
     } else {
       void persistEmployeeStatus(id, newStatus);
     }
   };
 
-  const persistEmployeeStatus = async (id: string, newStatus: EmploymentStatus) => {
+  const persistEmployeeStatus = async (id: string, newStatus: EmploymentStatus, effectiveDate: string = today) => {
     const employee = employees.find((e) => e.id === id);
     const prevStatus = employee?.status;
     try {
@@ -15918,7 +15922,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       await saveProfileEmployeeInfo(id, {
         ...info,
         employmentStatus: newStatus,
-        employmentStatusDate: today,
+        employmentStatusDate: effectiveDate,
         // Reactivating clears a prior terminateDate (set by Terminated/
         // Resigned here, or by Training List's own Quit/Stopped action on
         // this same profile) — otherwise they'd come back Active but stay
@@ -15927,8 +15931,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         terminateDate: newStatus === "active" ? undefined : info.terminateDate,
       });
       await updateCompanyUser(id, { isActive: newStatus === "active" });
-      setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, status: newStatus, terminationDate: newStatus === "terminated" || newStatus === "resigned" ? today : e.terminationDate } : e)));
-      void logActivity({ action: "employee_status_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { from: prevStatus, to: newStatus, status: newStatus } });
+      setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, status: newStatus, terminationDate: newStatus === "active" ? e.terminationDate : effectiveDate } : e)));
+      void logActivity({ action: "employee_status_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { from: prevStatus, to: newStatus, status: newStatus, effectiveDate } });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update employment status.");
     }
@@ -15936,7 +15940,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const handleConfirmStatusChange = async () => {
     if (!confirmDialog) return;
-    await persistEmployeeStatus(confirmDialog.employeeId, confirmDialog.newStatus);
+    await persistEmployeeStatus(confirmDialog.employeeId, confirmDialog.newStatus, confirmDialog.effectiveDate);
     setConfirmDialog(null);
   };
 
@@ -16105,6 +16109,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     } catch (err) {
       console.error("Failed to save start date:", err);
       setEmployees((p) => p.map((e) => (e.id === id ? { ...e, startDate: prevValue } : e)));
+    }
+  };
+
+  // Master List's "Separation Date" column — writes employee_info.
+  // employmentStatusDate, the same field persistEmployeeStatus auto-stamps
+  // with "today" the moment Status flips to Inactive/Terminated/Resigned
+  // (see Employee.terminationDate = info.employmentStatusDate ||
+  // info.terminateDate above). Editable here so it can be corrected to the
+  // real separation date when HR updates the status days after the fact.
+  const handleUpdateSeparationDate = async (id: string, value: string) => {
+    const employee = employees.find((e) => e.id === id);
+    const prevValue = employee?.terminationDate ?? "";
+    setEmployees((p) => p.map((e) => (e.id === id ? { ...e, terminationDate: value } : e)));
+    try {
+      const info = (await getProfileEmployeeInfo(id)) || {};
+      await saveProfileEmployeeInfo(id, { ...info, employmentStatusDate: value });
+      void logActivity({ action: "employee_separation_date_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { from: prevValue, to: value } });
+    } catch (err) {
+      console.error("Failed to save separation date:", err);
+      setEmployees((p) => p.map((e) => (e.id === id ? { ...e, terminationDate: prevValue } : e)));
     }
   };
 
@@ -16972,7 +16996,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // TicketColumnFilter component and pattern TicketList.tsx already
   // established for its own column filters.
   const MASTER_LIST_COLUMN_FILTER_KEYS = [
-    "status", "startDate", "name", "phone", "address", "department", "position",
+    "status", "startDate", "separationDate", "name", "phone", "address", "department", "position",
     "hoursOfWork", "totalWorkHours", "mealTime", "sickLeave", "vacationLeave",
     "tierLevel", "employmentStatus", "warnings",
   ] as const;
@@ -16986,6 +17010,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const masterListColumnValueGetters: Record<MasterListColumnFilterKey, (e: Employee) => string> = {
     status: (e) => (e.status ? e.status.charAt(0).toUpperCase() + e.status.slice(1) : ""),
     startDate: (e) => e.startDate || "",
+    separationDate: (e) => e.terminationDate || "",
     name: (e) => e.name || "",
     phone: (e) => e.phone || "",
     address: (e) => e.address || "",
@@ -19708,7 +19733,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           const showBranchColumn = masterListDept === "Parts Manager and Parts";
           const showTierColumn = masterListDept === "Current Technicians";
           const showAccessColumn = masterListDept === MASTER_LIST_TRAINEE_TAB;
-          const colCount = (showBranchColumn ? 15 : 14) + (showTierColumn ? 1 : 0) + (showAccessColumn ? 1 : 0);
+          const colCount = (showBranchColumn ? 16 : 15) + (showTierColumn ? 1 : 0) + (showAccessColumn ? 1 : 0);
           return (
         <div className="overflow-x-auto">
           <table className="w-full text-[11px]">
@@ -19717,6 +19742,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 {showBranchColumn && <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Branch</th>}
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Status{renderMasterListColFilter("status", "Status")}</th>
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes the employee's hire date">Start Date{renderMasterListColFilter("startDate", "Start Date")}</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — when this employee actually left. Auto-stamped with today's date the moment Status is set to Inactive/Terminated/Resigned; correct it here if that happened after the fact.">Separation Date{renderMasterListColFilter("separationDate", "Separation Date")}</th>
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Name{renderMasterListColFilter("name", "Name")}</th>
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.phone_number">Phone{renderMasterListColFilter("phone", "Phone")}</th>
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Address{renderMasterListColFilter("address", "Address")}</th>
@@ -19806,10 +19832,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             "bg-yellow-500/20 text-yellow-300"
                           }`}
                         >
-                          <option value="active">Active</option>
-                          <option value="inactive">Inactive</option>
-                          <option value="terminated">Terminated</option>
-                          <option value="resigned">Resigned</option>
+                          <option value="active" className="bg-slate-800 text-white">Active</option>
+                          <option value="inactive" className="bg-slate-800 text-white">Inactive</option>
+                          <option value="terminated" className="bg-slate-800 text-white">Terminated</option>
+                          <option value="resigned" className="bg-slate-800 text-white">Resigned</option>
                         </select>
                       </td>
                       <td className="px-2 py-1">
@@ -19822,6 +19848,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           }}
                           className="glass-input text-[11px] py-0.5 px-1 rounded-md w-[110px]"
                         />
+                      </td>
+                      <td className="px-2 py-1">
+                        {employee.status === "active" ? (
+                          <span className="text-slate-600 italic text-[10px]">—</span>
+                        ) : (
+                          <input
+                            key={`${employee.id}:${employee.terminationDate || ""}`}
+                            type="date"
+                            defaultValue={employee.terminationDate || ""}
+                            onBlur={(e) => {
+                              const v = e.target.value;
+                              if (v !== (employee.terminationDate || "")) void handleUpdateSeparationDate(employee.id, v);
+                            }}
+                            className="glass-input text-[11px] py-0.5 px-1 rounded-md w-[110px]"
+                          />
+                        )}
                       </td>
                       <td className="px-2 py-1 font-medium whitespace-nowrap">
                         <button
@@ -34293,6 +34335,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <p className="text-sm text-muted-foreground mb-4">
               Are you sure you want to mark <span className="font-semibold text-white">{confirmDialog.employeeName}</span> as <span className="font-semibold text-white capitalize">{confirmDialog.newStatus}</span>? This will also deactivate their account.
             </p>
+            <div className="flex flex-col gap-1 mb-4">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Effective Date</label>
+              <input
+                type="date"
+                value={confirmDialog.effectiveDate}
+                max={today}
+                onChange={(e) => setConfirmDialog({ ...confirmDialog, effectiveDate: e.target.value || today })}
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              <p className="text-[10px] text-muted-foreground mt-0.5">Stamped onto Separation Date — defaults to today, but set it to when they actually left if this is being processed after the fact.</p>
+            </div>
             <div className="flex gap-2 justify-end">
               <button onClick={handleCancelStatusChange} className="btn text-sm px-4 py-2">Cancel</button>
               <button

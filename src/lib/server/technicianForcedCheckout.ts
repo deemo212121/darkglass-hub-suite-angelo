@@ -104,8 +104,19 @@ const SCHEDULE_TZ_TO_IANA: Record<string, string> = {
   EST: "America/New_York",
 };
 
-/** How far back to look for un-closed entries — yesterday plus a couple of straggler days. */
-const STRAGGLER_LOOKBACK_DAYS = 4;
+/**
+ * How far back to look for un-closed entries. Previously 4 — but the query
+ * is `work_date=gte.<today-N days>`, a sliding window with no floor, so any
+ * entry that wasn't caught within its first N days (a cron outage, an
+ * error, a missed run) aged out of the window and became permanently
+ * invisible to every future run, stuck open forever with no way for this
+ * job to ever reach it again. There's no real cost to looking back much
+ * further — the query is already tightly scoped to check_out is null
+ * (genuinely rare, anomalous rows, not a full-table scan), so a generous
+ * margin costs nothing and just means a straggler from any real outage
+ * eventually gets swept up instead of being lost for good.
+ */
+const STRAGGLER_LOOKBACK_DAYS = 90;
 
 function resolveCreds(env: Record<string, string | undefined>) {
   const g = globalThis as any;
