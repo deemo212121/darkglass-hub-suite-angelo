@@ -4,6 +4,7 @@ import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, placeEncompassOrder, isEncompassDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
 import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
+import { PART_STATUS_OPTIONS } from "@/lib/partStatuses";
 import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone, ClipboardCheck, ChevronDown, X } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { isFirebaseReady, auth as firebaseAuth } from "@/lib/firebase/config";
@@ -5707,31 +5708,7 @@ function TicketDetailsPage() {
         <td className="px-1 py-1.5">
           <select value={partDraft.status} onChange={(e) => setPartDraft((d) => ({ ...d, status: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500">
             <option value="">Status*</option>
-            <option>Back Order</option>
-            <option>Cancelled</option>
-            <option>Claimed</option>
-            <option>CX Home</option>
-            <option>Cx Received</option>
-            <option>Defective</option>
-            <option>Dropship</option>
-            <option>Hold for Estimation</option>
-            <option>Hold for next vist</option>
-            <option>In Review</option>
-            <option>Lost</option>
-            <option>Need PO</option>
-            <option>Not Used &amp; Stocked</option>
-            <option>PAID</option>
-            <option>Part Ready</option>
-            <option>PNN</option>
-            <option>PO Made</option>
-            <option>RA - Defect</option>
-            <option>RA- DMG</option>
-            <option>RA - PNN</option>
-            <option>RA - Qty Discrepancy</option>
-            <option>SQT Received</option>
-            <option>Tech Pickup</option>
-            <option>Transfer to Another Ticket</option>
-            <option>Used</option>
+            {PART_STATUS_OPTIONS.map((s) => <option key={s}>{s}</option>)}
           </select>
         </td>
         <td className="px-1 py-1.5">
@@ -7535,31 +7512,7 @@ function TicketDetailsPage() {
                             <td className={cellWrap}>
                               <select value={String(val("status") ?? "")} onChange={(e) => set("status", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={`${selectCls} text-blue-300 font-semibold`}>
                                 <option value="">Status*</option>
-                                <option>Back Order</option>
-                                <option>Cancelled</option>
-                                <option>Claimed</option>
-                                <option>CX Home</option>
-                                <option>Cx Received</option>
-                                <option>Defective</option>
-                                <option>Dropship</option>
-                                <option>Hold for Estimation</option>
-                                <option>Hold for next vist</option>
-                                <option>In Review</option>
-                                <option>Lost</option>
-                                <option>Need PO</option>
-                                <option>Not Used &amp; Stocked</option>
-                                <option>PAID</option>
-                                <option>Part Ready</option>
-                                <option>PNN</option>
-                                <option>PO Made</option>
-                                <option>RA - Defect</option>
-                                <option>RA- DMG</option>
-                                <option>RA - PNN</option>
-                                <option>RA - Qty Discrepancy</option>
-                                <option>SQT Received</option>
-                                <option>Tech Pickup</option>
-                                <option>Transfer to Another Ticket</option>
-                                <option>Used</option>
+                                {PART_STATUS_OPTIONS.map((s) => <option key={s}>{s}</option>)}
                               </select>
                             </td>
                             <td className={cellWrap}><input value={String(val("note") ?? "")} onChange={(e) => set("note", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Note" /></td>

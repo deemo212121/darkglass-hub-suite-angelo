@@ -9,11 +9,16 @@ import {
   getPartsToReceive,
   updatePartReceiveRow,
   getDistinctPartSources,
+  getDeliveredDates,
+  saveDeliveredDate,
   type PartReceiveRow,
 } from "@/lib/supabase/partReceive";
+import { marconeTrackDelivery } from "@/lib/marconeApi";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
 import { addPendingDoneItem, removePendingDoneItem } from "@/lib/partsDoneQueue";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
+import { PART_STATUS_OPTIONS } from "@/lib/partStatuses";
+import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 const PART_RECEIVE_ACTIVITY_TARGET_TYPE = "part_receive";
@@ -113,22 +118,19 @@ function agingClass(days: number | null): string {
   return "text-red-400";
 }
 
-// A row-level receive-completeness status — distinct from the part's
-// ticket-facing `status` (always "PO Made" here, since that's this page's
-// own query filter, so it wouldn't differentiate any row). Partial (some
-// but not all of quantity received) isn't otherwise surfaced anywhere —
-// the existing Receive Status checkboxes only split Not Received/Received
-// on qtyReceived > 0, so a partial row currently just reads as "Received."
-type PartReceiveStatus = "Not Received" | "Partial" | "Received";
-function receiveStatusOf(item: Pick<PartReceiveRow, "quantity" | "qtyReceived">): PartReceiveStatus {
-  if (item.qtyReceived <= 0) return "Not Received";
-  if (item.qtyReceived < item.quantity) return "Partial";
-  return "Received";
+// The tracking number Marcone's /orders/trackpackage can look up (FedEx or
+// UPS only) — null for USPS, will-call pickups, or free-text entries.
+function carrierTrackingNumber(item: Pick<PartReceiveRow, "tracking" | "shipMethod">): string | null {
+  if (NO_TRACKING_SHIP_METHODS.has(item.shipMethod.trim().toLowerCase())) return null;
+  const tn = item.tracking.split(/[,\s/;|]+/).map((v) => v.trim()).find(Boolean) ?? "";
+  if (/^1Z[0-9A-Z]{16}$/i.test(tn)) return tn;
+  if (/^\d{12,15}$/.test(tn)) return tn;
+  if (/^\d{20,22}$/.test(tn) && !/^(9[1-6])/.test(tn)) return tn;
+  return null;
 }
-function receiveStatusClass(status: PartReceiveStatus): string {
-  if (status === "Received") return "bg-green-500/15 border-green-400/40 text-green-300";
-  if (status === "Partial") return "bg-amber-500/15 border-amber-400/40 text-amber-300";
-  return "bg-slate-500/15 border-slate-400/40 text-slate-300";
+
+function agingLabel(days: number | null): string {
+  return days === null ? "—" : days > 0 ? `${days}d` : "On time";
 }
 
 // Column visibility (persisted per browser) — same "Columns (n/m)" /
@@ -147,6 +149,7 @@ const PART_RECEIVE_COLUMNS = [
   { key: "partDesc", label: "Part Desc*" },
   { key: "eta", label: "ETA" },
   { key: "aging", label: "Aging" },
+  { key: "deliveredDate", label: "Delivered Date" },
   { key: "receiveDate", label: "Receive Date" },
   { key: "tracking", label: "Tracking" },
   { key: "ticketNo", label: "Ticket No" },
@@ -163,12 +166,40 @@ type PartReceiveColumnKey = (typeof PART_RECEIVE_COLUMNS)[number]["key"];
 // "Ticket" group over 4 sub-columns, flanked by ungrouped columns) — used
 // to keep colSpans correct as columns are hidden/shown.
 const PART_RECEIVE_LEADING_COLS: readonly PartReceiveColumnKey[] = [
-  "receive", "partStatus", "uniqueId", "poNumber", "partsNote", "partFrom", "poDate", "orderNo", "invoiceNo", "partNumber", "partDesc", "eta", "aging", "receiveDate", "tracking",
+  "receive", "partStatus", "uniqueId", "poNumber", "partsNote", "partFrom", "poDate", "orderNo", "invoiceNo", "partNumber", "partDesc", "eta", "aging", "deliveredDate", "receiveDate", "tracking",
 ];
 const PART_RECEIVE_TICKET_GROUP_COLS: readonly PartReceiveColumnKey[] = ["ticketNo", "ticketStatus", "tech", "schedule"];
 const PART_RECEIVE_TRAILING_COLS: readonly PartReceiveColumnKey[] = ["qtyOrdered", "qtyReceived", "partCost", "coreCost"];
 
 const PART_RECEIVE_COLUMN_VISIBILITY_KEY = "ahs:part-receive:visible-columns";
+
+// Text each column is filtered on — matches what the cell displays.
+const PART_RECEIVE_FILTER_VALUE: Record<PartReceiveColumnKey, (item: PartReceiveRow) => string> = {
+  receive: (i) => (i.qtyReceived > 0 ? "Received" : "Not Received"),
+  partStatus: (i) => i.status,
+  uniqueId: (i) => i.id,
+  poNumber: (i) => i.poNo,
+  partsNote: (i) => i.note,
+  partFrom: (i) => i.partFrom,
+  poDate: (i) => i.poDate,
+  orderNo: (i) => i.orderNo,
+  invoiceNo: (i) => i.invoiceNo,
+  partNumber: (i) => i.partNo,
+  partDesc: (i) => i.partDesc,
+  eta: (i) => i.eta,
+  aging: (i) => agingLabel(agingDays(i)),
+  deliveredDate: (i) => i.deliveredDate,
+  receiveDate: (i) => i.receivedDate,
+  tracking: (i) => i.tracking,
+  ticketNo: (i) => i.ticketNo,
+  ticketStatus: (i) => i.ticketStatus,
+  tech: (i) => i.tech,
+  schedule: (i) => i.schedule,
+  qtyOrdered: (i) => String(i.quantity),
+  qtyReceived: (i) => String(i.qtyReceived),
+  partCost: (i) => i.partPrice.toFixed(2),
+  coreCost: (i) => i.coreValue.toFixed(2),
+};
 
 function loadPartReceiveVisibleColumns(): Record<string, boolean> {
   const allVisible = Object.fromEntries(PART_RECEIVE_COLUMNS.map((c) => [c.key, true]));
@@ -186,6 +217,8 @@ function loadPartReceiveVisibleColumns(): Record<string, boolean> {
 // "not received" vs "received" (the badge counts, the totals row) — the
 // Status donut just visualizes the same two numbers, so it needs the same
 // colors.
+const NO_LOCATION = "(No location)";
+
 const DONUT_NOT_RECEIVED_COLOR = "#f59e0b";
 const DONUT_RECEIVED_COLOR = "#22c55e";
 
@@ -253,11 +286,51 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
     try { localStorage.setItem(PART_RECEIVE_COLUMN_VISIBILITY_KEY, JSON.stringify(all)); } catch { /* ignore */ }
   };
 
+  // Per tracking-number lookup state for the Delivered Date column:
+  // "checking" while in flight, otherwise the latest carrier scan text for
+  // packages that aren't delivered yet ("" when Marcone had nothing).
+  const [deliveryLookup, setDeliveryLookup] = useState<Record<string, "checking" | { lastEvent: string }>>({});
+
+  const lookUpDeliveries = async (items: PartReceiveRow[]) => {
+    const pending = new Map<string, string[]>();
+    for (const item of items) {
+      if (item.deliveredDate) continue;
+      const tn = carrierTrackingNumber(item);
+      if (!tn) continue;
+      const ids = pending.get(tn);
+      if (ids) ids.push(item.id);
+      else pending.set(tn, [item.id]);
+    }
+    const queue = Array.from(pending.entries());
+    setDeliveryLookup((prev) => ({ ...prev, ...Object.fromEntries(queue.map(([tn]) => [tn, "checking" as const])) }));
+    const worker = async () => {
+      for (let next = queue.shift(); next; next = queue.shift()) {
+        const [tn, ids] = next;
+        const res = await marconeTrackDelivery(tn);
+        const info = res.success ? res.data : undefined;
+        if (info?.deliveredDate) {
+          const { deliveredDate, deliveredLocation = "" } = info;
+          setReceiveItems((current) => current.map((r) => (ids.includes(r.id) ? { ...r, deliveredDate, deliveredLocation } : r)));
+          await Promise.all(ids.map((id) => saveDeliveredDate(id, deliveredDate, deliveredLocation).catch((err) => console.warn("Couldn't save delivered date (is migration 0325 applied?):", err))));
+        }
+        setDeliveryLookup((prev) => ({ ...prev, [tn]: { lastEvent: info?.lastEvent ?? "" } }));
+      }
+    };
+    await Promise.all(Array.from({ length: 4 }, worker));
+  };
+
   useEffect(() => {
     setLoading(true);
     setLoadError(null);
-    getPartsToReceive()
-      .then(setReceiveItems)
+    Promise.all([getPartsToReceive(), getDeliveredDates()])
+      .then(([items, delivered]) => {
+        const merged = items.map((item) => {
+          const d = delivered.get(item.id);
+          return d ? { ...item, deliveredDate: d.date, deliveredLocation: d.location } : item;
+        });
+        setReceiveItems(merged);
+        lookUpDeliveries(merged);
+      })
       .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
     getDistinctPartSources().then(setPartSources).catch((err) => console.error("Failed to load part sources:", err));
@@ -368,6 +441,17 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
   const setLocalNote = (id: string, value: string) => {
     setReceiveItems((current) => current.map((item) => (item.id === id ? { ...item, note: value } : item)));
   };
+  const [noteModal, setNoteModal] = useState<{ id: string; label: string; draft: string } | null>(null);
+  const saveNoteModal = () => {
+    if (!noteModal) return;
+    const current = receiveItems.find((r) => r.id === noteModal.id);
+    if (current && current.note !== noteModal.draft) {
+      markEditStart("note", noteModal.id, current.note);
+      setLocalNote(noteModal.id, noteModal.draft);
+      persistNote(noteModal.id, noteModal.draft);
+    }
+    setNoteModal(null);
+  };
   const persistNote = async (id: string, value: string) => {
     try {
       await updatePartReceiveRow(id, { note: value });
@@ -387,6 +471,38 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
       setSaveError(err instanceof Error ? err.message : "Failed to save note");
     }
   };
+
+  const handleStatusChange = (id: string, nextStatus: string) => {
+    const item = receiveItems.find((r) => r.id === id);
+    if (!item || item.status === nextStatus) return;
+    const prevStatus = item.status;
+    setReceiveItems((current) => current.map((r) => (r.id === id ? { ...r, status: nextStatus } : r)));
+    updatePartReceiveRow(id, { status: nextStatus })
+      .then(() => {
+        setSaveError(null);
+        logActivity({
+          action: "part_receive_status_changed",
+          targetType: PART_RECEIVE_ACTIVITY_TARGET_TYPE,
+          targetId: id,
+          targetLabel: partReceiveActivityLabel(item),
+          details: { from: prevStatus || null, to: nextStatus },
+        });
+      })
+      .catch((err) => {
+        setReceiveItems((current) => current.map((r) => (r.id === id ? { ...r, status: prevStatus } : r)));
+        setSaveError(err instanceof Error ? err.message : "Failed to save part status");
+      });
+  };
+
+  const [columnFilters, setColumnFilters] = useState<Partial<Record<PartReceiveColumnKey, Set<string>>>>({});
+  const colFilter = (key: PartReceiveColumnKey) => (
+    <TicketColumnFilter
+      options={receiveItems.map((i) => PART_RECEIVE_FILTER_VALUE[key](i))}
+      selected={columnFilters[key] ?? new Set()}
+      onChange={(next) => setColumnFilters((prev) => ({ ...prev, [key]: next }))}
+      label={`Filter by ${PART_RECEIVE_COLUMNS.find((c) => c.key === key)?.label ?? key}`}
+    />
+  );
 
   const [dirtyInvoiceIds, setDirtyInvoiceIds] = useState<Set<string>>(new Set());
   const [savingInvoices, setSavingInvoices] = useState(false);
@@ -438,7 +554,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
   };
 
   const filteredItems = receiveItems.filter((item) => {
-    if (location && item.location !== location) return false;
+    if (location && (item.location || NO_LOCATION) !== location) return false;
     if (partFrom && item.partFrom !== partFrom) return false;
     if (ticketFilter && !item.ticketNo.toLowerCase().includes(ticketFilter.trim().toLowerCase())) return false;
     if (dateFrom || dateTo) {
@@ -446,6 +562,9 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
       const rowDate = new Date(item.poDate);
       if (dateFrom && rowDate < new Date(dateFrom)) return false;
       if (dateTo && rowDate > new Date(dateTo)) return false;
+    }
+    for (const [key, selected] of Object.entries(columnFilters) as [PartReceiveColumnKey, Set<string>][]) {
+      if (selected.size > 0 && !selected.has(PART_RECEIVE_FILTER_VALUE[key](item))) return false;
     }
     const isReceived = item.qtyReceived > 0;
     return isReceived ? showReceived : showNotReceived;
@@ -475,8 +594,11 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
     }
     return true;
   });
-  const branchSummary = LOCATIONS.map((loc) => {
-    const items = branchScoped.filter((item) => item.location === loc);
+  // Built from the locations actually on these parts, not the LOCATIONS
+  // constant — a ticket whose location is spelled differently or blank
+  // would otherwise be dropped, making this total disagree with the rest.
+  const branchSummary = Array.from(new Set(branchScoped.map((item) => item.location || NO_LOCATION))).map((loc) => {
+    const items = branchScoped.filter((item) => (item.location || NO_LOCATION) === loc);
     return {
       location: loc,
       notReceived: items.filter((item) => item.qtyReceived <= 0).length,
@@ -502,7 +624,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
   // instead of Location, so picking a source in the dropdown doesn't just
   // collapse this donut down to a single 100% slice.
   const partFromScoped = receiveItems.filter((item) => {
-    if (location && item.location !== location) return false;
+    if (location && (item.location || NO_LOCATION) !== location) return false;
     if (dateFrom || dateTo) {
       if (!item.poDate) return false;
       const rowDate = new Date(item.poDate);
@@ -597,50 +719,100 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                 than a sane fixed one) is what made them balloon into huge,
                 mostly-empty rings. The list scrolls internally past this
                 height instead. */}
-            <div className="flex flex-col lg:flex-row gap-4 items-stretch lg:max-h-[520px]">
+            <div className="flex flex-col lg:flex-row gap-4 items-stretch">
               {/* ~1/4 width on wide screens — the list itself doesn't need
                   more, and the donut alongside fills what would otherwise
                   be dead space to its right. */}
-              <div className="lg:w-1/4 lg:shrink-0 rounded-lg border border-white/10 divide-y divide-white/5 overflow-y-auto">
-                <button
-                  type="button"
-                  onClick={() => setLocation("")}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition ${
-                    location === "" ? "bg-white/10" : "hover:bg-white/5"
-                  }`}
-                >
-                  <span className="inline-flex shrink-0 items-center rounded-md border border-white/20 bg-white/10 px-2 py-0.5 text-[11px] font-bold tracking-wide text-white">
-                    ALL LOCATIONS
-                  </span>
-                  <span className="ml-auto text-xs text-slate-300">
-                    <span className="font-semibold text-amber-300">{allBranchTotals.notReceived}</span> not rcvd ·{" "}
-                    <span className="font-semibold text-green-400">{allBranchTotals.received}</span> rcvd
-                  </span>
-                </button>
-                {branchSummary.map((b) => {
-                  const c = branchChipColor(b.location);
-                  const active = location === b.location;
-                  return (
-                    <button
-                      key={b.location}
-                      type="button"
-                      onClick={() => setLocation(active ? "" : b.location)}
-                      title={b.location}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition ${
-                        active ? "bg-white/10" : "hover:bg-white/5"
-                      }`}
-                    >
-                      <span className={`inline-flex shrink-0 items-center justify-center rounded-md border px-2 py-0.5 text-[11px] font-bold tracking-wide min-w-[3.25rem] ${c.bg} ${c.border} ${c.text}`}>
-                        {branchAbbrev(b.location)}
-                      </span>
-                      <span className="ml-auto text-xs text-slate-300">
-                        <span className="font-semibold text-amber-300">{b.notReceived}</span> not rcvd ·{" "}
-                        <span className="font-semibold text-green-400">{b.received}</span> rcvd
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+              {(() => {
+                const bars = branchSummary
+                  .map((b) => ({ ...b, total: b.notReceived + b.received }))
+                  .sort((a, b) => b.total - a.total || a.location.localeCompare(b.location));
+                const grandTotal = allBranchTotals.notReceived + allBranchTotals.received;
+                const maxTotal = Math.max(1, ...bars.map((b) => b.total));
+                const step = maxTotal <= 10 ? 2 : maxTotal <= 25 ? 5 : maxTotal <= 50 ? 10 : Math.ceil(maxTotal / 50) * 10;
+                const axisMax = Math.ceil(maxTotal / step) * step;
+                const ticks = Array.from({ length: axisMax / step + 1 }, (_, i) => i * step);
+                const pct = (n: number) => (grandTotal > 0 ? ((n / grandTotal) * 100).toFixed(1) : "0.0");
+                return (
+                  <div className="lg:w-[40%] lg:shrink-0 rounded-lg border border-white/10 p-4 flex flex-col min-h-0">
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="min-w-0">
+                        <p className="text-base font-bold text-white leading-tight">Parts for Receive by Branch</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Total Parts for Receive: <span className="font-semibold text-slate-200 tabular-nums">{grandTotal}</span>
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setLocation("")}
+                        title="Show all branches"
+                        className={`shrink-0 flex items-center gap-2 rounded-lg border px-3 py-1.5 transition ${
+                          location === "" ? "border-blue-400/50 bg-blue-500/10" : "border-white/15 bg-white/5 hover:bg-white/10"
+                        }`}
+                      >
+                        <span className="text-2xl font-bold text-white tabular-nums leading-none">{grandTotal}</span>
+                        <span className="text-[10px] leading-tight text-muted-foreground text-left">Total Parts<br />for Receive</span>
+                      </button>
+                    </div>
+
+                    <div className="flex-1">
+                      <div className="relative">
+                        {/* Gridlines at each axis tick, behind the bars. */}
+                        <div className="pointer-events-none absolute inset-y-0 left-12 right-20">
+                          {ticks.map((t) => (
+                            <div key={t} className="absolute inset-y-0 border-l border-white/5" style={{ left: `${(t / axisMax) * 100}%` }} />
+                          ))}
+                        </div>
+                        <div className="relative flex flex-col gap-1">
+                          {bars.map((b) => {
+                            const active = location === b.location;
+                            const dimmed = location !== "" && !active;
+                            const color = b.location === NO_LOCATION ? "#64748b" : branchDonutHex(b.location);
+                            return (
+                              <button
+                                key={b.location}
+                                type="button"
+                                onClick={() => setLocation(active ? "" : b.location)}
+                                title={`${b.location} — ${b.notReceived} not received · ${b.received} received`}
+                                className={`group flex items-center gap-0 rounded text-left transition ${active ? "bg-white/10" : "hover:bg-white/5"} ${dimmed ? "opacity-40" : ""}`}
+                              >
+                                <span className="w-12 shrink-0 pr-2 text-right text-[11px] font-semibold text-slate-300">
+                                  {b.location === NO_LOCATION ? "N/A" : branchAbbrev(b.location)}
+                                </span>
+                                <span className="relative flex-1 h-4">
+                                  <span
+                                    className="absolute inset-y-0 left-0 rounded-r"
+                                    style={{ width: `${Math.max(1.5, (b.total / axisMax) * 100)}%`, background: color }}
+                                  />
+                                </span>
+                                <span className="w-20 shrink-0 pl-2 text-[11px] text-slate-400 tabular-nums whitespace-nowrap">
+                                  <span className="font-bold text-slate-100">{b.total}</span> ({pct(b.total)}%)
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* X-axis — kept outside the scroll area so it stays visible. */}
+                    <div className="mt-2 border-t border-white/10 pt-1">
+                      <div className="relative ml-12 mr-20 h-4">
+                        {ticks.map((t) => (
+                          <span
+                            key={t}
+                            className="absolute -translate-x-1/2 text-[10px] text-slate-500 tabular-nums"
+                            style={{ left: `${(t / axisMax) * 100}%` }}
+                          >
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                      <p className="text-center text-[10px] text-slate-500 mt-1">Number of Parts</p>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Fills the remaining space beside the (now-narrow) list —
                   three breakdowns of the same underlying data (status,
@@ -649,20 +821,16 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                   DonutSummaryCard's own h-full) stretches to match the
                   branch list's full height instead of packing to the top
                   and leaving the rest of the panel blank. */}
-              <div className="flex-1 flex flex-wrap gap-4">
+              <div className="flex-1 flex flex-wrap gap-4 lg:self-start">
                 <DonutSummaryCard
                   title="Status"
                   data={[
-                    { name: "Not received", value: allBranchTotals.notReceived },
                     { name: "Received", value: allBranchTotals.received },
-                  ].filter((d) => d.value > 0)}
+                    { name: "Not received", value: allBranchTotals.notReceived },
+                  ]}
                   colorFor={(name) => (name === "Received" ? DONUT_RECEIVED_COLOR : DONUT_NOT_RECEIVED_COLOR)}
-                  centerValue={
-                    allBranchTotals.notReceived + allBranchTotals.received > 0
-                      ? `${Math.round((allBranchTotals.received / (allBranchTotals.notReceived + allBranchTotals.received)) * 100)}%`
-                      : "—"
-                  }
-                  centerLabel="Received"
+                  centerValue={String(allBranchTotals.notReceived + allBranchTotals.received)}
+                  centerLabel="Total Parts"
                 />
                 <DonutSummaryCard
                   title="By Location"
@@ -833,33 +1001,29 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
             <table className="w-full min-w-[1900px] text-xs pt-compact">
               <thead>
                 <tr className="bg-blue-900/50 border-b border-blue-500/30">
-                  {isColVisible("receive") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Receive</th>}
-                  {isColVisible("partStatus") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Part Status</th>}
-                  {isColVisible("uniqueId") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Unique ID*</th>}
-                  {isColVisible("poNumber") && <th className="px-4 py-3 text-left font-semibold text-blue-300">PO Number</th>}
-                  {isColVisible("partsNote") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Parts Note</th>}
-                  {isColVisible("partFrom") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Part From</th>}
-                  {isColVisible("poDate") && <th className="px-4 py-3 text-left font-semibold text-blue-300">P/O Date</th>}
-                  {isColVisible("orderNo") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Order No</th>}
-                  {isColVisible("invoiceNo") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Invoice #</th>}
-                  {isColVisible("partNumber") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Part Number*</th>}
-                  {isColVisible("partDesc") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Part Desc*</th>}
-                  {isColVisible("eta") && <th className="px-4 py-3 text-left font-semibold text-blue-300">ETA</th>}
-                  {isColVisible("aging") && <th className="px-4 py-3 text-left font-semibold text-blue-300" title="Business days late vs. ETA, excluding weekends">Aging</th>}
-                  {isColVisible("receiveDate") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Receive Date</th>}
-                  {isColVisible("tracking") && <th className="px-4 py-3 text-left font-semibold text-blue-300">Tracking</th>}
+                  {PART_RECEIVE_LEADING_COLS.filter(isColVisible).map((key) => (
+                    <th
+                      key={key}
+                      className="px-4 py-3 text-left font-semibold text-blue-300 whitespace-nowrap"
+                      title={key === "aging" ? "Business days late vs. ETA, excluding weekends" : undefined}
+                    >
+                      <span className="inline-flex items-center">{PART_RECEIVE_COLUMNS.find((c) => c.key === key)?.label}{colFilter(key)}</span>
+                    </th>
+                  ))}
                   {ticketGroupColSpan > 0 && <th colSpan={ticketGroupColSpan} className="px-4 py-3 text-center font-semibold text-blue-300">Ticket</th>}
-                  {isColVisible("qtyOrdered") && <th className="px-4 py-3 text-center font-semibold text-blue-300">Quantity Ordered</th>}
-                  {isColVisible("qtyReceived") && <th className="px-4 py-3 text-center font-semibold text-blue-300">Quantity Received</th>}
-                  {isColVisible("partCost") && <th className="px-4 py-3 text-center font-semibold text-blue-300">$ Part</th>}
-                  {isColVisible("coreCost") && <th className="px-4 py-3 text-center font-semibold text-blue-300">$ Core</th>}
+                  {PART_RECEIVE_TRAILING_COLS.filter(isColVisible).map((key) => (
+                    <th key={key} className="px-4 py-3 text-center font-semibold text-blue-300 whitespace-nowrap">
+                      <span className="inline-flex items-center">{PART_RECEIVE_COLUMNS.find((c) => c.key === key)?.label}{colFilter(key)}</span>
+                    </th>
+                  ))}
                 </tr>
                 <tr className="bg-blue-900/30 border-b border-blue-500/20">
                   {leadingColSpan > 0 && <th colSpan={leadingColSpan} className="px-4 py-2"></th>}
-                  {isColVisible("ticketNo") && <th className="px-4 py-2 text-xs font-semibold text-blue-200 border-l border-blue-500/20">Ticket No</th>}
-                  {isColVisible("ticketStatus") && <th className="px-4 py-2 text-xs font-semibold text-blue-200 border-l border-blue-500/20">Status</th>}
-                  {isColVisible("tech") && <th className="px-4 py-2 text-xs font-semibold text-blue-200 border-l border-blue-500/20">Tech</th>}
-                  {isColVisible("schedule") && <th className="px-4 py-2 text-xs font-semibold text-blue-200 border-l border-blue-500/20">Schedule</th>}
+                  {PART_RECEIVE_TICKET_GROUP_COLS.filter(isColVisible).map((key) => (
+                    <th key={key} className="px-4 py-2 text-xs font-semibold text-blue-200 border-l border-blue-500/20 whitespace-nowrap">
+                      <span className="inline-flex items-center">{key === "ticketStatus" ? "Status" : PART_RECEIVE_COLUMNS.find((c) => c.key === key)?.label}{colFilter(key)}</span>
+                    </th>
+                  ))}
                   {trailingColSpan > 0 && <th colSpan={trailingColSpan} className="px-4 py-2"></th>}
                 </tr>
               </thead>
@@ -868,7 +1032,6 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                   <tr><td colSpan={Math.max(1, totalVisibleColSpan)} className="px-4 py-8 text-center text-slate-400">No parts match these filters.</td></tr>
                 ) : filteredItems.map((item) => {
                   const aging = agingDays(item);
-                  const receiveStatus = receiveStatusOf(item);
                   return (
                   <tr key={item.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
                     {isColVisible("receive") && (
@@ -885,9 +1048,18 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                     )}
                     {isColVisible("partStatus") && (
                       <td className="px-4 py-3">
-                        <span className={`inline-block rounded border px-2 py-0.5 text-[10px] font-semibold ${receiveStatusClass(receiveStatus)}`}>
-                          {receiveStatus}
-                        </span>
+                        <select
+                          value={item.status}
+                          onChange={(e) => handleStatusChange(item.id, e.target.value)}
+                          aria-label={`Part status for ${item.partNo || item.id}`}
+                          className="w-44 rounded border border-white/15 bg-slate-900 px-2 py-1 text-sm font-semibold text-white outline-none [color-scheme:dark] focus:border-blue-400"
+                        >
+                          {!item.status && <option value="" className="bg-slate-900 text-white">Status*</option>}
+                          {item.status && !(PART_STATUS_OPTIONS as readonly string[]).includes(item.status) && (
+                            <option value={item.status} className="bg-slate-900 text-white">{item.status}</option>
+                          )}
+                          {PART_STATUS_OPTIONS.map((s) => <option key={s} value={s} className="bg-slate-900 text-white">{s}</option>)}
+                        </select>
                       </td>
                     )}
                     {isColVisible("uniqueId") && (
@@ -912,17 +1084,14 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                     )}
                     {isColVisible("partsNote") && (
                       <td className="px-4 py-3 text-slate-300">
-                        <label className="sr-only" htmlFor={`parts-note-${item.id}`}>Note for {item.id}</label>
-                        <input
-                          id={`parts-note-${item.id}`}
-                          type="text"
-                          value={item.note}
-                          placeholder="Add a note…"
-                          onFocus={(e) => markEditStart("note", item.id, e.target.value)}
-                          onChange={(e) => setLocalNote(item.id, e.target.value)}
-                          onBlur={(e) => persistNote(item.id, e.target.value)}
-                          className="w-40 rounded border border-white/10 bg-slate-950/70 px-2 py-1 text-sm text-slate-300 outline-none focus:border-blue-400"
-                        />
+                        <button
+                          type="button"
+                          onClick={() => setNoteModal({ id: item.id, label: partReceiveActivityLabel(item), draft: item.note })}
+                          title={item.note || "Add a note"}
+                          className={`w-40 truncate rounded border border-white/10 bg-slate-950/70 px-2 py-1 text-left text-sm outline-none hover:border-blue-400 focus:border-blue-400 ${item.note ? "text-slate-300" : "text-slate-500 italic"}`}
+                        >
+                          {item.note || "Add a note…"}
+                        </button>
                       </td>
                     )}
                     {isColVisible("partFrom") && <td className="px-4 py-3 text-slate-300">{item.partFrom}</td>}
@@ -949,9 +1118,29 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                     {isColVisible("eta") && <td className="px-4 py-3 text-slate-300">{item.eta || "—"}</td>}
                     {isColVisible("aging") && (
                       <td className={`px-4 py-3 font-semibold ${agingClass(aging)}`}>
-                        {aging === null ? "—" : aging > 0 ? `${aging}d` : "On time"}
+                        {agingLabel(aging)}
                       </td>
                     )}
+                    {isColVisible("deliveredDate") && (() => {
+                      if (item.deliveredDate) {
+                        return (
+                          <td className="px-4 py-3 whitespace-nowrap text-green-400 font-semibold" title={item.deliveredLocation ? `Delivered in ${item.deliveredLocation}` : "Delivered"}>
+                            {item.deliveredDate}
+                          </td>
+                        );
+                      }
+                      const tn = carrierTrackingNumber(item);
+                      const state = tn ? deliveryLookup[tn] : undefined;
+                      if (state === "checking") return <td className="px-4 py-3 text-slate-500 italic whitespace-nowrap">Checking…</td>;
+                      if (state) {
+                        return (
+                          <td className="px-4 py-3 text-amber-300 whitespace-nowrap" title={state.lastEvent ? `Latest scan: ${state.lastEvent}` : "No carrier scans yet"}>
+                            Not yet
+                          </td>
+                        );
+                      }
+                      return <td className="px-4 py-3 text-slate-500" title={tn ? undefined : "No FedEx/UPS tracking number to look up"}>—</td>;
+                    })()}
                     {isColVisible("receiveDate") && (
                       <td className="px-4 py-3 text-slate-300">
                         <input
@@ -1026,7 +1215,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
               </tbody>
               <tfoot>
                 <tr className="bg-blue-900/50 border-t-2 border-blue-500/30 font-semibold text-blue-300">
-                  <td colSpan={Math.max(1, leadingColSpan + ticketGroupColSpan)} className="px-4 py-3 text-right">Totals:</td>
+                  <td colSpan={Math.max(1, leadingColSpan + ticketGroupColSpan)} className="px-4 py-3 text-right">Totals — {filteredItems.length} part line{filteredItems.length === 1 ? "" : "s"} (quantities summed):</td>
                   {isColVisible("qtyOrdered") && <td className="px-4 py-3 text-center">{totals.total}</td>}
                   {isColVisible("qtyReceived") && <td className="px-4 py-3 text-center text-green-400">{totals.rcvd}</td>}
                   {isColVisible("partCost") && <td className="px-4 py-3 text-right">${totals.partCost.toFixed(2)}</td>}
@@ -1039,6 +1228,33 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
         </>
         )}
       </main>
+
+      {noteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setNoteModal(null)}>
+          <div className="w-full max-w-lg flex flex-col rounded-lg border border-white/10 bg-slate-900 p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div className="min-w-0">
+                <h3 className="text-lg font-bold text-white">Parts Note</h3>
+                <p className="text-xs text-blue-300 truncate">{noteModal.label}</p>
+              </div>
+              <button type="button" onClick={() => setNoteModal(null)} className="text-slate-400 hover:text-white text-xl leading-none" aria-label="Close">×</button>
+            </div>
+            <textarea
+              value={noteModal.draft}
+              onChange={(e) => setNoteModal((m) => (m ? { ...m, draft: e.target.value } : m))}
+              placeholder="Add a note…"
+              rows={8}
+              autoFocus
+              aria-label="Parts note"
+              className="w-full resize-y rounded border border-white/15 bg-slate-950 px-3 py-2 text-sm leading-relaxed text-slate-200 outline-none focus:border-blue-400 whitespace-pre-wrap"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" onClick={() => setNoteModal(null)} className="btn hover:bg-white/15 text-sm">Cancel</button>
+              <button type="button" onClick={saveNoteModal} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700">Save Note</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {activityLogOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setActivityLogOpen(false)}>

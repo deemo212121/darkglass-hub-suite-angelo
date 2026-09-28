@@ -14,6 +14,8 @@ import { supabase } from "./client";
 
 export interface PartReceiveRow {
   id: string;
+  /** parts.status — the same Part Status as the ticket's Part Transaction. */
+  status: string;
   poNo: string;
   poDate: string;
   orderNo: string;
@@ -36,6 +38,9 @@ export interface PartReceiveRow {
   partFrom: string;
   /** The real carrier/shipping method selected when the PO was placed (e.g. "FedEx Ground") — only set by the Marcone/Encompass order flow, see migration 0168. */
   shipMethod: string;
+  /** Carrier-confirmed delivery date (migration 0325); "" until looked up. */
+  deliveredDate: string;
+  deliveredLocation: string;
 }
 
 // Supabase caps an unbounded select at 1000 rows — a company's full
@@ -48,7 +53,7 @@ export async function getPartsToReceive(): Promise<PartReceiveRow[]> {
     const { data, error } = await supabase
       .from("parts")
       .select(
-        "id, po_no, po_date, order_no, invoice_no, note, part_no, part_desc, eta, received_date, in_tracking, part_dist, ship_method, quantity, qty_received, part_price, core_value, tickets!inner(ticket_no, technician, status, location, schedule_date)"
+        "id, status, po_no, po_date, order_no, invoice_no, note, part_no, part_desc, eta, received_date, in_tracking, part_dist, ship_method, quantity, qty_received, part_price, core_value, tickets!inner(ticket_no, technician, status, location, schedule_date)"
       )
       .eq("status", "PO Made")
       .range(from, from + PAGE_SIZE - 1);
@@ -61,6 +66,7 @@ export async function getPartsToReceive(): Promise<PartReceiveRow[]> {
     all.push(
       ...(data ?? []).map((row: any) => ({
         id: row.id,
+        status: row.status || "",
         poNo: row.po_no || "",
         poDate: row.po_date || "",
         orderNo: row.order_no || "",
@@ -82,6 +88,8 @@ export async function getPartsToReceive(): Promise<PartReceiveRow[]> {
         location: row.tickets?.location || "",
         partFrom: row.part_dist || "",
         shipMethod: row.ship_method || "",
+        deliveredDate: "",
+        deliveredLocation: "",
       }))
     );
     if (!data || data.length < PAGE_SIZE) break;
@@ -91,9 +99,10 @@ export async function getPartsToReceive(): Promise<PartReceiveRow[]> {
 
 export async function updatePartReceiveRow(
   id: string,
-  updates: { qtyReceived?: number; receivedDate?: string; invoiceNo?: string; note?: string }
+  updates: { qtyReceived?: number; receivedDate?: string; invoiceNo?: string; note?: string; status?: string }
 ): Promise<void> {
   const payload: Record<string, unknown> = {};
+  if (updates.status !== undefined) payload.status = updates.status;
   if (updates.qtyReceived !== undefined) payload.qty_received = updates.qtyReceived;
   if (updates.receivedDate !== undefined) payload.received_date = updates.receivedDate || null;
   if (updates.invoiceNo !== undefined) payload.invoice_no = updates.invoiceNo;
@@ -105,6 +114,35 @@ export async function updatePartReceiveRow(
     console.error("updatePartReceiveRow error:", error.message);
     throw new Error(error.message);
   }
+}
+
+/**
+ * delivered_date / delivered_location (migration 0325), read separately
+ * from getPartsToReceive so Part Receive still loads if that migration
+ * hasn't been run yet — an unknown column would fail the whole select.
+ */
+export async function getDeliveredDates(): Promise<Map<string, { date: string; location: string }>> {
+  const map = new Map<string, { date: string; location: string }>();
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("parts")
+      .select("id, delivered_date, delivered_location")
+      .eq("status", "PO Made")
+      .not("delivered_date", "is", null)
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.warn("getDeliveredDates unavailable (is migration 0325 applied?):", error.message);
+      return map;
+    }
+    for (const r of data ?? []) map.set(r.id, { date: r.delivered_date, location: r.delivered_location || "" });
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return map;
+}
+
+export async function saveDeliveredDate(id: string, date: string, location: string): Promise<void> {
+  const { error } = await supabase.from("parts").update({ delivered_date: date, delivered_location: location || null }).eq("id", id);
+  if (error) throw new Error(error.message);
 }
 
 /** Distinct real "Part From" (part_dist) values currently in use, for the filter dropdown. */
