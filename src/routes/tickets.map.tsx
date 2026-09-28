@@ -1,4 +1,5 @@
-import { createFileRoute, Navigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
+import { StableNavigate as Navigate } from "@/lib/StableNavigate";
 import { TicketListMap } from "@/components/TicketListMap";
 import { useAuth } from "@/lib/auth";
 

@@ -1,4 +1,5 @@
-import { createFileRoute, Link, Navigate, Outlet, notFound, useLocation } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, notFound, useLocation } from "@tanstack/react-router";
+import { StableNavigate as Navigate } from "@/lib/StableNavigate";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { OverallStatusPage } from "@/components/OverallStatusPage";

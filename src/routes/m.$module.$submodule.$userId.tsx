@@ -1,4 +1,5 @@
-import { createFileRoute, notFound, Link, Navigate, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, notFound, Link, useNavigate } from "@tanstack/react-router";
+import { StableNavigate as Navigate } from "@/lib/StableNavigate";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";

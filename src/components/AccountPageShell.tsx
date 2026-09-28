@@ -1,4 +1,5 @@
-import { Link, Navigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
+import { StableNavigate as Navigate } from "@/lib/StableNavigate";
 import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { ChevronLeft } from "lucide-react";
