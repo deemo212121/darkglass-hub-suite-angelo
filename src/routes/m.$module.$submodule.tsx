@@ -129,6 +129,7 @@ import { ItTicketsPage } from "@/components/ItTicketsPage";
 import { CSRMainDashboard } from "@/components/CSRMainDashboard";
 import { CSRTeamDailyReport } from "@/components/CSRTeamDailyReport";
 import { CsrSelfServiceTally } from "@/components/CsrSelfServiceTally";
+import { CsrRescheduleRequestsPage } from "@/components/CsrRescheduleRequestsPage";
 import { CSRCallTracker } from "@/components/CSRCallTracker";
 import { CSRStatusSummary } from "@/components/CSRStatusSummary";
 import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
@@ -533,6 +534,8 @@ function SubModule() {
         ? <CSRTeamDailyReport mod={mod} sub={sub} />
         : (sub as any).custom === "csr-self-service-tally"
         ? <CsrSelfServiceTally mod={mod} sub={sub} />
+        : (sub as any).custom === "csr-reschedule-requests"
+        ? <CsrRescheduleRequestsPage mod={mod} sub={sub} />
         : (sub as any).custom === "csr-daily-report"
         ? <ReportCSRDaily mod={mod} sub={sub} />
         : (sub as any).custom === "call-tracker"

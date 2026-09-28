@@ -415,7 +415,7 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
                         <td className="px-4 py-3 font-mono text-slate-300">{order.partNo || "—"}</td>
                         <td className="px-4 py-3 text-slate-300">{order.description || "—"}</td>
                         <td className="px-4 py-3 text-slate-300">{hasETA ? order.eta : "—"}</td>
-                        <td className="px-4 py-3 text-center text-slate-400">{order.requestQty}</td>
+                        <td className="px-4 py-3 text-center text-slate-400">{order.partNo ? order.requestQty : "—"}</td>
                         <td className="px-4 py-3 text-center text-slate-400" title="Live Marcone stock availability">{availDisplay}</td>
                         <td className="px-4 py-3 text-center">
                           <a
