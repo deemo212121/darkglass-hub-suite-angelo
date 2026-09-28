@@ -1739,18 +1739,29 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                     <>
                       {(() => {
                         const myProfile = companyProfiles.find((p) => p.id === myProfileId) ?? null;
-                        return !myProfile?.technician_id ? (
+                        return (
                           <div>
-                            <label className="text-xs font-semibold text-white block mb-1">Employee ID</label>
-                            <input
-                              type="text"
-                              placeholder="Not on file — type it in"
-                              value={formData.employeeIdOverride}
-                              onChange={(e) => setFormData({ ...formData, employeeIdOverride: e.target.value })}
-                              className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
-                            />
+                            <label className="text-xs font-semibold text-white block mb-1">Technician ID</label>
+                            {myProfile?.technician_id ? (
+                              <input
+                                type="text"
+                                value={myProfile.technician_id}
+                                readOnly
+                                disabled
+                                title="Auto-filled from your profile"
+                                className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm opacity-70"
+                              />
+                            ) : (
+                              <input
+                                type="text"
+                                placeholder="Not on file — type it in"
+                                value={formData.employeeIdOverride}
+                                onChange={(e) => setFormData({ ...formData, employeeIdOverride: e.target.value })}
+                                className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
+                              />
+                            )}
                           </div>
-                        ) : null;
+                        );
                       })()}
                       <div>
                         <label className="text-xs font-semibold text-white block mb-1">Exception Type</label>

@@ -88,6 +88,7 @@ import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import { CorrectionManagerSignModal } from "@/components/CorrectionSignModals";
 import { PtoManagerSignModal } from "@/components/PtoSignModals";
+import { TicketDisputeManagerSignModal } from "@/components/TicketDisputeSignModals";
 import { LOCATIONS, ACTIVE_LOCATIONS } from "@/lib/locations";
 import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
 import { getServerNow, zonedDateKey, zonedTimeString, zonedWallClockToUtcIso, TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
@@ -118,11 +119,11 @@ import { resolveTierCode } from "@/lib/tierCodes";
 import { getModelResources, saveModelResources, type ModelResources } from "@/lib/supabase/modelResources";
 import { getUndismissedMobilePopupAlerts, dismissTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
 import { createItTicket, getItTickets, type ItTicketRow, type ItTicketPriority } from "@/lib/supabase/itTickets";
-import { createEmployeeRequest, getCompanyEmployeeRequests, notifyRequestReviewers, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
+import { createEmployeeRequest, getCompanyEmployeeRequests, updateEmployeeRequestStatus, canReviewTicketDispute, notifyRequestReviewers, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { createPtoRequest, getCompanyPtoRequests, weekdayCount, canReviewPtoStage, reviewPtoStage, type PtoType, type PtoRequestRow } from "@/lib/supabase/pto";
 import { createTimecardCorrection, getCompanyTimecardCorrections, canReviewCorrectionStage, reviewCorrectionStage, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { createNotification } from "@/lib/supabase/notifications";
-import { getMileageEntries, type MileageEntry } from "@/lib/supabase/mileage";
+import { getMileageEntries, resetMileageRouteConfirmation, type MileageEntry } from "@/lib/supabase/mileage";
 import { NotificationsMenu } from "@/components/NotificationsMenu";
 import { NotificationCenterPanel } from "@/components/NotificationCenterPage";
 import { AnnouncementsMenu } from "@/components/AnnouncementsMenu";
@@ -7242,7 +7243,7 @@ const REJECT_REASON_OPTIONS = ["On Field", "Termination", "Absent", "Quit", "Oth
 // PTO Management tabs — since this viewer usually can't act on those
 // anyway). Corrections/PTO are approved/rejected as submitted; unlike
 // desktop, there's no inline "adjust the corrected punch" editor here.
-type TeamApprovalsTab = "trainee" | "corrections" | "pto";
+type TeamApprovalsTab = "trainee" | "corrections" | "pto" | "ticketDispute";
 
 function MobileTeamApprovalsView({
   profileId,
@@ -7268,6 +7269,7 @@ function MobileTeamApprovalsView({
   const [traineeQueue, setTraineeQueue] = useState<TraineeReviewQueueItem[]>([]);
   const [corrections, setCorrections] = useState<TimecardCorrectionRow[]>([]);
   const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
+  const [ticketDisputes, setTicketDisputes] = useState<EmployeeRequestRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedTraineeKey, setSelectedTraineeKey] = useState<string | null>(null);
   const [rejectReasonOption, setRejectReasonOption] = useState("");
@@ -7283,17 +7285,19 @@ function MobileTeamApprovalsView({
     }
     setLoading(true);
     try {
-      const [allProfiles, queue, correctionRows, ptoRows] = await Promise.all([
+      const [allProfiles, queue, correctionRows, ptoRows, requestRows] = await Promise.all([
         getCompanyUsers(),
         getTraineeReviewQueue(profileId),
         getCompanyTimecardCorrections(),
         getCompanyPtoRequests(),
+        getCompanyEmployeeRequests(),
       ]);
       setProfiles(allProfiles);
       queue.sort((a, b) => b.workDate.localeCompare(a.workDate) || (a.trainee.display_name || "").localeCompare(b.trainee.display_name || ""));
       setTraineeQueue(queue);
       setCorrections(correctionRows);
       setPtoRequests(ptoRows);
+      setTicketDisputes(requestRows.filter((r) => r.requestType === "ticket_time_dispute"));
     } catch (e) {
       console.error("MobileTeamApprovalsView: load failed", e);
     } finally {
@@ -7327,6 +7331,14 @@ function MobileTeamApprovalsView({
     if (r.status !== "pending" || r.managerStatus !== "pending") return false;
     const { requesterManagerName, requesterManagersManagerName } = managerChainFor(r.profileId);
     return canReviewPtoStage(r, "manager", profileId, role, extraRoles, userName, requesterManagerName, requesterManagersManagerName);
+  });
+  // Ticket Time Dispute is single-stage (no manager/hr/accounting split like
+  // Corrections/PTO) — canReviewTicketDispute does its own manager-chain
+  // lookup internally, given the full roster, instead of needing
+  // managerChainFor's separate resolution.
+  const pendingTicketDisputes = ticketDisputes.filter((r) => {
+    if (r.status !== "pending") return false;
+    return canReviewTicketDispute(r.profileId, role, extraRoles, userName, profiles);
   });
 
   const selectedTrainee = traineeQueue.find((t) => teamApprovalTraineeKey(t) === selectedTraineeKey) ?? null;
@@ -7428,6 +7440,31 @@ function MobileTeamApprovalsView({
       setSubmitting(false);
     }
   };
+  const [signingTicketDispute, setSigningTicketDispute] = useState<EmployeeRequestRow | null>(null);
+
+  const handleTicketDisputeDecision = async (r: EmployeeRequestRow, decision: "approved" | "rejected") => {
+    if (readOnly || !profileId || submitting) return;
+    setSubmitting(true);
+    try {
+      if (decision === "approved" && r.ticketNo && r.disputedStartTime && r.disputedEndTime) {
+        // Ticket write BEFORE the status flip — same safety ordering
+        // TicketTimeDisputesTab.tsx's own plain approve uses, so a failed
+        // ticket write never leaves this marked approved. Reschedule-mode
+        // rows have no disputedStartTime/EndTime (null-guarded above), so
+        // this is skipped for those — nothing to backfill.
+        await setTicketOnsiteCheckIn(r.ticketNo, "arrived", r.disputedStartTime);
+        await setTicketOnsiteCheckIn(r.ticketNo, "done", r.disputedEndTime);
+        await resetMileageRouteConfirmation(r.ticketNo).catch((err) => console.error("Failed to invalidate mileage route order after dispute approval:", err));
+      }
+      await updateEmployeeRequestStatus(r.id, decision, profileId);
+      setTicketDisputes((prev) => prev.filter((x) => x.id !== r.id));
+    } catch (err) {
+      console.error("Failed to review ticket dispute:", err);
+      alert("Couldn't submit this — please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const nameFor = (id: string) => profileById.get(id)?.display_name || profileById.get(id)?.email || "Unknown";
 
@@ -7447,6 +7484,9 @@ function MobileTeamApprovalsView({
         </button>
         <button type="button" className={`mtech-approvals-tab ${tab === "pto" ? "active" : ""}`} onClick={() => setTab("pto")}>
           PTO ({pendingPto.length})
+        </button>
+        <button type="button" className={`mtech-approvals-tab ${tab === "ticketDispute" ? "active" : ""}`} onClick={() => setTab("ticketDispute")}>
+          Ticket Dispute ({pendingTicketDisputes.length})
         </button>
       </div>
 
@@ -7614,6 +7654,55 @@ function MobileTeamApprovalsView({
         </div>
       )}
 
+      {!loading && tab === "ticketDispute" && (
+        <div className="mtech-clockin-list">
+          {pendingTicketDisputes.length === 0 && <div className="mtech-muted">No pending ticket disputes.</div>}
+          {pendingTicketDisputes.map((r) => (
+            <div key={r.id} className="mtech-clockin-row mtech-approvals-row">
+              <div className="mtech-clockin-row-info">
+                <div className="mtech-clockin-row-name">{nameFor(r.profileId)}</div>
+                <div className="mtech-clockin-row-status">
+                  {r.ticketNo || "—"} · {r.disputeMode === "reschedule" ? "Reschedule" : "Time Dispute"}
+                </div>
+                {r.disputeMode === "reschedule" ? (
+                  <div className="mtech-approvals-times">
+                    <div>{r.rescheduleActualDay || "—"} → {r.rescheduleDate || "—"}</div>
+                  </div>
+                ) : (
+                  (r.disputedStartTime || r.disputedEndTime) && (() => {
+                    const tz = profileById.get(r.profileId)?.schedule_timezone || "CST";
+                    return (
+                      <div className="mtech-approvals-times">
+                        <div>{fmtTimeInZone(r.disputedStartTime, tz)} – {fmtTimeInZone(r.disputedEndTime, tz)} {tz}</div>
+                      </div>
+                    );
+                  })()
+                )}
+                {r.details && <div className="mtech-clockin-row-flag">{r.details}</div>}
+              </div>
+              {readOnly ? (
+                <div className="mtech-clockin-row-status">Preview only</div>
+              ) : (
+                <div className="mtech-approvals-actions">
+                  {r.exceptionType !== null ? (
+                    <button type="button" className="mtech-clockin-btn" disabled={submitting} onClick={() => setSigningTicketDispute(r)}>
+                      Approve &amp; Sign
+                    </button>
+                  ) : (
+                    <button type="button" className="mtech-clockin-btn" disabled={submitting} onClick={() => void handleTicketDisputeDecision(r, "approved")}>
+                      Approve
+                    </button>
+                  )}
+                  <button type="button" className="mtech-clockin-btn mtech-approvals-reject-btn" disabled={submitting} onClick={() => void handleTicketDisputeDecision(r, "rejected")}>
+                    Reject
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {signingCorrection && (
         <CorrectionManagerSignModal
           correction={signingCorrection}
@@ -7639,6 +7728,20 @@ function MobileTeamApprovalsView({
           onSigned={() => {
             setPtoRequests((prev) => prev.filter((x) => x.id !== signingPtoManager.id));
             setSigningPtoManager(null);
+          }}
+        />
+      )}
+      {signingTicketDispute && (
+        <TicketDisputeManagerSignModal
+          request={signingTicketDispute}
+          companyId={companyId ?? null}
+          profiles={profiles}
+          reviewerId={profileId}
+          reviewerName={userName}
+          onClose={() => setSigningTicketDispute(null)}
+          onSigned={() => {
+            setTicketDisputes((prev) => prev.filter((x) => x.id !== signingTicketDispute.id));
+            setSigningTicketDispute(null);
           }}
         />
       )}
@@ -8671,6 +8774,31 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, role, tec
   const [customerName, setCustomerName] = useState("");
   const [scheduledTime, setScheduledTime] = useState("");
   const [actionTaken, setActionTaken] = useState("");
+  // Customer / Job Details auto-fill straight from the selected ticket
+  // (Customer Name, Scheduled Time = the ticket's own time slot) — neither
+  // is hand-typed anymore, same for Reschedule's Actual Day (the ticket's
+  // own schedule_date) below. ticketScheduleDate is kept separately from
+  // rescheduleActualDay so switching between Time Dispute/Reschedule mode
+  // re-syncs Actual Day from the ticket instead of leaving a stale value.
+  const [ticketScheduleDate, setTicketScheduleDate] = useState("");
+  useEffect(() => {
+    if (!ticketNo) {
+      setCustomerName("");
+      setScheduledTime("");
+      setTicketScheduleDate("");
+      return;
+    }
+    let cancelled = false;
+    getTicketByNumber(ticketNo)
+      .then((t) => {
+        if (cancelled || !t) return;
+        setCustomerName(t.customer || "");
+        setScheduledTime(t.schedulePeriod || "");
+        setTicketScheduleDate(t.schedule || "");
+      })
+      .catch((e) => console.error("ticket time dispute: failed to fetch ticket details", e));
+    return () => { cancelled = true; };
+  }, [ticketNo]);
   const sigPad = useSignaturePad({ width: 400, height: 110, defaultName: userName || "" });
   // Arriving from the Tickets tab's "Dispute" button (a missing-timestamp
   // card) — pre-select that ticket instead of leaving the dropdown blank.
@@ -8689,6 +8817,12 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, role, tec
   const [disputeMode, setDisputeMode] = useState<"time_dispute" | "reschedule">("time_dispute");
   const [rescheduleActualDay, setRescheduleActualDay] = useState("");
   const [rescheduleDate, setRescheduleDate] = useState("");
+  // Actual Day auto-fills from the ticket's own schedule_date — not
+  // hand-picked — re-synced whenever the ticket changes or the tech
+  // switches into Reschedule mode.
+  useEffect(() => {
+    if (disputeMode === "reschedule") setRescheduleActualDay(ticketScheduleDate);
+  }, [disputeMode, ticketScheduleDate]);
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState("");
   // .mtech-save-msg is styled green by default (a "saved" confirmation) —
@@ -8780,11 +8914,15 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, role, tec
       setMsg("Enter the time you actually started and finished.");
       return;
     }
-    if (disputeMode === "reschedule" && (!rescheduleActualDay || !rescheduleDate)) {
+    if (disputeMode === "reschedule" && !rescheduleActualDay) {
       setMsgIsError(true);
-      setMsg("Enter the actual day and the day it was rescheduled to.");
+      setMsg("Couldn't determine this ticket's scheduled date — pick the ticket again.");
       return;
     }
+    // Reschedule Date is optional — at the time of filing the tech often
+    // doesn't know yet when it'll actually be rescheduled to (that's
+    // dispatch's call); they're just flagging that this one couldn't be
+    // done as scheduled.
     if (!details.trim()) {
       setMsgIsError(true);
       setMsg(disputeMode === "reschedule" ? "Describe why it was rescheduled." : "Describe what went wrong with the check-in.");
@@ -9008,16 +9146,20 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, role, tec
               className="mtech-bill-input full"
               type="date"
               value={rescheduleActualDay}
-              onChange={(e) => setRescheduleActualDay(e.target.value)}
+              readOnly
+              disabled
+              title="Auto-filled from the ticket's scheduled date"
+              style={{ opacity: 0.7 }}
             />
 
-            <div className="mtech-section-title">Reschedule Date</div>
+            <div className="mtech-section-title">Reschedule Date (optional)</div>
             <input
               className="mtech-bill-input full"
               type="date"
               value={rescheduleDate}
               onChange={(e) => setRescheduleDate(e.target.value)}
             />
+            <p className="mtech-muted" style={{ padding: "0.15rem 0 0" }}>Leave blank if the new date isn't set yet.</p>
 
             <div className="mtech-section-title">Reason</div>
             <textarea
@@ -9042,11 +9184,19 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, role, tec
           <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>{files.length} file{files.length === 1 ? "" : "s"} selected</p>
         )}
 
-        {!companyProfiles.find((p) => p.id === profileId)?.technician_id && (
-          <>
-            <div className="mtech-section-title">Employee ID</div>
-            <input className="mtech-bill-input full" type="text" value={employeeIdOverride} onChange={(e) => setEmployeeIdOverride(e.target.value)} placeholder="Not on file — type it in" />
-          </>
+        <div className="mtech-section-title">Technician ID</div>
+        {companyProfiles.find((p) => p.id === profileId)?.technician_id ? (
+          <input
+            className="mtech-bill-input full"
+            type="text"
+            value={companyProfiles.find((p) => p.id === profileId)?.technician_id || ""}
+            readOnly
+            disabled
+            title="Auto-filled from your profile"
+            style={{ opacity: 0.7 }}
+          />
+        ) : (
+          <input className="mtech-bill-input full" type="text" value={employeeIdOverride} onChange={(e) => setEmployeeIdOverride(e.target.value)} placeholder="Not on file — type it in" />
         )}
 
         <div className="mtech-section-title">Exception Type</div>
@@ -9061,8 +9211,8 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, role, tec
         )}
 
         <div className="mtech-section-title">Customer / Job Details (If applicable)</div>
-        <input className="mtech-bill-input full" type="text" value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="Customer Name" />
-        <input className="mtech-bill-input full" style={{ marginTop: "0.4rem" }} type="text" value={scheduledTime} onChange={(e) => setScheduledTime(e.target.value)} placeholder="Scheduled Time" />
+        <input className="mtech-bill-input full" type="text" value={customerName} readOnly disabled placeholder="Customer Name — auto-filled from ticket" title="Auto-filled from the ticket" style={{ opacity: 0.7 }} />
+        <input className="mtech-bill-input full" style={{ marginTop: "0.4rem", opacity: 0.7 }} type="text" value={scheduledTime} readOnly disabled placeholder="Scheduled Time — auto-filled from ticket" title="Auto-filled from the ticket's time slot" />
         <input className="mtech-bill-input full" style={{ marginTop: "0.4rem" }} type="text" value={actionTaken} onChange={(e) => setActionTaken(e.target.value)} placeholder="Action Taken / Rescheduled Status" />
 
         <div className="mtech-section-title">Employee Signature — I confirm the information above is accurate and truthful.</div>
@@ -9367,11 +9517,19 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
 
         <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>Fill in only the field(s) that were wrong — the rest is left as recorded.</p>
 
-        {!companyProfiles.find((p) => p.id === profileId)?.technician_id && (
-          <>
-            <div className="mtech-section-title">Employee ID</div>
-            <input className="mtech-bill-input full" type="text" value={employeeIdOverride} onChange={(e) => setEmployeeIdOverride(e.target.value)} placeholder="Not on file — type it in" />
-          </>
+        <div className="mtech-section-title">Technician ID</div>
+        {companyProfiles.find((p) => p.id === profileId)?.technician_id ? (
+          <input
+            className="mtech-bill-input full"
+            type="text"
+            value={companyProfiles.find((p) => p.id === profileId)?.technician_id || ""}
+            readOnly
+            disabled
+            title="Auto-filled from your profile"
+            style={{ opacity: 0.7 }}
+          />
+        ) : (
+          <input className="mtech-bill-input full" type="text" value={employeeIdOverride} onChange={(e) => setEmployeeIdOverride(e.target.value)} placeholder="Not on file — type it in" />
         )}
 
         <div className="mtech-section-title">Exception Type</div>

@@ -1,33 +1,41 @@
 /**
  * Part Daily Report — rebuilt on live data, sharing PartsDashboard.tsx's
  * data source (getPartsInventoryRows(), the real `parts` table joined to
- * `tickets` for branch/location) and its established status buckets
- * (PENDING/READY/DONE). Per branch: Collections = parts that reached a
- * DONE status, RA = parts with a return-authorization number set,
- * Receives = parts with an inbound tracking number set — all scoped to the
- * selected date range.
+ * `tickets` for branch/location). Per branch: Collections = parts that
+ * reached a DONE status, RA = parts with a return-authorization number
+ * set, Receives = parts with an inbound tracking number set, Pending RA =
+ * return-eligible parts (partReturn.ts) with no RA number yet — all
+ * scoped to the selected date range.
  *
  * `parts.created_by` isn't populated in this data set (same gap
  * PartsDashboard.tsx already documents), so there's no real field to
  * attribute an individual part line to a specific staff member —
  * Collections/Pickups/RA/Receives stay branch-level, which is what the
- * charts and the Daily Branch Activity table actually emphasize anyway.
- * Issues/Lost are the one manually-entered pair, tracked per branch per
- * day in parts_daily_issues_log (see partsDailyIssuesLog.ts).
+ * Daily Branch Activity table actually emphasizes anyway. Issues/Lost/Not
+ * Recovered/Total Warnings/Remarks are manually entered, tracked per
+ * branch per day in parts_daily_issues_log (see partsDailyIssuesLog.ts).
+ *
+ * The Overview tab's old chart section (KPI tiles, branch bar chart,
+ * Value & Aging/Status Distribution/Warranty panels) was replaced with
+ * "PO Team's Daily Report" — Tickets/Parts Ordered computed live from
+ * parts.po_date, Pending Tickets/Internal Note entered by hand (one row
+ * per day, not per branch — see partsPoTeamDailyLog.ts).
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Loader2, LayoutDashboard, CheckCheck, Building2, ClipboardList, RotateCcw, Download, Package, Truck, Inbox, AlertTriangle, DollarSign, ShieldCheck, PackageX, Users } from "lucide-react";
+import { ChevronLeft, Loader2, LayoutDashboard, CheckCheck, Building2, ClipboardList, RotateCcw, Download, Package, PackageX, Users, Hourglass } from "lucide-react";
 import { BrandedLoader } from "@/components/BrandedLoader";
-import { Bar, BarChart, CartesianGrid, Pie, PieChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from "recharts";
+import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from "recharts";
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getPartsInventoryRows, type PartInventoryRow } from "@/lib/supabase/partsInventory";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getPartsDailyIssues, upsertPartsDailyIssue, type PartsDailyIssueEntry } from "@/lib/supabase/partsDailyIssuesLog";
+import { getPartsPoTeamDailyLog, upsertPartsPoTeamDailyEntry, type PartsPoTeamDailyEntry } from "@/lib/supabase/partsPoTeamDailyLog";
+import { getPartsPoTeamStaffDailyLog, upsertPartsPoTeamStaffDailyEntry, type PartsPoTeamStaffDailyEntry } from "@/lib/supabase/partsPoTeamStaffDailyLog";
 import { normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
 import { getPartsDoneActivity, type PartsDoneActivityRow } from "@/lib/supabase/partsDoneActivityLog";
 import { getBranchProgress, type BranchProgress } from "@/lib/partsBranchProgress";
@@ -36,21 +44,14 @@ import { getPartReturns as getReturnPendingRows, type PartReturnRow as ReturnPen
 import { getPartsForDailyCollection, type PartCollectionRow } from "@/lib/supabase/partDailyCollection";
 import { getPartsToReceive, type PartReceiveRow } from "@/lib/supabase/partReceive";
 
-const PARTS_ROLES = new Set(["PARTS", "PARTS_MANAGER"]);
-// Same buckets PartsDashboard.tsx already established — Back Order and
-// Cancelled are deliberately their own buckets, not folded into Pending.
-const PENDING_STATUSES = new Set(["Need PO", "PO Made"]);
-const READY_STATUSES = new Set(["Part Ready", "Tech Pickup"]);
+// The "Parts Order" clerical role (roleLabels.ts's PARTS_ORDER) — PO Team
+// members specifically, distinct from branch-floor PARTS/PARTS_MANAGER
+// staff, which this page never lists.
+const PARTS_ORDER_ROLES = new Set(["PARTS_ORDER"]);
+// Same DONE bucket PartsDashboard.tsx already established.
 const DONE_STATUSES = new Set(["Used", "Claimed"]);
 const TOOLTIP_STYLE = { background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" } as const;
 const LEGEND_STYLE = { fontSize: 11, color: "#94a3b8" } as const;
-const STATUS_BUCKET_COLORS: Record<string, string> = {
-  Pending: "#facc15",
-  Ready: "#3b82f6",
-  Done: "#34d399",
-  "Back Order": "#fb923c",
-  Cancelled: "#f87171",
-};
 // Full literal class strings (not built with `${color}` template
 // interpolation) — Tailwind's build-time scanner only picks up classes
 // that appear as complete strings in the source, so a dynamic
@@ -194,9 +195,9 @@ function parseSummaryMetrics(summary: string): PartsDoneActivityRow["metrics"] {
   };
 }
 
-function isPartsProfile(p: ProfileRow): boolean {
-  if (PARTS_ROLES.has(normalizeRole(p.role))) return true;
-  return (p.extra_roles || []).some((r) => PARTS_ROLES.has(normalizeRole(r)));
+function isPartsOrderProfile(p: ProfileRow): boolean {
+  if (PARTS_ORDER_ROLES.has(normalizeRole(p.role))) return true;
+  return (p.extra_roles || []).some((r) => PARTS_ORDER_ROLES.has(normalizeRole(r)));
 }
 function dateOnly(v: string | undefined | null): string {
   return (v || "").slice(0, 10);
@@ -277,8 +278,8 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
 
   useEffect(() => {
     // Also loaded for Overview now — the Staff Changes Counter's RA
-    // Created column needs raCreatedRows too, so widen the trigger
-    // instead of fetching it twice.
+    // Created column and Daily Branch Activity's Pending RA column both
+    // need this data too, so widen the trigger instead of fetching twice.
     if ((tab !== "ra-returns" && tab !== "overview") || raReturnsLoaded) return;
     setRaReturnsLoading(true);
     Promise.all([
@@ -342,7 +343,7 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
         ]);
         if (cancelled) return;
         setRows(partRows);
-        setStaff(profiles.filter((p) => p.is_active && isPartsProfile(p)));
+        setStaff(profiles.filter((p) => p.is_active && isPartsOrderProfile(p)));
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load Part Daily Report.");
       } finally {
@@ -416,154 +417,181 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
     [rows, dateFrom, dateTo, branchFilter],
   );
 
-  const kpi = {
-    collections: collectionsRows.length,
-    pickups: pickupRows.length,
-    ra: raRows.length,
-    receives: receivesRows.length,
-  };
-
-  const branchChartData = useMemo(() => {
-    const map = new Map<string, { collections: number; pickups: number; ra: number; receives: number; issues: number; lost: number }>();
-    const ensure = (loc: string) => {
-      const b = loc || "Unspecified";
-      if (!map.has(b)) map.set(b, { collections: 0, pickups: 0, ra: 0, receives: 0, issues: 0, lost: 0 });
-      return map.get(b)!;
-    };
-    for (const r of collectionsRows) ensure(r.location).collections++;
-    for (const r of pickupRows) ensure(r.location).pickups++;
-    for (const r of raRows) ensure(r.location).ra++;
-    for (const r of receivesRows) ensure(r.location).receives++;
-    for (const e of issuesLog) {
-      if (branchFilter.size > 0 && !branchFilter.has(e.branch)) continue;
-      const row = ensure(e.branch);
-      row.issues += e.issues;
-      row.lost += e.lost;
-    }
-    return Array.from(map.entries()).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.collections - a.collections).slice(0, 12);
-  }, [collectionsRows, pickupRows, raRows, receivesRows, issuesLog, branchFilter]);
-
-  // Same 4 automated metrics as branchChartData, but keyed per (branch, day)
-  // instead of summed per branch — feeds the "Daily Branch Activity" table,
-  // where these 4 columns are read-only next to the 2 manual ones.
+  // Same automated metrics, but keyed per (branch, day) instead of summed
+  // company-wide — feeds the "Daily Branch Activity" table, where these
+  // are read-only next to the manual columns. Pending RA is sourced from
+  // returnPendingRows (partReturn.ts) — parts eligible for return that
+  // don't have an RA number yet — bucketed by invoiceDate since that's
+  // the closest thing to "when this became return-eligible"; it's a live
+  // snapshot (no historical status log exists), so a past day's count can
+  // shift if a part invoiced that day is still pending today.
   const dailyBranchStats = useMemo(() => {
-    const map = new Map<string, { collections: number; pickups: number; ra: number; receives: number }>();
-    const bump = (loc: string, dateStr: string, key: "collections" | "pickups" | "ra" | "receives") => {
+    const map = new Map<string, { collections: number; pickups: number; ra: number; receives: number; pendingRa: number }>();
+    const bump = (loc: string, dateStr: string, key: "collections" | "pickups" | "ra" | "receives" | "pendingRa") => {
       const b = loc || "Unspecified";
       const k = `${b}|${dateOnly(dateStr)}`;
-      if (!map.has(k)) map.set(k, { collections: 0, pickups: 0, ra: 0, receives: 0 });
+      if (!map.has(k)) map.set(k, { collections: 0, pickups: 0, ra: 0, receives: 0, pendingRa: 0 });
       map.get(k)![key]++;
     };
     for (const r of collectionsRows) bump(r.location, r.createdAt, "collections");
     for (const r of pickupRows) bump(r.location, r.pickedUpDate || r.createdAt, "pickups");
     for (const r of raRows) bump(r.location, r.raDate || r.createdAt, "ra");
     for (const r of receivesRows) bump(r.location, r.createdAt, "receives");
-    return map;
-  }, [collectionsRows, pickupRows, raRows, receivesRows]);
-  const getDailyBranchStats = (branch: string, date: string) =>
-    dailyBranchStats.get(`${branch}|${date}`) || { collections: 0, pickups: 0, ra: 0, receives: 0 };
-
-  // $ value of parts collected this period — partPrice * quantity is
-  // already on every row, just never summed anywhere on this page before.
-  const dollarCollected = useMemo(
-    () => collectionsRows.reduce((sum, r) => sum + (r.partPrice || 0) * (r.quantity || 1), 0),
-    [collectionsRows]
-  );
-
-  // Live pipeline snapshot — everything in `inWindow` that hasn't reached a
-  // DONE status yet, bucketed the same way PartsDashboard.tsx already does.
-  const statusDistribution = useMemo(() => {
-    const counts: Record<string, number> = { Pending: 0, Ready: 0, Done: 0, "Back Order": 0, Cancelled: 0 };
-    for (const r of inWindow) {
-      if (PENDING_STATUSES.has(r.status)) counts.Pending++;
-      else if (READY_STATUSES.has(r.status)) counts.Ready++;
-      else if (DONE_STATUSES.has(r.status)) counts.Done++;
-      else if (r.status === "Back Order") counts["Back Order"]++;
-      else if (r.status === "Cancelled") counts.Cancelled++;
-    }
-    return Object.entries(counts).filter(([, v]) => v > 0).map(([name, value]) => ({ name, value }));
-  }, [inWindow]);
-
-  const agingStats = useMemo(() => {
-    const pending = inWindow.filter((r) => !DONE_STATUSES.has(r.status) && r.status !== "Cancelled");
-    if (pending.length === 0) return { avgDays: 0, oldest: null as PartInventoryRow | null };
-    const avgDays = Math.round(pending.reduce((s, r) => s + r.agingDays, 0) / pending.length);
-    const oldest = pending.reduce((a, b) => (b.agingDays > a.agingDays ? b : a));
-    return { avgDays, oldest };
-  }, [inWindow]);
-
-  // `warranty` is free text off the tickets table (not a fixed enum) —
-  // same "group by whatever real values exist" approach PartsDashboard.tsx's
-  // own Warranty panel already uses, rather than guessing an in/out split.
-  const warrantyBreakdown = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const r of inWindow) {
-      const key = r.warranty || "Unspecified";
-      map.set(key, (map.get(key) ?? 0) + 1);
-    }
-    return Array.from(map.entries()).map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count).slice(0, 5);
-  }, [inWindow]);
-
-  // Staff Changes Counter — Collections/Pickups/Receives are driven by
-  // `technician` on the parts rows, which is the TICKET's field
-  // technician, not a Parts/Parts Manager staffer, so there's no real way
-  // to attribute those three to someone in `staff`; they stay blank
-  // rather than show a number attributed to the wrong person. RA Created
-  // is the one genuine case — `returned_by` (free text, set when someone
-  // processes a return) is matched by name against the Parts Staff roster.
-  const staffChangesCounter = useMemo(() => {
-    const byNameLower = new Map(staff.map((p) => [(p.display_name || p.email || "").trim().toLowerCase(), p]));
-    const raCountByProfile = new Map<string, number>();
-    for (const r of raCreatedRows) {
-      const name = (r.returnedBy || "").trim();
-      if (!name) continue;
-      const match = byNameLower.get(name.toLowerCase());
-      if (!match) continue;
+    for (const r of returnPendingRows) {
+      if (r.raNo.trim()) continue; // already has an RA — counted in "ra" above instead
       if (branchFilter.size > 0 && !branchFilter.has(r.location)) continue;
-      const d = (r.raDate || "").slice(0, 10);
-      if (!d || d < dateFrom || d > dateTo) continue;
-      raCountByProfile.set(match.id, (raCountByProfile.get(match.id) ?? 0) + 1);
+      if (!r.invoiceDate) continue;
+      bump(r.location, r.invoiceDate, "pendingRa");
     }
+    return map;
+  }, [collectionsRows, pickupRows, raRows, receivesRows, returnPendingRows, branchFilter]);
+  const getDailyBranchStats = (branch: string, date: string) =>
+    dailyBranchStats.get(`${branch}|${date}`) || { collections: 0, pickups: 0, ra: 0, receives: 0, pendingRa: 0 };
+
+  // PO Team roster — Parts Order staff only (isPartsOrderProfile). No.
+  // Tickets/Parts/Pending here are the SAME company-wide numbers as the
+  // PO Team's Daily Report tiles above (ticketsOrdered/partsOrdered/
+  // poTeamPendingTickets, same poTeamDateFrom/poTeamDateTo range) — parts
+  // rows carry no staff-attribution field (parts.created_by isn't
+  // populated), so there's no real way to break those down per person;
+  // this just lists who's on the PO team for the period, not per-person
+  // counts.
+  const staffChangesCounter = useMemo(() => {
     return staff
       .map((p) => ({
         id: p.id,
         name: p.display_name || p.email || "—",
         role: ROLE_LABELS[normalizeRole(p.role)] || p.role,
         branch: p.assigned_branch || p.department || "—",
-        ra: raCountByProfile.get(p.id) ?? 0,
       }))
-      .filter((s) => s.ra > 0)
-      .sort((a, b) => b.ra - a.ra || a.name.localeCompare(b.name));
-  }, [staff, raCreatedRows, branchFilter, dateFrom, dateTo]);
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [staff]);
 
-  // Manual Issues/Lost tally — branch-filtered the same way every other
-  // Overview number already is, so the top tiles and the per-day table
-  // below always agree with the picker.
+  // Manual per-branch tally (Issues/Lost/Not Recovered/Total Warnings/
+  // Remarks) — branch-filtered the same way every other Overview number
+  // already is.
   const issuesDateList = useMemo(() => dateRangeList(dateFrom, dateTo), [dateFrom, dateTo]);
   const filteredIssuesLog = useMemo(
     () => (branchFilter.size === 0 ? issuesLog : issuesLog.filter((e) => branchFilter.has(e.branch))),
     [issuesLog, branchFilter]
   );
   const issuesByKey = useMemo(() => new Map(filteredIssuesLog.map((e) => [`${e.branch}|${e.date}`, e])), [filteredIssuesLog]);
-  const issuesTotals = useMemo(
-    () => filteredIssuesLog.reduce((acc, e) => ({ issues: acc.issues + e.issues, lost: acc.lost + e.lost }), { issues: 0, lost: 0 }),
-    [filteredIssuesLog]
-  );
-  const getIssueEntry = (branch: string, date: string) => issuesByKey.get(`${branch}|${date}`) || { branch, date, issues: 0, lost: 0 };
-  const updateIssueField = (branch: string, date: string, field: "issues" | "lost", value: number) => {
+  const getIssueEntry = (branch: string, date: string) =>
+    issuesByKey.get(`${branch}|${date}`) || { branch, date, issues: 0, lost: 0, notRecovered: 0, totalWarnings: 0, remarks: "" };
+  type ManualTallyField = "issues" | "lost" | "notRecovered" | "totalWarnings" | "remarks";
+  const updateIssueField = (branch: string, date: string, field: ManualTallyField, value: number | string) => {
     setIssuesLog((prev) => {
       const idx = prev.findIndex((e) => e.branch === branch && e.date === date);
-      if (idx === -1) return [...prev, { branch, date, issues: 0, lost: 0, [field]: value }];
+      if (idx === -1) return [...prev, { branch, date, issues: 0, lost: 0, notRecovered: 0, totalWarnings: 0, remarks: "", [field]: value }];
       const next = [...prev];
       next[idx] = { ...next[idx], [field]: value };
       return next;
     });
   };
-  const saveIssueField = async (branch: string, date: string, field: "issues" | "lost", value: number) => {
+  const saveIssueField = async (branch: string, date: string, field: ManualTallyField, value: number | string) => {
     try {
-      await upsertPartsDailyIssue(branch, date, { [field]: value });
+      await upsertPartsDailyIssue(branch, date, { [field]: value } as Partial<Pick<PartsDailyIssueEntry, ManualTallyField>>);
     } catch (err) {
-      console.error("Failed to save Issues/Lost entry:", err);
+      console.error("Failed to save manual tally entry:", err);
+    }
+  };
+
+  // PO Team's Daily Report — replaces the old chart section. Tickets/Parts
+  // Ordered are computed live from parts.po_date (real "when the PO was
+  // placed" data), summed across the selected range. Pending Tickets and
+  // Internal Note have no live source (Pending Tickets would need a
+  // same-day 2PM CST snapshot this app doesn't take), so the PO Team
+  // enters both by hand — one row per day (partsPoTeamDailyLog.ts).
+  // Pending Tickets sums whatever's been entered for each day in range;
+  // Internal Note is a single field tied to Date To (the most recent day
+  // in the range) — editing it only ever writes that one day's row.
+  const [poTeamDateFrom, setPoTeamDateFrom] = useState(todayIso());
+  const [poTeamDateTo, setPoTeamDateTo] = useState(todayIso());
+  const [poTeamEntries, setPoTeamEntries] = useState<PartsPoTeamDailyEntry[]>([]);
+  const [poTeamSaving, setPoTeamSaving] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    getPartsPoTeamDailyLog(poTeamDateFrom, poTeamDateTo)
+      .then((entries) => { if (!cancelled) setPoTeamEntries(entries); })
+      .catch((err) => console.error("Failed to load PO Team's Daily Report entries:", err));
+    return () => { cancelled = true; };
+  }, [poTeamDateFrom, poTeamDateTo]);
+  const poTeamIsSingleDay = poTeamDateFrom === poTeamDateTo;
+  const poTeamPendingTickets = useMemo(() => poTeamEntries.reduce((sum, e) => sum + e.pendingTickets, 0), [poTeamEntries]);
+  const savePoTeamEntryField = async (patch: Partial<Pick<PartsPoTeamDailyEntry, "pendingTickets">>) => {
+    setPoTeamSaving(true);
+    try {
+      await upsertPartsPoTeamDailyEntry(poTeamDateTo, patch);
+      setPoTeamEntries((prev) => {
+        const idx = prev.findIndex((e) => e.date === poTeamDateTo);
+        if (idx === -1) return [...prev, { date: poTeamDateTo, pendingTickets: 0, internalNote: "", ...patch }];
+        const next = [...prev];
+        next[idx] = { ...next[idx], ...patch };
+        return next;
+      });
+    } catch (err) {
+      console.error("Failed to save PO Team's Daily Report entry:", err);
+    } finally {
+      setPoTeamSaving(false);
+    }
+  };
+  const poTeamOrderedRows = useMemo(
+    () => rows.filter((r) => inRange(r.poDate, poTeamDateFrom, poTeamDateTo) && (branchFilter.size === 0 || branchFilter.has(r.location))),
+    [rows, poTeamDateFrom, poTeamDateTo, branchFilter]
+  );
+  const ticketsOrdered = useMemo(() => new Set(poTeamOrderedRows.map((r) => r.ticketNo).filter(Boolean)).size, [poTeamOrderedRows]);
+  const partsOrdered = useMemo(() => poTeamOrderedRows.reduce((sum, r) => sum + (r.quantity || 1), 0), [poTeamOrderedRows]);
+
+  // Staff Changes Counter — PO Team's own per-person tally (migration
+  // 0310). No live source for any of these (parts.created_by isn't
+  // populated), so a lead enters Tickets/Parts/Pending and a note by hand
+  // per (staffer, day) — same manual-tally pattern as Daily Branch
+  // Activity's Issues/Lost/etc., just keyed by profile_id instead of
+  // branch. Editable inline when the range is a single day; summed
+  // read-only (Tickets/Parts/Pending) across the range otherwise, with
+  // Internal Note always tied to Date To specifically.
+  const [staffPoEntries, setStaffPoEntries] = useState<PartsPoTeamStaffDailyEntry[]>([]);
+  const [staffPoSavingKey, setStaffPoSavingKey] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getPartsPoTeamStaffDailyLog(poTeamDateFrom, poTeamDateTo)
+      .then((entries) => { if (!cancelled) setStaffPoEntries(entries); })
+      .catch((err) => console.error("Failed to load PO Team staff daily entries:", err));
+    return () => { cancelled = true; };
+  }, [poTeamDateFrom, poTeamDateTo]);
+  const staffPoEntriesByProfile = useMemo(() => {
+    const map = new Map<string, PartsPoTeamStaffDailyEntry[]>();
+    for (const e of staffPoEntries) {
+      const arr = map.get(e.profileId);
+      if (arr) arr.push(e);
+      else map.set(e.profileId, [e]);
+    }
+    return map;
+  }, [staffPoEntries]);
+  const getStaffPoSummary = (profileId: string) => {
+    const entries = staffPoEntriesByProfile.get(profileId) ?? [];
+    return {
+      ticketsOrdered: entries.reduce((s, e) => s + e.ticketsOrdered, 0),
+      partsOrdered: entries.reduce((s, e) => s + e.partsOrdered, 0),
+      pendingTickets: entries.reduce((s, e) => s + e.pendingTickets, 0),
+      internalNote: entries.find((e) => e.date === poTeamDateTo)?.internalNote ?? "",
+    };
+  };
+  const saveStaffPoField = async (profileId: string, patch: Partial<Pick<PartsPoTeamStaffDailyEntry, "ticketsOrdered" | "partsOrdered" | "pendingTickets" | "internalNote">>) => {
+    setStaffPoSavingKey(profileId);
+    try {
+      await upsertPartsPoTeamStaffDailyEntry(profileId, poTeamDateTo, patch);
+      setStaffPoEntries((prev) => {
+        const idx = prev.findIndex((e) => e.profileId === profileId && e.date === poTeamDateTo);
+        if (idx === -1) return [...prev, { profileId, date: poTeamDateTo, ticketsOrdered: 0, partsOrdered: 0, pendingTickets: 0, internalNote: "", ...patch }];
+        const next = [...prev];
+        next[idx] = { ...next[idx], ...patch };
+        return next;
+      });
+    } catch (err) {
+      console.error("Failed to save PO Team staff entry:", err);
+    } finally {
+      setStaffPoSavingKey(null);
     }
   };
 
@@ -609,185 +637,66 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
           <div className="panel p-8 mb-6"><BrandedLoader label="Loading Part Daily Report…" /></div>
         ) : (
         <>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
-          {[
-            { l: "Collections", v: kpi.collections, icon: Package, cls: KPI_TILE_COLORS.emerald },
-            { l: "Pickups", v: kpi.pickups, icon: Truck, cls: KPI_TILE_COLORS.violet },
-            { l: "RA Created", v: kpi.ra, icon: RotateCcw, cls: KPI_TILE_COLORS.orange },
-            { l: "Receives", v: kpi.receives, icon: Inbox, cls: KPI_TILE_COLORS.blue },
-            { l: "Issues", v: issuesTotals.issues, icon: AlertTriangle, cls: KPI_TILE_COLORS.red },
-            { l: "Lost", v: issuesTotals.lost, icon: PackageX, cls: KPI_TILE_COLORS.rose },
-          ].map(({ l, v, icon: Icon, cls }) => (
-            <div key={l} className={`panel p-4 border-l-4 ${cls.border} ${cls.bg} flex items-center gap-3`}>
-              <div className={`rounded-full ${cls.iconBg} p-2 shrink-0`}><Icon className={`h-4 w-4 ${cls.text}`} /></div>
+        <div className="panel p-4 border-l-4 border-l-indigo-500 mb-6">
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+            <p className="text-sm font-semibold text-indigo-300 flex items-center gap-2"><ClipboardList className="h-4 w-4" /> PO Team's Daily Report</p>
+            <div className="flex items-end gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date From</label>
+                <input type="date" value={poTeamDateFrom} onChange={(e) => setPoTeamDateFrom(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date To</label>
+                <input type="date" value={poTeamDateTo} onChange={(e) => setPoTeamDateTo(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+              </div>
+              {poTeamSaving && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground mb-2" />}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+            <div className={`panel p-4 border-l-4 ${KPI_TILE_COLORS.emerald.border} ${KPI_TILE_COLORS.emerald.bg} flex items-center gap-3`}>
+              <div className={`rounded-full ${KPI_TILE_COLORS.emerald.iconBg} p-2 shrink-0`}><ClipboardList className={`h-4 w-4 ${KPI_TILE_COLORS.emerald.text}`} /></div>
               <div className="min-w-0">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5 truncate">{l}</p>
-                <p className={`text-2xl font-bold ${cls.text}`}>{v}</p>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5 truncate">No. of Tickets Ordered</p>
+                <p className={`text-2xl font-bold ${KPI_TILE_COLORS.emerald.text}`}>{ticketsOrdered}</p>
               </div>
             </div>
-          ))}
-        </div>
-
-        <div className="panel p-4 border-l-4 border-l-indigo-500 mb-4">
-          <div className="flex items-center justify-between mb-4">
-            <p className="text-sm font-semibold text-indigo-300 flex items-center gap-2"><Building2 className="h-4 w-4" /> Collections / Pickups / RA / Receives / Issues / Lost by Branch</p>
-            <button
-              onClick={() => downloadSheetXlsx(
-                `parts-daily-branch-breakdown_${dateFrom}_to_${dateTo}.xlsx`,
-                "Branch Breakdown",
-                [
-                  ["Branch", "Collections", "Pickups", "RA Created", "Receives", "Issues", "Lost"],
-                  ...branchChartData.map((b) => [b.name, b.collections, b.pickups, b.ra, b.receives, b.issues, b.lost]),
-                ],
-              )}
-              disabled={branchChartData.length === 0}
-              className="btn text-xs px-2.5 py-1 flex items-center gap-1.5 disabled:opacity-50"
-            >
-              <Download className="h-3 w-3" /> Download XLSX
-            </button>
-          </div>
-          {branchChartData.length === 0 ? (
-            <p className="text-xs text-muted-foreground py-16 text-center">No part activity in this date range.</p>
-          ) : (
-            <>
-            <ResponsiveContainer width="100%" height={280} debounce={200}>
-              <BarChart data={branchChartData} margin={{ left: -10, top: 4 }} barCategoryGap="20%">
-                <defs>
-                  <linearGradient id="gradCollections" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#34d399" stopOpacity={1} /><stop offset="100%" stopColor="#34d399" stopOpacity={0.55} /></linearGradient>
-                  <linearGradient id="gradPickups" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#a78bfa" stopOpacity={1} /><stop offset="100%" stopColor="#a78bfa" stopOpacity={0.55} /></linearGradient>
-                  <linearGradient id="gradReceives" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#3b82f6" stopOpacity={1} /><stop offset="100%" stopColor="#3b82f6" stopOpacity={0.55} /></linearGradient>
-                  <linearGradient id="gradRa" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#fb923c" stopOpacity={1} /><stop offset="100%" stopColor="#fb923c" stopOpacity={0.55} /></linearGradient>
-                  <linearGradient id="gradIssues" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#f87171" stopOpacity={1} /><stop offset="100%" stopColor="#f87171" stopOpacity={0.55} /></linearGradient>
-                  <linearGradient id="gradLost" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#fb7185" stopOpacity={1} /><stop offset="100%" stopColor="#fb7185" stopOpacity={0.55} /></linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.12)" vertical={false} />
-                <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} angle={-25} textAnchor="end" height={50} axisLine={{ stroke: "rgba(148,163,184,0.2)" }} tickLine={false} />
-                <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: "rgba(148,163,184,0.08)" }} />
-                <Legend wrapperStyle={LEGEND_STYLE} iconType="circle" iconSize={8} />
-                <Bar dataKey="collections" fill="url(#gradCollections)" radius={[4, 4, 0, 0]} name="Collections" maxBarSize={24} />
-                <Bar dataKey="pickups" fill="url(#gradPickups)" radius={[4, 4, 0, 0]} name="Pickups" maxBarSize={24} />
-                <Bar dataKey="receives" fill="url(#gradReceives)" radius={[4, 4, 0, 0]} name="Receives" maxBarSize={24} />
-                <Bar dataKey="ra" fill="url(#gradRa)" radius={[4, 4, 0, 0]} name="RA Created" maxBarSize={24} />
-                <Bar dataKey="issues" fill="url(#gradIssues)" radius={[4, 4, 0, 0]} name="Issues" maxBarSize={24} />
-                <Bar dataKey="lost" fill="url(#gradLost)" radius={[4, 4, 0, 0]} name="Lost" maxBarSize={24} />
-              </BarChart>
-            </ResponsiveContainer>
-            {/* Raw data under the graph, per the same numbers the chart plots. */}
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-white/10 text-muted-foreground">
-                    <th className="text-left font-semibold px-2 py-1.5">Branch</th>
-                    <th className="text-right font-semibold px-2 py-1.5">Collections</th>
-                    <th className="text-right font-semibold px-2 py-1.5">Pickups</th>
-                    <th className="text-right font-semibold px-2 py-1.5">RA Created</th>
-                    <th className="text-right font-semibold px-2 py-1.5">Receives</th>
-                    <th className="text-right font-semibold px-2 py-1.5">Issues</th>
-                    <th className="text-right font-semibold px-2 py-1.5">Lost</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {branchChartData.map((b) => (
-                    <tr key={b.name} className="border-b border-white/5">
-                      <td className="px-2 py-1.5 font-medium">{b.name}</td>
-                      <td className="px-2 py-1.5 text-right text-emerald-300">{b.collections}</td>
-                      <td className="px-2 py-1.5 text-right text-violet-300">{b.pickups}</td>
-                      <td className="px-2 py-1.5 text-right text-orange-300">{b.ra}</td>
-                      <td className="px-2 py-1.5 text-right text-blue-300">{b.receives}</td>
-                      <td className="px-2 py-1.5 text-right text-red-300">{b.issues}</td>
-                      <td className="px-2 py-1.5 text-right text-rose-300">{b.lost}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            </>
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-          <div className="panel p-4 border-l-4 border-l-green-500">
-            <p className="text-sm font-semibold mb-3 text-green-300 flex items-center gap-2"><DollarSign className="h-4 w-4" /> Value &amp; Aging</p>
-            <div className="space-y-3">
-              <div>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Value Collected</p>
-                <p className="text-2xl font-bold text-green-400">${dollarCollected.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+            <div className={`panel p-4 border-l-4 ${KPI_TILE_COLORS.violet.border} ${KPI_TILE_COLORS.violet.bg} flex items-center gap-3`}>
+              <div className={`rounded-full ${KPI_TILE_COLORS.violet.iconBg} p-2 shrink-0`}><Package className={`h-4 w-4 ${KPI_TILE_COLORS.violet.text}`} /></div>
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5 truncate">No. of Parts Ordered</p>
+                <p className={`text-2xl font-bold ${KPI_TILE_COLORS.violet.text}`}>{partsOrdered}</p>
               </div>
-              <div className="flex items-center justify-between border-t border-white/10 pt-3">
-                <div>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Avg Aging (pending)</p>
-                  <p className="text-lg font-bold text-amber-300">{agingStats.avgDays}d</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Oldest Pending</p>
-                  <p className="text-sm font-semibold text-red-300">
-                    {agingStats.oldest ? `${agingStats.oldest.ticketNo || "—"} · ${agingStats.oldest.agingDays}d` : "—"}
-                  </p>
-                </div>
+            </div>
+            <div className={`panel p-4 border-l-4 ${KPI_TILE_COLORS.orange.border} ${KPI_TILE_COLORS.orange.bg} flex items-center gap-3`}>
+              <div className={`rounded-full ${KPI_TILE_COLORS.orange.iconBg} p-2 shrink-0`}><Hourglass className={`h-4 w-4 ${KPI_TILE_COLORS.orange.text}`} /></div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5 truncate">No. of Pending Tickets</p>
+                {poTeamIsSingleDay ? (
+                  <input
+                    type="number"
+                    min={0}
+                    value={poTeamPendingTickets}
+                    onChange={(e) => setPoTeamEntries([{ date: poTeamDateTo, pendingTickets: Number(e.target.value) || 0, internalNote: "" }])}
+                    onBlur={(e) => savePoTeamEntryField({ pendingTickets: Number(e.target.value) || 0 })}
+                    className={`w-full bg-transparent text-2xl font-bold ${KPI_TILE_COLORS.orange.text} focus:outline-none`}
+                  />
+                ) : (
+                  <p className={`text-2xl font-bold ${KPI_TILE_COLORS.orange.text}`} title="Sum of each day's entry in this range — narrow to one day to edit">{poTeamPendingTickets}</p>
+                )}
               </div>
             </div>
           </div>
-
-          <div className="panel p-4 border-l-4 border-l-purple-500">
-            <p className="text-sm font-semibold mb-2 text-purple-300">Status Distribution</p>
-            {statusDistribution.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-10 text-center">No parts in this date range.</p>
-            ) : (
-              <div className="flex items-center gap-3">
-                <ResponsiveContainer width="55%" height={160}>
-                  <PieChart>
-                    <Pie data={statusDistribution} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={38} outerRadius={62} paddingAngle={2} stroke="none">
-                      {statusDistribution.map((d) => <Cell key={d.name} fill={STATUS_BUCKET_COLORS[d.name] || "#94a3b8"} />)}
-                    </Pie>
-                    <Tooltip contentStyle={TOOLTIP_STYLE} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="flex-1 space-y-1.5">
-                  {statusDistribution.map((d) => (
-                    <div key={d.name} className="flex items-center justify-between text-xs">
-                      <span className="flex items-center gap-1.5 text-muted-foreground"><span className="h-2 w-2 rounded-full shrink-0" style={{ background: STATUS_BUCKET_COLORS[d.name] || "#94a3b8" }} />{d.name}</span>
-                      <span className="font-semibold text-slate-200">{d.value}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="panel p-4 border-l-4 border-l-cyan-500">
-            <p className="text-sm font-semibold mb-3 text-cyan-300 flex items-center gap-2"><ShieldCheck className="h-4 w-4" /> Warranty</p>
-            {warrantyBreakdown.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-10 text-center">No parts in this date range.</p>
-            ) : (
-              <div className="space-y-2.5">
-                {warrantyBreakdown.map((b) => {
-                  const max = Math.max(1, ...warrantyBreakdown.map((x) => x.count));
-                  return (
-                    <div key={b.label}>
-                      <div className="flex justify-between text-xs mb-1">
-                        <span className="text-muted-foreground truncate">{b.label}</span>
-                        <span className="text-cyan-300 font-semibold">{b.count}</span>
-                      </div>
-                      <div className="h-2 rounded-full bg-white/5 overflow-hidden">
-                        <div className="h-full rounded-full bg-cyan-400" style={{ width: `${(b.count / max) * 100}%` }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          <p className="text-[11px] text-muted-foreground mt-3">Tickets/Parts Ordered are automatic (parts.po_date within {poTeamDateFrom} – {poTeamDateTo}, respecting the Branch filter below). Pending Tickets is entered by hand, one row per day — narrow to a single day to edit it directly.</p>
         </div>
 
         <div className="panel p-0 border-l-4 border-l-blue-500 mb-4">
-          <div className="px-4 pt-4 pb-2 flex items-center justify-between">
-            <p className="text-sm font-semibold text-blue-300 flex items-center gap-2"><Users className="h-4 w-4" /> Staff Changes Counter</p>
-            <span className="text-xs text-muted-foreground">{staffChangesCounter.length} of {staff.length} Parts Staff</span>
+          <div className="px-4 pt-4 pb-2 flex items-center justify-between flex-wrap gap-2">
+            <p className="text-sm font-semibold text-blue-300 flex items-center gap-2"><Users className="h-4 w-4" /> Staff Changes Counter — PO Team</p>
+            <span className="text-xs text-muted-foreground">{staffChangesCounter.length} Parts Order staff</span>
           </div>
-          <p className="text-xs text-muted-foreground px-4 pb-3">Only RA Created is attributable to a Parts Staff member (via who processed the return) — Collections/Pickups/Receives are tied to the ticket's field technician, not Parts Staff, so they stay blank here.</p>
+          <p className="text-xs text-muted-foreground px-4 pb-3">Same {poTeamDateFrom} – {poTeamDateTo} range as PO Team's Daily Report above. No live source for any of these (parts.created_by isn't populated), so they're entered by hand per person, per day — editable directly when the range is a single day; summed across the range otherwise ({poTeamIsSingleDay ? "editing now" : "narrow to a single day to edit"}). Internal Note always applies to {poTeamDateTo}.</p>
           {staffChangesCounter.length === 0 ? (
-            <p className="text-xs text-muted-foreground px-4 pb-4">No Parts staff have an RA Created attributed to them in this date range.</p>
+            <p className="text-xs text-muted-foreground px-4 pb-4">No active Parts Order staff found.</p>
           ) : (
             <div className="overflow-x-auto max-h-96 overflow-y-auto">
               <table className="w-full text-xs">
@@ -795,25 +704,70 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
                   <tr className="border-b border-white/10 text-muted-foreground">
                     <th className="text-left font-semibold px-4 py-2">Name</th>
                     <th className="text-left font-semibold px-2 py-2">Role</th>
-                    <th className="text-left font-semibold px-2 py-2">Branch</th>
-                    <th className="text-right font-semibold px-2 py-2">Collections</th>
-                    <th className="text-right font-semibold px-2 py-2">Pickups</th>
-                    <th className="text-right font-semibold px-2 py-2">RA Created</th>
-                    <th className="text-right font-semibold px-4 py-2">Receives</th>
+                    <th className="text-center font-semibold px-2 py-2">No. of Tickets Ordered</th>
+                    <th className="text-center font-semibold px-2 py-2">No. of Parts Ordered</th>
+                    <th className="text-center font-semibold px-2 py-2">No. of Pending Tickets</th>
+                    <th className="text-left font-semibold px-4 py-2">Internal Note</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {staffChangesCounter.map((s) => (
-                    <tr key={s.id} className="border-b border-white/5 hover:bg-white/5">
-                      <td className="px-4 py-2 font-medium">{s.name}</td>
-                      <td className="px-2 py-2 text-muted-foreground">{s.role}</td>
-                      <td className="px-2 py-2 text-muted-foreground">{s.branch}</td>
-                      <td className="px-2 py-2 text-right text-muted-foreground">—</td>
-                      <td className="px-2 py-2 text-right text-muted-foreground">—</td>
-                      <td className="px-2 py-2 text-right font-semibold text-orange-300">{s.ra}</td>
-                      <td className="px-4 py-2 text-right text-muted-foreground">—</td>
-                    </tr>
-                  ))}
+                  {staffChangesCounter.map((s) => {
+                    const summary = getStaffPoSummary(s.id);
+                    const saving = staffPoSavingKey === s.id;
+                    return (
+                      <tr key={s.id} className="border-b border-white/5 hover:bg-white/5">
+                        <td className="px-4 py-2 font-medium whitespace-nowrap">{s.name}</td>
+                        <td className="px-2 py-2 text-muted-foreground whitespace-nowrap">{s.role}</td>
+                        {poTeamIsSingleDay ? (
+                          <>
+                            <td className="px-2 py-2 text-center">
+                              <input
+                                type="number"
+                                min={0}
+                                defaultValue={summary.ticketsOrdered}
+                                onBlur={(e) => saveStaffPoField(s.id, { ticketsOrdered: Number(e.target.value) || 0 })}
+                                className="glass-input text-xs py-0.5 px-1.5 rounded w-16 text-center text-emerald-300 font-medium"
+                              />
+                            </td>
+                            <td className="px-2 py-2 text-center">
+                              <input
+                                type="number"
+                                min={0}
+                                defaultValue={summary.partsOrdered}
+                                onBlur={(e) => saveStaffPoField(s.id, { partsOrdered: Number(e.target.value) || 0 })}
+                                className="glass-input text-xs py-0.5 px-1.5 rounded w-16 text-center text-violet-300 font-medium"
+                              />
+                            </td>
+                            <td className="px-2 py-2 text-center">
+                              <input
+                                type="number"
+                                min={0}
+                                defaultValue={summary.pendingTickets}
+                                onBlur={(e) => saveStaffPoField(s.id, { pendingTickets: Number(e.target.value) || 0 })}
+                                className="glass-input text-xs py-0.5 px-1.5 rounded w-16 text-center text-orange-300 font-medium"
+                              />
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="px-2 py-2 text-center text-emerald-300 font-semibold">{summary.ticketsOrdered}</td>
+                            <td className="px-2 py-2 text-center text-violet-300 font-semibold">{summary.partsOrdered}</td>
+                            <td className="px-2 py-2 text-center text-orange-300 font-semibold">{summary.pendingTickets}</td>
+                          </>
+                        )}
+                        <td className="px-4 py-2">
+                          <input
+                            type="text"
+                            defaultValue={summary.internalNote}
+                            onBlur={(e) => saveStaffPoField(s.id, { internalNote: e.target.value })}
+                            placeholder="Manually entered…"
+                            className="glass-input text-xs py-0.5 px-1.5 rounded w-full min-w-[160px]"
+                          />
+                          {saving && <span className="text-[10px] text-slate-500 ml-1">Saving…</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -822,7 +776,7 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
 
         <div className="mt-4">
           <p className="text-sm font-semibold mb-2 text-red-300 flex items-center gap-2"><PackageX className="h-4 w-4" /> Daily Branch Activity</p>
-          <p className="text-xs text-muted-foreground mb-3">Collections/Pickups/RA/Receives are automated — same counts as the charts above, just broken out per branch per day. Issues and Lost are the only manual columns; the tiles above sum whatever's entered here for the selected date range.</p>
+          <p className="text-xs text-muted-foreground mb-3">Pickups/Collections/Receives/Pending RA/RA Created are automated, broken out per branch per day. Issues, Lost, Not Recovered, Total Warnings, and Remarks are manual.</p>
           {branchOptions.length === 0 ? (
             <p className="text-xs text-muted-foreground">No branches yet — add a part record first.</p>
           ) : (
@@ -835,13 +789,16 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
                     return {
                       collections: acc.collections + s.collections,
                       pickups: acc.pickups + s.pickups,
-                      ra: acc.ra + s.ra,
                       receives: acc.receives + s.receives,
+                      pendingRa: acc.pendingRa + s.pendingRa,
+                      ra: acc.ra + s.ra,
                       issues: acc.issues + e.issues,
                       lost: acc.lost + e.lost,
+                      notRecovered: acc.notRecovered + e.notRecovered,
+                      totalWarnings: acc.totalWarnings + e.totalWarnings,
                     };
                   },
-                  { collections: 0, pickups: 0, ra: 0, receives: 0, issues: 0, lost: 0 }
+                  { collections: 0, pickups: 0, receives: 0, pendingRa: 0, ra: 0, issues: 0, lost: 0, notRecovered: 0, totalWarnings: 0 }
                 );
                 return (
                   <div key={date} className="panel p-0 overflow-hidden border-l-4 border-l-red-500">
@@ -853,12 +810,16 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
                         <thead>
                           <tr className="border-b border-white/10 bg-white/5">
                             <th className="px-2 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Branch</th>
-                            <th className="px-2 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Collections</th>
                             <th className="px-2 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Pickups</th>
-                            <th className="px-2 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">RA Created</th>
+                            <th className="px-2 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Collections</th>
                             <th className="px-2 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Receives</th>
+                            <th className="px-2 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Pending RA</th>
+                            <th className="px-2 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">RA Created</th>
                             <th className="px-2 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Issues</th>
                             <th className="px-2 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Lost</th>
+                            <th className="px-2 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Not Recovered</th>
+                            <th className="px-2 py-2 text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Total Warnings</th>
+                            <th className="px-2 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Remarks</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -868,10 +829,11 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
                             return (
                               <tr key={branch} className="border-b border-white/5 hover:bg-white/5">
                                 <td className="px-2 py-2 font-medium whitespace-nowrap">{branch}</td>
-                                <td className="px-2 py-2 text-center text-emerald-300">{stats.collections}</td>
                                 <td className="px-2 py-2 text-center text-violet-300">{stats.pickups}</td>
-                                <td className="px-2 py-2 text-center text-orange-300">{stats.ra}</td>
+                                <td className="px-2 py-2 text-center text-emerald-300">{stats.collections}</td>
                                 <td className="px-2 py-2 text-center text-blue-300">{stats.receives}</td>
+                                <td className="px-2 py-2 text-center text-amber-300">{stats.pendingRa}</td>
+                                <td className="px-2 py-2 text-center text-orange-300">{stats.ra}</td>
                                 <td className="px-2 py-2 text-center">
                                   <input
                                     type="number"
@@ -892,6 +854,36 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
                                     className="glass-input text-xs py-0.5 px-1.5 rounded w-16 text-center text-rose-300 font-medium"
                                   />
                                 </td>
+                                <td className="px-2 py-2 text-center">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={entry.notRecovered}
+                                    onChange={(e) => updateIssueField(branch, date, "notRecovered", Number(e.target.value))}
+                                    onBlur={(e) => saveIssueField(branch, date, "notRecovered", Number(e.target.value))}
+                                    className="glass-input text-xs py-0.5 px-1.5 rounded w-16 text-center text-red-300 font-medium"
+                                  />
+                                </td>
+                                <td className="px-2 py-2 text-center">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={entry.totalWarnings}
+                                    onChange={(e) => updateIssueField(branch, date, "totalWarnings", Number(e.target.value))}
+                                    onBlur={(e) => saveIssueField(branch, date, "totalWarnings", Number(e.target.value))}
+                                    className="glass-input text-xs py-0.5 px-1.5 rounded w-16 text-center text-amber-300 font-medium"
+                                  />
+                                </td>
+                                <td className="px-2 py-2">
+                                  <input
+                                    type="text"
+                                    value={entry.remarks}
+                                    onChange={(e) => updateIssueField(branch, date, "remarks", e.target.value)}
+                                    onBlur={(e) => saveIssueField(branch, date, "remarks", e.target.value)}
+                                    placeholder="—"
+                                    className="glass-input text-xs py-0.5 px-1.5 rounded w-full min-w-[140px]"
+                                  />
+                                </td>
                               </tr>
                             );
                           })}
@@ -899,12 +891,16 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
                         <tfoot>
                           <tr className="border-t border-white/10 bg-white/5 font-semibold">
                             <td className="px-2 py-2">Totals</td>
-                            <td className="px-2 py-2 text-center text-emerald-300">{dayTotals.collections}</td>
                             <td className="px-2 py-2 text-center text-violet-300">{dayTotals.pickups}</td>
-                            <td className="px-2 py-2 text-center text-orange-300">{dayTotals.ra}</td>
+                            <td className="px-2 py-2 text-center text-emerald-300">{dayTotals.collections}</td>
                             <td className="px-2 py-2 text-center text-blue-300">{dayTotals.receives}</td>
+                            <td className="px-2 py-2 text-center text-amber-300">{dayTotals.pendingRa}</td>
+                            <td className="px-2 py-2 text-center text-orange-300">{dayTotals.ra}</td>
                             <td className="px-2 py-2 text-center text-red-300">{dayTotals.issues}</td>
                             <td className="px-2 py-2 text-center text-rose-300">{dayTotals.lost}</td>
+                            <td className="px-2 py-2 text-center text-red-300">{dayTotals.notRecovered}</td>
+                            <td className="px-2 py-2 text-center text-amber-300">{dayTotals.totalWarnings}</td>
+                            <td className="px-2 py-2"></td>
                           </tr>
                         </tfoot>
                       </table>
