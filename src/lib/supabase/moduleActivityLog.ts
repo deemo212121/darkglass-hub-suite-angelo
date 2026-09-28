@@ -21,6 +21,7 @@ export const MODULE_ACTIVITY_ACTION_LABELS: Record<string, string> = {
   payroll_csv_exported: "Exported payroll CSV",
   pto_request_approved: "Approved PTO request",
   pto_request_rejected: "Rejected PTO request",
+  pto_stage_reconsidered: "Reconsidered a PTO review decision",
   timecard_correction_approved: "Approved time correction",
   timecard_correction_rejected: "Rejected time correction",
   conduct_warning_submitted: "Submitted conduct warning",

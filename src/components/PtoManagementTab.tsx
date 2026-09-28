@@ -19,6 +19,7 @@ import {
   getCompanyPtoRequests,
   createPtoRequest,
   reviewPtoStage,
+  resetPtoStage,
   canReviewPtoStage,
   isEligibleForPto,
   ptoEligibleDate,
@@ -174,6 +175,38 @@ export function PtoManagementTab() {
     }
   };
 
+  // Undo a mistaken Approve/Reject on one stage — the review buttons above
+  // only render while that stage is "pending" (see the JSX below), so once
+  // someone has clicked, there's otherwise no way to revisit it even for a
+  // plain misclick. Resets just that one stage back to pending; the other
+  // two stages, and their own history, are untouched.
+  const handleReconsiderStage = async (request: PtoRequestRow, stage: PtoStage) => {
+    const stageLabel = stage === "manager" ? "Manager" : stage === "hr" ? "HR" : "Accounting";
+    if (!window.confirm(`Undo the ${stageLabel} decision on this request and set it back to pending? The reviewer will need to re-decide.`)) return;
+    setBusyPtoId(request.id);
+    try {
+      await resetPtoStage(request.id, stage);
+      setPtoRequests(await getCompanyPtoRequests());
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: displayName || "Admin",
+        action: "pto_stage_reconsidered",
+        targetType: "pto_request",
+        targetId: request.id,
+        targetLabel: `${profileName(request.profileId)} (${request.startDate} – ${request.endDate})`,
+        details: {
+          stage,
+          ptoType: request.ptoType,
+          previousStatus: stage === "manager" ? request.managerStatus : stage === "hr" ? request.hrStatus : request.accountingStatus,
+        },
+      });
+    } catch (error) {
+      alert(`Failed to reset this stage: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setBusyPtoId(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-end">
@@ -312,9 +345,29 @@ export function PtoManagementTab() {
             <div className="text-center py-8">
               <p className="text-slate-400 text-sm">No PTO history yet</p>
             </div>
-          ) : visiblePtoRequests.filter(r => r.status !== "pending").map((request) => (
+          ) : visiblePtoRequests.filter(r => r.status !== "pending").map((request) => {
+            const requesterManagerName = profileById.get(request.profileId)?.manager_name ?? null;
+            const requesterManagersManagerName = requesterManagerName
+              ? profiles.find((p) => (p.display_name || "").trim().toLowerCase() === requesterManagerName.trim().toLowerCase())?.manager_name ?? null
+              : null;
+            // A "Reconsider" button per stage that's rejected AND that this
+            // viewer could act on in the first place (same canReviewPtoStage
+            // gate the live Approve/Reject buttons use above) — the only way
+            // to undo a mistaken decision, since this history row otherwise
+            // has no controls at all once the request leaves "pending".
+            const reconsiderable: { stage: PtoStage; label: string }[] = (
+              [
+                ["manager", "Manager"],
+                ["hr", "HR"],
+                ["accounting", "Accounting"],
+              ] as [PtoStage, string][]
+            ).filter(([stage]) => {
+              const status = stage === "manager" ? request.managerStatus : stage === "hr" ? request.hrStatus : request.accountingStatus;
+              return status === "rejected" && canReviewPtoStage(request, stage, myProfileId, role, extraRoles, displayName, requesterManagerName, requesterManagersManagerName);
+            }).map(([stage, label]) => ({ stage, label }));
+            return (
             <div key={request.id} className="bg-slate-800/50 border border-white/10 rounded-lg p-4">
-              <div className="flex items-start justify-between">
+              <div className="flex items-start justify-between gap-3">
                 <div className="flex-1">
                   <p className="text-sm font-semibold text-white">{profileName(request.profileId)} - {PTO_TYPE_LABELS[request.ptoType]}</p>
                   <p className="text-xs text-slate-400 mt-1">{request.startDate} to {request.endDate}</p>
@@ -335,9 +388,26 @@ export function PtoManagementTab() {
                     Accounting: {request.accountingStatus}{request.accountingReviewedBy ? ` by ${profileName(request.accountingReviewedBy)}` : ""}{request.accountingReviewedAt ? ` on ${request.accountingReviewedAt.slice(0, 10)}` : ""}
                   </p>
                 </div>
+                {reconsiderable.length > 0 && (
+                  <div className="flex flex-col gap-1.5 shrink-0">
+                    {reconsiderable.map(({ stage, label }) => (
+                      <button
+                        key={stage}
+                        type="button"
+                        title={`Undo the ${label} rejection and set it back to pending`}
+                        disabled={busyPtoId === request.id}
+                        onClick={() => void handleReconsiderStage(request, stage)}
+                        className="px-2 py-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-slate-200 rounded text-[10px] font-semibold transition whitespace-nowrap"
+                      >
+                        {busyPtoId === request.id ? "…" : `Reconsider (${label})`}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 

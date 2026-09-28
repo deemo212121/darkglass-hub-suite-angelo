@@ -739,6 +739,35 @@ export async function reviewPtoStage(
 }
 
 /**
+ * Resets one stage's review back to "pending" so it can be re-decided —
+ * the review buttons in PtoManagementTab.tsx only render while a stage is
+ * still "pending" (canReviewPtoStage(..., "pending" check ...)), so once a
+ * reviewer has clicked Approve or Reject there is otherwise no way to
+ * revisit it, even for a plain misclick. Only clears that one stage's own
+ * three columns (status/reviewed_by/reviewed_at) — the other two stages
+ * are left exactly as they are, and sync_pto_overall_status (migration
+ * 0101) recomputes the derived `status` from whatever the three stages
+ * say after this. Callers are expected to gate this the same way the
+ * original Approve/Reject buttons are gated (canReviewPtoStage for that
+ * stage) — this function itself does not re-check who's calling.
+ */
+export async function resetPtoStage(requestId: string, stage: PtoStage): Promise<void> {
+  const prefix = stage === "manager" ? "manager" : stage === "hr" ? "hr" : "accounting";
+  const { error } = await supabase
+    .from("pto_requests")
+    .update({
+      [`${prefix}_status`]: "pending",
+      [`${prefix}_reviewed_by`]: null,
+      [`${prefix}_reviewed_at`]: null,
+    })
+    .eq("id", requestId);
+  if (error) {
+    console.error("resetPtoStage error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
+/**
  * The paper form's "5. HR Department Use Only" sign-off. This function
  * itself only ever touches the hr_paperwork_* columns — it stays
  * independent of hrStatus/accountingStatus (the manager-then-HR-OR-

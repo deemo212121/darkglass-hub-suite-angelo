@@ -329,6 +329,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const [ticketListFor, setTicketListFor] = useState<{ id: string; name: string } | null>(null);
   const [mileageListFor, setMileageListFor] = useState<{ id: string; name: string } | null>(null);
   const [offDaysListFor, setOffDaysListFor] = useState<{ id: string; name: string } | null>(null);
+  const [hoursListFor, setHoursListFor] = useState<{ id: string; name: string } | null>(null);
   const [importing, setImporting] = useState(false);
   const [templateGenerating, setTemplateGenerating] = useState(false);
   const [importResult, setImportResult] = useState<{ rowsApplied: number; skipped: string[] } | null>(null);
@@ -338,13 +339,26 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const [managerFilter, setManagerFilter] = useState<string[]>([]);
   const [tierFilter, setTierFilter] = useState<string[]>([]);
   const [groupBy, setGroupBy] = useState<GroupBy>("none");
-  // Ref to the (default, ungrouped) table's horizontal-scroll container so
-  // a floating scrollbar pinned to the bottom of the viewport can mirror
-  // its scroll position — same pattern TicketList.tsx uses, needed here
-  // too now that this table has 20+ columns. If Group By is active there
-  // can be more than one table on screen; this only tracks whichever one
-  // mounts last, same acceptable limitation as elsewhere this pattern's used.
-  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  // One horizontal-scroll ref PER group's table (not a single shared one) —
+  // same floating-scrollbar-pinned-to-the-viewport pattern TicketList.tsx
+  // uses, needed here too now that this table has 20+ columns. With Group
+  // By active there can be several of these tables on screen at once; a
+  // single shared ref would only ever track whichever one mounted last,
+  // leaving every other group's wide table with no floating scrollbar at
+  // all. Lazily creates one stable RefObject per group key (kept in a
+  // useRef Map so it survives re-renders) and reused for both that group's
+  // scroll container and its own <FloatingHorizontalScrollbar> below —
+  // each one hides itself independently when its own table isn't the one
+  // currently in view.
+  const groupScrollRefs = useRef(new Map<string, React.RefObject<HTMLDivElement | null>>());
+  const getGroupScrollRef = (key: string): React.RefObject<HTMLDivElement | null> => {
+    let ref = groupScrollRefs.current.get(key);
+    if (!ref) {
+      ref = { current: null };
+      groupScrollRefs.current.set(key, ref);
+    }
+    return ref;
+  };
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [selectedTechId, setSelectedTechId] = useState<string | null>(null);
@@ -748,6 +762,21 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       .filter((d) => (d.isProfileId ? d.techKey === mileageListFor.id : d.techKey === nameKey))
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [mileageListFor, mileageDaily]);
+
+  // The real per-day hours (calcWorkedHours + paid-meal-credit off this
+  // technician's own timecard punches, see hoursByProfileByDay in load())
+  // behind a clicked Hours Worked total — same "show the days it's built
+  // from" transparency the Mileage/Total Tickets breakdowns already give,
+  // for whatever Period (Weekly/Monthly/Custom) is currently selected.
+  const hoursListRows = useMemo(() => {
+    if (!hoursListFor) return [];
+    const dayMap = hoursDaily.get(hoursListFor.id);
+    if (!dayMap) return [];
+    return Array.from(dayMap.entries())
+      .filter(([, hrs]) => hrs > 0)
+      .map(([date, hours]) => ({ date, hours }))
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [hoursListFor, hoursDaily]);
 
   // The actual dates behind a clicked Off Days count — every date in the
   // period whose weekday falls in this technician's scheduled off_days
@@ -1191,7 +1220,13 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
 
   return (
     <div className="min-h-screen flex flex-col">
-      <main className="flex-1 max-w-[1500px] mx-auto w-full px-4 sm:px-6 py-8">
+      {/* max-w-[1900px] (not unbounded) — same convention TicketList.tsx's
+          own very-wide table uses: wide enough that a big/ultrawide monitor
+          actually gets to use the extra room (more of this table's 20+
+          columns fit without scrolling), while `w-full` + the responsive
+          px-4/sm:px-6 padding still let it shrink correctly on a smaller
+          screen — the floating horizontal scrollbar picks up the rest. */}
+      <main className="flex-1 max-w-[1900px] mx-auto w-full px-4 sm:px-6 py-8">
         <div className="relative rounded-2xl border border-white/10 bg-gradient-to-br from-blue-600/20 via-indigo-600/10 to-transparent px-6 py-6 mb-5">
           <div className="flex items-center gap-3 flex-wrap">
             <button onClick={goBack} className="btn hover:bg-white/15 shrink-0"><ChevronLeft className="h-4 w-4" /></button>
@@ -1444,7 +1479,9 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                 </ResponsiveContainer>
               </div>
             )}
-            {groupedRows.map(({ groupName, rows: groupRows }) => (
+            {groupedRows.map(({ groupName, rows: groupRows }) => {
+              const groupScrollRef = getGroupScrollRef(groupName ?? "__all__");
+              return (
               <div key={groupName ?? "all"} className="rounded-xl border border-white/10 bg-white/[0.03] overflow-hidden">
                 {groupName != null && (
                   <div className="px-4 py-2.5 border-b border-white/10 bg-white/5 flex items-center justify-between">
@@ -1454,7 +1491,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                     </span>
                   </div>
                 )}
-                <div className="overflow-x-auto" ref={tableScrollRef}>
+                <div className="overflow-x-auto" ref={groupScrollRef}>
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-white/10 bg-white/5">
@@ -1559,7 +1596,20 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                               )}
                             </td>
                             <td className="px-3 py-2 text-right text-muted-foreground">—</td>
-                            <td className="px-3 py-2 text-right">{fmt1(r.hoursWorked)}</td>
+                            <td className="px-3 py-2 text-right">
+                              {r.hoursWorked > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setHoursListFor({ id: r.id, name: r.name })}
+                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
+                                  title="View hours breakdown"
+                                >
+                                  {fmt1(r.hoursWorked)}
+                                </button>
+                              ) : (
+                                fmt1(r.hoursWorked)
+                              )}
+                            </td>
                             <td className="px-3 py-2 text-muted-foreground">{r.location}</td>
                             <td className="px-3 py-2 text-muted-foreground">{r.manager}</td>
                             <td className="px-3 py-2 text-muted-foreground">{r.tier}</td>
@@ -1580,17 +1630,18 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                     </tbody>
                   </table>
                 </div>
+                {/* Floating horizontal scrollbar — pinned to the bottom of
+                    the viewport so the user can scroll THIS group's wide
+                    table sideways without first scrolling all the way down.
+                    Hides itself automatically when this table isn't the one
+                    currently in view (e.g. a different group is on screen),
+                    or when its own native scrollbar is already reachable. */}
+                <FloatingHorizontalScrollbar targetRef={groupScrollRef} />
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
-
-        {/* Floating horizontal scrollbar — pinned to the bottom of the
-            viewport so the user can scroll this wide table sideways
-            without first scrolling all the way down. Hides itself
-            automatically when the table's own native scrollbar comes into
-            view. */}
-        <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
       </main>
 
       {ticketListFor && (
@@ -1688,6 +1739,50 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                             </span>
                           )}
                         </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {hoursListFor && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setHoursListFor(null)}>
+          <div
+            className="bg-slate-900 border border-white/15 rounded-xl w-full max-w-lg max-h-[80vh] flex flex-col shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-slate-950 rounded-t-xl">
+              <div>
+                <p className="font-semibold text-white">Hours Breakdown — {hoursListFor.name}</p>
+                <p className="text-xs text-slate-400">{periodStart} – {periodEnd} · {fmt1(hoursListRows.reduce((s, d) => s + d.hours, 0))} total hours</p>
+              </div>
+              <button onClick={() => setHoursListFor(null)} className="text-white/40 hover:text-white/80 transition">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="px-5 pt-3 text-[11px] text-slate-400">
+              Real hours per day from this technician's own timecard — Check In/Check Out minus any unpaid meal break (<span className="text-slate-300">calcWorkedHours</span>), plus any paid-meal credit their role gets. A day with a manual correction (technician_daily_performance_overrides) shows this raw punched value here regardless — the table's own total already reflects the correction.
+            </p>
+            <div className="overflow-y-auto flex-1 p-2">
+              {hoursListRows.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-8">No punches in this period.</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-slate-400 uppercase">
+                      <th className="px-3 py-2">Date</th>
+                      <th className="px-3 py-2 text-right">Hours</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {hoursListRows.map((d) => (
+                      <tr key={d.date} className="hover:bg-white/5">
+                        <td className="px-3 py-2 text-slate-300">{d.date}</td>
+                        <td className="px-3 py-2 text-right font-medium">{fmt1(d.hours)}</td>
                       </tr>
                     ))}
                   </tbody>
