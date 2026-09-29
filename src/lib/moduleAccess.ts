@@ -83,3 +83,14 @@ export function getModuleRoleGate(moduleSlug: string, submoduleSlug: string): st
 export function useModuleRoleGate(moduleSlug: string, submoduleSlug: string): string[] | null {
   return useSyncExternalStore(subscribe, () => getModuleRoleGate(moduleSlug, submoduleSlug));
 }
+
+/**
+ * Subscribes the caller to the whole override cache — for list views (Home,
+ * a module's tile grid, the floating Modules strip) that filter many
+ * submodules through the synchronous helpers and just need to re-render
+ * whenever any override changes. hydrateModuleRoleGates always swaps in a
+ * new object, so the snapshot identity changes on every re-hydration.
+ */
+export function useModuleRoleGateOverrides(): Record<string, string[]> {
+  return useSyncExternalStore(subscribe, () => overrides, () => overrides);
+}

@@ -7,7 +7,7 @@ import { MapProviderToggle } from "@/components/MapProviderToggle";
 import { useAuth } from "@/lib/auth";
 import { getModule, type ModuleDef, type SubModuleDef } from "@/lib/modules";
 import { hasDashboardAccess } from "@/lib/dashboardAccess";
-import { getModuleRoleGate, MODULE_LEVEL_GATE_SLUG } from "@/lib/moduleAccess";
+import { getModuleRoleGate, MODULE_LEVEL_GATE_SLUG, useModuleRoleGateOverrides } from "@/lib/moduleAccess";
 import { isModuleAllowed, isModuleAllowedForTrainee, isModuleAllowedForFrozen } from "@/lib/roleLabels";
 import { canAccessSubmodule } from "@/lib/submoduleAccess";
 import { getCompanyUsers } from "@/lib/supabase/users";
@@ -82,6 +82,9 @@ function ModuleIndex() {
   // parent routes with children, not a real runtime issue (the loader
   // always returns { module } or throws notFound() first).
   const { module: m } = Route.useLoaderData() as { module: ModuleDef };
+  // Re-render when an admin changes module access live (the tile filters
+  // below read the override cache synchronously).
+  useModuleRoleGateOverrides();
   const isAdmin = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN"].includes((r || "").toUpperCase()));
 
   // Parts hub's single "Done" button — aggregates rows marked done across

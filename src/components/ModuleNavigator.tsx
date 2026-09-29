@@ -24,6 +24,7 @@ import { LayoutGrid, Eye, ChevronDown } from "lucide-react";
 import { MODULES, type ModuleDef, type SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { canAccessSubmodule } from "@/lib/submoduleAccess";
+import { useModuleRoleGateOverrides } from "@/lib/moduleAccess";
 import { ROLE_OPTIONS, isModuleAllowed, isModuleAllowedForTrainee, isModuleAllowedForFrozen } from "@/lib/roleLabels";
 
 const SUPER_ROLES = new Set(["SUPERADMIN", "SUPERSUPERADMIN"]);
@@ -33,6 +34,9 @@ export function ModuleNavigator() {
   const [expanded, setExpanded] = useState(false);
   const [activeModule, setActiveModule] = useState<ModuleDef | null>(null);
   const closeTimer = useRef<number | null>(null);
+  // Re-render when an admin changes module access live (the strip's filters
+  // below read the override cache synchronously).
+  useModuleRoleGateOverrides();
 
   useEffect(() => {
     return () => {

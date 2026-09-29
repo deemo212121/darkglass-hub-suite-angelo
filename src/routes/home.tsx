@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { shouldUseMobile } from "@/lib/device";
 import { isModuleAllowed, isModuleAllowedForTrainee, isModuleAllowedForFrozen } from "@/lib/roleLabels";
 import { canAccessSubmodule } from "@/lib/submoduleAccess";
+import { useModuleRoleGateOverrides } from "@/lib/moduleAccess";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { ModuleAccessQuickEditModal } from "@/components/ModuleAccessQuickEditModal";
 
@@ -19,6 +20,9 @@ export const Route = createFileRoute("/home")({
 
 function Home() {
   const { ready, email, role, extraRoles, isTrainee, isFrozen } = useAuth();
+  // Re-render when an admin changes module access live (the tile filters
+  // below read the override cache synchronously).
+  useModuleRoleGateOverrides();
   const navigate = useNavigate();
   // Only an actual admin tier can reassign who sees a module — same gate
   // Accessibility Management itself sits behind. Super Admin always passes

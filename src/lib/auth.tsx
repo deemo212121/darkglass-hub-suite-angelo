@@ -520,20 +520,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   setIsActive(sbProfile.isActive);
                   setMustChangePasswordState(sbProfile.mustChangePassword);
                   // Hydrate this company's per-module/submodule role-gate
-                  // overrides (migration 0151) — every getDashboardRoleGate()/
-                  // getModuleRoleGate() call site stays synchronous and just
-                  // starts seeing the customized list once this resolves.
-                  // Never blocks login; a submodule reads as "open to
-                  // everyone" (or the Dashboard's hardcoded default) until it does.
-                  void (async () => {
-                    try {
-                      const { getModuleRoleGateOverrides } = await import("./supabase/moduleRoleGates");
-                      const { hydrateModuleRoleGates } = await import("./moduleAccess");
-                      hydrateModuleRoleGates(await getModuleRoleGateOverrides());
-                    } catch (e) {
-                      console.warn("Module role gate override hydration skipped:", e);
-                    }
-                  })();
+                  // overrides (migration 0151) BEFORE `ready` flips true.
+                  // Every gate check reads this cache synchronously, and an
+                  // empty cache means "open to everyone" — so if pages render
+                  // first (as they did when this was fire-and-forget), Home
+                  // and the module grids list every module/submodule to every
+                  // role after a refresh. A failed fetch still doesn't block
+                  // login; it just leaves the permissive default in place.
+                  try {
+                    const { getModuleRoleGateOverrides } = await import("./supabase/moduleRoleGates");
+                    const { hydrateModuleRoleGates } = await import("./moduleAccess");
+                    hydrateModuleRoleGates(await getModuleRoleGateOverrides());
+                  } catch (e) {
+                    console.warn("Module role gate override hydration skipped:", e);
+                  }
+                  if (isStale()) return;
                   startModuleGateWatch(sbProfile.companyId);
                   // Compute location access. Two overrides win over the
                   // work-plan-based filter:
