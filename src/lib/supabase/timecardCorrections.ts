@@ -503,6 +503,51 @@ export async function reviewCorrectionStage(
 }
 
 /**
+ * HR rejects a correction from Exception Reports — including one that was
+ * already fully approved. Any single stage rejecting makes the overall
+ * status "rejected" (DB trigger, migration 0270). If it HAD been approved,
+ * reviewCorrectionStage's final-approval step already merged the corrected
+ * punch into timecard_entries, so this puts the original times back; a meal
+ * the correction didn't touch is left as it is.
+ */
+export async function rejectCorrectionAsHr(
+  c: Pick<
+    TimecardCorrectionRow,
+    "id" | "profileId" | "workDate" | "managerId" | "status" | "originalCheckIn" | "originalCheckOut" | "originalMealStart" | "originalMealEnd" | "correctedMealStart" | "correctedMealEnd"
+  >,
+  reviewerId: string,
+  reviewerName: string
+): Promise<void> {
+  const wasApproved = c.status === "approved";
+  await reviewCorrectionStage(c, "hr", "rejected", reviewerId, reviewerName);
+  if (!wasApproved) return;
+
+  const { data: existing } = await supabase
+    .from("timecard_entries")
+    .select("meal_start, meal_end, notes")
+    .eq("profile_id", c.profileId)
+    .eq("work_date", c.workDate)
+    .maybeSingle();
+  const mealWasCorrected = Boolean(c.correctedMealStart || c.correctedMealEnd);
+  const { error } = await supabase.from("timecard_entries").upsert(
+    {
+      profile_id: c.profileId,
+      work_date: c.workDate,
+      check_in: c.originalCheckIn || null,
+      check_out: c.originalCheckOut || null,
+      meal_start: mealWasCorrected ? c.originalMealStart || null : existing?.meal_start ?? null,
+      meal_end: mealWasCorrected ? c.originalMealEnd || null : existing?.meal_end ?? null,
+      notes: existing?.notes ?? null,
+    },
+    { onConflict: "profile_id,work_date" }
+  );
+  if (error) {
+    console.error("rejectCorrectionAsHr timecard revert error:", error.message);
+    throw new Error(`Correction rejected, but restoring the original timecard failed: ${error.message}`);
+  }
+}
+
+/**
  * The paper form's "5. HR Department Use Only" sign-off. This function
  * itself only ever touches the hr_paperwork_* columns — it stays
  * independent of reviewCorrectionStage's hr_status quorum vote at the DB

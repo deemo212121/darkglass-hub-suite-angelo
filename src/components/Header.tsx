@@ -19,6 +19,7 @@ import { useTheme } from "@/lib/theme";
 import { setDesktopOverride, setMobileMode } from "@/lib/device";
 import { getMyFullProfile } from "@/lib/supabase/users";
 import { LocationSharingBadge } from "@/components/LocationSharingBadge";
+import { ModuleNavigator } from "@/components/ModuleNavigator";
 
 /**
  * Live reference clock in the header — this app's operations run across
@@ -165,15 +166,23 @@ export function AppHeader() {
 
   return (
     <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--color-background)]/70 border-b border-[var(--color-panel-border)]">
-      <div className="max-w-[1400px] mx-auto px-6 py-3 flex items-center gap-4">
-        <Link to="/home" className="flex items-center gap-3">
+      <div className="w-full px-4 lg:px-6 py-2.5 flex items-center gap-3">
+        <Link to="/home" className="flex shrink-0 items-center gap-3">
           <img src={logo} alt="Admin Hub Solutions" className="logo-img h-9 w-9 object-contain" />
-          <div>
+          <div className="hidden md:block">
             <div className="font-display font-semibold tracking-tight leading-none">Admin Hub Solutions</div>
             <div className="text-xs text-muted-foreground">Operations console</div>
           </div>
         </Link>
-        <CentralClock zoneKey={profileZone || "CST"} />
+        {ready && email && (
+          <>
+            <span className="hidden sm:block h-7 w-px shrink-0 bg-[var(--color-panel-border)]" aria-hidden="true" />
+            <ModuleNavigator />
+          </>
+        )}
+        <div className="ml-auto hidden xl:block shrink-0">
+          <CentralClock zoneKey={profileZone || "CST"} />
+        </div>
         {/* The icon strip (clock buttons, theme toggle, announcements,
             notifications, messages) can genuinely be wider than a phone
             viewport — this desktop header has no mobile layout of its own,
@@ -183,7 +192,7 @@ export function AppHeader() {
             (the only way back to Mobile View), only this strip scrolls
             internally; the profile button stays pinned and always
             reachable without scrolling. */}
-        <div className="ml-auto flex items-center gap-2 text-sm min-w-0">
+        <div className="ml-auto xl:ml-0 flex items-center gap-2 text-sm min-w-0">
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar min-w-0">
             {ready && email && <TimeClockButtons />}
             {ready && email && (
@@ -205,7 +214,7 @@ export function AppHeader() {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
-                  className="group flex items-center gap-2.5 rounded-full pl-1 pr-3 py-1 border border-[var(--color-panel-border)] bg-[var(--color-panel)] hover:bg-[var(--color-secondary)] transition-colors cursor-pointer"
+                  className="group flex shrink-0 items-center gap-2.5 rounded-full pl-1 pr-3 py-1 border border-[var(--color-panel-border)] bg-[var(--color-panel)] hover:bg-[var(--color-secondary)] transition-colors cursor-pointer"
                   aria-label="Account menu"
                 >
                   <span className="relative grid h-8 w-8 place-items-center rounded-full bg-[var(--color-primary)] overflow-hidden text-xs font-semibold text-[var(--color-primary-foreground)]">

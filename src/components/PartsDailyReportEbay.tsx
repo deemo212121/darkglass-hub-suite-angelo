@@ -1156,7 +1156,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
 
   return (
     <div className="min-h-screen flex flex-col">
-      <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
+      <main className="flex-1 w-full min-w-0 px-4 lg:px-6 py-8">
         <div className="flex items-center justify-between gap-3 mb-6">
           <div className="flex items-center gap-3">
             <button type="button" onClick={goBack} className="btn hover:bg-white/15">

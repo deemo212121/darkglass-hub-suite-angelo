@@ -22,7 +22,6 @@ import { TicketSearchFab } from "@/components/TicketSearchFab";
 import { FloatingMessenger } from "@/components/FloatingMessenger";
 import { SessionKickedOutBanner } from "@/components/SessionKickedOutBanner";
 import { ViewAsRoleBanner } from "@/components/ViewAsRoleBanner";
-import { ModuleNavigator } from "@/components/ModuleNavigator";
 import { TechnicianLocationTracker } from "@/components/TechnicianLocationTracker";
 import { LiveLocationProvider } from "@/lib/liveLocationContext";
 
@@ -176,10 +175,6 @@ function RootComponent() {
             <Outlet />
             {!hideChrome && <TicketSearchFab />}
             {!hideChrome && <FloatingMessenger />}
-            {/* Floating module navigator — sits below the AppHeader on every
-                authenticated page so users can hop between modules without
-                going back to /home. */}
-            {!hideChrome && <ModuleNavigator />}
           </LiveLocationProvider>
         </AuthProvider>
       </ThemeProvider>

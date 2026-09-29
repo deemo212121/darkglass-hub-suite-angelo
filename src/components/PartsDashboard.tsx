@@ -360,7 +360,7 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
 
   return (
     <div className="min-h-screen flex flex-col">
-      <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
+      <main className="flex-1 w-full min-w-0 px-4 lg:px-6 py-8">
 
         {/* Header */}
         <div className="flex items-center gap-3 mb-2">

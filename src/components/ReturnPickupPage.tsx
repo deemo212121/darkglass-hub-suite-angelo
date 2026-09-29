@@ -209,7 +209,7 @@ export function ReturnPickupPage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
+      <main className="flex-1 w-full min-w-0 px-4 lg:px-6 py-8">
         <style>{`
           .panel {
             background: rgba(255, 255, 255, 0.08);

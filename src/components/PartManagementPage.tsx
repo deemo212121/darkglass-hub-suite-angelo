@@ -20,6 +20,7 @@ import {
   deletePartManagementRow,
   type PartManagementRow,
 } from "@/lib/supabase/partManagement";
+import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 
 // The canonical part-status vocabulary (matches the dropdown on the ticket
 // detail page's own Parts tab) - real distinct values currently in the data
@@ -35,6 +36,18 @@ function formatMoney(value: number) {
   const amount = Number(value || 0);
   return Number.isFinite(amount) ? amount.toFixed(2) : "0.00";
 }
+
+// Text each column's funnel filter matches on — same as what the cell shows.
+const PART_MGMT_COLUMNS: { label: string; value: (r: PartManagementRow) => string }[] = [
+  { label: "Ticket #", value: (r) => r.ticketNo || "" },
+  { label: "Part No", value: (r) => r.partNo || "" },
+  { label: "Description", value: (r) => r.description || "" },
+  { label: "Dist", value: (r) => r.partDist || "" },
+  { label: "Part Status", value: (r) => r.partStatus || "" },
+  { label: "Unit $", value: (r) => `$${formatMoney(r.unit)}` },
+  { label: "Qty", value: (r) => String(r.qty) },
+  { label: "Total", value: (r) => `$${formatMoney(r.unit * r.qty)}` },
+];
 
 function defaultFilterOptions(rows: PartManagementRow[]) {
   const repairValues = [...new Set([...REPAIR_STATUS_OPTIONS, ...rows.map((row) => row.repairStatus).filter(Boolean)])];
@@ -170,7 +183,7 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
 
   const hasLocation = locations.length > 0;
 
-  const filteredRows = useMemo(() => {
+  const baseFilteredRows = useMemo(() => {
     if (!hasLocation) return [] as PartManagementRow[];
     const repair = repairStatusFilter.trim();
     const part = partStatusFilter.trim();
@@ -191,6 +204,31 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
       return true;
     });
   }, [hasLocation, locations, repairStatusFilter, partStatusFilter, ticketFilter, fromDate, toDate, resultSearch, rows]);
+
+  // Per-column funnel filters, layered on the panel filters above — so the
+  // record count, CSV export and "select all Need PO" all follow them too.
+  const [columnFilters, setColumnFilters] = useState<Record<string, Set<string>>>({});
+  const filteredRows = useMemo(
+    () =>
+      baseFilteredRows.filter((row) =>
+        PART_MGMT_COLUMNS.every(({ label, value }) => {
+          const selected = columnFilters[label];
+          return !selected || selected.size === 0 || selected.has(value(row));
+        }),
+      ),
+    [baseFilteredRows, columnFilters],
+  );
+  const colFilter = (label: string) => {
+    const col = PART_MGMT_COLUMNS.find((c) => c.label === label)!;
+    return (
+      <TicketColumnFilter
+        options={baseFilteredRows.map(col.value)}
+        selected={columnFilters[label] ?? new Set()}
+        onChange={(next) => setColumnFilters((prev) => ({ ...prev, [label]: next }))}
+        label={`Filter by ${label}`}
+      />
+    );
+  };
 
   const handleExport = () => {
     if (filteredRows.length === 0) return;
@@ -298,7 +336,7 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-950">
-      <main className="flex-1 max-w-7xl mx-auto w-full px-6 py-8">
+      <main className="flex-1 w-full min-w-0 px-4 lg:px-6 py-8">
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-6">
             <button
@@ -546,14 +584,14 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
                         className="w-4 h-4 cursor-pointer"
                       />
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Ticket #</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Part No</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Description</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Dist</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Part Status</th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Unit $</th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Qty</th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase">Total</th>
+                    {PART_MGMT_COLUMNS.map(({ label }) => {
+                      const right = label === "Unit $" || label === "Qty" || label === "Total";
+                      return (
+                        <th key={label} className={`px-4 py-3 text-xs font-semibold uppercase whitespace-nowrap ${right ? "text-right" : "text-left"}`}>
+                          <span className="inline-flex items-center">{label}{colFilter(label)}</span>
+                        </th>
+                      );
+                    })}
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase">Actions</th>
                   </tr>
                 </thead>
@@ -594,7 +632,7 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
                           </a>
                         </td>
                         <td className="px-4 py-3 font-mono text-sm">{row.partNo}</td>
-                        <td className="px-4 py-3 text-xs max-w-xs truncate">{row.description}</td>
+                        <td className="px-4 py-3 text-xs max-w-md truncate" title={row.description}>{row.description}</td>
                         <td className="px-4 py-3 text-sm">{row.partDist}</td>
                         <td className="px-4 py-3">
                           <span
