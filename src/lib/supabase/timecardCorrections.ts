@@ -318,34 +318,17 @@ export function formatShift(minutes: number): string {
 /**
  * Rules every Time Correction Request submission must pass (desktop and
  * mobile share this): corrected check-in and check-out are both required;
- * a meal break is required once the corrected shift runs over 6 hours, and
- * at 6 hours or less the meal must stay exactly as actually punched; an
- * over-6-hour meal must be complete, in order, and inside the shift.
+ * a meal break is required once the corrected shift runs over 6 hours
+ * (optional at 6 hours or less); and any meal given must be complete, in
+ * order, and inside the shift.
  * Returns an error message to show, or null when valid.
  */
-export function validateCorrectionTimes(t: {
-  checkIn: string;
-  checkOut: string;
-  mealStart: string;
-  mealEnd: string;
-  /** The meal actually punched that day ("" if none) — on a 6-hours-or-less shift the meal can't be corrected, only kept as punched. */
-  actualMealStart?: string;
-  actualMealEnd?: string;
-}): string | null {
+export function validateCorrectionTimes(t: { checkIn: string; checkOut: string; mealStart: string; mealEnd: string }): string | null {
   if (!t.checkIn || !t.checkOut) return "Corrected Check In and Corrected Check Out are both required.";
   const shift = correctionShiftMinutes(t.checkIn, t.checkOut);
   if (shift === null) return `Check out (${t.checkOut}) must be after check in (${t.checkIn}). Double-check the AM/PM on the time picker.`;
   const hasMealStart = Boolean(t.mealStart);
   const hasMealEnd = Boolean(t.mealEnd);
-  // 6 hours or less: the meal stays exactly as punched (the form shows it
-  // locked). A meal on a short shift is unpaid, so correcting it isn't
-  // allowed — this is the backstop so the locked fields can't be bypassed.
-  if (shift <= CORRECTION_MEAL_REQUIRED_AFTER_MINUTES) {
-    if ((t.mealStart || "") !== (t.actualMealStart || "") || (t.mealEnd || "") !== (t.actualMealEnd || "")) {
-      return "The meal break can't be corrected on a shift of 6 hours or less — it has to stay as punched.";
-    }
-    return null;
-  }
   if (shift > CORRECTION_MEAL_REQUIRED_AFTER_MINUTES && (!hasMealStart || !hasMealEnd)) {
     return "This shift is over 6 hours, so Corrected Meal Start and Corrected Meal End are both required.";
   }

@@ -178,30 +178,24 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   // Over 6 hours: meal fields unlocked and required. 6 hours or less (or
   // not both punches entered yet): locked — a meal on a short shift is unpaid.
   const correctionMealRequired = correctionShift !== null && correctionShift > CORRECTION_MEAL_REQUIRED_AFTER_MINUTES;
-  // The meal actually punched on the correction date — shown locked (and
-  // submitted as-is) whenever the shift is 6 hours or less, and pre-filled
-  // as the starting point when it's over 6 hours.
-  const [punchedMeal, setPunchedMeal] = useState<{ start: string; end: string } | null>(null);
+  // Pre-fill the meal fields with the meal actually punched on the picked
+  // date (only while they're still blank), so the employee only adjusts
+  // what's wrong or fills in a meal they forgot to punch.
   useEffect(() => {
-    if (!myProfileId || !formData.correctionDate) {
-      setPunchedMeal(null);
-      return;
-    }
+    if (!myProfileId || !formData.correctionDate) return;
     let cancelled = false;
     getEntryForDate(myProfileId, formData.correctionDate)
-      .then((e) => { if (!cancelled) setPunchedMeal({ start: e?.mealStart || "", end: e?.mealEnd || "" }); })
-      .catch(() => { if (!cancelled) setPunchedMeal({ start: "", end: "" }); });
+      .then((e) => {
+        if (cancelled || !(e?.mealStart || e?.mealEnd)) return;
+        setFormData((prev) =>
+          prev.correctedMealStart || prev.correctedMealEnd
+            ? prev
+            : { ...prev, correctedMealStart: e?.mealStart || "", correctedMealEnd: e?.mealEnd || "" }
+        );
+      })
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [myProfileId, formData.correctionDate]);
-  const withCorrectionShift = (next: typeof formData): typeof formData => {
-    const shift = correctionShiftMinutes(next.correctedCheckIn, next.correctedCheckOut);
-    if (shift !== null && shift > CORRECTION_MEAL_REQUIRED_AFTER_MINUTES) {
-      return next.correctedMealStart || next.correctedMealEnd
-        ? next
-        : { ...next, correctedMealStart: punchedMeal?.start || "", correctedMealEnd: punchedMeal?.end || "" };
-    }
-    return { ...next, correctedMealStart: "", correctedMealEnd: "" };
-  };
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const correctionSigPad =useSignaturePad({ width: 400, height: 110, defaultName: displayName || "" });
   // Reused for both Sick Leave and Unpaid Leave (mutually exclusive modal states).
@@ -714,21 +708,17 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             setSubmitting(false);
             return;
           }
-          // Re-read the day's real punches at submit time (not the 30-day
-          // attendance list, which misses older dates) — on a 6-hours-or-less
-          // shift the meal is submitted exactly as punched, never corrected.
+          // Re-read the day's real punches at submit time for the "original"
+          // times saved with the request (the 30-day attendance list misses
+          // older dates).
           const punched = myProfileId ? await getEntryForDate(myProfileId, formData.correctionDate).catch(() => null) : null;
-          const submitShift = correctionShiftMinutes(formData.correctedCheckIn, formData.correctedCheckOut);
-          const submitMealEditable = submitShift !== null && submitShift > CORRECTION_MEAL_REQUIRED_AFTER_MINUTES;
-          const submittedMealStart = submitMealEditable ? formData.correctedMealStart : punched?.mealStart || "";
-          const submittedMealEnd = submitMealEditable ? formData.correctedMealEnd : punched?.mealEnd || "";
+          const submittedMealStart = formData.correctedMealStart;
+          const submittedMealEnd = formData.correctedMealEnd;
           const correctionTimesError = validateCorrectionTimes({
             checkIn: formData.correctedCheckIn,
             checkOut: formData.correctedCheckOut,
             mealStart: submittedMealStart,
             mealEnd: submittedMealEnd,
-            actualMealStart: punched?.mealStart || "",
-            actualMealEnd: punched?.mealEnd || "",
           });
           if (correctionTimesError) {
             alert(correctionTimesError);
@@ -1715,7 +1705,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                             step="1"
                             title="Corrected Check In"
                             value={formData.correctedCheckIn}
-                            onChange={(e) => setFormData(withCorrectionShift({ ...formData, correctedCheckIn: e.target.value }))}
+                            onChange={(e) => setFormData({ ...formData, correctedCheckIn: e.target.value })}
                             className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
                           />
                         </div>
@@ -1726,47 +1716,41 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                             step="1"
                             title="Corrected Check Out"
                             value={formData.correctedCheckOut}
-                            onChange={(e) => setFormData(withCorrectionShift({ ...formData, correctedCheckOut: e.target.value }))}
+                            onChange={(e) => setFormData({ ...formData, correctedCheckOut: e.target.value })}
                             className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
                           />
                         </div>
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className={`text-xs font-semibold block mb-1 ${correctionMealRequired ? "text-white" : "text-slate-500"}`}>{correctionMealRequired ? "Corrected Meal Start" : "Meal Start (as punched)"} {correctionMealRequired && <span className="text-red-400">*</span>}</label>
+                          <label className="text-xs font-semibold text-white block mb-1">Corrected Meal Start {correctionMealRequired && <span className="text-red-400">*</span>}</label>
                           <input
                             type="time"
                             step="1"
-                            title={correctionMealRequired ? "Corrected Meal Start" : "Meal as actually punched — can't be corrected on a shift of 6 hours or less"}
-                            value={correctionMealRequired ? formData.correctedMealStart : punchedMeal?.start || ""}
-                            disabled={!correctionMealRequired}
+                            title="Corrected Meal Start"
+                            value={formData.correctedMealStart}
                             onChange={(e) => setFormData({ ...formData, correctedMealStart: e.target.value })}
-                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 disabled:opacity-60 disabled:bg-slate-900 disabled:cursor-not-allowed"
+                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
                           />
                         </div>
                         <div>
-                          <label className={`text-xs font-semibold block mb-1 ${correctionMealRequired ? "text-white" : "text-slate-500"}`}>{correctionMealRequired ? "Corrected Meal End" : "Meal End (as punched)"} {correctionMealRequired && <span className="text-red-400">*</span>}</label>
+                          <label className="text-xs font-semibold text-white block mb-1">Corrected Meal End {correctionMealRequired && <span className="text-red-400">*</span>}</label>
                           <input
                             type="time"
                             step="1"
-                            title={correctionMealRequired ? "Corrected Meal End" : "Meal as actually punched — can't be corrected on a shift of 6 hours or less"}
-                            value={correctionMealRequired ? formData.correctedMealEnd : punchedMeal?.end || ""}
-                            disabled={!correctionMealRequired}
+                            title="Corrected Meal End"
+                            value={formData.correctedMealEnd}
                             onChange={(e) => setFormData({ ...formData, correctedMealEnd: e.target.value })}
-                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 disabled:opacity-60 disabled:bg-slate-900 disabled:cursor-not-allowed"
+                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
                           />
                         </div>
                       </div>
                       <p className={`text-[10px] ${correctionMealRequired ? "text-amber-300" : "text-slate-500"}`}>
-                        {!formData.correctionDate
-                          ? "Pick the date first — the meal you punched that day loads from your timecard."
-                          : correctionShift === null
-                          ? "Enter check in and check out. Meal start/end can only be corrected when the shift is over 6 hours — otherwise the meal you punched is kept."
+                        {correctionShift === null
+                          ? "Check in and check out are required. Meal start/end are required only when the shift is over 6 hours."
                           : correctionMealRequired
                           ? `Shift is ${formatShift(correctionShift)} — over 6 hours, so meal start and end are required.`
-                          : punchedMeal?.start || punchedMeal?.end
-                          ? `Shift is ${formatShift(correctionShift)} — 6 hours or less, so the meal you punched is kept as-is and can't be corrected (it's unpaid).`
-                          : `Shift is ${formatShift(correctionShift)} — 6 hours or less, and no meal was punched that day. A meal can't be added.`}
+                          : `Shift is ${formatShift(correctionShift)} — meal break optional (required only over 6 hours).`}
                       </p>
                     </>
                   )}

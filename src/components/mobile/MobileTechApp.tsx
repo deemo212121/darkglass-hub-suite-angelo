@@ -9288,31 +9288,21 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
 
   const shiftMinutes = correctionShiftMinutes(correctedCheckIn, correctedCheckOut);
   const mealRequired = shiftMinutes !== null && shiftMinutes > CORRECTION_MEAL_REQUIRED_AFTER_MINUTES;
-  // The meal actually punched on the correction date. 6 hours or less: shown
-  // locked and submitted exactly as punched (a meal on a short shift is
-  // unpaid, so it can't be corrected). Over 6 hours: pre-filled, editable.
-  const [punchedMeal, setPunchedMeal] = useState<{ start: string; end: string } | null>(null);
+  // Pre-fill the meal fields with the meal actually punched on the picked
+  // date (only while they're still blank), so the tech only adjusts what's
+  // wrong or fills in a meal they forgot to punch.
   useEffect(() => {
-    if (!profileId || !correctionDate) {
-      setPunchedMeal(null);
-      return;
-    }
+    if (!profileId || !correctionDate) return;
     let cancelled = false;
     getEntryForDate(profileId, correctionDate)
-      .then((e) => { if (!cancelled) setPunchedMeal({ start: e?.mealStart || "", end: e?.mealEnd || "" }); })
-      .catch(() => { if (!cancelled) setPunchedMeal({ start: "", end: "" }); });
+      .then((e) => {
+        if (cancelled || !(e?.mealStart || e?.mealEnd)) return;
+        setCorrectedMealStart((prev) => prev || e?.mealStart || "");
+        setCorrectedMealEnd((prev) => prev || e?.mealEnd || "");
+      })
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [profileId, correctionDate]);
-  const clearMealIfShort = (checkIn: string, checkOut: string) => {
-    const shift = correctionShiftMinutes(checkIn, checkOut);
-    if (shift === null || shift <= CORRECTION_MEAL_REQUIRED_AFTER_MINUTES) {
-      setCorrectedMealStart("");
-      setCorrectedMealEnd("");
-    } else if (!correctedMealStart && !correctedMealEnd) {
-      setCorrectedMealStart(punchedMeal?.start || "");
-      setCorrectedMealEnd(punchedMeal?.end || "");
-    }
-  };
 
   const submit = async () => {
     if (!profileId) {
@@ -9326,10 +9316,8 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
     const timesError = validateCorrectionTimes({
       checkIn: correctedCheckIn,
       checkOut: correctedCheckOut,
-      mealStart: mealRequired ? correctedMealStart : punchedMeal?.start || "",
-      mealEnd: mealRequired ? correctedMealEnd : punchedMeal?.end || "",
-      actualMealStart: punchedMeal?.start || "",
-      actualMealEnd: punchedMeal?.end || "",
+      mealStart: correctedMealStart,
+      mealEnd: correctedMealEnd,
     });
     if (timesError) {
       setMsgIsError(true);
@@ -9359,24 +9347,8 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
       const [y, m] = correctionDate.split("-").map(Number);
       const monthEntries = await getMonthEntries(profileId, y, m - 1);
       const existing = monthEntries[correctionDate];
-      // Authoritative re-check against the punches just read — on a
-      // 6-hours-or-less shift the meal is submitted exactly as punched.
-      const submittedMealStart = mealRequired ? correctedMealStart : existing?.mealStart || "";
-      const submittedMealEnd = mealRequired ? correctedMealEnd : existing?.mealEnd || "";
-      const freshTimesError = validateCorrectionTimes({
-        checkIn: correctedCheckIn,
-        checkOut: correctedCheckOut,
-        mealStart: submittedMealStart,
-        mealEnd: submittedMealEnd,
-        actualMealStart: existing?.mealStart || "",
-        actualMealEnd: existing?.mealEnd || "",
-      });
-      if (freshTimesError) {
-        setMsgIsError(true);
-        setMsg(freshTimesError);
-        setSubmitting(false);
-        return;
-      }
+      const submittedMealStart = correctedMealStart;
+      const submittedMealEnd = correctedMealEnd;
 
       const myProfile = companyProfiles.find((p) => p.id === profileId) ?? null;
       const managerProfile = myProfile ? await resolveTeamLeadOrManager(myProfile, companyProfiles) : null;
@@ -9483,45 +9455,23 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
         <input className="mtech-bill-input full" type="date" value={correctionDate} onChange={(e) => setCorrectionDate(e.target.value)} />
 
         <div className="mtech-section-title">Corrected Check In <span style={{ color: "#f87171" }}>*</span></div>
-        <input className="mtech-bill-input full" type="time" value={correctedCheckIn} onChange={(e) => { setCorrectedCheckIn(e.target.value); clearMealIfShort(e.target.value, correctedCheckOut); }} />
+        <input className="mtech-bill-input full" type="time" value={correctedCheckIn} onChange={(e) => setCorrectedCheckIn(e.target.value)} />
 
         <div className="mtech-section-title">Corrected Check Out <span style={{ color: "#f87171" }}>*</span></div>
-        <input className="mtech-bill-input full" type="time" value={correctedCheckOut} onChange={(e) => { setCorrectedCheckOut(e.target.value); clearMealIfShort(correctedCheckIn, e.target.value); }} />
+        <input className="mtech-bill-input full" type="time" value={correctedCheckOut} onChange={(e) => setCorrectedCheckOut(e.target.value)} />
 
-        <div className="mtech-section-title" style={{ opacity: mealRequired ? 1 : 0.6 }}>
-          {mealRequired ? "Corrected Meal Start" : "Meal Start (as punched)"} {mealRequired && <span style={{ color: "#f87171" }}>*</span>}
-        </div>
-        <input
-          className="mtech-bill-input full"
-          type="time"
-          value={mealRequired ? correctedMealStart : punchedMeal?.start || ""}
-          disabled={!mealRequired}
-          style={{ opacity: mealRequired ? 1 : 0.6 }}
-          onChange={(e) => setCorrectedMealStart(e.target.value)}
-        />
+        <div className="mtech-section-title">Corrected Meal Start {mealRequired && <span style={{ color: "#f87171" }}>*</span>}</div>
+        <input className="mtech-bill-input full" type="time" value={correctedMealStart} onChange={(e) => setCorrectedMealStart(e.target.value)} />
 
-        <div className="mtech-section-title" style={{ opacity: mealRequired ? 1 : 0.6 }}>
-          {mealRequired ? "Corrected Meal End" : "Meal End (as punched)"} {mealRequired && <span style={{ color: "#f87171" }}>*</span>}
-        </div>
-        <input
-          className="mtech-bill-input full"
-          type="time"
-          value={mealRequired ? correctedMealEnd : punchedMeal?.end || ""}
-          disabled={!mealRequired}
-          style={{ opacity: mealRequired ? 1 : 0.6 }}
-          onChange={(e) => setCorrectedMealEnd(e.target.value)}
-        />
+        <div className="mtech-section-title">Corrected Meal End {mealRequired && <span style={{ color: "#f87171" }}>*</span>}</div>
+        <input className="mtech-bill-input full" type="time" value={correctedMealEnd} onChange={(e) => setCorrectedMealEnd(e.target.value)} />
 
         <p className="mtech-muted" style={{ padding: "0.25rem 0", color: mealRequired ? "#fcd34d" : undefined }}>
-          {!correctionDate
-            ? "Pick the date first — the meal you punched that day loads from your timecard."
-            : shiftMinutes === null
-            ? "Enter check in and check out. Meal start/end can only be corrected when the shift is over 6 hours — otherwise the meal you punched is kept."
+          {shiftMinutes === null
+            ? "Check in and check out are required. Meal start/end are required only when the shift is over 6 hours."
             : mealRequired
             ? `Shift is ${formatShift(shiftMinutes)} — over 6 hours, so meal start and end are required.`
-            : punchedMeal?.start || punchedMeal?.end
-            ? `Shift is ${formatShift(shiftMinutes)} — 6 hours or less, so the meal you punched is kept as-is and can't be corrected (it's unpaid).`
-            : `Shift is ${formatShift(shiftMinutes)} — 6 hours or less, and no meal was punched that day. A meal can't be added.`}
+            : `Shift is ${formatShift(shiftMinutes)} — meal break optional (required only over 6 hours).`}
         </p>
 
         <div className="mtech-section-title">Technician ID</div>
