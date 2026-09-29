@@ -82,14 +82,14 @@ import { canAccessUserManagement, getUserManagementRecord, canAccessAdminModule 
 import { isSubmoduleAllowed, isSubmoduleAllowedForTrainee, isSubmoduleAllowedForFrozen, isCompanySuperAdminRole, isCsrRestrictedRole } from "@/lib/roleLabels";
 import { CompanySettingsPage } from "@/components/CompanySettingsPage";
 import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
-import { useModuleRoleGate } from "@/lib/moduleAccess";
+import { useModuleRoleGate, useModuleRoleGateOverrides } from "@/lib/moduleAccess";
 // Roles allowed into the admin module overall, and into User Management /
 // Activity Logs specifically. Checked via hasDashboardAccess so a secondary
 // role (profiles.extra_roles) grants access too, not just the primary role —
 // e.g. a Parts Manager who's also been given Admin as a secondary role.
 // Shared with submoduleAccess.ts (used by home.tsx/ModuleNavigator.tsx to
 // decide what to even list) so both surfaces can never drift apart.
-import { ADMIN_MODULE_ROLES, USER_MANAGEMENT_DEFAULT_ROLES, ACTIVITY_LOG_DEFAULT_ROLES, WHEREABOUTS_DEFAULT_ROLES } from "@/lib/submoduleAccess";
+import { ADMIN_MODULE_ROLES, USER_MANAGEMENT_DEFAULT_ROLES, ACTIVITY_LOG_DEFAULT_ROLES, WHEREABOUTS_DEFAULT_ROLES, resolveSubmoduleAllowedRoles, passesModuleLevelGate } from "@/lib/submoduleAccess";
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import { ReportHRDaily } from "@/components/ReportHRDaily";
 import { HrOnboardingChecklistPage } from "@/components/HrOnboardingChecklistPage";
@@ -217,6 +217,10 @@ function SubModule() {
   // Someone sitting on a page an admin just revoked sees "Access
   // restricted" right away instead of only after their next reload.
   const explicitModuleOverride = useModuleRoleGate(mod.slug, sub.slug);
+  // Re-check on ANY access-rule change (the module-level gate and the
+  // Dashboard-family fallbacks below read the cache synchronously), not just
+  // this exact (module, submodule) pair.
+  useModuleRoleGateOverrides();
   // moduleAllowedRoles covers every module, not just Dashboard: the
   // Dashboard module additionally has a hardcoded default per submodule
   // (getDashboardRoleGate, DASHBOARD_ROLE_GATES) for when there's no
@@ -239,7 +243,12 @@ function SubModule() {
   // "todo-list" submodule, and blanket-including "tickets" in that list
   // would make it inherit HR's "todo-list" DASHBOARD_ROLE_GATES entry too
   // (gates are keyed by submodule slug alone). See dashboardAccess.ts.
-  const moduleAllowedRoles = (mod.slug === "dashboard" || mod.slug === "hr" || mod.slug === "accounting" || mod.slug === "csr" || (sub as any).custom === "receiving-status") ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
+  // Shared with canAccessSubmodule (Home/Modules strip) so a tile is only
+  // listed if this page would actually let the viewer in. receiving-status
+  // keeps its own special case (see dashboardAccess.ts).
+  const moduleAllowedRoles = (sub as any).custom === "receiving-status"
+    ? (explicitModuleOverride ?? getDashboardRoleGate(sub.slug))
+    : resolveSubmoduleAllowedRoles(mod.slug, sub.slug, explicitModuleOverride);
 
   if (!ready) return null;
   if (!email) return redirectOnce("/landing") ? <Navigate to="/landing" replace /> : null;
@@ -253,6 +262,15 @@ function SubModule() {
   // restriction while it's set, not something a leftover permission grant
   // can quietly punch a hole in.
   if (!isSubmoduleAllowedForTrainee(isTrainee, mod.slug, sub.slug)) {
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
+  }
+
+  // Whole-module lockout (Accessibility Management's module-level box) is
+  // authoritative for every page in the module, same as Home and the
+  // module's own tile grid — a pasted/bookmarked link to a page inside a
+  // module this role is locked out of goes Home. (Admin is exempt inside
+  // passesModuleLevelGate — its own gate below handles its carve-outs.)
+  if (!passesModuleLevelGate(role, extraRoles, mod.slug)) {
     return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
