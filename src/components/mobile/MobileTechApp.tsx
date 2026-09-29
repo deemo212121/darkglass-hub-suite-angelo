@@ -62,7 +62,7 @@ import {
 } from "@/lib/supabase/messaging";
 import { getTicketBilling, saveTicketBilling, type TicketBilling } from "@/lib/supabase/billing";
 import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supabase/payslips";
-import { getMyProfileSchedule, getMonthEntries, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, savePunch, clearPunch, canEditPunch, resolveScheduledShiftHours, type UITimeEntry, type CompanyTimecardEntry, type PunchField } from "@/lib/supabase/timecards";
+import { getMyProfileSchedule, getMonthEntries, getEntryForDate, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, savePunch, clearPunch, canEditPunch, resolveScheduledShiftHours, type UITimeEntry, type CompanyTimecardEntry, type PunchField } from "@/lib/supabase/timecards";
 import {
   getTraineeEntryForDate,
   saveTraineePunch,
@@ -9288,6 +9288,31 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
 
   const shiftMinutes = correctionShiftMinutes(correctedCheckIn, correctedCheckOut);
   const mealRequired = shiftMinutes !== null && shiftMinutes > CORRECTION_MEAL_REQUIRED_AFTER_MINUTES;
+  // The meal actually punched on the correction date. 6 hours or less: shown
+  // locked and submitted exactly as punched (a meal on a short shift is
+  // unpaid, so it can't be corrected). Over 6 hours: pre-filled, editable.
+  const [punchedMeal, setPunchedMeal] = useState<{ start: string; end: string } | null>(null);
+  useEffect(() => {
+    if (!profileId || !correctionDate) {
+      setPunchedMeal(null);
+      return;
+    }
+    let cancelled = false;
+    getEntryForDate(profileId, correctionDate)
+      .then((e) => { if (!cancelled) setPunchedMeal({ start: e?.mealStart || "", end: e?.mealEnd || "" }); })
+      .catch(() => { if (!cancelled) setPunchedMeal({ start: "", end: "" }); });
+    return () => { cancelled = true; };
+  }, [profileId, correctionDate]);
+  const clearMealIfShort = (checkIn: string, checkOut: string) => {
+    const shift = correctionShiftMinutes(checkIn, checkOut);
+    if (shift === null || shift <= CORRECTION_MEAL_REQUIRED_AFTER_MINUTES) {
+      setCorrectedMealStart("");
+      setCorrectedMealEnd("");
+    } else if (!correctedMealStart && !correctedMealEnd) {
+      setCorrectedMealStart(punchedMeal?.start || "");
+      setCorrectedMealEnd(punchedMeal?.end || "");
+    }
+  };
 
   const submit = async () => {
     if (!profileId) {
@@ -9301,8 +9326,10 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
     const timesError = validateCorrectionTimes({
       checkIn: correctedCheckIn,
       checkOut: correctedCheckOut,
-      mealStart: correctedMealStart,
-      mealEnd: correctedMealEnd,
+      mealStart: mealRequired ? correctedMealStart : punchedMeal?.start || "",
+      mealEnd: mealRequired ? correctedMealEnd : punchedMeal?.end || "",
+      actualMealStart: punchedMeal?.start || "",
+      actualMealEnd: punchedMeal?.end || "",
     });
     if (timesError) {
       setMsgIsError(true);
@@ -9332,6 +9359,24 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
       const [y, m] = correctionDate.split("-").map(Number);
       const monthEntries = await getMonthEntries(profileId, y, m - 1);
       const existing = monthEntries[correctionDate];
+      // Authoritative re-check against the punches just read — on a
+      // 6-hours-or-less shift the meal is submitted exactly as punched.
+      const submittedMealStart = mealRequired ? correctedMealStart : existing?.mealStart || "";
+      const submittedMealEnd = mealRequired ? correctedMealEnd : existing?.mealEnd || "";
+      const freshTimesError = validateCorrectionTimes({
+        checkIn: correctedCheckIn,
+        checkOut: correctedCheckOut,
+        mealStart: submittedMealStart,
+        mealEnd: submittedMealEnd,
+        actualMealStart: existing?.mealStart || "",
+        actualMealEnd: existing?.mealEnd || "",
+      });
+      if (freshTimesError) {
+        setMsgIsError(true);
+        setMsg(freshTimesError);
+        setSubmitting(false);
+        return;
+      }
 
       const myProfile = companyProfiles.find((p) => p.id === profileId) ?? null;
       const managerProfile = myProfile ? await resolveTeamLeadOrManager(myProfile, companyProfiles) : null;
@@ -9364,8 +9409,8 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
         correctedCheckOut,
         originalMealStart: existing?.mealStart || "",
         originalMealEnd: existing?.mealEnd || "",
-        correctedMealStart,
-        correctedMealEnd,
+        correctedMealStart: submittedMealStart,
+        correctedMealEnd: submittedMealEnd,
         reason: details.trim(),
         requestedBy: profileId,
         managerId: managerProfile?.id ?? null,
@@ -9438,23 +9483,45 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
         <input className="mtech-bill-input full" type="date" value={correctionDate} onChange={(e) => setCorrectionDate(e.target.value)} />
 
         <div className="mtech-section-title">Corrected Check In <span style={{ color: "#f87171" }}>*</span></div>
-        <input className="mtech-bill-input full" type="time" value={correctedCheckIn} onChange={(e) => setCorrectedCheckIn(e.target.value)} />
+        <input className="mtech-bill-input full" type="time" value={correctedCheckIn} onChange={(e) => { setCorrectedCheckIn(e.target.value); clearMealIfShort(e.target.value, correctedCheckOut); }} />
 
         <div className="mtech-section-title">Corrected Check Out <span style={{ color: "#f87171" }}>*</span></div>
-        <input className="mtech-bill-input full" type="time" value={correctedCheckOut} onChange={(e) => setCorrectedCheckOut(e.target.value)} />
+        <input className="mtech-bill-input full" type="time" value={correctedCheckOut} onChange={(e) => { setCorrectedCheckOut(e.target.value); clearMealIfShort(correctedCheckIn, e.target.value); }} />
 
-        <div className="mtech-section-title">Corrected Meal Start {mealRequired && <span style={{ color: "#f87171" }}>*</span>}</div>
-        <input className="mtech-bill-input full" type="time" value={correctedMealStart} onChange={(e) => setCorrectedMealStart(e.target.value)} />
+        <div className="mtech-section-title" style={{ opacity: mealRequired ? 1 : 0.6 }}>
+          {mealRequired ? "Corrected Meal Start" : "Meal Start (as punched)"} {mealRequired && <span style={{ color: "#f87171" }}>*</span>}
+        </div>
+        <input
+          className="mtech-bill-input full"
+          type="time"
+          value={mealRequired ? correctedMealStart : punchedMeal?.start || ""}
+          disabled={!mealRequired}
+          style={{ opacity: mealRequired ? 1 : 0.6 }}
+          onChange={(e) => setCorrectedMealStart(e.target.value)}
+        />
 
-        <div className="mtech-section-title">Corrected Meal End {mealRequired && <span style={{ color: "#f87171" }}>*</span>}</div>
-        <input className="mtech-bill-input full" type="time" value={correctedMealEnd} onChange={(e) => setCorrectedMealEnd(e.target.value)} />
+        <div className="mtech-section-title" style={{ opacity: mealRequired ? 1 : 0.6 }}>
+          {mealRequired ? "Corrected Meal End" : "Meal End (as punched)"} {mealRequired && <span style={{ color: "#f87171" }}>*</span>}
+        </div>
+        <input
+          className="mtech-bill-input full"
+          type="time"
+          value={mealRequired ? correctedMealEnd : punchedMeal?.end || ""}
+          disabled={!mealRequired}
+          style={{ opacity: mealRequired ? 1 : 0.6 }}
+          onChange={(e) => setCorrectedMealEnd(e.target.value)}
+        />
 
         <p className="mtech-muted" style={{ padding: "0.25rem 0", color: mealRequired ? "#fcd34d" : undefined }}>
-          {shiftMinutes === null
-            ? "Check in and check out are required. Meal start/end become required when the shift is over 6 hours."
+          {!correctionDate
+            ? "Pick the date first — the meal you punched that day loads from your timecard."
+            : shiftMinutes === null
+            ? "Enter check in and check out. Meal start/end can only be corrected when the shift is over 6 hours — otherwise the meal you punched is kept."
             : mealRequired
             ? `Shift is ${formatShift(shiftMinutes)} — over 6 hours, so meal start and end are required.`
-            : `Shift is ${formatShift(shiftMinutes)} — meal break optional (required only over 6 hours).`}
+            : punchedMeal?.start || punchedMeal?.end
+            ? `Shift is ${formatShift(shiftMinutes)} — 6 hours or less, so the meal you punched is kept as-is and can't be corrected (it's unpaid).`
+            : `Shift is ${formatShift(shiftMinutes)} — 6 hours or less, and no meal was punched that day. A meal can't be added.`}
         </p>
 
         <div className="mtech-section-title">Technician ID</div>
