@@ -449,6 +449,28 @@ export async function approveTraineeDay(entry: TraineeTimecardEntry, approvedByP
   if (error) throw new Error(error.message);
 }
 
+/**
+ * A reviewer (the trainee's manager, or a fallback reviewer — callers gate
+ * on canApproveTraineeDay) correcting a trainee's punched times, e.g. a
+ * forgotten clock-out. Updates only this trainee row; the real timecard is
+ * written when the day is approved (approveTraineeDay copies these times).
+ */
+export async function updateTraineeDayTimes(
+  entryId: string,
+  times: { checkIn: string; checkOut: string; mealStart: string; mealEnd: string }
+): Promise<void> {
+  const { error } = await supabase
+    .from("trainee_timecard_entries")
+    .update({
+      check_in: times.checkIn || null,
+      check_out: times.checkOut || null,
+      meal_start: times.mealStart || null,
+      meal_end: times.mealEnd || null,
+    })
+    .eq("id", entryId);
+  if (error) throw new Error(error.message);
+}
+
 /** Rejects a trainee's day — does NOT touch the real timecard. The row stays visible with the reason; the trainee re-punching resets it back to "pending" (see saveTraineePunch). */
 export async function rejectTraineeDay(entryId: string, reviewedByProfileId: string, reason: string): Promise<void> {
   const { error } = await supabase

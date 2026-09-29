@@ -5,29 +5,22 @@
  * every other employee uses, but those punches land in
  * trainee_timecard_entries (migration 0216) instead of the real
  * timecard_entries, until their direct manager approves the day here.
- * Approve copies the day onto the real timecard via approveTraineeDay
- * (reusing the existing saveEntry, same as technicianCheckoutProposals'
- * own approval flow) — Reject sends it back with a reason, and the trainee
- * simply re-punching resets it to pending for another look.
+ * Approve copies the day onto the real timecard via approveTraineeDay —
+ * Reject sends it back with a reason, and the trainee simply re-punching
+ * resets it to pending for another look.
  *
- * Table layout mirrors ReportAttendanceMonitoring.tsx's "Daily Attendance"
- * (groupBy="employee") table — same compact columns/header/banded-row look
- * — but the band groups by the trainee's MANAGER instead of by date (a
- * manager reviewing here already knows they're looking at their own
- * trainees; grouping by who they report to matters more than which day),
- * and keeps a Date column plus the Approve/Reject Actions column that
- * read-only report doesn't need.
+ * Laid out like the Corrections tab on the same page (filters, a
+ * Pending/Listed counter, one row per trainee day, and a "View Timecard"
+ * modal). The reviewer can correct the trainee's punched times in that
+ * modal before approving — e.g. a trainee who forgot to clock out — since
+ * trainers routinely leave before their trainees do.
  *
  * Receives profiles/teamScopedIds/role/extraRoles/myProfileId as props
  * from AttendanceMonitoringPage rather than re-fetching them — this tab is
- * only ever mounted there, so there's no reason to duplicate the company
- * roster + CSR composition fetch that page already did (contrast with
- * TicketAttendanceTab.tsx, which IS mounted from two different pages and
- * so fetches everything itself).
+ * only ever mounted there.
  */
-import { useEffect, useMemo, useState, Fragment } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Check, X as XIcon, Clock3, RotateCcw } from "lucide-react";
 import type { ProfileRow } from "@/lib/supabase/users";
 import { calcWorkedHours } from "@/lib/supabase/timecards";
 import { ROLE_LABELS, normalizeRole, isAttendanceFullAccessRole, isTraineeFallbackReviewerRole } from "@/lib/roleLabels";
@@ -40,18 +33,25 @@ import {
   recordTraineeDayWithoutPunch,
   approveTraineeDayOnField,
   resetTraineeDay,
+  updateTraineeDayTimes,
   type TraineeTimecardEntry,
 } from "@/lib/supabase/traineeTimecards";
 
 /** Fixed rejection categories the user asked for — "Other" reveals a required free-text field. */
 const REJECT_REASON_OPTIONS = ["On Field", "Termination", "Absent", "Quit", "Other"] as const;
 
+type StatusFilter = "all" | "pending" | "approved" | "rejected" | "nopunch";
+
 const STATUS_LABEL: Record<TraineeTimecardEntry["status"], string> = { pending: "Pending", approved: "Approved", rejected: "Rejected" };
-const STATUS_CLASS: Record<TraineeTimecardEntry["status"], string> = {
-  pending: "bg-sky-500/20 text-sky-300",
-  approved: "bg-green-500/20 text-green-300",
-  rejected: "bg-red-500/20 text-red-300",
+// Same badge palette as the Corrections tab's status badges.
+const STATUS_BADGE: Record<TraineeTimecardEntry["status"], string> = {
+  pending: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30",
+  approved: "bg-green-500/20 text-green-300 border-green-500/30",
+  rejected: "bg-red-500/20 text-red-300 border-red-500/30",
 };
+
+const INPUT_CLASS = "w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none transition";
+const MODAL_INPUT_CLASS = "w-full bg-slate-700/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none";
 
 // profiles.department is rarely populated — role is the real department-like
 // dimension, same convention ReportAttendanceMonitoring.tsx/AccountingDashboard.tsx use.
@@ -64,6 +64,15 @@ interface Row {
   entry: TraineeTimecardEntry | null;
   profileId: string;
 }
+
+interface TimeDraft {
+  checkIn: string;
+  checkOut: string;
+  mealStart: string;
+  mealEnd: string;
+}
+
+type Selected = { kind: "entry"; entry: TraineeTimecardEntry } | { kind: "placeholder"; profileId: string };
 
 export function TraineeAttendanceTab({
   profiles,
@@ -81,12 +90,9 @@ export function TraineeAttendanceTab({
 }) {
   // Initial guess only — the browser's own local calendar date, used purely
   // so the filter isn't blank on first paint. Corrected below to the real
-  // server-verified CST business date (same canonical clock AppHeader shows
-  // and TimeClockMenu stamps a punch under), since a manager reviewing from
-  // a very different timezone (e.g. the Philippines) could otherwise land
-  // on this tab defaulted to a date that doesn't match the company's own
-  // "today" at all — see getTraineeReviewQueue's own fix for the same class
-  // of bug, which this mirrors for this tab's date-range filter.
+  // server-verified CST business date, since a manager reviewing from a very
+  // different timezone (e.g. the Philippines) could otherwise land on this
+  // tab defaulted to a date that doesn't match the company's own "today".
   const browserTodayGuess = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const [dateFrom, setDateFrom] = useState(browserTodayGuess);
   const [dateTo, setDateTo] = useState(browserTodayGuess);
@@ -108,10 +114,19 @@ export function TraineeAttendanceTab({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
   const [entries, setEntries] = useState<TraineeTimecardEntry[]>([]);
   const [loading, setLoading] = useState(false);
-  const [actingId, setActingId] = useState<string | null>(null);
-  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [branchFilter, setBranchFilter] = useState("all");
+  const [managerFilter, setManagerFilter] = useState("all");
+
+  // View Timecard modal
+  const [selected, setSelected] = useState<Selected | null>(null);
+  const [draft, setDraft] = useState<TimeDraft>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "" });
+  const [acting, setActing] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
   const [rejectReasonOption, setRejectReasonOption] = useState("");
   const [rejectReasonCustom, setRejectReasonCustom] = useState("");
   // "On Field" needs a time range (when they were out) same as "Other"
@@ -120,14 +135,12 @@ export function TraineeAttendanceTab({
   const [onFieldStart, setOnFieldStart] = useState("");
   const [onFieldEnd, setOnFieldEnd] = useState("");
   const resetRejectForm = () => {
-    setRejectingId(null);
+    setRejecting(false);
     setRejectReasonOption("");
     setRejectReasonCustom("");
     setOnFieldStart("");
     setOnFieldEnd("");
   };
-  // Unused for "On Field" — that path is approved with real times instead
-  // of rejected with a text note; kept simple for every other reason.
   const finalRejectReason = rejectReasonOption === "Other" ? rejectReasonCustom.trim() : rejectReasonOption;
   const canSubmitReject =
     rejectReasonOption !== "" &&
@@ -137,21 +150,11 @@ export function TraineeAttendanceTab({
   const profileById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
   // Every trainee this viewer may see — same "my team" scoping every other
   // tab on this page already uses, so a manager only ever sees their own
-  // trainees while Admin/HR/Finance/SuperAdmin see the whole company. This
-  // is the actual roster (from Masterlist's Employment Type), not derived
-  // from who happens to have punched yet — a brand-new trainee who hasn't
-  // clocked in at all still needs to show up here, not just silently be
-  // absent from the list.
-  // Follows Masterlist's Employment Status alone — any role marked Trainee
-  // there shows up here, not just the Technician department (see
-  // getMyProfileSchedule in timecards.ts for the matching punch-redirect logic).
+  // trainees while Admin/HR/Finance/SuperAdmin see the whole company. The
+  // actual roster (Masterlist's Employment Type), not derived from who has
+  // punched — a trainee who hasn't clocked in at all still shows up.
   const visibleTrainees = useMemo(
-    () =>
-      profiles.filter(
-        (p) =>
-          p.employment_type === "trainee" &&
-          (teamScopedIds === null || teamScopedIds.has(p.id))
-      ),
+    () => profiles.filter((p) => p.employment_type === "trainee" && (teamScopedIds === null || teamScopedIds.has(p.id))),
     [profiles, teamScopedIds]
   );
   const traineeIds = useMemo(() => new Set(visibleTrainees.map((p) => p.id)), [visibleTrainees]);
@@ -169,19 +172,14 @@ export function TraineeAttendanceTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateFrom, dateTo, traineeIds]);
 
-  // The trainee's own stored manager_name (profiles.manager_name — the same
-  // field resolveTeamLeadOrManager reads at punch time) is the band label,
-  // not entry.managerId — a placeholder row (nobody's punched yet) has no
-  // entry at all to read a managerId off, but still needs to land in the
-  // right manager's group.
+  // The trainee's own stored manager_name (the same field
+  // resolveTeamLeadOrManager reads at punch time), not entry.managerId — a
+  // placeholder row has no entry to read a managerId off.
   const managerNameOf = (profileId: string) => profileById.get(profileId)?.manager_name?.trim() || "Unassigned";
 
   // A real punch row per (trainee, day) that has one, PLUS a placeholder for
-  // any visible trainee with zero punches anywhere in the selected range —
-  // otherwise a trainee who just hasn't clocked in yet (or hasn't started)
-  // would be invisible on this tab instead of showing as something a
-  // manager can actually see and follow up on. Grouped by manager (band),
-  // then by trainee name, then most-recent day first within a trainee.
+  // any visible trainee with zero punches in the selected range — otherwise
+  // a trainee who hasn't clocked in yet would be invisible here.
   const rows = useMemo<Row[]>(() => {
     const withEntry: Row[] = entries.map((e) => ({ kind: "entry", entry: e, profileId: e.profileId }));
     const punchedIds = new Set(entries.map((e) => e.profileId));
@@ -189,444 +187,429 @@ export function TraineeAttendanceTab({
       .filter((p) => !punchedIds.has(p.id))
       .map((p) => ({ kind: "placeholder", entry: null, profileId: p.id }));
     return [...withEntry, ...withoutEntry].sort((a, b) => {
-      const mgrA = managerNameOf(a.profileId);
-      const mgrB = managerNameOf(b.profileId);
-      if (mgrA !== mgrB) return mgrA.localeCompare(mgrB);
-      const nameA = profileById.get(a.profileId)?.display_name || "";
-      const nameB = profileById.get(b.profileId)?.display_name || "";
-      if (nameA !== nameB) return nameA.localeCompare(nameB);
-      if (a.kind === "entry" && b.kind === "entry") return b.entry!.workDate.localeCompare(a.entry!.workDate);
-      return 0;
+      // Newest day first, then by trainee name; placeholders last.
+      if (a.kind !== b.kind) return a.kind === "entry" ? -1 : 1;
+      if (a.kind === "entry" && b.kind === "entry" && a.entry!.workDate !== b.entry!.workDate) return b.entry!.workDate.localeCompare(a.entry!.workDate);
+      return (profileById.get(a.profileId)?.display_name || "").localeCompare(profileById.get(b.profileId)?.display_name || "");
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries, visibleTrainees, profileById]);
 
-  const handleApprove = async (entry: TraineeTimecardEntry) => {
-    if (!myProfileId) return;
-    const name = profileById.get(entry.profileId)?.display_name || "this trainee";
-    const verb = entry.status === "approved" ? "Re-approve" : "Approve";
-    if (!window.confirm(`${verb} ${name}'s timecard for ${entry.workDate}? It will be copied onto their real timecard.`)) return;
-    setActingId(entry.id);
-    try {
-      await approveTraineeDay(entry, myProfileId);
-      load();
-    } catch (err) {
-      alert(`Failed to approve: ${err instanceof Error ? err.message : "Unknown error"}`);
-    } finally {
-      setActingId(null);
-    }
-  };
+  const branchOptions = useMemo(
+    () => Array.from(new Set(visibleTrainees.map((p) => p.assigned_branch).filter((b): b is string => !!b))).sort(),
+    [visibleTrainees]
+  );
+  const managerOptions = useMemo(
+    () => Array.from(new Set(visibleTrainees.map((p) => managerNameOf(p.id)))).sort(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [visibleTrainees, profileById]
+  );
 
-  // Testing/correction convenience — wipes this day back to a clean slate
-  // (see resetTraineeDay's own doc comment) so it can be re-punched and
-  // re-run through the whole flow, instead of being stuck e.g. as an old
-  // "Approved" row from before On Field wrote real times.
-  const handleReset = async (entry: TraineeTimecardEntry) => {
-    if (!myProfileId) return;
-    const name = profileById.get(entry.profileId)?.display_name || "this trainee";
-    if (!window.confirm(`Reset ${name}'s timecard for ${entry.workDate} back to no punch at all? This clears both the trainee record and their real timecard for this day.`)) return;
-    setActingId(entry.id);
-    try {
-      await resetTraineeDay(entry.profileId, entry.workDate);
-      load();
-    } catch (err) {
-      alert(`Failed to reset: ${err instanceof Error ? err.message : "Unknown error"}`);
-    } finally {
-      setActingId(null);
-    }
-  };
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter((row) => {
+      const profile = profileById.get(row.profileId);
+      if (q && !(profile?.display_name || "").toLowerCase().includes(q)) return false;
+      if (branchFilter !== "all" && profile?.assigned_branch !== branchFilter) return false;
+      if (managerFilter !== "all" && managerNameOf(row.profileId) !== managerFilter) return false;
+      if (statusFilter === "nopunch") return row.kind === "placeholder";
+      if (statusFilter !== "all") return row.kind === "entry" && row.entry!.status === statusFilter;
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, search, branchFilter, managerFilter, statusFilter, profileById]);
 
-  const submitReject = async (entry: TraineeTimecardEntry) => {
-    if (!myProfileId || !canSubmitReject) return;
-    setActingId(entry.id);
-    try {
-      if (rejectReasonOption === "On Field") {
-        // Not a rejection — the entered range becomes the trainee's real
-        // Check In/Check Out for the day (see approveTraineeDayOnField's own
-        // doc comment), so it's approved outright with real times instead of
-        // landing in "rejected" with just a text note. Also how an already-
-        // "Approved" blank-times day (from before this existed) gets fixed.
-        await approveTraineeDayOnField(entry.profileId, entry.workDate, onFieldStart, onFieldEnd, myProfileId, myProfileId);
-      } else {
-        await rejectTraineeDay(entry.id, myProfileId, finalRejectReason);
-      }
-      resetRejectForm();
-      load();
-    } catch (err) {
-      alert(`Failed to reject: ${err instanceof Error ? err.message : "Unknown error"}`);
-    } finally {
-      setActingId(null);
-    }
-  };
+  const pendingCount = filteredRows.filter((r) => r.kind === "entry" && r.entry!.status === "pending").length;
+  const hasActiveFilter = search.trim() !== "" || statusFilter !== "all" || branchFilter !== "all" || managerFilter !== "all";
 
   // A placeholder row has no entry yet to read a managerId off — same
-  // authority check as canApproveTraineeDay, just matched against the
-  // trainee's raw manager_name (the same field the band label above already
-  // reads) instead of an existing row's stamped managerId.
+  // authority check as canApproveTraineeDay, matched against the trainee's
+  // raw manager_name instead.
   const viewerName = (profileById.get(myProfileId || "")?.display_name || "").trim().toLowerCase();
   const canManageTrainee = (trainee: ProfileRow | undefined) =>
     isAttendanceFullAccessRole(role, extraRoles) ||
     isTraineeFallbackReviewerRole(role, extraRoles) ||
     (viewerName !== "" && (trainee?.manager_name || "").trim().toLowerCase() === viewerName);
 
-  // Marks a trainee absent (or any other reason) for a day they never
-  // punched at all — see recordTraineeDayWithoutPunch's own doc comment.
-  // Always targets dateTo (the end of the selected range, defaulting to
-  // today when From=To) since a placeholder row has no specific date of
-  // its own to attach the status to.
-  const submitPlaceholderReject = async (trainee: ProfileRow | undefined, profileId: string) => {
-    if (!myProfileId || !canSubmitReject) return;
-    const actingKey = `placeholder:${profileId}`;
-    setActingId(actingKey);
+  const openEntry = (entry: TraineeTimecardEntry) => {
+    resetRejectForm();
+    setSelected({ kind: "entry", entry });
+    setDraft({ checkIn: entry.checkIn || "", checkOut: entry.checkOut || "", mealStart: entry.mealStart || "", mealEnd: entry.mealEnd || "" });
+  };
+  const openPlaceholder = (profileId: string) => {
+    resetRejectForm();
+    setRejecting(true); // a no-punch day only has the status/On Field action
+    setSelected({ kind: "placeholder", profileId });
+  };
+  const closeModal = () => {
+    if (acting) return;
+    setSelected(null);
+    resetRejectForm();
+  };
+
+  const selectedEntry = selected?.kind === "entry" ? selected.entry : null;
+  const draftChanged =
+    !!selectedEntry &&
+    (draft.checkIn !== (selectedEntry.checkIn || "") ||
+      draft.checkOut !== (selectedEntry.checkOut || "") ||
+      draft.mealStart !== (selectedEntry.mealStart || "") ||
+      draft.mealEnd !== (selectedEntry.mealEnd || ""));
+  const draftHours = calcWorkedHours({ ...draft, notes: "" });
+
+  const run = async (label: string, fn: () => Promise<void>) => {
+    setActing(true);
     try {
-      const managerId =
-        profiles.find(
-          (p) => p.is_active && (p.display_name || "").trim().toLowerCase() === (trainee?.manager_name || "").trim().toLowerCase()
-        )?.id ?? null;
-      if (rejectReasonOption === "On Field") {
-        await approveTraineeDayOnField(profileId, dateTo, onFieldStart, onFieldEnd, managerId, myProfileId);
-      } else {
-        await recordTraineeDayWithoutPunch(profileId, dateTo, managerId, myProfileId, finalRejectReason);
-      }
+      await fn();
+      setSelected(null);
       resetRejectForm();
       load();
     } catch (err) {
-      alert(`Failed to update status: ${err instanceof Error ? err.message : "Unknown error"}`);
+      alert(`Failed to ${label}: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
-      setActingId(null);
+      setActing(false);
     }
   };
 
+  const handleSaveTimes = () => {
+    if (!selectedEntry) return;
+    void run("save times", () => updateTraineeDayTimes(selectedEntry.id, draft));
+  };
+
+  // Edited times are saved onto the trainee row first, then approval copies
+  // them onto the real timecard — so the two records always agree.
+  const handleApprove = () => {
+    if (!selectedEntry || !myProfileId) return;
+    if (!draft.checkIn || !draft.checkOut) {
+      alert("Check In and Check Out are both required to approve — fill in the missing time first.");
+      return;
+    }
+    const name = profileById.get(selectedEntry.profileId)?.display_name || "this trainee";
+    const verb = selectedEntry.status === "approved" ? "Re-approve" : "Approve";
+    if (!window.confirm(`${verb} ${name}'s timecard for ${selectedEntry.workDate}? It will be copied onto their real timecard.`)) return;
+    void run("approve", async () => {
+      if (draftChanged) await updateTraineeDayTimes(selectedEntry.id, draft);
+      await approveTraineeDay({ ...selectedEntry, ...draft }, myProfileId);
+    });
+  };
+
+  const handleReject = () => {
+    if (!myProfileId || !canSubmitReject || !selected) return;
+    if (selected.kind === "entry") {
+      const entry = selected.entry;
+      void run("update", async () => {
+        if (rejectReasonOption === "On Field") {
+          // Not a rejection — the entered range becomes the trainee's real
+          // Check In/Check Out for the day (see approveTraineeDayOnField).
+          await approveTraineeDayOnField(entry.profileId, entry.workDate, onFieldStart, onFieldEnd, myProfileId, myProfileId);
+        } else {
+          await rejectTraineeDay(entry.id, myProfileId, finalRejectReason);
+        }
+      });
+      return;
+    }
+    // No punch at all — see recordTraineeDayWithoutPunch. Targets dateTo
+    // (the end of the selected range, today by default).
+    const trainee = profileById.get(selected.profileId);
+    const managerId =
+      profiles.find((p) => p.is_active && (p.display_name || "").trim().toLowerCase() === (trainee?.manager_name || "").trim().toLowerCase())?.id ?? null;
+    void run("update status", async () => {
+      if (rejectReasonOption === "On Field") {
+        await approveTraineeDayOnField(selected.profileId, dateTo, onFieldStart, onFieldEnd, managerId, myProfileId);
+      } else {
+        await recordTraineeDayWithoutPunch(selected.profileId, dateTo, managerId, myProfileId, finalRejectReason);
+      }
+    });
+  };
+
+  // Testing/correction convenience — wipes this day back to a clean slate
+  // (see resetTraineeDay) so it can be re-punched and re-run through the flow.
+  const handleReset = () => {
+    if (!selectedEntry) return;
+    const name = profileById.get(selectedEntry.profileId)?.display_name || "this trainee";
+    if (!window.confirm(`Reset ${name}'s timecard for ${selectedEntry.workDate} back to no punch at all? This clears both the trainee record and their real timecard for this day.`)) return;
+    void run("reset", () => resetTraineeDay(selectedEntry.profileId, selectedEntry.workDate));
+  };
+
+  const selectedProfile = selected ? profileById.get(selected.kind === "entry" ? selected.entry.profileId : selected.profileId) : undefined;
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-bold text-white flex items-center gap-2">
-          <Clock3 className="h-5 w-5 text-sky-400" />
-          Trainee Attendance
-        </h2>
-      </div>
+      <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+          <h2 className="text-lg font-bold text-white">Trainee Attendance</h2>
+        </div>
 
-      <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-4 mb-4">
           <div>
-            <label className="block text-xs text-slate-400 uppercase mb-2">Date From</label>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
-            />
+            <label className="block text-xs text-slate-400 uppercase mb-2">Search Trainee</label>
+            <input type="text" placeholder="Enter trainee name..." value={search} onChange={(e) => setSearch(e.target.value)} className={INPUT_CLASS} />
           </div>
           <div>
-            <label className="block text-xs text-slate-400 uppercase mb-2">Date To</label>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
-            />
+            <label className="block text-xs text-slate-400 uppercase mb-2">Filter by Status</label>
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} className={INPUT_CLASS}>
+              <option value="all">All Statuses</option>
+              <option value="pending">Pending</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+              <option value="nopunch">No Punch Yet</option>
+            </select>
           </div>
-          <div className="flex items-end">
-            <button
-              type="button"
-              onClick={load}
-              disabled={loading}
-              className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-semibold transition"
-            >
-              {loading ? "Loading…" : "Refresh"}
-            </button>
+          <div>
+            <label className="block text-xs text-slate-400 uppercase mb-2">Filter by Manager</label>
+            <select value={managerFilter} onChange={(e) => setManagerFilter(e.target.value)} className={INPUT_CLASS}>
+              <option value="all">All Managers</option>
+              {managerOptions.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 uppercase mb-2">Filter by Branch</label>
+            <select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)} className={INPUT_CLASS}>
+              <option value="all">All Branches</option>
+              {branchOptions.map((b) => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
+          </div>
+          <div className="md:col-span-2">
+            <label className="block text-xs text-slate-400 uppercase mb-2">Filter by Work Date</label>
+            <div className="flex items-center gap-1.5">
+              <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} className={`flex-1 min-w-0 ${INPUT_CLASS}`} />
+              <span className="text-slate-500 text-xs shrink-0">to</span>
+              <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} className={`flex-1 min-w-0 ${INPUT_CLASS}`} />
+            </div>
+          </div>
+          <div className="flex items-end justify-end gap-2 md:col-span-2">
+            <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-2 text-sm">
+              <span className="text-yellow-300/80">Pending: </span>
+              <span className="font-semibold text-yellow-300">{pendingCount}</span>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-slate-800/50 px-4 py-2 text-sm">
+              <span className="text-slate-400">Listed: </span>
+              <span className="font-semibold text-white">{filteredRows.length}</span>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="panel overflow-x-auto p-0">
-        <div className="px-3 py-2 border-b border-white/10 font-semibold text-xs flex justify-between">
-          <span>Trainee Attendance</span>
-          <span className="text-muted-foreground">{rows.length} records</span>
-        </div>
-        <table className="w-full text-xs">
+        <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-white/10 bg-white/5">
-              {[
-                { label: "Name", align: "text-left" },
-                { label: "Role", align: "text-left" },
-                { label: "Branch", align: "text-left" },
-                { label: "Date", align: "text-center" },
-                { label: "Clock In", align: "text-center" },
-                { label: "Required In", align: "text-center" },
-                { label: "Clock Out", align: "text-center" },
-                { label: "Required Out", align: "text-center" },
-                { label: "Hours", align: "text-center" },
-                { label: "Status", align: "text-center" },
-                { label: "Actions", align: "text-center" },
-              ].map((h) => (
-                <th key={h.label} className={`px-2.5 py-1.5 ${h.align} text-[10px] text-muted-foreground uppercase whitespace-nowrap`}>{h.label}</th>
+            <tr className="border-b border-white/10">
+              {["Employee", "Work Date", "Clock Times", "Required Time", "Hours", "Manager", "Status", "Actions"].map((h) => (
+                <th key={h} className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={11} className="px-3 py-8 text-center text-muted-foreground">Loading…</td></tr>
-            ) : rows.length === 0 ? (
-              <tr><td colSpan={11} className="px-3 py-8 text-center text-muted-foreground">No trainees visible to you yet — set an employee's Employment Type to Trainee on Masterlist.</td></tr>
+              <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
+            ) : filteredRows.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="px-3 py-8 text-center text-slate-400">
+                  {hasActiveFilter
+                    ? "No trainee days match your search/filter."
+                    : visibleTrainees.length === 0
+                      ? "No trainees visible to you yet — set an employee's Employment Type to Trainee on Masterlist."
+                      : "No trainee timecards in this date range."}
+                </td>
+              </tr>
             ) : (
-              rows.map((row, i) => {
+              filteredRows.map((row) => {
                 const profile = profileById.get(row.profileId);
-                const showManagerBand = i === 0 || managerNameOf(rows[i - 1].profileId) !== managerNameOf(row.profileId);
-                const managerBand = (
-                  <tr className="bg-blue-500/10">
-                    <td colSpan={11} className="px-2.5 py-1 font-semibold text-blue-300 text-[10px] uppercase tracking-wide">
-                      {managerNameOf(row.profileId)}
-                    </td>
-                  </tr>
-                );
                 const nameCell = (
-                  <td className="px-2.5 py-1 font-medium whitespace-nowrap">
+                  <td className="px-3 py-3 text-white font-medium">
                     {profile?.display_name ? (
                       <Link
                         to="/m/$module/$submodule"
                         params={{ module: "hr", submodule: "user-management" }}
                         search={{ q: profile.display_name } as any}
-                        className="text-sky-300 hover:text-sky-200 hover:underline"
+                        className="text-blue-400 hover:text-blue-300 hover:underline"
                         title="Open in User Management"
                       >
                         {profile.display_name}
                       </Link>
-                    ) : (
-                      "—"
-                    )}
+                    ) : "—"}
+                    <p className="text-[11px] text-slate-500 font-normal">{roleLabel(profile?.role)}{profile?.assigned_branch ? ` · ${profile.assigned_branch}` : ""}</p>
                   </td>
+                );
+                const requiredCell = (
+                  <td className="px-3 py-3 text-slate-400">{profile?.required_check_in || "—"} → {profile?.required_check_out || "—"}</td>
                 );
 
                 if (row.kind === "placeholder") {
-                  const placeholderKey = `placeholder:${row.profileId}`;
-                  const isActingPlaceholder = actingId === placeholderKey;
-                  const isRejectingPlaceholder = rejectingId === placeholderKey;
-                  const canManage = canManageTrainee(profile);
                   return (
-                    <Fragment key={placeholderKey}>
-                      {showManagerBand && managerBand}
-                      <tr className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
-                        {nameCell}
-                        <td className="px-2.5 py-1 text-muted-foreground whitespace-nowrap">{roleLabel(profile?.role)}</td>
-                        <td className="px-2.5 py-1 text-muted-foreground whitespace-nowrap">{profile?.assigned_branch || "—"}</td>
-                        <td className="px-2.5 py-1 text-center text-muted-foreground" colSpan={6}>No punch in this date range yet.</td>
-                        <td className="px-2.5 py-1 text-center">
-                          <span className="inline-block rounded px-1.5 py-0.5 text-[10px] bg-white/10 text-slate-400">No Punch Yet</span>
-                        </td>
-                        <td className="px-2.5 py-1 text-center">
-                          {!canManage ? (
-                            <span className="text-slate-600">—</span>
-                          ) : isRejectingPlaceholder ? (
-                            <div className="flex flex-col gap-1.5 min-w-[180px] text-left mx-auto">
-                              <select
-                                value={rejectReasonOption}
-                                onChange={(e) => setRejectReasonOption(e.target.value)}
-                                autoFocus
-                                className="w-full rounded border border-white/15 bg-slate-800 px-2 py-1 text-xs text-white"
-                              >
-                                <option value="">Select reason…</option>
-                                {REJECT_REASON_OPTIONS.map((opt) => (
-                                  <option key={opt} value={opt}>{opt}</option>
-                                ))}
-                              </select>
-                              {rejectReasonOption === "Other" && (
-                                <input
-                                  type="text"
-                                  value={rejectReasonCustom}
-                                  onChange={(e) => setRejectReasonCustom(e.target.value)}
-                                  placeholder="Specify reason…"
-                                  className="w-full rounded border border-white/15 bg-slate-800 px-2 py-1 text-xs text-white"
-                                />
-                              )}
-                              {rejectReasonOption === "On Field" && (
-                                <div className="grid grid-cols-2 gap-1">
-                                  <input
-                                    type="time"
-                                    value={onFieldStart}
-                                    onChange={(e) => setOnFieldStart(e.target.value)}
-                                    title="On Field start — becomes their real Check In"
-                                    className="w-full rounded border border-white/15 bg-slate-800 px-1.5 py-1 text-xs text-white"
-                                  />
-                                  <input
-                                    type="time"
-                                    value={onFieldEnd}
-                                    onChange={(e) => setOnFieldEnd(e.target.value)}
-                                    title="On Field end — becomes their real Check Out"
-                                    className="w-full rounded border border-white/15 bg-slate-800 px-1.5 py-1 text-xs text-white"
-                                  />
-                                </div>
-                              )}
-                              <div className="flex gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => void submitPlaceholderReject(profile, row.profileId)}
-                                  disabled={!canSubmitReject || isActingPlaceholder}
-                                  className={`flex-1 rounded-md border px-2 py-1 text-[11px] font-semibold disabled:opacity-40 ${
-                                    rejectReasonOption === "On Field"
-                                      ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
-                                      : "border-red-400/40 bg-red-500/15 text-red-300 hover:bg-red-500/25"
-                                  }`}
-                                >
-                                  {isActingPlaceholder ? "…" : rejectReasonOption === "On Field" ? "Approve" : "Confirm"}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={resetRejectForm}
-                                  disabled={isActingPlaceholder}
-                                  className="rounded-md border border-white/15 bg-white/5 px-2 py-1 text-[11px] font-semibold text-slate-300 hover:bg-white/10"
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => { setRejectingId(placeholderKey); setRejectReasonOption(""); setRejectReasonCustom(""); setOnFieldStart(""); setOnFieldEnd(""); }}
-                              disabled={isActingPlaceholder}
-                              title="Mark a status (e.g. Absent, or On Field with real hours) without a punch"
-                              className="rounded-md border border-white/15 bg-white/5 px-2 py-1 text-[11px] font-semibold text-slate-300 hover:bg-white/10 disabled:opacity-40"
-                            >
-                              Mark Status
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    </Fragment>
+                    <tr key={`placeholder:${row.profileId}`} className="border-b border-white/5 hover:bg-white/5 transition">
+                      {nameCell}
+                      <td className="px-3 py-3 text-slate-500">—</td>
+                      <td className="px-3 py-3 text-slate-500">No punch in this date range yet.</td>
+                      {requiredCell}
+                      <td className="px-3 py-3 text-slate-500">—</td>
+                      <td className="px-3 py-3 text-slate-300">{managerNameOf(row.profileId)}</td>
+                      <td className="px-3 py-3">
+                        <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold border bg-white/10 text-slate-400 border-white/10">No Punch Yet</span>
+                      </td>
+                      <td className="px-3 py-3">
+                        {canManageTrainee(profile) ? (
+                          <button onClick={() => openPlaceholder(row.profileId)} className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs transition">
+                            Mark Status
+                          </button>
+                        ) : <span className="text-slate-600">—</span>}
+                      </td>
+                    </tr>
                   );
                 }
 
                 const entry = row.entry!;
                 const canApprove = canApproveTraineeDay(entry, myProfileId, role, extraRoles);
-                const isActing = actingId === entry.id;
-                const isRejecting = rejectingId === entry.id;
                 const hours = calcWorkedHours({ checkIn: entry.checkIn, checkOut: entry.checkOut, mealStart: entry.mealStart, mealEnd: entry.mealEnd, notes: "" });
                 return (
-                  <Fragment key={entry.id}>
-                    {showManagerBand && managerBand}
-                    <tr className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
-                      {nameCell}
-                      <td className="px-2.5 py-1 text-muted-foreground whitespace-nowrap">{roleLabel(profile?.role)}</td>
-                      <td className="px-2.5 py-1 text-muted-foreground whitespace-nowrap">{profile?.assigned_branch || "—"}</td>
-                      <td className="px-2.5 py-1 text-center whitespace-nowrap">{entry.workDate}</td>
-                      <td className="px-2.5 py-1 text-center whitespace-nowrap">{entry.checkIn || "—"}</td>
-                      <td className="px-2.5 py-1 text-center whitespace-nowrap text-muted-foreground">{profile?.required_check_in || "—"}</td>
-                      <td className="px-2.5 py-1 text-center whitespace-nowrap">{entry.checkOut || "—"}</td>
-                      <td className="px-2.5 py-1 text-center whitespace-nowrap text-muted-foreground">{profile?.required_check_out || "—"}</td>
-                      <td className="px-2.5 py-1 text-center whitespace-nowrap">{hours.toFixed(2)}h</td>
-                      <td className="px-2.5 py-1 text-center">
-                        <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] ${STATUS_CLASS[entry.status]}`}>{STATUS_LABEL[entry.status]}</span>
-                        {entry.status === "rejected" && entry.rejectReason && (
-                          <p className="mt-1 text-[10px] text-slate-400 italic max-w-[160px] mx-auto">"{entry.rejectReason}"</p>
-                        )}
-                      </td>
-                      <td className="px-2.5 py-1 text-center">
-                        {!canApprove ? (
-                          <span className="text-slate-600">—</span>
-                        ) : isRejecting ? (
-                          <div className="flex flex-col gap-1.5 min-w-[180px] text-left mx-auto">
-                            <select
-                              value={rejectReasonOption}
-                              onChange={(e) => setRejectReasonOption(e.target.value)}
-                              autoFocus
-                              className="w-full rounded border border-white/15 bg-slate-800 px-2 py-1 text-xs text-white"
-                            >
-                              <option value="">Select reason…</option>
-                              {REJECT_REASON_OPTIONS.map((opt) => (
-                                <option key={opt} value={opt}>{opt}</option>
-                              ))}
-                            </select>
-                            {rejectReasonOption === "Other" && (
-                              <input
-                                type="text"
-                                value={rejectReasonCustom}
-                                onChange={(e) => setRejectReasonCustom(e.target.value)}
-                                placeholder="Specify reason…"
-                                className="w-full rounded border border-white/15 bg-slate-800 px-2 py-1 text-xs text-white"
-                              />
-                            )}
-                            {rejectReasonOption === "On Field" && (
-                              <div className="grid grid-cols-2 gap-1">
-                                <input
-                                  type="time"
-                                  value={onFieldStart}
-                                  onChange={(e) => setOnFieldStart(e.target.value)}
-                                  title="On Field start — becomes their real Check In"
-                                  className="w-full rounded border border-white/15 bg-slate-800 px-1.5 py-1 text-xs text-white"
-                                />
-                                <input
-                                  type="time"
-                                  value={onFieldEnd}
-                                  onChange={(e) => setOnFieldEnd(e.target.value)}
-                                  title="On Field end — becomes their real Check Out"
-                                  className="w-full rounded border border-white/15 bg-slate-800 px-1.5 py-1 text-xs text-white"
-                                />
-                              </div>
-                            )}
-                            <div className="flex gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => void submitReject(entry)}
-                                disabled={!canSubmitReject || isActing}
-                                className={`flex-1 rounded-md border px-2 py-1 text-[11px] font-semibold disabled:opacity-40 ${
-                                  rejectReasonOption === "On Field"
-                                    ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
-                                    : "border-red-400/40 bg-red-500/15 text-red-300 hover:bg-red-500/25"
-                                }`}
-                              >
-                                {isActing ? "…" : rejectReasonOption === "On Field" ? "Approve" : "Confirm Reject"}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={resetRejectForm}
-                                disabled={isActing}
-                                className="rounded-md border border-white/15 bg-white/5 px-2 py-1 text-[11px] font-semibold text-slate-300 hover:bg-white/10"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex items-center justify-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => void handleApprove(entry)}
-                              disabled={isActing}
-                              title={entry.status === "approved" ? "Re-approve" : "Approve"}
-                              className="grid h-7 w-7 place-items-center rounded-full border border-emerald-400/40 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 disabled:opacity-40"
-                            >
-                              {isActing ? "…" : <Check className="h-3.5 w-3.5" />}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => { setRejectingId(entry.id); setRejectReasonOption(""); setRejectReasonCustom(""); setOnFieldStart(""); setOnFieldEnd(""); }}
-                              disabled={isActing}
-                              title={entry.status === "rejected" ? "Change reason" : "Reject / On Field"}
-                              className="grid h-7 w-7 place-items-center rounded-full border border-red-400/40 bg-red-500/15 text-red-300 hover:bg-red-500/25 disabled:opacity-40"
-                            >
-                              <XIcon className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void handleReset(entry)}
-                              disabled={isActing}
-                              title="Reset — clear this day back to no punch at all, for re-testing"
-                              className="grid h-7 w-7 place-items-center rounded-full border border-white/15 bg-white/5 text-slate-300 hover:bg-white/10 disabled:opacity-40"
-                            >
-                              <RotateCcw className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  </Fragment>
+                  <tr key={entry.id} className="border-b border-white/5 hover:bg-white/5 transition">
+                    {nameCell}
+                    <td className="px-3 py-3 text-slate-300">{entry.workDate}</td>
+                    <td className="px-3 py-3 text-slate-300">
+                      {entry.checkIn || "—"} → {entry.checkOut ? entry.checkOut : <span className="text-amber-300">still clocked in</span>}
+                      {(entry.mealStart || entry.mealEnd) && (
+                        <p className="text-[11px] text-slate-500">Meal: {entry.mealStart || "—"} → {entry.mealEnd || "—"}</p>
+                      )}
+                    </td>
+                    {requiredCell}
+                    <td className="px-3 py-3 text-slate-300">{hours.toFixed(2)}h</td>
+                    <td className="px-3 py-3 text-slate-300">{managerNameOf(entry.profileId)}</td>
+                    <td className="px-3 py-3">
+                      <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${STATUS_BADGE[entry.status]}`}>{STATUS_LABEL[entry.status]}</span>
+                      {entry.status === "rejected" && entry.rejectReason && (
+                        <p className="mt-1 text-[11px] text-slate-400 italic max-w-[180px]">"{entry.rejectReason}"</p>
+                      )}
+                    </td>
+                    <td className="px-3 py-3">
+                      {canApprove ? (
+                        <button onClick={() => openEntry(entry)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs transition">
+                          View Timecard
+                        </button>
+                      ) : (
+                        <span className="text-slate-400 text-xs">{STATUS_LABEL[entry.status]}</span>
+                      )}
+                    </td>
+                  </tr>
                 );
               })
             )}
           </tbody>
         </table>
       </div>
+
+      {selected && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50" onClick={closeModal}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-6">
+              <div>
+                <h2 className="text-2xl font-bold text-white">Trainee Timecard</h2>
+                <p className="text-sm text-slate-400 mt-1">Trainee: <span className="text-blue-400">{selectedProfile?.display_name || "—"}</span></p>
+                <p className="text-sm text-slate-400">Work Date: {selectedEntry ? selectedEntry.workDate : dateTo}</p>
+                <p className="text-sm text-slate-400">Manager: {selectedProfile ? managerNameOf(selectedProfile.id) : "—"}</p>
+              </div>
+              <button onClick={closeModal} className="text-slate-400 hover:text-white transition p-1">✕</button>
+            </div>
+
+            {selectedEntry && (
+              <div className="bg-slate-800/50 border border-white/10 rounded-lg p-4 mb-6">
+                <h3 className="text-sm font-bold text-white mb-1">Clock Times</h3>
+                <p className="text-xs text-slate-400 mb-3">
+                  Punched: <span className="text-slate-200 font-semibold">{selectedEntry.checkIn || "—"} → {selectedEntry.checkOut || "—"}</span>
+                  {" · "}Required: {selectedProfile?.required_check_in || "—"} → {selectedProfile?.required_check_out || "—"}
+                </p>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="block text-xs text-slate-400 uppercase mb-2">Check In</label>
+                    <input type="time" step="1" value={draft.checkIn} onChange={(e) => setDraft({ ...draft, checkIn: e.target.value })} className={MODAL_INPUT_CLASS} />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 uppercase mb-2">Check Out</label>
+                    <input type="time" step="1" value={draft.checkOut} onChange={(e) => setDraft({ ...draft, checkOut: e.target.value })} className={MODAL_INPUT_CLASS} />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 uppercase mb-2">Meal Start</label>
+                    <input type="time" step="1" value={draft.mealStart} onChange={(e) => setDraft({ ...draft, mealStart: e.target.value })} className={MODAL_INPUT_CLASS} />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 uppercase mb-2">Meal End</label>
+                    <input type="time" step="1" value={draft.mealEnd} onChange={(e) => setDraft({ ...draft, mealEnd: e.target.value })} className={MODAL_INPUT_CLASS} />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between mt-4 text-sm">
+                  <span className="text-slate-400">Hours: <span className="text-white font-semibold">{draftHours.toFixed(2)}h</span></span>
+                  <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold border ${STATUS_BADGE[selectedEntry.status]}`}>{STATUS_LABEL[selectedEntry.status]}</span>
+                </div>
+                {selectedEntry.status === "rejected" && selectedEntry.rejectReason && (
+                  <p className="mt-2 text-xs text-slate-400 italic">Rejected: "{selectedEntry.rejectReason}"</p>
+                )}
+              </div>
+            )}
+
+            {rejecting && (
+              <div className="bg-slate-800/50 border border-white/10 rounded-lg p-4 mb-6 space-y-3">
+                <h3 className="text-sm font-bold text-white">{selectedEntry ? "Reject / On Field" : "Mark Status (no punch)"}</h3>
+                <select value={rejectReasonOption} onChange={(e) => setRejectReasonOption(e.target.value)} autoFocus className={MODAL_INPUT_CLASS}>
+                  <option value="">Select reason…</option>
+                  {REJECT_REASON_OPTIONS.map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+                {rejectReasonOption === "Other" && (
+                  <input type="text" value={rejectReasonCustom} onChange={(e) => setRejectReasonCustom(e.target.value)} placeholder="Specify reason…" className={MODAL_INPUT_CLASS} />
+                )}
+                {rejectReasonOption === "On Field" && (
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="block text-xs text-slate-400 uppercase mb-2">On Field Start</label>
+                      <input type="time" value={onFieldStart} onChange={(e) => setOnFieldStart(e.target.value)} className={MODAL_INPUT_CLASS} />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-400 uppercase mb-2">On Field End</label>
+                      <input type="time" value={onFieldEnd} onChange={(e) => setOnFieldEnd(e.target.value)} className={MODAL_INPUT_CLASS} />
+                    </div>
+                    <p className="md:col-span-2 text-xs text-slate-500">These become their real Check In / Check Out and the day is approved.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {selectedEntry && !rejecting && (
+                <>
+                  <button onClick={handleReset} disabled={acting} className="mr-auto px-3 py-2 rounded-lg text-xs font-semibold border border-white/15 bg-white/5 text-slate-300 hover:bg-white/10 disabled:opacity-40" title="Clear this day back to no punch at all">
+                    Reset Day
+                  </button>
+                  {selectedEntry.status !== "approved" && (
+                    <button onClick={handleSaveTimes} disabled={acting || !draftChanged} className="px-4 py-2 rounded-lg text-sm font-semibold border border-white/15 bg-slate-700 text-white hover:bg-slate-600 disabled:opacity-40">
+                      Save Times
+                    </button>
+                  )}
+                  <button onClick={() => setRejecting(true)} disabled={acting} className="px-4 py-2 rounded-lg text-sm font-semibold bg-red-600 hover:bg-red-700 text-white disabled:opacity-40">
+                    {selectedEntry.status === "rejected" ? "Change Reason" : "Reject"}
+                  </button>
+                  <button onClick={handleApprove} disabled={acting} className="px-4 py-2 rounded-lg text-sm font-semibold bg-green-600 hover:bg-green-700 text-white disabled:opacity-40">
+                    {acting ? "Saving…" : selectedEntry.status === "approved" ? "Re-approve" : draftChanged ? "Save & Approve" : "Approve"}
+                  </button>
+                </>
+              )}
+              {rejecting && (
+                <>
+                  <button onClick={selectedEntry ? resetRejectForm : closeModal} disabled={acting} className="px-4 py-2 rounded-lg text-sm font-semibold border border-white/15 bg-white/5 text-slate-300 hover:bg-white/10">
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleReject}
+                    disabled={!canSubmitReject || acting}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-40 ${rejectReasonOption === "On Field" ? "bg-green-600 hover:bg-green-700" : "bg-red-600 hover:bg-red-700"}`}
+                  >
+                    {acting ? "Saving…" : rejectReasonOption === "On Field" ? "Approve On Field" : selectedEntry ? "Confirm Reject" : "Confirm"}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
