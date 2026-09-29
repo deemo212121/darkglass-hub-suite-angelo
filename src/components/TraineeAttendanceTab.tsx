@@ -148,14 +148,30 @@ export function TraineeAttendanceTab({
     (rejectReasonOption !== "On Field" || (onFieldStart !== "" && onFieldEnd !== ""));
 
   const profileById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
-  // Every trainee this viewer may see — same "my team" scoping every other
-  // tab on this page already uses, so a manager only ever sees their own
-  // trainees while Admin/HR/Finance/SuperAdmin see the whole company. The
-  // actual roster (Masterlist's Employment Type), not derived from who has
-  // punched — a trainee who hasn't clocked in at all still shows up.
+  const viewerName = (profileById.get(myProfileId || "")?.display_name || "").trim().toLowerCase();
+  // Fallback reviewers (Admin/HR/Finance/SuperAdmin/Technical Assistant
+  // Director, Senior Branch Manager) can cover a day a trainee's own manager
+  // hasn't reviewed — they get an "All Trainees" switch. Everyone else only
+  // ever sees their own trainees.
+  const isFallbackReviewer = isAttendanceFullAccessRole(role, extraRoles) || isTraineeFallbackReviewerRole(role, extraRoles);
+  const [scope, setScope] = useState<"mine" | "all">("mine");
+  const showAll = scope === "all" && isFallbackReviewer;
+  // Default view is a trainer's OWN trainees only (the trainee's
+  // profiles.manager_name is the viewer) — not the viewer's whole team
+  // chain, and not the whole company even for Admin/HR. The actual roster
+  // (Masterlist's Employment Type), not derived from who has punched — a
+  // trainee who hasn't clocked in at all still shows up.
   const visibleTrainees = useMemo(
-    () => profiles.filter((p) => p.employment_type === "trainee" && (teamScopedIds === null || teamScopedIds.has(p.id))),
-    [profiles, teamScopedIds]
+    () =>
+      profiles.filter(
+        (p) =>
+          p.employment_type === "trainee" &&
+          (showAll
+            ? teamScopedIds === null || teamScopedIds.has(p.id) || isTraineeFallbackReviewerRole(role, extraRoles)
+            : viewerName !== "" && (p.manager_name || "").trim().toLowerCase() === viewerName)
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [profiles, teamScopedIds, showAll, viewerName]
   );
   const traineeIds = useMemo(() => new Set(visibleTrainees.map((p) => p.id)), [visibleTrainees]);
 
@@ -224,7 +240,6 @@ export function TraineeAttendanceTab({
   // A placeholder row has no entry yet to read a managerId off — same
   // authority check as canApproveTraineeDay, matched against the trainee's
   // raw manager_name instead.
-  const viewerName = (profileById.get(myProfileId || "")?.display_name || "").trim().toLowerCase();
   const canManageTrainee = (trainee: ProfileRow | undefined) =>
     isAttendanceFullAccessRole(role, extraRoles) ||
     isTraineeFallbackReviewerRole(role, extraRoles) ||
@@ -336,7 +351,24 @@ export function TraineeAttendanceTab({
       <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
         <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
           <h2 className="text-lg font-bold text-white">Trainee Attendance</h2>
+          {isFallbackReviewer && (
+            <div className="flex gap-1.5">
+              {(["mine", "all"] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setScope(s)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${scope === s ? "bg-primary/20 text-primary" : "bg-slate-800/50 text-slate-400 hover:text-white"}`}
+                >
+                  {s === "mine" ? "My Trainees" : "All Trainees"}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
+        {showAll && (
+          <p className="text-xs text-slate-500 mb-3">Every trainee company-wide — for covering a day a trainee's own manager hasn't reviewed.</p>
+        )}
 
         <div className="grid gap-3 md:grid-cols-4 mb-4">
           <div>
@@ -408,7 +440,11 @@ export function TraineeAttendanceTab({
                   {hasActiveFilter
                     ? "No trainee days match your search/filter."
                     : visibleTrainees.length === 0
-                      ? "No trainees visible to you yet — set an employee's Employment Type to Trainee on Masterlist."
+                      ? showAll
+                        ? "No trainees yet — set an employee's Employment Type to Trainee on Masterlist."
+                        : isFallbackReviewer
+                          ? "You have no trainees of your own — switch to All Trainees to see everyone's."
+                          : "You have no trainees assigned to you."
                       : "No trainee timecards in this date range."}
                 </td>
               </tr>
