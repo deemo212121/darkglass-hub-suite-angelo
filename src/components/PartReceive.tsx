@@ -3,7 +3,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Check, Columns3, History, PackageCheck, CalendarRange } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
-import { branchAbbrev, branchChipColor, branchDonutHex } from "@/lib/branchDisplay";
+import { branchDonutHex } from "@/lib/branchDisplay";
 import { DonutSummaryCard, CATEGORICAL_DONUT_HEX, DONUT_OTHER_COLOR, DONUT_TOP_N, topDonutSlices } from "@/components/DonutSummaryCard";
 import {
   getPartsToReceive,
@@ -19,6 +19,7 @@ import { addPendingDoneItem, removePendingDoneItem } from "@/lib/partsDoneQueue"
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 import { PART_STATUS_OPTIONS } from "@/lib/partStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
+import { BranchBarChart } from "@/components/BranchBarChart";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 
 const PART_RECEIVE_ACTIVITY_TARGET_TYPE = "part_receive";
@@ -723,96 +724,19 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
               {/* ~1/4 width on wide screens — the list itself doesn't need
                   more, and the donut alongside fills what would otherwise
                   be dead space to its right. */}
-              {(() => {
-                const bars = branchSummary
-                  .map((b) => ({ ...b, total: b.notReceived + b.received }))
-                  .sort((a, b) => b.total - a.total || a.location.localeCompare(b.location));
-                const grandTotal = allBranchTotals.notReceived + allBranchTotals.received;
-                const maxTotal = Math.max(1, ...bars.map((b) => b.total));
-                const step = maxTotal <= 10 ? 2 : maxTotal <= 25 ? 5 : maxTotal <= 50 ? 10 : Math.ceil(maxTotal / 50) * 10;
-                const axisMax = Math.ceil(maxTotal / step) * step;
-                const ticks = Array.from({ length: axisMax / step + 1 }, (_, i) => i * step);
-                const pct = (n: number) => (grandTotal > 0 ? ((n / grandTotal) * 100).toFixed(1) : "0.0");
-                return (
-                  <div className="lg:w-[40%] lg:shrink-0 rounded-lg border border-white/10 p-4 flex flex-col min-h-0">
-                    <div className="flex items-start justify-between gap-3 mb-3">
-                      <div className="min-w-0">
-                        <p className="text-base font-bold text-white leading-tight">Parts for Receive by Branch</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          Total Parts for Receive: <span className="font-semibold text-slate-200 tabular-nums">{grandTotal}</span>
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setLocation("")}
-                        title="Show all branches"
-                        className={`shrink-0 flex items-center gap-2 rounded-lg border px-3 py-1.5 transition ${
-                          location === "" ? "border-blue-400/50 bg-blue-500/10" : "border-white/15 bg-white/5 hover:bg-white/10"
-                        }`}
-                      >
-                        <span className="text-2xl font-bold text-white tabular-nums leading-none">{grandTotal}</span>
-                        <span className="text-[10px] leading-tight text-muted-foreground text-left">Total Parts<br />for Receive</span>
-                      </button>
-                    </div>
-
-                    <div className="flex-1">
-                      <div className="relative">
-                        {/* Gridlines at each axis tick, behind the bars. */}
-                        <div className="pointer-events-none absolute inset-y-0 left-12 right-20">
-                          {ticks.map((t) => (
-                            <div key={t} className="absolute inset-y-0 border-l border-white/5" style={{ left: `${(t / axisMax) * 100}%` }} />
-                          ))}
-                        </div>
-                        <div className="relative flex flex-col gap-1">
-                          {bars.map((b) => {
-                            const active = location === b.location;
-                            const dimmed = location !== "" && !active;
-                            const color = b.location === NO_LOCATION ? "#64748b" : branchDonutHex(b.location);
-                            return (
-                              <button
-                                key={b.location}
-                                type="button"
-                                onClick={() => setLocation(active ? "" : b.location)}
-                                title={`${b.location} — ${b.notReceived} not received · ${b.received} received`}
-                                className={`group flex items-center gap-0 rounded text-left transition ${active ? "bg-white/10" : "hover:bg-white/5"} ${dimmed ? "opacity-40" : ""}`}
-                              >
-                                <span className="w-12 shrink-0 pr-2 text-right text-[11px] font-semibold text-slate-300">
-                                  {b.location === NO_LOCATION ? "N/A" : branchAbbrev(b.location)}
-                                </span>
-                                <span className="relative flex-1 h-4">
-                                  <span
-                                    className="absolute inset-y-0 left-0 rounded-r"
-                                    style={{ width: `${Math.max(1.5, (b.total / axisMax) * 100)}%`, background: color }}
-                                  />
-                                </span>
-                                <span className="w-20 shrink-0 pl-2 text-[11px] text-slate-400 tabular-nums whitespace-nowrap">
-                                  <span className="font-bold text-slate-100">{b.total}</span> ({pct(b.total)}%)
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* X-axis — kept outside the scroll area so it stays visible. */}
-                    <div className="mt-2 border-t border-white/10 pt-1">
-                      <div className="relative ml-12 mr-20 h-4">
-                        {ticks.map((t) => (
-                          <span
-                            key={t}
-                            className="absolute -translate-x-1/2 text-[10px] text-slate-500 tabular-nums"
-                            style={{ left: `${(t / axisMax) * 100}%` }}
-                          >
-                            {t}
-                          </span>
-                        ))}
-                      </div>
-                      <p className="text-center text-[10px] text-slate-500 mt-1">Number of Parts</p>
-                    </div>
-                  </div>
-                );
-              })()}
+              <BranchBarChart
+                title="Parts for Receive by Branch"
+                totalLabel="Total Parts for Receive"
+                unitLabel="Number of Parts"
+                bars={branchSummary.map((b) => ({
+                  location: b.location,
+                  total: b.notReceived + b.received,
+                  detail: `${b.notReceived} not received · ${b.received} received`,
+                }))}
+                selected={location}
+                onSelect={setLocation}
+                noLocationKey={NO_LOCATION}
+              />
 
               {/* Fills the remaining space beside the (now-narrow) list —
                   three breakdowns of the same underlying data (status,

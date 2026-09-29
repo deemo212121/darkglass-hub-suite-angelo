@@ -3,8 +3,13 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Printer, PackageCheck } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
-import { branchAbbrev, branchChipColor, branchDonutHex } from "@/lib/branchDisplay";
+import { branchDonutHex } from "@/lib/branchDisplay";
 import { DonutSummaryCard, CATEGORICAL_DONUT_HEX, DONUT_OTHER_COLOR, DONUT_TOP_N, topDonutSlices } from "@/components/DonutSummaryCard";
+import { BranchBarChart } from "@/components/BranchBarChart";
+
+// Location value for parts whose ticket has no location — distinct from ""
+// (which means "all locations" in the Location filter).
+const NO_LOCATION = "(No location)";
 import { getPartReturns, updatePartReturnEntryRow, submitPartReturnBatch, type PartReturnRow } from "@/lib/supabase/partReturn";
 import { marconeLookupPart, marconeRequestReturn, marconeGetReaQrCode, marconeFindReturnableItems, type MarconePartInfo } from "@/lib/marconeApi";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
@@ -387,7 +392,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
 
   const matchesCommonFilters = (r: PartReturnRow) => {
     if (provider && providerGroupOf(r.partDist) !== provider) return false;
-    if (location && r.location !== location) return false;
+    if (location && (r.location || NO_LOCATION) !== location) return false;
     if (r.aging !== null && (r.aging < agingMin || r.aging > agingMax)) return false;
     if (!includeReturned && r.returnStatus !== "NOT RECEIVED") return false;
     if (!includeReserved && reservedQty(r) > 0) return false;
@@ -418,8 +423,11 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     if (r.aging !== null && (r.aging < agingMin || r.aging > agingMax)) return false;
     return true;
   });
-  const branchSummary = LOCATIONS.map((loc) => {
-    const items = branchScoped.filter((r) => r.location === loc);
+  // Built from the locations actually on these parts, not the LOCATIONS
+  // list — a ticket whose location is spelled differently or blank would
+  // otherwise be dropped from the chart and totals.
+  const branchSummary = Array.from(new Set(branchScoped.map((r) => r.location || NO_LOCATION))).map((loc) => {
+    const items = branchScoped.filter((r) => (r.location || NO_LOCATION) === loc);
     return {
       location: loc,
       notReturned: items.filter((r) => r.returnStatus === "NOT RECEIVED").length,
@@ -444,7 +452,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   // (Provider) instead of Location, so picking one in the dropdown doesn't
   // just collapse this donut down to a single 100% slice.
   const providerScoped = byTab.filter((r) => {
-    if (location && r.location !== location) return false;
+    if (location && (r.location || NO_LOCATION) !== location) return false;
     if (r.aging !== null && (r.aging < agingMin || r.aging > agingMax)) return false;
     return true;
   });
@@ -539,71 +547,31 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
                 </div>
               </div>
             </div>
-            {/* Capped, not unbounded — see Part Receive's own Branch
-                Summary for why: an uncapped row stretches the donuts to
-                match however tall the branch list happens to be, which
-                balloons them into huge, mostly-empty rings once there are
-                20+ branches. The list scrolls internally past this height. */}
-            <div className="flex flex-col lg:flex-row gap-4 items-stretch lg:max-h-[520px]">
-              {/* ~1/4 width on wide screens — same layout as Part Receive's
-                  own Branch Summary, same branch abbreviations/colors too
-                  (src/lib/branchDisplay.ts), just Returned/Not Returned
-                  instead of Received/Not Received. */}
-              <div className="lg:w-1/4 lg:shrink-0 rounded-lg border border-white/10 divide-y divide-white/5 overflow-y-auto">
-                <button
-                  type="button"
-                  onClick={() => setLocation("")}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition ${
-                    location === "" ? "bg-white/10" : "hover:bg-white/5"
-                  }`}
-                >
-                  <span className="inline-flex shrink-0 items-center rounded-md border border-white/20 bg-white/10 px-2 py-0.5 text-[11px] font-bold tracking-wide text-white">
-                    ALL LOCATIONS
-                  </span>
-                  <span className="ml-auto text-xs text-slate-300">
-                    <span className="font-semibold text-amber-300">{allBranchTotals.notReturned}</span> not rtn'd ·{" "}
-                    <span className="font-semibold text-green-400">{allBranchTotals.returned}</span> rtn'd
-                  </span>
-                </button>
-                {branchSummary.map((b) => {
-                  const c = branchChipColor(b.location);
-                  const active = location === b.location;
-                  return (
-                    <button
-                      key={b.location}
-                      type="button"
-                      onClick={() => setLocation(active ? "" : b.location)}
-                      title={b.location}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition ${
-                        active ? "bg-white/10" : "hover:bg-white/5"
-                      }`}
-                    >
-                      <span className={`inline-flex shrink-0 items-center justify-center rounded-md border px-2 py-0.5 text-[11px] font-bold tracking-wide min-w-[3.25rem] ${c.bg} ${c.border} ${c.text}`}>
-                        {branchAbbrev(b.location)}
-                      </span>
-                      <span className="ml-auto text-xs text-slate-300">
-                        <span className="font-semibold text-amber-300">{b.notReturned}</span> not rtn'd ·{" "}
-                        <span className="font-semibold text-green-400">{b.returned}</span> rtn'd
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+            <div className="flex flex-col lg:flex-row gap-4 items-stretch">
+              <BranchBarChart
+                title="Parts for Return by Branch"
+                totalLabel="Total Parts for Return"
+                unitLabel="Number of Parts"
+                bars={branchSummary.map((b) => ({
+                  location: b.location,
+                  total: b.notReturned + b.returned,
+                  detail: `${b.notReturned} not returned · ${b.returned} returned`,
+                }))}
+                selected={location}
+                onSelect={setLocation}
+                noLocationKey={NO_LOCATION}
+              />
 
-              <div className="flex-1 flex flex-wrap gap-4">
+              <div className="flex-1 flex flex-wrap gap-4 lg:self-start">
                 <DonutSummaryCard
                   title="Status"
                   data={[
-                    { name: "Not returned", value: allBranchTotals.notReturned },
                     { name: "Returned", value: allBranchTotals.returned },
-                  ].filter((d) => d.value > 0)}
+                    { name: "Not returned", value: allBranchTotals.notReturned },
+                  ]}
                   colorFor={(name) => (name === "Returned" ? DONUT_RETURNED_COLOR : DONUT_NOT_RETURNED_COLOR)}
-                  centerValue={
-                    allBranchTotals.notReturned + allBranchTotals.returned > 0
-                      ? `${Math.round((allBranchTotals.returned / (allBranchTotals.notReturned + allBranchTotals.returned)) * 100)}%`
-                      : "—"
-                  }
-                  centerLabel="Returned"
+                  centerValue={String(allBranchTotals.notReturned + allBranchTotals.returned)}
+                  centerLabel="Total Parts"
                 />
                 <DonutSummaryCard
                   title="By Location"
@@ -637,6 +605,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
               <label htmlFor="locationFilter">Location</label>
               <select id="locationFilter" value={location} onChange={(e) => setLocation(e.target.value)}>
                 <option value="">All Locations</option>
+                {location && !(LOCATIONS as readonly string[]).includes(location) && <option value={location}>{location}</option>}
                 {LOCATIONS.map((l) => <option key={l} value={l}>{l}</option>)}
               </select>
             </div>

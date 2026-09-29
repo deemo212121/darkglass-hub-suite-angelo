@@ -4578,6 +4578,63 @@ a.mtech-phone-link:active { opacity: 0.7; }
   color: var(--lt-text) !important;
 }
 
+/* Every Parts/Logistics scoped-style page wraps its table in .table-wrap
+   with a hardcoded #111827 fill (PartReturn, PartReturnStatus,
+   PartInventoryPage, PartFootprint, PartPickup, PartCollection,
+   PartHistory, PoStatus, ReturnPickup, RepairStatuses). Rows are
+   transparent, so in light mode every other row showed that dark fill
+   through — dark bands with dark text on them. Light surfaces here. */
+:root[data-theme="light"] .table-wrap,
+:root[data-theme="light"] .table-wrap table {
+  background: var(--lt-surface) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .table-wrap thead th {
+  background: var(--lt-surface-3) !important;
+  color: var(--lt-text) !important;
+  border-color: var(--lt-border) !important;
+}
+:root[data-theme="light"] .table-wrap tbody tr {
+  background: var(--lt-surface) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .table-wrap tbody tr:nth-child(even) {
+  background: var(--lt-surface-2) !important;
+}
+:root[data-theme="light"] .table-wrap td {
+  color: var(--lt-text) !important;
+  border-color: var(--lt-border) !important;
+}
+:root[data-theme="light"] .table-wrap tr.totals-row,
+:root[data-theme="light"] .table-wrap tr.totals-row td,
+:root[data-theme="light"] .table-wrap tr.total-row td {
+  background: var(--lt-surface-2) !important;
+  color: var(--lt-text) !important;
+}
+
+/* Pale text (#e5e7eb / #dbeafe / #bfdbfe / #cbd5e1) sitting straight on the
+   page with no fill of its own — invisible in light mode. Found by scanning
+   every scoped <style> block for light text colors without a background:
+     PartReturn.tsx          .checkbox-row ("Include Returned/Reserved"),
+                             .aging-range span
+     PartCollectionPage.tsx  .status-left label, .status-right label
+     PartPickupPage.tsx      .pick-summary
+     PoStatusPage.tsx        .report-footer
+     ReturnPickupPage.tsx    .po-footer */
+:root[data-theme="light"] .checkbox-row,
+:root[data-theme="light"] .status-left label,
+:root[data-theme="light"] .status-right label {
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .aging-range span,
+:root[data-theme="light"] .pick-summary {
+  color: #1d4ed8 !important;
+}
+:root[data-theme="light"] .report-footer,
+:root[data-theme="light"] .po-footer {
+  color: var(--lt-text-2) !important;
+}
+
 /* ── WorkCalendarPage.tsx — same rgba(255,255,255,0.08) glass-panel
    anti-pattern, plus a few hardcoded dark navy chrome pieces (month
    nav arrows, view toggle buttons) and pale-blue accent text that
@@ -11118,6 +11175,63 @@ a.mtech-phone-link:active { opacity: 0.7; }
 /* Table wrap in Po Status */
 :root[data-theme="light"] .table-wrap {
   color: var(--lt-text) !important;
+}
+
+/* Every Parts/Logistics scoped-style page wraps its table in .table-wrap
+   with a hardcoded #111827 fill (PartReturn, PartReturnStatus,
+   PartInventoryPage, PartFootprint, PartPickup, PartCollection,
+   PartHistory, PoStatus, ReturnPickup, RepairStatuses). Rows are
+   transparent, so in light mode every other row showed that dark fill
+   through — dark bands with dark text on them. Light surfaces here. */
+:root[data-theme="light"] .table-wrap,
+:root[data-theme="light"] .table-wrap table {
+  background: var(--lt-surface) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .table-wrap thead th {
+  background: var(--lt-surface-3) !important;
+  color: var(--lt-text) !important;
+  border-color: var(--lt-border) !important;
+}
+:root[data-theme="light"] .table-wrap tbody tr {
+  background: var(--lt-surface) !important;
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .table-wrap tbody tr:nth-child(even) {
+  background: var(--lt-surface-2) !important;
+}
+:root[data-theme="light"] .table-wrap td {
+  color: var(--lt-text) !important;
+  border-color: var(--lt-border) !important;
+}
+:root[data-theme="light"] .table-wrap tr.totals-row,
+:root[data-theme="light"] .table-wrap tr.totals-row td,
+:root[data-theme="light"] .table-wrap tr.total-row td {
+  background: var(--lt-surface-2) !important;
+  color: var(--lt-text) !important;
+}
+
+/* Pale text (#e5e7eb / #dbeafe / #bfdbfe / #cbd5e1) sitting straight on the
+   page with no fill of its own — invisible in light mode. Found by scanning
+   every scoped <style> block for light text colors without a background:
+     PartReturn.tsx          .checkbox-row ("Include Returned/Reserved"),
+                             .aging-range span
+     PartCollectionPage.tsx  .status-left label, .status-right label
+     PartPickupPage.tsx      .pick-summary
+     PoStatusPage.tsx        .report-footer
+     ReturnPickupPage.tsx    .po-footer */
+:root[data-theme="light"] .checkbox-row,
+:root[data-theme="light"] .status-left label,
+:root[data-theme="light"] .status-right label {
+  color: var(--lt-text) !important;
+}
+:root[data-theme="light"] .aging-range span,
+:root[data-theme="light"] .pick-summary {
+  color: #1d4ed8 !important;
+}
+:root[data-theme="light"] .report-footer,
+:root[data-theme="light"] .po-footer {
+  color: var(--lt-text-2) !important;
 }
 
 /* ── WorkCalendarPage.tsx — same rgba(255,255,255,0.08) glass-panel
