@@ -1,15 +1,14 @@
 /**
- * Part Order — one row per ticket whose Repair Status (tickets.status, the
- * same "TR-Need PO"/"OP-Waiting for Part"/etc value shown on the Ticket
- * List) is exactly "TR-Need PO", driven off the TICKET not the part: every
- * ticket at that status shows up here even before anyone has logged a part
- * for it in Service Tracking (blank Part No/Description/Part Dist./ETA
- * until they do) — a ticket previously vanished from this page entirely
- * unless a `parts` row already existed for it, which silently hid most of
- * a company's TR-Need PO backlog (confirmed: dozens of tickets sitting at
- * TR-Need PO on the Ticket List, only one showing up here). A ticket that
- * does have one or more logged parts gets one row per part instead of the
- * single blank placeholder row. Reads parts + tickets as two parallel
+ * Part Order — every ticket that needs a part ordered, one of two ways:
+ *  1. Repair Status (tickets.status) is "TR-Need PO" — every logged part,
+ *     or one blank placeholder row if no part is logged yet (most TR-Need
+ *     PO tickets have none logged at that point, and used to vanish from
+ *     this page entirely); or
+ *  2. any other Repair Status, but at least one part still has Part Status
+ *     "Need PO" — only those parts are listed. A ticket can need a part
+ *     ordered while its status reads CL-Parts Back Ordered, TR-Need Triage,
+ *     PT-Need PreAuthorization, etc.
+ * Reads parts + tickets as two parallel
  * queries and merges client-side - parts.ticket_id -> tickets is a
  * composite FK PostgREST can't embed directly, see partsInventory.ts for
  * the same pattern - instead of looping per-ticket (the previous approach
@@ -21,7 +20,7 @@ import { supabase } from "./client";
 export interface PartOrderRow {
   id: string;
   ticketNo: string;
-  /** The ticket's Repair Status (tickets.status) — always "TR-Need PO" here, same value shown on the Ticket List, NOT the part row's own status. */
+  /** The ticket's Repair Status (tickets.status), same value shown on the Ticket List — NOT the part row's own status. */
   status: string;
   partDist: string;
   partNo: string;
@@ -94,21 +93,29 @@ export async function getPartOrderRows(): Promise<PartOrderRow[]> {
 
   const rows: PartOrderRow[] = [];
   for (const t of ticketsAll as any[]) {
-    if (t.status !== "TR-Need PO") continue;
+    const ticketStatus = t.status ?? "";
+    const isTrNeedPo = ticketStatus === "TR-Need PO";
+    const allParts = partsByTicketId.get(t.id) ?? [];
+    // A TR-Need PO ticket shows every logged part (or one blank row if none
+    // is logged yet). Any other ticket shows up only for the parts actually
+    // still marked "Need PO" — a ticket can need a part ordered while its
+    // Repair Status says something else (CL-Parts Back Ordered, TR-Need
+    // Triage, PT-Need PreAuthorization, ...).
+    const parts = isTrNeedPo ? allParts : allParts.filter((p) => p.status === "Need PO");
+    if (!isTrNeedPo && parts.length === 0) continue;
     const ticketNo = t.ticket_no ?? "";
     const location = t.location ?? "";
     const scheduleDate = t.schedule_date ?? "";
     const warranty = t.warranty ?? "";
     const statusChangedBy = t.status_changed_by ?? null;
-    const parts = partsByTicketId.get(t.id) ?? [];
     if (parts.length === 0) {
-      // No part logged for this ticket yet in Service Tracking — still
+      // TR-Need PO with no part logged yet in Service Tracking — still
       // show it (blank part columns) so it isn't silently dropped from
       // logistics' view of what needs a PO.
       rows.push({
         id: `ticket-${t.id}`,
         ticketNo,
-        status: "TR-Need PO",
+        status: ticketStatus,
         partDist: "",
         partNo: "",
         description: "",
@@ -117,7 +124,7 @@ export async function getPartOrderRows(): Promise<PartOrderRow[]> {
         location,
         scheduleDate,
         warranty,
-        repairStatus: "TR-Need PO",
+        repairStatus: ticketStatus,
         statusChangedBy,
       });
       continue;
@@ -126,7 +133,7 @@ export async function getPartOrderRows(): Promise<PartOrderRow[]> {
       rows.push({
         id: row.id,
         ticketNo,
-        status: "TR-Need PO",
+        status: ticketStatus,
         partDist: row.part_dist || "",
         partNo: row.part_no || "",
         description: row.part_desc || "",
@@ -135,7 +142,7 @@ export async function getPartOrderRows(): Promise<PartOrderRow[]> {
         location,
         scheduleDate,
         warranty,
-        repairStatus: "TR-Need PO",
+        repairStatus: ticketStatus,
         statusChangedBy,
       });
     }
