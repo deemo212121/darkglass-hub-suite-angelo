@@ -19,7 +19,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, LayoutDashboard, Package, AlertTriangle, Truck, ClipboardList, DollarSign, Loader2, Users, Download, Calendar, Building2, CalendarClock } from "lucide-react";
 import { BrandedLoader } from "@/components/BrandedLoader";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getPartsInventoryRows, type PartInventoryRow } from "@/lib/supabase/partsInventory";
@@ -29,6 +29,9 @@ import { normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
 import { ReportAttendanceMonitoring } from "@/components/ReportAttendanceMonitoring";
 import { WorkHoursPanel } from "@/components/WorkHoursPanel";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
+import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
+import { branchDonutHex } from "@/lib/branchDisplay";
+import { LOCATIONS } from "@/lib/locations";
 
 // CheckboxDropdown — a select-styled button that opens a portal-positioned
 // checkbox list below it. The whole button is the trigger (unlike a plain
@@ -143,6 +146,33 @@ const HIGH_CONTRAST_TOOLTIP_STYLE = {
 
 const currency = (n: number) => n.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// Same per-branch colors as Part Receive (branchDonutHex) for branches on the
+// LOCATIONS list; any other spelling gets a stable color hashed from its name
+// instead of all collapsing onto the first palette color.
+const BRANCH_FALLBACK_COLORS = ["#60a5fa", "#fbbf24", "#c084fc", "#2dd4bf", "#fb7185", "#a3e635", "#fb923c", "#f472b6", "#22d3ee"];
+function branchColor(name: string): string {
+  if ((LOCATIONS as readonly string[]).includes(name)) return branchDonutHex(name);
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return BRANCH_FALLBACK_COLORS[h % BRANCH_FALLBACK_COLORS.length];
+}
+
+const WTY_SERIES_COLORS =["#60a5fa", "#fbbf24", "#c084fc", "#2dd4bf", "#fb7185", "#a3e635", "#fb923c", "#f472b6", "#22d3ee", "#e2e8f0"];
+const WTY_OTHER_COLOR = "#64748b";
+
+const BRANCH_DETAIL_COLUMNS:{ label: string; value: (r: PartInventoryRow) => string }[] = [
+  { label: "PO Date", value: (r) => r.createdAt.slice(0, 10) },
+  { label: "Vendor", value: (r) => r.partDist || "—" },
+  { label: "Location", value: (r) => r.location || "—" },
+  { label: "PO #", value: (r) => r.poNo || "—" },
+  { label: "Part#", value: (r) => r.partNo || "—" },
+  { label: "Description", value: (r) => r.partDesc || "—" },
+  { label: "Qty", value: (r) => String(r.quantity) },
+  { label: "Unit Price", value: (r) => currency(r.partPrice) },
+  { label: "Total Amount", value: (r) => currency(r.partPrice * r.quantity) },
+  { label: "Warranty Company", value: (r) => r.claimCompany || "—" },
+];
+
 
 // Shared by every panel's own one-click "Download XLSX" button below.
 function downloadSheetXlsx(filename: string, sheetName: string, rows: (string | number)[][]) {
@@ -159,6 +189,7 @@ const TABS = [
   { id: "distributor" as const, label: "Distributor & Most Ordered Parts", icon: Truck },
   { id: "daily-po-balances" as const, label: "Daily PO Balances", icon: Calendar },
   { id: "wty-vendor" as const, label: "Wty/Vendor - $", icon: Building2 },
+  { id: "wty-vendor-qty" as const, label: "Wty/Vendor - Qty", icon: Package },
   { id: "part-lines" as const, label: "Part Lines", icon: ClipboardList },
 ];
 type PartsOrderDashboardTab = (typeof TABS)[number]["id"];
@@ -174,6 +205,10 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [staff, setStaff] = useState<ProfileRow[]>([]);
 
   const [tab, setTab] = useState<PartsOrderDashboardTab>("overview");
+  const branchDetailScrollRef = useRef<HTMLDivElement | null>(null);
+  const dailyBalancesScrollRef = useRef<HTMLDivElement | null>(null);
+  const wtyScrollRef = useRef<HTMLDivElement | null>(null);
+  const partLinesScrollRef = useRef<HTMLDivElement | null>(null);
 
   // Wty/Vendor - $ tab's own Distributor/Warranty Company filters — checkbox
   // dropdowns (TicketColumnFilter), so more than one of each can be picked
@@ -322,6 +357,20 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       .sort((a, b) => (a.location || "").localeCompare(b.location || "") || a.createdAt.localeCompare(b.createdAt));
   }, [scopedRows, branchDetailFilter, branchDetailFrom, branchDetailTo]);
 
+  // Per-column funnel filters on the Branch Detail table; each getter returns
+  // exactly the text its cell displays, so the checklist matches the table.
+  const [branchDetailColFilters, setBranchDetailColFilters] = useState<Record<string, Set<string>>>({});
+  const visibleBranchDetailRows = useMemo(
+    () =>
+      branchDetailRows.filter((r) =>
+        BRANCH_DETAIL_COLUMNS.every(({ label, value }) => {
+          const selected = branchDetailColFilters[label];
+          return !selected || selected.size === 0 || selected.has(value(r));
+        }),
+      ),
+    [branchDetailRows, branchDetailColFilters],
+  );
+
   // Broken down by branch as well as part number — the same part can be
   // ordered from several branches.
   const topParts = useMemo(() => {
@@ -401,6 +450,11 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       }))
       .sort((a, b) => b.total - a.total);
   }, [scopedRows, dailyByBranchDates]);
+  const dailyByBranchColumnTotals = useMemo(
+    () => dailyByBranchDates.map((_, di) => dailyByBranch.reduce((s, r) => s + r.byDate[di], 0)),
+    [dailyByBranch, dailyByBranchDates]
+  );
+  const dailyByBranchGrandTotal = useMemo(() => dailyByBranch.reduce((s, r) => s + r.total, 0), [dailyByBranch]);
 
   const dailyByBranchChartData = useMemo(
     () => dailyByBranch.slice(0, 10).map((r) => ({ name: r.branch, value: Math.round(r.total * 100) / 100 })),
@@ -417,6 +471,11 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     });
   }, [scopedRows, wtyDistFilter, wtyCompanyFilter]);
 
+  // Wty/Vendor - $ and Wty/Vendor - Qty share one crosstab: dollars spent
+  // (price × qty) or number of parts ordered (qty), per the active tab.
+  const wtyIsQty = tab === "wty-vendor-qty";
+  const fmtWty = (v: number) => (wtyIsQty ? v.toLocaleString() : currency(v));
+  const wtyHeatRgb = wtyIsQty ? "59, 130, 246" : "16, 185, 129";
   const wtyVendorCrosstab = useMemo(() => {
     const distributors = Array.from(new Set(wtyVendorScopedRows.map((r) => r.partDist || "Unspecified"))).sort();
     const companies = Array.from(new Set(wtyVendorScopedRows.map((r) => r.claimCompany || "Unspecified"))).sort();
@@ -425,7 +484,7 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       const company = r.claimCompany || "Unspecified";
       const dist = r.partDist || "Unspecified";
       const key = `${company}::${dist}`;
-      cellMap.set(key, (cellMap.get(key) ?? 0) + r.partPrice * r.quantity);
+      cellMap.set(key, (cellMap.get(key) ?? 0) + (wtyIsQty ? r.quantity : r.partPrice * r.quantity));
     }
     const rows = companies
       .map((company) => {
@@ -437,7 +496,22 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const columnTotals = distributors.map((_, i) => rows.reduce((s, r) => s + r.cells[i], 0));
     const grandTotal = columnTotals.reduce((s, v) => s + v, 0);
     return { distributors, rows, columnTotals, grandTotal };
-  }, [wtyVendorScopedRows]);
+  }, [wtyVendorScopedRows, wtyIsQty]);
+  // One color per distributor / warranty company, shared by the Top
+  // Distributors / Top Warranty Companies bar charts and the crosstab below
+  // them, so a bar and its table column/row read as the same thing. Ranked
+  // by total (the same order the charts use); past the top 10, gray.
+  const wtyDistColor = useMemo(() => {
+    const ranked = wtyVendorCrosstab.distributors
+      .map((name, i) => ({ name, total: wtyVendorCrosstab.columnTotals[i] }))
+      .sort((a, b) => b.total - a.total);
+    const map = new Map(ranked.map((d, i) => [d.name, WTY_SERIES_COLORS[i] ?? WTY_OTHER_COLOR]));
+    return (name: string) => map.get(name) ?? WTY_OTHER_COLOR;
+  }, [wtyVendorCrosstab]);
+  const wtyCompanyColor = useMemo(() => {
+    const map = new Map(wtyVendorCrosstab.rows.map((r, i) => [r.company, WTY_SERIES_COLORS[i] ?? WTY_OTHER_COLOR]));
+    return (name: string) => map.get(name) ?? WTY_OTHER_COLOR;
+  }, [wtyVendorCrosstab]);
 
   const wtyCompanyChartData = useMemo(
     () => wtyVendorCrosstab.rows.slice(0, 10).map((r) => ({ name: r.company, value: Math.round(r.rowTotal * 100) / 100 })),
@@ -656,7 +730,7 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
   return (
     <div className="min-h-screen flex flex-col">
-      <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
+      <main className="flex-1 w-full min-w-0 px-4 lg:px-6 py-8">
 
         {/* Header */}
         <div className="flex items-center gap-3 mb-2">
@@ -788,28 +862,30 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <XAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
                 <YAxis type="category" dataKey="name" tick={{ fill: "#94a3b8", fontSize: 10 }} width={120} />
                 <Tooltip contentStyle={HIGH_CONTRAST_TOOLTIP_STYLE} formatter={(v: any) => currency(Number(v))} />
-                <Bar dataKey="value" fill="#3b82f6" radius={[0, 4, 4, 0]} name="Spend" />
+                <Bar dataKey="value" radius={[0, 4, 4, 0]} name="Spend">
+                  {branchSpendChartData.map((d) => <Cell key={d.name} fill={branchColor(d.name)} />)}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           )}
         </div>
 
         <div className="panel p-0 overflow-hidden mb-4">
-          <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm flex items-center gap-2">
-            <Building2 className="h-4 w-4 text-blue-400" />Per-Branch Overview
+          <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-2 whitespace-nowrap"><Building2 className="h-4 w-4 text-blue-400" />Per-Branch Overview</span>
             <CheckboxDropdown
               options={branchSummary.map((b) => b.branch)}
               selected={branchDetailFilter}
               onChange={setBranchDetailFilter}
               allLabel="Branches"
-              className="w-40"
+              className="w-40 shrink-0"
             />
             {branchDetailFilter.size > 0 && (
               <>
-                <span className="text-[10px] text-muted-foreground">{branchDetailFilter.size} branch{branchDetailFilter.size > 1 ? "es" : ""} selected — showing full breakdown</span>
-                <input type="date" aria-label="Branch detail date from" title="Date from" value={branchDetailFrom} onChange={(e) => setBranchDetailFrom(e.target.value)} className="glass-input text-xs py-1" />
+                <span className="text-[10px] text-muted-foreground whitespace-nowrap">{branchDetailFilter.size} branch{branchDetailFilter.size > 1 ? "es" : ""} selected — showing full breakdown</span>
+                <input type="date" aria-label="Branch detail date from" title="Date from" value={branchDetailFrom} onChange={(e) => setBranchDetailFrom(e.target.value)} className="glass-input text-xs py-1 !w-40 shrink-0" />
                 <span className="text-[10px] text-muted-foreground">to</span>
-                <input type="date" aria-label="Branch detail date to" title="Date to" value={branchDetailTo} onChange={(e) => setBranchDetailTo(e.target.value)} className="glass-input text-xs py-1" />
+                <input type="date" aria-label="Branch detail date to" title="Date to" value={branchDetailTo} onChange={(e) => setBranchDetailTo(e.target.value)} className="glass-input text-xs py-1 !w-40 shrink-0" />
                 {(branchDetailFrom || branchDetailTo) && (
                   <button
                     type="button"
@@ -829,7 +905,7 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     "Branch Detail",
                     [
                       ["PO Date", "Vendor", "Location", "PO #", "Part#", "Description", "Qty", "Unit Price", "Total Amount", "Warranty Company"],
-                      ...branchDetailRows.map((r) => [r.createdAt.slice(0, 10), r.partDist, r.location, r.poNo, r.partNo, r.partDesc, r.quantity, r.partPrice.toFixed(2), (r.partPrice * r.quantity).toFixed(2), r.claimCompany]),
+                      ...visibleBranchDetailRows.map((r) => [r.createdAt.slice(0, 10), r.partDist, r.location, r.poNo, r.partNo, r.partDesc, r.quantity, r.partPrice.toFixed(2), (r.partPrice * r.quantity).toFixed(2), r.claimCompany]),
                     ]
                   )
                 : downloadSheetXlsx(
@@ -838,7 +914,7 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     [["Branch", "PO Lines", "Total Spend", "Distinct POs", "Distinct Distributors", "Pending PO"], ...branchSummary.map((b) => [b.branch, b.lines, b.spend.toFixed(2), b.poCount, b.distributorCount, b.pending])]
                   )
               }
-              className="ml-auto flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+              className="ml-auto flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors whitespace-nowrap"
             >
               <Download className="h-3.5 w-3.5" />Download XLSX
             </button>
@@ -853,7 +929,12 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No data yet.</td></tr>
               ) : branchSummary.map((b, i) => (
                 <tr key={b.branch} className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
-                  <td className="px-4 py-2 font-medium">{b.branch}</td>
+                  <td className="px-4 py-2 font-medium">
+                    <span className="inline-flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: branchColor(b.branch) }} />
+                      {b.branch}
+                    </span>
+                  </td>
                   <td className="px-4 py-2 text-blue-300">{b.lines.toLocaleString()}</td>
                   <td className="px-4 py-2 text-green-300">{currency(b.spend)}</td>
                   <td className="px-4 py-2">{b.poCount}</td>
@@ -864,15 +945,28 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             </tbody>
           </table>
           ) : (
-          <div className="overflow-x-auto">
+          <div ref={branchDetailScrollRef} className="overflow-x-auto">
+            <FloatingHorizontalScrollbar targetRef={branchDetailScrollRef} />
             <table className="w-full text-sm">
               <thead><tr className="border-b border-white/10 bg-white/5">
-                {["PO Date", "Vendor", "Location", "PO #", "Part#", "Description", "Qty", "Unit Price", "Total Amount", "Warranty Company"].map((h) => <th key={h} className="px-4 py-2 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">{h}</th>)}
+                {BRANCH_DETAIL_COLUMNS.map(({ label, value }) => (
+                  <th key={label} className="px-4 py-2 text-left text-xs text-muted-foreground uppercase whitespace-nowrap">
+                    <span className="inline-flex items-center">
+                      {label}
+                      <TicketColumnFilter
+                        options={branchDetailRows.map(value)}
+                        selected={branchDetailColFilters[label] ?? new Set()}
+                        onChange={(next) => setBranchDetailColFilters((prev) => ({ ...prev, [label]: next }))}
+                        label={`Filter by ${label}`}
+                      />
+                    </span>
+                  </th>
+                ))}
               </tr></thead>
               <tbody>
-                {branchDetailRows.length === 0 ? (
-                  <tr><td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">No records for the selected branch(es).</td></tr>
-                ) : branchDetailRows.map((r, i) => (
+                {visibleBranchDetailRows.length === 0 ? (
+                  <tr><td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">{branchDetailRows.length === 0 ? "No records for the selected branch(es)." : "No records match these column filters."}</td></tr>
+                ) : visibleBranchDetailRows.map((r, i) => (
                   <tr key={r.id} className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
                     <td className="px-4 py-2 text-xs text-muted-foreground whitespace-nowrap">{r.createdAt.slice(0, 10)}</td>
                     <td className="px-4 py-2 text-xs">{r.partDist || "—"}</td>
@@ -1030,7 +1124,9 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <XAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
                 <YAxis type="category" dataKey="name" tick={{ fill: "#94a3b8", fontSize: 10 }} width={120} />
                 <Tooltip contentStyle={HIGH_CONTRAST_TOOLTIP_STYLE} formatter={(v: any) => currency(Number(v))} />
-                <Bar dataKey="value" fill="#3b82f6" radius={[0, 4, 4, 0]} name="Spend" />
+                <Bar dataKey="value" radius={[0, 4, 4, 0]} name="Spend">
+                  {dailyByBranchChartData.map((d) => <Cell key={d.name} fill={branchColor(d.name)} />)}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -1044,14 +1140,19 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               onClick={() => downloadSheetXlsx(
                 `daily-po-balances_${new Date().toISOString().slice(0, 10)}.xlsx`,
                 "Daily PO Balances",
-                [["Branch", ...dailyByBranchDates, "Total"], ...dailyByBranch.map((r) => [r.branch, ...r.byDate.map((v) => v.toFixed(2)), r.total.toFixed(2)])]
+                [
+                  ["Branch", ...dailyByBranchDates, "Total"],
+                  ...dailyByBranch.map((r) => [r.branch, ...r.byDate.map((v) => v.toFixed(2)), r.total.toFixed(2)]),
+                  ["Total", ...dailyByBranchColumnTotals.map((v) => v.toFixed(2)), dailyByBranchGrandTotal.toFixed(2)],
+                ]
               )}
               className="ml-auto flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
             >
               <Download className="h-3.5 w-3.5" />Download XLSX
             </button>
           </div>
-          <div className="overflow-x-auto">
+          <div ref={dailyBalancesScrollRef} className="overflow-x-auto">
+            <FloatingHorizontalScrollbar targetRef={dailyBalancesScrollRef} />
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-white/10 bg-white/5">
@@ -1069,7 +1170,12 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   <tr><td colSpan={dailyByBranchDates.length + 2} className="px-4 py-8 text-center text-muted-foreground">No data yet.</td></tr>
                 ) : dailyByBranch.map((row, i) => (
                   <tr key={row.branch} className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
-                    <td className="px-3 py-2 font-medium sticky left-0 bg-slate-950">{row.branch}</td>
+                    <td className="px-3 py-2 font-medium sticky left-0 bg-slate-950">
+                      <span className="inline-flex items-center gap-2">
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: branchColor(row.branch) }} />
+                        {row.branch}
+                      </span>
+                    </td>
                     {row.byDate.map((v, di) => (
                       <td key={di} className="px-2 py-2 text-right text-muted-foreground">{v > 0 ? currency(v) : "—"}</td>
                     ))}
@@ -1077,6 +1183,17 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   </tr>
                 ))}
               </tbody>
+              {dailyByBranch.length > 0 && (
+                <tfoot>
+                  <tr className="border-t-2 border-white/20 bg-white/5 font-semibold">
+                    <td className="px-3 py-2 sticky left-0 bg-slate-900 text-white">Total</td>
+                    {dailyByBranchColumnTotals.map((v, di) => (
+                      <td key={di} className="px-2 py-2 text-right text-white tabular-nums">{v > 0 ? currency(v) : "—"}</td>
+                    ))}
+                    <td className="px-3 py-2 text-right text-green-300 tabular-nums">{currency(dailyByBranchGrandTotal)}</td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
           <p className="px-4 py-2 text-[10px] text-muted-foreground border-t border-white/10">
@@ -1086,7 +1203,7 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         </>
         )}
 
-        {tab === "wty-vendor" && (
+        {(tab === "wty-vendor" || tab === "wty-vendor-qty") && (
         <div className="mb-4">
           <div className="panel p-4 mb-4">
             <div className="flex flex-wrap items-end gap-4">
@@ -1113,32 +1230,36 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
             <div className="panel p-4">
-              <p className="text-sm font-semibold mb-4">Top Warranty Companies by Spend</p>
+              <p className="text-sm font-semibold mb-4">Top Warranty Companies by {wtyIsQty ? "Parts Ordered" : "Spend"}</p>
               {wtyCompanyChartData.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-16 text-center">No data yet.</p>
               ) : (
                 <ResponsiveContainer width="100%" height={Math.max(180, wtyCompanyChartData.length * 26)} debounce={200}>
                   <BarChart data={wtyCompanyChartData} layout="vertical" margin={{ left: 20 }}>
-                    <XAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
+                    <XAxis type="number" allowDecimals={!wtyIsQty} tick={{ fill: "#94a3b8", fontSize: 11 }} tickFormatter={(v) => (wtyIsQty ? String(v) : `$${v}`)} />
                     <YAxis type="category" dataKey="name" tick={{ fill: "#94a3b8", fontSize: 10 }} width={120} />
-                    <Tooltip contentStyle={HIGH_CONTRAST_TOOLTIP_STYLE} formatter={(v: any) => currency(Number(v))} />
-                    <Bar dataKey="value" fill="#3b82f6" radius={[0, 4, 4, 0]} name="Spend" />
+                    <Tooltip contentStyle={HIGH_CONTRAST_TOOLTIP_STYLE} formatter={(v: any) => fmtWty(Number(v))} />
+                    <Bar dataKey="value" radius={[0, 4, 4, 0]} name={wtyIsQty ? "Parts" : "Spend"}>
+                      {wtyCompanyChartData.map((d) => <Cell key={d.name} fill={wtyCompanyColor(d.name)} />)}
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               )}
             </div>
 
             <div className="panel p-4">
-              <p className="text-sm font-semibold mb-4">Top Distributors by Spend</p>
+              <p className="text-sm font-semibold mb-4">Top Distributors by {wtyIsQty ? "Parts Ordered" : "Spend"}</p>
               {wtyDistributorChartData.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-16 text-center">No data yet.</p>
               ) : (
                 <ResponsiveContainer width="100%" height={Math.max(180, wtyDistributorChartData.length * 26)} debounce={200}>
                   <BarChart data={wtyDistributorChartData} layout="vertical" margin={{ left: 20 }}>
-                    <XAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
+                    <XAxis type="number" allowDecimals={!wtyIsQty} tick={{ fill: "#94a3b8", fontSize: 11 }} tickFormatter={(v) => (wtyIsQty ? String(v) : `$${v}`)} />
                     <YAxis type="category" dataKey="name" tick={{ fill: "#94a3b8", fontSize: 10 }} width={120} />
-                    <Tooltip contentStyle={HIGH_CONTRAST_TOOLTIP_STYLE} formatter={(v: any) => currency(Number(v))} />
-                    <Bar dataKey="value" fill="#34d399" radius={[0, 4, 4, 0]} name="Spend" />
+                    <Tooltip contentStyle={HIGH_CONTRAST_TOOLTIP_STYLE} formatter={(v: any) => fmtWty(Number(v))} />
+                    <Bar dataKey="value" radius={[0, 4, 4, 0]} name={wtyIsQty ? "Parts" : "Spend"}>
+                      {wtyDistributorChartData.map((d) => <Cell key={d.name} fill={wtyDistColor(d.name)} />)}
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -1147,30 +1268,41 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
           <div className="panel p-0 overflow-hidden">
             <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm flex items-center gap-2">
-              <Building2 className="h-4 w-4 text-blue-400" />Spend by Warranty Company × Distributor
+              {wtyIsQty ? <Package className="h-4 w-4 text-blue-400" /> : <Building2 className="h-4 w-4 text-blue-400" />}
+              {wtyIsQty ? "Parts Ordered" : "Spend"} by Warranty Company × Distributor
               <button
                 type="button"
-                onClick={() => downloadSheetXlsx(
-                  `wty-vendor_${new Date().toISOString().slice(0, 10)}.xlsx`,
-                  "Wty-Vendor",
-                  [
-                    ["Warranty Company", ...wtyVendorCrosstab.distributors, "Total"],
-                    ...wtyVendorCrosstab.rows.map((r) => [r.company, ...r.cells.map((v) => v.toFixed(2)), r.rowTotal.toFixed(2)]),
-                    ["Total", ...wtyVendorCrosstab.columnTotals.map((v) => v.toFixed(2)), wtyVendorCrosstab.grandTotal.toFixed(2)],
-                  ]
-                )}
+                onClick={() => {
+                  const cell = (v: number) => (wtyIsQty ? v : v.toFixed(2));
+                  downloadSheetXlsx(
+                    `${wtyIsQty ? "wty-vendor-qty" : "wty-vendor"}_${new Date().toISOString().slice(0, 10)}.xlsx`,
+                    wtyIsQty ? "Wty-Vendor Qty" : "Wty-Vendor",
+                    [
+                      ["Warranty Company", ...wtyVendorCrosstab.distributors, "Total"],
+                      ...wtyVendorCrosstab.rows.map((r) => [r.company, ...r.cells.map(cell), cell(r.rowTotal)]),
+                      ["Total", ...wtyVendorCrosstab.columnTotals.map(cell), cell(wtyVendorCrosstab.grandTotal)],
+                    ]
+                  );
+                }}
                 className="ml-auto flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
               >
                 <Download className="h-3.5 w-3.5" />Download XLSX
               </button>
             </div>
-            <div className="overflow-x-auto">
+            <div ref={wtyScrollRef} className="overflow-x-auto">
+              <FloatingHorizontalScrollbar targetRef={wtyScrollRef} />
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-white/10 bg-white/5">
                     <th className="px-3 py-2 text-left font-semibold text-muted-foreground sticky left-0 bg-slate-950">Warranty Company</th>
                     {wtyVendorCrosstab.distributors.map((d) => (
-                      <th key={d} className="px-2 py-2 text-right font-semibold text-muted-foreground whitespace-nowrap">{d}</th>
+                      <th
+                        key={d}
+                        className="px-2 py-2 text-right font-semibold whitespace-nowrap border-t-[3px]"
+                        style={{ borderTopColor: wtyDistColor(d), color: wtyDistColor(d) }}
+                      >
+                        {d}
+                      </th>
                     ))}
                     <th className="px-3 py-2 text-right font-semibold text-muted-foreground">Total</th>
                   </tr>
@@ -1180,22 +1312,38 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     <tr><td colSpan={wtyVendorCrosstab.distributors.length + 2} className="px-4 py-8 text-center text-muted-foreground">No data yet.</td></tr>
                   ) : wtyVendorCrosstab.rows.map((row, i) => (
                     <tr key={row.company} className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
-                      <td className="px-3 py-2 font-medium sticky left-0 bg-slate-950">{row.company}</td>
+                      <td className="px-3 py-2 font-medium sticky left-0 bg-slate-950">
+                        <span className="inline-flex items-center gap-2">
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: wtyCompanyColor(row.company) }} />
+                          {row.company}
+                        </span>
+                      </td>
                       {row.cells.map((v, ci) => (
-                        <td key={ci} className="px-2 py-2 text-right text-muted-foreground">{v > 0 ? currency(v) : "—"}</td>
+                        <td
+                          key={ci}
+                          className={`px-2 py-2 text-right tabular-nums ${v > 0 ? "font-semibold" : "text-slate-600"}`}
+                          style={v > 0 ? { color: wtyDistColor(wtyVendorCrosstab.distributors[ci]) } : undefined}
+                        >
+                          {v > 0 ? fmtWty(v) : "—"}
+                        </td>
                       ))}
-                      <td className="px-3 py-2 text-right text-green-300 font-semibold">{currency(row.rowTotal)}</td>
+                      <td
+                        className={`px-3 py-2 text-right font-semibold tabular-nums border-l border-white/10 ${wtyIsQty ? "text-blue-300" : "text-green-300"}`}
+                        style={{ background: `rgba(${wtyHeatRgb}, 0.08)` }}
+                      >
+                        {fmtWty(row.rowTotal)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
                 {wtyVendorCrosstab.rows.length > 0 && (
                   <tfoot>
-                    <tr className="border-t border-white/10 bg-white/5">
-                      <td className="px-3 py-2 font-semibold sticky left-0 bg-slate-950">Total</td>
+                    <tr className="border-t-2 border-white/20" style={{ background: `rgba(${wtyHeatRgb}, 0.12)` }}>
+                      <td className="px-3 py-2 font-semibold sticky left-0 bg-slate-900 text-white">Total</td>
                       {wtyVendorCrosstab.columnTotals.map((v, i) => (
-                        <td key={i} className="px-2 py-2 text-right font-semibold text-muted-foreground">{v > 0 ? currency(v) : "—"}</td>
+                        <td key={i} className={`px-2 py-2 text-right font-semibold tabular-nums ${v > 0 ? "text-white" : "text-slate-600"}`}>{v > 0 ? fmtWty(v) : "—"}</td>
                       ))}
-                      <td className="px-3 py-2 text-right font-semibold text-green-300">{currency(wtyVendorCrosstab.grandTotal)}</td>
+                      <td className={`px-3 py-2 text-right font-bold tabular-nums border-l border-white/10 ${wtyIsQty ? "text-blue-300" : "text-green-300"}`}>{fmtWty(wtyVendorCrosstab.grandTotal)}</td>
                     </tr>
                   </tfoot>
                 )}
@@ -1215,7 +1363,9 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} angle={-25} textAnchor="end" height={52} />
                 <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
                 <Tooltip contentStyle={HIGH_CONTRAST_TOOLTIP_STYLE} />
-                <Bar dataKey="value" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Lines" />
+                <Bar dataKey="value" radius={[4, 4, 0, 0]} name="Lines">
+                  {locationBreakdown.map((d) => <Cell key={d.name} fill={branchColor(d.name)} />)}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -1299,7 +1449,8 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             </div>
           </div>
 
-          <div className="overflow-x-auto">
+          <div ref={partLinesScrollRef} className="overflow-x-auto">
+            <FloatingHorizontalScrollbar targetRef={partLinesScrollRef} />
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-white/5">

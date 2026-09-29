@@ -31,6 +31,7 @@ import { regenerateTicketDisputePdf } from "@/lib/ticketDisputeReportPdf";
 import { employeeInfoForPto, PtoHrSignModal } from "@/components/PtoSignModals";
 import { regeneratePtoExceptionReportPdf } from "@/lib/ptoExceptionReportPdf";
 import { normalizeRole } from "@/lib/roleLabels";
+import { ActualTime, RequestedTime } from "@/components/CorrectionRequestedTime";
 
 const PTO_LEAVE_TYPE_LABELS: Record<string, string> = { sick: "Sick Leave", unpaid: "Unpaid Leave" };
 
@@ -242,6 +243,8 @@ export function ExceptionReportsTab() {
             <tr className="border-b border-white/10">
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Employee</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Work Date</th>
+              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Actual Time</th>
+              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Requested Time</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Exception Type</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Paperwork Status</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Submitted</th>
@@ -250,9 +253,9 @@ export function ExceptionReportsTab() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400"><Loader2 className="h-4 w-4 animate-spin inline" /></td></tr>
+              <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400"><Loader2 className="h-4 w-4 animate-spin inline" /></td></tr>
             ) : reports.length === 0 ? (
-              <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">No exception report PDFs yet.</td></tr>
+              <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">No exception report PDFs yet.</td></tr>
             ) : reports.map((c) => {
               const mgrBadge = managerBadge(c);
               const hrStatusBadge = hrBadge(c);
@@ -269,6 +272,8 @@ export function ExceptionReportsTab() {
                     </button>
                   </td>
                   <td className="px-3 py-3 text-slate-300">{c.workDate}</td>
+                  <td className="px-3 py-3 text-slate-300"><ActualTime c={c} /></td>
+                  <td className="px-3 py-3 text-amber-200"><RequestedTime c={c} /></td>
                   <td className="px-3 py-3 text-slate-300">{c.exceptionType ? EXCEPTION_TYPE_LABELS[c.exceptionType] : "—"}</td>
                   <td className="px-3 py-3">
                     <div className="flex flex-col gap-1">

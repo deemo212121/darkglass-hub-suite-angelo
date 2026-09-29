@@ -108,7 +108,7 @@ export function PartFootprintPage({ mod, sub }: { mod: ModuleDef; sub: SubModule
 
   return (
     <div className="min-h-screen flex flex-col">
-      <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
+      <main className="flex-1 w-full min-w-0 px-4 lg:px-6 py-8">
         <style>{`
           .fp-panel {
             width: 100%;

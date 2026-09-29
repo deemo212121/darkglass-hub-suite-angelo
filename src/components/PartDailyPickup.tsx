@@ -178,7 +178,7 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
 
   const COLS=["Tech Name","Ticket #","Repair Status","Part No","Description","PO","Unique ID","Qty","Core Value","Part Status","Picked Up","Action",...(canSeeNotes?["Notes"]:[]),"In Transit"];
 
-  return(<div className="min-h-screen flex flex-col"><main className="flex-1 max-w-[1600px] mx-auto w-full px-4 py-8">
+  return(<div className="min-h-screen flex flex-col"><main className="flex-1 w-full min-w-0 px-4 lg:px-6 py-8">
     <div className="flex items-center justify-between gap-3 mb-6">
       <div className="flex items-center gap-3">
         <button type="button" onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4"/></button>
