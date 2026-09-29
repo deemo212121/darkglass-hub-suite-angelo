@@ -34,6 +34,8 @@ export interface PartOrderRow {
   repairStatus: string;
   /** tickets.status_changed_by — a profiles.id (UUID), stamped automatically by a Postgres audit trigger whenever tickets.status changes. Resolve against a profiles list for a display name; null for a row nothing has ever changed the status of. */
   statusChangedBy: string | null;
+  /** True for the single placeholder row of a TR-Need PO ticket with no Part Transaction record logged yet. */
+  noPartLogged: boolean;
 }
 
 // Supabase caps an unbounded select at 1000 rows — both `parts` and
@@ -126,6 +128,7 @@ export async function getPartOrderRows(): Promise<PartOrderRow[]> {
         warranty,
         repairStatus: ticketStatus,
         statusChangedBy,
+        noPartLogged: true,
       });
       continue;
     }
@@ -144,6 +147,7 @@ export async function getPartOrderRows(): Promise<PartOrderRow[]> {
         warranty,
         repairStatus: ticketStatus,
         statusChangedBy,
+        noPartLogged: false,
       });
     }
   }

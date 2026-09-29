@@ -57,10 +57,23 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [noDateOnly, setNoDateOnly] = useState(false);
   const rangeActive = Boolean(dateFrom || dateTo) || noDateOnly;
 
+  // Summary-tile filter — which group of tickets the table is narrowed to.
+  type TicketGroup = "all" | "trAll" | "trWith" | "trWithout" | "other";
+  const [ticketGroup, setTicketGroup] = useState<TicketGroup>("all");
+  const matchesGroup = (o: PartOrderRow) => {
+    const isTr = o.status === "TR-Need PO";
+    if (ticketGroup === "trAll") return isTr;
+    if (ticketGroup === "trWith") return isTr && !o.noPartLogged;
+    if (ticketGroup === "trWithout") return isTr && o.noPartLogged;
+    if (ticketGroup === "other") return !isTr;
+    return true;
+  };
+
   const [columnFilters, setColumnFilters] = useState<Partial<Record<ColumnKey, Set<string>>>>({});
   const hasColumnFilters = Object.values(columnFilters).some((s) => s && s.size > 0);
-  const hasAnyFilter = hasColumnFilters || rangeActive || !includeNoDate;
+  const hasAnyFilter = hasColumnFilters || rangeActive || !includeNoDate || ticketGroup !== "all";
   const clearAll = () => {
+    setTicketGroup("all");
     setColumnFilters({});
     setDateFrom("");
     setDateTo("");
@@ -101,21 +114,39 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
     });
 
   const filteredOrders = useMemo(
-    () => orders.filter((o) => matchesDate(o) && matchesColumns(o)),
+    () => orders.filter((o) => matchesGroup(o) && matchesDate(o) && matchesColumns(o)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [orders, dateFrom, dateTo, includeNoDate, noDateOnly, columnFilters],
+    [orders, dateFrom, dateTo, includeNoDate, noDateOnly, columnFilters, ticketGroup],
   );
+
+  // TR-Need PO tickets split by whether their Part Transaction has any
+  // record yet, plus the other-status tickets listed for a Need PO part.
+  // Counted per ticket across everything loaded (not the filtered view).
+  const summary = useMemo(() => {
+    const tr = new Set<string>();
+    const trWithout = new Set<string>();
+    const other = new Set<string>();
+    for (const o of orders) {
+      if (o.status === "TR-Need PO") {
+        tr.add(o.ticketNo);
+        if (o.noPartLogged) trWithout.add(o.ticketNo);
+      } else {
+        other.add(o.ticketNo);
+      }
+    }
+    return { tr: tr.size, trWith: tr.size - trWithout.size, trWithout: trWithout.size, other: other.size };
+  }, [orders]);
 
   // Each funnel lists the values among rows that pass every OTHER filter
   // (Excel autofilter behavior, same as TicketList.tsx).
   const columnOptions = useMemo(() => {
     const out = {} as Record<ColumnKey, string[]>;
     for (const { key, value } of COLUMNS) {
-      out[key] = orders.filter((o) => matchesDate(o) && matchesColumns(o, key)).map(value);
+      out[key] = orders.filter((o) => matchesGroup(o) && matchesDate(o) && matchesColumns(o, key)).map(value);
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orders, dateFrom, dateTo, includeNoDate, noDateOnly, columnFilters]);
+  }, [orders, dateFrom, dateTo, includeNoDate, noDateOnly, columnFilters, ticketGroup]);
 
   const ticketCount = useMemo(() => new Set(filteredOrders.map((o) => o.ticketNo)).size, [filteredOrders]);
   const totalTicketCount = useMemo(() => new Set(orders.map((o) => o.ticketNo)).size, [orders]);
@@ -194,6 +225,31 @@ export function PartOrder({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
         </div>
 
         <div className="panel mb-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+            {([
+              { group: "trAll", label: "TR-Need PO tickets", value: summary.tr, hint: "Repair Status is TR-Need PO", tone: "border-l-blue-500 text-blue-300" },
+              { group: "trWith", label: "With part transaction", value: summary.trWith, hint: "TR-Need PO with at least one Part Transaction record", tone: "border-l-emerald-500 text-emerald-300" },
+              { group: "trWithout", label: "No part transaction", value: summary.trWithout, hint: "TR-Need PO with no Part Transaction record yet — part still needs to be added", tone: "border-l-amber-500 text-amber-300" },
+              { group: "other", label: "Other status, part Need PO", value: summary.other, hint: "Not TR-Need PO, but a part is still marked Need PO", tone: "border-l-slate-400 text-slate-300" },
+            ] as const).map((t) => {
+              const active = ticketGroup === t.group;
+              return (
+                <button
+                  key={t.group}
+                  type="button"
+                  aria-pressed={active}
+                  title={`${t.hint}. Click to ${active ? "show all" : "filter the table to these"}.`}
+                  onClick={() => setTicketGroup(active ? "all" : t.group)}
+                  className={`rounded-lg border border-white/10 border-l-4 px-4 py-3 text-left transition ${t.tone} ${
+                    active ? "bg-white/10 ring-1 ring-white/25" : "bg-white/[0.03] hover:bg-white/[0.07]"
+                  }`}
+                >
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t.label}</div>
+                  <div className="mt-1 text-2xl font-bold tabular-nums">{loading ? "…" : t.value}</div>
+                </button>
+              );
+            })}
+          </div>
           <div className="flex flex-wrap items-end gap-4">
             <div className="flex flex-col gap-1">
               <label htmlFor="po-date-from" className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Schedule Date From</label>
