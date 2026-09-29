@@ -30,6 +30,10 @@ import {
 import {
   getCompanyTimecardCorrections,
   createTimecardCorrection,
+  validateCorrectionTimes,
+  correctionShiftMinutes,
+  formatShift,
+  CORRECTION_MEAL_REQUIRED_AFTER_MINUTES,
   type TimecardCorrectionRow,
 } from "@/lib/supabase/timecardCorrections";
 import { buildCorrectionSubmissionPdf } from "@/lib/timecardCorrectionPdf";
@@ -88,13 +92,6 @@ const PTO_TYPE_LABEL: Record<PtoType, string> = {
   bereavement: "Bereavement",
 };
 
-// Zero-padded "HH:MM"/"HH:MM:SS" strings sort chronologically as plain
-// strings, so this catches the classic native <input type="time"> mistake
-// of leaving the AM/PM half wrong (e.g. typing "08:24" but submitting
-// "20:24") without needing to parse into Date objects.
-function isCheckOutBeforeCheckIn(checkIn: string, checkOut: string): boolean {
-  return !!checkIn && !!checkOut && checkOut <= checkIn;
-}
 
 const ATTENDANCE_DAILY: AttendanceRecord[] = [
   { date: "2026-06-04", clockIn: "8:00 AM", clockOut: "5:00 PM", hoursWorked: 9, status: "completed" },
@@ -176,8 +173,10 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     // on file — "let them type it in when it's blank" per the original ask.
     employeeIdOverride: "",
   });
+  const correctionShift = correctionShiftMinutes(formData.correctedCheckIn, formData.correctedCheckOut);
+  const correctionMealRequired = correctionShift !== null && correctionShift > CORRECTION_MEAL_REQUIRED_AFTER_MINUTES;
   const [submitSuccess, setSubmitSuccess] = useState(false);
-  const correctionSigPad = useSignaturePad({ width: 400, height: 110, defaultName: displayName || "" });
+  const correctionSigPad =useSignaturePad({ width: 400, height: 110, defaultName: displayName || "" });
   // Reused for both Sick Leave and Unpaid Leave (mutually exclusive modal states).
   const leaveSigPad = useSignaturePad({ width: 400, height: 110, defaultName: displayName || "" });
 
@@ -688,31 +687,18 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             setSubmitting(false);
             return;
           }
-          if (
-            !formData.correctedCheckIn &&
-            !formData.correctedCheckOut &&
-            !formData.correctedMealStart &&
-            !formData.correctedMealEnd
-          ) {
-            alert("Enter at least one corrected time (Check In, Check Out, Meal Start, or Meal End).");
+          const correctionTimesError = validateCorrectionTimes({
+            checkIn: formData.correctedCheckIn,
+            checkOut: formData.correctedCheckOut,
+            mealStart: formData.correctedMealStart,
+            mealEnd: formData.correctedMealEnd,
+          });
+          if (correctionTimesError) {
+            alert(correctionTimesError);
             setSubmitting(false);
             return;
           }
           const existing = liveAttendance.find((a) => a.date === formData.correctionDate);
-          const effectiveCheckIn = formData.correctedCheckIn || existing?.clockIn || "";
-          const effectiveCheckOut = formData.correctedCheckOut || existing?.clockOut || "";
-          if (isCheckOutBeforeCheckIn(effectiveCheckIn, effectiveCheckOut)) {
-            alert(`Check out (${effectiveCheckOut}) is before check in (${effectiveCheckIn}). Double-check the AM/PM on the time picker.`);
-            setSubmitting(false);
-            return;
-          }
-          const effectiveMealStart = formData.correctedMealStart || existing?.mealStart || "";
-          const effectiveMealEnd = formData.correctedMealEnd || existing?.mealEnd || "";
-          if (isCheckOutBeforeCheckIn(effectiveMealStart, effectiveMealEnd)) {
-            alert(`Meal end (${effectiveMealEnd}) is before meal start (${effectiveMealStart}). Double-check the AM/PM on the time picker.`);
-            setSubmitting(false);
-            return;
-          }
           if (!formData.details.trim()) {
             alert("Please describe the reason for this exception.");
             setSubmitting(false);
@@ -1686,7 +1672,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="text-xs font-semibold text-white block mb-1">Corrected Check In</label>
+                          <label className="text-xs font-semibold text-white block mb-1">Corrected Check In <span className="text-red-400">*</span></label>
                           <input
                             type="time"
                             step="1"
@@ -1697,7 +1683,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           />
                         </div>
                         <div>
-                          <label className="text-xs font-semibold text-white block mb-1">Corrected Check Out</label>
+                          <label className="text-xs font-semibold text-white block mb-1">Corrected Check Out <span className="text-red-400">*</span></label>
                           <input
                             type="time"
                             step="1"
@@ -1710,7 +1696,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="text-xs font-semibold text-white block mb-1">Corrected Meal Start</label>
+                          <label className="text-xs font-semibold text-white block mb-1">Corrected Meal Start {correctionMealRequired && <span className="text-red-400">*</span>}</label>
                           <input
                             type="time"
                             step="1"
@@ -1721,7 +1707,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           />
                         </div>
                         <div>
-                          <label className="text-xs font-semibold text-white block mb-1">Corrected Meal End</label>
+                          <label className="text-xs font-semibold text-white block mb-1">Corrected Meal End {correctionMealRequired && <span className="text-red-400">*</span>}</label>
                           <input
                             type="time"
                             step="1"
@@ -1732,7 +1718,13 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           />
                         </div>
                       </div>
-                      <p className="text-[10px] text-slate-500">Leave meal fields blank if only the check-in/check-out time was wrong.</p>
+                      <p className={`text-[10px] ${correctionMealRequired ? "text-amber-300" : "text-slate-500"}`}>
+                        {correctionShift === null
+                          ? "Check in and check out are required. Meal start/end become required when the shift is over 6 hours."
+                          : correctionMealRequired
+                          ? `Shift is ${formatShift(correctionShift)} — over 6 hours, so meal start and end are required.`
+                          : `Shift is ${formatShift(correctionShift)} — meal break optional (required only over 6 hours).`}
+                      </p>
                     </>
                   )}
                   {(modalType === "correction" || modalType === "sick" || modalType === "unpaidLeave") && (
