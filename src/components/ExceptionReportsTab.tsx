@@ -11,15 +11,17 @@
  * CorrectionsTab.tsx right beside it in Absent List.
  */
 import { useEffect, useMemo, useState } from "react";
-import { Download, Loader2, RefreshCw } from "lucide-react";
+import { Download, Loader2, RefreshCw, XCircle } from "lucide-react";
+import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getProfileIdByFirebaseUid } from "@/lib/supabase/timecards";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
-import { getCompanyTimecardCorrections, updateCorrectionPdfUrl, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
-import { getCompanyEmployeeRequests, updateEmployeeRequestPdfUrl, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
-import { getCompanyPtoRequests, updatePtoPdfUrl, type PtoRequestRow } from "@/lib/supabase/pto";
+import { getCompanyTimecardCorrections, updateCorrectionPdfUrl, rejectCorrectionAsHr, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
+import { getCompanyEmployeeRequests, updateEmployeeRequestPdfUrl, updateEmployeeRequestStatus, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
+import { getCompanyPtoRequests, updatePtoPdfUrl, reviewPtoStage, type PtoRequestRow } from "@/lib/supabase/pto";
+import { createNotification } from "@/lib/supabase/notifications";
 import { EXCEPTION_TYPE_LABELS } from "@/lib/exceptionVisitReportTemplate";
 import { TICKET_DISPUTE_EXCEPTION_TYPE_LABELS } from "@/lib/ticketDisputeReportTemplate";
 import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
@@ -129,6 +131,93 @@ export function ExceptionReportsTab() {
       alert(err instanceof Error ? err.message : "Failed to regenerate PDF.");
     } finally {
       setRegeneratingId(null);
+    }
+  };
+
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const handleRejectCorrection = async (c: TimecardCorrectionRow) => {
+    const name = profileName(c.profileId);
+    const message =
+      c.status === "approved"
+        ? `Reject ${name}'s time correction for ${c.workDate}?\n\nIt was already approved, so their timecard will be put back to the actual times (${c.originalCheckIn || "—"} → ${c.originalCheckOut || "—"}). ${name} will be notified.`
+        : `Reject ${name}'s time correction for ${c.workDate}? ${name} will be notified.`;
+    if (!confirm(message)) return;
+    setRejectingId(c.id);
+    try {
+      await rejectCorrectionAsHr(c, myProfileId || "", displayName || "HR");
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: displayName || "HR",
+        action: "timecard_correction_rejected",
+        targetType: "timecard_correction",
+        targetId: c.id,
+        targetLabel: `${name} (${c.workDate})`,
+        details: { stage: "hr", source: "exception-reports", wasApproved: c.status === "approved" },
+      });
+      await load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to reject the correction.");
+    } finally {
+      setRejectingId(null);
+    }
+  };
+
+  const handleRejectPto = async (r: PtoRequestRow) => {
+    const name = profileName(r.profileId);
+    const dates = r.startDate === r.endDate ? r.startDate : `${r.startDate} – ${r.endDate}`;
+    if (!confirm(`Reject ${name}'s ${PTO_LEAVE_TYPE_LABELS[r.ptoType] || "leave"} request for ${dates}? ${name} will be notified.`)) return;
+    setRejectingId(r.id);
+    try {
+      await reviewPtoStage(r, "hr", "rejected", myProfileId || "", displayName || "HR");
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: displayName || "HR",
+        action: "pto_request_rejected",
+        targetType: "pto_request",
+        targetId: r.id,
+        targetLabel: `${name} (${dates})`,
+        details: { stage: "hr", source: "exception-reports", wasApproved: r.status === "approved" },
+      });
+      await load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to reject the request.");
+    } finally {
+      setRejectingId(null);
+    }
+  };
+
+  const handleRejectTicketDispute = async (r: EmployeeRequestRow) => {
+    const name = profileName(r.profileId);
+    const ticket = r.ticketNo || "this ticket";
+    const message =
+      r.status === "approved"
+        ? `Reject ${name}'s ticket dispute for ${ticket}?\n\nIt was already approved, and the claimed times were written onto the ticket's on-site check-in. Those ticket times will NOT be changed back automatically — fix them on the ticket if needed. ${name} will be notified.`
+        : `Reject ${name}'s ticket dispute for ${ticket}? ${name} will be notified.`;
+    if (!confirm(message)) return;
+    setRejectingId(r.id);
+    try {
+      await updateEmployeeRequestStatus(r.id, "rejected", myProfileId);
+      await createNotification({
+        recipientId: r.profileId,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `❌ Your ticket time dispute for ${ticket} was rejected by HR.`,
+        linkTo: "/m/dashboard/employee-self-service?tab=requests",
+      }).catch((err) => console.error("Failed to notify ticket dispute rejection:", err));
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: displayName || "HR",
+        action: "ticket_time_dispute_rejected",
+        targetType: "employee_request",
+        targetId: r.id,
+        targetLabel: `${name} (${ticket})`,
+        details: { source: "exception-reports", wasApproved: r.status === "approved" },
+      });
+      await load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to reject the dispute.");
+    } finally {
+      setRejectingId(null);
     }
   };
 
@@ -277,6 +366,9 @@ export function ExceptionReportsTab() {
                   <td className="px-3 py-3 text-slate-300">{c.exceptionType ? EXCEPTION_TYPE_LABELS[c.exceptionType] : "—"}</td>
                   <td className="px-3 py-3">
                     <div className="flex flex-col gap-1">
+                      {c.status === "rejected" && (
+                        <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold border w-fit bg-red-500/20 text-red-300 border-red-500/30">Rejected</span>
+                      )}
                       <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border w-fit ${mgrBadge.className}`}>{mgrBadge.label}</span>
                       <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border w-fit ${hrStatusBadge.className}`}>{hrStatusBadge.label}</span>
                     </div>
@@ -307,6 +399,17 @@ export function ExceptionReportsTab() {
                           className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs font-semibold transition"
                         >
                           Sign HR
+                        </button>
+                      )}
+                      {isFullRequestsAdmin && c.status !== "rejected" && (
+                        <button
+                          type="button"
+                          title="Reject this correction as HR"
+                          onClick={() => handleRejectCorrection(c)}
+                          disabled={rejectingId === c.id}
+                          className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded text-xs font-semibold transition inline-flex items-center gap-1"
+                        >
+                          {rejectingId === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />} Reject
                         </button>
                       )}
                     </div>
@@ -353,6 +456,9 @@ export function ExceptionReportsTab() {
                   <td className="px-3 py-3 text-slate-300">{r.exceptionType ? TICKET_DISPUTE_EXCEPTION_TYPE_LABELS[r.exceptionType] : "—"}</td>
                   <td className="px-3 py-3">
                     <div className="flex flex-col gap-1">
+                      {r.status === "rejected" && (
+                        <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold border w-fit bg-red-500/20 text-red-300 border-red-500/30">Rejected</span>
+                      )}
                       <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border w-fit ${mgrBadge.className}`}>{mgrBadge.label}</span>
                       <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border w-fit ${hrStatusBadge.className}`}>{hrStatusBadge.label}</span>
                     </div>
@@ -383,6 +489,17 @@ export function ExceptionReportsTab() {
                           className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs font-semibold transition"
                         >
                           Sign HR
+                        </button>
+                      )}
+                      {isFullRequestsAdmin && r.status !== "rejected" && (
+                        <button
+                          type="button"
+                          title="Reject this ticket dispute as HR"
+                          onClick={() => handleRejectTicketDispute(r)}
+                          disabled={rejectingId === r.id}
+                          className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded text-xs font-semibold transition inline-flex items-center gap-1"
+                        >
+                          {rejectingId === r.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />} Reject
                         </button>
                       )}
                     </div>
@@ -431,6 +548,9 @@ export function ExceptionReportsTab() {
                   <td className="px-3 py-3 text-slate-300">{r.exceptionType ? EXCEPTION_TYPE_LABELS[r.exceptionType] : "—"}</td>
                   <td className="px-3 py-3">
                     <div className="flex flex-col gap-1">
+                      {r.status === "denied" && (
+                        <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold border w-fit bg-red-500/20 text-red-300 border-red-500/30">Rejected</span>
+                      )}
                       <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border w-fit ${mgrBadge.className}`}>{mgrBadge.label}</span>
                       <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border w-fit ${hrStatusBadge.className}`}>{hrStatusBadge.label}</span>
                     </div>
@@ -461,6 +581,17 @@ export function ExceptionReportsTab() {
                           className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs font-semibold transition"
                         >
                           Sign HR
+                        </button>
+                      )}
+                      {isFullRequestsAdmin && r.status !== "denied" && r.status !== "cancelled" && (
+                        <button
+                          type="button"
+                          title="Reject this leave request as HR"
+                          onClick={() => handleRejectPto(r)}
+                          disabled={rejectingId === r.id}
+                          className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded text-xs font-semibold transition inline-flex items-center gap-1"
+                        >
+                          {rejectingId === r.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />} Reject
                         </button>
                       )}
                     </div>

@@ -867,7 +867,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
 
   return (
     <main className="flex-1 bg-slate-950">
-      <div className="mx-auto max-w-[1400px] px-4 py-4">
+      <div className="w-full min-w-0 px-4 lg:px-6 py-4">
         <div className="mb-3 flex flex-wrap items-center gap-3 text-white">
           <button type="button" onClick={goBack} className="btn">
             <ChevronLeft className="h-4 w-4" />
