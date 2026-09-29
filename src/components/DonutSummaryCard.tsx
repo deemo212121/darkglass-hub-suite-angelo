@@ -57,7 +57,10 @@ export function DonutSummaryCard({
           ends up (it stretches to match whatever list sits beside it),
           instead of a fixed pixel donut leaving empty space below it. */}
       <div className="relative flex-1 min-h-[140px]">
-        <ResponsiveContainer width="100%" height="100%">
+        {/* minHeight: a percentage height only resolves when the card has a
+            definite height (i.e. it's stretched by its row). When it isn't,
+            the chart measured 0px tall and rendered nothing at all. */}
+        <ResponsiveContainer width="100%" height="100%" minHeight={140}>
           <PieChart>
             <Pie
               data={data}
@@ -74,7 +77,7 @@ export function DonutSummaryCard({
           </PieChart>
         </ResponsiveContainer>
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-          <p className="text-2xl font-bold">{centerValue}</p>
+          <p className="text-2xl font-bold text-foreground">{centerValue}</p>
           <p className="text-[10px] text-muted-foreground uppercase tracking-wide">{centerLabel}</p>
         </div>
       </div>
@@ -84,7 +87,7 @@ export function DonutSummaryCard({
           <div key={d.name} className="flex items-center gap-2 min-w-0">
             <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: colorFor(d.name, i) }} />
             <span className="text-muted-foreground truncate">{d.name}</span>
-            <span className="font-semibold ml-auto shrink-0">{d.value}</span>
+            <span className="font-semibold ml-auto shrink-0 text-foreground tabular-nums">{d.value}</span>
           </div>
         ))}
       </div>

@@ -4,7 +4,8 @@ import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Printer, Save, CheckCircle, Loader2, Undo2, ScanLine, History, PackageCheck } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
-import { branchAbbrev, branchChipColor, branchDonutHex } from "@/lib/branchDisplay";
+import { branchDonutHex } from "@/lib/branchDisplay";
+import { BranchBarChart } from "@/components/BranchBarChart";
 import { DonutSummaryCard, CATEGORICAL_DONUT_HEX, DONUT_OTHER_COLOR, DONUT_TOP_N, topDonutSlices } from "@/components/DonutSummaryCard";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
@@ -29,6 +30,9 @@ function useP(open:boolean){const ref=useRef<HTMLButtonElement>(null);const [pos
 // donuts use for their own "not X / X" split.
 const DONUT_NOT_COLLECTED_COLOR = "#f59e0b";
 const DONUT_COLLECTED_COLOR = "#22c55e";
+// Location value for parts whose ticket has no location — distinct from ""
+// (which means "all locations" in the Location filter).
+const NO_LOCATION = "(No location)";
 const DATE_TYPES=["Pickup Date","Collect Date"] as const;
 const COLLECT_TYPES=["Defective","Hold by Technician","In Review","Restock","Used","Used (Core)","Used (Panel)"];
 const TODAY=new Date().toISOString().slice(0,10);
@@ -133,8 +137,11 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   }, [tech, dateType, startDate, endDate, ticketNo, collectType]);
   useEffect(() => { loadSummaryRows(); }, [loadSummaryRows]);
 
-  const branchSummary = LOCATIONS.map((loc) => {
-    const items = summaryRows.filter((r) => r.location === loc);
+  // Built from the locations actually on these parts, not the LOCATIONS
+  // list — a ticket whose location is spelled differently or blank would
+  // otherwise be dropped from the chart and totals.
+  const branchSummary = Array.from(new Set(summaryRows.map((r) => r.location || NO_LOCATION))).map((loc) => {
+    const items = summaryRows.filter((r) => (r.location || NO_LOCATION) === loc);
     return {
       location: loc,
       notCollected: items.filter((r) => !r.collected).length,
@@ -286,65 +293,31 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
           <p className="text-xs text-muted-foreground -mt-0.5">Click a branch to filter the table below</p>
         </div>
       </div>
-      {/* Capped, not unbounded — see Part Receive/Part Return's own Branch
-          Summary for why: an uncapped row stretches the donuts to match
-          however tall the branch list happens to be. */}
-      <div className="flex flex-col lg:flex-row gap-4 items-stretch lg:max-h-[520px]">
-        <div className="lg:w-1/4 lg:shrink-0 rounded-lg border border-white/10 divide-y divide-white/5 overflow-y-auto">
-          <button
-            type="button"
-            onClick={() => setLocation("")}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition ${
-              location === "" ? "bg-white/10" : "hover:bg-white/5"
-            }`}
-          >
-            <span className="inline-flex shrink-0 items-center rounded-md border border-white/20 bg-white/10 px-2 py-0.5 text-[11px] font-bold tracking-wide text-white">
-              ALL LOCATIONS
-            </span>
-            <span className="ml-auto text-xs text-slate-300">
-              <span className="font-semibold text-amber-300">{allBranchTotals.notCollected}</span> not coll'd ·{" "}
-              <span className="font-semibold text-green-400">{allBranchTotals.collected}</span> coll'd
-            </span>
-          </button>
-          {branchSummary.map((b) => {
-            const c = branchChipColor(b.location);
-            const active = location === b.location;
-            return (
-              <button
-                key={b.location}
-                type="button"
-                onClick={() => setLocation(active ? "" : b.location)}
-                title={b.location}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition ${
-                  active ? "bg-white/10" : "hover:bg-white/5"
-                }`}
-              >
-                <span className={`inline-flex shrink-0 items-center justify-center rounded-md border px-2 py-0.5 text-[11px] font-bold tracking-wide min-w-[3.25rem] ${c.bg} ${c.border} ${c.text}`}>
-                  {branchAbbrev(b.location)}
-                </span>
-                <span className="ml-auto text-xs text-slate-300">
-                  <span className="font-semibold text-amber-300">{b.notCollected}</span> not coll'd ·{" "}
-                  <span className="font-semibold text-green-400">{b.collected}</span> coll'd
-                </span>
-              </button>
-            );
-          })}
-        </div>
+      <div className="flex flex-col lg:flex-row gap-4 items-stretch">
+        <BranchBarChart
+          title="Parts for Collection by Branch"
+          totalLabel="Total Parts for Collection"
+          unitLabel="Number of Parts"
+          bars={branchSummary.map((b) => ({
+            location: b.location,
+            total: b.notCollected + b.collected,
+            detail: `${b.notCollected} not collected · ${b.collected} collected`,
+          }))}
+          selected={location}
+          onSelect={(l) => setLocation(l === NO_LOCATION ? "" : l)}
+          noLocationKey={NO_LOCATION}
+        />
 
-        <div className="flex-1 flex flex-wrap gap-4">
+        <div className="flex-1 flex flex-wrap gap-4 lg:self-start">
           <DonutSummaryCard
             title="Status"
             data={[
-              { name: "Not collected", value: allBranchTotals.notCollected },
               { name: "Collected", value: allBranchTotals.collected },
-            ].filter((d) => d.value > 0)}
+              { name: "Not collected", value: allBranchTotals.notCollected },
+            ]}
             colorFor={(name) => (name === "Collected" ? DONUT_COLLECTED_COLOR : DONUT_NOT_COLLECTED_COLOR)}
-            centerValue={
-              allBranchTotals.notCollected + allBranchTotals.collected > 0
-                ? `${Math.round((allBranchTotals.collected / (allBranchTotals.notCollected + allBranchTotals.collected)) * 100)}%`
-                : "—"
-            }
-            centerLabel="Collected"
+            centerValue={String(allBranchTotals.notCollected + allBranchTotals.collected)}
+            centerLabel="Total Parts"
           />
           <DonutSummaryCard
             title="By Location"
