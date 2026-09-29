@@ -4,7 +4,7 @@ import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Ticket, Trash2, Save, Send, Mail } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
-import { getMyRoles, getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { hasDashboardAccess } from "@/lib/dashboardAccess";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
@@ -54,12 +54,16 @@ const PRIORITY_CLASSES: Record<ItTicketPriority, string> = {
 export function ItTicketsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
-  const { uid, role, displayName, email } = useAuth();
-  const [extraRoles, setExtraRoles] = useState<string[] | null>(null);
+  const { uid, role, extraRoles, displayName, email } = useAuth();
   // IT/Admin/Superadmin get full edit/assign/delete — everyone else who made
   // it past the page-level gate (Senior Managers) is read-only. Enforced
   // again server-side by the it_tickets_update/delete RLS policies either way.
-  const canEdit = extraRoles !== null && hasDashboardAccess(IT_ADMIN_ROLES, role, extraRoles);
+  // extraRoles comes straight from useAuth() (already loaded before this
+  // page can mount — see m.$module.$submodule.tsx's own gate) rather than a
+  // separate getMyRoles(uid) DB call this file used to make, which read the
+  // REAL signed-in account's extra_roles directly and so ignored a Super
+  // Admin's "View as" role preview.
+  const canEdit = hasDashboardAccess(IT_ADMIN_ROLES, role, extraRoles);
 
   const [tickets, setTickets] = useState<ItTicketRow[]>([]);
   const [itAdmins, setItAdmins] = useState<ProfileRow[]>([]);
@@ -240,17 +244,6 @@ export function ItTicketsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
-  useEffect(() => {
-    if (!uid) return;
-    let cancelled = false;
-    getMyRoles(uid).then(({ extraRoles }) => {
-      if (!cancelled) setExtraRoles(extraRoles);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [uid]);
-
   const loadTickets = async () => {
     setLoading(true);
     setError("");
@@ -380,7 +373,7 @@ export function ItTicketsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 {sub.title}
               </h1>
               <p className="text-sm text-muted-foreground">{sub.description}</p>
-              {extraRoles !== null && !canEdit && (
+              {!canEdit && (
                 <p className="mt-2 text-xs text-amber-300/90">
                   View-only — only IT and Admins can edit, assign, or delete tickets.
                 </p>

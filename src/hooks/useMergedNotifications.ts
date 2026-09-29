@@ -24,7 +24,7 @@
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useAuth } from "@/lib/auth";
-import { getMyProfileId, getMyRoles } from "@/lib/supabase/users";
+import { getMyProfileId } from "@/lib/supabase/users";
 import {
   getMyNotifications,
   markNotificationRead,
@@ -377,10 +377,13 @@ const DROPDOWN_LIMIT = 30;
 
 export function useMergedNotifications(options?: { limit?: number }) {
   const limit = options?.limit ?? DROPDOWN_LIMIT;
-  const { uid, ready, role } = useAuth();
-  // HR either as the primary role or as a sub-role (extra_roles) — useAuth()
-  // only carries the primary role, so we resolve extra_roles separately.
-  const [isHr, setIsHr] = useState(false);
+  const { uid, ready, role, extraRoles } = useAuth();
+  // HR either as the primary role or as a sub-role (extra_roles) — both come
+  // straight from useAuth() (already loaded at login, and correctly [] for
+  // extraRoles during a "View as" preview) rather than a separate
+  // getMyRoles(uid) DB call this file used to make, which read the REAL
+  // signed-in account's own extra_roles regardless of any active preview.
+  const isHr = (role ?? "").toUpperCase() === "HR" || extraRoles.some((r) => (r ?? "").toUpperCase() === "HR");
   const [profileId, setProfileId] = useState<string | null>(null);
   const [tableNotifs, setTableNotifs] = useState<NotificationRow[]>([]);
   const [firestoreNotifs, setFirestoreNotifs] = useState<AppNotification[]>([]);
@@ -405,23 +408,6 @@ export function useMergedNotifications(options?: { limit?: number }) {
     return () => { cancelled = true; };
   }, [ready, uid, load]);
 
-  // Resolve HR status from primary role OR extra_roles (sub-roles) — a user
-  // whose HR access comes from extra_roles wouldn't be caught by useAuth().role.
-  useEffect(() => {
-    if (!ready || !uid) {
-      setIsHr(false);
-      return;
-    }
-    if ((role ?? "").toUpperCase() === "HR") {
-      setIsHr(true);
-      return;
-    }
-    let cancelled = false;
-    getMyRoles(uid).then(({ extraRoles }) => {
-      if (!cancelled) setIsHr(extraRoles.some((r) => (r ?? "").toUpperCase() === "HR"));
-    });
-    return () => { cancelled = true; };
-  }, [ready, uid, role]);
 
   // Live-append any new table-based notification addressed to me.
   useEffect(() => {
