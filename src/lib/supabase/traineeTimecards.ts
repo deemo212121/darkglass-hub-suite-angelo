@@ -388,6 +388,50 @@ export async function getTraineeReviewQueue(managerProfileId: string): Promise<T
 }
 
 /**
+ * Company-wide counterpart to getTraineeReviewQueue — every pending trainee
+ * day plus every active trainee's no-show today, regardless of who their
+ * resolved manager is. For a full-access viewer (Admin/SuperAdmin/HR/
+ * Finance/Technical Assistant Director — see isAttendanceFullAccessRole)
+ * browsing mobile's Team Approvals trainee tab, matching the same
+ * company-wide bypass canApproveTraineeDay already grants them for acting
+ * on any trainee day.
+ *
+ * Deliberately a SEPARATE function from getTraineeReviewQueue, not a mode
+ * flag on it — that one also gates the reviewing manager's own Check Out
+ * (see getPendingTraineeReviewCount below), and a full-access role must
+ * never have their own clock-out blocked on every trainee company-wide
+ * having been reviewed by someone, just their own actual directs (if any).
+ */
+export async function getCompanyTraineeReviewQueue(): Promise<TraineeReviewQueueItem[]> {
+  const [entries, roster, serverNow] = await Promise.all([getCompanyTraineeEntries(), getCompanyUsers(), getServerNow()]);
+
+  const entryItems = entries
+    .filter((e) => e.status === "pending")
+    .map((entry) => {
+      const trainee = roster.find((p) => p.id === entry.profileId);
+      return trainee ? { kind: "entry" as const, trainee, entry, workDate: entry.workDate } : null;
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+
+  const entryProfileIdsByWorkDate = new Map<string, Set<string>>();
+  for (const e of entries) {
+    if (!entryProfileIdsByWorkDate.has(e.workDate)) entryProfileIdsByWorkDate.set(e.workDate, new Set());
+    entryProfileIdsByWorkDate.get(e.workDate)!.add(e.profileId);
+  }
+  const noShowItems: TraineeReviewQueueItem[] = roster
+    .filter((p) => p.employment_type === "trainee" && p.is_active)
+    .map((trainee) => {
+      const traineeTz: ScheduleTimezone = trainee.schedule_timezone || "CST";
+      const traineeToday = zonedDateKey(serverNow, traineeTz);
+      return { trainee, traineeToday };
+    })
+    .filter(({ trainee, traineeToday }) => !entryProfileIdsByWorkDate.get(traineeToday)?.has(trainee.id))
+    .map(({ trainee, traineeToday }) => ({ kind: "noshow" as const, trainee, entry: null, workDate: traineeToday }));
+
+  return [...entryItems, ...noShowItems];
+}
+
+/**
  * How many trainee days this manager still has to review — gates the
  * manager's OWN Check Out (see the persistPunch/saveEntry call sites in
  * TimeClockMenu.tsx, routes/timecard.tsx, and MobileTechApp.tsx) so it

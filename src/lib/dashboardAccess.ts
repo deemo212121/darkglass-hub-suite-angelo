@@ -25,7 +25,7 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   // Manager-tier roles (see ATTENDANCE_MANAGER_TIER_ROLES_ARRAY) are scoped to
   // their own direct reports here (AttendanceMonitoringPage.tsx's
   // visibleAttendanceProfileIds) — ADMIN/HR/FINANCE/SUPERADMIN see everyone.
-  "attendance-monitoring": ["ADMIN", "HR", "FINANCE", ...ATTENDANCE_MANAGER_TIER_ROLES_ARRAY],
+  "attendance-monitoring": ["ADMIN", "HR", "FINANCE", "TECHNICAL_ASSISTANT_DIRECTOR", ...ATTENDANCE_MANAGER_TIER_ROLES_ARRAY],
   "payroll-calculation": ["ADMIN", "FINANCE"],
   "expense-tracking": ["ADMIN", "FINANCE"],
   // View access matches expense-tracking (SUPERADMIN always bypasses per
@@ -93,7 +93,7 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   // visibleEmployeeMonitoringProfileIds — a Team Leader sees only their
   // direct reports, Branch Manager tier and up sees their whole downward
   // chain. Same audience shape as attendance-monitoring above.
-  "absent-list": ["ADMIN", "HR", "FINANCE", ...ATTENDANCE_MANAGER_TIER_ROLES_ARRAY],
+  "absent-list": ["ADMIN", "HR", "FINANCE", "TECHNICAL_ASSISTANT_DIRECTOR", ...ATTENDANCE_MANAGER_TIER_ROLES_ARRAY],
   "live-chat-support": ["ADMIN", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER"],
   // IT Tickets now lives only in the Admin module (m.$module.$submodule.tsx
   // reuses this same list via getDashboardRoleGate("it-tickets") to carve

@@ -69,6 +69,7 @@ import {
   clearTraineePunch,
   getPendingTraineeReviewCount,
   getTraineeReviewQueue,
+  getCompanyTraineeReviewQueue,
   approveTraineeDay,
   rejectTraineeDay,
   recordTraineeDayWithoutPunch,
@@ -979,12 +980,19 @@ export function MobileTechApp() {
   // someone whose role is manager-tier but who has zero actual direct
   // reports (a brand-new promotion, a role assigned without a real team)
   // shouldn't see these tiles at all, not just see them always-empty.
-  // isAttendanceFullAccessRole (Admin/SuperAdmin/HR/Finance) always passes —
-  // visibleAttendanceProfileIds returns null for them (unrestricted), which
-  // correctly reads as "has a team" here too. False (hidden) until `users`
-  // finishes loading, same fail-closed default `roster` above uses.
+  // isAttendanceFullAccessRole (Admin/SuperAdmin/HR/Finance/Technical
+  // Assistant Director) always passes regardless of the manager-tier check
+  // below — they're company-wide "has a team" by definition, same as their
+  // desktop Attendance Monitoring access (this used to just be a comment
+  // with no actual bypass in the code below it; the manager-tier check
+  // short-circuited these roles out before it was ever reached, so on
+  // mobile they never actually saw these 3 tiles until this fix). False
+  // (hidden) until `users` finishes loading, same fail-closed default
+  // `roster` above uses.
   const hasTeamUnderMe = useMemo(() => {
-    if (!isAttendanceManagerTierRole(role, extraRoles) || users.length === 0) return false;
+    if (users.length === 0) return false;
+    if (isAttendanceFullAccessRole(role, extraRoles)) return true;
+    if (!isAttendanceManagerTierRole(role, extraRoles)) return false;
     const myProfile = users.find((u) => u.id === profileId) ?? null;
     if (!myProfile) return false;
     const scoped = visibleAttendanceProfileIds(myProfile, users, csrComposition);
@@ -7287,7 +7295,7 @@ function MobileTeamApprovalsView({
     try {
       const [allProfiles, queue, correctionRows, ptoRows, requestRows] = await Promise.all([
         getCompanyUsers(),
-        getTraineeReviewQueue(profileId),
+        isAttendanceFullAccessRole(role, extraRoles) ? getCompanyTraineeReviewQueue() : getTraineeReviewQueue(profileId),
         getCompanyTimecardCorrections(),
         getCompanyPtoRequests(),
         getCompanyEmployeeRequests(),

@@ -603,7 +603,7 @@ export function isAttendanceManagerTierRole(role: string | null | undefined, ext
  * narrow their attendance view down to just their own direct reports).
  * Callers must check this BEFORE isAttendanceManagerTierRole so it wins.
  */
-const ATTENDANCE_FULL_ACCESS_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR", "FINANCE"]);
+const ATTENDANCE_FULL_ACCESS_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR", "FINANCE", "TECHNICAL_ASSISTANT_DIRECTOR"]);
 
 export function isAttendanceFullAccessRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
   return anyHeldRoleIn(ATTENDANCE_FULL_ACCESS_ROLES, role, extraRoles);
