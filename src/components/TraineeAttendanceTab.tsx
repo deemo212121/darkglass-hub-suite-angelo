@@ -20,7 +20,7 @@
  * only ever mounted there.
  */
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import type { ProfileRow } from "@/lib/supabase/users";
 import { calcWorkedHours } from "@/lib/supabase/timecards";
 import { ROLE_LABELS, normalizeRole, isAttendanceFullAccessRole, isTraineeFallbackReviewerRole } from "@/lib/roleLabels";
@@ -260,6 +260,33 @@ export function TraineeAttendanceTab({
     setSelected(null);
     resetRejectForm();
   };
+
+  // Deep link from the clock-out review pop-up (TraineeAttendanceReviewModal):
+  // ?review=<entry id>&date=<work date> opens that day's editor,
+  // ?trainee=<profile id>&date=<work date> opens Mark Status for a no-show.
+  const routeSearch = (useSearch({ strict: false }) as { review?: string; trainee?: string; date?: string }) ?? {};
+  const [deepLink, setDeepLink] = useState<{ review?: string; trainee?: string } | null>(null);
+  useEffect(() => {
+    if (!routeSearch.date || !(routeSearch.review || routeSearch.trainee)) return;
+    setScope("mine");
+    setDateFrom(routeSearch.date);
+    setDateTo(routeSearch.date);
+    setDeepLink({ review: routeSearch.review, trainee: routeSearch.trainee });
+  }, [routeSearch.review, routeSearch.trainee, routeSearch.date]);
+  useEffect(() => {
+    if (!deepLink || loading) return;
+    if (deepLink.trainee) {
+      openPlaceholder(deepLink.trainee);
+      setDeepLink(null);
+      return;
+    }
+    const entry = entries.find((e) => e.id === deepLink.review);
+    if (entry) {
+      openEntry(entry);
+      setDeepLink(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLink, entries, loading]);
 
   const selectedEntry = selected?.kind === "entry" ? selected.entry : null;
   const draftChanged =
