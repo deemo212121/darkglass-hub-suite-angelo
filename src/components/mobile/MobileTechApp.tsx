@@ -69,7 +69,6 @@ import {
   clearTraineePunch,
   getPendingTraineeReviewCount,
   getTraineeReviewQueue,
-  getCompanyTraineeReviewQueue,
   approveTraineeDay,
   rejectTraineeDay,
   recordTraineeDayWithoutPunch,
@@ -7295,7 +7294,10 @@ function MobileTeamApprovalsView({
     try {
       const [allProfiles, queue, correctionRows, ptoRows, requestRows] = await Promise.all([
         getCompanyUsers(),
-        isAttendanceFullAccessRole(role, extraRoles) ? getCompanyTraineeReviewQueue() : getTraineeReviewQueue(profileId),
+        // Own trainees only, whatever the viewer's role — the company-wide
+        // fallback lives on desktop Attendance Monitoring's Trainee
+        // Attendance tab, not here.
+        getTraineeReviewQueue(profileId),
         getCompanyTimecardCorrections(),
         getCompanyPtoRequests(),
         getCompanyEmployeeRequests(),
