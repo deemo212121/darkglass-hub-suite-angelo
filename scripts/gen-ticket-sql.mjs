@@ -81,7 +81,15 @@ function parseCsv(text) {
         else inQuotes = false;
       } else field += c;
     } else {
-      if (c === '"') inQuotes = true;
+      // Only a quote at the very start of a field opens quoted mode — a
+      // stray unescaped quote later in an otherwise-unquoted field (common
+      // in real CSR note exports, e.g. `stated " We have received...`)
+      // must be treated as a literal character, not a parser-state
+      // toggle. Treating it as a toggle silently swallows every comma/
+      // newline until the next stray quote, corrupting every field after
+      // it in the row (confirmed live: shifted a free-text note into the
+      // `diagnosed` boolean column and broke the insert).
+      if (c === '"' && field.length === 0) inQuotes = true;
       else if (c === ",") { row.push(field); field = ""; }
       else if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
       else if (c === "\r") { /* skip */ }

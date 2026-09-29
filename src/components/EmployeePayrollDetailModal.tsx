@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
+import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2, StickyNote } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAuth } from "@/lib/auth";
 import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, hoursDiff, MEAL_ALWAYS_PAID_DEFAULT_HOURS, type AttendanceRow } from "@/lib/supabase/timecards";
 import { isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, hasAnyTechnicianPayRole } from "@/lib/roleLabels";
@@ -242,6 +243,11 @@ export function EmployeePayrollDetailModal({
   // clicking a "Pending Time Correction Request" status can show the actual
   // request detail + approve/reject inline, same popup Absent List uses.
   const [pendingCorrectionByDate, setPendingCorrectionByDate] = useState<Map<string, TimecardCorrectionRow>>(new Map());
+  // This employee's attendance_notes content, keyed by date — the same
+  // (profile, day) notes typed on the Daily/Ticket Attendance tabs' "Add
+  // note" field, surfaced here as a hover bubble on the Date cell so a note
+  // left on one page is visible without leaving this modal to find it.
+  const [notesByDate, setNotesByDate] = useState<Map<string, string>>(new Map());
   const [pendingDetailModal, setPendingDetailModal] = useState<{ date: string; item: PendingItem } | null>(null);
   const [history, setHistory] = useState<SalaryEntryRow[]>([]);
   const [ticketRows, setTicketRows] = useState<TicketAttendanceRow[]>([]);
@@ -408,8 +414,10 @@ export function EmployeePayrollDetailModal({
       // formal Unpaid request existed.
       const paidLeaveDates = new Map<string, PtoType>();
       const unpaidLeaveDates = new Map<string, PtoType>();
+      const noteMap = new Map<string, string>();
       for (const n of hrStatusNotes) {
         if (n.profileId !== profileId) continue;
+        if (n.content) noteMap.set(n.noteDate, n.content);
         const type = HR_STATUS_TO_PTO_TYPE[n.hrNote];
         if (!type) continue;
         (isPaidPtoType(type) ? paidLeaveDates : unpaidLeaveDates).set(n.noteDate, type);
@@ -437,6 +445,7 @@ export function EmployeePayrollDetailModal({
       if (cancelledRef.current) return;
       setAttendance(attRows);
       setSeedAttendance(seedRows);
+      setNotesByDate(noteMap);
       setPendingCorrectionByDate(new Map(pendingCorrections.filter((c) => c.profileId === profileId).map((c) => [c.workDate, c])));
       setHistory(hist);
       setTicketRows(myTicketRows);
@@ -1585,6 +1594,7 @@ export function EmployeePayrollDetailModal({
                   <tbody>
                     {attendance.map((row) => {
                       const dayIsFixed = entryEffectiveOn(history, row.date)?.compensationType === "fixed";
+                      const dayNote = notesByDate.get(row.date);
                       const edit = attendanceEdits[row.date];
                       const isRestDay = row.status === "day-off" || row.status === "holiday";
                       // dailyHoursSplitByDate's regular/overtime is correct (meal credit
@@ -1641,6 +1651,18 @@ export function EmployeePayrollDetailModal({
                           <span className="inline-flex items-center gap-1">
                             {isExpanded ? <ChevronDown className="h-3 w-3 text-slate-500" /> : <ChevronRight className="h-3 w-3 text-slate-500" />}
                             {row.date}
+                            {dayNote && (
+                              <TooltipProvider delayDuration={150}>
+                                <Tooltip>
+                                  <TooltipTrigger asChild onClick={(e) => e.stopPropagation()}>
+                                    <StickyNote className="h-3 w-3 text-amber-400 shrink-0" />
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-[220px] whitespace-pre-wrap text-left bg-slate-800 text-slate-100 border border-white/10">
+                                    {dayNote}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
                           </span>
                         </td>
                         {attendanceEditing ? (
