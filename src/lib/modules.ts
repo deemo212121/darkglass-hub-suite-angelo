@@ -1969,6 +1969,16 @@ const branchTechMod: ModuleDef = {
       fields: [],
       seed: () => ({}),
     },
+    // Repair guides shown as "Tech Tips" inside tickets (mobile Tips tab,
+    // desktop Tracking tab). Same page also listed under Triage.
+    {
+      slug: "tech-guides",
+      title: "Tech Guides",
+      description: "Repair guides by appliance — shown as Tech Tips inside tickets.",
+      custom: "tech-guides" as any,
+      fields: [],
+      seed: () => ({}),
+    },
   ],
 };
 
@@ -2047,6 +2057,14 @@ const triageMod: ModuleDef = {
       custom: "repair-knowledge" as any,
       fields: [],
       count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "tech-guides",
+      title: "Tech Guides",
+      description: "Repair guides by appliance — shown as Tech Tips inside tickets.",
+      custom: "tech-guides" as any,
+      fields: [],
       seed: () => ({}),
     },
   ],

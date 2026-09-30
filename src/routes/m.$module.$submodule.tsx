@@ -99,6 +99,7 @@ import { CandidateReviewsPage } from "@/components/CandidateReviewsPage";
 import { TrainingListPage } from "@/components/TrainingListPage";
 import { AbsentListPage } from "@/components/AbsentListPage";
 import { RepairKnowledgeBase } from "@/components/RepairKnowledgeBase";
+import { TechGuidesPage } from "@/components/TechGuidesPage";
 import { ExpensesModulePage } from "@/components/ExpensesModulePage";
 import { StaffListPage } from "@/components/StaffListPage";
 import { ReportHR } from "@/components/ReportHR";
@@ -507,6 +508,8 @@ function SubModule() {
         ? <ReportTriageDaily mod={mod} sub={sub} />
         : (sub as any).custom === "repair-knowledge"
         ? <RepairKnowledgeBase mod={mod} sub={sub} />
+        : (sub as any).custom === "tech-guides"
+        ? <TechGuidesPage mod={mod} sub={sub} />
         : (sub as any).custom === "report-parts-daily"
         ? <ReportPartsDaily mod={mod} sub={sub} />
         : (sub as any).custom === "report-operations-daily"

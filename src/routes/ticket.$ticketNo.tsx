@@ -15,6 +15,7 @@ import { TicketPhotos } from "@/components/TicketPhotos";
 import { MarconePartsOrderModal, type AddressBookEntry, type MarconePartLine } from "@/components/MarconePartsOrderModal";
 import { TruckStockBatchModal, type TruckStockBatchSelection } from "@/components/TruckStockBatchModal";
 import { TicketSidebar } from "@/components/TicketSidebar";
+import { TechTipsPanel } from "@/components/TechTipsPanel";
 import { TIME_FRAMES } from "@/lib/timeframes";
 import { CLAIM_STATUSES, CLAIM_TOS, PAYMENT_METHODS } from "@/lib/claimDropdowns";
 import { resolveTierCode } from "@/lib/tierCodes";
@@ -7152,6 +7153,27 @@ function TicketDetailsPage() {
 
         {activeTab === "tracking" && (
           <div className="space-y-8">
+            {/* Tech Tips — the product's repair guide and what the tech
+                recorded against it per visit (filled in from the mobile
+                app's Tips tab; read-only here). */}
+            <div id="section-tech-tips" className="scroll-mt-28">
+              <h4 className="font-semibold text-slate-300 mb-4">Tech Tips</h4>
+              <div className="rounded-lg border border-white/10 bg-slate-900/40 p-4">
+                <TechTipsPanel
+                  ticketId={ticketDbId}
+                  productType={ticket?.productCategory || ""}
+                  model={ticket?.model}
+                  symptom={visitLogEntries[0]?.symptomCx || ""}
+                  visits={visitLogEntries.map((v, idx) => ({
+                    id: v.id,
+                    label: `V${visitLogEntries.length - idx}${v.scheduleDate ? ` · ${v.scheduleDate}` : ""}`,
+                  }))}
+                  editable={false}
+                  authorName=""
+                />
+              </div>
+            </div>
+
             {/* Related Tickets */}
             <div id="section-related-tickets" className="scroll-mt-28">
               <h4 className="font-semibold text-slate-300 mb-4">Related Tickets</h4>
