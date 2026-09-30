@@ -28,7 +28,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Pencil, Check, Loader2, Filter, CalendarDays, ListChecks, ClipboardList, Paperclip, Flag, History, X, BarChart3, AlertTriangle, Umbrella, FileText, HeartPulse, ListTodo, FileDown } from "lucide-react";
+import { ChevronLeft, Pencil, Check, Loader2, Filter, CalendarDays, ListChecks, ClipboardList, Paperclip, Flag, History, X, BarChart3, AlertTriangle, Umbrella, HeartPulse, ListTodo, FileDown, Users } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { ROLE_LABELS, TECHNICIAN_PAY_ROLES, normalizeRole } from "@/lib/roleLabels";
@@ -40,9 +40,8 @@ import { getAttendanceNotes, upsertAttendanceNote, upsertAttendanceHrNote, uploa
 import { getCompanyPtoRequests, sickYearWindow, sickDaysUsed, SICK_LEAVE_ANNUAL_ALLOWANCE, type PtoRequestRow } from "@/lib/supabase/pto";
 import { HrCalendarTab } from "@/components/HrCalendarTab";
 import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
-import { TicketTimeDisputesTab } from "@/components/TicketTimeDisputesTab";
 import { PtoManagementTab } from "@/components/PtoManagementTab";
-import { CorrectionsTab } from "@/components/CorrectionsTab";
+import { EmployeeAttendanceStatusTab } from "@/components/EmployeeAttendanceStatusTab";
 import { VisitExceptionReportTab } from "@/components/VisitExceptionReportTab";
 import { ExceptionReportsTab } from "@/components/ExceptionReportsTab";
 import { HolidayCalendarTab } from "@/components/HolidayCalendarTab";
@@ -146,7 +145,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   // Monitoring already mount (TicketAttendanceTab.tsx takes no props and
   // fetches its own data), added as a third view so HR can check on-site
   // check-ins without leaving this page.
-  const [view, setView] = useState<"list" | "calendar" | "ticketAttendance" | "ticketTimeDisputes" | "ptoManagement" | "corrections" | "exceptionReports" | "holidays" | "visitExceptions" | "exceededSickDays" | "pendingExplanations">("list");
+  const [view, setView] = useState<"list" | "calendar" | "ticketAttendance" | "ptoManagement" | "exceptionReports" | "holidays" | "visitExceptions" | "exceededSickDays" | "pendingExplanations" | "attendanceStatus">("list");
   const [statsCardHidden, setStatsCardHidden] = useState(false);
   const [dateFrom, setDateFrom] = useState(todayISO());
   const [dateTo, setDateTo] = useState(todayISO());
@@ -1084,24 +1083,10 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           </button>
           <button
             type="button"
-            onClick={() => setView("ticketTimeDisputes")}
-            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "ticketTimeDisputes" ? "bg-primary/20 text-primary" : ""}`}
-          >
-            <AlertTriangle className="h-3.5 w-3.5" /> Ticket Time Disputes
-          </button>
-          <button
-            type="button"
             onClick={() => setView("ptoManagement")}
             className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "ptoManagement" ? "bg-primary/20 text-primary" : ""}`}
           >
             <Umbrella className="h-3.5 w-3.5" /> PTO Management
-          </button>
-          <button
-            type="button"
-            onClick={() => setView("corrections")}
-            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "corrections" ? "bg-primary/20 text-primary" : ""}`}
-          >
-            <FileText className="h-3.5 w-3.5" /> Corrections
           </button>
           <button
             type="button"
@@ -1138,6 +1123,13 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           >
             <ListTodo className="h-3.5 w-3.5" /> Pending Explanations
           </button>
+          <button
+            type="button"
+            onClick={() => setView("attendanceStatus")}
+            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "attendanceStatus" ? "bg-primary/20 text-primary" : ""}`}
+          >
+            <Users className="h-3.5 w-3.5" /> Attendance Status
+          </button>
         </div>
 
         {view === "calendar" && (
@@ -1146,11 +1138,11 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
 
         {view === "ticketAttendance" && <TicketAttendanceTab />}
 
-        {view === "ticketTimeDisputes" && <TicketTimeDisputesTab />}
+        {view === "attendanceStatus" && <EmployeeAttendanceStatusTab />}
+
 
         {view === "ptoManagement" && <PtoManagementTab />}
 
-        {view === "corrections" && <CorrectionsTab />}
 
         {view === "exceptionReports" && <ExceptionReportsTab />}
 
