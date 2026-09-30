@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2, StickyNote } from "lucide-react";
+import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2, StickyNote, Download } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAuth } from "@/lib/auth";
 import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, hoursDiff, MEAL_ALWAYS_PAID_DEFAULT_HOURS, type AttendanceRow } from "@/lib/supabase/timecards";
@@ -232,6 +232,7 @@ export function EmployeePayrollDetailModal({
   const fallbackMonth = currentMonthBounds();
   const [rangeStart, setRangeStart] = useState(initialStart || fallbackMonth.start);
   const [rangeEnd, setRangeEnd] = useState(initialEnd || fallbackMonth.end);
+  const [downloadingAttendance, setDownloadingAttendance] = useState(false);
   const [loading, setLoading] = useState(true);
   const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
   // Only the partial calendar week BEFORE rangeStart (empty when rangeStart
@@ -876,6 +877,19 @@ export function EmployeePayrollDetailModal({
     totals.compliant.total = totals.compliant.regularPay + totals.compliant.overtimePay;
     return totals;
   }, [attendance, history, dailyHoursSplitByDate, dailyPayByDate, isCurrentlyFixed, currentEntry, otMultiplier, isPhPayroll]);
+  const downloadAttendanceExcel = async () => {
+    if (downloadingAttendance || loading || attendance.length === 0 || attendanceEditing || savingRates || pendingRateChanges.length > 0) return;
+    setDownloadingAttendance(true);
+    try {
+      // Loaded on click — see AccountingDashboard's downloadFilteredAttendance.
+      const { downloadIndividualAttendanceWorkbook } = await import("@/lib/payrollAttendanceExport");
+      await downloadIndividualAttendanceWorkbook(employeeName, attendance, dailyHoursSplitByDate, dailyPayByDate, ticketStateByDate, isPhPayroll, rangeStart, rangeEnd);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Unable to download attendance. Please try again.");
+    } finally {
+      setDownloadingAttendance(false);
+    }
+  };
   const displayedPay = payViewTotals[payView];
   // Flat equivalent of displayedPay — every hour at the same (regular or
   // state-floor-matched) rate, no 1.5× overtime multiplier. This tile can't
@@ -1539,6 +1553,15 @@ export function EmployeePayrollDetailModal({
                     {savingRates ? "Saving…" : `Save Rate Changes (${pendingRateChanges.length})`}
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={downloadAttendanceExcel}
+                  disabled={downloadingAttendance || loading || attendance.length === 0 || attendanceEditing || savingRates || pendingRateChanges.length > 0}
+                  title={attendanceEditing || pendingRateChanges.length > 0 ? "Save or cancel your edits before downloading" : "Download attendance for the selected date range"}
+                  className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white flex items-center gap-1"
+                >
+                  {downloadingAttendance ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />} {downloadingAttendance ? "Exporting..." : "Download Excel"}
+                </button>
                 {attendanceEditing ? (
                   <>
                     <button
