@@ -8,10 +8,11 @@ import type { EncompassPartInfo } from "@/lib/encompassApi";
 import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, placeEncompassOrder, isEncompassDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
 import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
 import { PART_STATUS_OPTIONS } from "@/lib/partStatuses";
-import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone, ClipboardCheck, ChevronDown, X, Search } from "lucide-react";
+import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone, ClipboardCheck, ChevronDown, X, Search, Settings } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { isFirebaseReady, auth as firebaseAuth } from "@/lib/firebase/config";
-import { getGmailConnectionStatus, disconnectGmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
+import { getGmailConnectionStatus, getGmailConnectRoles, disconnectGmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
+import { GmailConnectRolesModal } from "@/components/GmailConnectRolesModal";
 import { getRecentDropshipRecipients, recordDropshipRecipient, type DropshipRecipient } from "@/lib/supabase/dropshipRecipients";
 import { useIsPhone } from "@/lib/device";
 import { TicketPhotos } from "@/components/TicketPhotos";
@@ -5147,7 +5148,17 @@ function TicketDetailsPage() {
   // happens to be connected. An Admin can still connect the same account
   // to both if they want; nothing forces it to differ.
   const gmailRegion: GmailRegion = "PARTS";
-  const canConnectGmail = String(currentUserRole || "").toUpperCase() === "ADMIN" || String(currentUserRole || "").toUpperCase() === "SUPERADMIN";
+  // Admin/SuperAdmin always; other roles only if an Admin granted them via the gear (migration 0329).
+  const myGmailRoles = [currentUserRole, ...(currentUserExtraRoles ?? [])].filter(Boolean).map((r) => String(r).toUpperCase());
+  const isGmailAdmin = myGmailRoles.some((r) => r === "ADMIN" || r === "SUPERADMIN" || r === "SUPERSUPERADMIN");
+  const [gmailConnectRoles, setGmailConnectRolesState] = useState<string[]>([]);
+  const [gmailRolesOpen, setGmailRolesOpen] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    getGmailConnectRoles(gmailRegion).then((roles) => !cancelled && setGmailConnectRolesState(roles));
+    return () => { cancelled = true; };
+  }, [gmailRegion]);
+  const canConnectGmail = isGmailAdmin || gmailConnectRoles.some((r) => myGmailRoles.includes(r.toUpperCase()));
 
   const loadGmailStatus = useCallback(async () => {
     setGmailStatusLoading(true);
@@ -7485,6 +7496,25 @@ function TicketDetailsPage() {
                     <span className="text-[10px] text-slate-500" title="An Admin needs to connect Gmail before Send will work">
                       Gmail not connected — ask an Admin
                     </span>
+                  )}
+                  {isGmailAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => setGmailRolesOpen(true)}
+                      className="rounded border border-white/15 bg-slate-800 p-1.5 text-slate-300 transition hover:bg-slate-700"
+                      title="Choose which roles can connect the Parts/Drop-Ship Gmail"
+                      aria-label="Gmail connect permissions"
+                    >
+                      <Settings className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  {gmailRolesOpen && (
+                    <GmailConnectRolesModal
+                      region={gmailRegion}
+                      title="Parts / Drop-Ship Gmail — Connect permission"
+                      onClose={() => setGmailRolesOpen(false)}
+                      onSaved={setGmailConnectRolesState}
+                    />
                   )}
                 </div>
                 )}

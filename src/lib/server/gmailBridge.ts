@@ -164,6 +164,28 @@ export async function fetchProfileByFirebaseUid(
   return { id: r.id, companyId: r.company_id, role: r.role, extraRoles: r.extra_roles ?? [], name: r.display_name || r.username || r.email };
 }
 
+/**
+ * Admin/SuperAdmin can always connect; an Admin can also grant extra roles per
+ * slot (gmail_connect_role_gates, migration 0329 — the ticket page gear).
+ * Checks the primary role and every extra role. A missing table (migration not
+ * run yet) just means no extra grants.
+ */
+async function canConnectGmailSlot(
+  env: EnvBag,
+  profile: { companyId: string; role: string | null; extraRoles: string[] },
+  region: string
+): Promise<boolean> {
+  const roles = [profile.role, ...profile.extraRoles].filter(Boolean).map((r) => String(r).toUpperCase());
+  if (roles.some((r) => CONNECT_ROLES.has(r) || r === "SUPERSUPERADMIN")) return true;
+  const url =
+    `${env.supabaseUrl}/rest/v1/gmail_connect_role_gates?select=role` +
+    `&company_id=eq.${encodeURIComponent(profile.companyId)}&region=eq.${encodeURIComponent(region)}`;
+  const res = await fetch(url, { headers: { apikey: env.supabaseServiceKey, Authorization: `Bearer ${env.supabaseServiceKey}` } });
+  if (!res.ok) return false;
+  const granted = new Set(((await res.json()) as Array<{ role: string }>).map((g) => g.role.toUpperCase()));
+  return roles.some((r) => granted.has(r));
+}
+
 async function fetchProfileById(
   env: EnvBag,
   profileId: string
@@ -415,8 +437,8 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       const claims = await verifyFirebaseToken(idToken, envBag.firebaseProjectId);
       const profile = await fetchProfileByFirebaseUid(envBag, claims.sub);
       if (!profile) return json({ error: "Profile not found" }, 404);
-      if (!profile.role || !CONNECT_ROLES.has(profile.role.toUpperCase())) {
-        return json({ error: "Only an Admin can connect Gmail" }, 403);
+      if (!(await canConnectGmailSlot(envBag, profile, region))) {
+        return json({ error: "You do not have permission to connect this Gmail. Ask an Admin to grant your role access." }, 403);
       }
       const state = strToB64url(JSON.stringify({ companyId: profile.companyId, profileId: profile.id, connectedByName: profile.name, region }));
       const redirectUri = `${url.origin}${url.pathname}`;
