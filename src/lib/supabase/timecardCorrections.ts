@@ -199,6 +199,22 @@ export async function getCompanyTimecardCorrectionHistory(): Promise<TimecardCor
  * Returns full rows (not just profileId/workDate) so callers that want to
  * show the actual requested correction (reason, corrected times, per-stage
  * status) — e.g. a detail popup — don't need a second fetch. */
+/** One employee's APPROVED corrections in a date range — used to label a fixed day "Corrected by <approver>". */
+export async function getApprovedCorrectionsForProfile(profileId: string, startDate: string, endDate: string): Promise<TimecardCorrectionRow[]> {
+  const { data, error } = await supabase
+    .from("timecard_corrections")
+    .select(SELECT_COLUMNS)
+    .eq("profile_id", profileId)
+    .eq("status", "approved")
+    .gte("work_date", startDate)
+    .lte("work_date", endDate);
+  if (error) {
+    console.error("getApprovedCorrectionsForProfile error:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapRow);
+}
+
 export async function getPendingCorrectionsInRange(startDate: string, endDate: string): Promise<TimecardCorrectionRow[]> {
   const { data, error } = await supabase
     .from("timecard_corrections")

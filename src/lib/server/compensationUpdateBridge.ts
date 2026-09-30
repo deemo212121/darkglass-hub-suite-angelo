@@ -90,7 +90,7 @@ export async function handleCompensationUpdateRequest(request: Request, env?: Re
     }
 
     const nowIso = new Date().toISOString();
-    const next = nextCompensationSlot(currentSlot);
+    const next = nextCompensationSlot(currentSlot, doc.form_data);
 
     // 3a. The employee (last) signed — finalize.
     if (!next) {
