@@ -1515,6 +1515,8 @@ function TicketDetailsPage() {
   // once the ticket's model/problem description are known; re-runs if
   // either changes (e.g. after editing Product Information).
   const [partSuggestions, setPartSuggestions] = useState<PartSuggestion[]>([]);
+  // "Suggested (from past tickets)" chips start collapsed.
+  const [partSuggestionsOpen, setPartSuggestionsOpen] = useState(false);
   const [partSuggestionsLoading, setPartSuggestionsLoading] = useState(false);
 
   // Edit mode state for schedule information
@@ -5672,7 +5674,16 @@ function TicketDetailsPage() {
             <div className="mt-1 text-[10px] text-slate-500">Checking past tickets for suggestions…</div>
           ) : partSuggestions.length > 0 ? (
             <div className="mt-1.5">
-              <div className="text-[9px] uppercase tracking-wide text-slate-500 mb-0.5">Suggested (from past tickets)</div>
+              <button
+                type="button"
+                onClick={() => setPartSuggestionsOpen((o) => !o)}
+                aria-expanded={partSuggestionsOpen}
+                className="flex items-center gap-1 text-[9px] uppercase tracking-wide text-slate-500 hover:text-slate-300 mb-0.5"
+              >
+                Suggested (from past tickets) · {partSuggestions.length}
+                <ChevronDown className={`h-3 w-3 transition-transform ${partSuggestionsOpen ? "rotate-180" : ""}`} />
+              </button>
+              {partSuggestionsOpen && (
               <div className="flex flex-wrap gap-1">
                 {partSuggestions.map((s) => (
                   <button
@@ -5689,6 +5700,7 @@ function TicketDetailsPage() {
                   </button>
                 ))}
               </div>
+              )}
             </div>
           ) : null}
         </td>
