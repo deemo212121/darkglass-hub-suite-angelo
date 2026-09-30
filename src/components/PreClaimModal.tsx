@@ -42,6 +42,7 @@ function fmt(amount: number) {
 const inputCls = "w-full bg-slate-800/50 border border-white/10 rounded px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none disabled:opacity-50";
 const roCls = "w-full bg-slate-950/50 border border-white/5 rounded px-2 py-1.5 text-sm text-slate-300";
 const labelCls = "block text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1";
+const sectionCls = "text-sm font-semibold text-blue-300 border-b border-white/10 pb-1 mb-3";
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -94,6 +95,10 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
   const [saving, setSaving] = useState(false);
   const [customerComplaint, setCustomerComplaint] = useState("");
   const [servicePerformed, setServicePerformed] = useState("");
+  // The newest visit log entry, shown in full so the claim can be checked
+  // against what the tech actually recorded. `latestVisitNo` is its V#.
+  const [latestVisit, setLatestVisit] = useState<Awaited<ReturnType<typeof getTicketVisits>>[number] | null>(null);
+  const [latestVisitNo, setLatestVisitNo] = useState(0);
   const [parts, setParts] = useState<UIPartRow[]>([]);
   const [checkedPartIds, setCheckedPartIds] = useState<Set<string>>(new Set());
   const [savingPartId, setSavingPartId] = useState<string | null>(null);
@@ -110,11 +115,28 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
     ])
       .then(([details, visits, partRows]) => {
         if (cancelled) return;
-        setForm(details ? { ...emptyForm(), ...details } : emptyForm());
+        const loaded = details ? { ...emptyForm(), ...details } : emptyForm();
+        // Posting Date fills in automatically (today, Central time) when the
+        // claim doesn't have one yet — still editable, saved on submit.
+        if (!loaded.postingDate) loaded.postingDate = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+        // Start Date fills in from the FIRST visit (V1 — the oldest, last in
+        // this newest-first list): its schedule date, else the day it was logged.
+        if (!loaded.startDate && visits.length > 0) {
+          const first = visits[visits.length - 1];
+          const iso = (s: string | undefined) => (s && /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : "");
+          loaded.startDate =
+            iso(first.scheduleDate) ||
+            (first.timestamp && !Number.isNaN(Date.parse(first.timestamp))
+              ? new Date(first.timestamp).toLocaleDateString("en-CA", { timeZone: "America/Chicago" })
+              : "");
+        }
+        setForm(loaded);
         // Latest visit (visits are returned newest-first) carries the
         // freshest Symptom(Cx)/Resolution text; fall back to the ticket's
         // own problem description if there's no visit yet.
         const latest = visits[0];
+        setLatestVisit(latest ?? null);
+        setLatestVisitNo(visits.length);
         setCustomerComplaint(latest?.symptomCx || ticket.problemDescription || "");
         setServicePerformed(latest?.resolution || "");
         setParts(partRows);
@@ -327,6 +349,9 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
             )}
             {/* Ticket / Customer / Product info + Pictures */}
             <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
+              <div className="space-y-5">
+              <div>
+              <h3 className={sectionCls}>Claim</h3>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <ReadOnly label="Ticket # (Claim #)" value={ticket.ticketNo} />
                 <ReadOnly label="S/P Account" value={ticket.account || ""} />
@@ -337,7 +362,6 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
                     {PRE_CLAIM_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </Field>
-                <ReadOnly label="Manufacture" value={ticket.manufacturer || ""} />
                 <Field label="Service Contract #">
                   <input value={form.serviceContractNo} onChange={(e) => setField("serviceContractNo", e.target.value)} className={inputCls} />
                 </Field>
@@ -348,10 +372,26 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
                     <option>Yes</option>
                   </select>
                 </Field>
+                <Field label="Call Status">
+                  <input value={form.callStatus} onChange={(e) => setField("callStatus", e.target.value)} className={inputCls} />
+                </Field>
+              </div>
+              </div>
+
+              <div>
+              <h3 className={sectionCls}>Product Details</h3>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <ReadOnly label="Manufacture" value={ticket.manufacturer || ""} />
+                <ReadOnly label="Brand" value={ticket.manufacturer || ""} />
                 <ReadOnly label="Model Code" value={ticket.model || ""} />
                 <ReadOnly label="Serial #" value={ticket.serial || ""} />
                 <ReadOnly label="Purchase Date" value={ticket.purchaseDate || ""} />
-                <ReadOnly label="Brand" value={ticket.manufacturer || ""} />
+              </div>
+              </div>
+
+              <div>
+              <h3 className={sectionCls}>Customer Details</h3>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <ReadOnly label="Cx First Name" value={ticket.firstName || ""} />
                 <ReadOnly label="Cx Last Name" value={ticket.lastName || ""} />
                 <ReadOnly label="Cx Address 1" value={ticket.address || ""} />
@@ -361,9 +401,8 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
                 <ReadOnly label="Cx Cell Phone" value={ticket.phone || ""} />
                 <ReadOnly label="Cx Home Phone" value={ticket.altPhone || ticket.secondPhone || ""} />
                 <ReadOnly label="Cx Email" value={ticket.email || ""} />
-                <Field label="Call Status">
-                  <input value={form.callStatus} onChange={(e) => setField("callStatus", e.target.value)} className={inputCls} />
-                </Field>
+              </div>
+              </div>
               </div>
               <div>
                 <p className={labelCls}>Pictures</p>
@@ -430,6 +469,50 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
               <Field label="Service Performed">
                 <div className={`${roCls} whitespace-pre-wrap min-h-[100px]`}>{servicePerformed || "—"}</div>
               </Field>
+            </div>
+
+            {/* Latest visit log entry — everything the tech/CSR recorded on it. */}
+            <div>
+              <h3 className={sectionCls}>
+                Latest Visit Log{latestVisit ? ` — V${latestVisitNo}` : ""}
+              </h3>
+              {!latestVisit ? (
+                <p className="text-sm text-slate-500">No visits logged on this ticket yet.</p>
+              ) : (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <ReadOnly label="Schedule Date" value={[latestVisit.scheduleDate, latestVisit.timeSlot].filter(Boolean).join(" · ")} />
+                    <ReadOnly label="Technician" value={[latestVisit.technician, latestVisit.secondTechnician].filter(Boolean).join(" + ")} />
+                    <ReadOnly label="Repair Status" value={latestVisit.repairStatus || latestVisit.status || ""} />
+                    <ReadOnly label="Repair Type" value={latestVisit.repairType || ""} />
+                    <ReadOnly label="Action Type (CSR)" value={latestVisit.actionType || ""} />
+                    <ReadOnly label="Activity" value={latestVisit.activity || ""} />
+                    <ReadOnly
+                      label="Last Updated"
+                      value={latestVisit.updatedAt || latestVisit.timestamp ? new Date(latestVisit.updatedAt || latestVisit.timestamp).toLocaleString() : ""}
+                    />
+                    <ReadOnly label="Logged By" value={latestVisit.by || ""} />
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-3">
+                    <Field label="Cause of Failure (Tech)">
+                      <div className={`${roCls} whitespace-pre-wrap`}>{latestVisit.diagnosis || "—"}</div>
+                    </Field>
+                    <Field label="Non-Completion Reason">
+                      <div className={`${roCls} whitespace-pre-wrap`}>{latestVisit.nonCompletionReason || "—"}</div>
+                    </Field>
+                    {latestVisit.schedNotes && (
+                      <Field label="Sched Notes">
+                        <div className={`${roCls} whitespace-pre-wrap`}>{latestVisit.schedNotes}</div>
+                      </Field>
+                    )}
+                    {latestVisit.note && (
+                      <Field label="Internal Note">
+                        <div className={`${roCls} whitespace-pre-wrap`}>{latestVisit.note}</div>
+                      </Field>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Parts Used */}
