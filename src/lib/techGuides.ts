@@ -247,7 +247,7 @@ export const DEFAULT_TECH_GUIDES: TechGuide[] = [
           "Test the drain pump for voltage and function",
           "If the pressure sensor is separate from the main control, test the pressure sensor",
         ],
-        keywords: ["not fill", "won't fill", "fill", "water", "not draining", "drain", "leak", "leaking", "overflow"],
+        keywords: ["not fill", "won't fill", "fill", "water", "not draining", "drain", "leak", "leaking", "overflow", "rinse", "not completing", "shuts off", "stops mid", "stops during"],
       },
       {
         id: "general",

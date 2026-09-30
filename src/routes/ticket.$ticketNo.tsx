@@ -1216,6 +1216,8 @@ function TicketDetailsPage() {
     TICKET_DETAILS_TABS,
     "general",
   );
+  // Tracking tab's Tech Tips section starts collapsed.
+  const [techTipsOpen, setTechTipsOpen] = useState(false);
   const [newServicerNote, setNewServicerNote] = useState("");
   const [servicerComments, setServicerComments] = useState<Array<{ id: string; body: string; authorName: string; authorRole: string; createdAt: string }>>([]);
   const [newVisitStatus, setNewVisitStatus] = useState("Visited");
@@ -5949,7 +5951,7 @@ function TicketDetailsPage() {
                 const internalAlerts = alertMessages.filter((a) => a.showInternal);
                 if (internalAlerts.length === 0) return null;
                 return (
-                  <div className="flex items-center gap-2 flex-1">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
                     {internalAlerts.slice(0, 1).map((alert) => {
                       const by = (alert.createdBy && profileNameById[alert.createdBy]) || alert.createdBy || "Unknown";
                       const when = alert.createdAt ? new Date(alert.createdAt).toLocaleString() : "";
@@ -5960,7 +5962,8 @@ function TicketDetailsPage() {
                           title={`By ${by} • ${when}`}
                         >
                           <span className="text-amber-200 font-bold text-sm whitespace-nowrap">⚠️ ALERT:</span>
-                          <span className="text-white font-semibold text-sm truncate flex-1">{alert.text}</span>
+                          {/* Wraps to 2 lines inside the header card; the full text is on hover. */}
+                          <span className="text-white font-semibold text-sm line-clamp-2 break-words flex-1 min-w-0" title={alert.text}>{alert.text}</span>
                           <span className="text-amber-200/80 text-xs whitespace-nowrap hidden lg:inline font-medium">
                             {by.split('@')[0]} • {when.split(',')[0]}
                           </span>
@@ -7195,7 +7198,17 @@ function TicketDetailsPage() {
                 recorded against it per visit (filled in from the mobile
                 app's Tips tab; read-only here). */}
             <div id="section-tech-tips" className="scroll-mt-28">
-              <h4 className="font-semibold text-slate-300 mb-4">Tech Tips</h4>
+              <button
+                type="button"
+                onClick={() => setTechTipsOpen((o) => !o)}
+                aria-expanded={techTipsOpen}
+                className="flex items-center gap-2 font-semibold text-slate-300 hover:text-white mb-4"
+              >
+                Tech Tips
+                <ChevronDown className={`h-4 w-4 transition-transform ${techTipsOpen ? "rotate-180" : ""}`} />
+                {!techTipsOpen && <span className="text-xs font-normal text-slate-500">Repair guide &amp; recorded test readings — click to show</span>}
+              </button>
+              {techTipsOpen && (
               <div className="rounded-lg border border-white/10 bg-slate-900/40 p-4">
                 <TechTipsPanel
                   ticketId={ticketDbId}
@@ -7210,6 +7223,7 @@ function TicketDetailsPage() {
                   authorName=""
                 />
               </div>
+              )}
             </div>
 
             {/* Related Tickets */}
