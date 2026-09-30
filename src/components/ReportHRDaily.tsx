@@ -7,6 +7,8 @@ import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import { StickyHorizontalScrollbar } from "@/components/StickyHorizontalScrollbar";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
+import { CompensationUpdateTab } from "@/components/CompensationUpdateTab";
+import { SignersChecklist } from "@/components/SignersChecklist";
 import {
   getHrJobPostings,
   addHrJobPosting,
@@ -133,7 +135,7 @@ import { getCandidateRequiredFormTypes, setCandidateRequiredFormTypes } from "@/
 import { buildWarningFormBodyMarkup, buildWarnNoteText, warningFormStyles, type WarningFormData, type SignatureSlot } from "@/lib/warningFormTemplate";
 import { buildNdaFormPages, ndaFormStyles, type NdaFormData } from "@/lib/ndaFormTemplate";
 import { buildWarningFormDocxBlob } from "@/lib/warningFormDocx";
-import { buildPromotionFormBodyMarkup, promotionFormStyles, type PromotionFormData, type PromotionSignatureSlot } from "@/lib/promotionFormTemplate";
+import { buildPromotionFormBodyMarkup, promotionFormStyles, promotionWageScheduleFields, type PromotionFormData, type PromotionSignatureSlot, type PromotionWageBasis } from "@/lib/promotionFormTemplate";
 import { buildPromotionFormDocxBlob } from "@/lib/promotionFormDocx";
 import { buildActionPlanFormBodyMarkup, actionPlanFormStyles, type ActionPlanFormData, type ActionPlanSignatureSlot } from "@/lib/actionPlanFormTemplate";
 import { buildActionPlanFormDocxBlob } from "@/lib/actionPlanFormDocx";
@@ -1134,7 +1136,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "compensationUpdate" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList">(paperworksOnly ? "combineForms" : "hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -1158,7 +1160,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const navigate = useNavigate();
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string; viewCvCandidateId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -2517,6 +2519,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const SIGNABLE_TYPE_TO_HR_TAB: Record<SignableDocumentType, typeof activeTab> = {
     warning_form: "warningForm",
     promotion_form: "promotionForm",
+    compensation_update: "compensationUpdate",
     action_plan_form: "actionPlanForm",
     termination_form: "terminationForm",
     w8ben: "w8ben",
@@ -13277,6 +13280,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     newPositionTitle: "",
     newDepartment: "",
     effectiveDate: todayStr,
+    wageAmount: "",
+    wageBasis: "hourly" as PromotionWageBasis,
+    hoursPerDay: "",
+    daysPerWeek: "",
     performance: {
       meetsExpectations: false,
       exceedsExpectations: false,
@@ -13321,6 +13328,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     newPositionTitle: promoForm.newPositionTitle,
     newDepartment: promoForm.newDepartment,
     effectiveDate: promoForm.effectiveDate,
+    wageAmount: promoForm.wageAmount.trim(),
+    wageBasis: promoForm.wageBasis,
+    hoursPerDay: promotionWageScheduleFields(promoForm.wageBasis).hoursPerDay ? promoForm.hoursPerDay.trim() : "",
+    daysPerWeek: promotionWageScheduleFields(promoForm.wageBasis).daysPerWeek ? promoForm.daysPerWeek.trim() : "",
     performance: promoForm.performance,
     recipientSlot,
     recipientName,
@@ -13550,6 +13561,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       newPositionTitle: "",
       newDepartment: "",
       effectiveDate: todayStr,
+      wageAmount: "",
+      wageBasis: "hourly",
+      hoursPerDay: "",
+      daysPerWeek: "",
       performance: { meetsExpectations: false, exceedsExpectations: false, leadershipDemonstrated: false, trainingCompleted: false, other: false, otherText: "" },
     });
   };
@@ -17360,6 +17375,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "coe", label: "Certificate of Employment", count: 0, icon: CheckCircle },
     { key: "customForms", label: "Custom Forms", count: newCustomFormSubmissionsCount, icon: FileText },
     { key: "promotionForm", label: "Employee Promotion / Role Change", count: 0, icon: FileText },
+    { key: "compensationUpdate", label: "Promotion Paper and Wage Increase", count: 0, icon: FileText },
     { key: "warningForm", label: "Employee Warning Form", count: 0, icon: FileText },
     { key: "i9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2CountOld, icon: FileCheck },
     { key: "actionPlanForm", label: "Manager's Action Plan Form", count: 0, icon: FileText },
@@ -22913,6 +22929,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   isFiltered={warningFormIsColumnFiltered("sentBy")}
                 />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Recipient</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Signers</th>
                 <FilterableTh
                   column="status" label="Status"
                   sortColumn={warningFormSentSortColumn} sortDir={warningFormSentSortDir} onSort={handleWarningFormSentSort}
@@ -22928,7 +22945,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </thead>
             <tbody>
               {sortedSentWarningForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentWarningForms.length === 0 ? "No warning forms sent yet." : "No forms match this search/filter."}</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentWarningForms.length === 0 ? "No warning forms sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
                 sortedSentWarningForms.map((doc) => {
                   const data = doc.formData as unknown as WarningFormData;
@@ -22945,6 +22962,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       <td className="px-4 py-3 text-muted-foreground">
                         {recipient?.name ?? doc.recipientName ?? "—"} <span className="text-[10px] uppercase">({doc.recipientSlot.replace("_", " ")}{!doc.recipientId ? " · external" : ""})</span>
                       </td>
+                      <td className="px-4 py-3"><SignersChecklist doc={doc} recipientDisplayName={recipient?.name} /></td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-1 rounded text-xs font-semibold ${
                           doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
@@ -23044,6 +23062,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       )}
 
       {/* ── Generate Employee Promotion / Role Change Form ── */}
+      {activeTab === "compensationUpdate" && <CompensationUpdateTab />}
+
       {activeTab === "promotionForm" && (
       <>
       <div className="panel p-0 overflow-hidden mt-4">
@@ -23137,6 +23157,74 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Effective Date</label>
               <input type="date" value={promoForm.effectiveDate} onChange={(e) => updatePromoField("effectiveDate", e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
             </div>
+            <div className="mt-2 flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Wage</label>
+              <div className="flex gap-2">
+                <div className="relative min-w-0 flex-1">
+                  <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={promoForm.wageAmount}
+                    onChange={(e) => updatePromoField("wageAmount", e.target.value.replace(/[^0-9.,]/g, ""))}
+                    placeholder="0.00"
+                    aria-label="Wage amount in dollars"
+                    className="glass-input w-full text-sm py-1.5 pl-6 pr-3 rounded-md"
+                  />
+                </div>
+                <select
+                  value={promoForm.wageBasis}
+                  onChange={(e) => updatePromoField("wageBasis", e.target.value as PromotionWageBasis)}
+                  aria-label="Wage basis"
+                  style={{ width: "9rem", flex: "0 0 9rem" }}
+                  className="glass-input text-sm py-1.5 px-2 rounded-md"
+                >
+                  <option value="hourly">per hour</option>
+                  <option value="daily">per day</option>
+                  <option value="monthly">per month</option>
+                  <option value="yearly">per year</option>
+                </select>
+              </div>
+            </div>
+            {(() => {
+              // Hourly asks for hours/day + days/week, daily only days/week; fixed monthly/yearly hides both.
+              const show = promotionWageScheduleFields(promoForm.wageBasis);
+              if (!show.hoursPerDay && !show.daysPerWeek) return null;
+              return (
+                <div className={`mt-2 grid gap-2 ${show.hoursPerDay && show.daysPerWeek ? "grid-cols-2" : "grid-cols-1"}`}>
+                  {show.hoursPerDay && (
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Hours per day</label>
+                      <input type="number" min={0} max={24} step="0.5" value={promoForm.hoursPerDay} onChange={(e) => updatePromoField("hoursPerDay", e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                    </div>
+                  )}
+                  {show.daysPerWeek && (
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Days in a week</label>
+                      <input type="number" min={0} max={7} step="1" value={promoForm.daysPerWeek} onChange={(e) => updatePromoField("daysPerWeek", e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+            <div className="mt-2 flex items-center gap-4 text-sm">
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={promoForm.wageBasis === "monthly"}
+                  onChange={(e) => updatePromoField("wageBasis", e.target.checked ? "monthly" : "hourly")}
+                />
+                Fixed monthly
+              </label>
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={promoForm.wageBasis === "yearly"}
+                  onChange={(e) => updatePromoField("wageBasis", e.target.checked ? "yearly" : "hourly")}
+                />
+                Yearly
+              </label>
+            </div>
           </div>
           <div>
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5 block">Performance &amp; Qualification Summary (For Direct Manager)</label>
@@ -23220,6 +23308,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   isFiltered={promotionFormIsColumnFiltered("sentBy")}
                 />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Recipient</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Signers</th>
                 <FilterableTh
                   column="status" label="Status"
                   sortColumn={promotionFormSentSortColumn} sortDir={promotionFormSentSortDir} onSort={handlePromotionFormSentSort}
@@ -23235,7 +23324,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </thead>
             <tbody>
               {sortedSentPromotionForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentPromotionForms.length === 0 ? "No promotion forms sent yet." : "No forms match this search/filter."}</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentPromotionForms.length === 0 ? "No promotion forms sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
                 sortedSentPromotionForms.map((doc) => {
                   const data = doc.formData as unknown as PromotionFormData;
@@ -23252,6 +23341,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       <td className="px-4 py-3 text-muted-foreground">
                         {recipient?.name ?? doc.recipientName ?? "—"} <span className="text-[10px] uppercase">({doc.recipientSlot.replace("_", " ")}{!doc.recipientId ? " · external" : ""})</span>
                       </td>
+                      <td className="px-4 py-3"><SignersChecklist doc={doc} recipientDisplayName={recipient?.name} /></td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-1 rounded text-xs font-semibold ${
                           doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
@@ -23456,6 +23546,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   isFiltered={actionPlanFormIsColumnFiltered("sentBy")}
                 />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Recipient</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Signers</th>
                 <FilterableTh
                   column="status" label="Status"
                   sortColumn={actionPlanFormSentSortColumn} sortDir={actionPlanFormSentSortDir} onSort={handleActionPlanFormSentSort}
@@ -23471,7 +23562,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </thead>
             <tbody>
               {sortedSentActionPlanForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentActionPlanForms.length === 0 ? "No action plan forms sent yet." : "No forms match this search/filter."}</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentActionPlanForms.length === 0 ? "No action plan forms sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
                 sortedSentActionPlanForms.map((doc) => {
                   const data = doc.formData as unknown as ActionPlanFormData;
@@ -23488,6 +23579,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       <td className="px-4 py-3 text-muted-foreground">
                         {recipient?.name ?? doc.recipientName ?? "—"} <span className="text-[10px] uppercase">({doc.recipientSlot.replace("_", " ")}{!doc.recipientId ? " · external" : ""})</span>
                       </td>
+                      <td className="px-4 py-3"><SignersChecklist doc={doc} recipientDisplayName={recipient?.name} /></td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-1 rounded text-xs font-semibold ${
                           doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
@@ -23723,6 +23815,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   isFiltered={terminationFormIsColumnFiltered("sentBy")}
                 />
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Recipient</th>
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Signers</th>
                 <FilterableTh
                   column="status" label="Status"
                   sortColumn={terminationFormSentSortColumn} sortDir={terminationFormSentSortDir} onSort={handleTerminationFormSentSort}
@@ -23738,7 +23831,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </thead>
             <tbody>
               {sortedSentTerminationForms.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentTerminationForms.length === 0 ? "No termination forms sent yet." : "No forms match this search/filter."}</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentTerminationForms.length === 0 ? "No termination forms sent yet." : "No forms match this search/filter."}</td></tr>
               ) : (
                 sortedSentTerminationForms.map((doc) => {
                   const data = doc.formData as unknown as TerminationFormData;
@@ -23755,6 +23848,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       <td className="px-4 py-3 text-muted-foreground">
                         {recipient?.name ?? doc.recipientName ?? "—"} <span className="text-[10px] uppercase">({doc.recipientSlot.replace("_", " ")}{!doc.recipientId ? " · external" : ""})</span>
                       </td>
+                      <td className="px-4 py-3"><SignersChecklist doc={doc} recipientDisplayName={recipient?.name} /></td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-1 rounded text-xs font-semibold ${
                           doc.status === "confirmed" ? "bg-green-500/20 text-green-300"

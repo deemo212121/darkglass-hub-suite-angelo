@@ -498,6 +498,18 @@ export async function uploadWarningForm(companyId: string, employeeName: string,
  * Upload a generated Employee Promotion / Role Change Form PDF — same
  * pattern as uploadWarningForm above.
  */
+/** Upload a generated Promotion Paper and Wage Increase PDF — same shape as uploadPromotionForm. */
+export async function uploadCompensationUpdate(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/compensation-updates`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "compensation-update")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
 export async function uploadPromotionForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
   if (!isFirebaseReady() || !storage) {
     throw new Error("Firebase Storage not configured");

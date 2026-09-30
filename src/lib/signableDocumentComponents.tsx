@@ -51,6 +51,7 @@ export const INTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   drivers_license_form: lazy(() => import("@/components/FillDriversLicensePage").then((m) => ({ default: m.FillDriversLicensePage }))),
   valid_id_form: lazy(() => import("@/components/FillValidIdPage").then((m) => ({ default: m.FillValidIdPage }))),
   visit_exception_report: lazy(() => import("@/components/FillVisitExceptionReportPage").then((m) => ({ default: m.FillVisitExceptionReportPage }))),
+  compensation_update: lazy(() => import("@/components/SignCompensationUpdatePage").then((m) => ({ default: m.SignCompensationUpdatePage }))),
 };
 
 export const EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType, ReturnType<typeof lazy>> = {
@@ -98,4 +99,6 @@ export const EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   // No external (no-login) variant — see signableDocumentRegistry.ts's
   // entry. Reuses the internal page, same as master_w2_agreement above.
   visit_exception_report: lazy(() => import("@/components/FillVisitExceptionReportPage").then((m) => ({ default: m.FillVisitExceptionReportPage }))),
+  // Internal-only (see signableDocumentRegistry.ts) — reuses the internal page.
+  compensation_update: lazy(() => import("@/components/SignCompensationUpdatePage").then((m) => ({ default: m.SignCompensationUpdatePage }))),
 };

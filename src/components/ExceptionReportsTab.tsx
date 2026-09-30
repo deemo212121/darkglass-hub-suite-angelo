@@ -32,7 +32,7 @@ import { resolveEmployeeInfo as resolveTicketDisputeEmployeeInfo, TicketDisputeH
 import { regenerateTicketDisputePdf } from "@/lib/ticketDisputeReportPdf";
 import { employeeInfoForPto, PtoHrSignModal } from "@/components/PtoSignModals";
 import { regeneratePtoExceptionReportPdf } from "@/lib/ptoExceptionReportPdf";
-import { normalizeRole } from "@/lib/roleLabels";
+import { normalizeRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { ActualTime, RequestedTime } from "@/components/CorrectionRequestedTime";
 
 const PTO_LEAVE_TYPE_LABELS: Record<string, string> = { sick: "Sick Leave", unpaid: "Unpaid Leave" };
@@ -251,7 +251,25 @@ export function ExceptionReportsTab() {
     }
   };
 
-  const reports = useMemo(() => {
+  // Staff group, same rules the rest of the app uses: PH = assigned branch
+  // "Philippines" (payroll/attendance grace use this exact check), then the
+  // technician side — any role in the Technician department (Technician,
+  // Tech Manager, Branch Manager, Senior Branch Manager, Technical Director,
+  // Technical Assistant Director) or a Technician tier — and every other US
+  // employee (Parts) is US Staff.
+  type StaffGroup = "all" | "ph" | "us" | "tech";
+  const [staffGroup, setStaffGroup] = useState<StaffGroup>("all");
+  const groupOf = (profileId: string): Exclude<StaffGroup, "all"> => {
+    const p = profileById.get(profileId);
+    if (p?.assigned_branch === "Philippines") return "ph";
+    if (getRoleDepartmentBreakdown(p?.role).department === "Technician" || normalizeRole(p?.role).startsWith("TECHNICIAN")) return "tech";
+    return "us";
+  };
+  const inGroup = (profileId: string) => staffGroup === "all" || groupOf(profileId) === staffGroup;
+
+  // Everything visible to this viewer that matches the search — before the
+  // staff-group filter, so the group buttons can show a count for each.
+  const allReports = useMemo(() => {
     const q = search.trim().toLowerCase();
     return corrections
       .filter((c) => c.pdfUrl !== null)
@@ -260,7 +278,7 @@ export function ExceptionReportsTab() {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }, [corrections, search, teamScopedIds, myProfileId, profiles]);
 
-  const ticketReports = useMemo(() => {
+  const allTicketReports = useMemo(() => {
     const q = search.trim().toLowerCase();
     return ticketDisputes
       .filter((r) => r.pdfUrl !== null)
@@ -269,7 +287,7 @@ export function ExceptionReportsTab() {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }, [ticketDisputes, search, teamScopedIds, profiles]);
 
-  const slUlReports = useMemo(() => {
+  const allSlUlReports = useMemo(() => {
     const q = search.trim().toLowerCase();
     return ptoRequests
       .filter((r) => r.exceptionType !== null && r.pdfUrl !== null)
@@ -277,6 +295,15 @@ export function ExceptionReportsTab() {
       .filter((r) => !q || profileName(r.profileId).toLowerCase().includes(q))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }, [ptoRequests, search, teamScopedIds, myProfileId, profiles]);
+
+  const reports = allReports.filter((c) => inGroup(c.profileId));
+  const ticketReports = allTicketReports.filter((r) => inGroup(r.profileId));
+  const slUlReports = allSlUlReports.filter((r) => inGroup(r.profileId));
+
+  const currentBase: { profileId: string }[] =
+    subView === "timeCorrection" ? allReports : subView === "ticketDispute" ? allTicketReports : allSlUlReports;
+  const groupCounts = { all: currentBase.length, ph: 0, us: 0, tech: 0 };
+  for (const r of currentBase) groupCounts[groupOf(r.profileId)]++;
 
   return (
     <div className="space-y-6">
@@ -316,15 +343,41 @@ export function ExceptionReportsTab() {
             </button>
           </div>
         </div>
-        <div className="mb-4 mt-3">
-          <label className="block text-xs text-slate-400 uppercase mb-2">Search Employee</label>
-          <input
-            type="text"
-            placeholder="Enter employee name..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full max-w-xs bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none transition"
-          />
+        <div className="mb-4 mt-3 flex flex-wrap items-end gap-4">
+          <div>
+            <label className="block text-xs text-slate-400 uppercase mb-2">Search Employee</label>
+            <input
+              type="text"
+              placeholder="Enter employee name..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full min-w-[16rem] max-w-xs bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none transition"
+            />
+          </div>
+          <div>
+            <span className="block text-xs text-slate-400 uppercase mb-2">Staff Group</span>
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Staff group">
+              {([
+                ["all", "All"],
+                ["ph", "PH"],
+                ["us", "US Staff (Parts)"],
+                ["tech", "Technicians"],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={staffGroup === key}
+                  onClick={() => setStaffGroup(key)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1.5 ${
+                    staffGroup === key ? "bg-primary/20 text-primary" : "bg-slate-800/50 text-slate-400 hover:text-white"
+                  }`}
+                >
+                  {label}
+                  <span className="rounded-full bg-black/20 px-1.5 text-[10px] tabular-nums">{groupCounts[key]}</span>
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
         {subView === "timeCorrection" ? (
         <table className="w-full text-sm">
@@ -425,6 +478,7 @@ export function ExceptionReportsTab() {
             <tr className="border-b border-white/10">
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Employee</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Ticket #</th>
+              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Dispute Type</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Exception Type</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Paperwork Status</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Submitted</th>
@@ -433,9 +487,9 @@ export function ExceptionReportsTab() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400"><Loader2 className="h-4 w-4 animate-spin inline" /></td></tr>
+              <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400"><Loader2 className="h-4 w-4 animate-spin inline" /></td></tr>
             ) : ticketReports.length === 0 ? (
-              <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">No exception report PDFs yet.</td></tr>
+              <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">No exception report PDFs yet.</td></tr>
             ) : ticketReports.map((r) => {
               const mgrBadge = managerBadge(r);
               const hrStatusBadge = hrBadge(r);
@@ -453,6 +507,13 @@ export function ExceptionReportsTab() {
                     </button>
                   </td>
                   <td className="px-3 py-3 text-slate-300">{r.ticketNo || "—"}</td>
+                  <td className="px-3 py-3">
+                    {r.disputeMode === "reschedule" ? (
+                      <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold border bg-blue-500/20 text-blue-300 border-blue-500/40">Reschedule</span>
+                    ) : (
+                      <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold border bg-amber-500/20 text-amber-300 border-amber-500/40">Time Dispute</span>
+                    )}
+                  </td>
                   <td className="px-3 py-3 text-slate-300">{r.exceptionType ? TICKET_DISPUTE_EXCEPTION_TYPE_LABELS[r.exceptionType] : "—"}</td>
                   <td className="px-3 py-3">
                     <div className="flex flex-col gap-1">

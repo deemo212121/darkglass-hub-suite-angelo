@@ -23,7 +23,7 @@ import {
   ptoRequestsInYear,
   sickYearWindow,
   sickRequestsInYear,
-  weekdayCount,
+  workingDayCount,
   type PtoRequestRow,
   type PtoType,
 } from "@/lib/supabase/pto";
@@ -451,7 +451,12 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             setSubmitting(false);
             return;
           }
-          const requestedDays = weekdayCount(formData.startDate, formData.endDate);
+          const requestedDays = workingDayCount(formData.startDate, formData.endDate, companyProfiles.find((p) => p.id === myProfileId)?.off_days);
+          if (requestedDays === 0) {
+            alert("Every day in that range is one of your scheduled rest days — there's nothing to file leave for.");
+            setSubmitting(false);
+            return;
+          }
           if (myPtoYear && requestedDays > myPtoRemaining) {
             alert(`This request is ${requestedDays} day${requestedDays === 1 ? "" : "s"}, but you only have ${myPtoRemaining} of ${myPtoYear.allowance} days left for Year ${myPtoYear.tenureYear} (resets ${myPtoYear.end}).`);
             setSubmitting(false);
@@ -504,7 +509,12 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           }
           // No 1-year eligibility gate here — Sick Leave is available from
           // day 1 of employment, unlike vacation PTO above.
-          const requestedDays = weekdayCount(formData.startDate, formData.endDate);
+          const requestedDays = workingDayCount(formData.startDate, formData.endDate, companyProfiles.find((p) => p.id === myProfileId)?.off_days);
+          if (requestedDays === 0) {
+            alert("Every day in that range is one of your scheduled rest days — there's nothing to file leave for.");
+            setSubmitting(false);
+            return;
+          }
           if (mySickYear && requestedDays > mySickRemaining) {
             alert(`This request is ${requestedDays} day${requestedDays === 1 ? "" : "s"}, but you only have ${mySickRemaining} of ${mySickYear.allowance} Sick Leave day(s) left for Year ${mySickYear.tenureYear} (resets ${mySickYear.end}).`);
             setSubmitting(false);

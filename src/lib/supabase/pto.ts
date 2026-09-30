@@ -482,16 +482,40 @@ export function canReviewPtoStage(
   return has("FINANCE");
 }
 
-/** Count weekdays (Mon–Fri) in an inclusive date range — used for the default hours estimate. */
-export function weekdayCount(startDate: string, endDate: string): number {
+/**
+ * Days a leave actually deducts: every date in the inclusive range EXCEPT
+ * the employee's own scheduled rest days (profiles.off_days, JS getDay()
+ * indices, 0=Sunday). A Friday–Tuesday leave for someone off Sat/Sun counts
+ * 3 days; for someone off Sun/Mon it counts Fri, Sat, Tue = 3. Anyone with no
+ * rest days on file is treated as off Saturday and Sunday. Can be 0 when the
+ * whole range is rest days.
+ */
+export function workingDayCount(startDate: string, endDate: string, offDays?: number[] | null): number {
+  const restDays = new Set(offDays && offDays.length > 0 ? offDays : [0, 6]);
   const start = new Date(startDate + "T00:00:00");
   const end = new Date(endDate + "T00:00:00");
   let count = 0;
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    const dow = d.getDay();
-    if (dow !== 0 && dow !== 6) count++;
+    if (!restDays.has(d.getDay())) count++;
   }
-  return Math.max(1, count);
+  return count;
+}
+
+async function getProfileOffDays(profileId: string): Promise<number[] | null> {
+  const { data, error } = await supabase.from("profiles").select("off_days").eq("id", profileId).maybeSingle();
+  if (error) {
+    console.error("getProfileOffDays error:", error.message);
+    return null;
+  }
+  return (data?.off_days as number[] | null) ?? null;
+}
+
+async function leaveHoursFor(profileId: string, startDate: string, endDate: string): Promise<number> {
+  const days = workingDayCount(startDate, endDate, await getProfileOffDays(profileId));
+  if (days === 0) {
+    throw new Error("Every day in that range is a scheduled rest day for this employee — there's nothing to file leave for.");
+  }
+  return days * 8;
 }
 
 /** Submit a new PTO request on behalf of an employee (profileId). */
@@ -530,7 +554,7 @@ export async function createPtoRequest(input: {
   employeeSignatureName?: string;
   pdfUrl?: string;
 }): Promise<PtoRequestRow> {
-  const hoursRequested = weekdayCount(input.startDate, input.endDate) * 8;
+  const hoursRequested = await leaveHoursFor(input.profileId, input.startDate, input.endDate);
   const insertPayload: Record<string, unknown> = {
     ...(input.id ? { id: input.id } : {}),
     profile_id: input.profileId,
@@ -588,7 +612,12 @@ export async function updatePtoRequest(
   id: string,
   input: { ptoType: PtoType; startDate: string; endDate: string; reason: string }
 ): Promise<void> {
-  const hoursRequested = weekdayCount(input.startDate, input.endDate) * 8;
+  const { data: existing, error: lookupError } = await supabase.from("pto_requests").select("profile_id").eq("id", id).single();
+  if (lookupError) {
+    console.error("updatePtoRequest lookup error:", lookupError.message);
+    throw new Error(lookupError.message);
+  }
+  const hoursRequested = await leaveHoursFor(existing.profile_id, input.startDate, input.endDate);
   const { error } = await supabase
     .from("pto_requests")
     .update({
