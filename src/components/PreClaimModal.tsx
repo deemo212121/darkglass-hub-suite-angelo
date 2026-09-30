@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { X, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import type { Ticket } from "@/lib/ticketData";
 import { getTicketVisits, getTicketParts, updateTicketPart, type UIPartRow } from "@/lib/supabase/tickets";
 import {
   getTicketClaimDetails,
+  getReadyToCompleteDate,
   upsertTicketClaimDetails,
   type TicketClaimDetails,
 } from "@/lib/supabase/claimDetails";
@@ -95,6 +96,9 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
   const [saving, setSaving] = useState(false);
   const [customerComplaint, setCustomerComplaint] = useState("");
   const [servicePerformed, setServicePerformed] = useState("");
+  // The latest visit's own Service Performed text — what an unedited claim uses.
+  const [visitServicePerformed, setVisitServicePerformed] = useState("");
+  const [spDefect, setSpDefect] = useState<{ state: "loading" | "ok" | "none"; text?: string; problemType?: string } | null>(null);
   // The newest visit log entry, shown in full so the claim can be checked
   // against what the tech actually recorded. `latestVisitNo` is its V#.
   const [latestVisit, setLatestVisit] = useState<Awaited<ReturnType<typeof getTicketVisits>>[number] | null>(null);
@@ -105,17 +109,25 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
   const [submittingToSP, setSubmittingToSP] = useState(false);
   const [spMessage, setSpMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
+  const currentTicketRef = useRef(ticket.ticketNo);
+  currentTicketRef.current = ticket.ticketNo;
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setSpDefect(null);
     Promise.all([
       getTicketClaimDetails(ticket.ticketNo),
       getTicketVisits(ticket.ticketNo),
       getTicketParts(ticket.ticketNo),
+      getReadyToCompleteDate(ticket.ticketNo),
     ])
-      .then(([details, visits, partRows]) => {
+      .then(([details, visits, partRows, readyToCompleteDate]) => {
         if (cancelled) return;
         const loaded = details ? { ...emptyForm(), ...details } : emptyForm();
+        // Complete Date fills in from the day the ticket's status last
+        // turned to "CL-Ready to Complete" (status history).
+        if (!loaded.completeDate && readyToCompleteDate) loaded.completeDate = readyToCompleteDate;
         // Posting Date fills in automatically (today, Central time) when the
         // claim doesn't have one yet — still editable, saved on submit.
         if (!loaded.postingDate) loaded.postingDate = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
@@ -138,14 +150,60 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
         setLatestVisit(latest ?? null);
         setLatestVisitNo(visits.length);
         setCustomerComplaint(latest?.symptomCx || ticket.problemDescription || "");
-        setServicePerformed(latest?.resolution || "");
+        // Service Performed: Claims' saved edit if there is one, else the
+        // latest visit's own text.
+        setVisitServicePerformed(latest?.resolution || "");
+        setServicePerformed(details?.servicePerformed || latest?.resolution || "");
         setParts(partRows);
         setCheckedPartIds(new Set(partRows.map((p) => p.id)));
+        void pullDefectFromSP(true);
       })
       .catch((err) => console.error("Failed to load Pre-Claim data:", err))
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [ticket.ticketNo]);
+
+  // Defect info from ServicePower: looks this ticket's call up by call number
+  // (getCallInfoSearch) and reads the call's ProblemType + ProbelmDesc. SP's
+  // dispatch feed has no EIA defect code — ProblemType is a text category
+  // (e.g. "Leaking Water") — so it's SHOWN under the field and only goes in
+  // when someone clicks "Use" (the claim's code field is 4 characters max).
+  // `auto` = the silent lookup on open: a miss shows nothing.
+  const pullDefectFromSP = async (auto = false) => {
+    const forTicket = ticket.ticketNo;
+    setSpDefect({ state: "loading" });
+    try {
+      const { fetchServicePowerCalls } = await import("@/lib/servicePowerSync");
+      const res = await fetchServicePowerCalls({ callNo: forTicket });
+      // Navigated to another ticket while this was in flight — drop it.
+      if (currentTicketRef.current !== forTicket) return;
+      const call = (res.calls ?? []).find((c: any) => String(c?.callNumber ?? "").trim() === forTicket) ?? res.calls?.[0];
+      if (!res.success || !call) {
+        setSpDefect({ state: "none", text: auto ? "" : "Not found on ServicePower." });
+        return;
+      }
+      const problemType = String(call.problemType ?? "").trim();
+      const problemDesc = String(call.problemDesc ?? "").trim();
+      if (!problemType && !problemDesc) {
+        setSpDefect({ state: "none", text: auto ? "" : "ServicePower has no problem type on this call." });
+        return;
+      }
+      setSpDefect({ state: "ok", problemType, text: `ServicePower: ${problemType || "—"}${problemDesc ? ` · "${problemDesc}"` : ""}` });
+    } catch (err) {
+      if (currentTicketRef.current !== forTicket) return;
+      setSpDefect({ state: "none", text: auto ? "" : `ServicePower lookup failed: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  };
+
+  // What to save: the form, plus Service Performed only when it differs
+  // from the visit's own text (or clears a previous edit) — an unedited
+  // claim never writes that column, so saving works before migration 0330.
+  const claimFieldsToSave = (): Partial<FormState> => {
+    const { servicePerformed: savedEdit, ...rest } = form;
+    const edited = servicePerformed.trim() !== visitServicePerformed.trim() ? servicePerformed : "";
+    if (edited || savedEdit) return { ...rest, servicePerformed: edited };
+    return rest;
+  };
 
   const currentIndex = ticketNumbers.indexOf(ticket.ticketNo);
   const goPrev = () => { if (currentIndex > 0) onNavigate(ticketNumbers[currentIndex - 1]); };
@@ -176,7 +234,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
   const handleSubmit = async () => {
     setSaving(true);
     try {
-      const saved = await upsertTicketClaimDetails(ticket.ticketNo, form, myProfileId);
+      const saved = await upsertTicketClaimDetails(ticket.ticketNo, claimFieldsToSave(), myProfileId);
       onSaved(ticket.ticketNo, saved);
       onClose();
     } catch (err) {
@@ -196,7 +254,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
     setSubmittingToSP(true);
     setSpMessage(null);
     try {
-      const saved = await upsertTicketClaimDetails(ticket.ticketNo, form, myProfileId);
+      const saved = await upsertTicketClaimDetails(ticket.ticketNo, claimFieldsToSave(), myProfileId);
       setForm((prev) => ({ ...prev, ...saved }));
       onSaved(ticket.ticketNo, saved);
 
@@ -455,7 +513,33 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
                 </select>
               </Field>
               <Field label="Failure/Defect Code">
-                <input value={form.failureDefectCode} onChange={(e) => setField("failureDefectCode", e.target.value)} className={inputCls} />
+                <div className="flex gap-1.5">
+                  <input value={form.failureDefectCode} onChange={(e) => setField("failureDefectCode", e.target.value)} className={inputCls} />
+                  <button
+                    type="button"
+                    onClick={() => void pullDefectFromSP(false)}
+                    disabled={spDefect?.state === "loading"}
+                    title="Look this call up on ServicePower again"
+                    className="shrink-0 rounded border border-blue-400/40 bg-blue-500/15 px-2 text-[11px] font-semibold text-blue-200 hover:bg-blue-500/25 disabled:opacity-50"
+                  >
+                    {spDefect?.state === "loading" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Pull from SP"}
+                  </button>
+                </div>
+                {spDefect?.text && (
+                  <p className={`mt-1 text-[10px] ${spDefect.state === "ok" ? "text-emerald-300" : "text-slate-500"}`}>
+                    {spDefect.text}
+                    {spDefect.state === "ok" && spDefect.problemType && form.failureDefectCode !== spDefect.problemType && (
+                      <button
+                        type="button"
+                        onClick={() => setField("failureDefectCode", spDefect.problemType!)}
+                        className="ml-1.5 font-semibold text-blue-400 hover:text-blue-300"
+                        title="ServicePower's claim defect code is 4 characters max — longer text is cut off when submitting"
+                      >
+                        Use
+                      </button>
+                    )}
+                  </p>
+                )}
               </Field>
               <Field label="Resolution/Repair Code">
                 <input value={form.resolutionCode} onChange={(e) => setField("resolutionCode", e.target.value)} className={inputCls} />
@@ -467,7 +551,25 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
                 <div className={`${roCls} whitespace-pre-wrap min-h-[100px]`}>{customerComplaint || "—"}</div>
               </Field>
               <Field label="Service Performed">
-                <div className={`${roCls} whitespace-pre-wrap min-h-[100px]`}>{servicePerformed || "—"}</div>
+                <textarea
+                  value={servicePerformed}
+                  onChange={(e) => setServicePerformed(e.target.value)}
+                  rows={5}
+                  className={`${inputCls} min-h-[100px] resize-y`}
+                  placeholder="What was done on the repair"
+                />
+                <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-500">
+                  {servicePerformed.trim() !== visitServicePerformed.trim() ? (
+                    <>
+                      <span className="text-amber-300">Edited for this claim — the visit log is unchanged.</span>
+                      <button type="button" onClick={() => setServicePerformed(visitServicePerformed)} className="text-blue-400 hover:text-blue-300">
+                        Reset to visit's text
+                      </button>
+                    </>
+                  ) : (
+                    <span>From the latest visit. Edits save with the claim.</span>
+                  )}
+                </div>
               </Field>
             </div>
 

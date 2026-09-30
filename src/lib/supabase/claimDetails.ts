@@ -28,6 +28,12 @@ export interface TicketClaimDetails {
   partsOnlyWarranty: boolean;
   failureDefectCode: string;
   resolutionCode: string;
+  /**
+   * Claims' edited Service Performed text (migration 0330). Empty = use the
+   * latest visit's own text. undefined = column not there yet (migration not
+   * run), so it's never sent back on save.
+   */
+  servicePerformed?: string;
   laborFee: number;
   otherFee: number;
   shippingFee: number;
@@ -66,6 +72,7 @@ function rowToClaimDetails(row: any): TicketClaimDetails {
     partsOnlyWarranty: !!row.parts_only_warranty,
     failureDefectCode: row.failure_defect_code ?? "",
     resolutionCode: row.resolution_code ?? "",
+    servicePerformed: "service_performed" in row ? (row.service_performed ?? "") : undefined,
     laborFee: Number(row.labor_fee) || 0,
     otherFee: Number(row.other_fee) || 0,
     shippingFee: Number(row.shipping_fee) || 0,
@@ -148,6 +155,7 @@ export async function upsertTicketClaimDetails(
   if (fields.partsOnlyWarranty !== undefined) payload.parts_only_warranty = fields.partsOnlyWarranty;
   if (fields.failureDefectCode !== undefined) payload.failure_defect_code = fields.failureDefectCode || null;
   if (fields.resolutionCode !== undefined) payload.resolution_code = fields.resolutionCode || null;
+  if (fields.servicePerformed !== undefined) payload.service_performed = fields.servicePerformed || null;
   if (fields.laborFee !== undefined) payload.labor_fee = fields.laborFee;
   if (fields.otherFee !== undefined) payload.other_fee = fields.otherFee;
   if (fields.shippingFee !== undefined) payload.shipping_fee = fields.shippingFee;
@@ -168,7 +176,34 @@ export async function upsertTicketClaimDetails(
     .single();
   if (error) {
     console.error("upsertTicketClaimDetails error:", error.message);
+    if (/service_performed/.test(error.message)) {
+      throw new Error("Saving an edited Service Performed needs migration 0330 (ticket_claim_details.service_performed) — run it in Supabase first.");
+    }
     throw new Error(error.message);
   }
   return rowToClaimDetails(data);
+}
+
+/**
+ * The day (YYYY-MM-DD, Central time) this ticket's status most recently
+ * turned to "CL-Ready to Complete", from ticket_audit_log's status history.
+ * Empty when it never has.
+ */
+export async function getReadyToCompleteDate(ticketNo: string): Promise<string> {
+  const ticketId = await getTicketId(ticketNo);
+  if (!ticketId) return "";
+  const { data, error } = await supabase
+    .from("ticket_audit_log")
+    .select("created_at")
+    .eq("ticket_id", ticketId)
+    .eq("field", "status")
+    .ilike("after_value", "%ready to complete%")
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (error) {
+    console.error("getReadyToCompleteDate error:", error.message);
+    return "";
+  }
+  const at = (data ?? [])[0]?.created_at as string | undefined;
+  return at ? new Date(at).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }) : "";
 }
