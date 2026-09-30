@@ -85,3 +85,33 @@ export async function removeBranchExtraEditor(id: string): Promise<void> {
   const { error } = await supabase.from("branch_daily_report_extra_editors").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
+
+export interface BranchFallbackTech {
+  id: string;
+  branch: string;
+  profileId: string;
+}
+
+/**
+ * Hand-picked fallback techs (migration 0327), company-wide. A branch with
+ * any rows here uses exactly this list instead of the automatic
+ * highest-tier pick; a branch with none keeps the automatic default.
+ */
+export async function getBranchFallbackTechs(): Promise<BranchFallbackTech[]> {
+  const { data, error } = await supabase
+    .from("branch_daily_report_fallback_techs")
+    .select("id, branch, profile_id");
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r: any) => ({ id: r.id, branch: r.branch, profileId: r.profile_id }));
+}
+
+/** Replaces a branch's fallback list. An empty list restores the automatic highest-tier default. */
+export async function setBranchFallbackTechs(branch: string, profileIds: string[]): Promise<void> {
+  const { error: delError } = await supabase.from("branch_daily_report_fallback_techs").delete().eq("branch", branch);
+  if (delError) throw new Error(delError.message);
+  if (profileIds.length === 0) return;
+  const { error } = await supabase
+    .from("branch_daily_report_fallback_techs")
+    .insert(profileIds.map((profileId) => ({ branch, profile_id: profileId })));
+  if (error) throw new Error(error.message);
+}

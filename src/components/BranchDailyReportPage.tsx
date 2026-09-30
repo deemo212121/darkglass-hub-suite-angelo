@@ -37,6 +37,9 @@
  *     Assistant Director grant above once that role holds this tier, but
  *     still the only path in for a plain Technician/Technician Manager/
  *     Technical Director at a branch with no Branch Manager.
+ *     That tier pick is only the default (0327): Senior Branch Manager and
+ *     above can hand-pick the branch's fallback tech(s) in Manage Branch
+ *     Access, which then replaces the tier pick until reset.
  *   - Everyone else with access to this page: read-only.
  */
 import { useEffect, useMemo, useState } from "react";
@@ -51,7 +54,7 @@ import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getCompanyTickets } from "@/lib/supabase/tickets";
 import { statusGroupOf } from "@/lib/ticketData";
 import { getCompanyTimecardEntries, calcWorkedHours, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
-import { TECHNICIAN_PAY_ROLES, normalizeRole } from "@/lib/roleLabels";
+import { TECHNICIAN_PAY_ROLES, ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import {
   getBranchDailyReports,
   getBranchDailyReportNotes,
@@ -71,7 +74,10 @@ import {
   getBranchExtraEditors,
   addBranchExtraEditor,
   removeBranchExtraEditor,
+  getBranchFallbackTechs,
+  setBranchFallbackTechs,
   type BranchExtraEditor,
+  type BranchFallbackTech,
 } from "@/lib/supabase/seniorBranchManagerAssignments";
 
 const URGENCY_LABEL: Record<BranchReportUrgency, string> = { low: "Low", moderate: "Moderate", high: "High" };
@@ -105,6 +111,8 @@ const TECHNICIAN_TIER_ORDER: Record<string, number> = {
   TECHNICAL_ASSISTANT_DIRECTOR: 2,
   TECHNICAL_DIRECTOR: 3,
 };
+const roleLabel = (role: string | null | undefined) => ROLE_LABELS[normalizeRole(role || "")] || role || "";
+const TECHNICAL_TIER_KNOWN =(role: string | null | undefined) => TECHNICIAN_TIER_ORDER[normalizeRole(role || "")] !== undefined;
 
 export function BranchDailyReportPage({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
@@ -115,6 +123,7 @@ export function BranchDailyReportPage({ mod }: { mod: ModuleDef; sub: SubModuleD
   const [users, setUsers] = useState<ProfileRow[]>([]);
   const [assignments, setAssignments] = useState<{ id: string; profileId: string; branch: string }[]>([]);
   const [extraEditors, setExtraEditors] = useState<BranchExtraEditor[]>([]);
+  const [fallbackPicks, setFallbackPicks] = useState<BranchFallbackTech[]>([]);
   const [reports, setReports] = useState<BranchDailyReport[]>([]);
   const [notesByReport, setNotesByReport] = useState<Map<string, BranchDailyReportNote[]>>(new Map());
   const [tickets, setTickets] = useState<Awaited<ReturnType<typeof getCompanyTickets>>>([]);
@@ -129,19 +138,22 @@ export function BranchDailyReportPage({ mod }: { mod: ModuleDef; sub: SubModuleD
     setLoading(true);
     setError(null);
     try {
-      const [u, a, r, t, x, tc] = await Promise.all([
+      const [u, a, r, t, x, tc, fp] = await Promise.all([
         getCompanyUsers(),
         getSeniorBranchManagerAssignments(),
         getBranchDailyReports(date),
         getCompanyTickets(),
         getBranchExtraEditors(),
         getCompanyTimecardEntries(date, date).catch((err) => { console.error("Failed to load timecard entries:", err); return []; }),
+        // Missing table (0327 not applied yet) just means "automatic default everywhere".
+        getBranchFallbackTechs().catch((err) => { console.warn("Fallback tech picks unavailable:", err); return [] as BranchFallbackTech[]; }),
       ]);
       setUsers(u);
       setAssignments(a);
       setReports(r);
       setTickets(t);
       setExtraEditors(x);
+      setFallbackPicks(fp);
       setTimecardEntries(tc);
       const notes = await getBranchDailyReportNotes(r.map((row) => row.id));
       const grouped = new Map<string, BranchDailyReportNote[]>();
@@ -186,8 +198,17 @@ export function BranchDailyReportPage({ mod }: { mod: ModuleDef; sub: SubModuleD
     }
     return best;
   }, [users]);
+  // Hand-picked fallback list per branch (0327) — replaces the tier pick when set.
+  const fallbackPicksByBranch = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const p of fallbackPicks) m.set(p.branch, [...(m.get(p.branch) ?? []), p.profileId]);
+    return m;
+  }, [fallbackPicks]);
   const isFallbackTechEditor = (branch: string) => {
-    if (!me || branchesWithActiveBranchManager.has(branch) || me.assigned_branch !== branch) return false;
+    if (!me || branchesWithActiveBranchManager.has(branch)) return false;
+    const picked = fallbackPicksByBranch.get(branch);
+    if (picked) return picked.includes(me.id);
+    if (me.assigned_branch !== branch) return false;
     const myTier = TECHNICIAN_TIER_ORDER[normalizeRole(me.role)];
     return myTier !== undefined && myTier === highestTechTierByBranch.get(branch);
   };
@@ -512,6 +533,7 @@ export function BranchDailyReportPage({ mod }: { mod: ModuleDef; sub: SubModuleD
           extraEditors={extraEditors}
           branchesWithActiveBranchManager={branchesWithActiveBranchManager}
           highestTechTierByBranch={highestTechTierByBranch}
+          fallbackPicksByBranch={fallbackPicksByBranch}
           canManageExtraEditors={canManageExtraEditors}
           onClose={() => setAssignOpen(false)}
           onChanged={load}
@@ -620,6 +642,7 @@ function AssignmentsModal({
   extraEditors,
   branchesWithActiveBranchManager,
   highestTechTierByBranch,
+  fallbackPicksByBranch,
   canManageExtraEditors,
   onClose,
   onChanged,
@@ -630,6 +653,7 @@ function AssignmentsModal({
   extraEditors: BranchExtraEditor[];
   branchesWithActiveBranchManager: Set<string>;
   highestTechTierByBranch: Map<string, number>;
+  fallbackPicksByBranch: Map<string, string[]>;
   canManageExtraEditors: (branch: string) => boolean;
   onClose: () => void;
   onChanged: () => Promise<void>;
@@ -645,8 +669,16 @@ function AssignmentsModal({
 
   const branchManagerFor = (branch: string) =>
     users.find((u) => u.is_active && u.assigned_branch === branch && normalizeRole(u.role) === "BRANCH_MANAGER") || null;
+  // Branch techs a manager can pick as fallback — any technician-pay tier at that branch.
+  const branchTechsFor = (branch: string) =>
+    users.filter((u) => u.is_active && u.assigned_branch === branch && TECHNICAL_TIER_KNOWN(u.role));
+  // Which branch's fallback picker is open, and the boxes ticked in it.
+  const [editingFallback, setEditingFallback] = useState<string | null>(null);
+  const [fallbackDraft, setFallbackDraft] = useState<Set<string>>(new Set());
   const fallbackTechsFor = (branch: string) => {
     if (branchesWithActiveBranchManager.has(branch)) return [];
+    const picked = fallbackPicksByBranch.get(branch);
+    if (picked) return users.filter((u) => picked.includes(u.id));
     const tier = highestTechTierByBranch.get(branch);
     if (tier === undefined) return [];
     return users.filter(
@@ -685,6 +717,20 @@ function AssignmentsModal({
     }
   };
 
+  const handleSaveFallback = async (branch: string, profileIds: string[]) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await setBranchFallbackTechs(branch, profileIds);
+      setEditingFallback(null);
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update fallback tech access.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleRemoveExtraEditor = async (id: string) => {
     setBusy(true);
     setError(null);
@@ -717,6 +763,8 @@ function AssignmentsModal({
             const fallbackTechs = fallbackTechsFor(branch);
             const branchExtraEditors = extraEditorsFor(branch);
             const canManageHere = canManageExtraEditors(branch);
+            const branchTechs = branchTechsFor(branch);
+            const isCustomFallback = fallbackPicksByBranch.has(branch);
             const alreadyHasAccess = new Set([
               ...(bm ? [bm.id] : []),
               ...fallbackTechs.map((t) => t.id),
@@ -745,11 +793,69 @@ function AssignmentsModal({
                     <span className="text-slate-400">Branch Manager: </span>
                     {bm ? <span className="text-foreground">{bm.display_name || bm.email}</span> : <span className="italic">None — fallback tech access below</span>}
                   </p>
-                  {fallbackTechs.length > 0 && (
+                  {!bm && (fallbackTechs.length > 0 || (canManageHere && branchTechs.length > 0)) && (
                     <p>
                       <span className="text-slate-400">Fallback tech access: </span>
-                      <span className="text-foreground">{fallbackTechs.map((t) => t.display_name || t.email).join(", ")}</span>
+                      <span className="text-foreground">
+                        {fallbackTechs.length > 0 ? fallbackTechs.map((t) => t.display_name || t.email).join(", ") : "—"}
+                      </span>
+                      <span className="text-slate-500"> {isCustomFallback ? "(picked)" : "(default: highest tier)"}</span>
+                      {canManageHere && editingFallback !== branch && (
+                        <button
+                          type="button"
+                          onClick={() => { setEditingFallback(branch); setFallbackDraft(new Set(fallbackTechs.map((t) => t.id))); }}
+                          className="ml-2 text-blue-400 hover:text-blue-300"
+                        >
+                          Edit
+                        </button>
+                      )}
                     </p>
+                  )}
+                  {!bm && editingFallback === branch && (
+                    <div className="mt-1 rounded-md border border-white/10 bg-white/5 p-2">
+                      <p className="text-[10px] text-slate-400 mb-1.5">Pick who gets notes access while this branch has no Branch Manager.</p>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1">
+                        {branchTechs.map((t) => (
+                          <label key={t.id} className="inline-flex items-center gap-1.5 text-[11px] text-foreground">
+                            <input
+                              type="checkbox"
+                              checked={fallbackDraft.has(t.id)}
+                              onChange={(e) => setFallbackDraft((prev) => {
+                                const next = new Set(prev);
+                                if (e.target.checked) next.add(t.id); else next.delete(t.id);
+                                return next;
+                              })}
+                            />
+                            {t.display_name || t.email}
+                            <span className="text-slate-500">({roleLabel(t.role)})</span>
+                          </label>
+                        ))}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleSaveFallback(branch, Array.from(fallbackDraft))}
+                          disabled={busy || fallbackDraft.size === 0}
+                          className="btn text-xs px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+                        >
+                          Save
+                        </button>
+                        {isCustomFallback && (
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveFallback(branch, [])}
+                            disabled={busy}
+                            className="btn text-xs px-2.5 py-1 disabled:opacity-50"
+                            title="Go back to the automatic highest-tier pick"
+                          >
+                            Reset to default
+                          </button>
+                        )}
+                        <button type="button" onClick={() => setEditingFallback(null)} className="btn text-xs px-2.5 py-1">
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </div>
                 <div className="mt-2">
