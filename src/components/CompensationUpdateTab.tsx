@@ -28,8 +28,8 @@ import { captureHtmlToPdfBlob, loadAssetDataUrl, resolveSignaturesForCapture } f
 import {
   buildCompensationUpdateBodyMarkup,
   compensationUpdateStyles,
-  COMPENSATION_SIGNING_ORDER,
   COMPENSATION_SLOT_LABEL,
+  compensationSigningOrder,
   nextCompensationSlot,
   compensationSignRequestMessage,
   type CompensationSignatureSlot,
@@ -54,6 +54,7 @@ const emptyForm = () => ({
   salaryIncrease: "",
   seniorId: "",
   execId: "",
+  skipSenior: false,
 });
 
 function statusLabel(doc: SignableDocument): string {
@@ -128,14 +129,16 @@ export function CompensationUpdateTab() {
       salaryIncrease: form.salaryIncrease.trim(),
       signers: {
         employee: { id: form.employeeId, name: employeeName },
-        senior_manager: { id: form.seniorId, name: nameOf(form.seniorId) },
+        senior_manager: form.skipSenior ? { id: "", name: "" } : { id: form.seniorId, name: nameOf(form.seniorId) },
         executive: { id: form.execId, name: nameOf(form.execId) },
         // Signed by whichever HR user picks it up from the Sent list.
         hr_staff: { id: "", name: "" },
       },
-      recipientSlot: "senior_manager",
-      recipientName: nameOf(form.seniorId),
-      recipientNames: { senior_manager: nameOf(form.seniorId) },
+      ...(form.skipSenior ? { skippedSlots: ["senior_manager" as const] } : {}),
+      // First signer: the Senior, or the Executive when no Senior is needed.
+      recipientSlot: form.skipSenior ? "executive" : "senior_manager",
+      recipientName: nameOf(form.skipSenior ? form.execId : form.seniorId),
+      recipientNames: form.skipSenior ? { executive: nameOf(form.execId) } : { senior_manager: nameOf(form.seniorId) },
     };
   };
 
@@ -145,7 +148,7 @@ export function CompensationUpdateTab() {
     !form.startingSalary.trim() && "Starting Salary",
     !form.effectiveDate && "Effective next payroll",
     !form.salaryIncrease.trim() && "Salary Increase",
-    !form.seniorId && "Senior signer",
+    !form.skipSenior && !form.seniorId && "Senior signer",
     !form.execId && "Executive signer",
   ].filter(Boolean) as string[];
 
@@ -161,21 +164,26 @@ export function CompensationUpdateTab() {
       const doc = await createSignableDocument({
         documentType: "compensation_update",
         formData: formData as unknown as Record<string, any>,
-        recipientId: form.seniorId,
-        recipientSlot: "senior_manager",
+        recipientId: formData.recipientSlot === "executive" ? form.execId : form.seniorId,
+        recipientSlot: formData.recipientSlot,
         pdfUrl,
       });
       const myProfileId = await getMyProfileId(uid);
       if (!myProfileId) throw new Error("Could not resolve your profile.");
-      const thread = await getOrCreateDmThread(myProfileId, form.seniorId);
+      const firstId = formData.recipientSlot === "executive" ? form.execId : form.seniorId;
+      const thread = await getOrCreateDmThread(myProfileId, firstId);
       await sendMessage({
         dmThreadId: thread.id,
         senderId: myProfileId,
         senderName: displayName || "HR",
-        body: `🎉 Promotion Paper and Wage Increase for ${formData.employeeName} needs your signature (Senior). Review and sign here: ${signLinkFor(doc.id)}`,
+        body: compensationSignRequestMessage(formData.recipientSlot, formData.employeeName, signLinkFor(doc.id)),
       });
       void logActivity({ action: "compensation_update_sent", targetType: "employee", targetId: form.employeeId, targetLabel: formData.employeeName });
-      setNotice(`Sent to ${formData.signers.senior_manager.name} (Senior). Then it goes to ${formData.signers.executive.name} (Executive), then HR signs it here, and finally ${formData.employeeName} signs last.`);
+      setNotice(
+        form.skipSenior
+          ? `Sent to ${formData.signers.executive.name} (Executive) — no Senior needed. Then HR signs it here, and finally ${formData.employeeName} signs last.`
+          : `Sent to ${formData.signers.senior_manager.name} (Senior). Then it goes to ${formData.signers.executive.name} (Executive), then HR signs it here, and finally ${formData.employeeName} signs last.`
+      );
       setForm(emptyForm());
       await loadDocs();
     } catch (err) {
@@ -189,7 +197,7 @@ export function CompensationUpdateTab() {
   const handleSendOn = async (doc: SignableDocument) => {
     if (!uid) return;
     const data = doc.formData as CompensationUpdateFormData;
-    const next = nextCompensationSlot(doc.recipientSlot as CompensationSignatureSlot);
+    const next = nextCompensationSlot(doc.recipientSlot as CompensationSignatureSlot, data);
     setBusyId(doc.id);
     setError(null);
     try {
@@ -350,7 +358,15 @@ export function CompensationUpdateTab() {
             </div>
             <div className="rounded-lg border border-white/10 p-3 space-y-3">
               <p className="text-xs font-semibold text-slate-300">Signing order</p>
-              {personSelect("1. Senior", form.seniorId, (v) => setForm((f) => ({ ...f, seniorId: v })))}
+              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer w-fit">
+                <input type="checkbox" checked={form.skipSenior} onChange={(e) => setForm((f) => ({ ...f, skipSenior: e.target.checked, seniorId: e.target.checked ? "" : f.seniorId }))} />
+                No Senior needed — start with the Executive
+              </label>
+              {form.skipSenior ? (
+                <p className="text-xs text-slate-500 line-through">1. Senior</p>
+              ) : (
+                personSelect("1. Senior", form.seniorId, (v) => setForm((f) => ({ ...f, seniorId: v })))
+              )}
               {personSelect("2. Executive", form.execId, (v) => setForm((f) => ({ ...f, execId: v })))}
               <p className="text-xs text-slate-400">3. HR — signs from the Sent list below (any HR) once the Executive has signed.</p>
               <p className="text-xs text-slate-400">4. Employee — {form.employeeId ? nameOf(form.employeeId) : "the recipient above"} signs last, which completes it.</p>
@@ -409,7 +425,7 @@ export function CompensationUpdateTab() {
                   <td className="px-4 py-3 font-medium text-white">{data.employeeName || "—"}</td>
                   <td className="px-4 py-3 text-slate-300 whitespace-nowrap">{doc.createdByName ?? "—"}</td>
                   <td className="px-4 py-3 text-xs text-slate-300">
-                    {COMPENSATION_SIGNING_ORDER.map((slot) => {
+                    {compensationSigningOrder(data).map((slot) => {
                       const signed = doc.signatures?.[slot];
                       const current = doc.status === "pending_signature" && doc.recipientSlot === slot;
                       return (
@@ -446,7 +462,7 @@ export function CompensationUpdateTab() {
                       )}
                       {doc.status === "signed" && (
                         <button type="button" onClick={() => handleSendOn(doc)} disabled={busy} className="px-2 py-1 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded text-xs font-semibold">
-                          {nextCompensationSlot(doc.recipientSlot as CompensationSignatureSlot) ? "Send to next signer" : "Finalize"}
+                          {nextCompensationSlot(doc.recipientSlot as CompensationSignatureSlot, data) ? "Send to next signer" : "Finalize"}
                         </button>
                       )}
                       {open && (

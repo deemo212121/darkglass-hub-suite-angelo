@@ -446,7 +446,7 @@ export async function saveEntry(
   profileId: string,
   workDate: string,
   entry: UITimeEntry,
-  opts?: { clockedInBy?: string }
+  opts?: { clockedInBy?: string; correctedBy?: string }
 ): Promise<void> {
   // clocked_in_by is only ever included in the payload when this save is
   // itself a manager's proxy clock-in — omitting the key entirely (rather
@@ -455,25 +455,30 @@ export async function saveEntry(
   // trail, since PostgREST's upsert only updates columns present in the
   // payload.
   await withNetworkRetry(async () => {
-    const { error } = await supabase
-      .from("timecard_entries")
-      .upsert(
-        {
-          profile_id: profileId,
-          work_date: workDate,
-          check_in: entry.checkIn || null,
-          check_out: entry.checkOut || null,
-          meal_start: entry.mealStart || null,
-          meal_end: entry.mealEnd || null,
-          notes: entry.notes || null,
-          ...(opts?.clockedInBy ? { clocked_in_by: opts.clockedInBy } : {}),
-          // Only included when the caller explicitly sets it — otherwise a
-          // punch-only save (clock in/out, corrections, etc.) would null out
-          // whatever state was already assigned to this day.
-          ...(entry.state !== undefined ? { state: entry.state || null } : {}),
-        },
-        { onConflict: "profile_id,work_date" }
-      );
+    const payload: Record<string, unknown> = {
+      profile_id: profileId,
+      work_date: workDate,
+      check_in: entry.checkIn || null,
+      check_out: entry.checkOut || null,
+      meal_start: entry.mealStart || null,
+      meal_end: entry.mealEnd || null,
+      notes: entry.notes || null,
+      ...(opts?.clockedInBy ? { clocked_in_by: opts.clockedInBy } : {}),
+      // A direct time edit (Payroll detail / Attendance Status), not a punch —
+      // shown as "Corrected by". Migration 0328.
+      ...(opts?.correctedBy ? { corrected_by: opts.correctedBy, corrected_at: new Date().toISOString() } : {}),
+      // Only included when the caller explicitly sets it — otherwise a
+      // punch-only save (clock in/out, corrections, etc.) would null out
+      // whatever state was already assigned to this day.
+      ...(entry.state !== undefined ? { state: entry.state || null } : {}),
+    };
+    let { error } = await supabase.from("timecard_entries").upsert(payload, { onConflict: "profile_id,work_date" });
+    // Before migration 0328 the corrected_by columns don't exist — fall back
+    // to the old behaviour (stamp clocked_in_by) rather than failing the save.
+    if (error && opts?.correctedBy && /corrected_(by|at)/.test(error.message)) {
+      const { corrected_by: _cb, corrected_at: _ca, ...rest } = payload;
+      ({ error } = await supabase.from("timecard_entries").upsert({ ...rest, clocked_in_by: opts.correctedBy }, { onConflict: "profile_id,work_date" }));
+    }
     if (error) {
       console.error("saveEntry error:", error.message);
       throw new Error(error.message);
@@ -759,6 +764,12 @@ export interface AttendanceRow {
   leaveType?: PtoType;
   /** State the technician was assigned to for this day, if set. */
   state?: string;
+  /** Who last saved the punches when it wasn't a self-punch (HR edit / manager proxy clock-in); null for a self-punch. */
+  clockedInBy?: string | null;
+  /** The day's timecard notes (auto clock-out marker / review line). */
+  notes?: string;
+  /** Who directly edited this day's times (Payroll detail / Attendance Status) — migration 0328. */
+  correctedBy?: string | null;
 }
 
 /**
@@ -788,13 +799,18 @@ export async function getAttendanceForRange(
     unpaidLeaveDates?: Map<string, PtoType>;
   } = {}
 ): Promise<AttendanceRow[]> {
-  const { data, error } = await supabase
-    .from("timecard_entries")
-    .select("work_date, check_in, check_out, meal_start, meal_end, state")
-    .eq("profile_id", profileId)
-    .gte("work_date", startDate)
-    .lte("work_date", endDate)
-    .order("work_date", { ascending: true });
+  const runAttendanceQuery = (cols: string) =>
+    supabase
+      .from("timecard_entries")
+      .select(cols)
+      .eq("profile_id", profileId)
+      .gte("work_date", startDate)
+      .lte("work_date", endDate)
+      .order("work_date", { ascending: true });
+  type AttendanceQueryResult = { data: any[] | null; error: { message: string } | null };
+  let { data, error } = (await runAttendanceQuery("work_date, check_in, check_out, meal_start, meal_end, state, clocked_in_by, notes, corrected_by")) as unknown as AttendanceQueryResult;
+  // Before migration 0328 there's no corrected_by column.
+  if (error && /corrected_by/.test(error.message)) ({ data, error } = (await runAttendanceQuery("work_date, check_in, check_out, meal_start, meal_end, state, clocked_in_by, notes")) as unknown as AttendanceQueryResult);
   if (error) throw new Error(error.message);
 
   const byDate = new Map<string, any>();
@@ -892,6 +908,9 @@ export async function getAttendanceForRange(
       hoursWorked: calcWorkedHours(entry),
       status,
       ...(row.state ? { state: row.state as string } : {}),
+      clockedInBy: (row.clocked_in_by as string | null) ?? null,
+      notes: (row.notes as string | null) ?? "",
+      correctedBy: (row.corrected_by as string | null) ?? null,
     });
   }
   return rows;
@@ -1038,6 +1057,10 @@ export interface CompanyTimecardEntry {
   mealEnd: string;
   /** Profile id of whoever performed the clock-in, if not the technician themselves (a manager's proxy clock-in). Null for a normal self-punch. */
   clockedInBy: string | null;
+  /** The day's timecard notes — carries the system's "[Auto clock-out …]" marker. */
+  notes: string;
+  /** Who directly edited this day's times (Payroll detail / Attendance Status) — migration 0328. */
+  correctedBy: string | null;
 }
 
 /**
@@ -1051,14 +1074,22 @@ export async function getCompanyTimecardEntries(
   endDate: string
 ): Promise<CompanyTimecardEntry[]> {
   const all: CompanyTimecardEntry[] = [];
+  // corrected_by only exists after migration 0328 — drop it once if missing.
+  let cols = "profile_id, work_date, check_in, check_out, meal_start, meal_end, clocked_in_by, notes, corrected_by";
   for (let from = 0; ; from += TIMECARD_ENTRIES_PAGE_SIZE) {
-    const { data, error } = await supabase
-      .from("timecard_entries")
-      .select("profile_id, work_date, check_in, check_out, meal_start, meal_end, clocked_in_by")
-      .gte("work_date", startDate)
-      .lte("work_date", endDate)
-      .order("work_date", { ascending: false })
-      .range(from, from + TIMECARD_ENTRIES_PAGE_SIZE - 1);
+    const run = () =>
+      supabase
+        .from("timecard_entries")
+        .select(cols)
+        .gte("work_date", startDate)
+        .lte("work_date", endDate)
+        .order("work_date", { ascending: false })
+        .range(from, from + TIMECARD_ENTRIES_PAGE_SIZE - 1);
+    let { data, error } = await run();
+    if (error && /corrected_by/.test(error.message)) {
+      cols = cols.replace(", corrected_by", "");
+      ({ data, error } = await run());
+    }
     if (error) {
       console.error("getCompanyTimecardEntries error:", error.message);
       return all;
@@ -1072,6 +1103,8 @@ export async function getCompanyTimecardEntries(
         mealStart: row.meal_start ?? "",
         mealEnd: row.meal_end ?? "",
         clockedInBy: row.clocked_in_by ?? null,
+        notes: row.notes ?? "",
+        correctedBy: row.corrected_by ?? null,
       }))
     );
     if (!data || data.length < TIMECARD_ENTRIES_PAGE_SIZE) break;

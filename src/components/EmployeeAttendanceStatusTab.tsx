@@ -16,20 +16,25 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, Loader2, Pencil, RefreshCw, X } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
-import { getProfileIdByFirebaseUid, getCompanyTimecardEntries, getEntryForDate, saveEntry, addDaysISO, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
+import { getProfileIdByFirebaseUid, getCompanyTimecardEntries, getEntryForDate, saveEntry, appendEntryNote, addDaysISO, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getCompanyTimecardCorrections, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { getCompanyPtoRequests, type PtoRequestRow, type PtoType } from "@/lib/supabase/pto";
 import { getAttendanceNotes, upsertAttendanceNote, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { ROLE_LABELS, normalizeRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
+import { correctionApproverId, autoClockOutInfo, AUTO_CLOCKOUT_REVIEWED_PREFIX } from "@/lib/attendanceStatusCode";
+import { getTicketAttendanceForTechnician, type TicketAttendanceRow } from "@/lib/supabase/technicianWhereabouts";
+import { getCompanyEmployeeRequests, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 
-type StatusKind = "completed" | "corrected" | "missing" | "pending" | "leave" | "rest" | "working" | "upcoming";
+type StatusKind = "completed" | "corrected" | "review" | "missing" | "pending" | "leave" | "rest" | "working" | "upcoming";
 
 interface DayStatus {
   kind: StatusKind;
   detail: string;
   correctedBy?: string;
+  /** A manager clocked them in on their behalf (proxy clock-in) — not a correction. */
+  clockedInBy?: string;
 }
 
 const HISTORY_DAYS = 14;
@@ -46,6 +51,7 @@ const PTO_LABEL: Record<PtoType, string> = {
 const STATUS_LABEL: Record<StatusKind, string> = {
   completed: "Completed",
   corrected: "Corrected",
+  review: "Pending for Review",
   missing: "Missing",
   pending: "Pending",
   leave: "On Leave",
@@ -57,6 +63,7 @@ const STATUS_LABEL: Record<StatusKind, string> = {
 const STATUS_CLASS: Record<StatusKind, string> = {
   completed: "bg-green-500/20 text-green-300 border-green-500/40",
   corrected: "bg-violet-500/20 text-violet-300 border-violet-500/40",
+  review: "bg-orange-500/20 text-orange-300 border-orange-500/40",
   missing: "bg-red-500/20 text-red-300 border-red-500/40",
   pending: "bg-amber-500/20 text-amber-300 border-amber-500/40",
   leave: "bg-sky-500/20 text-sky-300 border-sky-500/40",
@@ -83,17 +90,6 @@ function fmtTime(t: string): string {
   return `${h % 12 || 12}:${m[2]} ${h < 12 ? "AM" : "PM"}`;
 }
 
-/** The last stage approver on an approved Time Correction (manager / HR / accounting), or the overall reviewer. */
-function correctionApproverId(c: TimecardCorrectionRow): string | null {
-  const stages = [
-    { by: c.managerReviewedBy, at: c.managerReviewedAt, ok: c.managerStatus === "approved" },
-    { by: c.hrReviewedBy, at: c.hrReviewedAt, ok: c.hrStatus === "approved" },
-    { by: c.accountingReviewedBy, at: c.accountingReviewedAt, ok: c.accountingStatus === "approved" },
-  ].filter((st) => st.ok && st.by);
-  stages.sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""));
-  return stages[0]?.by ?? c.reviewedBy ?? null;
-}
-
 function computeStatus(args: {
   profile: ProfileRow;
   date: string;
@@ -115,27 +111,34 @@ function computeStatus(args: {
   // editor; an approved Time Correction names whoever approved it last.
   const approvedCorrection = corrections.find((c) => c.status === "approved");
   const approverId = approvedCorrection ? correctionApproverId(approvedCorrection) : null;
-  const correctedBy =
-    entry?.clockedInBy && entry.clockedInBy !== profile.id
-      ? nameOf(entry.clockedInBy)
-      : approvedCorrection
-      ? approverId
-        ? nameOf(approverId)
-        : "Time Correction"
-      : undefined;
+  // Corrected = someone changed the times directly (corrected_by, migration 0328 —
+  // counts even on HR's own timecard) or an approved Time Correction.
+  // A manager's proxy clock-in (clocked_in_by) is only "Clocked in by".
+  const correctedBy = entry?.correctedBy
+    ? nameOf(entry.correctedBy)
+    : approvedCorrection
+    ? approverId
+      ? nameOf(approverId)
+      : "Time Correction"
+    : undefined;
+  const clockedInBy = entry?.clockedInBy && entry.clockedInBy !== profile.id ? nameOf(entry.clockedInBy) : undefined;
 
   if (entry?.checkIn && entry.checkOut) {
     if (entry.mealStart && !entry.mealEnd) return { kind: "missing", detail: "Meal end missing", correctedBy };
     if (!entry.mealStart && entry.mealEnd) return { kind: "missing", detail: "Meal start missing", correctedBy };
-    if (correctedBy) return { kind: "corrected", detail: approvedCorrection && !(entry.clockedInBy && entry.clockedInBy !== profile.id) ? "via Time Correction" : "", correctedBy };
-    return { kind: "completed", detail: "" };
+    if (correctedBy) return { kind: "corrected", detail: approvedCorrection && !entry.correctedBy ? "via Time Correction" : "", correctedBy, clockedInBy };
+    // The system clocked them out — HR reviews it (Mark reviewed), or edits the times (→ Corrected).
+    const auto = autoClockOutInfo(entry.notes);
+    if (auto.auto && !auto.reviewedBy) return { kind: "review", detail: `Auto clock-out${auto.time ? ` at ${fmtTime(auto.time)}` : ""} — HR to review`, clockedInBy };
+    if (auto.auto) return { kind: "completed", detail: `Auto clock-out reviewed by ${auto.reviewedBy}`, clockedInBy };
+    return { kind: "completed", detail: "", clockedInBy };
   }
 
   const approvedPto = ptos.find((r) => r.status === "approved");
   if (approvedPto) return { kind: "leave", detail: `${PTO_LABEL[approvedPto.ptoType]} leave · Approved ✓` };
 
   if (entry?.checkIn) {
-    if (date === today) return { kind: "working", detail: "No check-out yet" };
+    if (date === today) return { kind: "working", detail: "No check-out yet", clockedInBy };
     return { kind: "missing", detail: "Check-out missing", correctedBy };
   }
   if (entry?.checkOut) return { kind: "missing", detail: "Check-in missing", correctedBy };
@@ -280,7 +283,7 @@ export function EmployeeAttendanceStatusTab() {
 
   const hasKind = (r: (typeof rows)[number], k: StatusKind) => (isRange ? (r.dayCounts[k] ?? 0) > 0 : r.status.kind === k);
   // Range: an employee counts toward a chip if any day in the range had that status.
-  const counts = (["completed", "corrected", "missing", "pending", "working", "leave", "rest"] as StatusKind[]).reduce<Record<string, number>>((acc, k) => {
+  const counts = (["completed", "corrected", "review", "missing", "pending", "working", "leave", "rest"] as StatusKind[]).reduce<Record<string, number>>((acc, k) => {
     acc[k] = rows.filter((r) => hasKind(r, k)).length;
     return acc;
   }, {});
@@ -316,7 +319,7 @@ export function EmployeeAttendanceStatusTab() {
     setEditError(null);
     try {
       const existing = await getEntryForDate(profileId, day);
-      await saveEntry(profileId, day, { ...draft, notes: existing?.notes ?? "" }, { clockedInBy: myProfileId });
+      await saveEntry(profileId, day, { ...draft, notes: existing?.notes ?? "" }, { correctedBy: myProfileId });
       setEditingDay(null);
       setEntries(await getCompanyTimecardEntries(rangeStart, date));
     } catch (err) {
@@ -325,6 +328,46 @@ export function EmployeeAttendanceStatusTab() {
       setSavingEdit(false);
     }
   };
+
+  // Technicians: their scheduled tickets for the open person's days — the Date
+  // cell lists them, and a worked day with none gets a "No tickets" flag (same
+  // idea as Ticket Attendance).
+  const isTechnician = (p: ProfileRow) =>
+    getRoleDepartmentBreakdown(p.role).department === "Technician" || normalizeRole(p.role).startsWith("TECHNICIAN");
+  const [ticketsFor, setTicketsFor] = useState<{ profileId: string; loading: boolean; rows: TicketAttendanceRow[] } | null>(null);
+  const [openTicketDay, setOpenTicketDay] = useState<string | null>(null);
+  // The open technician's Ticket Time Disputes — a ticket with no Work Start but a
+  // dispute still awaiting approval counts as Pending, not Missing.
+  const [ticketDisputes, setTicketDisputes] = useState<EmployeeRequestRow[]>([]);
+  const pendingDisputeFor = (ticketNo: string) =>
+    ticketDisputes.find((d) => d.status === "pending" && (d.ticketNo || "").trim().toUpperCase() === ticketNo.trim().toUpperCase()) ?? null;
+  /** Tickets with no on-site Work Start (cancelled tickets don't count), split by whether a dispute is pending. */
+  const ticketGaps = (rows: TicketAttendanceRow[]) => {
+    const noStart = rows.filter((t) => !t.arrivedAt && t.statusGroup !== "cancelled");
+    const pending = noStart.filter((t) => pendingDisputeFor(t.ticketNo));
+    return { missing: noStart.length - pending.length, pending: pending.length };
+  };
+  useEffect(() => {
+    setOpenTicketDay(null);
+    const prof = openProfileId ? profileById.get(openProfileId) : null;
+    if (!prof || !isTechnician(prof) || !prof.display_name) {
+      setTicketsFor(null);
+      return;
+    }
+    let cancelled = false;
+    setTicketsFor({ profileId: prof.id, loading: true, rows: [] });
+    getTicketAttendanceForTechnician(prof.display_name, rangeStart, date)
+      .then((rows) => !cancelled && setTicketsFor({ profileId: prof.id, loading: false, rows }))
+      .catch(() => !cancelled && setTicketsFor({ profileId: prof.id, loading: false, rows: [] }));
+    getCompanyEmployeeRequests()
+      .then((reqs) => !cancelled && setTicketDisputes(reqs.filter((r) => r.requestType === "ticket_time_dispute" && r.profileId === prof.id)))
+      .catch(() => !cancelled && setTicketDisputes([]));
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openProfileId, rangeStart, date, profiles]);
+  const ticketsOn = (profileId: string, day: string) =>
+    ticketsFor && ticketsFor.profileId === profileId && !ticketsFor.loading ? ticketsFor.rows.filter((t) => t.scheduleDate === day) : null;
+  const fmtStamp = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "—");
 
   const noteByKey = useMemo(() => new Map(notes.map((n) => [`${n.profileId}|${n.noteDate}`, n])), [notes]);
 
@@ -400,11 +443,40 @@ export function EmployeeAttendanceStatusTab() {
     );
   };
 
+  const [reviewingKey, setReviewingKey] = useState<string | null>(null);
+  /** HR marks a system auto clock-out as reviewed (times kept as-is) — appends a line to the day's notes. */
+  const markReviewed = async (profileId: string, day: string) => {
+    const key = `${profileId}|${day}`;
+    setReviewingKey(key);
+    try {
+      const me = myProfileId ? nameOf(myProfileId) : "HR";
+      await appendEntryNote(profileId, day, `${AUTO_CLOCKOUT_REVIEWED_PREFIX}${me}]`);
+      setEntries(await getCompanyTimecardEntries(rangeStart, date));
+    } catch (err) {
+      alert(`Failed to mark reviewed: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setReviewingKey(null);
+    }
+  };
+  const reviewButton = (profileId: string, s: DayStatus, day: string) =>
+    canEditPunches && s.kind === "review" ? (
+      <button
+        type="button"
+        onClick={() => markReviewed(profileId, day)}
+        disabled={reviewingKey === `${profileId}|${day}`}
+        title="Keep the system's Time Out and mark this day reviewed. To change the time instead, use the pencil."
+        className="mt-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-orange-600/80 hover:bg-orange-600 text-white disabled:opacity-50"
+      >
+        {reviewingKey === `${profileId}|${day}` ? "Saving…" : "Mark reviewed"}
+      </button>
+    ) : null;
+
   const statusBadge = (s: DayStatus) => (
     <div className="flex flex-col items-start gap-0.5">
       <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${STATUS_CLASS[s.kind]}`}>{STATUS_LABEL[s.kind]}</span>
       {s.detail && <span className="text-[11px] text-slate-400">{s.detail}</span>}
       {s.correctedBy && <span className="text-[11px] text-violet-300">Corrected by: {s.correctedBy}</span>}
+      {s.clockedInBy && <span className="text-[11px] text-sky-300">Clocked in by: {s.clockedInBy}</span>}
     </div>
   );
 
@@ -479,7 +551,7 @@ export function EmployeeAttendanceStatusTab() {
       </div>
 
       <div className="flex flex-wrap gap-1.5">
-        {([["", "All", rows.length], ...(["completed", "corrected", "missing", "pending", "working", "leave", "rest"] as StatusKind[]).map((k) => [k, isRange ? `Had ${STATUS_LABEL[k]}` : STATUS_LABEL[k], counts[k] ?? 0])] as [StatusKind | "", string, number][]).map(([key, label, n]) => (
+        {([["", "All", rows.length], ...(["completed", "corrected", "review", "missing", "pending", "working", "leave", "rest"] as StatusKind[]).map((k) => [k, isRange ? `Had ${STATUS_LABEL[k]}` : STATUS_LABEL[k], counts[k] ?? 0])] as [StatusKind | "", string, number][]).map(([key, label, n]) => (
           <button
             key={key || "all"}
             type="button"
@@ -529,14 +601,17 @@ export function EmployeeAttendanceStatusTab() {
                 <td className="px-3 py-2.5">
                   {isRange ? (
                     <div className="flex flex-wrap gap-1">
-                      {(["completed", "corrected", "missing", "pending", "working", "leave", "rest"] as StatusKind[]).filter((k) => dayCounts[k]).map((k) => (
+                      {(["completed", "corrected", "review", "missing", "pending", "working", "leave", "rest"] as StatusKind[]).filter((k) => dayCounts[k]).map((k) => (
                         <span key={k} className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${STATUS_CLASS[k]}`}>
                           {STATUS_LABEL[k]} <span className="tabular-nums">{dayCounts[k]}</span>
                         </span>
                       ))}
                     </div>
                   ) : (
-                    statusBadge(status)
+                    <>
+                      {statusBadge(status)}
+                      {reviewButton(p.id, status, date)}
+                    </>
                   )}
                 </td>
               </tr>
@@ -590,14 +665,60 @@ export function EmployeeAttendanceStatusTab() {
                               </tr>
                             );
                           }
+                          const tech = isTechnician(p);
+                          const dayTickets = tech ? ticketsOn(p.id, day) : null;
+                          const dayStatus = statusFor(p, day);
+                          const worked = ["completed", "corrected", "review", "working"].includes(dayStatus.kind);
+                          const ticketOpen = openTicketDay === day;
                           return (
-                            <tr key={day} className={`border-b border-white/5 align-top ${day === date ? "bg-primary/5" : ""}`}>
-                              <td className="px-3 py-2 text-slate-200 whitespace-nowrap">{fmtDay(day)}</td>
+                            <Fragment key={day}>
+                            <tr className={`border-b border-white/5 align-top ${day === date ? "bg-primary/5" : ""} ${ticketOpen ? "bg-white/5" : ""}`}>
+                              <td className="px-3 py-2 text-slate-200 whitespace-nowrap">
+                                {tech ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setOpenTicketDay(ticketOpen ? null : day)}
+                                    title="Show this day's tickets"
+                                    className="inline-flex items-center gap-1 text-blue-300 hover:text-blue-200 hover:underline"
+                                  >
+                                    <ChevronRight className={`h-3 w-3 transition-transform ${ticketOpen ? "rotate-90" : ""}`} />
+                                    {fmtDay(day)}
+                                    {dayTickets && dayTickets.length > 0 && <span className="ml-1 text-[10px] text-slate-400">({dayTickets.length})</span>}
+                                  </button>
+                                ) : (
+                                  fmtDay(day)
+                                )}
+                              </td>
                               <td className="px-3 py-2 tabular-nums text-slate-200">{e?.checkIn ? fmtTime(e.checkIn) : "—"}</td>
                               <td className="px-3 py-2 tabular-nums text-slate-300">{e?.mealStart ? fmtTime(e.mealStart) : "—"}</td>
                               <td className="px-3 py-2 tabular-nums text-slate-300">{e?.mealEnd ? fmtTime(e.mealEnd) : "—"}</td>
                               <td className="px-3 py-2 tabular-nums text-slate-200">{e?.checkOut ? fmtTime(e.checkOut) : "—"}</td>
-                              <td className="px-3 py-2">{statusBadge(statusFor(p, day))}</td><td className="px-3 py-2">{notesCell(p.id, day)}</td>
+                              <td className="px-3 py-2">
+                                {statusBadge(dayStatus)}
+                                {worked && dayTickets && dayTickets.length === 0 && (
+                                  <span className="mt-1 inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold border bg-rose-500/15 text-rose-300 border-rose-500/30" title="Clocked in this day but had no scheduled tickets">
+                                    No tickets
+                                  </span>
+                                )}
+                                {worked && dayTickets && dayTickets.length > 0 && (() => {
+                                  const gaps = ticketGaps(dayTickets);
+                                  return (
+                                    <div className="mt-1 flex flex-wrap gap-1">
+                                      {gaps.missing > 0 && (
+                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold border bg-rose-500/15 text-rose-300 border-rose-500/30" title="Tickets with no on-site Work Start and no dispute filed">
+                                          Missing {gaps.missing} ticket{gaps.missing === 1 ? "" : "s"}
+                                        </span>
+                                      )}
+                                      {gaps.pending > 0 && (
+                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold border bg-amber-500/15 text-amber-300 border-amber-500/30" title="Tickets with no Work Start that have a Ticket Time Dispute awaiting approval">
+                                          Pending {gaps.pending} ticket{gaps.pending === 1 ? "" : "s"}
+                                        </span>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+                                {reviewButton(p.id, dayStatus, day)}
+                              </td><td className="px-3 py-2">{notesCell(p.id, day)}</td>
                               {canEditPunches && (
                                 <td className="px-2 py-2">
                                   {day <= today && (
@@ -608,6 +729,47 @@ export function EmployeeAttendanceStatusTab() {
                                 </td>
                               )}
                             </tr>
+                            {ticketOpen && (
+                              <tr className="border-b border-white/5 bg-slate-950/60">
+                                <td colSpan={canEditPunches ? 8 : 7} className="px-3 py-2 pl-8">
+                                  {ticketsFor?.loading ? (
+                                    <span className="text-xs text-slate-400"><Loader2 className="h-3.5 w-3.5 animate-spin inline mr-1" />Loading tickets…</span>
+                                  ) : !dayTickets || dayTickets.length === 0 ? (
+                                    <span className="text-xs text-slate-400">No tickets scheduled for {fmtDay(day)}.</span>
+                                  ) : (
+                                    <table className="w-full text-xs">
+                                      <thead>
+                                        <tr className="text-left text-[10px] uppercase text-slate-500">
+                                          <th className="px-2 py-1">Ticket #</th>
+                                          <th className="px-2 py-1">Status</th>
+                                          <th className="px-2 py-1">Time Slot</th>
+                                          <th className="px-2 py-1">Work Start</th>
+                                          <th className="px-2 py-1">Work Done</th>
+                                          <th className="px-2 py-1">Address</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {dayTickets.map((t) => (
+                                          <tr key={t.ticketId} className="border-t border-white/5">
+                                            <td className="px-2 py-1">
+                                              <a href={`/ticket/${encodeURIComponent(t.ticketNo)}`} target="_blank" rel="noreferrer" className="text-blue-300 hover:underline font-medium">{t.ticketNo}</a>
+                                            </td>
+                                            <td className="px-2 py-1 text-slate-300">{t.status || "—"}</td>
+                                            <td className="px-2 py-1 text-slate-300">{t.timeSlot || "—"}</td>
+                                            <td className={`px-2 py-1 tabular-nums ${t.arrivedAt ? "text-slate-200" : t.statusGroup === "cancelled" ? "text-slate-500" : pendingDisputeFor(t.ticketNo) ? "text-amber-300" : "text-rose-300"}`}>
+                                              {t.arrivedAt ? fmtStamp(t.arrivedAt) : t.statusGroup === "cancelled" ? "—" : pendingDisputeFor(t.ticketNo) ? "Dispute pending" : "No check-in"}
+                                            </td>
+                                            <td className={`px-2 py-1 tabular-nums ${t.doneAt ? "text-slate-200" : "text-slate-500"}`}>{fmtStamp(t.doneAt)}</td>
+                                            <td className="px-2 py-1 text-slate-400">{t.address || "—"}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  )}
+                                </td>
+                              </tr>
+                            )}
+                            </Fragment>
                           );
                         })}
                       </tbody>

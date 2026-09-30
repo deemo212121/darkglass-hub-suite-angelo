@@ -38,6 +38,8 @@ export interface CompensationUpdateFormData {
   salaryIncrease: string;
   /** Who signs each slot, chosen by HR at send time. */
   signers: Record<CompensationSignatureSlot, CompensationSigner>;
+  /** Slots HR chose to leave out of this paper (e.g. no Senior needed). Older papers have none. */
+  skippedSlots?: CompensationSignatureSlot[];
   /** Current recipient — kept in sync by reassignSignableDocument / the bridge. */
   recipientSlot: CompensationSignatureSlot;
   recipientName: string;
@@ -131,7 +133,7 @@ export function buildCompensationUpdateBodyMarkup(data: CompensationUpdateFormDa
       <p class="comp-p">Congratulations once again, and best wishes in your new roles!</p>
 
       <div class="comp-sign-title">Signatures</div>
-      ${COMPENSATION_SIGNING_ORDER.map((slot) => signRow(slot, data, signatures)).join("")}
+      ${compensationSigningOrder(data).map((slot) => signRow(slot, data, signatures)).join("")}
     </div>
   `;
 }
@@ -144,8 +146,18 @@ export function compensationSignRequestMessage(nextSlot: CompensationSignatureSl
   return `🎉 Promotion Paper and Wage Increase for ${employeeName} needs your signature (${COMPENSATION_SLOT_LABEL[nextSlot]}). Review and sign here: ${link}`;
 }
 
-/** The slot after `current` in signing order, or null when `current` is the last (Employee). */
-export function nextCompensationSlot(current: CompensationSignatureSlot): CompensationSignatureSlot | null {
-  const i = COMPENSATION_SIGNING_ORDER.indexOf(current);
-  return i >= 0 && i < COMPENSATION_SIGNING_ORDER.length - 1 ? COMPENSATION_SIGNING_ORDER[i + 1] : null;
+/** This paper's signing order — the fixed order minus any slots HR skipped. */
+export function compensationSigningOrder(data?: Pick<CompensationUpdateFormData, "skippedSlots"> | null): CompensationSignatureSlot[] {
+  const skipped = new Set(data?.skippedSlots ?? []);
+  return COMPENSATION_SIGNING_ORDER.filter((slot) => !skipped.has(slot));
+}
+
+/** The slot after `current` in this paper's signing order, or null when `current` is the last (Employee). */
+export function nextCompensationSlot(
+  current: CompensationSignatureSlot,
+  data?: Pick<CompensationUpdateFormData, "skippedSlots"> | null
+): CompensationSignatureSlot | null {
+  const order = compensationSigningOrder(data);
+  const i = order.indexOf(current);
+  return i >= 0 && i < order.length - 1 ? order[i + 1] : null;
 }

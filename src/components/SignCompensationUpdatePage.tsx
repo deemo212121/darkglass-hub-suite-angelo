@@ -183,7 +183,7 @@ export function SignCompensationUpdatePage({ docId }: Props) {
                 ? outcome.nextSlot === "hr_staff" && outcome.nextName === "HR"
                   ? "✓ Signed. Sent to HR for the next signature."
                   : `✓ Signed. Sent to ${outcome.nextName} (${COMPENSATION_SLOT_LABEL[outcome.nextSlot]}) for the next signature.`
-                : "✓ Signed. All four signatures are in — the document is complete."}
+                : "✓ Signed. All signatures are in — the document is complete."}
             </p>
             {doc.pdfUrl && (
               <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">

@@ -5,7 +5,9 @@ import { useAuth } from "@/lib/auth";
 import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, hoursDiff, MEAL_ALWAYS_PAID_DEFAULT_HOURS, type AttendanceRow } from "@/lib/supabase/timecards";
 import { isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, hasAnyTechnicianPayRole } from "@/lib/roleLabels";
 import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
-import { getPendingCorrectionsInRange, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
+import { getPendingCorrectionsInRange, getApprovedCorrectionsForProfile, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
+import { attendanceCodeFor, correctionApproverId, autoClockOutInfo, ATTENDANCE_CODE_CLASS, ATTENDANCE_CODE_LABEL } from "@/lib/attendanceStatusCode";
+import { supabase } from "@/lib/supabase/client";
 import { PendingItemDetailModal, type PendingItem } from "@/components/PendingItemDetailModal";
 import { getCompanyPtoRequests, isPaidPtoType, type PtoRequestRow, type PtoType } from "@/lib/supabase/pto";
 import { getAttendanceNotes } from "@/lib/supabase/attendanceNotes";
@@ -243,6 +245,9 @@ export function EmployeePayrollDetailModal({
   // clicking a "Pending Time Correction Request" status can show the actual
   // request detail + approve/reject inline, same popup Absent List uses.
   const [pendingCorrectionByDate, setPendingCorrectionByDate] = useState<Map<string, TimecardCorrectionRow>>(new Map());
+  // CP / CR / PD / MS codes: approved corrections (for "Corrected by") and names of whoever changed a day.
+  const [approvedCorrectionByDate, setApprovedCorrectionByDate] = useState<Map<string, TimecardCorrectionRow>>(new Map());
+  const [changerNames, setChangerNames] = useState<Map<string, string>>(new Map());
   // This employee's attendance_notes content, keyed by date — the same
   // (profile, day) notes typed on the Daily/Ticket Attendance tabs' "Add
   // note" field, surfaced here as a hover bubble on the Date cell so a note
@@ -396,12 +401,13 @@ export function EmployeePayrollDetailModal({
       const seedEnd = addDaysISO(rangeStart, -1);
       const needsSeed = seedStart <= seedEnd;
       const notesStart = needsSeed ? seedStart : rangeStart;
-      const [holidays, pendingCorrections, hist, myTicketRows, hrStatusNotes] = await Promise.all([
+      const [holidays, pendingCorrections, hist, myTicketRows, hrStatusNotes, approvedCorrections] = await Promise.all([
         getCompanyHolidaysInRange(rangeStart, rangeEnd).catch(() => []),
         getPendingCorrectionsInRange(rangeStart, rangeEnd).catch(() => []),
         getSalaryHistory(profileId),
         getTicketAttendanceForTechnician(employeeName, rangeStart, rangeEnd),
         getAttendanceNotes(notesStart, rangeEnd).catch(() => []),
+        getApprovedCorrectionsForProfile(profileId, rangeStart, rangeEnd).catch(() => []),
       ]);
       // Merge in HR-plotted leave (attendance_notes.hr_note, no formal
       // pto_requests row) — a formal request wins if one somehow also
@@ -447,6 +453,23 @@ export function EmployeePayrollDetailModal({
       setSeedAttendance(seedRows);
       setNotesByDate(noteMap);
       setPendingCorrectionByDate(new Map(pendingCorrections.filter((c) => c.profileId === profileId).map((c) => [c.workDate, c])));
+      setApprovedCorrectionByDate(new Map(approvedCorrections.map((c) => [c.workDate, c])));
+      const changerIds = [
+        ...new Set([
+          ...attRows.map((r) => r.clockedInBy).filter((id): id is string => !!id && id !== profileId),
+          ...attRows.map((r) => r.correctedBy).filter((id): id is string => !!id),
+          ...approvedCorrections.map(correctionApproverId).filter((id): id is string => !!id),
+        ]),
+      ];
+      if (changerIds.length > 0) {
+        supabase
+          .from("profiles")
+          .select("id, display_name, email")
+          .in("id", changerIds)
+          .then(({ data }) => {
+            if (!cancelledRef.current) setChangerNames(new Map((data ?? []).map((p: any) => [p.id as string, (p.display_name || p.email || "") as string])));
+          });
+      }
       setHistory(hist);
       setTicketRows(myTicketRows);
       // Not needed to render the rows themselves — fetched separately so a
@@ -1094,7 +1117,7 @@ export function EmployeePayrollDetailModal({
           profileId,
           row.date,
           { checkIn: e.checkIn, checkOut: e.checkOut, mealStart: e.mealStart, mealEnd: e.mealEnd, notes: "" },
-          myProfileId ? { clockedInBy: myProfileId } : undefined
+          myProfileId ? { correctedBy: myProfileId } : undefined
         );
       }
       setAttendanceEditing(false);
@@ -1742,6 +1765,39 @@ export function EmployeePayrollDetailModal({
                         </td>
                         <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? fmtDecimal(totalDayHours) : "—"}</td>
                         <td className={`py-1.5 text-right font-semibold ${STATUS_COLOR[row.status]}`}>
+                          {(() => {
+                            const approved = approvedCorrectionByDate.get(row.date);
+                            // Only a direct time edit or an approved Time Correction counts as Corrected — a
+                            // manager's proxy clock-in (clocked_in_by) is still a normal Completed day.
+                            const changerId = row.correctedBy ? row.correctedBy : approved ? correctionApproverId(approved) ?? "time-correction" : null;
+                            const clockedInById = row.clockedInBy && row.clockedInBy !== profileId ? row.clockedInBy : null;
+                            const now = new Date();
+                            const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+                            const pendingPto = ptoRequests.some((r) => r.profileId === profileId && r.status === "pending" && r.startDate <= row.date && r.endDate >= row.date);
+                            const code = attendanceCodeFor({
+                              checkIn: row.clockIn,
+                              checkOut: row.clockOut,
+                              pending: row.status === "pending-correction" || pendingPto,
+                              excused: row.status === "day-off" || row.status === "holiday" || row.status === "paid-leave" || row.status === "unpaid-leave",
+                              correctedById: changerId,
+                              needsReview: (() => {
+                                const a = autoClockOutInfo(row.notes);
+                                return a.auto && !a.reviewedBy;
+                              })(),
+                              isFuture: row.date > todayKey,
+                              isToday: row.date === todayKey,
+                            });
+                            if (!code) return null;
+                            const who = code === "CR" ? (changerId === "time-correction" ? "Time Correction" : changerNames.get(changerId ?? "") || "someone else") : "";
+                            return (
+                              <span
+                                title={code === "CR" ? `Corrected by: ${who}` : code === "CP" && clockedInById ? `Completed — Clocked in by: ${changerNames.get(clockedInById) || "a manager"}` : code === "PR" ? "Pending for Review — the system clocked this employee out automatically; HR reviews it in Employee Monitoring → Attendance Status" : ATTENDANCE_CODE_LABEL[code]}
+                                className={`mr-1.5 inline-block px-1.5 py-px rounded text-[10px] font-bold border align-middle ${ATTENDANCE_CODE_CLASS[code]}`}
+                              >
+                                {code}
+                              </span>
+                            );
+                          })()}
                           {row.status === "pending-correction" && pendingCorrectionByDate.has(row.date) ? (
                             <button
                               type="button"

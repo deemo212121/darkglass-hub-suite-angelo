@@ -28,7 +28,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Pencil, Check, Loader2, Filter, CalendarDays, ListChecks, ClipboardList, Paperclip, Flag, History, X, BarChart3, AlertTriangle, Umbrella, HeartPulse, ListTodo, FileDown, Users } from "lucide-react";
+import { ChevronLeft, Pencil, Check, Loader2, Filter, CalendarDays, ListChecks, Paperclip, Flag, History, X, BarChart3, AlertTriangle, Umbrella, HeartPulse, ListTodo, FileDown, Users } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { ROLE_LABELS, TECHNICIAN_PAY_ROLES, normalizeRole } from "@/lib/roleLabels";
@@ -39,7 +39,6 @@ import { getCompanyTimecardEntries, getProfileIdByFirebaseUid, type CompanyTimec
 import { getAttendanceNotes, upsertAttendanceNote, upsertAttendanceHrNote, uploadAttendanceNoteAttachment, removeAttendanceNoteAttachment, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
 import { getCompanyPtoRequests, sickYearWindow, sickDaysUsed, SICK_LEAVE_ANNUAL_ALLOWANCE, type PtoRequestRow } from "@/lib/supabase/pto";
 import { HrCalendarTab } from "@/components/HrCalendarTab";
-import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
 import { PtoManagementTab } from "@/components/PtoManagementTab";
 import { EmployeeAttendanceStatusTab } from "@/components/EmployeeAttendanceStatusTab";
 import { VisitExceptionReportTab } from "@/components/VisitExceptionReportTab";
@@ -145,7 +144,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   // Monitoring already mount (TicketAttendanceTab.tsx takes no props and
   // fetches its own data), added as a third view so HR can check on-site
   // check-ins without leaving this page.
-  const [view, setView] = useState<"list" | "calendar" | "ticketAttendance" | "ptoManagement" | "exceptionReports" | "holidays" | "visitExceptions" | "exceededSickDays" | "pendingExplanations" | "attendanceStatus">("list");
+  const [view, setView] = useState<"list" | "calendar" | "ptoManagement" | "exceptionReports" | "holidays" | "visitExceptions" | "exceededSickDays" | "pendingExplanations" | "attendanceStatus">("list");
   const [statsCardHidden, setStatsCardHidden] = useState(false);
   const [dateFrom, setDateFrom] = useState(todayISO());
   const [dateTo, setDateTo] = useState(todayISO());
@@ -1076,13 +1075,6 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           </button>
           <button
             type="button"
-            onClick={() => setView("ticketAttendance")}
-            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "ticketAttendance" ? "bg-primary/20 text-primary" : ""}`}
-          >
-            <ClipboardList className="h-3.5 w-3.5" /> Ticket Attendance
-          </button>
-          <button
-            type="button"
             onClick={() => setView("ptoManagement")}
             className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "ptoManagement" ? "bg-primary/20 text-primary" : ""}`}
           >
@@ -1135,8 +1127,6 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         {view === "calendar" && (
           <HrCalendarTab employees={calendarEmployees} myProfileId={myProfileId} myDisplayName={displayName} />
         )}
-
-        {view === "ticketAttendance" && <TicketAttendanceTab />}
 
         {view === "attendanceStatus" && <EmployeeAttendanceStatusTab />}
 
