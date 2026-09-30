@@ -74,6 +74,9 @@ export const SIGNABLE_DOCUMENT_REGISTRY: Record<SignableDocumentType, SignableDo
   // an onboarding checklist item — recipient is always an existing AHS
   // technician, no external/no-login variant needed.
   visit_exception_report: { label: "Employee Attendance & Visit Exception Report", internalPath: "/fill-visit-exception-report", externalPath: "/fill-visit-exception-report" },
+  // Every signer (employee, senior, exec, HR) is an existing AHS teammate —
+  // no external/no-login variant.
+  compensation_update: { label: "Promotion Paper and Wage Increase", internalPath: "/sign-compensation-update", externalPath: "/sign-compensation-update" },
 };
 
 export function signableDocumentLabel(type: SignableDocumentType): string {
@@ -148,7 +151,7 @@ export const STAFF_FORM_TIERS: { key: StaffFormTier; label: string; formTypes: S
  * pull every warning/promotion/action-plan/termination form for every
  * employee's entire tenure, none of which Hiring ever renders.
  */
-const EMPLOYEE_ONLY_DOCUMENT_TYPES = new Set<SignableDocumentType>(["warning_form", "promotion_form", "action_plan_form", "termination_form"]);
+const EMPLOYEE_ONLY_DOCUMENT_TYPES = new Set<SignableDocumentType>(["warning_form", "promotion_form", "action_plan_form", "termination_form", "compensation_update"]);
 export const HIRING_CANDIDATE_DOCUMENT_TYPES: SignableDocumentType[] = (
   Object.keys(SIGNABLE_DOCUMENT_REGISTRY) as SignableDocumentType[]
 ).filter((t) => !EMPLOYEE_ONLY_DOCUMENT_TYPES.has(t));

@@ -8,7 +8,7 @@ import {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, ImageRun,
   BorderStyle, WidthType, VerticalAlign, AlignmentType,
 } from "docx";
-import type { PromotionFormData, PromotionFormSignatures } from "./promotionFormTemplate";
+import { promotionWageText, promotionWageScheduleFields, type PromotionFormData, type PromotionFormSignatures } from "./promotionFormTemplate";
 
 const INK = "111827";
 const MUTED = "374151";
@@ -144,6 +144,27 @@ export async function buildPromotionFormDocxBlob(data: PromotionFormData, logoDa
       new TableRow({ children: [new TableCell({ borders: BOTTOM_RULE_CELL_BORDERS, margins: CELL_MARGINS, children: [labelValue("New Position Title", data.newPositionTitle)] })] }),
       new TableRow({ children: [new TableCell({ borders: BOTTOM_RULE_CELL_BORDERS, margins: CELL_MARGINS, children: [labelValue("New Department/Branch", data.newDepartment)] })] }),
       new TableRow({ children: [new TableCell({ borders: BOTTOM_RULE_CELL_BORDERS, margins: CELL_MARGINS, children: [labelValue("Effective Date", fmtDate(data.effectiveDate))] })] }),
+      // Wage rows only for forms that carry wage info — older forms export unchanged.
+      ...(promotionWageText(data) !== null
+        ? [
+            new TableRow({ children: [new TableCell({ borders: BOTTOM_RULE_CELL_BORDERS, margins: CELL_MARGINS, children: [labelValue("Wage", promotionWageText(data) ?? "")] })] }),
+            ...(promotionWageScheduleFields(data.wageBasis).hoursPerDay
+              ? [new TableRow({ children: [new TableCell({ borders: BOTTOM_RULE_CELL_BORDERS, margins: CELL_MARGINS, children: [labelValue("Hours per day", data.hoursPerDay ?? "")] })] })]
+              : []),
+            ...(promotionWageScheduleFields(data.wageBasis).daysPerWeek
+              ? [new TableRow({ children: [new TableCell({ borders: BOTTOM_RULE_CELL_BORDERS, margins: CELL_MARGINS, children: [labelValue("Days in a week", data.daysPerWeek ?? "")] })] })]
+              : []),
+            new TableRow({
+              children: [
+                new TableCell({
+                  borders: BOTTOM_RULE_CELL_BORDERS,
+                  margins: CELL_MARGINS,
+                  children: [new Paragraph({ children: [new TextRun({ text: `${checkbox(data.wageBasis === "monthly")} Fixed Monthly     ${checkbox(data.wageBasis === "yearly")} Yearly`, size: 20 })] })],
+                }),
+              ],
+            }),
+          ]
+        : []),
     ],
   });
 

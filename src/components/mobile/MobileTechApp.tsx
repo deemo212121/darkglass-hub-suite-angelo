@@ -120,7 +120,7 @@ import { getModelResources, saveModelResources, type ModelResources } from "@/li
 import { getUndismissedMobilePopupAlerts, dismissTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
 import { createItTicket, getItTickets, type ItTicketRow, type ItTicketPriority } from "@/lib/supabase/itTickets";
 import { createEmployeeRequest, getCompanyEmployeeRequests, updateEmployeeRequestStatus, canReviewTicketDispute, notifyRequestReviewers, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
-import { createPtoRequest, getCompanyPtoRequests, weekdayCount, canReviewPtoStage, reviewPtoStage, type PtoType, type PtoRequestRow } from "@/lib/supabase/pto";
+import { createPtoRequest, getCompanyPtoRequests, canReviewPtoStage, reviewPtoStage, type PtoType, type PtoRequestRow } from "@/lib/supabase/pto";
 import {
   createTimecardCorrection,
   getCompanyTimecardCorrections,

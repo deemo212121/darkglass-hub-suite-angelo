@@ -13,6 +13,7 @@ import { handleCustomFormsRequest } from "./lib/server/customFormsBridge";
 import { handleImageProxyRequest } from "./lib/server/imageProxyBridge";
 import { handleGoogleDriveRequest } from "./lib/server/googleDriveBridge";
 import { handleSignableDocumentsRequest } from "./lib/server/signableDocumentsBridge";
+import { handleCompensationUpdateRequest } from "./lib/server/compensationUpdateBridge";
 import { handleLiveChatRequest } from "./lib/server/liveChatBridge";
 import { handleAdminUpdateEmailRequest } from "./lib/server/adminUpdateEmailBridge";
 import { handleLiveChatStaffRequest } from "./lib/server/liveChatStaffBridge";
@@ -175,6 +176,10 @@ export default {
     if (url.pathname === "/api/signable-documents") {
       const merged = await resolveServerEnv(env);
       return await handleSignableDocumentsRequest(request, merged);
+    }
+    if (url.pathname === "/api/compensation-update") {
+      const merged = await resolveServerEnv(env);
+      return await handleCompensationUpdateRequest(request, merged);
     }
     if (url.pathname === "/api/run-attendance-alerts") {
       const merged = await resolveServerEnv(env);

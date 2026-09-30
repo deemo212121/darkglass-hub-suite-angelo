@@ -32,6 +32,15 @@ export interface PromotionPerformanceSummary {
   otherText: string;
 }
 
+export type PromotionWageBasis = "hourly" | "daily" | "monthly" | "yearly";
+
+export const PROMOTION_WAGE_BASIS_LABEL: Record<PromotionWageBasis, string> = {
+  hourly: "per hour",
+  daily: "per day",
+  monthly: "per month",
+  yearly: "per year",
+};
+
 export interface PromotionFormData {
   /** The employee's actual profile id — kept for consistency with the Warning Form's shape; this form never writes back to the profile (document-only, no auto profile update). */
   employeeId: string;
@@ -43,6 +52,15 @@ export interface PromotionFormData {
   newPositionTitle: string;
   newDepartment: string;
   effectiveDate: string;
+  /**
+   * Wage details (Role Change Details). All optional — forms sent before
+   * these existed have none of them and render exactly as before (the wage
+   * lines are only drawn when a basis or amount is present).
+   */
+  wageAmount?: string;
+  wageBasis?: PromotionWageBasis;
+  hoursPerDay?: string;
+  daysPerWeek?: string;
   performance: PromotionPerformanceSummary;
   recipientSlot: PromotionSignatureSlot;
   /** The CURRENT recipient's display name — pre-fills their "Name:" line before they've signed. Only actually read as a fallback, see resolvedSignerName below. */
@@ -138,6 +156,35 @@ function resolvedSignerName(data: PromotionFormData, slot: PromotionSignatureSlo
   return signatures[slot]?.name || data.recipientNames?.[slot] || (data.recipientSlot === slot ? data.recipientName : "") || "";
 }
 
+/** "$20.00 per hour" etc., or null when the form carries no wage info (older forms). */
+export function promotionWageText(data: Pick<PromotionFormData, "wageAmount" | "wageBasis">): string | null {
+  const amount = (data.wageAmount ?? "").trim();
+  if (!amount && !data.wageBasis) return null;
+  const money = amount ? (amount.startsWith("$") ? amount : `$${amount}`) : "";
+  return [money, data.wageBasis ? PROMOTION_WAGE_BASIS_LABEL[data.wageBasis] : ""].filter(Boolean).join(" ");
+}
+
+/** Which schedule fields apply to a wage basis: hourly needs both, daily only days/week, fixed monthly/yearly neither. */
+export function promotionWageScheduleFields(basis: PromotionWageBasis | undefined): { hoursPerDay: boolean; daysPerWeek: boolean } {
+  if (basis === "monthly" || basis === "yearly") return { hoursPerDay: false, daysPerWeek: false };
+  if (basis === "daily") return { hoursPerDay: false, daysPerWeek: true };
+  return { hoursPerDay: true, daysPerWeek: true };
+}
+
+function wageMarkup(data: PromotionFormData): string {
+  const wage = promotionWageText(data);
+  if (wage === null) return "";
+  const show = promotionWageScheduleFields(data.wageBasis);
+  const schedule = [
+    show.hoursPerDay ? `<span class="promo-label">Hours per day:</span> <strong>${blank(data.hoursPerDay ?? "")}</strong>` : "",
+    show.daysPerWeek ? `<span class="promo-label">Days in a week:</span> <strong>${blank(data.daysPerWeek ?? "")}</strong>` : "",
+  ].filter(Boolean).join("&nbsp;&nbsp;&nbsp;&nbsp;");
+  return `
+        <div class="promo-field"><span class="promo-label">Wage:</span> <strong>${blank(wage)}</strong></div>
+        ${schedule ? `<div class="promo-field">${schedule}</div>` : ""}
+        <div class="promo-field">${checkbox(data.wageBasis === "monthly")} Fixed Monthly&nbsp;&nbsp;&nbsp;&nbsp;${checkbox(data.wageBasis === "yearly")} Yearly</div>`;
+}
+
 function signRow(label: string, name: string, entry: PromotionSignatureEntry | undefined) {
   return `
     <div class="promo-sign-row">
@@ -180,6 +227,7 @@ export function buildPromotionFormBodyMarkup(data: PromotionFormData, logoDataUr
         <div class="promo-field"><span class="promo-label">New Position Title:</span> <strong>${blank(data.newPositionTitle)}</strong></div>
         <div class="promo-field"><span class="promo-label">New Department/Branch:</span> <strong>${blank(data.newDepartment)}</strong></div>
         <div class="promo-field"><span class="promo-label">Effective Date:</span> <strong>${blank(fmtDate(data.effectiveDate))}</strong></div>
+        ${wageMarkup(data)}
       </div>
 
       <div class="promo-section">
