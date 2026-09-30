@@ -23,6 +23,7 @@
 
 import { supabase } from "./client";
 import { mileageEffectiveTotal } from "./mileage";
+import { statusGroupOf } from "@/lib/ticketData";
 
 /** repair_type value used as the fallback rate for a completed visit with no repair_type set. */
 export const DEFAULT_REPAIR_TYPE = "Default Amount";
@@ -191,6 +192,19 @@ export interface TechRepairCount {
 // through in chunks of 1000.
 const PAGE_SIZE = 1000;
 
+// Same convention tickets.ts's own runBatched/BULK_LOOKUP_BATCH_SIZE
+// uses — a .in("ticket_id", ids) filter built from too many UUIDs at once
+// makes a request URL long enough that PostgREST rejects it with a 400,
+// so lookups keyed off a possibly-large ticket-id list go through this in
+// bounded chunks instead of one unbounded call.
+const BULK_LOOKUP_BATCH_SIZE = 200;
+const BULK_LOOKUP_CONCURRENCY = 5;
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  return chunks;
+}
+
 /**
  * One "this technician did this ticket" completion candidate — the shared
  * pool behind getTechCompletedRepairCounts / getTechRedoTickets /
@@ -261,19 +275,39 @@ async function getTechCompletedCandidates(startDate: string, endDate: string): P
   const completedTickets = ticketRows.filter((t: any) => String(t.technician || "").trim() && isCompletedStatus(t.status));
   if (completedTickets.length === 0) return [];
 
+  // Batched, same reason every other bulk-by-ticket-id lookup in this app
+  // is (see tickets.ts's own runBatched) — a wide period (Monthly, or a
+  // big Custom range) can produce thousands of completedTickets, and a
+  // single .in("ticket_id", ticketIds) with that many UUIDs builds a URL
+  // long enough that PostgREST rejects it outright with a 400, silently
+  // losing every repair_type/payroll-exclusion lookup for the whole
+  // period instead of just the tickets past whatever the true limit is.
   const ticketIds = completedTickets.map((t: any) => t.id);
-  const [{ data: visitRows, error: vErr }, { data: excludedRows, error: exErr }] = await Promise.all([
-    // Purely for repair_type categorization now — NOT for determining
-    // whether the ticket is complete (that's isCompletedStatus above).
-    supabase.from("visits").select("ticket_id, repair_type, created_at").in("ticket_id", ticketIds),
-    // Tickets Finance has put on hold for payroll via the Mileage tab's On
-    // Hold action (migration 0148) — while flagged, a ticket that's
-    // genuinely completed still never counts toward pay, but it's
-    // reversible. Same "skip this ticket_id" treatment as redo.
-    supabase.from("mileage_entries").select("ticket_id").eq("payroll_excluded", true).in("ticket_id", ticketIds),
-  ]);
-  if (vErr) console.error("getTechCompletedCandidates (visit repair types) error:", vErr.message);
-  if (exErr) console.error("getTechCompletedCandidates (payroll exclusions) error:", exErr.message);
+  const idBatches = chunkArray(ticketIds, BULK_LOOKUP_BATCH_SIZE);
+  const visitRows: any[] = [];
+  const excludedRows: any[] = [];
+  for (let i = 0; i < idBatches.length; i += BULK_LOOKUP_CONCURRENCY) {
+    const results = await Promise.all(
+      idBatches.slice(i, i + BULK_LOOKUP_CONCURRENCY).map((batch) =>
+        Promise.all([
+          // Purely for repair_type categorization now — NOT for determining
+          // whether the ticket is complete (that's isCompletedStatus above).
+          supabase.from("visits").select("ticket_id, repair_type, created_at").in("ticket_id", batch),
+          // Tickets Finance has put on hold for payroll via the Mileage tab's
+          // On Hold action (migration 0148) — while flagged, a ticket that's
+          // genuinely completed still never counts toward pay, but it's
+          // reversible. Same "skip this ticket_id" treatment as redo.
+          supabase.from("mileage_entries").select("ticket_id").eq("payroll_excluded", true).in("ticket_id", batch),
+        ])
+      )
+    );
+    for (const [{ data: vData, error: vErr }, { data: exData, error: exErr }] of results) {
+      if (vErr) console.error("getTechCompletedCandidates (visit repair types) error:", vErr.message);
+      if (exErr) console.error("getTechCompletedCandidates (payroll exclusions) error:", exErr.message);
+      visitRows.push(...(vData ?? []));
+      excludedRows.push(...(exData ?? []));
+    }
+  }
 
   const latestRepairTypeByTicketId = new Map<string, string>();
   const latestCreatedAtByTicketId = new Map<string, string>();
@@ -331,6 +365,44 @@ export async function getTechCompletedRepairCounts(
 }
 
 /**
+ * Cancelled-ticket counts per technician for a period — for the Technician
+ * Performance Report's "Cancelled" column. Unlike getTechCompletedCandidates
+ * (which only looks at tickets already filtered to a completed status),
+ * this reads the same raw tickets.schedule_date-scoped rows but keeps only
+ * the ones whose status has actually reached the terminal "cancelled"
+ * bucket (statusGroupOf === "cancelled" — CL-Cancelled, not the still-
+ * pending "CL-Need Cancel" request state, see ticketData.ts's own
+ * statusGroupOf comment). Grouped by the same free-text tickets.technician
+ * field every other per-technician count in this file uses.
+ */
+export async function getTechCancelledTicketCounts(startDate: string, endDate: string): Promise<{ technician: string; count: number }[]> {
+  if (!startDate || !endDate) return [];
+  const ticketRows: any[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data: page, error } = await supabase
+      .from("tickets")
+      .select("technician, status, schedule_date")
+      .gte("schedule_date", startDate)
+      .lte("schedule_date", endDate)
+      .not("technician", "is", null)
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getTechCancelledTicketCounts error:", error.message);
+      return [];
+    }
+    ticketRows.push(...(page ?? []));
+    if (!page || page.length < PAGE_SIZE) break;
+  }
+  const counts = new Map<string, number>();
+  for (const t of ticketRows) {
+    const technician = String(t.technician || "").trim();
+    if (!technician || statusGroupOf(t.status) !== "cancelled") continue;
+    counts.set(technician, (counts.get(technician) ?? 0) + 1);
+  }
+  return Array.from(counts.entries()).map(([technician, count]) => ({ technician, count }));
+}
+
+/**
  * One confirmed, not-yet-paid late ticket completion (see
  * late_ticket_completions / lateTicketCompletions.ts) for one technician — a
  * ticket whose status only reached CL-Claimed/CL-Completed after the week it
@@ -372,15 +444,26 @@ export async function getCarryoverTickets(): Promise<TechCarryoverTicket[]> {
   const carryovers = (rows ?? []).filter((r: any) => String(r.technician_name || "").trim());
   if (carryovers.length === 0) return [];
 
+  // Batched — same reason getTechCompletedCandidates above is: a large
+  // enough ticketIds list makes .in()'s URL long enough for PostgREST to
+  // reject with a 400.
   const ticketIds = carryovers.map((r: any) => r.ticket_id);
-  const [{ data: ticketRows, error: tErr }, { data: visitRows, error: vErr }, { data: excludedRows, error: exErr }] = await Promise.all([
-    supabase.from("tickets").select("id, location, redo").in("id", ticketIds),
-    supabase.from("visits").select("ticket_id, repair_type, created_at").in("ticket_id", ticketIds),
-    supabase.from("mileage_entries").select("ticket_id").eq("payroll_excluded", true).in("ticket_id", ticketIds),
-  ]);
-  if (tErr) console.error("getCarryoverTickets (tickets) error:", tErr.message);
-  if (vErr) console.error("getCarryoverTickets (visits) error:", vErr.message);
-  if (exErr) console.error("getCarryoverTickets (exclusions) error:", exErr.message);
+  const ticketRows: any[] = [];
+  const visitRows: any[] = [];
+  const excludedRows: any[] = [];
+  for (const batch of chunkArray(ticketIds, BULK_LOOKUP_BATCH_SIZE)) {
+    const [{ data: tData, error: tErr }, { data: vData, error: vErr }, { data: exData, error: exErr }] = await Promise.all([
+      supabase.from("tickets").select("id, location, redo").in("id", batch),
+      supabase.from("visits").select("ticket_id, repair_type, created_at").in("ticket_id", batch),
+      supabase.from("mileage_entries").select("ticket_id").eq("payroll_excluded", true).in("ticket_id", batch),
+    ]);
+    if (tErr) console.error("getCarryoverTickets (tickets) error:", tErr.message);
+    if (vErr) console.error("getCarryoverTickets (visits) error:", vErr.message);
+    if (exErr) console.error("getCarryoverTickets (exclusions) error:", exErr.message);
+    ticketRows.push(...(tData ?? []));
+    visitRows.push(...(vData ?? []));
+    excludedRows.push(...(exData ?? []));
+  }
 
   const ticketById = new Map((ticketRows ?? []).map((t: any) => [t.id, t]));
   const latestRepairTypeByTicketId = new Map<string, string>();
@@ -535,9 +618,13 @@ export async function getTechSecondCounts(startDate: string, endDate: string): P
   // second-technician column of their own) — but whether the JOB is done
   // now follows the same ticket.status rule as everywhere else (isCompletedStatus).
   const ticketIds = Array.from(new Set(assisted.map((r: any) => r.ticket_id).filter(Boolean)));
-  const { data: ticketRows, error: tErr } = await supabase.from("tickets").select("id, redo, status").in("id", ticketIds);
-  if (tErr) console.error("getTechSecondCounts (ticket lookup) error:", tErr.message);
-  const ticketById = new Map((ticketRows ?? []).map((t: any) => [t.id, t]));
+  const ticketRows: any[] = [];
+  for (const batch of chunkArray(ticketIds, BULK_LOOKUP_BATCH_SIZE)) {
+    const { data, error: tErr } = await supabase.from("tickets").select("id, redo, status").in("id", batch);
+    if (tErr) console.error("getTechSecondCounts (ticket lookup) error:", tErr.message);
+    ticketRows.push(...(data ?? []));
+  }
+  const ticketById = new Map(ticketRows.map((t: any) => [t.id, t]));
 
   for (const r of assisted as any[]) {
     const ticket = ticketById.get(r.ticket_id);
@@ -586,9 +673,13 @@ export async function getTechAssistedTickets(startDate: string, endDate: string)
   if (assisted.length === 0) return out;
 
   const ticketIds = Array.from(new Set(assisted.map((r: any) => r.ticket_id).filter(Boolean)));
-  const { data: ticketRows, error: tErr } = await supabase.from("tickets").select("id, ticket_no, redo, status").in("id", ticketIds);
-  if (tErr) console.error("getTechAssistedTickets (ticket lookup) error:", tErr.message);
-  const ticketById = new Map((ticketRows ?? []).map((t: any) => [t.id, t]));
+  const ticketRows: any[] = [];
+  for (const batch of chunkArray(ticketIds, BULK_LOOKUP_BATCH_SIZE)) {
+    const { data, error: tErr } = await supabase.from("tickets").select("id, ticket_no, redo, status").in("id", batch);
+    if (tErr) console.error("getTechAssistedTickets (ticket lookup) error:", tErr.message);
+    ticketRows.push(...(data ?? []));
+  }
+  const ticketById = new Map(ticketRows.map((t: any) => [t.id, t]));
 
   for (const r of assisted as any[]) {
     const ticket = ticketById.get(r.ticket_id);
@@ -643,9 +734,13 @@ export async function getTechSecondTechTickets(startDate: string, endDate: strin
   if (assisted.length === 0) return out;
 
   const ticketIds = Array.from(new Set(assisted.map((r: any) => r.ticket_id).filter(Boolean)));
-  const { data: ticketRows, error: tErr } = await supabase.from("tickets").select("id, ticket_no, redo, status").in("id", ticketIds);
-  if (tErr) console.error("getTechSecondTechTickets (ticket lookup) error:", tErr.message);
-  const ticketById = new Map((ticketRows ?? []).map((t: any) => [t.id, t]));
+  const ticketRows: any[] = [];
+  for (const batch of chunkArray(ticketIds, BULK_LOOKUP_BATCH_SIZE)) {
+    const { data, error: tErr } = await supabase.from("tickets").select("id, ticket_no, redo, status").in("id", batch);
+    if (tErr) console.error("getTechSecondTechTickets (ticket lookup) error:", tErr.message);
+    ticketRows.push(...(data ?? []));
+  }
+  const ticketById = new Map(ticketRows.map((t: any) => [t.id, t]));
 
   for (const r of assisted as any[]) {
     const ticket = ticketById.get(r.ticket_id);

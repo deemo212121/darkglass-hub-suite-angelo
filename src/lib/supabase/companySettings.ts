@@ -202,3 +202,40 @@ export async function setCompanyWeeklyPasswordResetEnabled(enabled: boolean): Pr
     throw new Error(error.message);
   }
 }
+
+/**
+ * Car IQ mileage reimbursement rates ($/mi with vs. without a company-
+ * installed Car IQ tracking device — AccountingDashboard.tsx's Car IQ tab).
+ * Editable instead of hardcoded (migration 0324) so a rate change doesn't
+ * need a code deploy. null means "never set" — the caller falls back to
+ * roleLabels.ts's CAR_IQ_MILEAGE_RATE_WITH/WITHOUT constants, same as
+ * before this setting existed.
+ */
+export interface CarIqMileageRates {
+  with: number | null;
+  without: number | null;
+}
+
+export async function getCarIqMileageRates(): Promise<CarIqMileageRates> {
+  const { data, error } = await supabase.from("companies").select("settings").limit(1).maybeSingle();
+  if (error || !data) {
+    if (error) console.error("getCarIqMileageRates error:", error.message);
+    return { with: null, without: null };
+  }
+  const s = (data.settings as Record<string, unknown> | null) ?? {};
+  const w = s.carIqMileageRateWith;
+  const wo = s.carIqMileageRateWithout;
+  return {
+    with: typeof w === "number" ? w : null,
+    without: typeof wo === "number" ? wo : null,
+  };
+}
+
+/** Admin/Finance/Superadmin only — enforced server-side by the set_car_iq_mileage_rates RPC. */
+export async function setCarIqMileageRates(rateWith: number, rateWithout: number): Promise<void> {
+  const { error } = await supabase.rpc("set_car_iq_mileage_rates", { p_with: rateWith, p_without: rateWithout });
+  if (error) {
+    console.error("setCarIqMileageRates error:", error.message);
+    throw new Error(error.message);
+  }
+}

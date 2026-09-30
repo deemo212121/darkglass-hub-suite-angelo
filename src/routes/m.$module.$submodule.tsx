@@ -1,4 +1,5 @@
 import { createFileRoute, Link, Navigate, Outlet, notFound, useLocation } from "@tanstack/react-router";
+import { useRedirectGuard } from "@/lib/useRedirectGuard";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { OverallStatusPage } from "@/components/OverallStatusPage";
@@ -81,14 +82,14 @@ import { canAccessUserManagement, getUserManagementRecord, canAccessAdminModule 
 import { isSubmoduleAllowed, isSubmoduleAllowedForTrainee, isSubmoduleAllowedForFrozen, isCompanySuperAdminRole, isCsrRestrictedRole } from "@/lib/roleLabels";
 import { CompanySettingsPage } from "@/components/CompanySettingsPage";
 import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
-import { useModuleRoleGate } from "@/lib/moduleAccess";
+import { useModuleRoleGate, useModuleRoleGateOverrides } from "@/lib/moduleAccess";
 // Roles allowed into the admin module overall, and into User Management /
 // Activity Logs specifically. Checked via hasDashboardAccess so a secondary
 // role (profiles.extra_roles) grants access too, not just the primary role —
 // e.g. a Parts Manager who's also been given Admin as a secondary role.
 // Shared with submoduleAccess.ts (used by home.tsx/ModuleNavigator.tsx to
 // decide what to even list) so both surfaces can never drift apart.
-import { ADMIN_MODULE_ROLES, USER_MANAGEMENT_DEFAULT_ROLES, ACTIVITY_LOG_DEFAULT_ROLES, WHEREABOUTS_DEFAULT_ROLES } from "@/lib/submoduleAccess";
+import { ADMIN_MODULE_ROLES, USER_MANAGEMENT_DEFAULT_ROLES, ACTIVITY_LOG_DEFAULT_ROLES, WHEREABOUTS_DEFAULT_ROLES, resolveSubmoduleAllowedRoles, passesModuleLevelGate } from "@/lib/submoduleAccess";
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import { ReportHRDaily } from "@/components/ReportHRDaily";
 import { HrOnboardingChecklistPage } from "@/components/HrOnboardingChecklistPage";
@@ -97,6 +98,7 @@ import { HiringAnalyticsPage } from "@/components/HiringAnalyticsPage";
 import { CandidateReviewsPage } from "@/components/CandidateReviewsPage";
 import { TrainingListPage } from "@/components/TrainingListPage";
 import { AbsentListPage } from "@/components/AbsentListPage";
+import { RepairKnowledgeBase } from "@/components/RepairKnowledgeBase";
 import { ExpensesModulePage } from "@/components/ExpensesModulePage";
 import { StaffListPage } from "@/components/StaffListPage";
 import { ReportHR } from "@/components/ReportHR";
@@ -127,8 +129,9 @@ import { EmployeeSelfServicePage } from "@/components/EmployeeSelfServicePage";
 import { ItTicketsPage } from "@/components/ItTicketsPage";
 import { CSRMainDashboard } from "@/components/CSRMainDashboard";
 import { CSRTeamDailyReport } from "@/components/CSRTeamDailyReport";
-import { CsrSelfServiceTally } from "@/components/CsrSelfServiceTally";
 import { CsrRescheduleRequestsPage } from "@/components/CsrRescheduleRequestsPage";
+import { CsrGhTracker } from "@/components/CsrGhTracker";
+import { CsrLtpReport } from "@/components/CsrLtpReport";
 import { CSRCallTracker } from "@/components/CSRCallTracker";
 import { CSRStatusSummary } from "@/components/CSRStatusSummary";
 import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
@@ -178,6 +181,9 @@ function SubModule() {
   // always returns { mod, sub } or throws notFound() first).
   const { mod, sub } = Route.useLoaderData() as { mod: ModuleDef; sub: SubModuleDef };
   const location = useLocation();
+  // Guards every <Navigate> below against firing more than once per
+  // distinct target — see useRedirectGuard.ts for why this is necessary.
+  const redirectOnce = useRedirectGuard();
 
   // Role gates that also need to honor a secondary role (profiles.
   // extra_roles) — a Parts Manager who's ALSO been given Admin as a
@@ -211,6 +217,10 @@ function SubModule() {
   // Someone sitting on a page an admin just revoked sees "Access
   // restricted" right away instead of only after their next reload.
   const explicitModuleOverride = useModuleRoleGate(mod.slug, sub.slug);
+  // Re-check on ANY access-rule change (the module-level gate and the
+  // Dashboard-family fallbacks below read the cache synchronously), not just
+  // this exact (module, submodule) pair.
+  useModuleRoleGateOverrides();
   // moduleAllowedRoles covers every module, not just Dashboard: the
   // Dashboard module additionally has a hardcoded default per submodule
   // (getDashboardRoleGate, DASHBOARD_ROLE_GATES) for when there's no
@@ -233,10 +243,15 @@ function SubModule() {
   // "todo-list" submodule, and blanket-including "tickets" in that list
   // would make it inherit HR's "todo-list" DASHBOARD_ROLE_GATES entry too
   // (gates are keyed by submodule slug alone). See dashboardAccess.ts.
-  const moduleAllowedRoles = (mod.slug === "dashboard" || mod.slug === "hr" || mod.slug === "accounting" || mod.slug === "csr" || (sub as any).custom === "receiving-status") ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
+  // Shared with canAccessSubmodule (Home/Modules strip) so a tile is only
+  // listed if this page would actually let the viewer in. receiving-status
+  // keeps its own special case (see dashboardAccess.ts).
+  const moduleAllowedRoles = (sub as any).custom === "receiving-status"
+    ? (explicitModuleOverride ?? getDashboardRoleGate(sub.slug))
+    : resolveSubmoduleAllowedRoles(mod.slug, sub.slug, explicitModuleOverride);
 
   if (!ready) return null;
-  if (!email) return <Navigate to="/landing" replace />;
+  if (!email) return redirectOnce("/landing") ? <Navigate to="/landing" replace /> : null;
 
   // Trainees only see Employee Self-Service — checked first, before any
   // role-based gate below, since it doesn't depend on role or extra_roles
@@ -247,7 +262,16 @@ function SubModule() {
   // restriction while it's set, not something a leftover permission grant
   // can quietly punch a hole in.
   if (!isSubmoduleAllowedForTrainee(isTrainee, mod.slug, sub.slug)) {
-    return <Navigate to="/home" replace />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
+  }
+
+  // Whole-module lockout (Accessibility Management's module-level box) is
+  // authoritative for every page in the module, same as Home and the
+  // module's own tile grid — a pasted/bookmarked link to a page inside a
+  // module this role is locked out of goes Home. (Admin is exempt inside
+  // passesModuleLevelGate — its own gate below handles its carve-outs.)
+  if (!passesModuleLevelGate(role, extraRoles, mod.slug)) {
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
   // Frozen accounts only see Messages — same absolute, override-proof
@@ -287,7 +311,7 @@ function SubModule() {
   // the hidden tiles by typing the URL directly. Skipped entirely when an
   // admin has explicitly overridden this exact submodule's roles.
   if (!explicitModuleOverride && !isSubmoduleAllowed(role, mod.slug, sub.slug, extraRoles)) {
-    return <Navigate to="/home" replace />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
   // Check admin access using Firebase role — primary role OR a secondary
@@ -327,7 +351,7 @@ function SubModule() {
     !isActivityLogSubmodule &&
     !isWhereaboutsSubmodule
   ) {
-    return <Navigate to="/home" replace />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
   // Check user management access using Firebase role — same primary-or-
@@ -339,7 +363,7 @@ function SubModule() {
   const hasUserManagementAccess = hasDashboardAccess(userManagementAllowedRoles, role, extraRoles);
 
   if (isUserManagementSubmodule && !hasUserManagementAccess) {
-    return <Navigate to="/home" replace />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
   // Activity Logs — same carve-out pattern as User Management above.
@@ -347,7 +371,7 @@ function SubModule() {
   const hasActivityLogAccess = hasDashboardAccess(activityLogAllowedRoles, role, extraRoles);
 
   if (isActivityLogSubmodule && !hasActivityLogAccess) {
-    return <Navigate to="/home" replace />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
   // Technician Whereabouts — same carve-out pattern as User Management/
@@ -356,7 +380,7 @@ function SubModule() {
   const hasWhereaboutsAccess = hasDashboardAccess(whereaboutsAllowedRoles, role, extraRoles);
 
   if (isWhereaboutsSubmodule && !hasWhereaboutsAccess) {
-    return <Navigate to="/home" replace />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
   // Company Settings is narrower than the general admin-module gate above —
@@ -365,7 +389,7 @@ function SubModule() {
   const hasCompanySettingsAccess = isCompanySuperAdminRole(role, extraRoles);
 
   if (sub.custom === "company-settings" && !hasCompanySettingsAccess) {
-    return <Navigate to="/home" replace />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
   const hasNestedUserRoute = sub.custom === "user-management" && location.pathname.split("/").filter(Boolean).length > 3;
@@ -387,7 +411,7 @@ function SubModule() {
     hasDashboardAccess(moduleAllowedRoles, role, extraRoles);
 
   if (moduleAllowedRoles && !moduleAccessOk) {
-    return <Navigate to="/home" replace />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
   return (
@@ -481,6 +505,8 @@ function SubModule() {
         ? <ReportClaimsDaily mod={mod} sub={sub} />
         : (sub as any).custom === "report-triage-daily"
         ? <ReportTriageDaily mod={mod} sub={sub} />
+        : (sub as any).custom === "repair-knowledge"
+        ? <RepairKnowledgeBase mod={mod} sub={sub} />
         : (sub as any).custom === "report-parts-daily"
         ? <ReportPartsDaily mod={mod} sub={sub} />
         : (sub as any).custom === "report-operations-daily"
@@ -529,10 +555,12 @@ function SubModule() {
         ? <CSRMainDashboard mod={mod} sub={sub} />
         : (sub as any).custom === "csr-team-daily-report"
         ? <CSRTeamDailyReport mod={mod} sub={sub} />
-        : (sub as any).custom === "csr-self-service-tally"
-        ? <CsrSelfServiceTally mod={mod} sub={sub} />
         : (sub as any).custom === "csr-reschedule-requests"
         ? <CsrRescheduleRequestsPage mod={mod} sub={sub} />
+        : (sub as any).custom === "csr-gh-tracker"
+        ? <CsrGhTracker mod={mod} sub={sub} />
+        : (sub as any).custom === "csr-ltp-report"
+        ? <CsrLtpReport mod={mod} sub={sub} />
         : (sub as any).custom === "csr-daily-report"
         ? <ReportCSRDaily mod={mod} sub={sub} />
         : (sub as any).custom === "call-tracker"

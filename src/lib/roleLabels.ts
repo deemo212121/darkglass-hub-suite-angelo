@@ -222,6 +222,37 @@ export function isBmAndUpRole(role: string | null | undefined): boolean {
   return BM_AND_UP_ROLES.has(normalizeRole(role));
 }
 
+/**
+ * Eligible for the Accounting Dashboard's Car IQ tab (2026-09-24): whether
+ * this technician-tier employee (any TECHNICIAN_PAY_ROLES tier — plain
+ * Technician up through Branch Manager/Senior Branch Manager/Tech
+ * Manager/Technical Director/Assistant Technical Director, primary or
+ * secondary role) has a company-installed Car IQ vehicle tracking device,
+ * which determines their mileage reimbursement rate ($0.20/mi with Car IQ
+ * vs $0.40/mi without). Same "pile up" semantics as hasAnyTechnicianPayRole.
+ */
+export function isCarIqEligible(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return hasAnyTechnicianPayRole(role, extraRoles);
+}
+
+/** Default mileage reimbursement rate ($/mi) with a company-installed Car IQ tracking device — used until a company sets its own via companySettings.ts's setCarIqMileageRates (migration 0320). */
+export const CAR_IQ_MILEAGE_RATE_WITH = 0.2;
+/** Default mileage reimbursement rate ($/mi) without one. */
+export const CAR_IQ_MILEAGE_RATE_WITHOUT = 0.4;
+
+/**
+ * null when no Car IQ status is on file yet (Mileage rate stays branch-
+ * driven/editable). rateWith/rateWithout default to the constants above,
+ * so an existing caller that hasn't been updated to pass the company's own
+ * configured rates (companySettings.ts's getCarIqMileageRates) keeps
+ * working exactly as before.
+ */
+export function mileageRateForCarIq(hasCarIq: boolean | null | undefined, rateWith: number = CAR_IQ_MILEAGE_RATE_WITH, rateWithout: number = CAR_IQ_MILEAGE_RATE_WITHOUT): number | null {
+  if (hasCarIq === true) return rateWith;
+  if (hasCarIq === false) return rateWithout;
+  return null;
+}
+
 /** Falls back to the flat ROLE_LABELS value for both fields if the role isn't in the breakdown map above. */
 export function getRoleDepartmentBreakdown(role: string | null | undefined): { department: string; roleLabel: string } {
   const code = normalizeRole(role);
@@ -572,7 +603,7 @@ export function isAttendanceManagerTierRole(role: string | null | undefined, ext
  * narrow their attendance view down to just their own direct reports).
  * Callers must check this BEFORE isAttendanceManagerTierRole so it wins.
  */
-const ATTENDANCE_FULL_ACCESS_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR", "FINANCE"]);
+const ATTENDANCE_FULL_ACCESS_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR", "FINANCE", "TECHNICAL_ASSISTANT_DIRECTOR"]);
 
 export function isAttendanceFullAccessRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
   return anyHeldRoleIn(ATTENDANCE_FULL_ACCESS_ROLES, role, extraRoles);

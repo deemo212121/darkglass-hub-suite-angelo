@@ -25,7 +25,7 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   // Manager-tier roles (see ATTENDANCE_MANAGER_TIER_ROLES_ARRAY) are scoped to
   // their own direct reports here (AttendanceMonitoringPage.tsx's
   // visibleAttendanceProfileIds) — ADMIN/HR/FINANCE/SUPERADMIN see everyone.
-  "attendance-monitoring": ["ADMIN", "HR", "FINANCE", ...ATTENDANCE_MANAGER_TIER_ROLES_ARRAY],
+  "attendance-monitoring": ["ADMIN", "HR", "FINANCE", "TECHNICAL_ASSISTANT_DIRECTOR", ...ATTENDANCE_MANAGER_TIER_ROLES_ARRAY],
   "payroll-calculation": ["ADMIN", "FINANCE"],
   "expense-tracking": ["ADMIN", "FINANCE"],
   // View access matches expense-tracking (SUPERADMIN always bypasses per
@@ -39,15 +39,32 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   // (Team List: Manager + Team Leader; Team Composition: Manager only) —
   // that's UI-level tab visibility, not a second role gate here.
   "csr-dashboard": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
-  // Same CSR-wide audience — every CSR role fills this in daily.
-  "daily-report": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
-  // Self-entry counterpart to "daily-report" above — same audience, since
-  // it just tallies into the same row a lead could otherwise type in.
-  "self-service": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
+  // Manager tier, plus Team Leader (scoped to just their own team inside
+  // CSRTeamDailyReport.tsx itself — a Team Leader sees only their own
+  // team's rows there, never every team). A plain CSR Associate (CSR_AGENT)
+  // still doesn't fill this in or see it at all, per explicit request.
+  "daily-report": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_TEAM_LEADER"],
+  // Self-entry counterpart to "daily-report" above — same audience as it
+  // USED to be (every CSR role); this one still needs CSR_AGENT, since
+  // agents are the ones logging their own GH numbers here. Replaces the old
+  // "self-service" tally tile (CsrSelfServiceTally.tsx, deleted); CSR_MANAGER
+  // additionally gets the aggregated cross-agent view here (CsrGhTracker.tsx's
+  // own isCsrManagerRole check), everyone else the agent-facing one.
+  "gh-tracker": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
+  // Manager tier only, same as daily-report — neither a plain CSR Associate
+  // nor a CSR Team Leader sees this per-branch aging report either.
+  "ltp-report": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"],
   // Reschedule Requests (custom: "csr-reschedule-requests") — same CSR-wide
-  // audience as daily-report/self-service; view-only there too (no
-  // approve/reject, just Phone DX/Rerouted/Notes annotation).
+  // audience as gh-tracker; view-only there too (no approve/reject, just
+  // Phone DX/Rerouted/Notes annotation).
   "reschedule-requests": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER"],
+  // CSR module's own-slug copy of Candidate Reviews (modules.ts's
+  // csrMod.submodules — "csr-candidate-reviews", not the bare
+  // "candidate-reviews" every other module's copy shares) — Manager tier
+  // only, per explicit request; HR's own copy (and every other module's) is
+  // unaffected, since they're gated by the shared "candidate-reviews" slug
+  // instead of this one.
+  "csr-candidate-reviews": ["ADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"],
   "hr-dashboard": ["ADMIN", "HR"],
   // HR module's Paperworks page (custom: "hr-paperworks") — the Automated
   // Forms group that used to live inside hr-dashboard's own sidebar. Same
@@ -76,7 +93,7 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   // visibleEmployeeMonitoringProfileIds — a Team Leader sees only their
   // direct reports, Branch Manager tier and up sees their whole downward
   // chain. Same audience shape as attendance-monitoring above.
-  "absent-list": ["ADMIN", "HR", "FINANCE", ...ATTENDANCE_MANAGER_TIER_ROLES_ARRAY],
+  "absent-list": ["ADMIN", "HR", "FINANCE", "TECHNICAL_ASSISTANT_DIRECTOR", ...ATTENDANCE_MANAGER_TIER_ROLES_ARRAY],
   "live-chat-support": ["ADMIN", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER"],
   // IT Tickets now lives only in the Admin module (m.$module.$submodule.tsx
   // reuses this same list via getDashboardRoleGate("it-tickets") to carve
@@ -105,10 +122,13 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
 const CSR_MODULE_SUBMODULE_SLUGS = new Set([
   "csr-dashboard",
   "daily-report",
+  "gh-tracker",
+  "ltp-report",
   "csr-daily-report",
   "call-tracker",
   "csr-status-summary",
   "reschedule-requests",
+  "csr-candidate-reviews",
 ]);
 
 export function getDashboardRoleGate(subSlug: string): string[] | null {

@@ -341,8 +341,15 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   // everyone. Reset when leaving the Tracker tab so it doesn't stay
   // silently applied if you come back to it later.
   const [checkoutAlertFilter, setCheckoutAlertFilter] = useState<number | null>(null);
+  // Same idea, one level up: Active (status "Open" — currently out),
+  // Future Active (status "Upcoming" — scheduled but not started), or
+  // Inactive (status "Closed" or "Cancelled" — trip is over/called off).
+  // Independent of, and combinable with, the Check-Out Alert filter above
+  // (e.g. Active + "2 days left" together) since they narrow on different
+  // things. Reset when leaving the Tracker tab for the same reason.
+  const [statusQuickFilter, setStatusQuickFilter] = useState<"active" | "future" | "inactive" | null>(null);
   useEffect(() => {
-    if (view !== "tracker") setCheckoutAlertFilter(null);
+    if (view !== "tracker") { setCheckoutAlertFilter(null); setStatusQuickFilter(null); }
   }, [view]);
   const [availabilitySearch, setAvailabilitySearch] = useState("");
   const [availabilityStatusFilter, setAvailabilityStatusFilter] = useState<"all" | "available" | "busy" | "needsForm">("all");
@@ -575,11 +582,28 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     }
     return counts;
   }, [sortedTrips]);
+  // Active/Future Active/Inactive bucketing for the quick-filter row —
+  // trip.status is already the derived, always-fresh value
+  // (computeFlashTechTripStatus, or a manual override), so this is just a
+  // relabeling into the 3 buckets the user actually thinks in day to day.
+  // Cancelled folds into Inactive here (it's just as "not happening" as
+  // Closed); the per-column Status funnel filter still isolates it
+  // specifically if that's ever needed.
+  const statusBucketOf = (t: FlashTechTrip): "active" | "future" | "inactive" =>
+    t.status === "Open" ? "active" : t.status === "Upcoming" ? "future" : "inactive";
+  const statusQuickCounts = useMemo(() => {
+    const counts = { active: 0, future: 0, inactive: 0 };
+    for (const t of sortedTrips) counts[statusBucketOf(t)]++;
+    return counts;
+  }, [sortedTrips]);
   const trackerTrips = useMemo(() => {
-    if (checkoutAlertFilter === null) return sortedTrips;
     const today = todayIso();
-    return sortedTrips.filter((t) => daysLeftIfOpen(t, today) === checkoutAlertFilter);
-  }, [sortedTrips, checkoutAlertFilter]);
+    return sortedTrips.filter((t) => {
+      if (checkoutAlertFilter !== null && daysLeftIfOpen(t, today) !== checkoutAlertFilter) return false;
+      if (statusQuickFilter !== null && statusBucketOf(t) !== statusQuickFilter) return false;
+      return true;
+    });
+  }, [sortedTrips, checkoutAlertFilter, statusQuickFilter]);
   const tripColorIndex = useMemo(() => new Map(sortedTrips.map((t, i) => [t.id, i % CHIP_COLORS.length])), [sortedTrips]);
   const calendarTrips = useMemo(
     () => (carRentalOnly ? sortedTrips.filter((t) => t.carRentalNeeded) : sortedTrips),
@@ -1141,6 +1165,38 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
 
         {view === "tracker" && (
           <>
+            <div className="mb-3">
+              <div className="flex items-center gap-2 mb-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Status</p>
+                {statusQuickFilter !== null && (
+                  <button type="button" onClick={() => setStatusQuickFilter(null)} className="text-[10px] text-blue-400 hover:text-blue-300">
+                    Clear filter
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {(
+                  [
+                    { key: "active" as const, label: "Active", color: "text-green-400" },
+                    { key: "future" as const, label: "Future Active", color: "text-blue-300" },
+                    { key: "inactive" as const, label: "Inactive", color: "text-slate-400" },
+                  ]
+                ).map(({ key, label, color }) => {
+                  const isActive = statusQuickFilter === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setStatusQuickFilter((cur) => (cur === key ? null : key))}
+                      className={`panel p-1.5 text-center transition-colors hover:bg-white/5 ${isActive ? "ring-1 ring-blue-400 bg-blue-500/10" : ""}`}
+                    >
+                      <p className={`text-sm font-bold ${color}`}>{statusQuickCounts[key]}</p>
+                      <p className="text-[9px] text-muted-foreground uppercase tracking-wide">{label}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             <div className="mb-3">
               <div className="flex items-center gap-2 mb-1.5">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Check-Out Alert — Days Until Return</p>

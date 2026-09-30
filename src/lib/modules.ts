@@ -199,10 +199,18 @@ const csrMod: ModuleDef = {
       seed: () => ({}),
     },
     {
-      slug: "self-service",
-      title: "CSR Self Service",
-      description: "Tally your own GH/Schedule/Attempt/Update for the day.",
-      custom: "csr-self-service-tally" as any,
+      slug: "gh-tracker",
+      title: "GH Tracker",
+      description: "Log phone numbers you've called or attempted to reach today.",
+      custom: "csr-gh-tracker" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
+      slug: "ltp-report",
+      title: "LTP Report",
+      description: "Live per-branch aging snapshot — 7+ day pending tickets and Today's/Monthly LTP%.",
+      custom: "csr-ltp-report" as any,
       fields: [],
       seed: () => ({}),
     },
@@ -258,9 +266,14 @@ const csrMod: ModuleDef = {
     },
     // Same shortcut-copy pattern as Branch/Technician's own tiles below —
     // reuses HR's exact page (dispatch is by `custom` alone), just
-    // reachable from here too.
+    // reachable from here too. Own slug ("csr-candidate-reviews", not the
+    // bare "candidate-reviews" every other module's copy shares) so its
+    // role gate can be scoped to just this CSR-reachable copy — a CSR
+    // Associate (CSR_AGENT) shouldn't see it here, but HR's own copy (and
+    // every other module's) stays open as before, since they're gated by
+    // the shared "candidate-reviews" slug instead.
     {
-      slug: "candidate-reviews",
+      slug: "csr-candidate-reviews",
       title: "Candidate Reviews",
       description: "Candidates forwarded to you for review — view their CV and leave your interviewer notes.",
       custom: "candidate-reviews" as any,
@@ -2023,6 +2036,17 @@ const triageMod: ModuleDef = {
       description: "View timecards and request time off.",
       custom: "employee-self-service" as any,
       fields: [],
+      seed: () => ({}),
+    },
+    // Past repairs grouped by model, sourced from Completed/Claimed/Data
+    // Closed tickets — a reference for Technical Support, not a report.
+    {
+      slug: "repair-knowledge",
+      title: "Repair Knowledge",
+      description: "Past repairs by model — symptoms, parts used, and outcomes from completed tickets.",
+      custom: "repair-knowledge" as any,
+      fields: [],
+      count: 0,
       seed: () => ({}),
     },
   ],

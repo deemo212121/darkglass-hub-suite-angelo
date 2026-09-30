@@ -14,6 +14,12 @@ export interface DailyPerformanceOverride {
   redoCount: number | null;
   miles: number | null;
   hoursWorked: number | null;
+  /** The 5 fields below (migration 0326) all use the same per-day "replace this one day's live value" shape as totalTickets/miles/hoursWorked — see sumWithDailyOverride in TechnicianPerformanceReport.tsx. ncns is the one exception: it has no live source to replace at all, so it's effectively summed from whatever's been manually entered. */
+  damageAssessment: number | null;
+  minorTicket: number | null;
+  majorTicket: number | null;
+  reschedule: number | null;
+  ncns: number | null;
   setByName: string | null;
   setAt: string;
 }
@@ -33,7 +39,7 @@ export async function getTechnicianPerformanceOverrides(
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await supabase
       .from("technician_daily_performance_overrides")
-      .select("profile_id, work_date, total_tickets, redo_count, miles, hours_worked, set_by_name, set_at")
+      .select("profile_id, work_date, total_tickets, redo_count, miles, hours_worked, damage_assessment, minor_ticket, major_ticket, reschedule, ncns, set_by_name, set_at")
       .gte("work_date", startDate)
       .lte("work_date", endDate)
       .range(from, from + PAGE_SIZE - 1);
@@ -45,6 +51,11 @@ export async function getTechnicianPerformanceOverrides(
       redo_count: number | null;
       miles: number | null;
       hours_worked: number | null;
+      damage_assessment: number | null;
+      minor_ticket: number | null;
+      major_ticket: number | null;
+      reschedule: number | null;
+      ncns: number | null;
       set_by_name: string | null;
       set_at: string;
     }>) {
@@ -54,6 +65,11 @@ export async function getTechnicianPerformanceOverrides(
         redoCount: r.redo_count,
         miles: r.miles,
         hoursWorked: r.hours_worked,
+        damageAssessment: r.damage_assessment,
+        minorTicket: r.minor_ticket,
+        majorTicket: r.major_ticket,
+        reschedule: r.reschedule,
+        ncns: r.ncns,
         setByName: r.set_by_name,
         setAt: r.set_at,
       });
@@ -70,6 +86,11 @@ export interface DailyPerformanceOverrideInput {
   redoCount?: number | null;
   miles?: number | null;
   hoursWorked?: number | null;
+  damageAssessment?: number | null;
+  minorTicket?: number | null;
+  majorTicket?: number | null;
+  reschedule?: number | null;
+  ncns?: number | null;
 }
 
 /** Replaces (upserts) one day's correction for one technician. Only the fields actually passed are written — omit a field to leave it untouched rather than clearing it. */
@@ -85,6 +106,11 @@ export async function bulkUpsertTechnicianPerformanceOverrides(
     ...("redoCount" in r ? { redo_count: r.redoCount } : {}),
     ...("miles" in r ? { miles: r.miles } : {}),
     ...("hoursWorked" in r ? { hours_worked: r.hoursWorked } : {}),
+    ...("damageAssessment" in r ? { damage_assessment: r.damageAssessment } : {}),
+    ...("minorTicket" in r ? { minor_ticket: r.minorTicket } : {}),
+    ...("majorTicket" in r ? { major_ticket: r.majorTicket } : {}),
+    ...("reschedule" in r ? { reschedule: r.reschedule } : {}),
+    ...("ncns" in r ? { ncns: r.ncns } : {}),
     set_by_name: setByName,
   }));
   // Supabase's own upsert batch size isn't officially capped the way a

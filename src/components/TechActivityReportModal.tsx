@@ -58,6 +58,13 @@ interface Props {
   /** Saves ("state") or clears ("company") this technician/period's Hourly + OT pay-mode override — see payroll_hourly_ot_overrides. When omitted, the Company/State comparison box shows read-only totals with no switch. */
   onSetHourlyOtMode?: (mode: "company" | "state", stateTotal: number) => void | Promise<void>;
   hourlyOtModeBusy?: boolean;
+  /** True while any of the parent's period-scoped bulk fetches — including
+   *  the ones a custom-line/manual-pay/category-override edit here
+   *  triggers — are still in flight. Blocks the State-mode auto-refresh
+   *  effect below from firing off a companyHourlyOtTotal/stateHourlyOtTotal
+   *  computed from stale, pre-edit data. See AccountingDashboard.tsx's
+   *  periodDataLoading. */
+  periodDataSettling?: boolean;
 }
 
 function fmt(amount: number) {
@@ -97,8 +104,9 @@ export function TechActivityReportModal({
   doneBusy,
   onSetHourlyOtMode,
   hourlyOtModeBusy,
+  periodDataSettling,
 }: Props) {
-  const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay, techHourlyPayStraight, techHourlyPayOtPremium, techWeightedRegularRate, techGuaranteedSalaryTarget, techHolidayPremium, techIncludablePay } = row;
+  const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay, techHourlyPayStraight, techHourlyPayOtPremium, techWeightedRegularRate, techGuaranteedSalaryTarget, techHolidayPremium, techIncludablePay, mileageRateOverride, carIqSwitch } = row;
   const branch = employee.assigned_branch || "";
 
   // Live Company-vs-State comparison for the Hourly Pay figure — fetched
@@ -227,6 +235,46 @@ export function TechActivityReportModal({
   const requiredPremiumAfterMinMatch = overtimeHours * regularRateAfterMinMatch * 0.5;
   const matchOt = Math.max(requiredPremiumAfterMinMatch - techHourlyPayOtPremium, 0);
   const stateHourlyOtTotal = companyHourlyOtTotal + matchMin + matchOt;
+  // Whether the saved payroll_hourly_ot_overrides row (techHourlyPay, from
+  // the parent) is currently a State-mode override rather than the flat
+  // company calc — used both by the Company/State toggle UI below and by
+  // the auto-refresh effect right after it.
+  const appliedIsState = Math.abs(techHourlyPay - companyHourlyOtTotal) > 0.005;
+
+  // payroll_hourly_ot_overrides stores a frozen DOLLAR AMOUNT, not a mode —
+  // so a previously-saved State override goes stale the moment anything
+  // that feeds stateHourlyOtTotal changes afterward (a custom line, a
+  // holiday, a mileage/manual-pay edit, a per-day state correction). Before
+  // this effect, that meant Total Payment silently kept paying out the OLD
+  // saved number until someone manually clicked Company then State again to
+  // force a fresh save — the "have to re-toggle to make the real number
+  // fire" bug. Auto-resave whenever the live State total and the saved
+  // override have actually drifted apart, so the override just tracks
+  // reality instead of needing a manual nudge. Only fires while a State
+  // override is ALREADY active — never switches someone from Company into
+  // State on its own.
+  useEffect(() => {
+    if (!onSetHourlyOtMode) return;
+    if (!appliedIsState) return;
+    // A custom line / training value / category count edit made from this
+    // very modal refetches the parent's bulk data (techIncludablePay,
+    // techWeightedRegularRate, and everything derived from them) on its own
+    // async round trip — stateHourlyOtTotal here can still be computed off
+    // the PRE-edit row for a moment after the edit resolves. Auto-saving
+    // during that gap would lock in a transitional number, then get
+    // overwritten again once the real refetch lands a beat later — visibly
+    // "changing on its own" exactly like the stale-override bug this effect
+    // exists to fix. Wait for every in-flight period load to settle first.
+    if (periodDataSettling) return;
+    if (Math.abs(techHourlyPay - stateHourlyOtTotal) <= 0.005) return;
+    void onSetHourlyOtMode("state", stateHourlyOtTotal);
+    // Keyed on the two numbers being compared, not on onSetHourlyOtMode (a
+    // fresh inline closure from the parent every render) — the guard above
+    // makes this idempotent once the override catches up, so re-running it
+    // on every parent render would just be wasted work, not a correctness
+    // issue either way.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stateHourlyOtTotal, techHourlyPay, appliedIsState, periodDataSettling]);
 
   // Trainee daily $100 guarantee, recomputed HERE against each day's real
   // EFFECTIVE rate (state floor if higher than the company rate on file —
@@ -406,6 +454,29 @@ export function TechActivityReportModal({
       alert(`Failed to add line: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
   };
+  // Car IQ History (migration 0319) detected this technician's Car IQ
+  // status changed partway through the period — mileageRateOverride's
+  // single rate above only covers one side of that switch, so the OTHER
+  // side's mileage needs its own line at its own rate. There's no reliable
+  // day-by-day mileage breakdown to auto-split the existing total by date
+  // (see AccountingDashboard.tsx's carIqSwitch computation), so this adds a
+  // blank, pre-labeled/pre-rated custom line and leaves the actual mileage
+  // figure for whoever's running payroll to type in, same as the regular
+  // Mileage figure always has been. Not wage-includable, matching the
+  // regular Mileage line (a reimbursement, not part of the FLSA weighted
+  // rate — see techIncludablePay, AccountingDashboard.tsx).
+  const handleAddCarIqSplitLine = async () => {
+    if (!carIqSwitch) return;
+    try {
+      const created = await addTechCustomPayItem(employee.id, periodStart, periodEnd, customItems.length);
+      const label = `Mileage (Car IQ $${carIqSwitch.rateAfter.toFixed(2)}/mi, from ${carIqSwitch.date})`;
+      await updateTechCustomPayItem(created.id, { label, rate: carIqSwitch.rateAfter, isWageIncludable: false });
+      setCustomItems((prev) => [...prev, { ...created, label, rate: carIqSwitch.rateAfter, isWageIncludable: false }]);
+      onCustomItemsChanged();
+    } catch (err) {
+      alert(`Failed to add Car IQ mileage line: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  };
   const handleCustomLineBlur = async (item: TechCustomPayItem, fields: { label?: string; value?: number; rate?: number; isWageIncludable?: boolean }) => {
     setSavingCustomId(item.id);
     try {
@@ -581,7 +652,7 @@ export function TechActivityReportModal({
                     <tr title="Hours actually worked this period (regular + overtime), State-matched total from the payroll detail step's Compliant/State toggle. Set via their name link on the Tech Payroll table → Add Rate Change.">
                       <td className="px-3 py-2 text-slate-300">Hourly Pay</td>
                       <td className="px-3 py-2 text-right text-slate-300">
-                        {hoursWorked.toFixed(1)}{overtimeHours > 0 ? ` + ${overtimeHours.toFixed(1)} OT` : ""}
+                        {hoursWorked.toFixed(3)}{overtimeHours > 0 ? ` + ${overtimeHours.toFixed(3)} OT` : ""}
                       </td>
                       <td className="px-3 py-2 text-right text-slate-300">{fmt(hourlyRate)}/hr</td>
                       <td className="px-3 py-2 text-right text-slate-200">{fmt(techHourlyPay)}</td>
@@ -591,7 +662,7 @@ export function TechActivityReportModal({
                       <tr title="All hours worked this period (regular + overtime), once, at this technician's flat hourly rate. Set via their name link on the Tech Payroll table → Add Rate Change, same as an office employee's rate.">
                         <td className="px-3 py-2 text-slate-300">Hourly Pay</td>
                         <td className="px-3 py-2 text-right text-slate-300">
-                          {hoursWorked.toFixed(1)}{overtimeHours > 0 ? ` + ${overtimeHours.toFixed(1)} OT` : ""}
+                          {hoursWorked.toFixed(3)}{overtimeHours > 0 ? ` + ${overtimeHours.toFixed(3)} OT` : ""}
                         </td>
                         <td className="px-3 py-2 text-right text-slate-300">{fmt(hourlyRate)}/hr</td>
                         <td className="px-3 py-2 text-right text-slate-200">{fmt(techHourlyPayStraight)}</td>
@@ -599,7 +670,7 @@ export function TechActivityReportModal({
                       {overtimeHours > 0 && (
                         <tr title="The extra 0.5x overtime premium, computed off the FLSA weighted regular rate — straight-time wages plus this period's includable incentive/bonus pay (piece-rate, carryover, LDT/Training, Two Tech, MCA, Completed Tickets, custom lines), divided by total hours — instead of the flat hourly rate. Required once a technician earns incentive pay alongside overtime in the same period.">
                           <td className="px-3 py-2 text-slate-300">OT Premium (Weighted Rate)</td>
-                          <td className="px-3 py-2 text-right text-slate-300">{overtimeHours.toFixed(1)} OT</td>
+                          <td className="px-3 py-2 text-right text-slate-300">{overtimeHours.toFixed(3)} OT</td>
                           <td className="px-3 py-2 text-right text-slate-300">{fmt(techWeightedRegularRate)}/hr × 0.5</td>
                           <td className="px-3 py-2 text-right text-slate-200">{fmt(techHourlyPayOtPremium)}</td>
                         </tr>
@@ -639,6 +710,13 @@ export function TechActivityReportModal({
                     }[field];
                     const savingValue = savingManualKey === `${employee.id}:${field}`;
                     const savingRate = savingRateKey === meta.rateKey;
+                    // Car IQ tab (2026-09-24): once this technician has a
+                    // Car IQ status on file, their Mileage rate is locked to
+                    // $0.20/$0.40 (see mileageRateOverride, AccountingDashboard.tsx)
+                    // instead of the shared per-branch Branch Rates figure —
+                    // shown read-only here so it can't be typed back over.
+                    const rateLocked = field === "mileage" && mileageRateOverride != null;
+                    const displayedRate = rateLocked ? (mileageRateOverride as number) : techRateFor(meta.rateKey);
                     return (
                       <tr key={field}>
                         <td className="px-3 py-2 text-slate-300">{meta.label}</td>
@@ -657,13 +735,13 @@ export function TechActivityReportModal({
                           </div>
                         </td>
                         <td className="px-3 py-2 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
+                          <div className="flex items-center justify-end gap-1.5" title={rateLocked ? "Locked by this technician's Car IQ status — change it on the Accounting Dashboard's Car IQ tab, not here." : undefined}>
                             {savingRate && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
                             <input
-                              key={`${meta.rateKey}:${techRateFor(meta.rateKey)}`}
+                              key={`${meta.rateKey}:${displayedRate}`}
                               type="number" min={0} step={0.01}
-                              defaultValue={techRateFor(meta.rateKey)}
-                              disabled={savingRate}
+                              defaultValue={displayedRate}
+                              disabled={savingRate || rateLocked}
                               onBlur={(e) => handleRateBlur(meta.rateKey, e.target.value)}
                               className={rateCellClass}
                             />
@@ -673,6 +751,26 @@ export function TechActivityReportModal({
                       </tr>
                     );
                   })}
+
+                  {carIqSwitch && (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-2 bg-amber-950/30 border-y border-amber-500/30">
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <p className="text-[11px] text-amber-300">
+                            Car IQ status changed on {carIqSwitch.date} this period — the Mileage line above (${carIqSwitch.rateBefore.toFixed(2)}/mi) only covers days before that.
+                            Add a second line at ${carIqSwitch.rateAfter.toFixed(2)}/mi for the mileage driven from {carIqSwitch.date} onward.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => void handleAddCarIqSplitLine()}
+                            className="shrink-0 px-2.5 py-1 rounded bg-amber-600/80 hover:bg-amber-600 text-white text-[11px] font-semibold whitespace-nowrap"
+                          >
+                            + Add Car IQ mileage line
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
 
                   {visibleCategoryPayments.map(({ type, count, rate, payment }) => {
                     const savingValue = savingCategoryOverrideKey === `${employee.id}:${type}`;
@@ -989,7 +1087,8 @@ export function TechActivityReportModal({
                 // AccountingDashboard.tsx), even on days State would be
                 // legally required — so also flag that case (stateIsDue)
                 // so it doesn't read as "Company is fine" when it isn't.
-                const appliedIsState = Math.abs(techHourlyPay - companyHourlyOtTotal) > 0.005;
+                // appliedIsState itself is hoisted to component scope above
+                // (see the auto-refresh effect right after stateHourlyOtTotal).
                 const stateIsDue = !appliedIsState && stateHourlyOtTotal > companyHourlyOtTotal + 0.005;
                 return (
                   <>

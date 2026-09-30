@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
+import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2, StickyNote } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAuth } from "@/lib/auth";
 import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, hoursDiff, MEAL_ALWAYS_PAID_DEFAULT_HOURS, type AttendanceRow } from "@/lib/supabase/timecards";
 import { isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, hasAnyTechnicianPayRole } from "@/lib/roleLabels";
@@ -52,6 +53,8 @@ interface Props {
   workingHours?: number | null;
   mealMinutes?: number | null;
   offDays?: number[];
+  /** "US" | "PH" (profileCountry/employee.country) — PH staff work out of one office, not deployed across US states, so this hides the Company/State toggle (no state concept applies), and makes meal breaks unpaid + overtime straight/flat pay (no 1.5× premium) instead of the US rules. Omitted/undefined behaves as "US" (existing behavior, unchanged). */
+  country?: string | null;
   /** Pre-computed by the caller via payGraceMinutesFor(country) — see attendanceGrace.ts. Defaults to 0 (no forgiveness) so existing callers aren't required to pass it. */
   graceMinutes?: number;
   /** The payroll period selected on the caller's own page (e.g. genStart/
@@ -197,6 +200,7 @@ export function EmployeePayrollDetailModal({
   workingHours,
   mealMinutes,
   offDays,
+  country,
   graceMinutes = 0,
   initialStart,
   initialEnd,
@@ -210,6 +214,11 @@ export function EmployeePayrollDetailModal({
   reviewPeriodEnd,
   onSyncReviewPeriod,
 }: Props) {
+  // PH staff work out of one office, not deployed across US states/field
+  // sites — no state-minimum-wage concept applies, meal breaks are unpaid
+  // (never credited back, regardless of role), and overtime is straight/
+  // flat pay at the same rate as regular hours, no 1.5× premium.
+  const isPhPayroll = country === "PH";
   // Named myRole/myExtraRoles (not role/extraRoles) — those names are
   // already taken by this component's own props above, which describe the
   // EMPLOYEE BEING VIEWED (used for the CSR overtime check below), not the
@@ -234,6 +243,11 @@ export function EmployeePayrollDetailModal({
   // clicking a "Pending Time Correction Request" status can show the actual
   // request detail + approve/reject inline, same popup Absent List uses.
   const [pendingCorrectionByDate, setPendingCorrectionByDate] = useState<Map<string, TimecardCorrectionRow>>(new Map());
+  // This employee's attendance_notes content, keyed by date — the same
+  // (profile, day) notes typed on the Daily/Ticket Attendance tabs' "Add
+  // note" field, surfaced here as a hover bubble on the Date cell so a note
+  // left on one page is visible without leaving this modal to find it.
+  const [notesByDate, setNotesByDate] = useState<Map<string, string>>(new Map());
   const [pendingDetailModal, setPendingDetailModal] = useState<{ date: string; item: PendingItem } | null>(null);
   const [history, setHistory] = useState<SalaryEntryRow[]>([]);
   const [ticketRows, setTicketRows] = useState<TicketAttendanceRow[]>([]);
@@ -294,8 +308,10 @@ export function EmployeePayrollDetailModal({
   // vs. that day's assigned state's minimum wage — not an equally-valid
   // alternative view, but the legally required number whenever a day's
   // state floor exceeds the company rate. Defaults to Compliant since that's
-  // the number that's actually safe to pay.
-  const [payView, setPayView] = useState<"calculated" | "compliant">("compliant");
+  // the number that's actually safe to pay. PH has no state-minimum-wage
+  // concept at all, so it's locked to Calculated (company rate) — the
+  // toggle itself is hidden below for isPhPayroll.
+  const [payView, setPayView] = useState<"calculated" | "compliant">(isPhPayroll ? "calculated" : "compliant");
 
   useEffect(() => {
     if (!uid) return;
@@ -398,8 +414,10 @@ export function EmployeePayrollDetailModal({
       // formal Unpaid request existed.
       const paidLeaveDates = new Map<string, PtoType>();
       const unpaidLeaveDates = new Map<string, PtoType>();
+      const noteMap = new Map<string, string>();
       for (const n of hrStatusNotes) {
         if (n.profileId !== profileId) continue;
+        if (n.content) noteMap.set(n.noteDate, n.content);
         const type = HR_STATUS_TO_PTO_TYPE[n.hrNote];
         if (!type) continue;
         (isPaidPtoType(type) ? paidLeaveDates : unpaidLeaveDates).set(n.noteDate, type);
@@ -427,6 +445,7 @@ export function EmployeePayrollDetailModal({
       if (cancelledRef.current) return;
       setAttendance(attRows);
       setSeedAttendance(seedRows);
+      setNotesByDate(noteMap);
       setPendingCorrectionByDate(new Map(pendingCorrections.filter((c) => c.profileId === profileId).map((c) => [c.workDate, c])));
       setHistory(hist);
       setTicketRows(myTicketRows);
@@ -456,7 +475,7 @@ export function EmployeePayrollDetailModal({
   // split runs), so it naturally lands as Regular or Overtime with no
   // separate "Meal" bucket in the totals. Kept as its own per-date map too,
   // purely so the table can still show where that 30 minutes came from.
-  const mealAlwaysPaid = isMealAlwaysPaidRole(role, extraRoles);
+  const mealAlwaysPaid = !isPhPayroll && isMealAlwaysPaidRole(role, extraRoles);
   // Covers seedAttendance too (the partial week before rangeStart, used only
   // for the weekly carry-over below) so a seed day's meal credit correctly
   // counts toward that week's already-used regular quota — not just the
@@ -776,6 +795,10 @@ export function EmployeePayrollDetailModal({
   // (rateEffectiveOn returns 0 for those — no per-day hourly rate to compare
   // against a floor; fixed salary is handled as its own flat branch in
   // payViewTotals below).
+  // PH has no state floor to match, and no OT premium — this collapses to
+  // 1 for PH so every pay-math site below that multiplies overtime hours by
+  // it naturally becomes flat/straight pay without needing its own branch.
+  const otMultiplier = isPhPayroll ? 1 : OVERTIME_MULTIPLIER;
   const dailyPayByDate = useMemo(() => {
     const map = new Map<string, { companyRate: number; effectiveRate: number; isMatched: boolean; calculatedPay: number; compliantPay: number }>();
     for (const row of attendance) {
@@ -792,12 +815,12 @@ export function EmployeePayrollDetailModal({
         companyRate,
         effectiveRate,
         isMatched,
-        calculatedPay: folded.regular * companyRate + folded.overtime * companyRate * OVERTIME_MULTIPLIER,
-        compliantPay: folded.regular * effectiveRate + folded.overtime * effectiveRate * OVERTIME_MULTIPLIER,
+        calculatedPay: folded.regular * companyRate + folded.overtime * companyRate * otMultiplier,
+        compliantPay: folded.regular * effectiveRate + folded.overtime * effectiveRate * otMultiplier,
       });
     }
     return map;
-  }, [attendance, history, dailyHoursSplitByDate]);
+  }, [attendance, history, dailyHoursSplitByDate, otMultiplier]);
 
   const payViewTotals = useMemo(() => {
     if (isCurrentlyFixed && currentEntry?.annualSalary) {
@@ -806,7 +829,8 @@ export function EmployeePayrollDetailModal({
       // pay is shown (Current Rate tile, Tech Activity Report's Hourly Pay
       // line). Using monthlySalary here inflated it to annual/12 (e.g. a
       // $72,000/yr salary showed $6,000.00 instead of the correct $2,769.23).
-      const fixed = perCutoffSalary(currentEntry.annualSalary);
+      // PH's cutoff is semi-monthly (24/yr), not the US's bi-weekly (26/yr).
+      const fixed = perCutoffSalary(currentEntry.annualSalary, isPhPayroll);
       return {
         calculated: { regularPay: fixed, overtimePay: 0, total: fixed },
         compliant: { regularPay: fixed, overtimePay: 0, total: fixed },
@@ -821,14 +845,14 @@ export function EmployeePayrollDetailModal({
       const { regular, overtime } = dailyHoursSplitByDate.get(row.date) ?? { regular: 0, overtime: 0 };
       const effectiveRate = dailyPayByDate.get(row.date)?.effectiveRate ?? rate;
       totals.calculated.regularPay += regular * rate;
-      totals.calculated.overtimePay += overtime * rate * OVERTIME_MULTIPLIER;
+      totals.calculated.overtimePay += overtime * rate * otMultiplier;
       totals.compliant.regularPay += regular * effectiveRate;
-      totals.compliant.overtimePay += overtime * effectiveRate * OVERTIME_MULTIPLIER;
+      totals.compliant.overtimePay += overtime * effectiveRate * otMultiplier;
     }
     totals.calculated.total = totals.calculated.regularPay + totals.calculated.overtimePay;
     totals.compliant.total = totals.compliant.regularPay + totals.compliant.overtimePay;
     return totals;
-  }, [attendance, history, dailyHoursSplitByDate, dailyPayByDate, isCurrentlyFixed, currentEntry]);
+  }, [attendance, history, dailyHoursSplitByDate, dailyPayByDate, isCurrentlyFixed, currentEntry, otMultiplier, isPhPayroll]);
   const displayedPay = payViewTotals[payView];
   // Flat equivalent of displayedPay — every hour at the same (regular or
   // state-floor-matched) rate, no 1.5× overtime multiplier. This tile can't
@@ -837,9 +861,10 @@ export function EmployeePayrollDetailModal({
   // regular-rate OT premium — showing displayedPay.total's old flat-×1.5
   // breakdown implied it WAS the final Hourly + OT figure, which is no
   // longer true once that step folds in incentive pay. Dividing overtimePay
-  // back down by OVERTIME_MULTIPLIER recovers the flat (1×) equivalent
-  // without duplicating the day-by-day rate loop above.
-  const displayedPayFlat = displayedPay.regularPay + displayedPay.overtimePay / OVERTIME_MULTIPLIER;
+  // back down by otMultiplier recovers the flat (1×) equivalent without
+  // duplicating the day-by-day rate loop above (a no-op division for PH,
+  // whose otMultiplier is already 1).
+  const displayedPayFlat = displayedPay.regularPay + displayedPay.overtimePay / otMultiplier;
   // Regular/overtime split of totalHours above — same dailyHoursSplitByDate
   // computedPay itself sums (already meal-credit-inclusive, via the raw
   // hours merge above), so this tile's breakdown line always agrees with
@@ -922,12 +947,17 @@ export function EmployeePayrollDetailModal({
       alert(isFixed ? "Please enter a valid annual salary." : "Please enter a valid hourly rate.");
       return;
     }
-    // Company policy: every technician-tier employee (primary OR secondary
-    // role) observes at least the federal minimum wage ($7.25/hr) on their
-    // hourly rate. Fixed-salary employees are the one carve-out (isFixed is
-    // checked separately from this rate, so this only fires for an hourly
-    // entry).
-    if (!isFixed && hasAnyTechnicianPayRole(role, extraRoles) && rate < FEDERAL_MIN_WAGE) {
+    // Company policy: every US technician-tier employee (primary OR
+    // secondary role) observes at least the federal minimum wage ($7.25/hr)
+    // on their hourly rate. Fixed-salary employees are the one carve-out
+    // (isFixed is checked separately from this rate, so this only fires for
+    // an hourly entry). Doesn't apply to PH staff at all — the US federal
+    // minimum wage is a US-only legal floor, not a real constraint on a
+    // Philippines-based rate (see isPhPayroll above), regardless of whether
+    // their role happens to be one of the technician-pay-tier roles
+    // (Branch/Senior Branch Manager, Tech Manager, etc.) that would trigger
+    // this for a US employee in the same role.
+    if (!isFixed && !isPhPayroll && hasAnyTechnicianPayRole(role, extraRoles) && rate < FEDERAL_MIN_WAGE) {
       alert(`Technician-tier hourly rates can't be entered below the federal minimum wage ($${FEDERAL_MIN_WAGE.toFixed(2)}/hr).`);
       return;
     }
@@ -1191,7 +1221,7 @@ export function EmployeePayrollDetailModal({
                   <p className="text-xs text-slate-400 uppercase">Current Rate</p>
                   {isCurrentlyFixed && currentEntry?.annualSalary ? (
                     <p className="text-xl font-bold text-white mt-1">
-                      ${currentEntry.annualSalary.toLocaleString()}/yr <span className="text-xs font-normal text-slate-400">(${perCutoffSalary(currentEntry.annualSalary).toFixed(2)}/cutoff)</span>
+                      ${currentEntry.annualSalary.toLocaleString()}/yr <span className="text-xs font-normal text-slate-400">(${perCutoffSalary(currentEntry.annualSalary, isPhPayroll).toFixed(2)}/cutoff)</span>
                     </p>
                   ) : (
                     <p className="text-xl font-bold text-white mt-1">${rateNow.toFixed(2)}/hr</p>
@@ -1210,7 +1240,7 @@ export function EmployeePayrollDetailModal({
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-xs text-slate-400 uppercase">Hourly + OT Pay ({rangeStart} – {rangeEnd})</p>
-                {!isCurrentlyFixed && (
+                {!isCurrentlyFixed && !isPhPayroll && (
                   <div className="flex items-center rounded-full bg-slate-900 border border-white/10 p-0.5 text-[10px]">
                     <button
                       type="button"
@@ -1316,7 +1346,7 @@ export function EmployeePayrollDetailModal({
                 </div>
                 {rateForm.compensationType === "fixed" && Number(rateForm.annualSalary) > 0 && (
                   <p className="text-[11px] text-slate-400">
-                    = ${monthlySalary(Number(rateForm.annualSalary)).toFixed(2)}/month · ${perCutoffSalary(Number(rateForm.annualSalary)).toFixed(2)}/cutoff (bi-weekly)
+                    = ${monthlySalary(Number(rateForm.annualSalary)).toFixed(2)}/month · ${perCutoffSalary(Number(rateForm.annualSalary), isPhPayroll).toFixed(2)}/cutoff {isPhPayroll ? "(semi-monthly)" : "(bi-weekly)"}
                   </p>
                 )}
                 <div className="flex justify-end">
@@ -1357,7 +1387,7 @@ export function EmployeePayrollDetailModal({
                       </td>
                       <td className="py-1.5 text-right text-white font-semibold">
                         {h.compensationType === "fixed" && h.annualSalary
-                          ? <>${h.annualSalary.toLocaleString()}/yr <span className="font-normal text-slate-400">(${perCutoffSalary(h.annualSalary).toFixed(2)}/cutoff)</span></>
+                          ? <>${h.annualSalary.toLocaleString()}/yr <span className="font-normal text-slate-400">(${perCutoffSalary(h.annualSalary, isPhPayroll).toFixed(2)}/cutoff)</span></>
                           : `$${h.hourlyRate.toFixed(2)}/hr`}
                       </td>
                       <td className="py-1.5 text-right">
@@ -1410,11 +1440,11 @@ export function EmployeePayrollDetailModal({
             </p>
           </div>
 
-          {/* Weekly breakdown + unassigned-state flag */}
-          {(weeklyBreakdown.length > 0 || unassignedStateDays.length > 0) && (
+          {/* Weekly breakdown + unassigned-state flag (PH has no state concept, so it never shows there — Weekly Breakdown spans the full row instead of leaving an empty column beside it) */}
+          {(weeklyBreakdown.length > 0 || (!isPhPayroll && unassignedStateDays.length > 0)) && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {weeklyBreakdown.length > 0 && (
-            <div className="bg-slate-800/30 border border-white/10 rounded-lg p-4">
+            <div className={`bg-slate-800/30 border border-white/10 rounded-lg p-4 ${isPhPayroll ? "md:col-span-2" : ""}`}>
               <h3 className="text-sm font-semibold text-white mb-2">Weekly Breakdown</h3>
               <ul className="space-y-1">
                 {weeklyBreakdown.map((w, i, arr) => {
@@ -1451,7 +1481,7 @@ export function EmployeePayrollDetailModal({
               </ul>
             </div>
           )}
-          {unassignedStateDays.length > 0 && (
+          {!isPhPayroll && unassignedStateDays.length > 0 && (
             <div className="bg-amber-950/20 border border-amber-500/30 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-amber-300 mb-2">
                 State Not Assigned — {unassignedStateDays.length} {unassignedStateDays.length === 1 ? "day" : "days"}
@@ -1535,9 +1565,18 @@ export function EmployeePayrollDetailModal({
                       <th className="text-left py-1.5">Meal Out</th>
                       <th className="text-left py-1.5">Check Out</th>
                       <th className="text-right py-1.5">Regular Hour(s)</th>
-                      <th className="text-right py-1.5" title="Actual Meal In-to-Meal Out duration for meal-always-paid roles (Technician, Branch/Senior Branch Manager, Tech Manager, Technical Director/Assistant Director) — fully paid whatever it runs, since the break happens inside the clock-in-to-clock-out span and isn't deducted from it. Flagged red past 30 minutes as a conduct flag, not a pay cut. No punch at all pays nothing extra, but also deducts nothing.">Meal Time</th>
+                      <th
+                        className="text-right py-1.5"
+                        title={
+                          isPhPayroll
+                            ? "Actual Meal In-to-Meal Out duration — unpaid for PH staff, already deducted from Regular Hour(s)/Total Hours. Flagged red past 30 minutes as a conduct flag, not an extra pay cut."
+                            : "Actual Meal In-to-Meal Out duration for meal-always-paid roles (Technician, Branch/Senior Branch Manager, Tech Manager, Technical Director/Assistant Director) — fully paid whatever it runs, since the break happens inside the clock-in-to-clock-out span and isn't deducted from it. Flagged red past 30 minutes as a conduct flag, not a pay cut. No punch at all pays nothing extra, but also deducts nothing."
+                        }
+                      >
+                        Meal Time
+                      </th>
                       <th className="text-right py-1.5">Overtime</th>
-                      <th className="text-right py-1.5" title="Regular Hour(s) + Meal Time + Overtime">Total Hours</th>
+                      <th className="text-right py-1.5" title={isPhPayroll ? "Regular Hour(s) + Overtime — Meal Time is unpaid and already excluded" : "Regular Hour(s) + Meal Time + Overtime"}>Total Hours</th>
                       <th className="text-right py-1.5">Status</th>
                       <th className="text-right py-1.5">Rate</th>
                       {payView === "compliant" && (
@@ -1555,6 +1594,7 @@ export function EmployeePayrollDetailModal({
                   <tbody>
                     {attendance.map((row) => {
                       const dayIsFixed = entryEffectiveOn(history, row.date)?.compensationType === "fixed";
+                      const dayNote = notesByDate.get(row.date);
                       const edit = attendanceEdits[row.date];
                       const isRestDay = row.status === "day-off" || row.status === "holiday";
                       // dailyHoursSplitByDate's regular/overtime is correct (meal credit
@@ -1611,6 +1651,18 @@ export function EmployeePayrollDetailModal({
                           <span className="inline-flex items-center gap-1">
                             {isExpanded ? <ChevronDown className="h-3 w-3 text-slate-500" /> : <ChevronRight className="h-3 w-3 text-slate-500" />}
                             {row.date}
+                            {dayNote && (
+                              <TooltipProvider delayDuration={150}>
+                                <Tooltip>
+                                  <TooltipTrigger asChild onClick={(e) => e.stopPropagation()}>
+                                    <StickyNote className="h-3 w-3 text-amber-400 shrink-0" />
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-[220px] whitespace-pre-wrap text-left bg-slate-800 text-slate-100 border border-white/10">
+                                    {dayNote}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
                           </span>
                         </td>
                         {attendanceEditing ? (
@@ -1673,7 +1725,15 @@ export function EmployeePayrollDetailModal({
                         <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? fmtDecimal(regularHours) : "—"}</td>
                         <td
                           className={`py-1.5 text-right ${mealOverPolicy ? "text-red-400 font-semibold" : "text-sky-300"}`}
-                          title={mealOverPolicy ? "Over the 30-minute paid meal policy — flagged for review. Still fully paid; this isn't a pay deduction." : "Actual meal break taken — fully paid regardless of length (see computeMealTimeCredit)."}
+                          title={
+                            isPhPayroll
+                              ? mealOverPolicy
+                                ? "Over 30 minutes — flagged for review. Unpaid either way; already deducted from Regular Hour(s)/Total Hours."
+                                : "Actual meal break taken — unpaid, already deducted from Regular Hour(s)/Total Hours."
+                              : mealOverPolicy
+                              ? "Over the 30-minute paid meal policy — flagged for review. Still fully paid; this isn't a pay deduction."
+                              : "Actual meal break taken — fully paid regardless of length (see computeMealTimeCredit)."
+                          }
                         >
                           {actualMealHours > 0 ? fmtDecimal(actualMealHours) : "—"}
                         </td>

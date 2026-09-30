@@ -1,9 +1,9 @@
 -- =====================================================================
--- 0310 — Part Daily Report: per-PO-staffer daily tally
+-- 0322 — Part Daily Report: per-PO-staffer daily tally
 --
 -- The Staff Changes Counter — PO Team roster (ReportPartsDaily.tsx) needs
 -- Tickets Ordered / Parts Ordered / Pending Tickets broken out PER
--- PERSON, not just the company-wide total parts_po_team_daily_log (0309)
+-- PERSON, not just the company-wide total parts_po_team_daily_log (0321)
 -- already tracks. There's no field anywhere that records who actually
 -- placed an individual order (parts.created_by isn't populated), so these
 -- are entered by hand per (staffer, day) — same manual-tally pattern as
@@ -12,8 +12,8 @@
 -- removed) company-wide note on parts_po_team_daily_log.
 --
 -- Company-scoped via RLS, same pattern as parts_daily_issues_log (0288)/
--- parts_po_team_daily_log (0309).
--- Run once in the Supabase SQL Editor, after 0309.
+-- parts_po_team_daily_log (0321).
+-- Run once in the Supabase SQL Editor, after 0321.
 -- =====================================================================
 
 create table if not exists parts_po_team_staff_daily_log (

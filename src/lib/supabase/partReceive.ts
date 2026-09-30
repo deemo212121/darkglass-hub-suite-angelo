@@ -38,7 +38,7 @@ export interface PartReceiveRow {
   partFrom: string;
   /** The real carrier/shipping method selected when the PO was placed (e.g. "FedEx Ground") — only set by the Marcone/Encompass order flow, see migration 0168. */
   shipMethod: string;
-  /** Carrier-confirmed delivery date (migration 0311); "" until looked up. */
+  /** Carrier-confirmed delivery date (migration 0325); "" until looked up. */
   deliveredDate: string;
   deliveredLocation: string;
 }
@@ -117,7 +117,7 @@ export async function updatePartReceiveRow(
 }
 
 /**
- * delivered_date / delivered_location (migration 0311), read separately
+ * delivered_date / delivered_location (migration 0325), read separately
  * from getPartsToReceive so Part Receive still loads if that migration
  * hasn't been run yet — an unknown column would fail the whole select.
  */
@@ -131,7 +131,7 @@ export async function getDeliveredDates(): Promise<Map<string, { date: string; l
       .not("delivered_date", "is", null)
       .range(from, from + PAGE_SIZE - 1);
     if (error) {
-      console.warn("getDeliveredDates unavailable (is migration 0311 applied?):", error.message);
+      console.warn("getDeliveredDates unavailable (is migration 0325 applied?):", error.message);
       return map;
     }
     for (const r of data ?? []) map.set(r.id, { date: r.delivered_date, location: r.delivered_location || "" });

@@ -13681,3 +13681,27 @@ a.mtech-phone-link:active { opacity: 0.7; }
   color: var(--mt-blue);
 }
 
+/* .mtech-bill-input (Mobile Time Correction's Date/Corrected Check In-Out/
+   Meal Start-End fields, among others) always renders on a hardcoded white
+   background regardless of the app's own theme — but the global native
+   date/time calendar-picker-indicator icon is forced white for dark theme
+   (see the `input[type="date"]::-webkit-calendar-picker-indicator` rule
+   earlier in this file), which makes it invisible white-on-white here
+   whenever the app theme is dark (the default), reading as "there's no
+   icon to tap" even though the field is still clickable. Placed at the end
+   of the file so it wins regardless of cascade order against any earlier
+   rule targeting the same selectors. */
+.mtech-bill-input[type="date"]::-webkit-calendar-picker-indicator,
+.mtech-bill-input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+.mtech-bill-input[type="time"]::-webkit-calendar-picker-indicator,
+.mtech-bill-input[type="month"]::-webkit-calendar-picker-indicator {
+  filter: none;
+  opacity: 0.85;
+}
+.mtech-bill-input[type="date"],
+.mtech-bill-input[type="datetime-local"],
+.mtech-bill-input[type="time"],
+.mtech-bill-input[type="month"] {
+  color-scheme: light;
+}
+

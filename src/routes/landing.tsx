@@ -30,11 +30,11 @@ export const Route = createFileRoute("/landing")({
 function Landing() {
   const { login, logout, email, role, ready, loading, companyId, companyLoginAlias } = useAuth();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ 
-    emailOrUsername: "jdage7@gmail.com", 
-    password: "", 
-    company: "USIHS",
-    remember: true 
+  const [form, setForm] = useState({
+    emailOrUsername: "",
+    password: "",
+    company: "",
+    remember: true
   });
   const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);

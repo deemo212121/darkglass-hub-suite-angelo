@@ -279,7 +279,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [viewAsRoleState, setViewAsRoleState] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
     try {
-      return sessionStorage.getItem(VIEW_AS_ROLE_KEY);
+      // localStorage, not sessionStorage — a preview needs to apply to
+      // every open tab, not just the one it was started in. sessionStorage
+      // is scoped per-tab, so right-clicking a tile to "open in new tab"
+      // (or Ctrl/middle-click) landed in a tab with no preview active at
+      // all, silently falling back to the Super Admin's own real,
+      // unrestricted access — exactly the opposite of what testing a
+      // restricted role's access is for. The stale-value safety net right
+      // below (a different, non-Super-Admin account signing in later)
+      // still clears it regardless of which storage this uses.
+      return localStorage.getItem(VIEW_AS_ROLE_KEY);
     } catch {
       return null;
     }
@@ -511,20 +520,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   setIsActive(sbProfile.isActive);
                   setMustChangePasswordState(sbProfile.mustChangePassword);
                   // Hydrate this company's per-module/submodule role-gate
-                  // overrides (migration 0151) — every getDashboardRoleGate()/
-                  // getModuleRoleGate() call site stays synchronous and just
-                  // starts seeing the customized list once this resolves.
-                  // Never blocks login; a submodule reads as "open to
-                  // everyone" (or the Dashboard's hardcoded default) until it does.
-                  void (async () => {
-                    try {
-                      const { getModuleRoleGateOverrides } = await import("./supabase/moduleRoleGates");
-                      const { hydrateModuleRoleGates } = await import("./moduleAccess");
-                      hydrateModuleRoleGates(await getModuleRoleGateOverrides());
-                    } catch (e) {
-                      console.warn("Module role gate override hydration skipped:", e);
-                    }
-                  })();
+                  // overrides (migration 0151) BEFORE `ready` flips true.
+                  // Every gate check reads this cache synchronously, and an
+                  // empty cache means "open to everyone" — so if pages render
+                  // first (as they did when this was fire-and-forget), Home
+                  // and the module grids list every module/submodule to every
+                  // role after a refresh. A failed fetch still doesn't block
+                  // login; it just leaves the permissive default in place.
+                  try {
+                    const { getModuleRoleGateOverrides } = await import("./supabase/moduleRoleGates");
+                    const { hydrateModuleRoleGates } = await import("./moduleAccess");
+                    hydrateModuleRoleGates(await getModuleRoleGateOverrides());
+                  } catch (e) {
+                    console.warn("Module role gate override hydration skipped:", e);
+                  }
+                  if (isStale()) return;
                   startModuleGateWatch(sbProfile.companyId);
                   // Compute location access. Two overrides win over the
                   // work-plan-based filter:
@@ -772,7 +782,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     try {
       devLog("🔓 Logging out...");
-      try { sessionStorage.removeItem(VIEW_AS_ROLE_KEY); } catch { /* best-effort */ }
+      try { localStorage.removeItem(VIEW_AS_ROLE_KEY); } catch { /* best-effort */ }
       await firebaseSignOut();
       devLog("✅ Logout successful");
 
@@ -797,15 +807,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   // Only a real Super Admin may hold a "view as" preview — a stale value
-  // left over in sessionStorage (e.g. a different account signed in later
-  // in the same tab) is silently ignored for anyone else, and cleared
-  // outright once we know who's actually signed in.
+  // left over in localStorage (e.g. a different account signed in later,
+  // possibly in a different tab entirely now that this is shared across
+  // tabs) is silently ignored for anyone else, and cleared outright once
+  // we know who's actually signed in.
   const isSuperRole = role !== null && SUPER_ROLES.has(role);
   useEffect(() => {
     if (!ready) return;
     if (!isSuperRole && viewAsRoleState !== null) {
       setViewAsRoleState(null);
-      try { sessionStorage.removeItem(VIEW_AS_ROLE_KEY); } catch { /* best-effort */ }
+      try { localStorage.removeItem(VIEW_AS_ROLE_KEY); } catch { /* best-effort */ }
     }
   }, [ready, isSuperRole, viewAsRoleState]);
 
@@ -813,8 +824,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (roleCode !== null && !isSuperRole) return; // only Super Admin may enter preview
     setViewAsRoleState(roleCode);
     try {
-      if (roleCode) sessionStorage.setItem(VIEW_AS_ROLE_KEY, roleCode);
-      else sessionStorage.removeItem(VIEW_AS_ROLE_KEY);
+      if (roleCode) localStorage.setItem(VIEW_AS_ROLE_KEY, roleCode);
+      else localStorage.removeItem(VIEW_AS_ROLE_KEY);
     } catch {
       // best-effort — preview still works for this render even if storage is blocked
     }

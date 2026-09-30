@@ -1,0 +1,78 @@
+DARKGLASS HUB SUITE - PROGRESS UPDATE
+Covering: July 20, 2026
+
+
+CRITICAL FIX: NSA INTEGRATION WAS SILENTLY BROKEN IN PRODUCTION
+-----------------------------------------------------
+- Found and fixed two separate bugs that meant NSA ticket data
+  (Communication log, Estimates, parts) could not load at all on the
+  live site, despite working fine in every local test - the request
+  path production actually uses was never wired up the same way dev
+  was, and separately, NSA's login credentials were never actually
+  reaching the deployed app due to a coding pattern that quietly broke
+  a build-time substitution step.
+- Both root-caused precisely and confirmed fixed against the real
+  live site (a real NSA dispatch request now returns real data instead
+  of an error).
+- Found the exact same credential-loading mistake in the Jotform
+  integration and fixed it too, before it caused the same failure
+  there.
+
+
+SUPERADMIN: EDIT ADMIN AND EDIT COMPANY NOW OPEN AS POP-UP WINDOWS
+-----------------------------------------------------
+- Company editing now actually works - the "Edit" button on the
+  Companies list was previously just a "coming soon" placeholder that
+  did nothing.
+- Tried making both Edit Admin and Edit Company expand inline within
+  their table row first, but that turned out to be more awkward in
+  practice, so both now open as a clean pop-up window instead.
+
+
+NEW: COMPANIES NOW PROPERLY SYNCED BETWEEN FIREBASE AND THE REAL DATABASE
+-----------------------------------------------------
+- Found that creating a company through SuperAdmin only ever saved it
+  to Firebase, never to the actual database everything else (tickets,
+  parts, user accounts, etc.) is built on - so any company created
+  through the dashboard looked fine in the list but couldn't actually
+  be used for anything. Fixed so both are created together going
+  forward, and backfilled the ones already missing.
+- Also fixed the "Add Company" form silently ignoring the custom
+  Company ID you typed in and generating its own random one instead,
+  even though the form itself checked that ID for uniqueness first.
+
+
+NEW: OPTIONAL SHORT LOGIN ID (ALIAS) FOR COMPANIES
+-----------------------------------------------------
+- A company's real Company ID can't safely be renamed once set (it's
+  tied into how the system identifies that company everywhere), but
+  companies can now be given a second, friendlier ID that also works
+  at login - e.g. AH Solutions' real ID stays COMP001, but USAPP now
+  also logs in successfully. Set from the Edit Company pop-up.
+- Caught and fixed a bug in this same feature shortly after building
+  it: saving a new alias could silently report success without
+  actually saving anything, if the save was rejected behind the
+  scenes. It now shows a real error if that happens instead of a false
+  "saved" message.
+
+
+BUG FIX: MILEAGE MISSING FOR JACKSON, MS / JACKSON, TN TICKETS
+-----------------------------------------------------
+- Tickets in either Jackson branch were showing no mileage at all.
+  Caused by a small formatting mismatch (a missing space) between how
+  the branch list stores those two city names and how tickets display
+  them - reused an existing fix already built for this exact class of
+  issue elsewhere in the app, rather than editing the branch data
+  itself, since ~300 other places already depend on the existing
+  format.
+
+
+SUGGESTED NEXT / STILL NEEDS DOING
+-----------------------------------------------------
+- The Companies list "Deactivate" button is still a "coming soon"
+  placeholder, same as Edit was before today - it doesn't do anything
+  yet.
+- Editing a company's other details (name, address, phone, etc.)
+  through SuperAdmin still only updates Firebase, not the real
+  database - same category of gap the login alias fix closed, just not
+  yet extended to those fields.

@@ -26,27 +26,24 @@
  * still approve/reject from AttendanceMonitoringPage's "Trainee Attendance"
  * tab, but are never gated by this — only the trainee's actual manager has
  * their own checkout held. A viewer with no trainees under them sees
- * nothing and their checkout is never held. No dismiss/X — it only goes
- * away once every pending item has been Approved/Rejected/marked.
+ * nothing and their checkout is never held.
+ *
+ * The pop-up doesn't approve/reject itself any more — "Review Timecard"
+ * opens that day in the Trainee Attendance tab (editor already open, via
+ * ?review=/?trainee= + ?date=), where the trainer can correct the times
+ * before approving. No dismiss/X: the only way out is to go review.
  */
 
 import { useEffect, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, ChevronRight, GraduationCap } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import {
   getTraineeReviewQueue,
-  getTraineeEntryForDate,
-  approveTraineeDay,
-  rejectTraineeDay,
-  recordTraineeDayWithoutPunch,
-  approveTraineeDayOnField,
   SELF_CHECKED_OUT_EVENT,
   type TraineeReviewQueueItem,
 } from "@/lib/supabase/traineeTimecards";
-
-/** Fixed rejection categories the user asked for — "Other" reveals a required free-text field. */
-const REJECT_REASON_OPTIONS = ["On Field", "Termination", "Absent", "Quit", "Other"] as const;
 
 /** entry items key by the real row's id; a "noshow" item has no row yet, so its trainee's profile id stands in. */
 const itemKey = (item: TraineeReviewQueueItem) => (item.kind === "entry" ? item.entry!.id : `noshow:${item.trainee.id}`);
@@ -62,33 +59,10 @@ function TimeField({ label, value }: { label: string; value: string }) {
 
 export function TraineeAttendanceReviewModal() {
   const { ready, uid } = useAuth();
+  const navigate = useNavigate();
   const [profileId, setProfileId] = useState<string | null>(null);
   const [pending, setPending] = useState<TraineeReviewQueueItem[]>([]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [rejecting, setRejecting] = useState(false);
-  const [rejectReasonOption, setRejectReasonOption] = useState("");
-  const [rejectReasonCustom, setRejectReasonCustom] = useState("");
-  // "On Field" needs a time range (when they were out) same as "Other"
-  // needs free text — baked straight into the stored reason string since
-  // reject_reason is a plain text column, no separate start/end columns to add.
-  const [onFieldStart, setOnFieldStart] = useState("");
-  const [onFieldEnd, setOnFieldEnd] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const resetRejectForm = () => {
-    setRejecting(false);
-    setRejectReasonOption("");
-    setRejectReasonCustom("");
-    setOnFieldStart("");
-    setOnFieldEnd("");
-  };
-  // Unused for "On Field" — that path is approved with real times instead
-  // of rejected with a text note (see submitReject below), so it never
-  // reads this value; kept simple for every other reason.
-  const finalRejectReason = rejectReasonOption === "Other" ? rejectReasonCustom.trim() : rejectReasonOption;
-  const canSubmitReject =
-    rejectReasonOption !== "" &&
-    (rejectReasonOption !== "Other" || rejectReasonCustom.trim() !== "") &&
-    (rejectReasonOption !== "On Field" || (onFieldStart !== "" && onFieldEnd !== ""));
 
   useEffect(() => {
     if (!ready || !uid) return;
@@ -116,75 +90,21 @@ export function TraineeAttendanceReviewModal() {
 
   const selected = pending.find((p) => itemKey(p) === selectedKey) ?? null;
 
-  const handleApprove = async (item: TraineeReviewQueueItem) => {
-    if (!profileId || submitting || item.kind !== "entry" || !item.entry) return;
-    setSubmitting(true);
-    try {
-      await approveTraineeDay(item.entry, profileId);
-      setPending((prev) => prev.filter((p) => itemKey(p) !== itemKey(item)));
-      setSelectedKey(null);
-    } catch (err) {
-      console.error("Failed to approve trainee day:", err);
-      alert("Couldn't approve this day — please try again.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  // "Present" for a no-show item: the queue was built the moment this
-  // popup loaded, but the trainee may have punched in for real since then
-  // (e.g. right before this manager tries to check out later in the day).
-  // Re-checks trainee_timecard_entries fresh and, if a real punch now
-  // exists, approves the day with THAT actual Time In/Out instead of
-  // making the manager type times by hand (that's what "On Field" is for
-  // — a trainee who genuinely worked but never punched at all).
-  const handleMarkPresent = async (item: TraineeReviewQueueItem) => {
-    if (!profileId || submitting) return;
-    setSubmitting(true);
-    try {
-      const entry = await getTraineeEntryForDate(item.trainee.id, item.workDate);
-      if (!entry || (!entry.checkIn && !entry.checkOut)) {
-        alert(`${item.trainee.display_name || "This trainee"} hasn't punched in yet for ${item.workDate} — nothing to fetch yet.`);
-        return;
-      }
-      await approveTraineeDay(entry, profileId);
-      setPending((prev) => prev.filter((p) => itemKey(p) !== itemKey(item)));
-      setSelectedKey(null);
-    } catch (err) {
-      console.error("Failed to mark trainee present:", err);
-      alert("Couldn't fetch their punch — please try again.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const submitReject = async (item: TraineeReviewQueueItem) => {
-    if (!profileId || submitting || !canSubmitReject) return;
-    setSubmitting(true);
-    try {
-      if (rejectReasonOption === "On Field") {
-        // Not a rejection — the manager-entered range becomes the trainee's
-        // real Check In/Check Out for the day (see approveTraineeDayOnField's
-        // own doc comment for why), so it's approved outright with real
-        // times instead of landing in "rejected" with just a text note.
-        await approveTraineeDayOnField(item.trainee.id, item.workDate, onFieldStart, onFieldEnd, profileId, profileId);
-      } else if (item.kind === "entry" && item.entry) {
-        await rejectTraineeDay(item.entry.id, profileId, finalRejectReason);
-      } else {
-        // No-show — nothing punched yet, so there's no row to update; this
-        // creates it directly already in "rejected" (see
-        // recordTraineeDayWithoutPunch's own doc comment).
-        await recordTraineeDayWithoutPunch(item.trainee.id, item.workDate, profileId, profileId, finalRejectReason);
-      }
-      setPending((prev) => prev.filter((p) => itemKey(p) !== itemKey(item)));
-      setSelectedKey(null);
-      resetRejectForm();
-    } catch (err) {
-      console.error("Failed to submit trainee status:", err);
-      alert("Couldn't submit this — please try again.");
-    } finally {
-      setSubmitting(false);
-    }
+  // Review happens in the Trainee Attendance tab, where the times can be
+  // corrected before approving (a trainee often forgets to clock out, or
+  // the trainer leaves first). This pop-up only points there; the trainer's
+  // checkout stays held until the day is resolved, so it reappears on their
+  // next Time Out attempt if they leave the tab without acting.
+  const openInTab = (item: TraineeReviewQueueItem) => {
+    setPending([]);
+    setSelectedKey(null);
+    navigate({
+      to: "/m/$module/$submodule",
+      params: { module: "dashboard", submodule: "attendance-monitoring" },
+      search: (item.kind === "entry" && item.entry
+        ? { tab: "trainee-attendance", review: item.entry.id, date: item.workDate }
+        : { tab: "trainee-attendance", trainee: item.trainee.id, date: item.workDate }) as any,
+    });
   };
 
   if (!profileId || pending.length === 0) return null;
@@ -196,7 +116,7 @@ export function TraineeAttendanceReviewModal() {
           {selected && (
             <button
               type="button"
-              onClick={() => { setSelectedKey(null); resetRejectForm(); }}
+              onClick={() => setSelectedKey(null)}
               aria-label="Back to list"
               className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-white/10 bg-white/5 text-slate-300"
             >
@@ -251,113 +171,16 @@ export function TraineeAttendanceReviewModal() {
                 </div>
               )}
 
-              {!rejecting ? (
-                <div className="flex gap-3 pt-2">
-                  {selected.kind === "entry" && (
-                    <button
-                      type="button"
-                      disabled={submitting}
-                      onClick={() => handleApprove(selected)}
-                      className="flex-1 rounded-full bg-emerald-500 px-4 py-3 text-sm font-semibold text-white transition disabled:opacity-50"
-                    >
-                      Approve
-                    </button>
-                  )}
-                  {selected.kind === "noshow" && (
-                    <button
-                      type="button"
-                      disabled={submitting}
-                      onClick={() => handleMarkPresent(selected)}
-                      className="flex-1 rounded-full bg-emerald-500 px-4 py-3 text-sm font-semibold text-white transition disabled:opacity-50"
-                    >
-                      Present
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    disabled={submitting}
-                    onClick={() => setRejecting(true)}
-                    className="flex-1 rounded-full border border-red-400/40 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-300 transition disabled:opacity-50"
-                  >
-                    {selected.kind === "noshow" ? "Mark Status" : "Reject"}
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-3 pt-2">
-                  <label className="text-xs font-medium text-slate-300">{selected.kind === "noshow" ? "Reason" : "Reason for rejection"}</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {REJECT_REASON_OPTIONS.map((opt) => (
-                      <button
-                        key={opt}
-                        type="button"
-                        onClick={() => setRejectReasonOption(opt)}
-                        className={`rounded-xl border px-3 py-2 text-sm font-medium transition ${
-                          rejectReasonOption === opt
-                            ? "border-red-400/60 bg-red-500/20 text-red-200"
-                            : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
-                        }`}
-                      >
-                        {opt}
-                      </button>
-                    ))}
-                  </div>
-                  {rejectReasonOption === "Other" && (
-                    <textarea
-                      value={rejectReasonCustom}
-                      onChange={(e) => setRejectReasonCustom(e.target.value)}
-                      rows={3}
-                      placeholder="Specify the reason…"
-                      autoFocus
-                      className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-red-400/50 focus:outline-none"
-                    />
-                  )}
-                  {rejectReasonOption === "On Field" && (
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-medium text-slate-300">What time were they on field?</label>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">From</div>
-                          <input
-                            type="time"
-                            value={onFieldStart}
-                            onChange={(e) => setOnFieldStart(e.target.value)}
-                            autoFocus
-                            className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-red-400/50 focus:outline-none"
-                          />
-                        </div>
-                        <div>
-                          <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">To</div>
-                          <input
-                            type="time"
-                            value={onFieldEnd}
-                            onChange={(e) => setOnFieldEnd(e.target.value)}
-                            className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-red-400/50 focus:outline-none"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  <div className="flex gap-3">
-                    <button
-                      type="button"
-                      onClick={resetRejectForm}
-                      className="flex-1 rounded-full border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-300 transition"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      disabled={submitting || !canSubmitReject}
-                      onClick={() => submitReject(selected)}
-                      className={`flex-1 rounded-full px-4 py-3 text-sm font-semibold text-white transition disabled:opacity-50 ${
-                        rejectReasonOption === "On Field" ? "bg-emerald-500" : "bg-red-500"
-                      }`}
-                    >
-                      {rejectReasonOption === "On Field" ? "Approve" : selected.kind === "noshow" ? "Submit" : "Submit Rejection"}
-                    </button>
-                  </div>
-                </div>
-              )}
+              <button
+                type="button"
+                onClick={() => openInTab(selected)}
+                className="w-full rounded-full bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
+              >
+                {selected.kind === "noshow" ? "Review in Trainee Attendance" : "Review Timecard"}
+              </button>
+              <p className="text-center text-[11px] text-slate-500">
+                Opens this day in Attendance Monitoring → Trainee Attendance, where you can correct the times and approve.
+              </p>
             </div>
           )}
         </div>

@@ -1,17 +1,17 @@
 -- =====================================================================
--- 0290 — Named, browsable pay-period cut-offs for the Accounting
+-- 0306 — Named, browsable pay-period cut-offs for the Accounting
 -- Dashboard's "Branch Commission" tab (src/components/
 -- BranchManagerCommissionTab.tsx). A period here is a company-wide date
 -- range (Start/End) that Finance can optionally name (e.g. "Sept Cutoff
 -- 1") so it shows up in a History list and can be reopened later — the
 -- per-person Completion %/LTP %/Completed Ticket values themselves stay
--- in branch_manager_commission_tally (0289), unchanged; this table is
+-- in branch_manager_commission_tally (0305), unchanged; this table is
 -- just the shared label/registry for the cut-off itself, sitting above
 -- that per-person data.
 --
 -- Company-scoped via RLS, company_id auto-stamped from the caller's
--- session — same pattern as branch_manager_commission_tally (0289).
--- Run once in the Supabase SQL Editor, after 0289.
+-- session — same pattern as branch_manager_commission_tally (0305).
+-- Run once in the Supabase SQL Editor, after 0305.
 -- =====================================================================
 
 create table if not exists branch_manager_commission_periods (
@@ -41,7 +41,7 @@ drop trigger if exists trg_branch_manager_commission_periods_stamp on branch_man
 create trigger trg_branch_manager_commission_periods_stamp before insert or update on branch_manager_commission_periods
   for each row execute function branch_manager_commission_periods_stamp();
 
--- ---------- RLS: company-scoped, same pattern as branch_manager_commission_tally (0289) ----------
+-- ---------- RLS: company-scoped, same pattern as branch_manager_commission_tally (0305) ----------
 alter table branch_manager_commission_periods enable row level security;
 alter table branch_manager_commission_periods force row level security;
 

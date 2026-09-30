@@ -211,7 +211,8 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
       const hours = hoursMap.get(emp.id) ?? 0;
       const reg = Math.min(hours, REGULAR_HOURS_PER_DAY * 14);
       const ot = Math.max(0, hours - reg);
-      const gross = reg * rate + ot * rate * 1.5;
+      // PH has no OT premium — straight pay, same rate as regular hours.
+      const gross = reg * rate + ot * rate * (emp.country === "PH" ? 1 : 1.5);
       if (emp.country === "PH") phTotal += gross; else usTotal += gross;
       if (emp.isActive) { if (emp.country === "PH") phCount++; else usCount++; }
     }
@@ -252,7 +253,8 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
       const hours = hoursMap.get(emp.id) ?? 0;
       const reg = Math.min(hours, REGULAR_HOURS_PER_DAY * 14);
       const ot = Math.max(0, hours - reg);
-      const gross = reg * rate + ot * rate * 1.5;
+      // PH has no OT premium — straight pay, same rate as regular hours.
+      const gross = reg * rate + ot * rate * (emp.country === "PH" ? 1 : 1.5);
       const dept = emp.department || "Unspecified";
       const d = map.get(dept) ?? { count: 0, total: 0 };
       d.count += 1;

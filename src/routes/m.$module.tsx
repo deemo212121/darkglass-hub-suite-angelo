@@ -1,4 +1,5 @@
 import { createFileRoute, Link, Navigate, notFound, Outlet } from "@tanstack/react-router";
+import { useRedirectGuard } from "@/lib/useRedirectGuard";
 import { useEffect, useState } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
@@ -6,10 +7,10 @@ import { MapProviderToggle } from "@/components/MapProviderToggle";
 import { useAuth } from "@/lib/auth";
 import { getModule, type ModuleDef, type SubModuleDef } from "@/lib/modules";
 import { hasDashboardAccess } from "@/lib/dashboardAccess";
-import { getModuleRoleGate, MODULE_LEVEL_GATE_SLUG } from "@/lib/moduleAccess";
+import { getModuleRoleGate, MODULE_LEVEL_GATE_SLUG, useModuleRoleGateOverrides } from "@/lib/moduleAccess";
 import { isModuleAllowed, isModuleAllowedForTrainee, isModuleAllowedForFrozen } from "@/lib/roleLabels";
 import { canAccessSubmodule } from "@/lib/submoduleAccess";
-import { getMyRoles, getCompanyUsers } from "@/lib/supabase/users";
+import { getCompanyUsers } from "@/lib/supabase/users";
 import {
   getCompanyMapProvider,
   setCompanyMapProvider,
@@ -75,13 +76,15 @@ export const Route = createFileRoute("/m/$module")({
 });
 
 function ModuleIndex() {
-  const { ready, email, role, uid, companyId, displayName, isTrainee, isFrozen } = useAuth();
+  const { ready, email, role, extraRoles, uid, companyId, displayName, isTrainee, isFrozen } = useAuth();
   // Route.useLoaderData()'s type resolves to `undefined` for this route in
   // the current @tanstack/react-router version — a known inference gap for
   // parent routes with children, not a real runtime issue (the loader
   // always returns { module } or throws notFound() first).
   const { module: m } = Route.useLoaderData() as { module: ModuleDef };
-  const [extraRoles, setExtraRoles] = useState<string[]>([]);
+  // Re-render when an admin changes module access live (the tile filters
+  // below read the override cache synchronously).
+  useModuleRoleGateOverrides();
   const isAdmin = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN"].includes((r || "").toUpperCase()));
 
   // Parts hub's single "Done" button — aggregates rows marked done across
@@ -348,26 +351,28 @@ function ModuleIndex() {
     }
   };
 
-  // Previously only fetched for the Dashboard module, on the assumption
-  // that only Dashboard's own submodule gate (getDashboardRoleGate) needed
-  // a secondary role. That stopped being true once canAccessSubmodule's
-  // fuller gate (admin-module/user-management/activity-log/company-
-  // settings, used by the tile-grid filters below) started checking
-  // extraRoles too: on every OTHER module this stayed the initial `[]`
-  // forever, so a user whose ADMIN access came only from a secondary role
-  // (extra_roles) would see the Admin module's own tiles disappear even
-  // though they could still open it directly via URL. isAdmin above (used
-  // elsewhere in this file, e.g. Parts' admin-only controls) had the same
-  // gap for the same reason.
-  useEffect(() => {
-    if (!ready || !uid) return;
-    let cancelled = false;
-    getMyRoles(uid).then(({ extraRoles }) => { if (!cancelled) setExtraRoles(extraRoles); });
-    return () => { cancelled = true; };
-  }, [ready, uid]);
+  // extraRoles comes straight from useAuth() (already loaded at login, no
+  // second fetch needed) rather than a separate getMyRoles(uid) DB call
+  // this file used to make — that second call read the REAL signed-in
+  // account's extra_roles directly from the database, which silently
+  // ignored a Super Admin's "View as" role preview: the tile grid would
+  // render correctly filtered for the previewed role on first paint (using
+  // the initial `[]` from that fetch), then a moment later the fetch would
+  // resolve with the REAL account's own extra_roles and re-filter against
+  // those instead — "populating" in extra tiles the previewed role was
+  // never supposed to see, since a Super Admin's real account commonly
+  // holds several broad secondary roles for its own day-to-day use.
+  // useAuth().extraRoles is already the correctly-simulated value during a
+  // preview (forced to [] — see auth.tsx's effectiveExtraRoles), and is
+  // hydrated synchronously alongside role/email before `ready` flips true,
+  // so there's no race to guard against here.
+
+  // Guards every <Navigate> below against firing more than once per
+  // distinct target — see useRedirectGuard.ts for why this is necessary.
+  const redirectOnce = useRedirectGuard();
 
   if (!ready) return null;
-  if (!email) return <Navigate to="/landing" replace />;
+  if (!email) return redirectOnce("/landing") ? <Navigate to="/landing" replace /> : null;
 
   const hasChildRoute = typeof window !== "undefined" && window.location.pathname.split("/").filter(Boolean).length > 2;
 
@@ -393,7 +398,7 @@ function ModuleIndex() {
   const hasExplicitModuleLevelOverride = getModuleRoleGate(m.slug, MODULE_LEVEL_GATE_SLUG) !== null;
 
   if (!isModuleAllowed(role, m.slug, extraRoles) && !(hasExplicitModuleLevelOverride ? false : hasSubmoduleOverrideForRole)) {
-    return <Navigate to="/home" replace />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
   // Trainees only see Employee Self-Service — checked independently of the
@@ -402,7 +407,7 @@ function ModuleIndex() {
   // still renders here so the per-submodule filter further down can show
   // just that one tile; every other module is blocked outright.
   if (!isModuleAllowedForTrainee(isTrainee, m.slug)) {
-    return <Navigate to="/home" replace />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
   // Frozen accounts only see Messages (Admin module, internal-message-support

@@ -13,7 +13,43 @@
  */
 import { isSubmoduleAllowed, isSubmoduleAllowedForTrainee, isSubmoduleAllowedForFrozen, isCompanySuperAdminRole } from "./roleLabels";
 import { getDashboardRoleGate, hasDashboardAccess } from "./dashboardAccess";
-import { getModuleRoleGate } from "./moduleAccess";
+import { getModuleRoleGate, MODULE_LEVEL_GATE_SLUG } from "./moduleAccess";
+
+const DASHBOARD_FAMILY_MODULES = new Set(["dashboard", "hr", "accounting", "csr"]);
+
+/**
+ * The per-page role list a (module, submodule) is gated by. A company
+ * override saved against the page's REAL module (what Accessibility
+ * Management writes, e.g. ("accounting", "expenses")) always wins. Only
+ * when there's none do the Dashboard-family modules fall back to
+ * getDashboardRoleGate's hardcoded defaults — which look overrides up under
+ * the "dashboard" namespace for most slugs, so using it FIRST (as this used
+ * to) silently ignored a real ("accounting", "expenses") override and read
+ * Accounting → Expenses as open to every role.
+ */
+export function resolveSubmoduleAllowedRoles(moduleSlug: string, subSlug: string, explicitModuleOverride: string[] | null): string[] | null {
+  if (explicitModuleOverride) return explicitModuleOverride;
+  return DASHBOARD_FAMILY_MODULES.has(moduleSlug) ? getDashboardRoleGate(subSlug) : null;
+}
+
+/**
+ * The module's "Whole Module" gate (Accessibility Management's module-level
+ * box, stored under MODULE_LEVEL_GATE_SLUG). When set it's authoritative for
+ * every page inside the module — same rule home.tsx and m.$module.tsx
+ * already apply to the module tile/grid. The submodule route never checked
+ * it, so a pasted /m/accounting/expenses link opened for a role locked out
+ * of Accounting entirely.
+ */
+export function passesModuleLevelGate(role: string | null | undefined, extraRoles: string[] | null | undefined, moduleSlug: string): boolean {
+  // Admin is exempt: it already has its own dedicated page gate (Admin/
+  // SuperAdmin plus per-page carve-outs for IT Tickets, User Management,
+  // Activity Logs, Technician Whereabouts, Messages), and its module-level
+  // list is narrower than those carve-outs — applying it here would bounce
+  // IT out of IT Tickets, HR out of User Management, etc.
+  if (moduleSlug === "admin") return true;
+  const moduleLevelGate = getModuleRoleGate(moduleSlug, MODULE_LEVEL_GATE_SLUG);
+  return !moduleLevelGate || hasDashboardAccess(moduleLevelGate, role, extraRoles);
+}
 
 export const ADMIN_MODULE_ROLES = ["ADMIN", "SUPERADMIN"];
 // DEFAULTS only, not floors — a company can widen or narrow any of these
@@ -44,14 +80,12 @@ export function canAccessSubmodule(
   if (isTrainee && !isSubmoduleAllowedForTrainee(isTrainee, moduleSlug, sub.slug)) return false;
   if (isFrozen && !isSubmoduleAllowedForFrozen(isFrozen, moduleSlug, sub.slug)) return false;
 
+  const isAllRolesAdminSubmodule = moduleSlug === "admin" && ALL_ROLES_ADMIN_SUBMODULES.has(sub.slug);
+  if (!passesModuleLevelGate(role, extraRoles, moduleSlug)) return false;
+
   const explicitModuleOverride = getModuleRoleGate(moduleSlug, sub.slug);
-  // Kept in sync with m.$module.$submodule.tsx's identical moduleAllowedRoles
-  // line — "accounting" and "csr" are included alongside "dashboard"/"hr" so
-  // accounting-dashboard's and daily-report/team-composition's hardcoded
-  // defaults still apply here (the floating quick-nav) even though they
-  // moved out of the Dashboard module into their own Accounting/CSR
-  // modules (see modules.ts).
-  const moduleAllowedRoles = (moduleSlug === "dashboard" || moduleSlug === "hr" || moduleSlug === "accounting" || moduleSlug === "csr") ? getDashboardRoleGate(sub.slug) : explicitModuleOverride;
+  // Same resolver m.$module.$submodule.tsx uses — keep them identical.
+  const moduleAllowedRoles = resolveSubmoduleAllowedRoles(moduleSlug, sub.slug, explicitModuleOverride);
 
   if (!explicitModuleOverride && !isSubmoduleAllowed(role, moduleSlug, sub.slug, extraRoles)) return false;
 
@@ -83,7 +117,6 @@ export function canAccessSubmodule(
   // configures a role-gate override for it via Accessibility Management,
   // which doesn't know this submodule is meant to be exempt. See
   // m.$module.$submodule.tsx's identical moduleAccessOk exemption.
-  const isAllRolesAdminSubmodule = moduleSlug === "admin" && ALL_ROLES_ADMIN_SUBMODULES.has(sub.slug);
   if (moduleAllowedRoles && !isAllRolesAdminSubmodule && !hasDashboardAccess(moduleAllowedRoles, role, extraRoles)) return false;
 
   return true;

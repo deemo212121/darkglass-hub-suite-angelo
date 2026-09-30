@@ -5,7 +5,7 @@ import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
-import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, type ProfileRow } from "@/lib/supabase/users";
 import { resolvePresenceStatus, PRESENCE_DOT_CLASS, PRESENCE_LABEL } from "@/lib/presence";
 import { getRoleDepartmentBreakdown, normalizeRole, isAttendanceManagerTierRole, TECHNICIAN_PAY_ROLES, isCompanySuperAdminRole, isFinanceRole } from "@/lib/roleLabels";
 import { getPendingCheckoutProposals, approveCheckoutProposal, type CheckoutProposal } from "@/lib/supabase/technicianCheckoutProposals";
@@ -98,6 +98,15 @@ const PTO_TYPE_LABELS: Record<PtoType, string> = {
   unpaid: "Unpaid",
   bereavement: "Bereavement",
 };
+
+// Time-Off Management's two sub-tabs (formerly one flat "PTO Requests"
+// list) — per explicit request, Paid Leave is Vacation only; Unpaid Leave
+// is Personal/Unpaid/Sick. Holiday and Bereavement weren't named in that
+// split; grouped into Unpaid Leave here (same "$0 pay, non-absent" shape
+// as Unpaid/Personal) rather than silently dropped from both tabs — flag
+// this if Holiday/Bereavement should actually land somewhere else.
+const PAID_LEAVE_PTO_TYPES: PtoType[] = ["vacation"];
+const UNPAID_LEAVE_PTO_TYPES: PtoType[] = ["personal", "unpaid", "sick", "holiday", "bereavement"];
 
 function toISODate(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -312,6 +321,15 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [loading, setLoading] = useState(true);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
+  // employee_info.hireDate per profile — a new hire has no attendance
+  // obligation before this date, but every day-iteration loop below used to
+  // only account for off_days/company holidays/future dates, so a
+  // technician hired TODAY would show as "Absent" for every day back to
+  // whatever window this page happens to be looking at (week-to-date,
+  // month-to-date, a custom range). Bulk-loaded once alongside `profiles`
+  // rather than per-row, same reasoning as every other
+  // getEmployeeInfoByProfileIds caller.
+  const [hireDateByProfileId, setHireDateByProfileId] = useState<Map<string, string | null>>(new Map());
   const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);
   const [entries, setEntries] = useState<CompanyTimecardEntry[]>([]);
   // Trainee punches (see traineeTimecards.ts) land in their own table, not
@@ -338,6 +356,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     ATTENDANCE_TABS,
     "daily-attendance",
   );
+  // Time-Off Management's own Paid Leave / Unpaid Leave sub-tabs — see
+  // PAID_LEAVE_PTO_TYPES / UNPAID_LEAVE_PTO_TYPES above.
+  const [ptoLeaveTab, setPtoLeaveTab] = useState<"paid" | "unpaid">("paid");
   // Floating left quick-nav — same pattern as Accounting Dashboard's:
   // collapsed (icon-only) by default so it stays out of the way of this
   // page's already-wide tables, expands to show labels via the chevron.
@@ -484,6 +505,13 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       ]);
       setMyProfileId(profileId);
       setProfiles(profileRows);
+      getEmployeeInfoByProfileIds(profileRows.map((p) => p.id))
+        .then((infoMap) => {
+          const hireDates = new Map<string, string | null>();
+          for (const [pid, info] of infoMap) hireDates.set(pid, info.hireDate || null);
+          setHireDateByProfileId(hireDates);
+        })
+        .catch(() => { /* best-effort — a technician just shows as usual (no hire-date suppression) if this fails */ });
       setCsrComposition(csrCompositionResult);
       setEntries(entryRows);
       setTraineeEntries(traineeEntryRows);
@@ -760,6 +788,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     return ptoRequests.filter((r) => teamScopedIds.has(r.profileId));
   }, [ptoRequests, teamScopedIds]);
 
+  // Time-Off Management tab's Paid Leave / Unpaid Leave split — only the
+  // two request lists inside that tab use this; ptoPendingApproval (KPI
+  // tile) and anything else keeps reading visiblePtoRequests directly.
+  const leaveTabPtoRequests = useMemo(() => {
+    const types = ptoLeaveTab === "paid" ? PAID_LEAVE_PTO_TYPES : UNPAID_LEAVE_PTO_TYPES;
+    return visiblePtoRequests.filter((r) => types.includes(r.ptoType));
+  }, [visiblePtoRequests, ptoLeaveTab]);
+
   const entriesByKey = useMemo(() => {
     const map = new Map<string, CompanyTimecardEntry>();
     entries.forEach((e) => map.set(`${e.profileId}|${e.workDate}`, e));
@@ -802,6 +838,17 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const holidayDateSet = useMemo(() => new Set(companyHolidays.map((h) => h.date)), [companyHolidays]);
   const isCompanyHolidayFor = useCallback((dateISO: string): boolean => holidayDateSet.has(dateISO), [holidayDateSet]);
 
+  // A date before this profile's own hireDate (employee_info.hireDate) —
+  // no hire date on file falls back to "always counts" (false), same as
+  // before this existed, rather than guessing.
+  const isBeforeHireFor = useCallback(
+    (profileId: string, dateISO: string): boolean => {
+      const hireDate = hireDateByProfileId.get(profileId);
+      return !!hireDate && dateISO < hireDate;
+    },
+    [hireDateByProfileId]
+  );
+
   // Pending Timecard Corrections — `corrections` (above) is already the full
   // company list for the Corrections tab, so just filter it down instead of
   // firing a second query. A "pending" correction hasn't cleared every
@@ -827,7 +874,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const offDays = new Set<number>(p.off_days ?? []);
       // A company holiday suppresses "missing clock-in"/etc. alerts exactly
       // like a scheduled rest day — see isCompanyHolidayFor above.
-      const isOffDay = offDays.has(dow) || isCompanyHolidayFor(dateISO);
+      const isOffDay = offDays.has(dow) || isCompanyHolidayFor(dateISO) || isBeforeHireFor(p.id, dateISO);
       const checkIn = entry?.checkIn || "";
       const checkOut = entry?.checkOut || "";
       const mealIn = entry?.mealStart || "";
@@ -866,7 +913,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         tickets: ticketsByNameAndDate.get(`${(p.display_name || p.email || "").trim().toLowerCase()}|${dateISO}`) ?? [],
       };
     },
-    [nowByTimezone, allProfileById, checkoutProposalsByKey, lastTicketUpdateByProfile, ticketsByNameAndDate, isCompanyHolidayFor, hasPendingCorrectionFor]
+    [nowByTimezone, allProfileById, checkoutProposalsByKey, lastTicketUpdateByProfile, ticketsByNameAndDate, isCompanyHolidayFor, hasPendingCorrectionFor, isBeforeHireFor]
   );
 
   const dailyRecords: DailyRecord[] = useMemo(
@@ -1005,7 +1052,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const cells = weekDates.map((iso) => {
         const dow = new Date(iso + "T00:00:00").getDay();
         if (offDays.has(dow)) return "off" as const;
-        if (iso > todayISO) return "future" as const;
+        // Not hired yet as of this date — treated like "future" (a plain
+        // "—", not counted toward workingDays/pct) rather than "off" (which
+        // would read as a scheduled rest day for someone already employed).
+        if (iso > todayISO || isBeforeHireFor(p.id, iso)) return "future" as const;
         workingDays++;
         const entry = entriesByKey.get(`${p.id}|${iso}`);
         const present = Boolean(entry?.checkIn);
@@ -1017,7 +1067,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const pct = workingDays > 0 ? Math.round((presentCount / workingDays) * 100) : 100;
       return { profileId: p.id, name: p.display_name || p.email, cells, presentCount, workingDays, pct };
     });
-  }, [summaryProfiles, weekDates, entriesByKey, traineePendingByKey, todayISO]);
+  }, [summaryProfiles, weekDates, entriesByKey, traineePendingByKey, todayISO, isBeforeHireFor]);
 
   // Narrows weeklySummary to rows matching the selected day + status (e.g.
   // "who was absent on Wednesday") — "all" for either just shows everyone,
@@ -1039,7 +1089,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       for (let d = new Date(monthStart); d <= today; d.setDate(d.getDate() + 1)) {
         const iso = toISODate(d);
         const dow = d.getDay();
-        if (offDays.has(dow)) continue;
+        if (offDays.has(dow) || isBeforeHireFor(p.id, iso)) continue;
         workingDays++;
         const entry = entriesByKey.get(`${p.id}|${iso}`);
         const checkIn = entry?.checkIn || "";
@@ -1055,7 +1105,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const status = pct >= 90 ? "Good" : pct >= 70 ? "Warning" : "Poor";
       return { profileId: p.id, name: p.display_name || p.email, workingDays, present, absent, late, pct, status };
     });
-  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO]);
+  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor]);
 
   // ---- Custom-range summary — same shape as monthlySummary above, just
   // over whatever [customRangeStart, customRangeEnd] the user picked instead
@@ -1073,7 +1123,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         const iso = toISODate(d);
         if (iso > todayISO) break; // don't count days that haven't happened yet as absences
         const dow = d.getDay();
-        if (offDays.has(dow)) continue;
+        if (offDays.has(dow) || isBeforeHireFor(p.id, iso)) continue;
         workingDays++;
         const entry = customEntriesByKey.get(`${p.id}|${iso}`);
         const checkIn = entry?.checkIn || "";
@@ -1087,7 +1137,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const status = pct >= 90 ? "Good" : pct >= 70 ? "Warning" : "Poor";
       return { profileId: p.id, name: p.display_name || p.email, workingDays, present, absent, late, pct, status };
     });
-  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO]);
+  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor]);
 
   // Day-by-day breakdown behind the Custom Attendance Summary's Present/
   // Absent/Late numbers — same day-iteration/off-day rules as customSummary
@@ -1112,7 +1162,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       const iso = toISODate(d);
       if (iso > todayISO) break;
-      if (offDays.has(d.getDay())) continue;
+      if (offDays.has(d.getDay()) || isBeforeHireFor(p.id, iso)) continue;
       const entry = customEntriesByKey.get(`${p.id}|${iso}`);
       const checkIn = entry?.checkIn || "";
       const checkOut = entry?.checkOut || "";
@@ -1499,7 +1549,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const tabConfig = [
     { id: "corrections", label: "Corrections", Icon: FileText },
     { id: "daily-attendance", label: "Daily Attendance", Icon: Clock },
-    { id: "pto-management", label: "PTO Management", Icon: Calendar },
+    { id: "pto-management", label: "Time-Off Management", Icon: Calendar },
     { id: "ticket-attendance", label: "Ticket Attendance", Icon: FileText },
     { id: "ticket-dispute", label: "Ticket Dispute", Icon: AlertTriangle },
     { id: "trainee-attendance", label: "Trainee Attendance", Icon: Clock },
@@ -2290,7 +2340,25 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
           {activeTab === "pto-management" && (
             <div className="space-y-6">
-              <div className="flex justify-end">
+              <div className="flex items-center justify-between">
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setPtoLeaveTab("paid")}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${
+                      ptoLeaveTab === "paid" ? "bg-blue-600 text-white" : "bg-white/5 text-slate-400 hover:bg-white/10"
+                    }`}
+                  >
+                    Paid Leave
+                  </button>
+                  <button
+                    onClick={() => setPtoLeaveTab("unpaid")}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${
+                      ptoLeaveTab === "unpaid" ? "bg-blue-600 text-white" : "bg-white/5 text-slate-400 hover:bg-white/10"
+                    }`}
+                  >
+                    Unpaid Leave
+                  </button>
+                </div>
                 <button onClick={() => setShowPtoForm(true)} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition">
                   + New PTO Request
                 </button>
@@ -2312,9 +2380,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   <tbody>
                     {loading ? (
                       <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
-                    ) : visiblePtoRequests.filter(r => r.status === "pending").length === 0 ? (
+                    ) : leaveTabPtoRequests.filter(r => r.status === "pending").length === 0 ? (
                       <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">No pending PTO requests.</td></tr>
-                    ) : visiblePtoRequests.filter(r => r.status === "pending").map((request) => {
+                    ) : leaveTabPtoRequests.filter(r => r.status === "pending").map((request) => {
                       // request.managerId is a snapshot resolved once at
                       // submission time — if the requester's manager_name
                       // has since changed, canReviewPtoStage's fallback
@@ -2434,11 +2502,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6">
                 <h2 className="text-lg font-bold text-white mb-4">PTO History</h2>
                 <div className="space-y-3">
-                  {visiblePtoRequests.filter(r => r.status !== "pending").length === 0 ? (
+                  {leaveTabPtoRequests.filter(r => r.status !== "pending").length === 0 ? (
                     <div className="text-center py-8">
                       <p className="text-slate-400 text-sm">No PTO history yet</p>
                     </div>
-                  ) : visiblePtoRequests.filter(r => r.status !== "pending").map((request) => (
+                  ) : leaveTabPtoRequests.filter(r => r.status !== "pending").map((request) => (
                     <div key={request.id} className="bg-slate-800/50 border border-white/10 rounded-lg p-4">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">

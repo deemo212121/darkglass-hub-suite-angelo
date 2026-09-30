@@ -32,6 +32,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } fro
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
+import { nowInTimezone, DEFAULT_ATTENDANCE_TIMEZONE } from "@/lib/attendanceGrace";
 import { normalizeRole, ROLE_LABELS, isJotformHrRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { useAllRoleOptions } from "@/lib/customRoles";
 import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, getProfileCredentialsPreview, setTraineeAccessGranted, type EmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
@@ -48,6 +49,9 @@ import {
   getLatestStatusChanges,
   logCandidateFieldEdit,
   getLatestFieldEdits,
+  logCandidateAttempt,
+  getCandidateAttemptSummaries,
+  getAttemptCountInRange,
   updateCandidateStatus,
   updateCandidateNotes,
   updateCandidateInterviewerNote,
@@ -70,6 +74,7 @@ import {
   type CvForwardDetail,
   type StatusChange,
   type FieldEdit,
+  type CandidateAttemptSummary,
 } from "@/lib/supabase/hrCandidates";
 import { getAllAgentNotes, getPendingAgentNotes, reviewAgentNote, addAgentNote, deleteAgentNote, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import { parseBranchAccess, LOCATIONS } from "@/lib/locations";
@@ -172,7 +177,7 @@ import { fillDamagePdf } from "@/lib/damagePdfFill";
 import { buildContractorDataBodyMarkup, contractorDataStyles, BLANK_EMERGENCY_CONTACT, type ContractorDataFormData } from "@/lib/contractorDataFormTemplate";
 import { buildContractorDataUsBodyMarkup, contractorDataUsStyles, BLANK_EMERGENCY_CONTACT_US, type ContractorDataUsFormData } from "@/lib/contractorDataUsFormTemplate";
 import { buildVehicleUseAgreementBodyMarkup, vehicleUseAgreementStyles, type VehicleUseAgreementFormData } from "@/lib/vehicleUseAgreementFormTemplate";
-import { buildDirectDepositBodyMarkup, directDepositStyles, type DirectDepositFormData } from "@/lib/directDepositFormTemplate";
+import { buildDirectDepositBodyMarkup, directDepositStyles, DIRECT_DEPOSIT_STATES, DIRECT_DEPOSIT_COUNTRIES, DIRECT_DEPOSIT_ACCOUNT_TYPES, type DirectDepositFormData } from "@/lib/directDepositFormTemplate";
 import type { I9FormData } from "@/lib/i9FormTemplate";
 import { fillI9Pdf } from "@/lib/i9PdfFill";
 import type { SubstanceScreeningFormData } from "@/lib/substanceScreeningFormTemplate";
@@ -1101,7 +1106,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const normalizedMyExtraRoles = myExtraRoles.map(normalizeRole);
   const heldRoles = [normalizedMyRole, ...normalizedMyExtraRoles];
   const isHrOrAdmin = ready && heldRoles.some((r) => HR_ADMIN_ROLES.has(r));
-  const isBranchManager = ready && heldRoles.some((r) => BRANCH_MANAGER_ROLES.has(r));
+  // "Pile up" semantics, same as isCsrRestrictedRole/everyHeldRoleIn in
+  // roleLabels.ts: only restrict to "my branch" when EVERY role this person
+  // holds is branch-manager-tier. Someone who's SUPERADMIN/ADMIN/HR and
+  // also happens to carry BRANCH_MANAGER as a secondary role (e.g. as an
+  // extra role) should still see the full company-wide candidate pipeline,
+  // not get silently locked to whatever single branch their profile
+  // happens to have assigned — previously used .some(), which branch-
+  // locked a Super Admin down to "no candidates" the moment BRANCH_MANAGER
+  // was one of several extra roles.
+  const heldRolesNonEmpty = heldRoles.filter(Boolean);
+  const isBranchManager = ready && heldRolesNonEmpty.length > 0 && heldRolesNonEmpty.every((r) => BRANCH_MANAGER_ROLES.has(r));
   const isAdmin = heldRoles.some((r) => ["ADMIN", "SUPERADMIN"].includes(r));
 
   // isJotformHrRole (not the broader isHrOrAdmin) so this stays in exact
@@ -1624,7 +1639,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // address, etc. with a partial save.
   const [employeeInfoByProfileId, setEmployeeInfoByProfileId] = useState<Map<string, EmployeeInfo>>(new Map());
 
-  const [confirmDialog, setConfirmDialog] = useState<{ show: boolean; employeeId: string; employeeName: string; newStatus: EmploymentStatus } | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ show: boolean; employeeId: string; employeeName: string; newStatus: EmploymentStatus; effectiveDate: string } | null>(null);
 
   const loadEmployees = async () => {
     setEmployeesLoading(true);
@@ -1940,6 +1955,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const [statusChangesByCandidateId, setStatusChangesByCandidateId] = useState<Map<string, StatusChange>>(new Map());
+  // All-time count + last-attempted date per candidate, from the dedicated
+  // per-event attempt log (0308) — independent of `status`, since re-logging
+  // an attempt while already at status="attempt" is a no-op for that column
+  // (see logCandidateAttempt's own comment). Powers the "Log Attempt (N)"
+  // button on the Hiring table.
+  const [attemptSummariesByCandidateId, setAttemptSummariesByCandidateId] = useState<Map<string, CandidateAttemptSummary>>(new Map());
   // Every "Forward CV" send this candidate's had, newest first — drives the
   // Hiring table's "Sent {date}" indicator next to the Forward button.
   const [cvForwardsByCandidateId, setCvForwardsByCandidateId] = useState<Map<string, CvForwardDetail[]>>(new Map());
@@ -1983,6 +2004,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         getAccountCreatorsByEmail().then(setAccountCreatorsByEmail),
         getLatestFieldEdits().then(setFieldEditsByKey),
         getCvForwardsByCandidateId().then(setCvForwardsByCandidateId),
+        getCandidateAttemptSummaries().then(setAttemptSummariesByCandidateId),
       ]);
       setCandidates(rows);
       writeCachedCandidates(rows);
@@ -2528,6 +2550,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     ssn_card_form: "ssnCard",
     drivers_license_form: "driversLicense",
     valid_id_form: "validId",
+    // Unreachable in practice — visit_exception_report is never a
+    // candidate onboarding form (not in STAFF_FORM_TIERS), so it can never
+    // be selected in this popup to begin with; sent instead from Employee
+    // Monitoring's own Visit Exception Report tab (AbsentListPage.tsx).
+    // Satisfies this Record's exhaustiveness only.
+    visit_exception_report: "warningForm",
   };
 
   // Forms popup — checkbox list of every SignableDocumentType, letting HR
@@ -3056,38 +3084,63 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }),
     [visibleCandidates, reportFrom, reportTo]
   );
-  const reportTerminatedEmployees = useMemo(
-    () => employees.filter((e) => e.terminationDate && e.terminationDate >= reportFrom && e.terminationDate <= reportTo),
-    [employees, reportFrom, reportTo]
-  );
+  // "Attempt" is the one KPI here that can't be a candidate-status snapshot
+  // like the other 7 — a candidate contacted both yesterday AND today is
+  // still just status="attempt" right now, so counting reportCandidates by
+  // status would only ever show 0-or-1 per candidate regardless of how many
+  // times they were actually attempted, and would attribute it to whichever
+  // day the CANDIDATE was created rather than the day of the attempt. This
+  // instead counts real logged-attempt rows (0308_hr_candidate_attempts.sql)
+  // whose own date falls in [reportFrom, reportTo] — so "attempted
+  // yesterday and today" with the range set to "today" correctly shows 1,
+  // not 0 (candidate created before today) or the same 1 no matter the
+  // range (status-snapshot behavior). Loaded async since it's a company-wide
+  // count from a different table, not derived from visibleCandidates.
+  const [reportAttemptCount, setReportAttemptCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    getAttemptCountInRange(reportFrom, reportTo).then((n) => { if (!cancelled) setReportAttemptCount(n); });
+    return () => { cancelled = true; };
+  }, [reportFrom, reportTo]);
+
+  // Same 8 statuses as the Hiring tab's own Candidate Pipeline tiles (kpi
+  // above), just windowed to the selected date range instead of all-time —
+  // this report is candidate-pipeline only, so it deliberately mirrors that
+  // tile set exactly rather than adding report-only extras.
   const hiringReportKpi = useMemo(() => ({
     candidates: reportCandidates.length,
+    applied: reportCandidates.filter((c) => c.status === "applied").length,
     scheduled: reportCandidates.filter((c) => c.status === "interviewing").length,
-    rejected: reportCandidates.filter((c) => c.status === "rejected").length,
+    attempt: reportAttemptCount,
+    training: reportCandidates.filter((c) => c.status === "training").length,
     hired: reportCandidates.filter((c) => c.status === "hired").length,
-    terminated: reportTerminatedEmployees.filter((e) => e.status === "terminated").length,
-    resigned: reportTerminatedEmployees.filter((e) => e.status === "resigned").length,
-  }), [reportCandidates, reportTerminatedEmployees]);
+    withdrawn: reportCandidates.filter((c) => c.status === "withdrawn").length,
+    cancelled: reportCandidates.filter((c) => c.status === "cancelled").length,
+  }), [reportCandidates, reportAttemptCount]);
   const reportRangeLabel = reportFrom === reportTo ? reportFrom : `${reportFrom} to ${reportTo}`;
 
   const hiringReportRows: [string, number][] = [
     ["Candidates", hiringReportKpi.candidates],
+    ["Applied", hiringReportKpi.applied],
     ["Scheduled for Interview", hiringReportKpi.scheduled],
-    ["Rejected", hiringReportKpi.rejected],
+    ["Attempt", hiringReportKpi.attempt],
+    ["Training", hiringReportKpi.training],
     ["Hired", hiringReportKpi.hired],
-    ["Terminated", hiringReportKpi.terminated],
-    ["Resigned", hiringReportKpi.resigned],
+    ["Withdrawn", hiringReportKpi.withdrawn],
+    ["Cancelled", hiringReportKpi.cancelled],
   ];
 
   // Metric -> the same accent color its KPI tile uses on the dashboard, so
   // the exported sheet visually matches the on-screen tiles.
   const hiringReportColors: Record<string, string> = {
     "Candidates": "#2563eb",
+    "Applied": "#2563eb",
     "Scheduled for Interview": "#ca8a04",
-    "Rejected": "#dc2626",
+    "Attempt": "#ea580c",
+    "Training": "#0891b2",
     "Hired": "#16a34a",
-    "Terminated": "#dc2626",
-    "Resigned": "#475569",
+    "Withdrawn": "#ea580c",
+    "Cancelled": "#dc2626",
   };
 
   // Shared by every "Download PDF" button on this page — loads the logo once
@@ -11938,6 +11991,131 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     [employees, directDepositRecipientSearch]
   );
 
+  // "File on Behalf" — same reasoning as SSN Card's own version above: HR
+  // already has the technician's bank details (emailed, handed over in
+  // person) and would rather type them in directly than send a fill-link
+  // and wait. Creates the document and signs it in one step, same PDF
+  // pipeline the employee's own Fill page uses, just with no signature pad
+  // — filedByHr/filedByHrName in formData tell buildDirectDepositBodyMarkup
+  // to show who filed it instead of a forged signature.
+  const [directDepositFileForRecipientId, setDirectDepositFileForRecipientId] = useState("");
+  const [directDepositFileForRecipientSearch, setDirectDepositFileForRecipientSearch] = useState("");
+  const [directDepositFileForRecipientDropdownOpen, setDirectDepositFileForRecipientDropdownOpen] = useState(false);
+  const [directDepositFileForFirstName, setDirectDepositFileForFirstName] = useState("");
+  const [directDepositFileForMiddleName, setDirectDepositFileForMiddleName] = useState("");
+  const [directDepositFileForLastName, setDirectDepositFileForLastName] = useState("");
+  const [directDepositFileForStreetAddress, setDirectDepositFileForStreetAddress] = useState("");
+  const [directDepositFileForCity, setDirectDepositFileForCity] = useState("");
+  const [directDepositFileForState, setDirectDepositFileForState] = useState("");
+  const [directDepositFileForZipCode, setDirectDepositFileForZipCode] = useState("");
+  const [directDepositFileForCountry, setDirectDepositFileForCountry] = useState("");
+  const [directDepositFileForBankName, setDirectDepositFileForBankName] = useState("");
+  const [directDepositFileForAccountNumber, setDirectDepositFileForAccountNumber] = useState("");
+  const [directDepositFileForRoutingNumber, setDirectDepositFileForRoutingNumber] = useState("");
+  const [directDepositFileForAccountType, setDirectDepositFileForAccountType] = useState("");
+  const [directDepositFiling, setDirectDepositFiling] = useState(false);
+  const [directDepositFilingError, setDirectDepositFilingError] = useState<string | null>(null);
+  const filteredDirectDepositFileForRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(directDepositFileForRecipientSearch.toLowerCase())),
+    [employees, directDepositFileForRecipientSearch]
+  );
+  const resetDirectDepositFileForForm = () => {
+    setDirectDepositFileForRecipientId("");
+    setDirectDepositFileForRecipientSearch("");
+    setDirectDepositFileForFirstName("");
+    setDirectDepositFileForMiddleName("");
+    setDirectDepositFileForLastName("");
+    setDirectDepositFileForStreetAddress("");
+    setDirectDepositFileForCity("");
+    setDirectDepositFileForState("");
+    setDirectDepositFileForZipCode("");
+    setDirectDepositFileForCountry("");
+    setDirectDepositFileForBankName("");
+    setDirectDepositFileForAccountNumber("");
+    setDirectDepositFileForRoutingNumber("");
+    setDirectDepositFileForAccountType("");
+  };
+
+  const handleFileDirectDepositForHr = async () => {
+    if (!directDepositFileForRecipientId || !uid) return;
+    const recipient = employees.find((e) => e.id === directDepositFileForRecipientId);
+    if (!recipient) { setDirectDepositFilingError("Select a technician first."); return; }
+    if (!directDepositFileForFirstName.trim() || !directDepositFileForLastName.trim()) { setDirectDepositFilingError("Enter the employee's first and last name."); return; }
+    if (!directDepositFileForBankName.trim() || !directDepositFileForAccountNumber.trim() || !directDepositFileForRoutingNumber.trim() || !directDepositFileForAccountType) {
+      setDirectDepositFilingError("Fill in the bank name, account #, routing #, and account type.");
+      return;
+    }
+
+    setDirectDepositFiling(true);
+    setDirectDepositFilingError(null);
+    let createdDocId: string | null = null;
+    try {
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["direct_deposit"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Direct Deposit Authorization on file. File another one anyway?`)) {
+        return;
+      }
+
+      const doc = await createSignableDocument({
+        documentType: "direct_deposit",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: recipient.id,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+      createdDocId = doc.id;
+      const companyId = doc.companyId;
+
+      const signedAt = new Date().toISOString();
+      const filedByHrName = displayName || "HR";
+      const finalData: DirectDepositFormData = {
+        employeeId: recipient.id,
+        employeeName: [directDepositFileForFirstName, directDepositFileForMiddleName, directDepositFileForLastName].filter(Boolean).join(" ").trim() || recipient.name,
+        firstName: directDepositFileForFirstName.trim(),
+        middleName: directDepositFileForMiddleName.trim(),
+        lastName: directDepositFileForLastName.trim(),
+        streetAddress: directDepositFileForStreetAddress.trim(),
+        city: directDepositFileForCity.trim(),
+        state: directDepositFileForState,
+        zipCode: directDepositFileForZipCode.trim(),
+        country: directDepositFileForCountry,
+        bankName: directDepositFileForBankName.trim(),
+        accountNumber: directDepositFileForAccountNumber.trim(),
+        routingNumber: directDepositFileForRoutingNumber.trim(),
+        accountType: directDepositFileForAccountType,
+        dateSigned: signedAt,
+        signatureDataUrl: "",
+        filedByHr: true,
+        filedByHrName,
+      };
+      // No real signature — HR typed this in, the employee never drew
+      // anything. url: "" is safe here specifically because the template
+      // checks filedByHr before ever rendering a <img src>.
+      const entry = { name: `Filed by HR — ${filedByHrName}`, url: "", signedAt };
+
+      const logo = directDepositLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      if (!directDepositLogoDataUrl) setDirectDepositLogoDataUrl(logo);
+      const pdfBlob = await captureHtmlToPdfBlob(buildDirectDepositBodyMarkup(finalData, logo, entry), directDepositStyles);
+      const pdfUrl = await uploadDirectDepositForm(companyId, finalData.employeeName, pdfBlob);
+
+      await signDocument(doc.id, "employee", entry, pdfUrl, finalData as unknown as Record<string, any>);
+
+      void logActivity({ action: "direct_deposit_filed_by_hr", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      resetDirectDepositFileForForm();
+      await loadSentDirectDepositForms();
+    } catch (err) {
+      // A row created but never signed would otherwise sit as a phantom
+      // "Awaiting Completion" the employee can't actually complete (there's
+      // no fill link for it) — clean it up rather than leave it stuck.
+      if (createdDocId) {
+        try { await deleteSignableDocument(createdDocId); } catch { /* best effort */ }
+      }
+      setDirectDepositFilingError(err instanceof Error ? err.message : "Failed to file this Direct Deposit Authorization.");
+    } finally {
+      setDirectDepositFiling(false);
+    }
+  };
+
   const buildDirectDepositPreviewData = (employeeName: string): DirectDepositFormData => ({
     employeeId: "",
     employeeName,
@@ -14664,7 +14842,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     ["parts_manager", "US STAFF (PARTS MANAGER)"],
     ["philippine_staff", "PHILIPPINE STAFF"],
   ];
-  const HIRING_EXPORT_COLUMNS = 14;
+  const HIRING_EXPORT_COLUMNS = 15;
 
   const formatInterviewCell = (r: HiringReportRow) =>
     r.scheduledInterviews.length === 0
@@ -14693,6 +14871,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <td style="${headerCell}text-align:right;">New Hire</td>
       <td style="${headerCell}text-align:right;">Terminated / Resigned</td>
       <td style="${headerCell}text-align:right;">Time Card Warning</td>
+      <td style="${headerCell}text-align:right;">Call Attempt</td>
       <td style="${headerCell}text-align:right;">Employee Error/Manipulation</td>
     `;
     let html = "";
@@ -14719,6 +14898,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <td style="${cell}text-align:right;">${r.hired}</td>
           <td style="${cell}text-align:right;">${r.terminatedResigned}</td>
           <td style="${cell}text-align:right;">${r.timeCardWarningCount}</td>
+          <td style="${cell}text-align:right;">${r.callAttemptCount}</td>
           <td style="${cell}text-align:right;">${r.employeeErrorManipulationCount}</td>
         </tr>`;
       });
@@ -15177,6 +15357,35 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // One attempt per candidate per (Central-time) calendar day — matches
+  // the real DB unique constraint (0309_hr_candidate_attempts_one_per_day.sql),
+  // just checked client-side first so the button can disable itself instead
+  // of only failing after a click.
+  const attemptedToday = (candidateId: string): boolean => {
+    const last = attemptSummariesByCandidateId.get(candidateId)?.lastAttemptedAt;
+    if (!last) return false;
+    return nowInTimezone(DEFAULT_ATTENDANCE_TIMEZONE, new Date(last)).dateISO === nowInTimezone(DEFAULT_ATTENDANCE_TIMEZONE).dateISO;
+  };
+
+  // Logs one dated attempt row (independent of `status` — see
+  // logCandidateAttempt's own comment on why a status re-save alone can't
+  // do this) and, only the FIRST time a candidate is contacted (still
+  // "applied"), also flips status to "attempt" so the pipeline reflects
+  // they've been reached out to. Every attempt after that just adds another
+  // row without touching status, so it never regresses a candidate who's
+  // since moved further along (interviewing/training/etc.).
+  const handleLogCandidateAttempt = async (c: Candidate) => {
+    if (attemptedToday(c.id)) return; // button should already be disabled for this — belt-and-suspenders
+    try {
+      await logCandidateAttempt(c.id);
+      if (c.status === "applied") await updateCandidateStatus(c.id, "attempt");
+      await Promise.all([loadCandidates(), getCandidateAttemptSummaries().then(setAttemptSummariesByCandidateId)]);
+      void logActivity({ action: "candidate_attempt_logged", targetType: "candidate", targetId: c.id, targetLabel: c.name });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to log call attempt.");
+    }
+  };
+
   const handleConfirmStatusDate = async () => {
     if (!statusDateDialog) return;
     // Captured before the update — only a genuine transition INTO Hired
@@ -15268,24 +15477,71 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleHiringManualEntrySave = async (
     section: HiringReportSection,
     groupKey: string,
-    field: "budget" | "sponsored" | "others",
+    field: "budget" | "sponsored" | "others" | "callAttempt",
     value: number | null
   ) => {
     const periodKey = hiringReportMode === "eod" ? eodDate : eomMonth;
     const key = `${section}|${groupKey}|${field}`;
     const prevSections = hiringSections;
-    setHiringSections((prev) => {
-      if (!prev) return prev;
-      const listKey = section === "technician" ? "technician" : section === "parts_manager" ? "partsManager" : "philippineStaff";
-      const next = { ...prev, [listKey]: prev[listKey].map((r) => (r.groupKey === groupKey ? { ...r, [field]: value } : r)) };
-      return next;
-    });
+    // Call Attempt's on-screen number is always the MERGED value (manual
+    // override if set, else the real hr_candidate_attempts auto-count —
+    // see HiringReportRow.callAttemptCount) — unlike Budget/Sponsored/
+    // Others, which have no other source, so there's nothing to reconcile
+    // a purely-optimistic patch against. Skip the optimistic patch for it
+    // and just re-fetch after saving so what's shown is always the true
+    // merged number (e.g. blanking the override correctly falls back to
+    // the real count instead of showing a stale 0).
+    if (field !== "callAttempt") {
+      setHiringSections((prev) => {
+        if (!prev) return prev;
+        const listKey = section === "technician" ? "technician" : section === "parts_manager" ? "partsManager" : "philippineStaff";
+        const next = { ...prev, [listKey]: prev[listKey].map((r) => (r.groupKey === groupKey ? { ...r, [field]: value } : r)) };
+        return next;
+      });
+    }
     setHiringSectionsSavingKey(key);
     try {
       await upsertHiringReportManualEntry(hiringReportMode, periodKey, section, groupKey, { [field]: value });
+      if (field === "callAttempt") {
+        await loadHiringSections(periodKey);
+        // Also refresh the Generate Report section's own "Attempt" KPI tile
+        // above — getAttemptCountInRange() already factors in this same
+        // manual override, so this just re-runs it now instead of waiting
+        // for reportFrom/reportTo to change. Only matters when this EOD
+        // entry's day (or this EOM entry's month) actually falls inside the
+        // currently-selected top-range; harmless no-op otherwise.
+        if (hiringReportMode === "eod" && periodKey >= reportFrom && periodKey <= reportTo) {
+          void getAttemptCountInRange(reportFrom, reportTo).then(setReportAttemptCount);
+        }
+      }
     } catch (err) {
       setHiringSections(prevSections);
       setError(err instanceof Error ? err.message : "Failed to save.");
+    } finally {
+      setHiringSectionsSavingKey(null);
+    }
+  };
+
+  // Philippine Staff rows are keyed by department, not a real "position" —
+  // staffing_targets (position+branch) doesn't fit, so this saves into
+  // hr_hiring_report_manual_entries instead, same as Budget/Sponsored/
+  // Others (see HiringReportManualEntry.staffNeeded's own comment).
+  const handlePhStaffNeededSave = async (groupKey: string, value: number) => {
+    const safeValue = Number.isFinite(value) ? value : 0;
+    const periodKey = hiringReportMode === "eod" ? eodDate : eomMonth;
+    const key = `philippine_staff|${groupKey}|staffNeeded`;
+    const prevSections = hiringSections;
+    setHiringSections((prev) => {
+      if (!prev) return prev;
+      return { ...prev, philippineStaff: prev.philippineStaff.map((r) => (r.groupKey === groupKey ? { ...r, staffNeeded: safeValue } : r)) };
+    });
+    setHiringSectionsSavingKey(key);
+    try {
+      await upsertHiringReportManualEntry(hiringReportMode, periodKey, "philippine_staff", groupKey, { staffNeeded: safeValue });
+      void logActivity({ action: "staffing_target_updated", targetType: "staffing_target", targetLabel: `Philippine Staff — ${groupKey}`, details: { staffNeeded: safeValue } });
+    } catch (err) {
+      setHiringSections(prevSections);
+      setError(err instanceof Error ? err.message : "Failed to update Staff Needed.");
     } finally {
       setHiringSectionsSavingKey(null);
     }
@@ -15648,13 +15904,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleUpdateEmployeeStatus = (id: string, newStatus: EmploymentStatus) => {
     if (newStatus === "terminated" || newStatus === "resigned" || newStatus === "inactive") {
       const employee = employees.find(e => e.id === id);
-      if (employee) setConfirmDialog({ show: true, employeeId: id, employeeName: employee.name, newStatus });
+      // Defaults to today, but the confirm dialog's own date input lets this
+      // be corrected before saving — e.g. HR processing a termination a few
+      // days after the person's actual last day shouldn't stamp the
+      // Separation Date with "today" instead of when they really left.
+      if (employee) setConfirmDialog({ show: true, employeeId: id, employeeName: employee.name, newStatus, effectiveDate: today });
     } else {
       void persistEmployeeStatus(id, newStatus);
     }
   };
 
-  const persistEmployeeStatus = async (id: string, newStatus: EmploymentStatus) => {
+  const persistEmployeeStatus = async (id: string, newStatus: EmploymentStatus, effectiveDate: string = today) => {
     const employee = employees.find((e) => e.id === id);
     const prevStatus = employee?.status;
     try {
@@ -15662,7 +15922,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       await saveProfileEmployeeInfo(id, {
         ...info,
         employmentStatus: newStatus,
-        employmentStatusDate: today,
+        employmentStatusDate: effectiveDate,
         // Reactivating clears a prior terminateDate (set by Terminated/
         // Resigned here, or by Training List's own Quit/Stopped action on
         // this same profile) — otherwise they'd come back Active but stay
@@ -15671,8 +15931,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         terminateDate: newStatus === "active" ? undefined : info.terminateDate,
       });
       await updateCompanyUser(id, { isActive: newStatus === "active" });
-      setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, status: newStatus, terminationDate: newStatus === "terminated" || newStatus === "resigned" ? today : e.terminationDate } : e)));
-      void logActivity({ action: "employee_status_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { from: prevStatus, to: newStatus, status: newStatus } });
+      setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, status: newStatus, terminationDate: newStatus === "active" ? e.terminationDate : effectiveDate } : e)));
+      void logActivity({ action: "employee_status_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { from: prevStatus, to: newStatus, status: newStatus, effectiveDate } });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update employment status.");
     }
@@ -15680,7 +15940,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const handleConfirmStatusChange = async () => {
     if (!confirmDialog) return;
-    await persistEmployeeStatus(confirmDialog.employeeId, confirmDialog.newStatus);
+    await persistEmployeeStatus(confirmDialog.employeeId, confirmDialog.newStatus, confirmDialog.effectiveDate);
     setConfirmDialog(null);
   };
 
@@ -15849,6 +16109,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     } catch (err) {
       console.error("Failed to save start date:", err);
       setEmployees((p) => p.map((e) => (e.id === id ? { ...e, startDate: prevValue } : e)));
+    }
+  };
+
+  // Master List's "Separation Date" column — writes employee_info.
+  // employmentStatusDate, the same field persistEmployeeStatus auto-stamps
+  // with "today" the moment Status flips to Inactive/Terminated/Resigned
+  // (see Employee.terminationDate = info.employmentStatusDate ||
+  // info.terminateDate above). Editable here so it can be corrected to the
+  // real separation date when HR updates the status days after the fact.
+  const handleUpdateSeparationDate = async (id: string, value: string) => {
+    const employee = employees.find((e) => e.id === id);
+    const prevValue = employee?.terminationDate ?? "";
+    setEmployees((p) => p.map((e) => (e.id === id ? { ...e, terminationDate: value } : e)));
+    try {
+      const info = (await getProfileEmployeeInfo(id)) || {};
+      await saveProfileEmployeeInfo(id, { ...info, employmentStatusDate: value });
+      void logActivity({ action: "employee_separation_date_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { from: prevValue, to: value } });
+    } catch (err) {
+      console.error("Failed to save separation date:", err);
+      setEmployees((p) => p.map((e) => (e.id === id ? { ...e, terminationDate: prevValue } : e)));
     }
   };
 
@@ -16716,7 +16996,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // TicketColumnFilter component and pattern TicketList.tsx already
   // established for its own column filters.
   const MASTER_LIST_COLUMN_FILTER_KEYS = [
-    "status", "startDate", "name", "phone", "address", "department", "position",
+    "status", "startDate", "separationDate", "name", "phone", "address", "department", "position",
     "hoursOfWork", "totalWorkHours", "mealTime", "sickLeave", "vacationLeave",
     "tierLevel", "employmentStatus", "warnings",
   ] as const;
@@ -16730,6 +17010,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const masterListColumnValueGetters: Record<MasterListColumnFilterKey, (e: Employee) => string> = {
     status: (e) => (e.status ? e.status.charAt(0).toUpperCase() + e.status.slice(1) : ""),
     startDate: (e) => e.startDate || "",
+    separationDate: (e) => e.terminationDate || "",
     name: (e) => e.name || "",
     phone: (e) => e.phone || "",
     address: (e) => e.address || "",
@@ -18575,6 +18856,23 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           Changed by: {statusChangesByCandidateId.get(c.id)!.changedByName}
                         </div>
                       )}
+                      {(c.status === "applied" || c.status === "attempt") && (
+                        <button
+                          type="button"
+                          disabled={attemptedToday(c.id)}
+                          onClick={() => void handleLogCandidateAttempt(c)}
+                          title={attemptedToday(c.id) ? "Already logged an attempt for this candidate today — try again tomorrow" : "Log a call/text attempt for today — counts on Generate Report's Attempt tile regardless of how many times this candidate's already been attempted"}
+                          className="mt-1 flex items-center gap-1 text-[10px] whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50 disabled:no-underline text-orange-300 hover:text-orange-200 underline"
+                        >
+                          <PhoneCall className="h-3 w-3" />
+                          Log Attempt{attemptSummariesByCandidateId.get(c.id)?.count ? ` (${attemptSummariesByCandidateId.get(c.id)!.count})` : ""}
+                        </button>
+                      )}
+                      {attemptSummariesByCandidateId.get(c.id)?.lastAttemptedAt && (
+                        <div className="mt-0.5 text-[10px] text-muted-foreground whitespace-nowrap" title={new Date(attemptSummariesByCandidateId.get(c.id)!.lastAttemptedAt).toLocaleString()}>
+                          Last attempt: {new Date(attemptSummariesByCandidateId.get(c.id)!.lastAttemptedAt).toLocaleDateString()}
+                        </div>
+                      )}
                       {c.createdAt && (
                         <div className="mt-1 text-[10px] text-muted-foreground whitespace-nowrap">
                           Applied: {new Date(c.createdAt).toLocaleDateString()}
@@ -19435,7 +19733,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           const showBranchColumn = masterListDept === "Parts Manager and Parts";
           const showTierColumn = masterListDept === "Current Technicians";
           const showAccessColumn = masterListDept === MASTER_LIST_TRAINEE_TAB;
-          const colCount = (showBranchColumn ? 15 : 14) + (showTierColumn ? 1 : 0) + (showAccessColumn ? 1 : 0);
+          const colCount = (showBranchColumn ? 16 : 15) + (showTierColumn ? 1 : 0) + (showAccessColumn ? 1 : 0);
           return (
         <div className="overflow-x-auto">
           <table className="w-full text-[11px]">
@@ -19444,6 +19742,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 {showBranchColumn && <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Branch</th>}
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Status{renderMasterListColFilter("status", "Status")}</th>
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes the employee's hire date">Start Date{renderMasterListColFilter("startDate", "Start Date")}</th>
+                <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — when this employee actually left. Auto-stamped with today's date the moment Status is set to Inactive/Terminated/Resigned; correct it here if that happened after the fact.">Separation Date{renderMasterListColFilter("separationDate", "Separation Date")}</th>
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Name{renderMasterListColFilter("name", "Name")}</th>
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase" title="Editable — writes profiles.phone_number">Phone{renderMasterListColFilter("phone", "Phone")}</th>
                 <th className="px-2 py-1.5 text-left text-[10px] text-muted-foreground uppercase">Address{renderMasterListColFilter("address", "Address")}</th>
@@ -19533,10 +19832,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             "bg-yellow-500/20 text-yellow-300"
                           }`}
                         >
-                          <option value="active">Active</option>
-                          <option value="inactive">Inactive</option>
-                          <option value="terminated">Terminated</option>
-                          <option value="resigned">Resigned</option>
+                          <option value="active" className="bg-slate-800 text-white">Active</option>
+                          <option value="inactive" className="bg-slate-800 text-white">Inactive</option>
+                          <option value="terminated" className="bg-slate-800 text-white">Terminated</option>
+                          <option value="resigned" className="bg-slate-800 text-white">Resigned</option>
                         </select>
                       </td>
                       <td className="px-2 py-1">
@@ -19549,6 +19848,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           }}
                           className="glass-input text-[11px] py-0.5 px-1 rounded-md w-[110px]"
                         />
+                      </td>
+                      <td className="px-2 py-1">
+                        {employee.status === "active" ? (
+                          <span className="text-slate-600 italic text-[10px]">—</span>
+                        ) : (
+                          <input
+                            key={`${employee.id}:${employee.terminationDate || ""}`}
+                            type="date"
+                            defaultValue={employee.terminationDate || ""}
+                            onBlur={(e) => {
+                              const v = e.target.value;
+                              if (v !== (employee.terminationDate || "")) void handleUpdateSeparationDate(employee.id, v);
+                            }}
+                            className="glass-input text-[11px] py-0.5 px-1 rounded-md w-[110px]"
+                          />
+                        )}
                       </td>
                       <td className="px-2 py-1 font-medium whitespace-nowrap">
                         <button
@@ -21433,7 +21748,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <div className="panel p-0 overflow-hidden">
         <div className="px-4 py-4 border-b border-white/10">
           <h2 className="font-semibold text-sm">Generate Hiring Report</h2>
-          <p className="text-[10px] text-muted-foreground mt-0.5">Totals of Candidates, Scheduled for Interview, Rejected, Hired, Terminated, and Resigned for the selected range.</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Same Candidate Pipeline breakdown as the Hiring tab (Candidates, Applied, Scheduled for Interview, Attempt, Training, Hired, Withdrawn, Cancelled) for the selected range.</p>
         </div>
 
         {/* Range filter */}
@@ -21457,15 +21772,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </div>
         </div>
 
-        {/* KPI tiles — same shape as the top-of-page overview, scoped to the range */}
-        <div className="p-4 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+        {/* KPI tiles — exact same 8 Candidate Pipeline tiles, in the same single-row layout, as the Hiring tab's own kpi block above, scoped to the range */}
+        <div className="p-4 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
           {[
             { label: "Candidates", value: hiringReportKpi.candidates, color: "text-blue-300", icon: <Users className="h-4 w-4" /> },
+            { label: "Applied", value: hiringReportKpi.applied, color: "text-blue-300", icon: <FileText className="h-4 w-4" /> },
             { label: "Scheduled for Interview", value: hiringReportKpi.scheduled, color: "text-yellow-300", icon: <Clock className="h-4 w-4" /> },
-            { label: "Rejected", value: hiringReportKpi.rejected, color: "text-red-300", icon: <XCircle className="h-4 w-4" /> },
+            { label: "Attempt", value: hiringReportKpi.attempt, color: "text-orange-300", icon: <PhoneCall className="h-4 w-4" /> },
+            { label: "Training", value: hiringReportKpi.training, color: "text-cyan-300", icon: <GraduationCap className="h-4 w-4" /> },
             { label: "Hired", value: hiringReportKpi.hired, color: "text-green-300", icon: <UserCheck className="h-4 w-4" /> },
-            { label: "Terminated", value: hiringReportKpi.terminated, color: "text-red-400", icon: <UserX className="h-4 w-4" /> },
-            { label: "Resigned", value: hiringReportKpi.resigned, color: "text-slate-300", icon: <UserMinus className="h-4 w-4" /> },
+            { label: "Withdrawn", value: hiringReportKpi.withdrawn, color: "text-orange-300", icon: <LogOut className="h-4 w-4" /> },
+            { label: "Cancelled", value: hiringReportKpi.cancelled, color: "text-red-300", icon: <XCircle className="h-4 w-4" /> },
           ].map((k) => (
             <div key={k.label} className="panel p-3 text-center">
               <div className="flex justify-center mb-1 text-muted-foreground">{k.icon}</div>
@@ -21571,12 +21888,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       <th className="px-3 py-2 text-left text-[10px] text-muted-foreground uppercase">New Hire</th>
                       <th className="px-3 py-2 text-left text-[10px] text-muted-foreground uppercase">Terminated / Resigned</th>
                       <th className="px-3 py-2 text-left text-[10px] text-muted-foreground uppercase">Time Card Warning</th>
+                      <th className="px-3 py-2 text-left text-[10px] text-muted-foreground uppercase">Call Attempt</th>
                       <th className="px-3 py-2 text-left text-[10px] text-muted-foreground uppercase">Employee Error/Manipulation</th>
                     </tr>
                   </thead>
                   <tbody>
                     {sectionRows.length === 0 ? (
-                      <tr><td colSpan={14} className="px-3 py-4 text-center text-muted-foreground text-xs">Nothing here yet.</td></tr>
+                      <tr><td colSpan={15} className="px-3 py-4 text-center text-muted-foreground text-xs">Nothing here yet.</td></tr>
                     ) : (
                       sectionRows.map((r) => {
                         const interview = r.scheduledInterviews[0];
@@ -21616,10 +21934,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                                 key={`${r.groupKey}||${r.staffNeeded}`}
                                 onBlur={(e) => {
                                   const v = Number(e.target.value);
-                                  if (v !== r.staffNeeded && sectionKey !== "philippine_staff") handleStaffNeededChange(sectionKey, r.groupKey, v);
+                                  if (v === r.staffNeeded) return;
+                                  if (sectionKey === "philippine_staff") void handlePhStaffNeededSave(r.groupKey, v);
+                                  else handleStaffNeededChange(sectionKey, r.groupKey, v);
                                 }}
-                                disabled={sectionKey === "philippine_staff"}
-                                className="glass-input text-sm w-16 py-1 px-2 rounded-md disabled:opacity-40"
+                                className="glass-input text-sm w-16 py-1 px-2 rounded-md"
                               />
                             </td>
                             <td className="px-3 py-2 text-center font-semibold">{r.hired || <span className="text-muted-foreground font-normal">—</span>}</td>
@@ -21630,6 +21949,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             <td className="px-3 py-2 text-center font-semibold">{r.hired || <span className="text-muted-foreground font-normal">—</span>}</td>
                             <td className="px-3 py-2 text-center">{r.terminatedResigned || <span className="text-muted-foreground">—</span>}</td>
                             <td className="px-3 py-2 text-center">{r.timeCardWarningCount || <span className="text-muted-foreground">—</span>}</td>
+                            <HiringManualCell value={r.callAttemptCount} saving={hiringSectionsSavingKey === `${savingPrefix}callAttempt`} onSave={(v) => handleHiringManualEntrySave(sectionKey, r.groupKey, "callAttempt", v)} />
                             <td className="px-3 py-2 text-center">{r.employeeErrorManipulationCount || <span className="text-muted-foreground">—</span>}</td>
                           </tr>
                         );
@@ -31436,6 +31756,117 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       </div>
 
+      <div className="panel p-0 overflow-visible mt-4 relative z-10">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">File on Behalf</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Already have their name/address/bank account info (emailed, handed to you in person)? Enter it directly here instead of sending a link — it's saved as complete right away, with no employee signature collected.</p>
+        </div>
+        <div className="p-4 flex flex-col gap-3 max-w-2xl">
+          <div className="flex flex-col gap-1 relative">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Technician</label>
+            <input
+              type="text"
+              value={directDepositFileForRecipientSearch}
+              onChange={(e) => { setDirectDepositFileForRecipientSearch(e.target.value); setDirectDepositFileForRecipientId(""); setDirectDepositFileForRecipientDropdownOpen(true); }}
+              onFocus={() => setDirectDepositFileForRecipientDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setDirectDepositFileForRecipientDropdownOpen(false), 150)}
+              placeholder="Search a teammate…"
+              className="glass-input text-sm py-1.5 px-3 rounded-md"
+            />
+            {directDepositFileForRecipientDropdownOpen && (
+              <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                {filteredDirectDepositFileForRecipients.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                ) : (
+                  filteredDirectDepositFileForRecipients.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => { setDirectDepositFileForRecipientId(e.id); setDirectDepositFileForRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`); setDirectDepositFileForRecipientDropdownOpen(false); }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${directDepositFileForRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                    >
+                      {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">First Name</label>
+              <input type="text" value={directDepositFileForFirstName} onChange={(e) => setDirectDepositFileForFirstName(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Middle Name</label>
+              <input type="text" value={directDepositFileForMiddleName} onChange={(e) => setDirectDepositFileForMiddleName(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Last Name</label>
+              <input type="text" value={directDepositFileForLastName} onChange={(e) => setDirectDepositFileForLastName(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1 sm:col-span-2">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Street Address</label>
+              <input type="text" value={directDepositFileForStreetAddress} onChange={(e) => setDirectDepositFileForStreetAddress(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">City</label>
+              <input type="text" value={directDepositFileForCity} onChange={(e) => setDirectDepositFileForCity(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">State</label>
+              <select value={directDepositFileForState} onChange={(e) => setDirectDepositFileForState(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md">
+                <option value="">Please Select</option>
+                {DIRECT_DEPOSIT_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Zip Code</label>
+              <input type="text" value={directDepositFileForZipCode} onChange={(e) => setDirectDepositFileForZipCode(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Country</label>
+              <select value={directDepositFileForCountry} onChange={(e) => setDirectDepositFileForCountry(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md">
+                <option value="">Please Select</option>
+                {DIRECT_DEPOSIT_COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Name of Bank</label>
+              <input type="text" value={directDepositFileForBankName} onChange={(e) => setDirectDepositFileForBankName(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Type of Account</label>
+              <select value={directDepositFileForAccountType} onChange={(e) => setDirectDepositFileForAccountType(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md">
+                <option value="">Please Select</option>
+                {DIRECT_DEPOSIT_ACCOUNT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Account #</label>
+              <input type="text" value={directDepositFileForAccountNumber} onChange={(e) => setDirectDepositFileForAccountNumber(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">9-Digit Routing #</label>
+              <input type="text" value={directDepositFileForRoutingNumber} onChange={(e) => setDirectDepositFileForRoutingNumber(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+            </div>
+          </div>
+
+          {directDepositFilingError && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{directDepositFilingError}</p>}
+          <button onClick={() => void handleFileDirectDepositForHr()} disabled={!directDepositFileForRecipientId || directDepositFiling} className="btn text-sm px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50 w-fit">
+            {directDepositFiling ? "Filing…" : "File This Direct Deposit Authorization"}
+          </button>
+        </div>
+      </div>
+
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
           <h2 className="font-semibold text-sm">Sent Direct Deposit Authorization Forms</h2>
@@ -33904,6 +34335,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <p className="text-sm text-muted-foreground mb-4">
               Are you sure you want to mark <span className="font-semibold text-white">{confirmDialog.employeeName}</span> as <span className="font-semibold text-white capitalize">{confirmDialog.newStatus}</span>? This will also deactivate their account.
             </p>
+            <div className="flex flex-col gap-1 mb-4">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Effective Date</label>
+              <input
+                type="date"
+                value={confirmDialog.effectiveDate}
+                max={today}
+                onChange={(e) => setConfirmDialog({ ...confirmDialog, effectiveDate: e.target.value || today })}
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              <p className="text-[10px] text-muted-foreground mt-0.5">Stamped onto Separation Date — defaults to today, but set it to when they actually left if this is being processed after the fact.</p>
+            </div>
             <div className="flex gap-2 justify-end">
               <button onClick={handleCancelStatusChange} className="btn text-sm px-4 py-2">Cancel</button>
               <button

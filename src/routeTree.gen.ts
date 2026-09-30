@@ -54,6 +54,7 @@ import { Route as FillW4rDocIdRouteImport } from './routes/fill-w4r.$docId'
 import { Route as FillW4rExternalDocIdRouteImport } from './routes/fill-w4r-external.$docId'
 import { Route as FillW4DocIdRouteImport } from './routes/fill-w4.$docId'
 import { Route as FillW4ExternalDocIdRouteImport } from './routes/fill-w4-external.$docId'
+import { Route as FillVisitExceptionReportDocIdRouteImport } from './routes/fill-visit-exception-report.$docId'
 import { Route as FillVehicleUseAgreementDocIdRouteImport } from './routes/fill-vehicle-use-agreement.$docId'
 import { Route as FillVehicleUseAgreementExternalDocIdRouteImport } from './routes/fill-vehicle-use-agreement-external.$docId'
 import { Route as FillVehicleAgreementDocIdRouteImport } from './routes/fill-vehicle-agreement.$docId'
@@ -339,6 +340,12 @@ const FillW4ExternalDocIdRoute = FillW4ExternalDocIdRouteImport.update({
   path: '/fill-w4-external/$docId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FillVisitExceptionReportDocIdRoute =
+  FillVisitExceptionReportDocIdRouteImport.update({
+    id: '/fill-visit-exception-report/$docId',
+    path: '/fill-visit-exception-report/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const FillVehicleUseAgreementDocIdRoute =
   FillVehicleUseAgreementDocIdRouteImport.update({
     id: '/fill-vehicle-use-agreement/$docId',
@@ -699,6 +706,7 @@ export interface FileRoutesByFullPath {
   '/fill-vehicle-agreement/$docId': typeof FillVehicleAgreementDocIdRoute
   '/fill-vehicle-use-agreement-external/$docId': typeof FillVehicleUseAgreementExternalDocIdRoute
   '/fill-vehicle-use-agreement/$docId': typeof FillVehicleUseAgreementDocIdRoute
+  '/fill-visit-exception-report/$docId': typeof FillVisitExceptionReportDocIdRoute
   '/fill-w4-external/$docId': typeof FillW4ExternalDocIdRoute
   '/fill-w4/$docId': typeof FillW4DocIdRoute
   '/fill-w4r-external/$docId': typeof FillW4rExternalDocIdRoute
@@ -798,6 +806,7 @@ export interface FileRoutesByTo {
   '/fill-vehicle-agreement/$docId': typeof FillVehicleAgreementDocIdRoute
   '/fill-vehicle-use-agreement-external/$docId': typeof FillVehicleUseAgreementExternalDocIdRoute
   '/fill-vehicle-use-agreement/$docId': typeof FillVehicleUseAgreementDocIdRoute
+  '/fill-visit-exception-report/$docId': typeof FillVisitExceptionReportDocIdRoute
   '/fill-w4-external/$docId': typeof FillW4ExternalDocIdRoute
   '/fill-w4/$docId': typeof FillW4DocIdRoute
   '/fill-w4r-external/$docId': typeof FillW4rExternalDocIdRoute
@@ -898,6 +907,7 @@ export interface FileRoutesById {
   '/fill-vehicle-agreement/$docId': typeof FillVehicleAgreementDocIdRoute
   '/fill-vehicle-use-agreement-external/$docId': typeof FillVehicleUseAgreementExternalDocIdRoute
   '/fill-vehicle-use-agreement/$docId': typeof FillVehicleUseAgreementDocIdRoute
+  '/fill-visit-exception-report/$docId': typeof FillVisitExceptionReportDocIdRoute
   '/fill-w4-external/$docId': typeof FillW4ExternalDocIdRoute
   '/fill-w4/$docId': typeof FillW4DocIdRoute
   '/fill-w4r-external/$docId': typeof FillW4rExternalDocIdRoute
@@ -999,6 +1009,7 @@ export interface FileRouteTypes {
     | '/fill-vehicle-agreement/$docId'
     | '/fill-vehicle-use-agreement-external/$docId'
     | '/fill-vehicle-use-agreement/$docId'
+    | '/fill-visit-exception-report/$docId'
     | '/fill-w4-external/$docId'
     | '/fill-w4/$docId'
     | '/fill-w4r-external/$docId'
@@ -1098,6 +1109,7 @@ export interface FileRouteTypes {
     | '/fill-vehicle-agreement/$docId'
     | '/fill-vehicle-use-agreement-external/$docId'
     | '/fill-vehicle-use-agreement/$docId'
+    | '/fill-visit-exception-report/$docId'
     | '/fill-w4-external/$docId'
     | '/fill-w4/$docId'
     | '/fill-w4r-external/$docId'
@@ -1197,6 +1209,7 @@ export interface FileRouteTypes {
     | '/fill-vehicle-agreement/$docId'
     | '/fill-vehicle-use-agreement-external/$docId'
     | '/fill-vehicle-use-agreement/$docId'
+    | '/fill-visit-exception-report/$docId'
     | '/fill-w4-external/$docId'
     | '/fill-w4/$docId'
     | '/fill-w4r-external/$docId'
@@ -1297,6 +1310,7 @@ export interface RootRouteChildren {
   FillVehicleAgreementDocIdRoute: typeof FillVehicleAgreementDocIdRoute
   FillVehicleUseAgreementExternalDocIdRoute: typeof FillVehicleUseAgreementExternalDocIdRoute
   FillVehicleUseAgreementDocIdRoute: typeof FillVehicleUseAgreementDocIdRoute
+  FillVisitExceptionReportDocIdRoute: typeof FillVisitExceptionReportDocIdRoute
   FillW4ExternalDocIdRoute: typeof FillW4ExternalDocIdRoute
   FillW4DocIdRoute: typeof FillW4DocIdRoute
   FillW4rExternalDocIdRoute: typeof FillW4rExternalDocIdRoute
@@ -1641,6 +1655,13 @@ declare module '@tanstack/react-router' {
       path: '/fill-w4-external/$docId'
       fullPath: '/fill-w4-external/$docId'
       preLoaderRoute: typeof FillW4ExternalDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fill-visit-exception-report/$docId': {
+      id: '/fill-visit-exception-report/$docId'
+      path: '/fill-visit-exception-report/$docId'
+      fullPath: '/fill-visit-exception-report/$docId'
+      preLoaderRoute: typeof FillVisitExceptionReportDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/fill-vehicle-use-agreement/$docId': {
@@ -2122,6 +2143,7 @@ const rootRouteChildren: RootRouteChildren = {
   FillVehicleUseAgreementExternalDocIdRoute:
     FillVehicleUseAgreementExternalDocIdRoute,
   FillVehicleUseAgreementDocIdRoute: FillVehicleUseAgreementDocIdRoute,
+  FillVisitExceptionReportDocIdRoute: FillVisitExceptionReportDocIdRoute,
   FillW4ExternalDocIdRoute: FillW4ExternalDocIdRoute,
   FillW4DocIdRoute: FillW4DocIdRoute,
   FillW4rExternalDocIdRoute: FillW4rExternalDocIdRoute,

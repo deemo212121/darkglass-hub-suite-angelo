@@ -112,6 +112,17 @@ export function isNeedCancel(t: Ticket): boolean {
   return t.status.trim().toLowerCase() === "cl-need cancel";
 }
 
+// Ready to Complete — the technician's part is done but the ticket hasn't
+// actually been claimed/completed/data-closed yet (see techPayroll.ts's
+// DEFAULT_REPAIR_TYPE comment: RTC alone no longer counts as "done" for pay
+// either). Still an open/pending status per statusGroupOf, same as Need
+// Cancel — both are excluded from the LTP Report's "excluding RTC and Need
+// Cancel" column since they're a different kind of pending than a ticket
+// that's simply aging without any action taken.
+export function isRtc(t: Ticket): boolean {
+  return t.status.trim().toLowerCase() === "cl-ready to complete";
+}
+
 export function isCancelled(t: Ticket): boolean {
   const v = t.status.trim().toLowerCase();
   return v === "cl-cancelled" || v === "cancelled";
@@ -343,4 +354,138 @@ export function computeDailyCounts(tickets: Ticket[], regionLocations: string[],
   return Array.from(byDate.entries())
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([date, v]) => ({ date, ...v }));
+}
+
+export interface LtpReportRow {
+  branch: string;
+  /** Currently-open tickets aged 7+ days, excluding RTC and Need Cancel (1st column). */
+  lateExclRtcNeedCancel: number;
+  /** Currently-open tickets aged 7+ days, any status including RTC/Need Cancel (2nd column) — the numerator behind todayLTP. */
+  lateAll: number;
+  /** Currently-open tickets, any aging (3rd column) — the denominator behind todayLTP. */
+  totalPending: number;
+  /** Tickets entered this month through asOfDate at this branch, any status (4th column). */
+  monthTotal: number;
+  /** lateAll / totalPending, as a percent. Null when totalPending is 0. */
+  todayLTP: number | null;
+  /** Average of this branch's daily LTP% (see computeDailyLtpBreakdown) across every day from the 1st of the month through asOfDate that had pending tickets. Null when no such day exists. */
+  monthlyLTP: number | null;
+  /** Tickets entered on asOfDate whose schedule date is the correct next business day (see nextBusinessDay) — a same-day-scheduling compliance count, not just "has any schedule date." */
+  scheduled: number;
+  /** Currently-open tickets, any aging, excluding RTC and Need Cancel — same exclusion as lateExclRtcNeedCancel but without the 7+ day aging filter. */
+  totalExclRtcNeedCancel: number;
+  /** scheduled / totalPending, as a percent — what share of the branch's whole pending queue (any age) got scheduled today. Null when totalPending is 0. */
+  twentyPercentPct: number | null;
+  /** Ticket visits at this branch scheduled for asOfDate whose repair type is a sealed-system job (see isSealedSystemRepairType) — "Seal", Sealed System" / "Sealed System Follow Up" / "Sealed System(R600)" / "Seal with Trainee". */
+  seal: number;
+}
+
+// Matches every "sealed system" repair-type variant in the Repair Type
+// dropdown (ticket.$ticketNo.tsx): "Seal with Trainee", "Sealed System",
+// "Sealed System Follow Up", "Sealed System(R600)".
+function isSealedSystemRepairType(repairType: string | undefined): boolean {
+  return /seal/i.test(repairType || "");
+}
+
+// Fixed "7 or more days" bucket — the LTP Report's formula (per the CSR
+// module's LTP Report tile) is always scoped to 7+ days, unlike the
+// Operations Daily Report's interactive aging-bucket picker.
+const LTP_REPORT_AGING_BUCKETS = new Set([7, LTP_AGING_MAX_BUCKET]);
+
+// The CSR policy this counts against: a ticket entered today should be
+// scheduled for the very next business day — Monday through Thursday entries
+// roll to the next calendar day, but a Friday (or weekend) entry rolls to
+// the following Monday since Sat/Sun aren't business days.
+function nextBusinessDay(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  const day = date.getDay(); // 0=Sun, 5=Fri, 6=Sat
+  const daysToAdd = day === 5 ? 3 : day === 6 ? 2 : 1;
+  date.setDate(date.getDate() + daysToAdd);
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Per-branch snapshot for the LTP Report tile, run for a single calendar day
+ * (`asOfDate`, YYYY-MM-DD — the report is filled out daily). Matches the
+ * pasted formula:
+ *   1st column: 7+ days pending, excluding RTC and Need Cancel
+ *   2nd column: 7+ days pending, all statuses (including RTC/Need Cancel)
+ *   3rd column: Total Pending Tickets
+ *   4th column: Month Total (tickets entered this month through asOfDate, any status)
+ *   Today's LTP = 2nd column / 3rd column
+ *   Monthly LTP = average of each day-to-date's daily LTP%, from the 1st of
+ *     asOfDate's month through asOfDate
+ *   Scheduled = tickets entered on asOfDate whose schedule date is the
+ *     correct next business day (Mon-Thu entries -> next calendar day,
+ *     Fri/Sat/Sun entries -> the following Monday)
+ *   Total Tickets (RTC and Cancel Excluded) = currently-open tickets, any
+ *     aging, excluding RTC and Need Cancel (same exclusion as the 1st
+ *     column, just without the 7+ day filter)
+ *   20% Percentage = Scheduled / Total Pending Tickets (the whole queue,
+ *     any age) — what share of the branch's backlog got scheduled today
+ *   Seal = ticket visits scheduled for asOfDate whose repair type is a
+ *     sealed-system job (see isSealedSystemRepairType)
+ * Columns 1-3 are always the CURRENT live open-ticket state — this app
+ * doesn't store a historical pending/aging snapshot (see
+ * computeDailyLtpBreakdown), so picking a past asOfDate can't replay what
+ * was actually pending that day. Only Month Total/Monthly LTP (which are
+ * built from ticket CREATED dates, not a point-in-time pending snapshot)
+ * meaningfully change with asOfDate.
+ */
+export function computeLtpReportRows(tickets: Ticket[], branches: string[], asOfDate: string): LtpReportRow[] {
+  const monthYYYYMM = asOfDate.slice(0, 7);
+
+  return branches.map((branch) => {
+    const branchTickets = tickets.filter((t) => normalizeLocation(t.location) === normalizeLocation(branch));
+
+    const openTickets = branchTickets.filter((t) => statusGroupOf(t.status) === "open");
+    const totalPending = openTickets.length;
+
+    const agedOpen = openTickets.filter((t) => matchesAgingBucket(liveAgingDays(t), LTP_REPORT_AGING_BUCKETS));
+    const lateAll = agedOpen.length;
+    const lateExclRtcNeedCancel = agedOpen.filter((t) => !isRtc(t) && !isNeedCancel(t)).length;
+    const totalExclRtcNeedCancel = openTickets.filter((t) => !isRtc(t) && !isNeedCancel(t)).length;
+
+    const monthTotal = branchTickets.filter((t) => {
+      const created = dateOnly(t.created);
+      return created.slice(0, 7) === monthYYYYMM && created <= asOfDate;
+    }).length;
+
+    const todayLTP = totalPending > 0 ? Math.round((lateAll / totalPending) * 10000) / 100 : null;
+
+    const dailyRows = computeDailyLtpBreakdown(tickets, [branch], monthYYYYMM, LTP_REPORT_AGING_BUCKETS).filter((r) => r.date <= asOfDate);
+    const daysWithPending = dailyRows.filter((r) => r.ltpPct !== null);
+    const monthlyLTP =
+      daysWithPending.length > 0
+        ? Math.round((daysWithPending.reduce((s, r) => s + (r.ltpPct as number), 0) / daysWithPending.length) * 100) / 100
+        : null;
+
+    const requiredScheduleDate = nextBusinessDay(asOfDate);
+    const scheduled = branchTickets.filter(
+      (t) => dateOnly(t.created) === asOfDate && dateOnly(t.schedule) === requiredScheduleDate,
+    ).length;
+
+    const twentyPercentPct = totalPending > 0 ? Math.round((scheduled / totalPending) * 10000) / 100 : null;
+
+    const seal = branchTickets.reduce(
+      (count, t) =>
+        count + (t.visits || []).filter((v) => dateOnly(v.scheduleDate) === asOfDate && isSealedSystemRepairType(v.repairType)).length,
+      0,
+    );
+
+    return {
+      branch,
+      lateExclRtcNeedCancel,
+      lateAll,
+      totalPending,
+      monthTotal,
+      todayLTP,
+      monthlyLTP,
+      scheduled,
+      totalExclRtcNeedCancel,
+      twentyPercentPct,
+      seal,
+    };
+  });
 }

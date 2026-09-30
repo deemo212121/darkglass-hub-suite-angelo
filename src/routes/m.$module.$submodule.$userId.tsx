@@ -1,4 +1,5 @@
 import { createFileRoute, notFound, Link, Navigate, useNavigate } from "@tanstack/react-router";
+import { useRedirectGuard } from "@/lib/useRedirectGuard";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
@@ -475,6 +476,9 @@ function UserDetailsPage() {
   const { module, submodule, userId } = Route.useLoaderData();
   const { ready, role: viewerRole, extraRoles: viewerExtraRoles, displayName: viewerDisplayName, email: viewerEmail } = useAuth();
   const navigate = useNavigate();
+  // Guards the <Navigate> below against firing more than once per distinct
+  // target — see useRedirectGuard.ts for why this is necessary.
+  const redirectOnce = useRedirectGuard();
   // Built-in roles plus any company-created custom roles (Accessibility
   // Management's "Add Role" — see src/lib/customRoles.ts).
   const roleOptions = useAllRoleOptions();
@@ -766,7 +770,7 @@ function UserDetailsPage() {
   );
 
   if (ready && !hasAccountAccess) {
-    return <Navigate to="/home" replace />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
   return (

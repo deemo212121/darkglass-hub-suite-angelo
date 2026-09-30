@@ -312,7 +312,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
         if (info?.deliveredDate) {
           const { deliveredDate, deliveredLocation = "" } = info;
           setReceiveItems((current) => current.map((r) => (ids.includes(r.id) ? { ...r, deliveredDate, deliveredLocation } : r)));
-          await Promise.all(ids.map((id) => saveDeliveredDate(id, deliveredDate, deliveredLocation).catch((err) => console.warn("Couldn't save delivered date (is migration 0311 applied?):", err))));
+          await Promise.all(ids.map((id) => saveDeliveredDate(id, deliveredDate, deliveredLocation).catch((err) => console.warn("Couldn't save delivered date (is migration 0325 applied?):", err))));
         }
         setDeliveryLookup((prev) => ({ ...prev, [tn]: { lastEvent: info?.lastEvent ?? "" } }));
       }

@@ -2,7 +2,7 @@ import { supabase } from "./client";
 
 /**
  * Per-PO-staffer daily tally for the Staff Changes Counter — PO Team
- * roster (migration 0310). Tickets Ordered/Parts Ordered/Pending Tickets
+ * roster (migration 0322). Tickets Ordered/Parts Ordered/Pending Tickets
  * have no live per-person data source (parts.created_by isn't populated),
  * so a lead enters all three by hand per (staffer, day) — same manual-
  * tally pattern parts_daily_issues_log uses per (branch, day). Internal

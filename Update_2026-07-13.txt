@@ -1,0 +1,84 @@
+DARKGLASS HUB SUITE - PROGRESS UPDATE
+Covering: July 13, 2026
+
+
+PTO ALLOWANCE TIERS + REQUEST HISTORY
+-----------------------------------------------------
+- PTO days now follow the real tiered policy: 5 days in year one, 6 in
+  year two, 7 in year three, increasing by 1 each year after that, based
+  on each employee's actual hire-date anniversary (not the calendar
+  year). Resets automatically every year on that anniversary.
+- "PTO Remaining" now shows on the My Requests tab too, not just the
+  main Dashboard tab.
+- The request summary cards (Pending, Approved, Closed, etc.) are now
+  clickable - clicking one pops up the actual list of matching requests
+  instead of just showing a number.
+- Submitting a PTO request that would go over what's left is now
+  blocked, instead of silently letting it through.
+
+
+NOTIFICATION PRIVACY - WHO SHOWS AS THE SENDER
+-----------------------------------------------------
+- PTO approval/rejection and Time Correction outcome notifications now
+  show up as "System" instead of naming the specific manager who
+  reviewed it.
+- Truck Stock pull-request notifications still show the real Parts
+  Manager name, since knowing who to follow up with there is actually
+  useful.
+
+
+NEW: SWITCH BETWEEN GOOGLE MAPS AND A FREE MAP, COMPANY-WIDE
+-----------------------------------------------------
+- Added a company-wide toggle (admin-only, on the Admin page) to switch
+  every map in the app - Ticket Map, Work Planner, Work Map, Branch/
+  Location setup, the mobile tech app, and the ticket detail page -
+  between Google Maps and a free alternative (Leaflet + OpenStreetMap).
+- When switched to the free map, the app stops calling Google's map
+  services entirely, so there's zero Google Maps billing while it's
+  off - confirmed by checking every map-related call in the app.
+- The free map still supports address lookup and real driving routes
+  (via Geoapify, same as Google's), so nothing is lost by switching.
+- Along the way, fixed several rough edges on the free map: it no
+  longer overlaps other page content, pin labels are no longer cut off,
+  the ticket list scrolls instead of stretching the whole page past 7
+  tickets, and the popup card / sidebar / top toolbar now match the
+  correct colors in both light mode and dark mode (previously some of
+  this only had dark-mode styling, or looked different than the Google
+  Maps version).
+
+
+TEAMMATE UPDATES MERGED IN
+-----------------------------------------------------
+- Pulled in a large batch of teammate work and reconciled it against
+  what's already built here, file by file, to avoid overwriting
+  anything or accidentally reintroducing already-fixed bugs:
+  - Claims Dashboard was quietly showing all zeros in production
+    (it was reading from database tables nothing actually writes to).
+    Rebuilt it to pull real numbers from ticket data instead.
+  - Parts Dashboard gained a CSV report export and pagination; kept our
+    existing quick-navigation buttons alongside the new "jump to
+    section" sidebar.
+  - Part Return Status now has an Excel (.xlsx) export button.
+  - Fixed a bug where the per-user Work Plan editor was silently
+    failing to load a user's work plan (the database query was missing
+    that field).
+  - Fixed a missing "view agent stats" link on the CSR Daily Report
+    that the other team dashboards already had.
+  - Fixed a light-mode color bug that could wipe out chart/legend
+    colors (an overly broad color-matching rule).
+  - Merged in a full HR feature set: generate and e-sign Employee
+    Warning Forms / COE letters in-app, an HR activity log (who did
+    what, company-wide), live-updating HR dashboard data, and a PTO
+    column plus reorganized navigation on the HR Daily Report.
+- Everything committed and pushed to GitHub.
+
+
+SUGGESTED NEXT / STILL NEEDS DOING
+-----------------------------------------------------
+- 4 new database migrations still need to be run manually in the
+  Supabase SQL Editor before their features will work: the map-provider
+  toggle setting, HR e-signature documents, the HR activity log, and
+  HR dashboard live updates.
+- A new setting (VITE_APP_URL) was added for the e-signature "sign this
+  document" links to work correctly once deployed - already filled in
+  with the live app URL.

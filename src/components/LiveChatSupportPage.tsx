@@ -38,7 +38,7 @@ import {
 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
-import { getCompanyUsers, getMyProfileId, getMyRoles, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
 import { LOCATIONS } from "@/lib/locations";
 import { getCsrTeamComposition, type CsrTeamMemberRow } from "@/lib/supabase/csrTeams";
@@ -176,9 +176,8 @@ function formatTimestamp(value: string) {
 export function LiveChatSupportPage({ mod, sub }: Props) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
-  const { uid, role, displayName, email } = useAuth();
+  const { uid, role, extraRoles, displayName, email } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
-  const [extraRoles, setExtraRoles] = useState<string[]>([]);
   // null = not (yet known to be) a team leader; an array = the profile ids
   // of everyone on the team this person leads, including themselves.
   const [myTeamMemberIds, setMyTeamMemberIds] = useState<string[] | null>(null);
@@ -233,6 +232,10 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
 
   const currentUserName = displayName || email || "Staff";
   const active = sessions.find((s) => s.id === activeId) ?? null;
+  // extraRoles from useAuth() (loaded at login, correctly [] during a "View
+  // as" preview) rather than a separate getMyRoles(uid) call this file used
+  // to make, which read the real signed-in account's own extra_roles and so
+  // ignored the preview.
   const isWideVisibility = hasDashboardAccess(WIDE_VISIBILITY_ROLES, role, extraRoles);
   const isTeamLeader = myTeamMemberIds !== null;
 
@@ -294,7 +297,6 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
     if (!uid) return;
     let cancelled = false;
     getMyProfileId(uid).then((id) => { if (!cancelled) setMyProfileId(id); });
-    getMyRoles(uid).then(({ extraRoles }) => { if (!cancelled) setExtraRoles(extraRoles); });
     return () => { cancelled = true; };
   }, [uid]);
 

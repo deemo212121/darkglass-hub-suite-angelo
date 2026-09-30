@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0289 — Manual per-person, per-pay-period tally backing the Accounting
+-- 0305 — Manual per-person, per-pay-period tally backing the Accounting
 -- Dashboard's "Branch Commission" tab (src/components/
 -- BranchManagerCommissionTab.tsx). Commission is earned by the PERSON
 -- holding a Branch Manager-tier role (Branch Manager, Senior Branch

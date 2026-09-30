@@ -689,6 +689,8 @@ export interface EmployeeInfo {
   employmentStatusDate?: string;
   /** Onboarding Documents checklist — keyed by document name (e.g. "W4"), true = collected. */
   onboardingDocs?: Record<string, boolean>;
+  /** Does this manager/director have a company-installed Car IQ vehicle tracking device? Drives their mileage reimbursement rate ($0.20/mi with, $0.40/mi without) — see the Accounting Dashboard's Car IQ tab. Undefined = not yet set. */
+  hasCarIq?: boolean;
 }
 
 /** Load the employee_info JSON for a profile (by profile id). */
@@ -797,6 +799,18 @@ export async function saveProfileEmployeeInfo(profileId: string, info: EmployeeI
   if (!data || data.length === 0) {
     throw new Error("This change wasn't saved — you may not have permission to edit this profile.");
   }
+}
+
+/**
+ * Toggle the Car IQ tab's per-manager flag (employee_info.hasCarIq).
+ * saveProfileEmployeeInfo replaces the WHOLE employee_info JSON blob, so
+ * this reads the current object first and merges the one field in — writing
+ * `{ hasCarIq: value }` directly would silently wipe out this profile's
+ * address/bank/onboarding-doc fields already stored there.
+ */
+export async function setEmployeeHasCarIq(profileId: string, hasCarIq: boolean): Promise<void> {
+  const current = (await getProfileEmployeeInfo(profileId)) ?? {};
+  await saveProfileEmployeeInfo(profileId, { ...current, hasCarIq });
 }
 
 export interface TechnicianHome {

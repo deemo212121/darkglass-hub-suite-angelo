@@ -70,6 +70,10 @@ export const SIGNABLE_DOCUMENT_REGISTRY: Record<SignableDocumentType, SignableDo
   ssn_card_form: { label: "SSN Card", internalPath: "/fill-ssn-card", externalPath: "/fill-ssn-card-external" },
   drivers_license_form: { label: "Driver's License", internalPath: "/fill-drivers-license", externalPath: "/fill-drivers-license-external" },
   valid_id_form: { label: "Valid ID", internalPath: "/fill-valid-id", externalPath: "/fill-valid-id-external" },
+  // Sent ad hoc from Employee Monitoring's Visit Exception Report tab, not
+  // an onboarding checklist item — recipient is always an existing AHS
+  // technician, no external/no-login variant needed.
+  visit_exception_report: { label: "Employee Attendance & Visit Exception Report", internalPath: "/fill-visit-exception-report", externalPath: "/fill-visit-exception-report" },
 };
 
 export function signableDocumentLabel(type: SignableDocumentType): string {
@@ -185,6 +189,7 @@ export const DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE = new Set<SignableDocum
   "master_w2_office_agreement",
   "master_ph_contractor_agreement",
   "master_w2_executive_agreement",
+  "visit_exception_report",
 ]);
 
 /**

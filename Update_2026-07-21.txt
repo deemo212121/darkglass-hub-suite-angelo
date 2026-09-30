@@ -1,0 +1,78 @@
+DARKGLASS HUB SUITE - PROGRESS UPDATE
+Covering: July 21, 2026
+
+
+NEW: DEFAULT TECHNICIAN FOR NEW TICKETS
+-----------------------------------------------------
+- New tickets always started completely unassigned - Admin can now set
+  a default technician so every new ticket already has someone
+  assigned from the moment it's created.
+- Set one company-wide, then optionally override per branch. Each
+  branch can inherit the company default, always stay unassigned
+  regardless of what the company default is set to, or use its own
+  specific technician - reusing the same "Rep Tech" field Location
+  Management already had for every branch (e.g. Nashville was already
+  set to Leo Sun), it just wasn't connected to ticket creation before.
+- All of this lives in one panel on the Admin page, next to the Map
+  Provider toggle. Nothing saves as you click through the dropdowns -
+  changes are staged and only committed when you click "Save Changes"
+  (a "Discard" option is there too), so scrolling through ~30 branches
+  can't accidentally commit a change on the wrong row.
+- Cleaned up the panel itself based on feedback while testing: the
+  30+ branch list is now collapsed behind a "Show all branches" toggle
+  by default so it doesn't push the rest of the Admin page out of
+  view, Map Provider and Default Technician now sit side-by-side at
+  matching heights, and the description text was trimmed down.
+
+
+BUG FIX: ADMINS CREATED VIA SUPERADMIN COULD DISAPPEAR OR NOT ACTUALLY WORK
+-----------------------------------------------------
+- Investigated a report that an admin created for a company (UIC)
+  wasn't showing up in the User Accounts list even though the login
+  itself worked. Found two separate, real bugs:
+  1. The admin's stored data used slightly different field names than
+     every place that reads it back expected, which caused a display
+     glitch where one of two same-company admins would silently not
+     render at all.
+  2. More seriously: creating a new admin through SuperAdmin was only
+     ever saving to one of our two databases - never the one that
+     almost the entire app (tickets, users, everything) actually
+     checks permissions against. In practice this meant a brand-new
+     admin could log in, but would see zero tickets, zero users -
+     nothing - and also couldn't be picked as a Manager when their
+     company tried to add its first real employee.
+  3. Also found and fixed a related issue causing this: creating a new
+     admin was quietly signing SuperAdmin out of their own session and
+     switching them into the new admin's account.
+- All three fixed, and the admins already affected by this were
+  repaired directly so they work correctly now without needing to be
+  recreated.
+
+
+BUG FIX: HR DASHBOARD'S "AUTOMATED FORMS" MENU SHOWED FOR EVERY COMPANY
+-----------------------------------------------------
+- The Certificate of Employment / Warning Form / tax form / Applicant
+  Documents section of the HR & Recruitment Dashboard is an AH
+  Solutions-specific workflow. It's now hidden for every other
+  company instead of showing up (non-functionally) everywhere.
+
+
+DATA CLEANUP: DUPLICATE / CORRUPTED COMPANY RECORDS
+-----------------------------------------------------
+- Found and removed 4 duplicate company records that had appeared in
+  Firebase (each missing almost every field except the name) and
+  restored one real company record (UIC) that had lost most of its
+  information the same way.
+- Checked thoroughly and confirmed this isn't caused by anything in
+  our own codebase - nothing here creates records like this. If it
+  happens again, it's coming from something outside the app (a
+  connected automation/integration), and that's worth tracking down at
+  the source rather than just cleaning it up each time it recurs.
+
+
+STATUS
+-----------------------------------------------------
+- Everything above is committed and pushed to GitHub.
+- Not yet deployed to the live site - all of today's work is confirmed
+  working (tested directly against real production data) but is
+  waiting on the go-ahead to push live.

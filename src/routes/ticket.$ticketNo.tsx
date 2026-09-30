@@ -1,11 +1,11 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, placeEncompassOrder, isEncompassDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
 import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
 import { PART_STATUS_OPTIONS } from "@/lib/partStatuses";
-import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone, ClipboardCheck, ChevronDown } from "lucide-react";
+import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone, ClipboardCheck, ChevronDown, X } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { isFirebaseReady, auth as firebaseAuth } from "@/lib/firebase/config";
 import { getGmailConnectionStatus, disconnectGmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
@@ -53,6 +53,8 @@ import {
   addTicketPart as sbAddTicketPart,
   updateTicketPart as sbUpdateTicketPart,
   deleteTicketPart as sbDeleteTicketPart,
+  getPartSuggestions,
+  type PartSuggestion,
 } from "@/lib/supabase/tickets";
 import { getTicketComments, addTicketComment } from "@/lib/supabase/comments";
 import { getTicketAlerts, addTicketAlert, removeTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
@@ -1049,24 +1051,49 @@ const TICKET_DATA: Record<string, TicketData> = {
 
 function ModelResourceButton(props: {
   label: string;
-  url: string;
+  urls: string[];
   onEdit: () => void;
 }) {
-  const { label, url, onEdit } = props;
-  const hasLink = Boolean(url && url.trim());
+  const { label, urls, onEdit } = props;
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const hasLinks = urls.length > 0;
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
   return (
-    <div className="inline-flex items-center rounded-lg border border-slate-600/60 bg-slate-800/70 text-xs overflow-hidden">
-      {hasLink ? (
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="px-3 py-1 flex items-center gap-1.5 text-blue-300 hover:bg-blue-600/20 transition-colors"
-          title={url}
-        >
-          <ExternalLink className="h-3.5 w-3.5" />
-          <span className="font-semibold">{label}</span>
-        </a>
+    <div ref={containerRef} className="relative inline-flex items-center rounded-lg border border-slate-600/60 bg-slate-800/70 text-xs overflow-hidden">
+      {hasLinks ? (
+        urls.length === 1 ? (
+          <a
+            href={urls[0]}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-1 flex items-center gap-1.5 text-blue-300 hover:bg-blue-600/20 transition-colors"
+            title={urls[0]}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            <span className="font-semibold">{label}</span>
+          </a>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="px-3 py-1 flex items-center gap-1.5 text-blue-300 hover:bg-blue-600/20 transition-colors"
+            title={`${urls.length} ${label} links`}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            <span className="font-semibold">{label}</span>
+            <span className="text-[10px] uppercase tracking-wide text-blue-400/80">({urls.length})</span>
+          </button>
+        )
       ) : (
         <button
           type="button"
@@ -1079,16 +1106,33 @@ function ModelResourceButton(props: {
           <span className="text-[10px] uppercase tracking-wide text-slate-500">Add</span>
         </button>
       )}
-      {hasLink && (
+      {hasLinks && (
         <button
           type="button"
           onClick={onEdit}
           className="px-2 py-1 border-l border-slate-600/60 text-slate-400 hover:text-slate-200 hover:bg-slate-700/60 transition-colors"
-          title={`Edit ${label} link`}
-          aria-label={`Edit ${label} link`}
+          title={`Edit ${label} links`}
+          aria-label={`Edit ${label} links`}
         >
           <Pencil className="h-3.5 w-3.5" />
         </button>
+      )}
+      {open && urls.length > 1 && (
+        <div className="absolute left-0 top-full mt-1 z-20 min-w-[220px] max-w-[360px] rounded-lg border border-slate-600/60 bg-slate-800 shadow-2xl py-1">
+          {urls.map((u, i) => (
+            <a
+              key={i}
+              href={u}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block px-3 py-1.5 text-blue-300 hover:bg-blue-600/20 truncate"
+              title={u}
+              onClick={() => setOpen(false)}
+            >
+              {label} {i + 1}
+            </a>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -1431,18 +1475,27 @@ function TicketDetailsPage() {
   const [isEditingProductInfo, setIsEditingProductInfo] = useState(false);
   const [editedProductInfo, setEditedProductInfo] = useState<Partial<TicketData>>({});
 
-  // Per-model reference links (Exploded View / Service Bulletin). Shared
-  // across every ticket carrying the same model number. Loaded from Supabase
-  // whenever the ticket's model changes.
+  // Per-model reference links (Exploded View / Service Bulletin / Tech Data
+  // Sheet), each supporting multiple URLs. Shared across every ticket
+  // carrying the same model number. Loaded from Supabase whenever the
+  // ticket's model changes.
   const [modelResources, setModelResources] = useState<{
-    explodedViewUrl: string;
-    serviceBulletinUrl: string;
-  }>({ explodedViewUrl: "", serviceBulletinUrl: "" });
+    explodedViewUrls: string[];
+    serviceBulletinUrls: string[];
+    techDataSheetUrls: string[];
+  }>({ explodedViewUrls: [], serviceBulletinUrls: [], techDataSheetUrls: [] });
   const [modelResourceModal, setModelResourceModal] = useState<
     | null
-    | { kind: "exploded" | "bulletin"; value: string }
+    | { kind: "exploded" | "bulletin" | "techDataSheet"; values: string[] }
   >(null);
   const [modelResourceSaving, setModelResourceSaving] = useState(false);
+
+  // Part suggestions for the Add Part row — past COMPLETED tickets sharing
+  // this model number or a similar-sounding problem description. Loaded
+  // once the ticket's model/problem description are known; re-runs if
+  // either changes (e.g. after editing Product Information).
+  const [partSuggestions, setPartSuggestions] = useState<PartSuggestion[]>([]);
+  const [partSuggestionsLoading, setPartSuggestionsLoading] = useState(false);
 
   // Edit mode state for schedule information
   const [isEditingScheduleInfo, setIsEditingScheduleInfo] = useState(false);
@@ -2240,13 +2293,14 @@ function TicketDetailsPage() {
     setSquaretradeUrlState(getSquaretradeUrl(ticketNo));
   }, [ticketNo]);
 
-  // Load per-model reference links (Exploded View / Service Bulletin) when
-  // the ticket's model changes. Shared across every ticket with the same
-  // model number — saving here updates the resource for all of them.
+  // Load per-model reference links (Exploded View / Service Bulletin / Tech
+  // Data Sheet) when the ticket's model changes. Shared across every ticket
+  // with the same model number — saving here updates the resource for all
+  // of them.
   useEffect(() => {
     const model = String(ticket?.model || "").trim();
     if (!model) {
-      setModelResources({ explodedViewUrl: "", serviceBulletinUrl: "" });
+      setModelResources({ explodedViewUrls: [], serviceBulletinUrls: [], techDataSheetUrls: [] });
       return;
     }
     let cancelled = false;
@@ -2254,13 +2308,33 @@ function TicketDetailsPage() {
       .then((res) => {
         if (cancelled) return;
         setModelResources({
-          explodedViewUrl: res.explodedViewUrl || "",
-          serviceBulletinUrl: res.serviceBulletinUrl || "",
+          explodedViewUrls: res.explodedViewUrls,
+          serviceBulletinUrls: res.serviceBulletinUrls,
+          techDataSheetUrls: res.techDataSheetUrls,
         });
       })
       .catch((err) => console.error("getModelResources error:", err));
     return () => { cancelled = true; };
   }, [ticket?.model]);
+
+  // Part suggestions — past completed tickets sharing this model or a
+  // similar-sounding problem. Re-runs on model/problem description change
+  // (e.g. right after editing Product Information/Problem Description).
+  useEffect(() => {
+    const model = String(ticket?.model || "").trim();
+    const problem = String(ticket?.problemDescription || "").trim();
+    if (!model && !problem) {
+      setPartSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    setPartSuggestionsLoading(true);
+    getPartSuggestions(model, problem, ticket?.ticketNo)
+      .then((rows) => { if (!cancelled) setPartSuggestions(rows); })
+      .catch((err) => console.error("getPartSuggestions error:", err))
+      .finally(() => { if (!cancelled) setPartSuggestionsLoading(false); });
+    return () => { cancelled = true; };
+  }, [ticket?.model, ticket?.problemDescription, ticket?.ticketNo]);
 
   const handleSaveModelResource = async () => {
     if (!modelResourceModal) return;
@@ -2269,21 +2343,23 @@ function TicketDetailsPage() {
       alert("This ticket has no model number. Set a model first before linking resources.");
       return;
     }
-    const url = modelResourceModal.value.trim();
+    const cleaned = modelResourceModal.values.map((v) => v.trim()).filter(Boolean);
     setModelResourceSaving(true);
     try {
       const updated = await saveModelResources(model, {
-        explodedViewUrl: modelResourceModal.kind === "exploded" ? url : modelResources.explodedViewUrl,
-        serviceBulletinUrl: modelResourceModal.kind === "bulletin" ? url : modelResources.serviceBulletinUrl,
+        explodedViewUrls: modelResourceModal.kind === "exploded" ? cleaned : modelResources.explodedViewUrls,
+        serviceBulletinUrls: modelResourceModal.kind === "bulletin" ? cleaned : modelResources.serviceBulletinUrls,
+        techDataSheetUrls: modelResourceModal.kind === "techDataSheet" ? cleaned : modelResources.techDataSheetUrls,
       });
       setModelResources({
-        explodedViewUrl: updated.explodedViewUrl,
-        serviceBulletinUrl: updated.serviceBulletinUrl,
+        explodedViewUrls: updated.explodedViewUrls,
+        serviceBulletinUrls: updated.serviceBulletinUrls,
+        techDataSheetUrls: updated.techDataSheetUrls,
       });
       setModelResourceModal(null);
     } catch (err) {
       console.error("saveModelResources error:", err);
-      alert(`Failed to save link: ${err instanceof Error ? err.message : "Unknown error"}`);
+      alert(`Failed to save links: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setModelResourceSaving(false);
     }
@@ -5547,6 +5623,33 @@ function TicketDetailsPage() {
               {marconeLookupMsg.text}
             </div>
           ) : null}
+          {/* Suggested parts from past COMPLETED tickets sharing this model
+              number or a similar-sounding problem description — click a
+              chip to fill Part No/Description, then Lookup for current
+              price/stock. */}
+          {partSuggestionsLoading ? (
+            <div className="mt-1 text-[10px] text-slate-500">Checking past tickets for suggestions…</div>
+          ) : partSuggestions.length > 0 ? (
+            <div className="mt-1.5">
+              <div className="text-[9px] uppercase tracking-wide text-slate-500 mb-0.5">Suggested (from past tickets)</div>
+              <div className="flex flex-wrap gap-1">
+                {partSuggestions.map((s) => (
+                  <button
+                    key={s.partNo}
+                    type="button"
+                    disabled={partsEditDisabled}
+                    onClick={() => setPartDraft((d) => ({ ...d, partNo: s.partNo, partDesc: s.partDesc || d.partDesc }))}
+                    title={`Used on ${s.sampleTicketNos.join(", ")}${s.sampleTicketNos.length < s.count ? ` and ${s.count - s.sampleTicketNos.length} more` : ""}`}
+                    className="rounded border border-emerald-400/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                  >
+                    {s.partNo}
+                    {s.partDesc ? ` — ${s.partDesc.length > 28 ? `${s.partDesc.slice(0, 28)}…` : s.partDesc}` : ""}
+                    <span className="text-emerald-400/70"> ×{s.count}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </td>
         <td className="px-1 py-1.5">
           <select value={partDraft.partDist} onChange={(e) => setPartDraft((d) => ({ ...d, partDist: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500">
@@ -6283,16 +6386,22 @@ function TicketDetailsPage() {
                   <div className="flex items-center gap-2 flex-wrap">
                     {/* Per-model reference links — synced across every ticket
                         sharing this model number. Saving here updates them
-                        for all matching tickets at once. */}
+                        for all matching tickets at once. Each field can hold
+                        multiple links. */}
                     <ModelResourceButton
                       label="Exploded View"
-                      url={modelResources.explodedViewUrl}
-                      onEdit={() => setModelResourceModal({ kind: "exploded", value: modelResources.explodedViewUrl })}
+                      urls={modelResources.explodedViewUrls}
+                      onEdit={() => setModelResourceModal({ kind: "exploded", values: modelResources.explodedViewUrls.length ? modelResources.explodedViewUrls : [""] })}
                     />
                     <ModelResourceButton
                       label="Service Bulletin"
-                      url={modelResources.serviceBulletinUrl}
-                      onEdit={() => setModelResourceModal({ kind: "bulletin", value: modelResources.serviceBulletinUrl })}
+                      urls={modelResources.serviceBulletinUrls}
+                      onEdit={() => setModelResourceModal({ kind: "bulletin", values: modelResources.serviceBulletinUrls.length ? modelResources.serviceBulletinUrls : [""] })}
+                    />
+                    <ModelResourceButton
+                      label="Tech Data Sheet"
+                      urls={modelResources.techDataSheetUrls}
+                      onEdit={() => setModelResourceModal({ kind: "techDataSheet", values: modelResources.techDataSheetUrls.length ? modelResources.techDataSheetUrls : [""] })}
                     />
                     {!isEditingProductInfo ? (
                       <button
@@ -9228,14 +9337,15 @@ function TicketDetailsPage() {
         </div>
       ) : null}
 
-      {/* Per-model resource link editor (Exploded View / Service Bulletin) */}
+      {/* Per-model resource link editor (Exploded View / Service Bulletin /
+          Tech Data Sheet) — each can hold multiple links. */}
       {modelResourceModal ? (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl border border-white/15 bg-slate-900 p-5 text-white shadow-2xl">
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-200">
-                  {modelResourceModal.kind === "exploded" ? "Exploded View link" : "Service Bulletin link"}
+                  {modelResourceModal.kind === "exploded" ? "Exploded View links" : modelResourceModal.kind === "bulletin" ? "Service Bulletin links" : "Tech Data Sheet links"}
                 </h3>
                 <p className="mt-0.5 text-[11px] text-slate-400">
                   Shared with every ticket using model{" "}
@@ -9251,43 +9361,62 @@ function TicketDetailsPage() {
               </button>
             </div>
 
-            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">URL</label>
-            <input
-              type="url"
-              value={modelResourceModal.value}
-              onChange={(e) => setModelResourceModal({ ...modelResourceModal, value: e.target.value })}
-              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleSaveModelResource(); } }}
-              placeholder="https://…"
-              autoFocus
-              className="mt-1 w-full rounded border border-white/15 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-400"
-            />
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">URLs</label>
+            <div className="mt-1 space-y-2 max-h-64 overflow-y-auto pr-1">
+              {modelResourceModal.values.map((v, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    type="url"
+                    value={v}
+                    onChange={(e) => {
+                      const next = [...modelResourceModal.values];
+                      next[i] = e.target.value;
+                      setModelResourceModal({ ...modelResourceModal, values: next });
+                    }}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleSaveModelResource(); } }}
+                    placeholder="https://…"
+                    autoFocus={i === 0}
+                    className="flex-1 rounded border border-white/15 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = modelResourceModal.values.filter((_, idx) => idx !== i);
+                      setModelResourceModal({ ...modelResourceModal, values: next.length ? next : [""] });
+                    }}
+                    className="shrink-0 rounded border border-white/15 bg-slate-950 p-2 text-slate-400 hover:text-rose-300 hover:border-rose-400/40"
+                    title="Remove this link"
+                    aria-label="Remove this link"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setModelResourceModal({ ...modelResourceModal, values: [...modelResourceModal.values, ""] })}
+              className="mt-2 text-xs font-semibold text-blue-300 hover:text-blue-200"
+            >
+              + Add another link
+            </button>
 
-            <div className="mt-4 flex items-center justify-between gap-2">
+            <div className="mt-4 flex items-center justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setModelResourceModal({ ...modelResourceModal, value: "" })}
-                className="text-xs text-slate-400 hover:text-rose-300"
-                title="Clear the saved link"
+                onClick={() => setModelResourceModal(null)}
+                className="rounded-lg border border-white/15 bg-slate-950 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:border-slate-200/40"
               >
-                Clear link
+                Cancel
               </button>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setModelResourceModal(null)}
-                  className="rounded-lg border border-white/15 bg-slate-950 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:border-slate-200/40"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveModelResource}
-                  disabled={modelResourceSaving || !ticket?.model}
-                  className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
-                >
-                  {modelResourceSaving ? "Saving…" : "Save"}
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={handleSaveModelResource}
+                disabled={modelResourceSaving || !ticket?.model}
+                className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
+              >
+                {modelResourceSaving ? "Saving…" : "Save"}
+              </button>
             </div>
           </div>
         </div>

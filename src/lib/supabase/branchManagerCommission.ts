@@ -1,5 +1,5 @@
 /**
- * Branch Manager Commission (migration 0289) — the manual per-person,
+ * Branch Manager Commission (migration 0305) — the manual per-person,
  * per-pay-period tally backing the Accounting Dashboard's "Branch
  * Commission" tab. Earned by the person holding a Branch Manager-tier
  * role (see roleLabels.ts's BM_AND_UP_ROLES), keyed by profile_id — not

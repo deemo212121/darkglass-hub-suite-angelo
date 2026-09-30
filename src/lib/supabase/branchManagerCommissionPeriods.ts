@@ -1,5 +1,5 @@
 /**
- * Branch Commission periods (migration 0290) — the named, browsable
+ * Branch Commission periods (migration 0306) — the named, browsable
  * cut-off registry sitting above branchManagerCommission.ts's per-person
  * tally rows. A period is just a company-wide (start, end) date range
  * with an optional label (e.g. "Sept Cutoff 1") — this module is the

@@ -141,11 +141,14 @@ export async function saveTraineePunch(
     console.error("saveTraineePunch error:", error.message);
     throw new Error(error.message);
   }
-  // "Clock in" specifically, not every punch — this is the moment their
-  // manager actually needs to know a day exists to review at all. Fire
-  // once the write's already committed and best-effort (a notify failure
-  // must never make the punch itself look like it failed).
-  if (field === "checkIn") void notifyTraineeClockIn(profileId, managerId, workDate).catch((err) => console.error("Failed to notify of trainee clock-in:", err));
+  // Clock-in tells their manager a day exists; clock-out tells them it's
+  // complete and ready to review (the review queue only surfaces a day once
+  // the trainee has clocked out — see getTraineeReviewQueue). Fired after
+  // the write commits and best-effort: a notify failure must never make the
+  // punch itself look like it failed.
+  if (field === "checkIn" || (field === "checkOut" && !existing?.checkOut)) {
+    void notifyTraineeManager(profileId, managerId, workDate, field).catch((err) => console.error(`Failed to notify of trainee ${field}:`, err));
+  }
 }
 
 /**
@@ -157,7 +160,7 @@ export async function saveTraineePunch(
  * history/audit purposes — the actual review popups no longer watch this
  * table directly, see SELF_CHECKED_OUT_EVENT's doc comment.
  */
-async function notifyTraineeClockIn(profileId: string, managerId: string | null, workDate: string): Promise<void> {
+async function notifyTraineeManager(profileId: string, managerId: string | null, workDate: string, field: "checkIn" | "checkOut"): Promise<void> {
   const roster = await getCompanyUsers();
   const trainee = roster.find((p) => p.id === profileId);
   const traineeName = trainee?.display_name || "A trainee";
@@ -175,7 +178,9 @@ async function notifyTraineeClockIn(profileId: string, managerId: string | null,
         recipientId: r.id,
         senderId: null,
         senderName: null,
-        body: `⏱️ ${traineeName} clocked in (${workDate}) — pending your approval on their trainee timecard.`,
+        body: field === "checkOut"
+          ? `✅ ${traineeName} clocked out (${workDate}) — their day is ready for your review.`
+          : `⏱️ ${traineeName} clocked in (${workDate}) — pending your approval on their trainee timecard.`,
         linkTo: TRAINEE_ATTENDANCE_LINK,
       })
     )
@@ -214,6 +219,12 @@ export async function saveTraineeEntry(
   if (error) {
     console.error("saveTraineeEntry error:", error.message);
     throw new Error(error.message);
+  }
+  // Same "day is ready for review" ping as saveTraineePunch, but only when
+  // this save is what first set the clock-out — re-saving an already
+  // clocked-out day shouldn't re-notify.
+  if (entry.checkOut && !existing?.checkOut) {
+    void notifyTraineeManager(profileId, managerId, workDate, "checkOut").catch((err) => console.error("Failed to notify of trainee checkOut:", err));
   }
 }
 
@@ -318,8 +329,10 @@ export interface TraineeReviewQueueItem {
 }
 
 /**
- * Everything this manager still needs to act on: any trainee day already
- * sitting "pending" (isDirectTraineeManager match), PLUS any trainee under
+ * Everything this manager still needs to act on: any COMPLETED trainee day
+ * (clocked out, or the day is over) sitting "pending" (isDirectTraineeManager
+ * match — the trainee's own manager only, never anyone else's trainees,
+ * regardless of the manager's own role), PLUS any trainee under
  * them (profiles.manager_name match, Employment Status = Trainee on
  * Masterlist regardless of role/department) who hasn't punched AT ALL yet
  * today. A no-show is exactly as much something to review as a late one —
@@ -354,11 +367,24 @@ export async function getTraineeReviewQueue(managerProfileId: string): Promise<T
   const manager = roster.find((p) => p.id === managerProfileId);
   const managerName = (manager?.display_name || "").trim().toLowerCase();
 
+  // A punched day only becomes reviewable once it's complete: the trainee
+  // has clocked out, or their own work day is already over (a forgotten
+  // clock-out must still surface for review rather than sit pending
+  // forever). A trainer routinely clocks out before their trainee — an
+  // in-progress day used to land in the blocking popup with no Check Out,
+  // forcing the trainer to approve a half-finished day or be stuck unable
+  // to clock out. The trainee's own clock-out now notifies the manager
+  // instead (see saveTraineePunch), and the completed day waits here.
+  const isCompleteDay = (entry: TraineeTimecardEntry, trainee: ProfileRow): boolean => {
+    if (entry.checkOut) return true;
+    const traineeTz: ScheduleTimezone = trainee.schedule_timezone || "CST";
+    return entry.workDate < zonedDateKey(serverNow, traineeTz);
+  };
   const entryItems = entries
     .filter((e) => e.status === "pending" && isDirectTraineeManager(e, managerProfileId))
     .map((entry) => {
       const trainee = roster.find((p) => p.id === entry.profileId);
-      return trainee ? { kind: "entry" as const, trainee, entry, workDate: entry.workDate } : null;
+      return trainee && isCompleteDay(entry, trainee) ? { kind: "entry" as const, trainee, entry, workDate: entry.workDate } : null;
     })
     .filter((x): x is NonNullable<typeof x> => x !== null);
 
@@ -420,6 +446,28 @@ export async function approveTraineeDay(entry: TraineeTimecardEntry, approvedByP
     .from("trainee_timecard_entries")
     .update({ status: "approved", reviewed_by: approvedByProfileId, reviewed_at: new Date().toISOString(), reject_reason: null })
     .eq("id", entry.id);
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * A reviewer (the trainee's manager, or a fallback reviewer — callers gate
+ * on canApproveTraineeDay) correcting a trainee's punched times, e.g. a
+ * forgotten clock-out. Updates only this trainee row; the real timecard is
+ * written when the day is approved (approveTraineeDay copies these times).
+ */
+export async function updateTraineeDayTimes(
+  entryId: string,
+  times: { checkIn: string; checkOut: string; mealStart: string; mealEnd: string }
+): Promise<void> {
+  const { error } = await supabase
+    .from("trainee_timecard_entries")
+    .update({
+      check_in: times.checkIn || null,
+      check_out: times.checkOut || null,
+      meal_start: times.mealStart || null,
+      meal_end: times.mealEnd || null,
+    })
+    .eq("id", entryId);
   if (error) throw new Error(error.message);
 }
 

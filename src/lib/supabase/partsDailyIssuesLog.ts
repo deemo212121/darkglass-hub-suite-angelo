@@ -3,7 +3,7 @@ import { supabase } from "./client";
 // Manual per-branch, per-day tally for the Part Daily Report's Daily
 // Branch Activity table — none of these six are derivable from any
 // existing table, someone types them in by hand. Issues/Lost: migration
-// 0288. Not Recovered/Total Warnings/Remarks: migration 0309.
+// 0288. Not Recovered/Total Warnings/Remarks: migration 0321.
 
 export interface PartsDailyIssueEntry {
   branch: string;
