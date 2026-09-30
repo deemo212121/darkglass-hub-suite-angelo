@@ -2,10 +2,13 @@ import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
+import { PartInfoModal, type PartInfoVendor } from "@/components/PartInfoModal";
+import type { MarconePartInfo } from "@/lib/marconeApi";
+import type { EncompassPartInfo } from "@/lib/encompassApi";
 import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, placeEncompassOrder, isEncompassDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
 import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
 import { PART_STATUS_OPTIONS } from "@/lib/partStatuses";
-import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone, ClipboardCheck, ChevronDown, X } from "lucide-react";
+import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone, ClipboardCheck, ChevronDown, X, Search } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { isFirebaseReady, auth as firebaseAuth } from "@/lib/firebase/config";
 import { getGmailConnectionStatus, disconnectGmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
@@ -103,6 +106,15 @@ const LOCATION_PART_DISTRIBUTORS: Record<string, string[]> = {
   Birmingham: ["Marcone- Birmingham / Montgomery", "Encompass-Birmingham / Montgomery"],
   Montgomery: ["Marcone- Birmingham / Montgomery", "Encompass-Birmingham / Montgomery"],
 };
+
+/** Part lookup stock line: "in stock: 12 (Richmond 5, Baltimore 7)" — only warehouses that have it, top 4. */
+function stockSummary(total: number, warehouses: { name?: string; qty: number }[]): string {
+  if (total <= 0) return "out of stock";
+  const withStock = warehouses.filter((w) => w.qty > 0).sort((a, b) => b.qty - a.qty);
+  const shown = withStock.slice(0, 4).map((w) => `${w.name || "Warehouse"} ${w.qty}`);
+  if (withStock.length > 4) shown.push(`+${withStock.length - 4} more`);
+  return `in stock: ${total}${shown.length ? ` (${shown.join(", ")})` : ""}`;
+}
 
 function partDistOptionsForLocation(location: string | null | undefined): string[] {
   return LOCATION_PART_DISTRIBUTORS[(location || "").trim()] ?? UNIVERSAL_PART_DISTRIBUTORS;
@@ -1428,6 +1440,11 @@ function TicketDetailsPage() {
   // Marcone /parts/lookup state for the inline Add row's "Lookup" button.
   const [marconeLookupBusy, setMarconeLookupBusy] = useState(false);
   const [marconeLookupMsg, setMarconeLookupMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  // Last successful Lookup — enables the magnifying glass (Part Info popup) for that part.
+  const [partInfoLookup, setPartInfoLookup] = useState<
+    { partNumber: string; vendor: PartInfoVendor; marcone?: MarconePartInfo; encompass?: EncompassPartInfo } | null
+  >(null);
+  const [partInfoOpen, setPartInfoOpen] = useState(false);
   // Which Part No the draft's current partDesc/partPrice/coreValue actually
   // belong to — either the last part a Lookup was run for, or (when editing
   // an existing row) that row's own saved part number. Lets handleMarconeLookup
@@ -4655,8 +4672,9 @@ function TicketDetailsPage() {
         }));
         lastMarconeFillPartNoRef.current = partNumber;
         lastMarconeFillDistRef.current = partDist;
-        const stockLine = d.inStock ? "in stock" : "out of stock";
+        const stockLine = stockSummary(d.totalAvailable ?? 0, (d.inventory ?? []).map((w) => ({ name: w.warehouseName, qty: Number(w.quantityAvailable ?? 0) || 0 })));
         const discLine = d.isDiscontinued ? " · discontinued" : "";
+        setPartInfoLookup({ partNumber, vendor: "marcone", marcone: d });
         setMarconeLookupMsg({
           kind: "ok",
           text: `Found ${d.make || ""} ${d.partNumber || partNumber} · Marcone: ${stockLine}${discLine}.`,
@@ -4684,7 +4702,8 @@ function TicketDetailsPage() {
       }));
       lastMarconeFillPartNoRef.current = partNumber;
       lastMarconeFillDistRef.current = partDist;
-      const stockLine = d.inStock ? "in stock" : "out of stock";
+      setPartInfoLookup({ partNumber, vendor: "encompass", encompass: d });
+      const stockLine = stockSummary(d.totalAvailable, d.availabilityByLocation.map((l) => ({ name: l.name || l.number, qty: l.available })));
       setMarconeLookupMsg({
         kind: "ok",
         text: `Found ${d.mfgName || ""} ${d.partNumber || partNumber} · Encompass: ${stockLine}.`,
@@ -5617,6 +5636,25 @@ function TicketDetailsPage() {
             >
               {marconeLookupBusy ? "…" : "Lookup"}
             </button>
+            <button
+              type="button"
+              onClick={() => setPartInfoOpen(true)}
+              disabled={!partInfoLookup || partInfoLookup.partNumber !== partDraft.partNo.trim()}
+              title={partInfoLookup && partInfoLookup.partNumber === partDraft.partNo.trim() ? "Part info & warehouse availability" : "Click Lookup first"}
+              aria-label="Part info"
+              className="shrink-0 rounded border border-sky-400/40 bg-sky-500/15 px-1.5 py-1 text-sky-200 hover:bg-sky-500/25 disabled:opacity-30 disabled:cursor-not-allowed transition"
+            >
+              <Search className="h-3.5 w-3.5" />
+            </button>
+            {partInfoOpen && partInfoLookup && (
+              <PartInfoModal
+                partNumber={partInfoLookup.partNumber}
+                initialVendor={partInfoLookup.vendor}
+                initialMarcone={partInfoLookup.marcone}
+                initialEncompass={partInfoLookup.encompass}
+                onClose={() => setPartInfoOpen(false)}
+              />
+            )}
           </div>
           {marconeLookupMsg ? (
             <div className={`mt-1 text-[10px] ${marconeLookupMsg.kind === "ok" ? "text-emerald-300" : "text-rose-300"}`}>

@@ -187,13 +187,17 @@ export interface MarconePartInfo {
   /** Net price for this account (dealer if present, falls back to price/list). */
   netPrice?: number;
   listPrice?: number;
+  dealerPrice?: number;
+  retailPrice?: number;
   coreValue?: number;
+  isDropShipOnly?: boolean;
   /** True if at least one warehouse has stock. */
   inStock?: boolean;
   /** Total quantity across warehouses. */
   totalAvailable?: number;
   /** Per-warehouse breakdown for tooltips / detail views. */
   inventory?: Array<{
+    warehouseNumber?: string;
     warehouseName?: string;
     quantityAvailable?: number;
   }>;
@@ -275,9 +279,13 @@ export async function marconeLookupPart(args: {
     // prefer `price`; fall back to `dealer` then `list` only if missing.
     netPrice: first.price ?? first.dealer ?? first.list ?? undefined,
     listPrice: first.list ?? undefined,
+    dealerPrice: first.dealer ?? undefined,
+    retailPrice: first.retail ?? undefined,
     coreValue: first.coreCost ?? undefined,
     isDiscontinued: first.isDiscontinued,
+    isDropShipOnly: first.isDropShipOnly,
     inventory: (first.inventory ?? []).map((inv) => ({
+      warehouseNumber: inv.warehouseNumber,
       warehouseName: inv.warehouseName,
       quantityAvailable: inv.quantityAvailable,
     })),
