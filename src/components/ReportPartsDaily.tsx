@@ -360,7 +360,7 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
         setAllProfiles(profiles);
         setStaff(profiles.filter((p) => p.is_active && isPartsOrderProfile(p)));
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load Part Daily Report.");
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load Parts Daily Report.");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -756,7 +756,7 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
         {tab === "overview" && (
         <>
         {loading ? (
-          <div className="panel p-8 mb-6"><BrandedLoader label="Loading Part Daily Report…" /></div>
+          <div className="panel p-8 mb-6"><BrandedLoader label="Loading Parts Daily Report…" /></div>
         ) : (
         <>
         <div className="panel p-4 border-l-4 border-l-indigo-500 mb-6">
