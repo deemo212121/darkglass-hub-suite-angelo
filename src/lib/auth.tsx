@@ -548,7 +548,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     if (isAllLocations) {
                       setAllowedLocations(null); // explicit override
                     } else if (isLocationRestrictedRole(sbProfile.role)) {
-                      setAllowedLocations(accessibleLocations(sbProfile.workPlan as any));
+                      const planned = accessibleLocations(sbProfile.workPlan as any);
+                      if (planned === null) {
+                        setAllowedLocations(null); // no plan configured → unrestricted
+                      } else {
+                        // An active Flash Tech trip temporarily adds its
+                        // destination on top of the saved plan. It's an
+                        // overlay, never written to work_plan, so it drops
+                        // off on its own once the trip's end date passes.
+                        let tripLocs: string[] = [];
+                        try {
+                          const { getMyProfileId } = await import("./supabase/users");
+                          const { getActiveFlashTechDestinations } = await import("./supabase/flashTechTrips");
+                          const pid = await getMyProfileId(firebaseUser.uid);
+                          if (pid) tripLocs = (await getActiveFlashTechDestinations(pid)).map((d) => d.location);
+                        } catch (e) {
+                          console.warn("Flash Tech destination overlay skipped:", e);
+                        }
+                        if (isStale()) return;
+                        setAllowedLocations(Array.from(new Set([...planned, ...tripLocs])));
+                      }
                     } else {
                       setAllowedLocations(null); // unrestricted
                     }
