@@ -42,7 +42,9 @@ export async function resolveTeamLeadOrManager(
       if (mine) {
         const leader = members.find((m) => m.teamId === mine.teamId && m.isLeader);
         const leaderProfile = leader ? allProfiles.find((p) => p.id === leader.profileId && p.is_active) : null;
-        if (leaderProfile) return leaderProfile;
+        // A team leader is the leader of their own team — never route their
+        // own request to themselves; fall through to their manager_name.
+        if (leaderProfile && leaderProfile.id !== profile.id) return leaderProfile;
       }
     } catch {
       // CSR team composition unavailable — fall through to manager_name match.

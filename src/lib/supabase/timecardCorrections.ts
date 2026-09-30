@@ -261,6 +261,17 @@ export function canReviewCorrectionStage(
   const has = (r: string) => heldRoles.includes(r);
   if (has("SUPERADMIN") || has("SUPERSUPERADMIN")) return true;
   if (stage === "manager") {
+    // Team leaders (CSR/Claims/Parts _TEAM_LEADER) can't approve the manager
+    // stage — per the user's explicit call, a team member's time correction
+    // is approved by a manager (e.g. Robyn Heredia), never their team
+    // leader. CSR requests are routed to the team leader
+    // (resolveTeamLeadOrManager), so the manager reaches them through the
+    // chain below: the requester's manager_name, or that person's own
+    // manager_name. Someone who ALSO holds a real manager-tier role (e.g.
+    // PARTS_TEAM_LEADER + PARTS_MANAGER) keeps it through that role.
+    const isTeamLeaderRole = (r: string) => r.endsWith("_TEAM_LEADER");
+    const nonLeaderRoles = heldRoles.filter((r) => !isTeamLeaderRole(r));
+    if (heldRoles.some(isTeamLeaderRole) && !isAttendanceManagerTierRole(nonLeaderRoles[0] ?? null, nonLeaderRoles.slice(1))) return false;
     if (request.managerId === viewerProfileId) return true;
     const currentManagerName = (requesterCurrentManagerName || "").trim().toLowerCase();
     const managersManagerName = (requesterManagersManagerName || "").trim().toLowerCase();
