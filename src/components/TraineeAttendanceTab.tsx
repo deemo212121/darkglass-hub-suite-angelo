@@ -27,7 +27,7 @@ import { ROLE_LABELS, normalizeRole, isAttendanceFullAccessRole, isTraineeFallba
 import { getServerNow, zonedDateKey } from "@/lib/serverTime";
 import {
   getCompanyTraineeEntries,
-  canApproveTraineeDay,
+  isCurrentTraineeManager,
   approveTraineeDay,
   rejectTraineeDay,
   recordTraineeDayWithoutPunch,
@@ -522,7 +522,12 @@ export function TraineeAttendanceTab({
                 }
 
                 const entry = row.entry!;
-                const canApprove = canApproveTraineeDay(entry, myProfileId, role, extraRoles);
+                // Fallback reviewers, or whoever is the trainee's manager NOW
+                // (not whoever was stamped on the entry at punch time).
+                const canApprove =
+                  isAttendanceFullAccessRole(role, extraRoles) ||
+                  isTraineeFallbackReviewerRole(role, extraRoles) ||
+                  isCurrentTraineeManager(profileById.get(entry.profileId), entry, myProfileId, viewerName);
                 const hours = calcWorkedHours({ checkIn: entry.checkIn, checkOut: entry.checkOut, mealStart: entry.mealStart, mealEnd: entry.mealEnd, notes: "" });
                 return (
                   <tr key={entry.id} className="border-b border-white/5 hover:bg-white/5 transition">

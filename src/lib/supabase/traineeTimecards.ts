@@ -319,6 +319,26 @@ export function isDirectTraineeManager(
   return !!viewerProfileId && entry.managerId === viewerProfileId;
 }
 
+/**
+ * Whether the viewer is this trainee's manager RIGHT NOW. An entry's
+ * managerId is stamped when the trainee punches in, so it goes stale the
+ * moment the trainee is reassigned (Masterlist's Manager field changed) —
+ * the old manager kept getting their Time Out blocked by a day the Trainee
+ * Attendance tab (which reads the current manager_name) never showed them,
+ * and the new manager could see the day but not approve it. The trainee's
+ * current manager_name decides; the stamp is only used when it's blank.
+ */
+export function isCurrentTraineeManager(
+  trainee: Pick<ProfileRow, "manager_name"> | null | undefined,
+  entry: Pick<TraineeTimecardEntry, "managerId"> | null,
+  viewerProfileId: string | null,
+  viewerDisplayName: string | null | undefined
+): boolean {
+  const current = (trainee?.manager_name || "").trim().toLowerCase();
+  if (current) return (viewerDisplayName || "").trim().toLowerCase() === current;
+  return !!entry && isDirectTraineeManager(entry, viewerProfileId);
+}
+
 export interface TraineeReviewQueueItem {
   kind: "entry" | "noshow";
   trainee: ProfileRow;
@@ -381,10 +401,14 @@ export async function getTraineeReviewQueue(managerProfileId: string): Promise<T
     return entry.workDate < zonedDateKey(serverNow, traineeTz);
   };
   const entryItems = entries
-    .filter((e) => e.status === "pending" && isDirectTraineeManager(e, managerProfileId))
+    .filter((e) => e.status === "pending")
     .map((entry) => {
       const trainee = roster.find((p) => p.id === entry.profileId);
-      return trainee && isCompleteDay(entry, trainee) ? { kind: "entry" as const, trainee, entry, workDate: entry.workDate } : null;
+      return trainee &&
+        isCurrentTraineeManager(trainee, entry, managerProfileId, manager?.display_name) &&
+        isCompleteDay(entry, trainee)
+        ? { kind: "entry" as const, trainee, entry, workDate: entry.workDate }
+        : null;
     })
     .filter((x): x is NonNullable<typeof x> => x !== null);
 
