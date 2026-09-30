@@ -40,6 +40,29 @@ export interface GmailConnectionStatus {
   connectedAt: string | null;
 }
 
+/**
+ * Extra roles (beyond Admin/SuperAdmin, who always can) allowed to connect /
+ * disconnect one slot's Gmail — migration 0327. Empty when none granted or
+ * the migration hasn't been run yet.
+ */
+export async function getGmailConnectRoles(region: GmailRegion): Promise<string[]> {
+  const { data, error } = await supabase.from("gmail_connect_role_gates").select("role").eq("region", region);
+  if (error) {
+    console.error("getGmailConnectRoles error:", error.message);
+    return [];
+  }
+  return (data ?? []).map((r: { role: string }) => r.role);
+}
+
+/** Replaces one slot's whole granted-role set. Admin/SuperAdmin only — enforced by RLS. */
+export async function setGmailConnectRoles(region: GmailRegion, roles: string[]): Promise<void> {
+  const { error: deleteError } = await supabase.from("gmail_connect_role_gates").delete().eq("region", region);
+  if (deleteError) throw new Error(deleteError.message);
+  if (roles.length === 0) return;
+  const { error: insertError } = await supabase.from("gmail_connect_role_gates").insert(roles.map((role) => ({ region, role })));
+  if (insertError) throw new Error(insertError.message);
+}
+
 /** Never exposes the stored refresh_token itself — see get_gmail_connection_status() RPC. */
 export async function getGmailConnectionStatus(region: GmailRegion): Promise<GmailConnectionStatus> {
   const { data, error } = await supabase.rpc("get_gmail_connection_status", { p_region: region });
