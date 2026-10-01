@@ -21,15 +21,18 @@
  */
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { AlertTriangle, ArrowRight, ChevronLeft, ChevronRight, Loader2, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, Pencil, ChevronLeft, ChevronRight, Loader2, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { getCompanyUsers, invalidateCompanyUsersCache, updateCompanyUser, type ProfileRow } from "@/lib/supabase/users";
 import { getSeniorBranchManagerAssignments, assignBranchToSeniorManager, unassignBranch, type SbmBranchAssignment } from "@/lib/supabase/seniorBranchManagerAssignments";
-import { getApprovalAreas, createApprovalArea, updateApprovalArea, deleteApprovalArea, type ApprovalArea } from "@/lib/supabase/approvalAreas";
+import { getApprovalAreas, createApprovalArea, updateApprovalArea, deleteApprovalArea, getTopApproverIds, setTopApproverIds, getPhDepartmentManagers, type ApprovalArea, type PhDepartmentManagerRow } from "@/lib/supabase/approvalAreas";
+import { PhApprovalChainPanel } from "@/components/PhApprovalChainPanel";
+import { supabase } from "@/lib/supabase/client";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import {
   chainLevelOf,
+  isTopApprover,
   chainApproverGroups,
   chainCanClockInWith,
   chainCanApproveWith,
@@ -43,6 +46,11 @@ interface Props {
   sub: SubModuleDef;
 }
 
+/** Masterlist Employment Status = Trainee. */
+function TraineeFlag() {
+  return <span className="px-1.5 rounded text-[9px] font-bold uppercase tracking-wide border border-amber-500/50 bg-amber-500/15 text-amber-300" title="Trainee — their attendance is approved through this chain too">Trainee</span>;
+}
+
 const nameOf = (p: ProfileRow | null | undefined) => (p ? p.display_name || p.email || "Unknown" : "—");
 const roleLabel = (p: ProfileRow) => ROLE_LABELS[normalizeRole(p.role)] ?? p.role;
 const holds = (p: ProfileRow, role: string) => [p.role, ...(p.extra_roles ?? [])].some((r) => String(r || "").toUpperCase() === role);
@@ -52,7 +60,9 @@ export function ApprovalChainPage({ mod, sub }: Props) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
 
-  const [tab, setTab] = useState<"hierarchy" | "people">("hierarchy");
+  const [tab, setTab] = useState<"hierarchy" | "people" | "ph">("hierarchy");
+  const [phDeptManagers, setPhDeptManagersState] = useState<PhDepartmentManagerRow[]>([]);
+  const [phMigrationMissing, setPhMigrationMissing] = useState(false);
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [sbmRows, setSbmRows] = useState<SbmBranchAssignment[]>([]);
   const [areas, setAreas] = useState<ApprovalArea[]>([]);
@@ -71,6 +81,11 @@ export function ApprovalChainPage({ mod, sub }: Props) {
       setSbmRows(sbm);
       try {
         setAreas(await getApprovalAreas());
+        setTopIds(await getTopApproverIds());
+        // PH department managers (0334) — a failed read just means the migration isn't run yet.
+        const phProbe = await supabase.from("ph_department_managers").select("department, profile_id");
+        setPhMigrationMissing(!!phProbe.error);
+        setPhDeptManagersState(await getPhDepartmentManagers());
         setAreasMissing(false);
       } catch {
         setAreasMissing(true);
@@ -98,15 +113,47 @@ export function ApprovalChainPage({ mod, sub }: Props) {
     }
   };
 
-  const data: ChainData = useMemo(() => ({ byId: new Map(profiles.map((p) => [p.id, p])), sbmBranches: sbmRows }), [profiles, sbmRows]);
+  const [topIds, setTopIds] = useState<string[]>([]);
+  const data: ChainData = useMemo(
+    () => ({ byId: new Map(profiles.map((p) => [p.id, p])), sbmBranches: sbmRows, topApproverIds: topIds, phDeptManagers }),
+    [profiles, sbmRows, topIds, phDeptManagers]
+  );
   const active = useMemo(() => profiles.filter((p) => p.is_active), [profiles]);
   const nonPh = useMemo(() => active.filter((p) => normBranch(p.assigned_branch) !== "philippines"), [active]);
   const governed = useMemo(() => nonPh.filter((p) => chainLevelOf(p)), [nonPh]);
   const sbms = useMemo(() => nonPh.filter((p) => holds(p, "SENIOR_BRANCH_MANAGER")).sort((a, b) => nameOf(a).localeCompare(nameOf(b))), [nonPh]);
   const topTier = useMemo(
-    () => active.filter((p) => ["ADMIN", "TECHNICAL_DIRECTOR", "TECHNICAL_ASSISTANT_DIRECTOR"].some((r) => holds(p, r)) && !holds(p, "SUPERADMIN") && !holds(p, "SUPERSUPERADMIN")),
-    [active]
+    () => active.filter((p) => isTopApprover(data, p) && !holds(p, "SUPERADMIN") && !holds(p, "SUPERSUPERADMIN")).sort((a, b) => nameOf(a).localeCompare(nameOf(b))),
+    [active, data]
   );
+
+  // ---- Top level editing (migration 0333) ----
+  const [editingTop, setEditingTop] = useState(false);
+  const [topDraft, setTopDraft] = useState<Set<string>>(new Set());
+  const [topSearch, setTopSearch] = useState("");
+  const startEditTop = () => {
+    setTopDraft(new Set(topTier.map((p) => p.id)));
+    setTopSearch("");
+    setEditingTop(true);
+  };
+  const saveTop = (ids: string[]) =>
+    run(async () => {
+      await setTopApproverIds(ids);
+      setEditingTop(false);
+    });
+
+  // ---- Per-person edits in a branch ----
+  const BRANCH_ROLE_OPTIONS = ["TECHNICIAN", "TECHNICIAN_MANAGER", "BRANCH_MANAGER", "PARTS", "PARTS_TEAM_LEADER", "PARTS_MANAGER"];
+  const changePersonRole = (person: ProfileRow, newRole: string) =>
+    run(async () => {
+      if (!window.confirm(`Change ${nameOf(person)}'s role from ${roleLabel(person)} to ${ROLE_LABELS[newRole] ?? newRole}? This changes their access across the app.`)) return;
+      await updateCompanyUser(person.id, { role: newRole as ProfileRow["role"] });
+    });
+  const movePerson = (person: ProfileRow, branch: string) =>
+    run(async () => {
+      if (!window.confirm(branch ? `Move ${nameOf(person)} to ${branch}?` : `Remove ${nameOf(person)} from ${person.assigned_branch}? They'll have no branch.`)) return;
+      await updateCompanyUser(person.id, { assignedBranch: branch });
+    });
 
   // Canonical branch list: SBM-owned branches first (their spelling), then any other spelling found on profiles.
   const allBranches = useMemo(() => {
@@ -128,8 +175,34 @@ export function ApprovalChainPage({ mod, sub }: Props) {
     [nonPh]
   );
   /** Branch level first (Branch Manager and Parts side by side), then technicians. */
-  const rankAtBranch = (p: ProfileRow) => (chainLevelOf(p) === "branch" ? 0 : holds(p, "PARTS") ? 1 : 2);
+  /** -1 Senior Branch Manager, 0 branch level (BM / Parts), 2 technicians. */
+  const rankAtBranch = (p: ProfileRow) => {
+    const l = chainLevelOf(p);
+    return l === "sbm" ? -1 : l === "branch" ? 0 : 2;
+  };
   const [addPersonFor, setAddPersonFor] = useState<string | null>(null);
+  const ADD_ROLE_OPTIONS = ["TECHNICIAN", "BRANCH_MANAGER", "PARTS"];
+  const [addDraft, setAddDraft] = useState<{ personId: string; role: string }>({ personId: "", role: "TECHNICIAN" });
+  const [editingPersonId, setEditingPersonId] = useState<string | null>(null);
+  const [personDraft, setPersonDraft] = useState<{ role: string; branch: string }>({ role: "", branch: "" });
+  /** Pencil → Save: role and/or branch in one update. */
+  // Role is managed in Users — this page only moves people between branches.
+  const savePersonEdit = (person: ProfileRow) =>
+    run(async () => {
+      const fields: { assignedBranch?: string } = {};
+      if (personDraft.branch && normBranch(personDraft.branch) !== normBranch(person.assigned_branch)) fields.assignedBranch = personDraft.branch;
+      if (Object.keys(fields).length === 0) { setEditingPersonId(null); return; }
+      if (!window.confirm(`Move ${nameOf(person)} from ${person.assigned_branch || "no branch"} to ${fields.assignedBranch}?`)) return;
+      await updateCompanyUser(person.id, fields);
+      setEditingPersonId(null);
+    });
+  /** Add person: put them in this branch with the chosen role. */
+  const addPersonToBranch = (person: ProfileRow, branch: string) =>
+    run(async () => {
+      if (!window.confirm(`Add ${nameOf(person)} (${roleLabel(person)}) to ${branch}?${person.assigned_branch ? ` This moves them from ${person.assigned_branch}.` : ""}`)) return;
+      await updateCompanyUser(person.id, { assignedBranch: branch });
+      setAddPersonFor(null);
+    });
   const movePersonToBranch = (person: ProfileRow, branch: string) =>
     run(async () => {
       if (person.assigned_branch && normBranch(person.assigned_branch) !== normBranch(branch) && !window.confirm(`Move ${nameOf(person)} from ${person.assigned_branch} to ${branch}?`)) return;
@@ -284,7 +357,7 @@ export function ApprovalChainPage({ mod, sub }: Props) {
           </div>
           <div className="mt-1.5 text-slate-400">
             Any one person at any of these levels can approve the Manager step; nobody approves their own request; SuperAdmin always can. HR and Accounting keep their own steps (any 2 of 3).
-            Enforced by the database — direct links or API calls can't skip it. Philippines staff and other departments keep their current rules for now.
+            Enforced by the database — direct links or API calls can't skip it. Philippines staff follow their own department chain — see the Philippines tab. Other US departments keep their current rules.
           </div>
         </div>
 
@@ -296,9 +369,9 @@ export function ApprovalChainPage({ mod, sub }: Props) {
         {error && <div className="mb-4 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</div>}
 
         <div className="flex gap-1.5 mb-4">
-          {(["hierarchy", "people"] as const).map((t) => (
+          {(["hierarchy", "people", "ph"] as const).map((t) => (
             <button key={t} type="button" onClick={() => setTab(t)} className={`btn text-sm px-3 py-1.5 ${tab === t ? "bg-primary/20 text-primary" : ""}`}>
-              {t === "hierarchy" ? "Hierarchy & Areas" : `People${problemCount ? ` · ${problemCount} problems` : ""}`}
+              {t === "hierarchy" ? "Hierarchy & Areas" : t === "ph" ? "Philippines" : `People${problemCount ? ` · ${problemCount} problems` : ""}`}
             </button>
           ))}
           {busy && <Loader2 className="h-4 w-4 animate-spin text-slate-400 self-center ml-2" />}
@@ -306,17 +379,68 @@ export function ApprovalChainPage({ mod, sub }: Props) {
 
         {loading ? (
           <div className="panel p-10 text-center text-slate-400"><Loader2 className="h-5 w-5 animate-spin inline" /></div>
+        ) : tab === "ph" ? (
+          <PhApprovalChainPanel data={data} profiles={profiles} topTier={topTier} busy={busy} run={run} migrationMissing={phMigrationMissing} />
         ) : tab === "hierarchy" ? (
           <div className="space-y-4">
             <div className="panel p-4">
-              <div className="text-xs uppercase tracking-wide text-slate-400 mb-1">Top level — approves Senior Branch Managers and everyone below</div>
-              <div className="flex flex-wrap gap-2">
-                {topTier.map((p) => (
-                  <span key={p.id} className="text-sm text-slate-100 rounded border border-white/10 bg-white/5 px-2 py-1">
-                    {nameOf(p)} <span className="text-slate-500 text-xs">· {roleLabel(p)}</span>
-                  </span>
-                ))}
+              <div className="flex items-center gap-2 mb-1">
+                <div className="text-xs uppercase tracking-wide text-slate-400">Top level — approves Senior Branch Managers and everyone below</div>
+                <span className="text-[10px] text-slate-500">{topIds.length > 0 ? "· custom list" : "· from roles (Admin / Technical Director / Asst. Director)"}</span>
+                {!editingTop && (
+                  <button type="button" onClick={startEditTop} disabled={busy || areasMissing} className="ml-auto text-xs font-semibold text-blue-300 hover:text-blue-200 disabled:opacity-40" title={areasMissing ? "Run migration 0333 first" : undefined}>
+                    Edit
+                  </button>
+                )}
               </div>
+              {!editingTop ? (
+                <div className="flex flex-wrap gap-2">
+                  {topTier.map((p) => (
+                    <span key={p.id} className="text-sm text-slate-100 rounded border border-white/10 bg-white/5 px-2 py-1">
+                      {nameOf(p)} <span className="text-slate-500 text-xs">· {roleLabel(p)}</span>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-2 space-y-2">
+                  <input value={topSearch} onChange={(e) => setTopSearch(e.target.value)} placeholder="Search people…" className="glass-input text-sm py-1.5 px-2 rounded-md w-full max-w-sm" />
+                  <div className="max-h-64 overflow-y-auto rounded border border-white/10 p-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4">
+                    {active
+                      .filter((p) => !holds(p, "SUPERADMIN") && !holds(p, "SUPERSUPERADMIN"))
+                      .filter((p) => !topSearch.trim() || nameOf(p).toLowerCase().includes(topSearch.trim().toLowerCase()))
+                      .sort((a, b) => Number(topDraft.has(b.id)) - Number(topDraft.has(a.id)) || nameOf(a).localeCompare(nameOf(b)))
+                      .map((p) => (
+                        <label key={p.id} className="flex items-center gap-2 py-0.5 text-sm text-slate-200 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={topDraft.has(p.id)}
+                            onChange={() =>
+                              setTopDraft((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(p.id)) next.delete(p.id);
+                                else next.add(p.id);
+                                return next;
+                              })
+                            }
+                          />
+                          {nameOf(p)} <span className="text-slate-500 text-xs">· {roleLabel(p)}</span>
+                        </label>
+                      ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button type="button" disabled={busy || topDraft.size === 0} onClick={() => saveTop([...topDraft])} className="btn text-sm px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
+                      Save ({topDraft.size})
+                    </button>
+                    <button type="button" onClick={() => setEditingTop(false)} className="btn text-sm px-3 py-1.5">Cancel</button>
+                    {topIds.length > 0 && (
+                      <button type="button" disabled={busy} onClick={() => saveTop([])} className="btn text-sm px-3 py-1.5 text-amber-300" title="Clear the custom list — top level comes from roles again">
+                        Reset to roles
+                      </button>
+                    )}
+                    <span className="text-[11px] text-slate-500">Only the people ticked here (plus SuperAdmin) approve Senior Branch Managers and Directors.</span>
+                  </div>
+                </div>
+              )}
             </div>
 
             {!areasMissing && areas.length === 0 && sbms.length > 0 && (
@@ -386,60 +510,119 @@ export function ApprovalChainPage({ mod, sub }: Props) {
                             {open && (() => {
                               const staff = [...branchStaffAt(b)].sort((x, y) => rankAtBranch(x) - rankAtBranch(y) || nameOf(x).localeCompare(nameOf(y)));
                               const groups = [
+                                { label: "Senior Branch Manager", people: staff.filter((x) => rankAtBranch(x) === -1) },
                                 { label: "Branch level — Branch Manager / Parts", people: staff.filter((x) => rankAtBranch(x) === 0) },
-                                { label: "Parts (can clock in technicians)", people: staff.filter((x) => rankAtBranch(x) === 1) },
                                 { label: "Technicians", people: staff.filter((x) => rankAtBranch(x) === 2) },
                               ];
-                              const candidates = assignable.filter((x) => normBranch(x.assigned_branch) !== normBranch(b));
+                              // Add person: only people with no branch yet (e.g. a new hire) — everyone at
+                              // this branch is already listed above, and moving someone in from another
+                              // branch is done with the pencil on their own row.
+                              const candidates = nonPh.filter((x) => !x.assigned_branch).sort((a2, b2) => nameOf(a2).localeCompare(nameOf(b2)));
+                              const iconBtn = "p-1 rounded text-slate-400 hover:text-white hover:bg-white/10 disabled:opacity-40";
                               return (
                                 <div className="px-7 pb-2 text-xs text-slate-300 space-y-2">
                                   {staff.length === 0 && <div className="text-slate-500">Nobody assigned to this branch.</div>}
                                   {groups.filter((g) => g.people.length > 0).map((g) => (
                                     <div key={g.label}>
                                       <div className="text-[10px] uppercase tracking-wide text-slate-500">{g.label}</div>
-                                      {g.people.map((x) => (
-                                        <div key={x.id} className="flex flex-wrap items-center gap-1">
-                                          {nameOf(x)} <span className="text-slate-500">· {roleLabel(x)}{(x.extra_roles ?? []).length ? ` (+ ${(x.extra_roles ?? []).map((r) => ROLE_LABELS[normalizeRole(r)] ?? r).join(", ")})` : ""}</span>
-                                          {rankAtBranch(x) < 2 && (() => {
-                                            const techsHere = staff.filter((t) => rankAtBranch(t) === 2);
-                                            const approves = techsHere.some((t) => chainCanApproveWith(data, x.id, t.id) === true);
-                                            const clocks = techsHere.some((t) => chainCanClockInWith(data, x.id, t.id) === true);
-                                            return (
-                                              <>
-                                                <span className={`px-1 rounded text-[9px] font-semibold border ${approves ? "border-green-500/40 text-green-300" : "border-white/10 text-slate-500 line-through"}`} title="Approves this branch's technicians' requests">Approves</span>
-                                                <span className={`px-1 rounded text-[9px] font-semibold border ${clocks ? "border-sky-500/40 text-sky-300" : "border-white/10 text-slate-500 line-through"}`} title="Can clock in this branch's technicians">Clocks in</span>
-                                              </>
-                                            );
-                                          })()}
-                                        </div>
-                                      ))}
+                                      {g.people.map((x) =>
+                                        editingPersonId === x.id ? (
+                                          <div key={x.id} className="flex flex-wrap items-center gap-1.5 py-1">
+                                            <span className="text-slate-100">{nameOf(x)}</span>
+                                            <span className="text-slate-500">· {roleLabel(x)} — move to</span>
+                                            <select
+                                              value={personDraft.branch}
+                                              onChange={(e) => setPersonDraft((d) => ({ ...d, branch: e.target.value }))}
+                                              style={{ width: "11rem", flex: "0 0 11rem" }}
+                                              className="glass-input text-[11px] py-0.5 px-1 rounded"
+                                              title="Branch"
+                                            >
+                                              {allBranches.map((br) => <option key={br} value={br}>{br}</option>)}
+                                            </select>
+                                            <button type="button" onClick={() => savePersonEdit(x)} disabled={busy} title="Save" className="p-1 rounded bg-green-600 hover:bg-green-700 text-white disabled:opacity-50">
+                                              <Check className="h-3 w-3" />
+                                            </button>
+                                            <button type="button" onClick={() => setEditingPersonId(null)} title="Cancel" className={iconBtn}>
+                                              <X className="h-3 w-3" />
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <div key={x.id} className="group flex flex-wrap items-center gap-1 py-0.5">
+                                            {nameOf(x)}
+                                            {x.employment_type === "trainee" && <TraineeFlag />}
+                                            <span className="text-slate-500">
+                                              · {roleLabel(x)}
+                                              {(x.extra_roles ?? []).length ? ` (+ ${(x.extra_roles ?? []).map((r) => ROLE_LABELS[normalizeRole(r)] ?? r).join(", ")})` : ""}
+                                            </span>
+                                            {rankAtBranch(x) === 0 && (() => {
+                                              const techsHere = staff.filter((t) => rankAtBranch(t) === 2);
+                                              const approves = techsHere.some((t) => chainCanApproveWith(data, x.id, t.id) === true);
+                                              const clocks = techsHere.some((t) => chainCanClockInWith(data, x.id, t.id) === true);
+                                              return (
+                                                <>
+                                                  <span className={`px-1 rounded text-[9px] font-semibold border ${approves ? "border-green-500/40 text-green-300" : "border-white/10 text-slate-500 line-through"}`} title="Approves this branch's technicians' requests">Approves</span>
+                                                  <span className={`px-1 rounded text-[9px] font-semibold border ${clocks ? "border-sky-500/40 text-sky-300" : "border-white/10 text-slate-500 line-through"}`} title="Can clock in this branch's technicians">Clocks in</span>
+                                                </>
+                                              );
+                                            })()}
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setEditingPersonId(x.id);
+                                                setPersonDraft({ role: normalizeRole(x.role), branch: allBranches.find((br) => normBranch(br) === normBranch(b)) ?? b });
+                                              }}
+                                              disabled={busy}
+                                              title="Change branch"
+                                              className={iconBtn}
+                                            >
+                                              <Pencil className="h-3 w-3" />
+                                            </button>
+                                            <button type="button" onClick={() => movePerson(x, "")} disabled={busy} title={`Remove from ${b}`} className="p-1 rounded text-slate-400 hover:text-red-300 hover:bg-red-500/10 disabled:opacity-40">
+                                              <Trash2 className="h-3 w-3" />
+                                            </button>
+                                          </div>
+                                        )
+                                      )}
                                     </div>
                                   ))}
                                   {addPersonFor === b ? (
-                                    <div className="flex items-center gap-1.5">
+                                    <div className="flex flex-wrap items-center gap-1.5">
                                       <select
                                         autoFocus
-                                        defaultValue=""
+                                        value={addDraft.personId}
                                         onChange={(e) => {
                                           const person = candidates.find((x) => x.id === e.target.value);
-                                          if (person) movePersonToBranch(person, b);
+                                          const r = person ? normalizeRole(person.role) : "TECHNICIAN";
+                                          setAddDraft({ personId: e.target.value, role: ADD_ROLE_OPTIONS.includes(r) ? r : "TECHNICIAN" });
                                         }}
                                         disabled={busy}
-                                        className="glass-input text-xs py-1 px-1.5 rounded flex-1 min-w-0"
+                                        style={{ width: "22rem", maxWidth: "100%" }}
+                                        className="glass-input text-xs py-1 px-1.5 rounded"
                                       >
-                                        <option value="">Choose a person to assign to {b}…</option>
+                                        <option value="">{candidates.length ? "Choose someone with no branch yet…" : "Everyone already has a branch"}</option>
                                         {candidates.map((x) => (
                                           <option key={x.id} value={x.id}>
-                                            {nameOf(x)} — {roleLabel(x)}{x.assigned_branch ? ` (now: ${x.assigned_branch})` : " (no branch)"}
+                                            {nameOf(x)} — {roleLabel(x)}
                                           </option>
                                         ))}
                                       </select>
-                                      <button type="button" onClick={() => setAddPersonFor(null)} className="p-1 rounded hover:bg-white/10 text-slate-400" title="Cancel">
+                                      <button
+                                        type="button"
+                                        disabled={busy || !addDraft.personId}
+                                        onClick={() => {
+                                          const person = candidates.find((x) => x.id === addDraft.personId);
+                                          if (person) addPersonToBranch(person, b);
+                                        }}
+                                        className="px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold disabled:opacity-50"
+                                      >
+                                        Add
+                                      </button>
+                                      <button type="button" onClick={() => setAddPersonFor(null)} className={iconBtn} title="Cancel">
                                         <X className="h-3.5 w-3.5" />
                                       </button>
                                     </div>
                                   ) : (
-                                    <button type="button" onClick={() => setAddPersonFor(b)} disabled={busy} className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-300 hover:text-blue-200 disabled:opacity-50">
+                                    <button type="button" onClick={() => { setAddDraft({ personId: "", role: "TECHNICIAN" }); setAddPersonFor(b); }} disabled={busy} className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-300 hover:text-blue-200 disabled:opacity-50">
                                       <Plus className="h-3 w-3" /> Add person to {b}
                                     </button>
                                   )}
@@ -576,7 +759,7 @@ export function ApprovalChainPage({ mod, sub }: Props) {
                   ) : filteredPeople.map((r) => (
                     <tr key={r.p.id} className="border-b border-white/5 align-top hover:bg-white/5">
                       <td className="px-3 py-2.5">
-                        <div className="font-medium text-white">{nameOf(r.p)}</div>
+                        <div className="font-medium text-white flex items-center gap-1.5">{nameOf(r.p)}{r.p.employment_type === "trainee" && <TraineeFlag />}</div>
                         <div className="text-[11px] text-slate-400">{roleLabel(r.p)}</div>
                       </td>
                       <td className="px-3 py-2.5">
@@ -634,7 +817,24 @@ export function ApprovalChainPage({ mod, sub }: Props) {
                           <div className="space-y-1">
                             {r.issues.map((i) => (
                               <div key={i} className="flex items-start gap-1 text-xs text-amber-300">
-                                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" /> {i}
+                                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+                                <span>
+                                  {i}
+                                  {i.startsWith("Branch spelled") && (() => {
+                                    // Save the standard spelling (the dropdown already shows it, so re-picking it does nothing).
+                                    const canonical = allBranches.find((b) => normBranch(b) === normBranch(r.p.assigned_branch));
+                                    return canonical ? (
+                                      <button
+                                        type="button"
+                                        disabled={busy}
+                                        onClick={() => run(async () => { await updateCompanyUser(r.p.id, { assignedBranch: canonical }); })}
+                                        className="ml-1.5 px-1.5 py-px rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-[10px] font-semibold disabled:opacity-50"
+                                      >
+                                        Fix
+                                      </button>
+                                    ) : null;
+                                  })()}
+                                </span>
                               </div>
                             ))}
                           </div>

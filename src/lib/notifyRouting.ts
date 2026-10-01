@@ -6,7 +6,7 @@
 
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import type { ProfileRow } from "@/lib/supabase/users";
-import { getChainData, chainLevelOf, chainCanApproveWith, chainCanClockInWith } from "@/lib/approvalDirectory";
+import { getChainData, chainLevelOf, chainCanApproveWith, chainCanClockInWith, isPhGoverned } from "@/lib/approvalDirectory";
 import {
   isAttendanceManagerTierRole,
   isAttendanceFullAccessRole,
@@ -137,7 +137,14 @@ export function visibleAttendanceProfileIds(
   const narrowToChain = viewerLevel === "branch" || viewerLevel === "sbm" || isPartsStaffRole(viewer.role, viewer.extra_roles);
   if (chain.byId.size > 0) {
     allProfiles.forEach((p) => {
-      if (p.id === viewer.id || !chainLevelOf(p)) return;
+      if (p.id === viewer.id) return;
+      // PH staff (department chain, migration 0334): a department manager sees the
+      // department's requests — only ever added, never removed from anyone's view.
+      if (isPhGoverned(p)) {
+        if (chainCanApproveWith(chain, viewer.id, p.id) === true) ids.add(p.id);
+        return;
+      }
+      if (!chainLevelOf(p)) return;
       const ok = chainCanApproveWith(chain, viewer.id, p.id) === true || chainCanClockInWith(chain, viewer.id, p.id) === true;
       if (ok) ids.add(p.id);
       else if (narrowToChain) ids.delete(p.id);

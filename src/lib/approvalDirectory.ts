@@ -14,6 +14,7 @@
  */
 import type { ProfileRow } from "@/lib/supabase/users";
 import { getSeniorBranchManagerAssignments, type SbmBranchAssignment } from "@/lib/supabase/seniorBranchManagerAssignments";
+import { getTopApproverIds, getPhDepartmentManagers, type PhDepartmentManagerRow } from "@/lib/supabase/approvalAreas";
 
 export type ChainLevel = "tech" | "branch" | "sbm" | "atd" | "td";
 
@@ -68,14 +69,73 @@ export function chainLevelOf(p: Pick<ProfileRow, "role" | "extra_roles" | "assig
 export interface ChainData {
   byId: Map<string, ProfileRow>;
   sbmBranches: SbmBranchAssignment[];
+  /** Explicit top-level approvers (migration 0333) — empty means the role-based default. */
+  topApproverIds?: string[];
+  /** PH department manager lists (migration 0334) — a department with none uses the role default. */
+  phDeptManagers?: PhDepartmentManagerRow[];
 }
 
-let registry: ChainData = { byId: new Map(), sbmBranches: [] };
+// ---- Philippines (migration 0334): department managers, no branches ----------
+const PH_DEPT_BY_ROLE: Record<string, string> = {
+  CSR: "CSR", CSR_AGENT: "CSR", CSR_TEAM_LEADER: "CSR", CSR_MANAGER: "CSR",
+  CLAIMS: "Claims", CLAIMS_TEAM_LEADER: "Claims", CLAIMS_MANAGER: "Claims",
+  PARTS: "Parts", PARTS_ORDER: "Parts", PARTS_TEAM_LEADER: "Parts", PARTS_MANAGER: "Parts",
+  BIZOPS_MANAGER: "BizOps", BIZOPS_SENIOR_MANAGER: "BizOps",
+  TRIAGE_USER: "Triage", TRIAGE_MANAGER: "Triage",
+  MANAGER: "Management", SENIOR_MANAGER: "Management",
+  FINANCE: "Accounting", HR: "HR", IT: "IT", DISPATCHER: "Dispatch",
+  TECHNICIAN: "Technician", TECHNICIAN_MANAGER: "Technician", TECHNICAL_DIRECTOR: "Technician",
+  TECHNICAL_ASSISTANT_DIRECTOR: "Technician", BRANCH_MANAGER: "Technician", SENIOR_BRANCH_MANAGER: "Technician",
+};
+const PH_DEPT_MANAGER_ROLES: Record<string, string[]> = {
+  CSR: ["CSR_MANAGER"],
+  Claims: ["CLAIMS_MANAGER"],
+  Parts: ["PARTS_MANAGER"],
+  BizOps: ["BIZOPS_SENIOR_MANAGER", "BIZOPS_MANAGER"],
+  Triage: ["TRIAGE_MANAGER"],
+  Management: ["SENIOR_MANAGER", "MANAGER"],
+  Technician: ["TECHNICIAN_MANAGER"],
+};
+
+/** A PH person's department from their primary role — mirrors SQL chain_department. */
+export function phDepartmentOf(p: Pick<ProfileRow, "role">): string {
+  return PH_DEPT_BY_ROLE[String(p.role || "").toUpperCase()] ?? "Other";
+}
+
+/** PH staff governed by the PH chain (not Admin / SuperAdmin as the primary role). */
+export function isPhGoverned(p: Pick<ProfileRow, "role" | "assigned_branch">): boolean {
+  return normBranch(p.assigned_branch) === "philippines" && !["ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(String(p.role || "").toUpperCase());
+}
+
+/** Mirrors SQL chain_is_ph_department_manager. */
+export function isPhDepartmentManager(data: ChainData, p: ProfileRow, department: string): boolean {
+  const list = (data.phDeptManagers ?? []).filter((m) => m.department === department);
+  if (list.length > 0) return list.some((m) => m.profileId === p.id);
+  if (!p.is_active || normBranch(p.assigned_branch) !== "philippines") return false;
+  const mgrRoles = PH_DEPT_MANAGER_ROLES[department] ?? [];
+  if (mgrRoles.includes(String(p.role || "").toUpperCase())) return true;
+  return phDepartmentOf(p) === department && (p.extra_roles ?? []).some((r) => mgrRoles.includes(String(r).toUpperCase()));
+}
+
+/** Everyone who manages a PH department (explicit list or role default). */
+export function phDepartmentManagers(data: ChainData, department: string): ProfileRow[] {
+  return [...data.byId.values()].filter((p) => isPhDepartmentManager(data, p, department));
+}
+
+let registry: ChainData = { byId: new Map(), sbmBranches: [], topApproverIds: [], phDeptManagers: [] };
+
+/** Top level: on the explicit list when it has anyone, else holds Admin / Technical Director / Asst. Director. Mirrors SQL chain_is_top. */
+export function isTopApprover(data: ChainData, p: Pick<ProfileRow, "id" | "role" | "extra_roles">): boolean {
+  const list = data.topApproverIds ?? [];
+  if (list.length > 0) return list.includes(p.id);
+  return heldRoles(p).some((r) => r === "ADMIN" || r === "TECHNICAL_DIRECTOR" || r === "TECHNICAL_ASSISTANT_DIRECTOR");
+}
 
 export async function registerApprovalDirectory(profiles: ProfileRow[]): Promise<void> {
   registry = { ...registry, byId: new Map(profiles.map((p) => [p.id, p])) };
   try {
-    registry = { ...registry, sbmBranches: await getSeniorBranchManagerAssignments() };
+    const [sbmBranches, topApproverIds, phDeptManagers] = await Promise.all([getSeniorBranchManagerAssignments(), getTopApproverIds(), getPhDepartmentManagers()]);
+    registry = { ...registry, sbmBranches, topApproverIds, phDeptManagers };
   } catch (err) {
     console.error("Approval chain: couldn't load Senior Branch Manager branches:", err);
   }
@@ -96,6 +156,7 @@ export function branchOwner(data: ChainData, branch: string | null | undefined):
 export function chainCanApproveWith(data: ChainData, viewerId: string | null | undefined, requesterId: string | null | undefined): boolean | null {
   const r = requesterId ? data.byId.get(requesterId) : undefined;
   if (!r) return null;
+  if (normBranch(r.assigned_branch) === "philippines") return phCanApproveWith(data, viewerId, r);
   const level = chainLevelOf(r);
   if (!level) return null;
   const v = viewerId ? data.byId.get(viewerId) : undefined;
@@ -103,7 +164,8 @@ export function chainCanApproveWith(data: ChainData, viewerId: string | null | u
   const roles = heldRoles(v);
   const has = (...xs: string[]) => xs.some((x) => roles.includes(x));
   if (has("SUPERADMIN", "SUPERSUPERADMIN")) return true;
-  const top = has("ADMIN", "TECHNICAL_DIRECTOR", "TECHNICAL_ASSISTANT_DIRECTOR");
+  const top = isTopApprover(data, v);
+  const hasTopList = (data.topApproverIds ?? []).length > 0;
   const sameBranch = !!normBranch(v.assigned_branch) && normBranch(v.assigned_branch) === normBranch(r.assigned_branch);
   switch (level) {
     case "tech":
@@ -113,10 +175,23 @@ export function chainCanApproveWith(data: ChainData, viewerId: string | null | u
     case "sbm":
       return top;
     case "atd":
-      return has("ADMIN", "TECHNICAL_DIRECTOR");
+      return hasTopList ? top : has("ADMIN", "TECHNICAL_DIRECTOR");
     case "td":
-      return has("ADMIN");
+      return hasTopList ? top : has("ADMIN");
   }
+}
+
+/** PH Manager step — mirrors SQL chain_ph_can_approve: the department's manager(s) or the top level; Team Leaders don't approve; a manager's own request goes to the top level. */
+function phCanApproveWith(data: ChainData, viewerId: string | null | undefined, r: ProfileRow): boolean | null {
+  if (!isPhGoverned(r)) return null;
+  const v = viewerId ? data.byId.get(viewerId) : undefined;
+  if (!v || v.id === r.id) return false;
+  const roles = heldRoles(v);
+  if (roles.includes("SUPERADMIN") || roles.includes("SUPERSUPERADMIN")) return true;
+  if (isTopApprover(data, v)) return true;
+  const dept = phDepartmentOf(r);
+  if (isPhDepartmentManager(data, r, dept)) return false;
+  return isPhDepartmentManager(data, v, dept);
 }
 
 /** Pure version — same logic as SQL chain_can_clock_in. null = not governed. */
@@ -153,7 +228,7 @@ export function chainApproverGroups(data: ChainData, requesterId: string): { lab
   const can = (p: ProfileRow) => chainCanApproveWith(data, p.id, r.id) === true;
   const roles = (p: ProfileRow) => heldRoles(p);
   const isSuper = (p: ProfileRow) => roles(p).some((x) => x === "SUPERADMIN" || x === "SUPERSUPERADMIN");
-  const isTop = (p: ProfileRow) => roles(p).some((x) => x === "ADMIN" || x === "TECHNICAL_DIRECTOR" || x === "TECHNICAL_ASSISTANT_DIRECTOR");
+  const isTop = (p: ProfileRow) => isTopApprover(data, p);
   const branchLevel = active.filter((p) => can(p) && !isSuper(p) && !isTop(p) && !ownsBranch(data, p.id, r.assigned_branch));
   const sbm = active.filter((p) => can(p) && !isSuper(p) && !isTop(p) && ownsBranch(data, p.id, r.assigned_branch));
   const top = active.filter((p) => can(p) && !isSuper(p) && isTop(p));

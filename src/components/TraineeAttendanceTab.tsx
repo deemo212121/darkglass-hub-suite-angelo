@@ -19,6 +19,7 @@
  * from AttendanceMonitoringPage rather than re-fetching them — this tab is
  * only ever mounted there.
  */
+import { chainCanApprove } from "@/lib/approvalDirectory";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearch } from "@tanstack/react-router";
 import type { ProfileRow } from "@/lib/supabase/users";
@@ -166,12 +167,16 @@ export function TraineeAttendanceTab({
       profiles.filter(
         (p) =>
           p.employment_type === "trainee" &&
+          // Deactivated accounts don't show up here.
+          p.is_active &&
           (showAll
             ? teamScopedIds === null || teamScopedIds.has(p.id) || isTraineeFallbackReviewerRole(role, extraRoles)
-            : viewerName !== "" && (p.manager_name || "").trim().toLowerCase() === viewerName)
+            : (viewerName !== "" && (p.manager_name || "").trim().toLowerCase() === viewerName) ||
+              // …plus trainees this viewer covers through the Approval Chain (their branch / area).
+              chainCanApprove(myProfileId, p.id) === true)
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [profiles, teamScopedIds, showAll, viewerName]
+    [profiles, teamScopedIds, showAll, viewerName, myProfileId]
   );
   const traineeIds = useMemo(() => new Set(visibleTrainees.map((p) => p.id)), [visibleTrainees]);
 
@@ -387,7 +392,7 @@ export function TraineeAttendanceTab({
                   onClick={() => setScope(s)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${scope === s ? "bg-primary/20 text-primary" : "bg-slate-800/50 text-slate-400 hover:text-white"}`}
                 >
-                  {s === "mine" ? "My Trainees" : "All Trainees"}
+                  {s === "mine" ? "My Trainees & Branch" : "All Trainees"}
                 </button>
               ))}
             </div>
