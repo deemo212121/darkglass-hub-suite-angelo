@@ -1,3 +1,4 @@
+import { trainingWindow, isTrainingDay } from "@/lib/fieldStartDate";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { X, Plus, Trash2, Loader2 } from "lucide-react";
@@ -232,7 +233,12 @@ export function TechActivityReportModal({
   // already paid) rather than an independent state-OT-floor check.
   const totalHoursForMatch = hoursWorked + overtimeHours;
   const regularRateAfterMinMatch = totalHoursForMatch > 0 ? techWeightedRegularRate + matchMin / totalHoursForMatch : techWeightedRegularRate;
-  const requiredPremiumAfterMinMatch = overtimeHours * regularRateAfterMinMatch * 0.5;
+  const traineeWindow = trainingWindow(employee.hrTrainingStart, employee.hrFieldStart, hireDate, employee.trainingEndDate);
+  const premiumHours = periodDayInfo.reduce((sum, day) => {
+    if (day.date < periodStart || day.date > periodEnd || isTrainingDay(day.date, traineeWindow)) return sum;
+    return sum + (dailySplit.get(day.date)?.overtime ?? 0);
+  }, 0);
+  const requiredPremiumAfterMinMatch = premiumHours * regularRateAfterMinMatch * 0.5;
   const matchOt = Math.max(requiredPremiumAfterMinMatch - techHourlyPayOtPremium, 0);
   const stateHourlyOtTotal = companyHourlyOtTotal + matchMin + matchOt;
   // Whether the saved payroll_hourly_ot_overrides row (techHourlyPay, from
@@ -288,12 +294,13 @@ export function TechActivityReportModal({
   // a phantom $12.73 shortfall against the $100 target.
   const TRAINEE_DAILY_MATCH_TARGET = 100;
   const techTraineeMatch = useMemo(() => {
-    const trainingEndDate = employee.trainingEndDate;
+    const window = trainingWindow(employee.hrTrainingStart, employee.hrFieldStart, hireDate, employee.trainingEndDate);
+    const trainingEndDate = window.end;
     if (!trainingEndDate) return 0;
     let match = 0;
     for (const d of periodDayInfo) {
       if (d.date < periodStart || d.date > periodEnd) continue;
-      if (hireDate && d.date < hireDate) continue;
+      if (window.start && d.date < window.start) continue;
       if (d.date > trainingEndDate) continue;
       const split = dailySplit.get(d.date) ?? { regular: 0, overtime: 0 };
       const dayHours = split.regular + split.overtime;
@@ -301,14 +308,14 @@ export function TechActivityReportModal({
       const companyRate = rateOnDate(d.date);
       const floorRate = d.state ? STATE_MIN_WAGE_2026.find((s) => s.state === d.state)?.rate ?? null : null;
       const effectiveRate = floorRate != null ? Math.max(floorRate, companyRate) : companyRate;
-      const actualDailyPay = dayHours * effectiveRate + split.overtime * techWeightedRegularRate * 0.5;
+      const actualDailyPay = dayHours * effectiveRate;
       if (actualDailyPay < TRAINEE_DAILY_MATCH_TARGET) {
         match += TRAINEE_DAILY_MATCH_TARGET - actualDailyPay;
       }
     }
     return match;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [periodDayInfo, dailySplit, periodStart, periodEnd, hireDate, employee.trainingEndDate, salaryHistory, hourlyRate, techWeightedRegularRate]);
+  }, [periodDayInfo, dailySplit, periodStart, periodEnd, hireDate, employee.trainingEndDate, employee.hrTrainingStart, employee.hrFieldStart, salaryHistory, hourlyRate, techWeightedRegularRate]);
 
   // The Guaranteed Minimum Salary Match, recomputed HERE (rather than using
   // row.techGuaranteedSalaryMatch from AccountingDashboard.tsx) because that
