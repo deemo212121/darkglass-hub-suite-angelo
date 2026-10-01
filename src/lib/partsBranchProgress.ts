@@ -11,7 +11,7 @@
  * for consistency.
  */
 import { getPartsToReceive } from "@/lib/supabase/partReceive";
-import { getPartsForDailyPickup, EXAMPLE_PICKUP_ROWS } from "@/lib/supabase/partDailyPickup";
+import { getPartsForDailyPickup } from "@/lib/supabase/partDailyPickup";
 import { getPartsForDailyCollection } from "@/lib/supabase/partDailyCollection";
 
 export interface BranchProgress {
@@ -42,7 +42,7 @@ export async function getBranchProgress(branches: string[]): Promise<BranchProgr
   return branches.map((branch, i) => {
     const receiveRows = allReceive.filter((r) => r.location === branch);
     const realPickup = pickupResults[i] ?? [];
-    const pickupRows = realPickup.length > 0 ? realPickup : EXAMPLE_PICKUP_ROWS.filter((r) => r.location === branch);
+    const pickupRows = realPickup;
     const collectionRows = allCollection.filter((r) => r.location === branch);
 
     return {

@@ -9,10 +9,14 @@
  *   - "Parts out" when nobody on the branch's parts staff (Parts / Parts
  *     Team Leader / Parts Manager) is in that day
  *   - branches whose parts were all collected: "no mistake"
+ *   - why someone is out: their Notes and HR Status for the day from HR's
+ *     Attendance Monitoring / Absent List (attendance_notes) — read-only
+ *     here, and carried into the copied text / remarks
  * A Copy button gives the plain-text version for the group chat.
  */
 import { useEffect, useMemo, useState } from "react";
-import { Send, Check, Loader2, ListChecks } from "lucide-react";
+import { Send, Check, Loader2, ListChecks, MessageSquare } from "lucide-react";
+import { getAttendanceNotes, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
 import { getPartsDailyIssues, upsertPartsDailyIssue } from "@/lib/supabase/partsDailyIssuesLog";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getCompanyTimecardEntries, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
@@ -43,6 +47,12 @@ const fmtTime = (t: string) => {
   return `${h % 12 || 12}:${m[2]} ${h < 12 ? "AM" : "PM"}`;
 };
 
+/** " (not clocked in yet — truck at the shop)" — the status plus HR's note, for the copied text and remarks. */
+const statusText = (presence: Presence | null, note?: string) => {
+  const parts = [presence?.text.toLowerCase(), note?.trim()].filter(Boolean);
+  return parts.length ? ` (${parts.join(" — ")})` : "";
+};
+
 const PRESENCE_CLASS: Record<Presence["kind"], string> = {
   off: "bg-sky-500/15 text-sky-300 border-sky-500/30",
   pending: "bg-amber-500/15 text-amber-300 border-amber-500/30",
@@ -56,8 +66,8 @@ type BranchLine = {
   code: string;
   total: number;
   notCollected: number;
-  techs: { name: string; count: number; presence: Presence | null }[];
-  partsPresence: { name: string; presence: Presence }[];
+  techs: { name: string; count: number; presence: Presence | null; note?: string }[];
+  partsPresence: { name: string; presence: Presence; note?: string }[];
   partsOut: boolean;
 };
 
@@ -65,7 +75,7 @@ type BranchLine = {
 const SAMPLE_BRANCHES: BranchLine[] = [
   {
     branch: "Columbus", code: "CB", total: 20, notCollected: 17, partsOut: false,
-    techs: [{ name: "Fredrick Jackson", count: 17, presence: { kind: "absent", text: "Not clocked in yet" } }],
+    techs: [{ name: "Fredrick Jackson", count: 17, presence: { kind: "absent", text: "Not clocked in yet" }, note: "Truck at the shop, coming in around 10 AM · HR: Excused" }],
     partsPresence: [{ name: "Amanda Simmons", presence: { kind: "in", text: "Clocked in 8:02 AM" } }],
   },
   {
@@ -118,16 +128,18 @@ export function CollectionStatusSummary({
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [sentMsg, setSentMsg] = useState<string | null>(null);
+  const [notes, setNotes] = useState<AttendanceNoteRow[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    Promise.all([getCompanyUsers(), getCompanyTimecardEntries(day, day), getCompanyPtoRequests()])
-      .then(([p, e, r]) => {
+    Promise.all([getCompanyUsers(), getCompanyTimecardEntries(day, day), getCompanyPtoRequests(), getAttendanceNotes(day, day)])
+      .then(([p, e, r, n]) => {
         if (cancelled) return;
         setProfiles(p);
         setEntries(e);
         setPtos(r);
+        setNotes(n);
       })
       .catch((err) => console.error("CollectionStatusSummary: load failed", err))
       .finally(() => !cancelled && setLoading(false));
@@ -142,6 +154,13 @@ export function CollectionStatusSummary({
     return m;
   }, [profiles]);
   const entryById = useMemo(() => new Map(entries.map((e) => [e.profileId, e])), [entries]);
+  const noteById = useMemo(() => new Map(notes.map((n) => [n.profileId, n])), [notes]);
+  /** HR's Notes + HR Status for this person on the day (Attendance Monitoring / Absent List), as one line. */
+  const noteText = (id: string): string | undefined => {
+    const n = noteById.get(id);
+    const hr = n?.hrNote?.trim();
+    return [n?.content?.trim(), hr ? `HR: ${hr}` : ""].filter(Boolean).join(" · ") || undefined;
+  };
 
   /** Attendance for one person on `day`. */
   const presenceOf = (p: ProfileRow | undefined): Presence | null => {
@@ -172,19 +191,28 @@ export function CollectionStatusSummary({
         }
         const techs = [...techCounts.entries()]
           .sort((a, b) => b[1] - a[1])
-          .map(([name, count]) => ({ name, count, presence: presenceOf(byName.get(name.toLowerCase())) }));
+          .map(([name, count]) => {
+            const prof = byName.get(name.toLowerCase());
+            return { name, count, presence: presenceOf(prof), note: prof ? noteText(prof.id) : undefined };
+          });
         const partsStaff = profiles.filter(
           (p) => p.is_active && norm(p.assigned_branch) === norm(branch) && [p.role, ...(p.extra_roles ?? [])].some((x) => PARTS_ROLES.has(String(x).toUpperCase()))
         );
-        const partsPresence = partsStaff.map((p) => ({ name: p.display_name || p.email, presence: presenceOf(p)! }));
+        const partsPresence = partsStaff.map((p) => ({ name: p.display_name || p.email, presence: presenceOf(p)!, note: noteText(p.id) }));
         const partsOut = partsStaff.length > 0 && partsPresence.every((x) => x.presence.kind !== "in");
         return { branch, code: branchAbbrev(branch), total: items.length, notCollected: notCollected.length, techs, partsPresence, partsOut };
       })
       .sort((a, b) => b.notCollected - a.notCollected || a.code.localeCompare(b.code));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, profiles, entries, ptos, day]);
+  }, [rows, profiles, entries, ptos, notes, day]);
 
   const branches = sample ? SAMPLE_BRANCHES : realBranches;
+  /** " (PM is out — sick)" — with the parts staff's HR notes when there are any. */
+  const pmOut = (b: BranchLine) => {
+    if (!b.partsOut) return "";
+    const why = b.partsPresence.map((p) => p.note?.trim()).filter(Boolean);
+    return why.length ? ` (PM is out — ${why.join("; ")})` : " (PM is out)";
+  };
   const withMissing = branches.filter((b) => b.notCollected > 0);
   const clean = branches.filter((b) => b.notCollected === 0);
 
@@ -192,13 +220,13 @@ export function CollectionStatusSummary({
     const lines: string[] = [`${heading} ${new Date(day + "T00:00:00").toLocaleDateString()}`, ""];
     for (const b of withMissing) {
       const who = b.techs
-        .map((t) => `${t.count} from ${t.name}${t.presence ? ` (${t.presence.text.toLowerCase()})` : ""}`)
+        .map((t) => `${t.count} from ${t.name}${statusText(t.presence, t.note)}`)
         .join(", ");
-      lines.push(`${b.code} - ${b.notCollected} part${b.notCollected === 1 ? "" : "s"} not ${verb} — ${who}${b.partsOut ? " (PM is out)" : ""}`);
+      lines.push(`${b.code} - ${b.notCollected} part${b.notCollected === 1 ? "" : "s"} not ${verb} — ${who}${pmOut(b)}`);
     }
     if (clean.length) {
       lines.push("");
-      for (const b of clean) lines.push(`${b.code} - no mistake${b.partsOut ? " (PM is out)" : ""}`);
+      for (const b of clean) lines.push(`${b.code} - no mistake${pmOut(b)}`);
     }
     return lines.join("\n");
   }, [withMissing, clean, day, heading, verb]);
@@ -221,9 +249,9 @@ export function CollectionStatusSummary({
     try {
       const existing = await getPartsDailyIssues(day, day);
       for (const b of targets) {
-        const who = b.techs.map((t) => `${t.count} from ${t.name}${t.presence ? ` (${t.presence.text.toLowerCase()})` : ""}`).join(", ");
+        const who = b.techs.map((t) => `${t.count} from ${t.name}${statusText(t.presence, t.note)}`).join(", ");
         const body = b.notCollected > 0 ? `${b.notCollected} part${b.notCollected === 1 ? "" : "s"} not ${verb} — ${who}` : "no mistake";
-        const line = `${tag} ${body}${b.partsOut ? " (PM is out)" : ""}`;
+        const line = `${tag} ${body}${pmOut(b)}`;
         const prev = existing.find((e) => e.branch === b.branch && e.date === day)?.remarks ?? "";
         const kept = prev.split("\n").filter((l) => l.trim() && !l.trim().startsWith(tag));
         await upsertPartsDailyIssue(b.branch, day, { remarks: [...kept, line].join("\n") });
@@ -236,6 +264,15 @@ export function CollectionStatusSummary({
       setSending(false);
     }
   };
+
+  /** Why they're out — HR's note for the day, read-only. */
+  const reason = (note?: string) =>
+    note?.trim() ? (
+      <span className="inline-flex items-center gap-1 text-[11px] text-slate-300 italic" title="From HR Attendance Monitoring / Absent List">
+        <MessageSquare className="h-3 w-3 text-slate-500 shrink-0" />
+        {note}
+      </span>
+    ) : null;
 
   const badge = (p: Presence | null) =>
     p ? <span className={`inline-block px-1.5 py-px rounded text-[10px] font-semibold border ${PRESENCE_CLASS[p.kind]}`}>{p.text}</span> : <span className="text-[10px] text-slate-500">(not on file)</span>;
@@ -294,13 +331,14 @@ export function CollectionStatusSummary({
                   <div key={t.name} className="flex flex-wrap items-center gap-1.5">
                     <span className="text-slate-200">{t.count} from {t.name}</span>
                     {badge(t.presence)}
+                    {reason(t.note)}
                   </div>
                 ))}
                 {b.partsPresence.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1.5 text-slate-400">
                     Parts:
                     {b.partsPresence.map((p) => (
-                      <span key={p.name} className="inline-flex items-center gap-1">{p.name} {badge(p.presence)}</span>
+                      <span key={p.name} className="inline-flex flex-wrap items-center gap-1">{p.name} {badge(p.presence)} {reason(p.note)}</span>
                     ))}
                   </div>
                 )}

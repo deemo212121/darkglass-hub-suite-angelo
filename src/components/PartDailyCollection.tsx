@@ -1,7 +1,7 @@
 import { CollectionStatusSummary } from "@/components/CollectionStatusSummary";
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Printer, Save, CheckCircle, Loader2, Undo2, ScanLine, History, PackageCheck } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
@@ -44,7 +44,18 @@ function getDefaultCollectionDate() {
   else d.setDate(d.getDate() - 1);
   return d.toISOString().slice(0, 10);
 }
-const COLS=["Technician","Picked Up","Collected","Part No","Description","Unique ID","Core Value","Ticket #","Repair Status","Qty","Used Qty","Restock Qty","Collect Type","Lot #","Comment","Part Status","Action"];
+// Collect first (pinned while scrolling sideways), then what identifies the part, then the fields you edit.
+const COLS=["Collect","Technician","Part","Ticket","Dates","Qty","Collect Type","Used Qty","Restock Qty","Lot #","Comment","Part Status","Core Value"];
+// Fields Save writes — a row differing from its last-loaded copy in any of these is an unsaved change.
+const EDIT_FIELDS=["collected","collectedDate","usedQty","restockQty","collectType","lotNo","comment"] as const;
+// When a Collect Type is picked and no quantities are entered yet, fill the
+// part's full quantity into the matching column (still editable).
+function qtyForType(r:PartCollectionRow,type:string):Partial<PartCollectionRow>{
+  if(r.usedQty||r.restockQty)return {};
+  if(type==="Restock")return {restockQty:r.quantity};
+  if(type.startsWith("Used"))return {usedQty:r.quantity};
+  return {};
+}
 
 export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const navigate = useNavigate();
@@ -55,7 +66,11 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const [dateType,setDateType]=useState<typeof DATE_TYPES[number]>("Pickup Date");const [dtOpen,setDtOpen]=useState(false);
   const [collectType,setCollectType]=useState("");const [ctOpen,setCtOpen]=useState(false);
   const [startDate,setStartDate]=useState(getDefaultCollectionDate);const [endDate,setEndDate]=useState(getDefaultCollectionDate);
-  const [ticketNo,setTicketNo]=useState(""); const [notCollected,setNotCollected]=useState(true);const [collected,setCollected]=useState(false);
+  const [ticketNo,setTicketNo]=useState("");
+  // One "Show" switch instead of two checkboxes that could both be off.
+  const [show,setShow]=useState<"open"|"done"|"all">("open");
+  const notCollected=show!=="done";const collected=show!=="open";
+  const [flashId,setFlashId]=useState<string|null>(null);
   const [restockToast,setRestockToast]=useState("");
   const [technicianRoster,setTechnicianRoster]=useState<string[]>([]);
   const [rows,setRows]=useState<PartCollectionRow[]>([]);
@@ -71,6 +86,13 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   // "log the meaningful state change" spirit as Part Receive's activity
   // log (see hrActivityLog.ts).
   const originalRowsRef = useRef<Map<string, PartCollectionRow>>(new Map());
+  const isRowDirty = (r: PartCollectionRow) => {
+    const o = originalRowsRef.current.get(r.id);
+    return !!o && EDIT_FIELDS.some((f) => o[f] !== r[f]);
+  };
+  const rowsRef = useRef<PartCollectionRow[]>([]);
+  rowsRef.current = rows;
+  const dirtyCount = rows.filter(isRowDirty).length;
   const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [activityLogEntries, setActivityLogEntries] = useState<HrActivityLogEntry[]>([]);
   const [activityLogLoading, setActivityLogLoading] = useState(false);
@@ -105,8 +127,18 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
       collectType: collectType || undefined,
     })
       .then((data) => {
-        setRows(data);
-        originalRowsRef.current = new Map(data.map((r) => [r.id, r]));
+        // Keep unsaved edits across a filter change / reload instead of silently dropping them.
+        const kept = rowsRef.current.filter(isRowDirty);
+        const orig = new Map(data.map((r) => [r.id, r] as const));
+        const editedById = new Map(kept.map((r) => [r.id, r] as const));
+        const merged = data.map((r) => editedById.get(r.id) ?? r);
+        for (const k of kept) {
+          if (orig.has(k.id)) continue;
+          const o = originalRowsRef.current.get(k.id);
+          if (o) { orig.set(k.id, o); merged.push(k); }
+        }
+        originalRowsRef.current = orig;
+        setRows(merged);
       })
       .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
@@ -151,6 +183,8 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   })
     .filter((b) => b.notCollected + b.collected > 0)
     .sort((a, b) => b.notCollected - a.notCollected || a.location.localeCompare(b.location));
+  const scopedSummary = location ? summaryRows.filter((r) => r.location === location) : summaryRows;
+  const statusCounts = { open: scopedSummary.filter((r) => !r.collected).length, done: scopedSummary.filter((r) => r.collected).length };
   const allBranchTotals = {
     notCollected: summaryRows.filter((r) => !r.collected).length,
     collected: summaryRows.filter((r) => r.collected).length,
@@ -173,6 +207,24 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const updateRowField = (id: string, patch: Partial<PartCollectionRow>) => {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   };
+  const setRowCollectType = (id: string, type: string) => {
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, collectType: type, ...qtyForType(r, type) } : r)));
+  };
+  const discardChanges = () => {
+    if (!window.confirm(`Discard ${dirtyCount} unsaved ${dirtyCount === 1 ? "change" : "changes"}?`)) return;
+    for (const r of rowsRef.current) {
+      const o = originalRowsRef.current.get(r.id);
+      if (o && r.collected && !o.collected) removePendingDoneItem(PARTS_DONE_QUEUE_SOURCE, r.id);
+    }
+    setRows((prev) => prev.map((r) => originalRowsRef.current.get(r.id) ?? r));
+  };
+  // Warn before leaving the page with unsaved edits.
+  useEffect(() => {
+    if (dirtyCount === 0) return;
+    const fn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", fn);
+    return () => window.removeEventListener("beforeunload", fn);
+  }, [dirtyCount]);
 
   const toggleCollected = (id: string) => {
     setRows((prev) => prev.map((r) => {
@@ -181,11 +233,13 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
         removePendingDoneItem(PARTS_DONE_QUEUE_SOURCE, id);
         return { ...r, collected: false, collectedDate: "" };
       }
+      const collectType = r.collectType || suggestCollectType(r.partStatus);
       const next = {
         ...r,
         collected: true,
         collectedDate: TODAY,
-        collectType: r.collectType || suggestCollectType(r.partStatus),
+        collectType,
+        ...qtyForType(r, collectType),
       };
       addPendingDoneItem(PARTS_DONE_QUEUE_SOURCE, id, `${next.partNo || next.id} (Ticket ${next.ticketNo || "—"})`, next.location);
       return next;
@@ -198,12 +252,17 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const handleScan = () => {
     const q = scanUniqueId.trim().toLowerCase();
     if (!q) return;
-    const match = rows.find((r) => r.uniqueId.toLowerCase() === q && !r.collected);
+    const any = rows.find((r) => r.uniqueId.toLowerCase() === q);
+    const match = any && !any.collected ? any : undefined;
     if (match) {
       toggleCollected(match.id);
       setScanUniqueId("");
+      // Show which row was just collected.
+      setFlashId(match.id);
+      requestAnimationFrame(() => document.querySelector(`[data-row-id="${match.id}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" }));
+      setTimeout(() => setFlashId((cur) => (cur === match.id ? null : cur)), 2000);
     } else {
-      setSaveError(`No un-collected row matches Unique ID "${scanUniqueId}".`);
+      setSaveError(any ? `${any.partNo || "That part"} (Unique ID "${scanUniqueId}") is already collected.` : `No part in this list matches Unique ID "${scanUniqueId}".`);
       setTimeout(() => setSaveError(null), 3000);
     }
     scanRef.current?.focus();
@@ -235,7 +294,8 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
     setSaving(true);
     setSaveError(null);
     try {
-      await Promise.all(rows.map((r) =>
+      const changed = rows.filter(isRowDirty);
+      await Promise.all(changed.map((r) =>
         updatePartCollectionRow(r.id, {
           collected: r.collected,
           collectedDate: r.collectedDate,
@@ -246,9 +306,12 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
           comment: r.comment,
         })
       ));
-      const restocked = rows.filter((r) => r.collected && r.collectType === "Restock");
+      const restocked = changed.filter((r) => {
+        const before = originalRowsRef.current.get(r.id);
+        return r.collected && r.collectType === "Restock" && !(before?.collected && before.collectType === "Restock");
+      });
       for (const r of restocked) await notifyRestock(r);
-      for (const r of rows) {
+      for (const r of changed) {
         const before = originalRowsRef.current.get(r.id);
         if (before && before.collected !== r.collected) {
           logActivity({
@@ -260,6 +323,7 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
         }
       }
       originalRowsRef.current = new Map(rows.map((r) => [r.id, r]));
+      loadSummaryRows();
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err) {
@@ -267,7 +331,7 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
     } finally {
       setSaving(false);
     }
-  }, [rows, notifyRestock]);
+  }, [rows, notifyRestock, loadSummaryRows]);
 
   const locD=useP(locOpen);const techD=useP(techOpen);const dtD=useP(dtOpen);const ctD=useP(ctOpen);
   const locL=useRef<HTMLDivElement>(null);const techL=useRef<HTMLDivElement>(null);const dtL=useRef<HTMLDivElement>(null);const ctL=useRef<HTMLDivElement>(null);
@@ -346,15 +410,19 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
           <input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} className="glass-input text-sm py-1.5 px-2 rounded-md w-32.5"/>
         </div>
         <div className="flex items-end gap-2 pb-0.5">
-          <button onClick={handleSave} disabled={saving||loading} className="btn flex items-center gap-2 px-4 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"><Save className="h-3.5 w-3.5"/>{saving?"Saving…":"Save"}</button>
           <button onClick={()=>window.print()} className="btn flex items-center gap-2 px-4"><Printer className="h-3.5 w-3.5"/>Print</button>
         </div>
       </div>
       <div className="flex flex-wrap items-end gap-3 mt-3">
         <div className="flex flex-col gap-1 min-w-[160px]"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Ticket No</label><input value={ticketNo} onChange={e=>setTicketNo(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md"/></div>
-        <div className="flex items-end gap-4 pb-0.5">
-          <label className="flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" checked={notCollected} onChange={e=>setNotCollected(e.target.checked)} className="accent-blue-500"/>Not-Collected</label>
-          <label className="flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" checked={collected} onChange={e=>setCollected(e.target.checked)} className="accent-blue-500"/>Collected</label>
+        <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Show</label>
+          <div className="inline-flex rounded-md border border-white/10 overflow-hidden text-sm">
+            {([["open", "Not collected", statusCounts.open], ["done", "Collected", statusCounts.done], ["all", "All", statusCounts.open + statusCounts.done]] as const).map(([k, label, n]) => (
+              <button key={k} type="button" onClick={() => setShow(k)} className={`px-3 py-1.5 flex items-center gap-1.5 ${show === k ? "bg-blue-600 text-white" : "hover:bg-white/5 text-slate-300"}`}>
+                {label}<span className={`rounded-full px-1.5 text-[11px] ${show === k ? "bg-white/20" : "bg-white/10"}`}>{n}</span>
+              </button>
+            ))}
+          </div>
         </div>
         <div className="flex flex-col gap-1 min-w-[180px] flex-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Collect Type</label>
           <button ref={ctD.ref} onClick={()=>setCtOpen(o=>!o)} className="glass-input w-full text-sm py-1.5 px-3 rounded-md flex items-center justify-between gap-2"><span className={collectType?"":"text-muted-foreground"}>{collectType||"All Types"}</span><Chev o={ctOpen}/></button>
@@ -363,7 +431,7 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
         <div className="flex flex-col gap-1 min-w-[220px]">
           <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Scan Parts Here (Unique ID)</label>
           <div className="flex gap-2">
-            <input ref={scanRef} value={scanUniqueId} onChange={e=>setScanUniqueId(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")handleScan();}} placeholder="Unique ID" className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"/>
+            <input ref={scanRef} value={scanUniqueId} onChange={e=>setScanUniqueId(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")handleScan();}} placeholder="Scan or type, then Enter" className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"/>
             <button onClick={handleScan} className="btn flex items-center gap-2 px-3 bg-blue-600 hover:bg-blue-700 text-white"><ScanLine className="h-3.5 w-3.5"/>Collect</button>
           </div>
         </div>
@@ -373,61 +441,84 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
     <div className="panel p-0 w-full">
       {loadError ? (
         <p className="text-sm text-red-400 px-4 py-6">Failed to load parts: {loadError}</p>
-      ) : loading ? (
+      ) : loading && rows.length === 0 ? (
         <p className="text-sm text-muted-foreground px-4 py-6">Loading…</p>
       ) : rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground px-4 py-6">No parts match these filters.</p>
+        <div className="px-4 py-6 text-sm text-muted-foreground">
+          {show === "open" && statusCounts.done > 0 ? (
+            <>Nothing left to collect here. {statusCounts.done} collected {statusCounts.done === 1 ? "part is" : "parts are"} hidden. <button type="button" onClick={() => setShow("done")} className="text-blue-400 hover:underline">Show collected</button></>
+          ) : show === "done" && statusCounts.open > 0 ? (
+            <>No collected parts yet. {statusCounts.open} not collected. <button type="button" onClick={() => setShow("open")} className="text-blue-400 hover:underline">Show not collected</button></>
+          ) : (
+            "No parts match these filters. Parts show here after they're picked up on Part Daily Pickup."
+          )}
+        </div>
       ) : (
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead><tr className="border-b border-white/10 bg-white/5">
-            {COLS.map(h=><th key={h} className="px-2 py-3 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>)}
+            {COLS.map((h, i) => <th key={h} className={`px-2 py-3 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap ${i === 0 ? "sticky left-0 z-10 bg-slate-900" : ""}`}>{h}</th>)}
           </tr></thead>
           <tbody>
-            {rows.map((r,idx)=>(
-              <tr key={r.id} className={`border-b border-white/5 hover:bg-white/5 ${idx%2!==0?"bg-white/[0.02]":""}`}>
-                <td className="px-2 py-2 whitespace-nowrap">{r.techName||"—"}</td>
-                <td className="px-2 py-2 whitespace-nowrap">{r.pickedUpDate||"—"}</td>
-                <td className="px-2 py-2 whitespace-nowrap">{r.collectedDate||"—"}</td>
-                <td className="px-2 py-2 font-mono whitespace-nowrap">{r.partNo}</td>
-                <td className="px-2 py-2 max-w-[160px] truncate" title={r.description}>{r.description}</td>
-                <td className="px-2 py-2 font-mono whitespace-nowrap text-[10px] text-muted-foreground" title={r.id}>{r.uniqueId}</td>
-                <td className="px-2 py-2 text-center">{r.coreValue > 0 ? `$${r.coreValue.toFixed(2)}` : "—"}</td>
-                <td className="px-2 py-2 font-mono text-blue-400 whitespace-nowrap">{r.ticketNo}</td>
-                <td className="px-2 py-2 whitespace-nowrap">{r.repairStatus||"—"}</td>
-                <td className="px-2 py-2 text-center">{r.quantity}</td>
-                <td className="px-2 py-2 text-center">
-                  <input type="number" value={r.usedQty} onChange={e=>updateRowField(r.id,{usedQty:Number(e.target.value)})} className="glass-input text-xs py-0.5 px-1.5 rounded w-14 text-center"/>
+            {rows.map((r) => {
+              const dirty = isRowDirty(r);
+              return (
+              <tr key={r.id} data-row-id={r.id} className={`border-b border-white/5 transition-colors ${flashId === r.id ? "bg-green-500/20" : r.collected ? "bg-green-500/[0.06]" : "hover:bg-white/5"}`}>
+                <td className="px-2 py-2 sticky left-0 z-[1] bg-slate-900">
+                  {r.collected ? (
+                    <div className="flex items-center gap-1.5 whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-semibold bg-green-500/15 text-green-300 border border-green-500/30"><CheckCircle className="h-3.5 w-3.5" />Collected</span>
+                      <button type="button" onClick={() => toggleCollected(r.id)} className="rounded p-1 text-slate-400 hover:text-orange-300 hover:bg-orange-500/10" title="Undo — mark as not collected"><Undo2 className="h-3.5 w-3.5" /></button>
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => toggleCollected(r.id)} className="inline-flex items-center gap-1 rounded px-3 py-1 text-[11px] font-semibold border border-blue-500/50 bg-blue-600 text-white hover:bg-blue-700" title="Mark as collected">
+                      Collect
+                    </button>
+                  )}
+                  {dirty && <div className="mt-1 text-[10px] text-amber-300">Not saved</div>}
                 </td>
-                <td className="px-2 py-2 text-center">
-                  <input type="number" value={r.restockQty} onChange={e=>updateRowField(r.id,{restockQty:Number(e.target.value)})} className="glass-input text-xs py-0.5 px-1.5 rounded w-14 text-center"/>
-                </td>
-                <td className="px-2 py-2">
-                  <select value={r.collectType} onChange={e=>updateRowField(r.id,{collectType:e.target.value})} className="glass-input text-xs py-0.5 px-1.5 rounded w-full">
-                    <option value="">—</option>
-                    {COLLECT_TYPES.map(c=><option key={c} value={c}>{c}</option>)}
-                  </select>
-                </td>
-                <td className="px-2 py-2">
-                  <input value={r.lotNo} onChange={e=>updateRowField(r.id,{lotNo:e.target.value})} placeholder="—" className="glass-input text-xs py-0.5 px-2 rounded w-20"/>
-                </td>
-                <td className="px-2 py-2">
-                  <input value={r.comment} onChange={e=>updateRowField(r.id,{comment:e.target.value})} placeholder="—" className="glass-input text-xs py-0.5 px-2 rounded w-32"/>
+                <td className="px-2 py-2 whitespace-nowrap">{r.techName || "—"}</td>
+                <td className="px-2 py-2 min-w-[180px]">
+                  <div className="font-mono font-semibold whitespace-nowrap">{r.partNo}</div>
+                  <div className="text-muted-foreground max-w-[220px] truncate" title={r.description}>{r.description}</div>
+                  <div className="font-mono text-[10px] text-slate-500" title={`Unique ID — full id ${r.id}`}>ID {r.uniqueId}</div>
                 </td>
                 <td className="px-2 py-2 whitespace-nowrap">
-                  <span className="rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-500/20 text-slate-300">{r.partStatus||"—"}</span>
+                  {r.ticketNo ? (
+                    <Link to="/ticket/$ticketNo" params={{ ticketNo: r.ticketNo }} target="_blank" rel="noreferrer" className="font-mono text-blue-400 hover:text-blue-300 hover:underline">{r.ticketNo}</Link>
+                  ) : "—"}
+                  <div className="text-muted-foreground">{r.repairStatus || "—"}</div>
+                </td>
+                <td className="px-2 py-2 whitespace-nowrap">
+                  <div><span className="text-muted-foreground">Picked up </span>{r.pickedUpDate || "—"}</div>
+                  <div><span className="text-muted-foreground">Collected </span>{r.collectedDate || "—"}</div>
+                </td>
+                <td className="px-2 py-2 text-center font-semibold">{r.quantity}</td>
+                <td className="px-2 py-2">
+                  <select value={r.collectType} onChange={e => setRowCollectType(r.id, e.target.value)} className="glass-input text-xs py-1 px-1.5 rounded w-full min-w-[120px]">
+                    <option value="">—</option>
+                    {COLLECT_TYPES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
                 </td>
                 <td className="px-2 py-2 text-center">
-                  <button
-                    onClick={()=>toggleCollected(r.id)}
-                    className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-medium border transition-colors ${r.collected?"border-orange-500/40 bg-orange-500/10 text-orange-300 hover:bg-orange-500/20":"border-green-500/40 bg-green-500/10 text-green-300 hover:bg-green-500/20"}`}
-                    title={r.collected?"Revert — mark as not collected":"Mark as collected"}
-                  >
-                    {r.collected ? <><Undo2 className="h-3 w-3"/>Revert</> : "Collect"}
-                  </button>
+                  <input type="number" min={0} value={r.usedQty} onChange={e => updateRowField(r.id, { usedQty: Math.max(0, Number(e.target.value)) })} className="glass-input text-xs py-1 px-1.5 rounded w-14 text-center" />
                 </td>
+                <td className="px-2 py-2 text-center">
+                  <input type="number" min={0} value={r.restockQty} onChange={e => updateRowField(r.id, { restockQty: Math.max(0, Number(e.target.value)) })} className="glass-input text-xs py-1 px-1.5 rounded w-14 text-center" />
+                </td>
+                <td className="px-2 py-2">
+                  <input value={r.lotNo} onChange={e => updateRowField(r.id, { lotNo: e.target.value })} placeholder="—" className="glass-input text-xs py-1 px-2 rounded w-20" />
+                </td>
+                <td className="px-2 py-2">
+                  <input value={r.comment} onChange={e => updateRowField(r.id, { comment: e.target.value })} placeholder="Add a note" className="glass-input text-xs py-1 px-2 rounded w-40" />
+                </td>
+                <td className="px-2 py-2 whitespace-nowrap">
+                  <span className="rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-500/20 text-slate-300">{r.partStatus || "—"}</span>
+                </td>
+                <td className="px-2 py-2 text-center whitespace-nowrap">{r.coreValue > 0 ? `$${r.coreValue.toFixed(2)}` : "—"}</td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -435,9 +526,17 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
     </div>
 
     {saveError && <p className="text-xs text-red-400 mt-2 text-center">{saveError}</p>}
-    <div className="flex justify-end mt-4 gap-3 items-center">
-      {saved&&<span className="text-green-400 text-sm flex items-center gap-1"><CheckCircle className="h-4 w-4"/>Saved successfully</span>}
-      <button onClick={handleSave} disabled={saving||loading||rows.length===0} className="btn bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2 px-8 disabled:opacity-50">{saving?<Loader2 className="h-3.5 w-3.5 animate-spin"/>:<Save className="h-3.5 w-3.5"/>}{saving?"Saving…":"Save All Changes"}</button>
+    {/* Sticky save bar — always in reach, and says how many edits are waiting. */}
+    <div className={`sticky bottom-0 z-20 mt-4 flex flex-wrap items-center justify-end gap-3 rounded-lg border px-4 py-3 backdrop-blur-md ${dirtyCount > 0 ? "border-amber-500/40 bg-amber-500/10" : "border-white/10 bg-slate-900/80"}`}>
+      {dirtyCount > 0 ? (
+        <span className="text-sm text-amber-200 mr-auto">{dirtyCount} unsaved {dirtyCount === 1 ? "change" : "changes"}</span>
+      ) : saved ? (
+        <span className="text-green-400 text-sm flex items-center gap-1 mr-auto"><CheckCircle className="h-4 w-4" />Saved</span>
+      ) : (
+        <span className="text-xs text-muted-foreground mr-auto">Click Collect on each part (or scan its Unique ID), then Save.</span>
+      )}
+      {dirtyCount > 0 && <button type="button" onClick={discardChanges} disabled={saving} className="btn text-sm px-4">Discard</button>}
+      <button onClick={handleSave} disabled={saving || dirtyCount === 0} className="btn bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2 px-8 disabled:opacity-50">{saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}{saving ? "Saving…" : "Save"}</button>
     </div>
     {restockToast&&<div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl border border-green-500/30 bg-green-500/15 px-4 py-3 text-sm text-green-300 shadow-2xl backdrop-blur-md"><CheckCircle className="h-4 w-4"/>{restockToast}</div>}
   </main>

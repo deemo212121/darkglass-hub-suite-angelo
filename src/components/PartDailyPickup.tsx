@@ -35,20 +35,6 @@ function repairStatusClass(status: string): string {
 
 const TODAY=new Date().toISOString().slice(0,10);
 
-// TEMPORARY fallback — the real query (getPartsForDailyPickup) matches
-// parts with status "Tech Pickup" AND an exact ticket schedule_date, so
-// it's very easy for it to legitimately return nothing (no real part
-// happens to be scheduled for the picked date yet). Rather than always
-// showing an empty table, fall back to these example rows so there's
-// always something to test the Picked Up toggle / "I'm Done" flow
-// against. Ids are prefixed "ex-" so Save knows never to persist them.
-export const EXAMPLE_PICKUP_ROWS: PartPickupRow[] = [
-  { id: "ex-pu-1", techName: "Abel Severino", ticketNo: "26000671722HS", repairStatus: "OP-Waiting for Part", partNo: "11101010016460", description: "Fixed Speed Reciprocating Comp", po: "1007567278-10-AV", quantity: 1, coreValue: 45, partStatus: "Tech Pickup", pickedUp: false, action: "", comment: "", inTransit: false, location: "Atlanta" },
-  { id: "ex-pu-2", techName: "Darrin Stewart", ticketNo: "1007567278-10-AV", repairStatus: "CL-Claimed", partNo: "4056017371", description: "Pipe", po: "PO-260702-001", quantity: 2, coreValue: 0, partStatus: "Tech Pickup", pickedUp: true, action: "Picked up at office", comment: "", inTransit: false, location: "Memphis" },
-  { id: "ex-pu-3", techName: "John Godfrey", ticketNo: "SA-3349588-AV", repairStatus: "OP-Ready for Service", partNo: "WE22X37340", description: "User Interface Board FL Dryer 87 & 95", po: "12-606043-0526", quantity: 1, coreValue: 0, partStatus: "Tech Pickup", pickedUp: false, action: "", comment: "", inTransit: true, location: "Nashville" },
-  { id: "ex-pu-4", techName: "Zonate Grant", ticketNo: "1234567", repairStatus: "TR-Need Triage", partNo: "WE04X24719", description: "Button Start ASM", po: "75112201", quantity: 1, coreValue: 12.5, partStatus: "Tech Pickup", pickedUp: false, action: "", comment: "Waiting on tech", inTransit: false, location: "Birmingham" },
-  { id: "ex-pu-5", techName: "Erick Guzman Juarez", ticketNo: "1007685370-10-AV", repairStatus: "OP-Waiting for Part", partNo: "140156010054", description: "Manifold, Water Filter, W/NO Con", po: "1-55553", quantity: 1, coreValue: 0, partStatus: "Tech Pickup", pickedUp: true, action: "Picked up", comment: "", inTransit: false, location: "San Antonio" },
-];
 
 export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const navigate = useNavigate();
@@ -70,7 +56,6 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const [loadError,setLoadError]=useState<string|null>(null);
   const [saveError,setSaveError]=useState<string|null>(null);
   const [saved,setSaved]=useState(false);
-  const [usingExampleData,setUsingExampleData]=useState(false);
   // Snapshot of what was last loaded/saved, keyed by id — diffed against
   // current `rows` on Save so only real pickedUp flips get logged, same
   // "log the meaningful state change" spirit as Part Receive's activity
@@ -119,13 +104,9 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
     setLoadError(null);
     getPartsForDailyPickup({ location: location || undefined, technician: tech || undefined, pickupDate })
       .then((data) => {
-        const finalRows =
-          data.length === 0
-            ? EXAMPLE_PICKUP_ROWS.filter((r) => (!location || r.location === location) && (!tech || r.techName === tech))
-            : data;
-        setRows(finalRows);
-        setUsingExampleData(data.length === 0);
-        originalRowsRef.current = new Map(finalRows.map((r) => [r.id, r]));
+        // Real parts only — no example rows when nothing matches.
+        setRows(data);
+        originalRowsRef.current = new Map(data.map((r) => [r.id, r]));
       })
       .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
@@ -273,16 +254,13 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
     </div>
 
     {/* Table */}
-    {usingExampleData && !loading && (
-      <p className="text-xs text-amber-400 mb-2">No real parts scheduled for pickup on this date — showing example data instead.</p>
-    )}
     <div className="panel p-0 w-full">
       {loadError ? (
         <p className="text-sm text-red-400 px-4 py-6">Failed to load parts: {loadError}</p>
       ) : loading ? (
         <p className="text-sm text-muted-foreground px-4 py-6">Loading…</p>
       ) : rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground px-4 py-6">No parts need pickup for these filters.</p>
+        <p className="text-sm text-muted-foreground px-4 py-6">No parts in Tech Pickup for this date — a part shows here when its status is Tech Pickup and its ticket is scheduled on the Pickup Date.</p>
       ) : (
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
