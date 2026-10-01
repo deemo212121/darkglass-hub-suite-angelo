@@ -35,6 +35,13 @@ export interface CorrectionEmployeeInfo {
   jobTitle: string;
   department: string;
   directManagerName: string;
+  /** Who approved the Accounting step, when it is approved — printed in section 7. */
+  accountingApproverName?: string;
+}
+
+/** Section 7 data from the row, when the Accounting step is approved. */
+function accountingApprovalOf(c: Pick<TimecardCorrectionRow, "accountingStatus" | "accountingReviewedAt">, info: CorrectionEmployeeInfo) {
+  return c.accountingStatus === "approved" ? { name: info.accountingApproverName || "Accounting", date: (c.accountingReviewedAt || "").slice(0, 10) } : null;
 }
 
 let cachedLogo: string | null = null;
@@ -51,7 +58,7 @@ function formDataFromCorrection(
   otherDescription: string,
   reason: string,
   employeeInfo: CorrectionEmployeeInfo,
-  extra?: { managerComments?: string; hrReceivedDate?: string; hrReviewerName?: string; hrActionStatus?: "approved" | "additional_review_required" | "" }
+  extra?: { managerComments?: string; hrReceivedDate?: string; hrReviewerName?: string; hrActionStatus?: "approved" | "additional_review_required" | ""; accountingApproval?: { name: string; date: string } | null }
 ): ExceptionVisitFormData {
   return {
     employeeId: "",
@@ -70,6 +77,7 @@ function formDataFromCorrection(
     hrReceivedDate: extra?.hrReceivedDate || "",
     hrReviewerName: extra?.hrReviewerName || "",
     hrActionStatus: extra?.hrActionStatus || "",
+    accountingApproval: extra?.accountingApproval ?? null,
   };
 }
 
@@ -121,6 +129,7 @@ export async function buildCorrectionManagerSignaturePdf(input: {
   const logoDataUrl = await getLogoDataUrl();
   const c = input.correction;
   const formData = formDataFromCorrection(c.workDate, c.exceptionType || "other", c.otherDescription, c.reason, input.employeeInfo, {
+    accountingApproval: accountingApprovalOf(c, input.employeeInfo),
     managerComments: input.managerComments,
     hrReceivedDate: c.hrReceivedDate || "",
     hrReviewerName: c.hrReviewerName || "",
@@ -157,6 +166,7 @@ export async function buildCorrectionHrSignaturePdf(input: {
   const logoDataUrl = await getLogoDataUrl();
   const c = input.correction;
   const formData = formDataFromCorrection(c.workDate, c.exceptionType || "other", c.otherDescription, c.reason, input.employeeInfo, {
+    accountingApproval: accountingApprovalOf(c, input.employeeInfo),
     managerComments: c.managerComments,
     hrReceivedDate: input.hrReceivedDate,
     hrReviewerName: input.hrReviewerName,
@@ -192,6 +202,7 @@ export async function regenerateCorrectionPdf(input: {
   const logoDataUrl = await getLogoDataUrl();
   const c = input.correction;
   const formData = formDataFromCorrection(c.workDate, c.exceptionType || "other", c.otherDescription, c.reason, input.employeeInfo, {
+    accountingApproval: accountingApprovalOf(c, input.employeeInfo),
     managerComments: c.managerComments,
     hrReceivedDate: c.hrReceivedDate || "",
     hrReviewerName: c.hrReviewerName || "",

@@ -491,6 +491,23 @@ export async function reviewCorrectionStage(
     throw new Error(error.message);
   }
   const updated = mapRow(data);
+
+  // Accounting approves with a click, not a signature — rebuild the Exception
+  // Report PDF so its "7. Accounting Approval" section shows who and when.
+  // Best-effort and in the background: the approval itself is already saved.
+  if (stage === "accounting" && decision === "approved" && updated.exceptionType !== null) {
+    void (async () => {
+      const [{ regenerateCorrectionPdf }, { employeeInfoFor }] = await Promise.all([
+        import("@/lib/timecardCorrectionPdf"),
+        import("@/components/CorrectionSignModals"),
+      ]);
+      const profiles = await getCompanyUsers();
+      const companyId = profiles.find((p) => p.id === updated.profileId)?.company_id;
+      if (!companyId) return;
+      const { pdfUrl } = await regenerateCorrectionPdf({ correction: updated, companyId, employeeInfo: employeeInfoFor(updated, profiles) });
+      await updateCorrectionPdfUrl(updated.id, pdfUrl);
+    })().catch((err) => console.error("Couldn't refresh the Exception Report PDF after Accounting approval:", err));
+  }
   const stageLabel = stage === "manager" ? "your manager" : stage === "hr" ? "HR" : "Accounting";
 
   if (decision === "rejected") {

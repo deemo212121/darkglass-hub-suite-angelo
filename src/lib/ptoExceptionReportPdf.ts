@@ -24,6 +24,13 @@ export interface PtoEmployeeInfo {
   jobTitle: string;
   department: string;
   directManagerName: string;
+  /** Who approved the Accounting step, when it is approved — printed in section 7. */
+  accountingApproverName?: string;
+}
+
+/** Section 7 data from the row, when the Accounting step is approved. */
+function accountingApprovalOf(r: Pick<PtoRequestRow, "accountingStatus" | "accountingReviewedAt">, info: PtoEmployeeInfo) {
+  return r.accountingStatus === "approved" ? { name: info.accountingApproverName || "Accounting", date: (r.accountingReviewedAt || "").slice(0, 10) } : null;
 }
 
 let cachedLogo: string | null = null;
@@ -40,7 +47,7 @@ function formDataFromPto(
   otherDescription: string,
   detailedReason: string,
   employeeInfo: PtoEmployeeInfo,
-  extra?: { managerComments?: string; hrReceivedDate?: string; hrReviewerName?: string; hrActionStatus?: "approved" | "additional_review_required" | "" }
+  extra?: { managerComments?: string; hrReceivedDate?: string; hrReviewerName?: string; hrActionStatus?: "approved" | "additional_review_required" | ""; accountingApproval?: { name: string; date: string } | null }
 ): ExceptionVisitFormData {
   return {
     employeeId: "",
@@ -57,6 +64,7 @@ function formDataFromPto(
     hrReceivedDate: extra?.hrReceivedDate || "",
     hrReviewerName: extra?.hrReviewerName || "",
     hrActionStatus: extra?.hrActionStatus || "",
+    accountingApproval: extra?.accountingApproval ?? null,
   };
 }
 
@@ -101,6 +109,7 @@ export async function buildPtoManagerSignaturePdf(input: {
   const logoDataUrl = await getLogoDataUrl();
   const r = input.request;
   const formData = formDataFromPto(r.startDate, r.exceptionType || "other", r.otherDescription, r.reason, input.employeeInfo, {
+    accountingApproval: accountingApprovalOf(r, input.employeeInfo),
     managerComments: input.managerComments,
     hrReceivedDate: r.hrReceivedDate || "",
     hrReviewerName: r.hrReviewerName || "",
@@ -131,6 +140,7 @@ export async function buildPtoHrSignaturePdf(input: {
   const logoDataUrl = await getLogoDataUrl();
   const r = input.request;
   const formData = formDataFromPto(r.startDate, r.exceptionType || "other", r.otherDescription, r.reason, input.employeeInfo, {
+    accountingApproval: accountingApprovalOf(r, input.employeeInfo),
     managerComments: r.managerComments,
     hrReceivedDate: input.hrReceivedDate,
     hrReviewerName: input.hrReviewerName,
@@ -155,6 +165,7 @@ export async function regeneratePtoExceptionReportPdf(input: {
   const logoDataUrl = await getLogoDataUrl();
   const r = input.request;
   const formData = formDataFromPto(r.startDate, r.exceptionType || "other", r.otherDescription, r.reason, input.employeeInfo, {
+    accountingApproval: accountingApprovalOf(r, input.employeeInfo),
     managerComments: r.managerComments,
     hrReceivedDate: r.hrReceivedDate || "",
     hrReviewerName: r.hrReviewerName || "",

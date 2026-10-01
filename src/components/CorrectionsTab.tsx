@@ -301,22 +301,27 @@ export function CorrectionsTab() {
                     {c.hrStatus === "pending" && canReviewCorrectionStage(c, "hr", myProfileId, role, extraRoles) && (
                       <div className="flex gap-1">
                         <span className="text-[10px] text-slate-500 self-center">HR:</span>
-                        {c.exceptionType === null && (
-                          // Pre-Exception-Report correction — plain approve, no signature (never asked of them at submission).
-                          <button type="button" title="Approve as HR" onClick={() => handleCorrectionStageAction(c, "hr", "approved")} disabled={busyCorrectionId === c.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
-                            {busyCorrectionId === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          title={c.exceptionType !== null && c.hrPaperworkStatus === "pending" ? "Approve & sign as HR" : "Approve as HR"}
+                          onClick={() => (c.exceptionType !== null && c.hrPaperworkStatus === "pending" ? setSigningHrFor(c) : handleCorrectionStageAction(c, "hr", "approved"))}
+                          disabled={busyCorrectionId === c.id}
+                          className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1"
+                        >
+                          {busyCorrectionId === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
+                        </button>
                         <button type="button" title="Reject as HR" onClick={() => handleCorrectionStageAction(c, "hr", "rejected")} disabled={busyCorrectionId === c.id} className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
                           {busyCorrectionId === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />}
                         </button>
                       </div>
                     )}
-                    {c.exceptionType !== null && c.hrPaperworkStatus === "pending" && canReviewCorrectionStage(c, "hr", myProfileId, role, extraRoles) && (
-                      // HR doesn't wait for the manager — any 2 of Manager / HR / Accounting, in any order.
-                      <button type="button" onClick={() => setSigningHrFor(c)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[10px] font-semibold transition">
-                        Approve & Sign as HR
-                      </button>
+                    {c.exceptionType !== null && c.hrPaperworkStatus === "pending" && c.hrStatus !== "pending" && canReviewCorrectionStage(c, "hr", myProfileId, role, extraRoles) && (
+                      <div className="flex gap-1">
+                        <span className="text-[10px] text-slate-500 self-center">HR:</span>
+                        <button type="button" title="Sign the Exception Report as HR" onClick={() => setSigningHrFor(c)} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs transition flex items-center gap-1">
+                          <CheckCircle className="h-3 w-3" />
+                        </button>
+                      </div>
                     )}
                     {c.accountingStatus === "pending" && canReviewCorrectionStage(c, "accounting", myProfileId, role, extraRoles) && (
                       <div className="flex gap-1">
