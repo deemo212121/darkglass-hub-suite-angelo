@@ -984,7 +984,21 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       const workbook = new ExcelJS.Workbook();
       const sheet = workbook.addWorksheet("Import Template");
 
-      sheet.columns = [
+      // The template follows the columns on screen: the short view gets the
+      // same short set (plus Date, which every day row needs), "Show all
+      // columns" gets the full layout. handleImportFile reads both sets of
+      // header names.
+      sheet.columns = !showAllColumns ? [
+        { header: "Name", key: "name", width: 26 },
+        { header: "Date", key: "date", width: 12 },
+        { header: "Minor Comp", key: "minorTicket", width: 13 },
+        { header: "Major Comp", key: "majorTicket", width: 13 },
+        { header: "Redo Count", key: "redoCount", width: 12 },
+        { header: "Mileage", key: "miles", width: 12 },
+        { header: "Hours of Work", key: "hoursWorked", width: 15 },
+        { header: "Working Total Days", key: "daysWorked", width: 19 },
+        { header: "Off Days", key: "offDays", width: 10 },
+      ] : [
         { header: "Name", key: "name", width: 26 },
         { header: "Variance", key: "variance", width: 12 },
         { header: "Damage Assessment", key: "damageAssessment", width: 18 },
@@ -1097,7 +1111,9 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       // re-import, see handleImportFile).
       sheet.addRow({});
       const noteRow = sheet.addRow({
-        name: "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. Damage Assessment/Minor Ticket/Major Ticket/Redo/Total Completion/Reschedule/NCNS/Mileage/Hours Worked below are the CURRENT totals, for reference.",
+        name: showAllColumns
+          ? "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. Damage Assessment/Minor Ticket/Major Ticket/Redo/Total Completion/Reschedule/NCNS/Mileage/Hours Worked below are the CURRENT totals, for reference."
+          : "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. The numbers below are the CURRENT totals, for reference. Working Total Days and Off Days aren't read back on import.",
       });
       noteRow.font = { italic: true, color: { argb: "FF64748B" } };
       for (const r of sortedRows) {
@@ -1122,7 +1138,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           manager: r.manager,
           tier: r.tier,
         });
-        styleVarianceCell(row.getCell("variance"), variance);
+        if (showAllColumns) styleVarianceCell(row.getCell("variance"), variance);
       }
 
       const buffer = await workbook.xlsx.writeBuffer();
@@ -1179,10 +1195,12 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         const ticketsIdx = idxAny("total completion", "total tickets");
         const redoIdx = idxAny("redo", "redo count");
         const milesIdx = idxAny("mileage", "miles");
-        const hoursIdx = idx("hours worked");
+        // Short-view template headers (Minor Comp/Major Comp/Hours of Work)
+        // are accepted alongside the full template's.
+        const hoursIdx = idxAny("hours worked", "hours of work");
         const damageAssessmentIdx = idx("damage assessment");
-        const minorTicketIdx = idx("minor ticket");
-        const majorTicketIdx = idx("major ticket");
+        const minorTicketIdx = idxAny("minor ticket", "minor comp");
+        const majorTicketIdx = idxAny("major ticket", "major comp");
         const rescheduleIdx = idx("reschedule");
         const ncnsIdx = idx("ncns");
         const locationIdx = idx("location");
