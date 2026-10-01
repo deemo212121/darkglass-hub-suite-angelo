@@ -12,6 +12,7 @@
 import { supabase } from "./client";
 import { getCompanyUsers } from "./users";
 import { createNotification } from "./notifications";
+import { requireRejectReason } from "@/lib/rejectReason";
 import { isAttendanceManagerTierRole } from "@/lib/roleLabels";
 
 /** "payroll_dispute" (0182) is reviewed the same way attendance_dispute is
@@ -257,20 +258,44 @@ export async function updateEmployeeRequestStatus(
   id: string,
   status: EmployeeRequestStatus,
   reviewedBy: string | null,
-  reviewNote?: string
+  reviewNote?: string,
+  /** Reviewer's display name for the rejection notification. */
+  reviewerName?: string
 ): Promise<void> {
-  const { error } = await supabase
+  // A rejection always carries a reason (shared popup when none was typed) —
+  // the employee sees it in Self-Service → My Requests and in the notification.
+  const note = status === "rejected" ? await requireRejectReason(reviewNote, "Reason for rejecting this request") : reviewNote;
+  const { data, error } = await supabase
     .from("employee_requests")
     .update({
       status,
       reviewed_by: reviewedBy,
       reviewed_at: new Date().toISOString(),
-      review_note: reviewNote || null,
+      review_note: note || null,
     })
-    .eq("id", id);
+    .eq("id", id)
+    .select("profile_id, request_type, ticket_no")
+    .maybeSingle();
   if (error) {
     console.error("updateEmployeeRequestStatus error:", error.message);
     throw new Error(error.message);
+  }
+  if (status === "rejected" && data?.profile_id) {
+    const what =
+      data.request_type === "ticket_time_dispute"
+        ? `ticket time dispute${data.ticket_no ? ` for ${data.ticket_no}` : ""}`
+        : data.request_type === "attendance_dispute"
+        ? "attendance dispute"
+        : data.request_type === "payroll_dispute"
+        ? "payroll dispute"
+        : "payroll inquiry";
+    await createNotification({
+      recipientId: data.profile_id,
+      senderId: reviewedBy,
+      senderName: reviewerName || "HR",
+      body: `❌ Your ${what} was rejected. Reason: ${note}`,
+      linkTo: "/m/dashboard/employee-self-service?tab=requests",
+    }).catch((err) => console.error("Failed to notify request rejection:", err));
   }
 }
 

@@ -8553,7 +8553,7 @@ function MobilePayrollDisputeView({
                   </p>
                 )}
                 {r.reviewNote && (
-                  <p className="mtech-muted" style={{ color: "#16a34a", fontWeight: 600, padding: "0.25rem 0" }}>Response: {r.reviewNote}</p>
+                  <p className="mtech-muted" style={{ color: r.status === "rejected" || (r.status as string) === "denied" ? "#dc2626" : "#16a34a", fontWeight: 600, padding: "0.25rem 0", whiteSpace: "pre-line" }}>{r.status === "rejected" || (r.status as string) === "denied" ? "Reason rejected: " : "Response: "}{r.reviewNote}</p>
                 )}
               </div>
             </div>
@@ -8784,7 +8784,7 @@ function MobileTimeOffView({ userName, profileId }: { userName: string; profileI
                   Manager: {requestStatusLabel(r.managerStatus)} · HR: {requestStatusLabel(r.hrStatus)} · Accounting: {requestStatusLabel(r.accountingStatus)}
                 </p>
                 {r.reviewNote && (
-                  <p className="mtech-muted" style={{ color: "#16a34a", fontWeight: 600, padding: "0.25rem 0" }}>Response: {r.reviewNote}</p>
+                  <p className="mtech-muted" style={{ color: (r.status as string) === "rejected" || (r.status as string) === "denied" ? "#dc2626" : "#16a34a", fontWeight: 600, padding: "0.25rem 0", whiteSpace: "pre-line" }}>{(r.status as string) === "rejected" || (r.status as string) === "denied" ? "Reason rejected: " : "Response: "}{r.reviewNote}</p>
                 )}
               </div>
             </div>
@@ -9326,7 +9326,7 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, role, tec
                   </p>
                 )}
                 {r.reviewNote && (
-                  <p className="mtech-muted" style={{ color: "#16a34a", fontWeight: 600, padding: "0.25rem 0" }}>Response: {r.reviewNote}</p>
+                  <p className="mtech-muted" style={{ color: r.status === "rejected" || (r.status as string) === "denied" ? "#dc2626" : "#16a34a", fontWeight: 600, padding: "0.25rem 0", whiteSpace: "pre-line" }}>{r.status === "rejected" || (r.status as string) === "denied" ? "Reason rejected: " : "Response: "}{r.reviewNote}</p>
                 )}
               </div>
             </div>
@@ -9665,6 +9665,9 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
                 <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>
                   Manager: {requestStatusLabel(r.managerStatus)} · HR: {requestStatusLabel(r.hrStatus)} · Accounting: {requestStatusLabel(r.accountingStatus)}
                 </p>
+                {r.status === "rejected" && r.reviewNote && (
+                  <p className="mtech-muted" style={{ color: "#dc2626", fontWeight: 600, padding: "0.25rem 0", whiteSpace: "pre-line" }}>Reason rejected: {r.reviewNote}</p>
+                )}
               </div>
             </div>
           ))}

@@ -1,3 +1,4 @@
+import { RejectReasonHost } from "@/components/RejectReasonHost";
 import "@/lib/promiseTryPolyfill";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect } from "react";
@@ -173,6 +174,8 @@ function RootComponent() {
             {!hideChrome && <FrozenAccountModal />}
             {!hideChrome && <LateTicketCompletionModal />}
             <Outlet />
+            {/* "Reason for rejecting" popup for every Reject action — mobile too. */}
+            <RejectReasonHost />
             {!hideChrome && <TicketSearchFab />}
             {!hideChrome && <FloatingMessenger />}
           </LiveLocationProvider>

@@ -79,6 +79,8 @@ interface Request {
   status: "pending" | "approved" | "rejected" | "closed";
   submittedDate: string;
   details: string;
+  /** Why it was rejected — "Rejected by <name> (<step>): <reason>" lines, shown in a red box. */
+  rejectionReason?: string | null;
 }
 
 const PTO_TYPE_LABEL: Record<PtoType, string> = {
@@ -325,6 +327,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         status: r.status === "denied" ? "rejected" : r.status === "cancelled" ? "closed" : r.status,
         submittedDate: r.createdAt.slice(0, 10),
         details: `${PTO_TYPE_LABEL[r.ptoType] ?? r.ptoType}: ${r.startDate} to ${r.endDate} (${r.hoursRequested}h)${r.reason ? ` - ${r.reason}` : ""}\n${managerLine} | ${hrLine}`,
+        rejectionReason: r.status === "denied" ? r.reviewNote : null,
       });
     }
     for (const r of myCorrections) {
@@ -343,6 +346,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         status: r.status,
         submittedDate: r.createdAt.slice(0, 10),
         details: `Date: ${r.workDate} - requested ${r.correctedCheckIn || "—"} to ${r.correctedCheckOut || "—"} (was ${r.originalCheckIn || "—"} to ${r.originalCheckOut || "—"})${(r.correctedMealStart || r.correctedMealEnd) ? `\nMeal: requested ${r.correctedMealStart || "—"} to ${r.correctedMealEnd || "—"} (was ${r.originalMealStart || "—"} to ${r.originalMealEnd || "—"})` : ""}${r.reason ? `. ${r.reason}` : ""}\n${corrManagerLine} | ${corrHrLine} | ${corrAccountingLine}${r.status === "approved" ? "\n✅ Your timecard has been updated with the corrected time." : ""}`,
+        rejectionReason: r.status === "rejected" ? r.reviewNote : null,
       });
     }
     for (const r of myEmployeeRequests) {
@@ -351,7 +355,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         type: r.requestType === "attendance_dispute" ? "Attendance Dispute" : "Payroll Inquiry",
         status: r.status,
         submittedDate: r.createdAt.slice(0, 10),
-        details: r.details + (r.reviewNote ? `\n\nResponse: ${r.reviewNote}` : ""),
+        details: r.details + (r.reviewNote && r.status !== "rejected" ? `\n\nResponse: ${r.reviewNote}` : ""),
+        rejectionReason: r.status === "rejected" ? r.reviewNote || null : null,
       });
     }
     return items.sort((a, b) => b.submittedDate.localeCompare(a.submittedDate));
@@ -1593,6 +1598,12 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           <p className="text-sm font-semibold text-white">{request.type}</p>
                           <p className="text-xs text-slate-400 mt-1">Submitted: {request.submittedDate}</p>
                           <p className="text-sm text-slate-300 mt-2 whitespace-pre-line">{request.details}</p>
+                          {request.status === "rejected" && (
+                            <div className="mt-2 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2">
+                              <p className="text-[11px] font-semibold uppercase tracking-wide text-red-300">Reason rejected</p>
+                              <p className="text-sm text-red-100 whitespace-pre-line">{request.rejectionReason || "No reason was given."}</p>
+                            </div>
+                          )}
                         </div>
                         <span className={`px-3 py-1 rounded text-xs font-semibold whitespace-nowrap ml-3 ${getStatusColor(request.status)}`}>
                           {getStatusIcon(request.status)} {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
@@ -1937,6 +1948,12 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           <p className="text-sm font-semibold text-white">{request.type}</p>
                           <p className="text-xs text-slate-400 mt-1">Submitted: {request.submittedDate}</p>
                           <p className="text-sm text-slate-300 mt-2 whitespace-pre-line">{request.details}</p>
+                          {request.status === "rejected" && (
+                            <div className="mt-2 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2">
+                              <p className="text-[11px] font-semibold uppercase tracking-wide text-red-300">Reason rejected</p>
+                              <p className="text-sm text-red-100 whitespace-pre-line">{request.rejectionReason || "No reason was given."}</p>
+                            </div>
+                          )}
                         </div>
                         <span className={`px-3 py-1 rounded text-xs font-semibold whitespace-nowrap ml-3 ${getStatusColor(request.status)}`}>
                           {getStatusIcon(request.status)} {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
