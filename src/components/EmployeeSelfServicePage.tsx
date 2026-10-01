@@ -30,8 +30,10 @@ import {
 import {
   getCompanyTimecardCorrections,
   createTimecardCorrection,
+  validateTimecardCorrectionDate,
   type TimecardCorrectionRow,
 } from "@/lib/supabase/timecardCorrections";
+import { zonedDateKey } from "@/lib/serverTime";
 import { buildCorrectionSubmissionPdf } from "@/lib/timecardCorrectionPdf";
 import { buildPtoSubmissionPdf } from "@/lib/ptoExceptionReportPdf";
 import { EXCEPTION_TYPE_LABELS, CORRECTION_ISSUE_LABELS, isCorrectionIssueType, type ExceptionType, type CorrectionIssueType } from "@/lib/exceptionVisitReportTemplate";
@@ -708,6 +710,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             setSubmitting(false);
             return;
           }
+          await validateTimecardCorrectionDate(myProfileId, formData.correctionDate);
           if (
             !formData.correctedCheckIn &&
             !formData.correctedCheckOut &&
@@ -1697,6 +1700,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                         <input
                           type="date"
                           title="Date"
+                          max={zonedDateKey(new Date(), companyProfiles.find((p) => p.id === myProfileId)?.schedule_timezone === "EST" ? "EST" : "CST")}
                           value={formData.correctionDate}
                           onChange={(e) => setFormData({ ...formData, correctionDate: e.target.value })}
                           className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"

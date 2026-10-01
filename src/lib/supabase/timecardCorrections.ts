@@ -17,6 +17,7 @@
 
 import { chainCanApprove } from "@/lib/approvalDirectory";
 import { supabase } from "./client";
+import { getServerNow, zonedDateKey } from "@/lib/serverTime";
 import { createNotification } from "./notifications";
 import { getCompanyUsers } from "./users";
 import { isAttendanceManagerTierRole } from "@/lib/roleLabels";
@@ -327,6 +328,20 @@ export function canReviewCorrectionStage(
  * same pre-generated-key pattern MobileTicketTimeDisputeView already uses
  * for its own attachments) and passes the resulting URLs in here.
  */
+/** Validate against the server clock in the employee's attendance timezone. */
+export async function validateTimecardCorrectionDate(profileId: string, workDate: string): Promise<void> {
+  const { data: profile, error } = await supabase
+    .from("profiles")
+    .select("schedule_timezone")
+    .eq("id", profileId)
+    .single();
+  if (error) throw error;
+  const today = zonedDateKey(await getServerNow(), profile.schedule_timezone === "EST" ? "EST" : "CST");
+  if (workDate > today) {
+    throw new Error("Time correction requests cannot be submitted for future dates. Choose today or an earlier date.");
+  }
+}
+
 export async function createTimecardCorrection(input: {
   id: string;
   profileId: string;
@@ -356,6 +371,7 @@ export async function createTimecardCorrection(input: {
   employeeSignatureName?: string;
   pdfUrl?: string;
 }): Promise<void> {
+  await validateTimecardCorrectionDate(input.profileId, input.workDate);
   const { error } = await supabase.from("timecard_corrections").insert({
     id: input.id,
     profile_id: input.profileId,
