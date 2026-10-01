@@ -22,7 +22,7 @@ import { getCompanyTimecardCorrections, updateCorrectionPdfUrl, rejectCorrection
 import { getCompanyEmployeeRequests, updateEmployeeRequestPdfUrl, updateEmployeeRequestStatus, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { getCompanyPtoRequests, updatePtoPdfUrl, reviewPtoStage, type PtoRequestRow } from "@/lib/supabase/pto";
 import { createNotification } from "@/lib/supabase/notifications";
-import { EXCEPTION_TYPE_LABELS } from "@/lib/exceptionVisitReportTemplate";
+import { EXCEPTION_TYPE_LABELS, correctionIssueLabel, correctionIssueKey, correctionIssueOptions } from "@/lib/exceptionVisitReportTemplate";
 import { TICKET_DISPUTE_EXCEPTION_TYPE_LABELS } from "@/lib/ticketDisputeReportTemplate";
 import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
@@ -299,7 +299,8 @@ export function ExceptionReportsTab() {
 
   // Work Date column sort (Time Correction view) — newest first by default.
   const [workDateSort, setWorkDateSort] = useState<"desc" | "asc">("desc");
-  const reports = [...allReports.filter((c) => inGroup(c.profileId))].sort((a, b) => {
+  const [issueFilter, setIssueFilter] = useState<string>("all");
+  const reports = [...allReports.filter((c) => inGroup(c.profileId) && (issueFilter === "all" || correctionIssueKey(c.exceptionType) === issueFilter))].sort((a, b) => {
       const d = a.workDate.localeCompare(b.workDate) || (a.createdAt ?? "").localeCompare(b.createdAt ?? "");
       return workDateSort === "desc" ? -d : d;
     });
@@ -384,6 +385,21 @@ export function ExceptionReportsTab() {
               ))}
             </div>
           </div>
+          {subView === "timeCorrection" && (
+            <div>
+              <span className="block text-xs text-slate-400 uppercase mb-2">Issue</span>
+              <select
+                value={issueFilter}
+                onChange={(e) => setIssueFilter(e.target.value)}
+                className="bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+              >
+                <option value="all">All Issues</option>
+                {correctionIssueOptions(allReports).map((o) => (
+                  <option key={o.value} value={o.value}>{o.label} ({o.count})</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
         {subView === "timeCorrection" ? (
         <table className="w-full text-sm">
@@ -402,7 +418,7 @@ export function ExceptionReportsTab() {
               </th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Actual Time</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Requested Time</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Exception Type</th>
+              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Issue</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Paperwork Status</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Submitted</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">PDF</th>
@@ -431,7 +447,7 @@ export function ExceptionReportsTab() {
                   <td className="px-3 py-3 text-slate-300">{c.workDate}</td>
                   <td className="px-3 py-3 text-slate-300"><ActualTime c={c} /></td>
                   <td className="px-3 py-3 text-amber-200"><RequestedTime c={c} /></td>
-                  <td className="px-3 py-3 text-slate-300">{c.exceptionType ? EXCEPTION_TYPE_LABELS[c.exceptionType] : "—"}</td>
+                  <td className="px-3 py-3 text-slate-300">{correctionIssueLabel(c.exceptionType, c.otherDescription)}</td>
                   <td className="px-3 py-3">
                     <div className="flex flex-col gap-1">
                       {c.status === "rejected" && (

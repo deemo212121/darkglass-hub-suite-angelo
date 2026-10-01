@@ -31,7 +31,9 @@ import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { getLatestVisitUpdatesByProfileIds, getTicketsScheduledInRange, type LatestVisitUpdate, type ScheduledTicketRow } from "@/lib/supabase/tickets";
 import { resolveTeamLeadOrManager, visibleAttendanceProfileIds } from "@/lib/notifyRouting";
+import { correctionIssueLabel, correctionIssueKey, correctionIssueOptions } from "@/lib/exceptionVisitReportTemplate";
 import { chainCanClockIn } from "@/lib/approvalDirectory";
+import { CorrectionStageBadges, CorrectionOverallBadge } from "@/components/CorrectionStageBadges";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { ATTENDANCE_GRACE_MINUTES, addMinutesToHHMM, nowInTimezone, timezoneForBranch, DEFAULT_ATTENDANCE_TIMEZONE, payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule, toSeconds, ON_TIME_BUFFER_SECONDS } from "@/lib/attendanceGrace";
 import { getServerNow } from "@/lib/serverTime";
@@ -1495,6 +1497,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // it's stale/blank but the id was captured correctly), never removes it.
   // Work Date column sort — newest first by default, click the header to flip.
   const [workDateSort, setWorkDateSort] = useState<"desc" | "asc">("desc");
+  // Issue filter (Time Correction "Issue", migration 0330) — older corrections fall under Others.
+  const [correctionIssueFilter, setCorrectionIssueFilter] = useState<string>("all");
   const filteredCorrections = useMemo(() => {
     const q = correctionSearch.trim().toLowerCase();
     return corrections.filter((c) => {
@@ -1511,6 +1515,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       }
       if (correctionWorkDateFrom && c.workDate < correctionWorkDateFrom) return false;
       if (correctionWorkDateTo && c.workDate > correctionWorkDateTo) return false;
+      if (correctionIssueFilter !== "all" && correctionIssueKey(c.exceptionType) !== correctionIssueFilter) return false;
       if (q && !profileName(c.profileId).toLowerCase().includes(q)) return false;
       return true;
     });
@@ -1519,6 +1524,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     correctionEraFilter,
     correctionSearch,
     correctionStatusFilter,
+    correctionIssueFilter,
     correctionDepartmentFilter,
     correctionBranchFilter,
     correctionWorkDateFrom,
@@ -2594,6 +2600,19 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     </select>
                   </div>
                   <div>
+                    <label className="block text-xs text-slate-400 uppercase mb-2">Filter by Issue</label>
+                    <select
+                      value={correctionIssueFilter}
+                      onChange={(e) => setCorrectionIssueFilter(e.target.value)}
+                      className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="all">All Issues</option>
+                      {correctionIssueOptions(corrections).map((o) => (
+                        <option key={o.value} value={o.value}>{o.label} ({o.count})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
                     <label className="block text-xs text-slate-400 uppercase mb-2">Filter by Department</label>
                     <select
                       value={correctionDepartmentFilter}
@@ -2650,7 +2669,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       />
                     </div>
                   </div>
-                  <div className="flex items-end justify-end gap-2 md:col-span-2">
+                  <div className="flex items-end justify-end gap-2">
                     <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-2 text-sm">
                       <span className="text-yellow-300/80">Pending: </span>
                       <span className="font-semibold text-yellow-300">{correctionPendingCount}</span>
@@ -2675,6 +2694,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   Work Date <span className="text-[10px]">{workDateSort === "desc" ? "▼" : "▲"}</span>
                 </button>
               </th>
+              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Issue</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Original Time</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Requested Time</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Reason</th>
@@ -2684,9 +2704,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   </thead>
                   <tbody>
                     {loading ? (
-                      <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
+                      <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
                     ) : filteredCorrections.length === 0 ? (
-                      <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" || correctionDepartmentFilter !== "all" || correctionBranchFilter !== "all" || correctionWorkDateFrom || correctionWorkDateTo ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
+                      <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" || correctionIssueFilter !== "all" || correctionDepartmentFilter !== "all" || correctionBranchFilter !== "all" || correctionWorkDateFrom || correctionWorkDateTo ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
                     ) : sortedCorrections.map((correction) => (
                       <tr key={correction.id} className="border-b border-white/5 hover:bg-white/5 transition">
                         <td className="px-3 py-3 text-white font-medium">
@@ -2695,35 +2715,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           </a>
                         </td>
                         <td className="px-3 py-3 text-slate-300">{correction.workDate}</td>
+                        <td className="px-3 py-3 text-slate-300">{correctionIssueLabel(correction.exceptionType, correction.otherDescription)}</td>
                         <td className="px-3 py-3 text-slate-300">{correction.originalCheckIn || "—"} → {correction.originalCheckOut || "—"}</td>
                         <td className="px-3 py-3 text-amber-200">
                           <RequestedTime c={correction} />
                         </td>
                         <td className="px-3 py-3 text-slate-300">{correction.reason || "—"}</td>
                         <td className="px-3 py-3">
-                          <div className="flex flex-col gap-1">
-                            <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
-                              correction.managerStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
-                              : correction.managerStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
-                              : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
-                            }`}>
-                              Manager: {correction.managerStatus.charAt(0).toUpperCase() + correction.managerStatus.slice(1)}
-                            </span>
-                            <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
-                              correction.hrStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
-                              : correction.hrStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
-                              : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
-                            }`}>
-                              HR: {correction.hrStatus.charAt(0).toUpperCase() + correction.hrStatus.slice(1)}
-                            </span>
-                            <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
-                              correction.accountingStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
-                              : correction.accountingStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
-                              : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
-                            }`}>
-                              Accounting: {correction.accountingStatus.charAt(0).toUpperCase() + correction.accountingStatus.slice(1)}
-                            </span>
-                          </div>
+                          <CorrectionStageBadges row={correction} />
                         </td>
                         <td className="px-3 py-3">
                           {correction.status === "pending" ? (
@@ -2731,7 +2730,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               View Timecard
                             </button>
                           ) : (
-                            <span className="text-slate-400 text-xs">{correction.status === "approved" ? "Approved" : "Rejected"}</span>
+                            <CorrectionOverallBadge status={correction.status} size="md" />
                           )}
                         </td>
                       </tr>

@@ -23,7 +23,8 @@ import { isAttendanceManagerTierRole } from "@/lib/roleLabels";
 
 export type CorrectionStatus = "pending" | "approved" | "rejected";
 export type CorrectionStage = "manager" | "hr" | "accounting";
-export type ExceptionType = "missed_workday" | "late_early" | "missed_visit" | "other";
+/** Original Exception Type values (older corrections) plus the Time Correction Issue choices (migration 0330). */
+export type ExceptionType = "missed_workday" | "late_early" | "missed_visit" | "other" | "forgot_to_clock" | "system_issue" | "account_issue" | "internet_issue";
 export type HrPaperworkStatus = "pending" | "approved" | "additional_review_required";
 
 export interface TimecardCorrectionRow {

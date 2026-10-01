@@ -39,7 +39,7 @@ import {
 } from "@/lib/supabase/timecardCorrections";
 import { buildCorrectionSubmissionPdf } from "@/lib/timecardCorrectionPdf";
 import { buildPtoSubmissionPdf } from "@/lib/ptoExceptionReportPdf";
-import { EXCEPTION_TYPE_LABELS, type ExceptionType } from "@/lib/exceptionVisitReportTemplate";
+import { EXCEPTION_TYPE_LABELS, CORRECTION_ISSUE_LABELS, isCorrectionIssueType, type ExceptionType, type CorrectionIssueType } from "@/lib/exceptionVisitReportTemplate";
 import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
@@ -168,12 +168,22 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     // into Time Correction (migration 0304), Sick Leave, and Unpaid Leave
     // (migration 0306) requests — shared here since only one modal is ever
     // open at a time. See timecardCorrectionPdf.ts / ptoExceptionReportPdf.ts.
-    exceptionType: "missed_workday" as ExceptionType,
+    // Time Correction asks for the Issue (migration 0330) instead — see the
+    // effect below that swaps the default when the modal type changes.
+    exceptionType: "missed_workday" as ExceptionType | CorrectionIssueType,
     otherDescription: "",
     // Only shown/used when the employee's own profile has no technician_id
     // on file — "let them type it in when it's blank" per the original ask.
     employeeIdOverride: "",
   });
+  // Time Correction uses the Issue list; Sick / Unpaid Leave keep the Exception
+  // Type list. Keep the shared field on a valid choice for whichever is open.
+  useEffect(() => {
+    setFormData((f) => {
+      if (modalType === "correction") return f.exceptionType === "other" || isCorrectionIssueType(f.exceptionType) ? f : { ...f, exceptionType: "forgot_to_clock" };
+      return isCorrectionIssueType(f.exceptionType) ? { ...f, exceptionType: "missed_workday" } : f;
+    });
+  }, [modalType]);
   const correctionShift = correctionShiftMinutes(formData.correctedCheckIn, formData.correctedCheckOut);
   // Over 6 hours: meal fields unlocked and required. 6 hours or less (or
   // not both punches entered yet): locked — a meal on a short shift is unpaid.
@@ -577,7 +587,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 directManagerName: managerProfile?.display_name || managerProfile?.email || "",
               },
               dateOfIncident: formData.startDate,
-              exceptionType: formData.exceptionType,
+              exceptionType: formData.exceptionType as ExceptionType, // never an Issue value here — the effect above resets it for leave
               otherDescription: formData.otherDescription,
               detailedReason: formData.details,
               employeeSignatureDataUrl: sickSignatureDataUrl,
@@ -591,7 +601,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
               reason: `Branch: ${formData.branch} | Position: ${ROLE_LABELS[formData.position] || formData.position || "N/A"} - ${formData.details}`,
               requestedBy: myProfileId,
               managerId: managerProfile?.id ?? null,
-              exceptionType: formData.exceptionType,
+              exceptionType: formData.exceptionType as ExceptionType, // never an Issue value here — the effect above resets it for leave
               otherDescription: formData.otherDescription,
               employeeSignatureUrl,
               employeeSignatureName: displayName || "",
@@ -669,7 +679,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 directManagerName: managerProfile?.display_name || managerProfile?.email || "",
               },
               dateOfIncident: formData.startDate,
-              exceptionType: formData.exceptionType,
+              exceptionType: formData.exceptionType as ExceptionType, // never an Issue value here — the effect above resets it for leave
               otherDescription: formData.otherDescription,
               detailedReason: formData.details,
               employeeSignatureDataUrl: unpaidSignatureDataUrl,
@@ -683,7 +693,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
               reason: `Branch: ${formData.branch} | Position: ${ROLE_LABELS[formData.position] || formData.position || "N/A"} - ${formData.details}`,
               requestedBy: myProfileId,
               managerId: managerProfile?.id ?? null,
-              exceptionType: formData.exceptionType,
+              exceptionType: formData.exceptionType as ExceptionType, // never an Issue value here — the effect above resets it for leave
               otherDescription: formData.otherDescription,
               employeeSignatureUrl,
               employeeSignatureName: displayName || "",
@@ -736,6 +746,11 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             return;
           }
           const existing = liveAttendance.find((a) => a.date === formData.correctionDate);
+          if (formData.exceptionType === "other" && !formData.otherDescription.trim()) {
+            alert("Please specify the issue for “Other”.");
+            setSubmitting(false);
+            return;
+          }
           if (!formData.details.trim()) {
             alert("Please describe the reason for this exception.");
             setSubmitting(false);
@@ -1796,9 +1811,12 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                         );
                       })()}
                       <div>
-                        <label className="text-xs font-semibold text-white block mb-1">Exception Type</label>
+                        <label className="text-xs font-semibold text-white block mb-1">{modalType === "correction" ? "Issue" : "Exception Type"}</label>
                         <div className="flex flex-col gap-1.5">
-                          {(Object.keys(EXCEPTION_TYPE_LABELS) as ExceptionType[]).map((t) => (
+                          {(modalType === "correction"
+                            ? (Object.keys(CORRECTION_ISSUE_LABELS) as CorrectionIssueType[]).map((t) => [t, t === "other" ? "Other: Specify" : CORRECTION_ISSUE_LABELS[t]] as const)
+                            : (Object.keys(EXCEPTION_TYPE_LABELS) as ExceptionType[]).map((t) => [t, EXCEPTION_TYPE_LABELS[t]] as const)
+                          ).map(([t, label]) => (
                             <label key={t} className="flex items-center gap-2 text-sm text-white">
                               <input
                                 type="radio"
@@ -1806,14 +1824,14 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                                 checked={formData.exceptionType === t}
                                 onChange={() => setFormData({ ...formData, exceptionType: t })}
                               />
-                              {EXCEPTION_TYPE_LABELS[t]}
+                              {label}
                             </label>
                           ))}
                         </div>
                         {formData.exceptionType === "other" && (
                           <input
                             type="text"
-                            placeholder="Describe the exception…"
+                            placeholder={modalType === "correction" ? "Specify the issue…" : "Describe the exception…"}
                             value={formData.otherDescription}
                             onChange={(e) => setFormData({ ...formData, otherDescription: e.target.value })}
                             className="w-full mt-2 px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 placeholder-slate-500"
