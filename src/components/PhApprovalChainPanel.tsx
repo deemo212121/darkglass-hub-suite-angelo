@@ -89,7 +89,7 @@ export function PhApprovalChainPanel({
         <div className="flex flex-wrap gap-2">
           {topTier.map((p) => (
             <span key={p.id} className="text-sm text-slate-100 rounded border border-white/10 bg-white/5 px-2 py-1">
-              {nameOf(p)} <span className="text-slate-500 text-xs">· {roleLabel(p)}</span>
+              {nameOf(p)} <span className="text-slate-500 text-xs">· {[p.role, ...(p.extra_roles ?? [])].some((r) => String(r).toUpperCase() === "SUPERADMIN") ? "Super Admin · always" : roleLabel(p)}</span>
             </span>
           ))}
         </div>

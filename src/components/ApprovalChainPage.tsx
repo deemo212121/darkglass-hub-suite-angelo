@@ -123,7 +123,11 @@ export function ApprovalChainPage({ mod, sub }: Props) {
   const governed = useMemo(() => nonPh.filter((p) => chainLevelOf(p)), [nonPh]);
   const sbms = useMemo(() => nonPh.filter((p) => holds(p, "SENIOR_BRANCH_MANAGER")).sort((a, b) => nameOf(a).localeCompare(nameOf(b))), [nonPh]);
   const topTier = useMemo(
-    () => active.filter((p) => isTopApprover(data, p) && !holds(p, "SUPERADMIN") && !holds(p, "SUPERSUPERADMIN")).sort((a, b) => nameOf(a).localeCompare(nameOf(b))),
+    // SuperAdmins always belong to the top level (they can approve anything); the list adds everyone else.
+    () =>
+      active
+        .filter((p) => holds(p, "SUPERADMIN") || isTopApprover(data, p))
+        .sort((a, b) => Number(holds(b, "SUPERADMIN")) - Number(holds(a, "SUPERADMIN")) || nameOf(a).localeCompare(nameOf(b))),
     [active, data]
   );
 
@@ -132,7 +136,7 @@ export function ApprovalChainPage({ mod, sub }: Props) {
   const [topDraft, setTopDraft] = useState<Set<string>>(new Set());
   const [topSearch, setTopSearch] = useState("");
   const startEditTop = () => {
-    setTopDraft(new Set(topTier.map((p) => p.id)));
+    setTopDraft(new Set(topTier.filter((p) => !holds(p, "SUPERADMIN")).map((p) => p.id)));
     setTopSearch("");
     setEditingTop(true);
   };
@@ -397,7 +401,7 @@ export function ApprovalChainPage({ mod, sub }: Props) {
                 <div className="flex flex-wrap gap-2">
                   {topTier.map((p) => (
                     <span key={p.id} className="text-sm text-slate-100 rounded border border-white/10 bg-white/5 px-2 py-1">
-                      {nameOf(p)} <span className="text-slate-500 text-xs">· {roleLabel(p)}</span>
+                      {nameOf(p)} <span className="text-slate-500 text-xs">· {holds(p, "SUPERADMIN") ? "Super Admin · always" : roleLabel(p)}</span>
                     </span>
                   ))}
                 </div>
@@ -406,14 +410,16 @@ export function ApprovalChainPage({ mod, sub }: Props) {
                   <input value={topSearch} onChange={(e) => setTopSearch(e.target.value)} placeholder="Search people…" className="glass-input text-sm py-1.5 px-2 rounded-md w-full max-w-sm" />
                   <div className="max-h-64 overflow-y-auto rounded border border-white/10 p-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4">
                     {active
-                      .filter((p) => !holds(p, "SUPERADMIN") && !holds(p, "SUPERSUPERADMIN"))
+                      .filter((p) => !holds(p, "SUPERSUPERADMIN") || holds(p, "SUPERADMIN"))
                       .filter((p) => !topSearch.trim() || nameOf(p).toLowerCase().includes(topSearch.trim().toLowerCase()))
-                      .sort((a, b) => Number(topDraft.has(b.id)) - Number(topDraft.has(a.id)) || nameOf(a).localeCompare(nameOf(b)))
+                      .sort((a, b) => Number(holds(b, "SUPERADMIN")) - Number(holds(a, "SUPERADMIN")) || Number(topDraft.has(b.id)) - Number(topDraft.has(a.id)) || nameOf(a).localeCompare(nameOf(b)))
                       .map((p) => (
                         <label key={p.id} className="flex items-center gap-2 py-0.5 text-sm text-slate-200 cursor-pointer">
                           <input
                             type="checkbox"
-                            checked={topDraft.has(p.id)}
+                            disabled={holds(p, "SUPERADMIN")}
+                            title={holds(p, "SUPERADMIN") ? "Super Admins are always top level" : undefined}
+                            checked={holds(p, "SUPERADMIN") || topDraft.has(p.id)}
                             onChange={() =>
                               setTopDraft((prev) => {
                                 const next = new Set(prev);
@@ -437,7 +443,7 @@ export function ApprovalChainPage({ mod, sub }: Props) {
                         Reset to roles
                       </button>
                     )}
-                    <span className="text-[11px] text-slate-500">Only the people ticked here (plus SuperAdmin) approve Senior Branch Managers and Directors.</span>
+                    <span className="text-[11px] text-slate-500">Super Admins are always top level; the people ticked here join them.</span>
                   </div>
                 </div>
               )}
