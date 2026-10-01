@@ -103,6 +103,18 @@ const TOOLTIP_STYLE = {
   fontWeight: 600,
   boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
 } as const;
+/**
+ * Per the user's call (2026-10-01): on THIS REPORT ONLY, Minor Comp, Major
+ * Comp, Redo Count, Mileage, Hours of Work, Working Days and Off Days count
+ * as 0 from this date to the present — live tickets / redos / punches /
+ * mileage / scheduled off days on or after it are ignored here, unless a
+ * value was entered for the day (import / correction). Earlier dates are
+ * unaffected, and nothing in the database is changed or deleted (payroll,
+ * Accounting, timecards all still use the real data). Set to "9999-12-31"
+ * to turn it off.
+ */
+const BLANK_LIVE_TIME_FROM = "2026-08-27";
+
 const CHART_BAR_FILL = "#3b82f6";
 const COMPARE_BAR_FILLS = ["#3b82f6", "#f59e0b", "#10b981", "#ec4899", "#8b5cf6", "#06b6d4"];
 
@@ -397,7 +409,11 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         getCompanyUsers(),
         getCsrTeamComposition().catch(() => null),
         getTechCompletedRepairCounts(periodStart, periodEnd),
-        getTechRedoTickets(periodStart, periodEnd),
+        // Redo tickets carry no date, so the blanked range (BLANK_LIVE_TIME_FROM
+        // onward) is cut off at the fetch: only redos completed before it count live.
+        periodStart < BLANK_LIVE_TIME_FROM
+          ? getTechRedoTickets(periodStart, periodEnd < BLANK_LIVE_TIME_FROM ? periodEnd : addDaysISO(BLANK_LIVE_TIME_FROM, -1))
+          : Promise.resolve(new Map()),
         getMileageEntries(),
         getCompanyTimecardEntries(periodStart, periodEnd),
         getTechCompletedTicketsDaily(periodStart, periodEnd),
@@ -627,6 +643,22 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         return sum;
       };
 
+      // Same as sumWithDailyOverride, but live values dated on/after
+      // BLANK_LIVE_TIME_FROM count as 0 (an entered value still counts).
+      const blankedDailySum = (
+        liveByDay: Map<string, number> | undefined,
+        overrideByDay: Map<string, DailyPerformanceOverride> | undefined,
+        field: "miles" | "hoursWorked" | "minorTicket" | "majorTicket"
+      ): number => {
+        const dayKeys = new Set<string>([...(liveByDay?.keys() ?? []), ...(overrideByDay?.keys() ?? [])]);
+        let sum = 0;
+        for (const day of dayKeys) {
+          const overrideVal = overrideByDay?.get(day)?.[field];
+          sum += overrideVal != null ? overrideVal : day >= BLANK_LIVE_TIME_FROM ? 0 : (liveByDay?.get(day) ?? 0);
+        }
+        return sum;
+      };
+
       const computed: TechPerfRow[] = techs.map((t) => {
         const nameKey = (t.display_name || t.email).trim().toLowerCase();
         const techOverrides = overrides.get(t.id);
@@ -649,8 +681,12 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           : redoMap.get(nameKey)?.length ?? 0;
         const miles = sumWithDailyOverride(milesByDayForTech, techOverrides, "miles");
         const hoursWorked = sumWithDailyOverride(hoursByProfileByDay.get(t.id), techOverrides, "hoursWorked");
-        const minorTicketCount = sumWithDailyOverride(minorByNameByDay.get(nameKey), techOverrides, "minorTicket") + (unscheduledMinorByName.get(nameKey) ?? 0);
-        const majorTicketCount = sumWithDailyOverride(majorByNameByDay.get(nameKey), techOverrides, "majorTicket") + (unscheduledMajorByName.get(nameKey) ?? 0);
+        // Blanked from BLANK_LIVE_TIME_FROM (see blankedDailySum); undated
+        // "unscheduled" completions can't be placed before/after it, so they
+        // only count when the whole period is before it.
+        const periodBeforeBlank = periodEnd < BLANK_LIVE_TIME_FROM;
+        const minorTicketCount = blankedDailySum(minorByNameByDay.get(nameKey), techOverrides, "minorTicket") + (periodBeforeBlank ? unscheduledMinorByName.get(nameKey) ?? 0 : 0);
+        const majorTicketCount = blankedDailySum(majorByNameByDay.get(nameKey), techOverrides, "majorTicket") + (periodBeforeBlank ? unscheduledMajorByName.get(nameKey) ?? 0 : 0);
         const rescheduleCount = sumWithDailyOverride(rescheduleByProfileIdByDay.get(t.id), techOverrides, "reschedule");
         const damageAssessmentCount = sumWithDailyOverride(damageByProfileIdByDay.get(t.id), techOverrides, "damageAssessment");
         // NCNS has no live source at all (see this file's header comment) —
@@ -668,6 +704,17 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           .map(([date]) => date);
         const workedDates = Array.from(new Set([...(daysByProfile.get(t.id) ?? []), ...overrideWorkedDays])).sort();
         const daysWorked = workedDates.length;
+        // Mileage / Hours of Work / Working Days / Off Days are blanked from
+        // BLANK_LIVE_TIME_FROM onward (per the user's call): live data on
+        // those dates counts as 0 unless someone entered a value for the day.
+        // Earlier dates keep their live numbers. Ticket counts and the
+        // derived metrics above (Mi/Ticket, Tickets/Hr, alerts) still use
+        // live data. Nothing is deleted.
+        const shownMiles = blankedDailySum(milesByDayForTech, techOverrides, "miles");
+        const shownHours = blankedDailySum(hoursByProfileByDay.get(t.id), techOverrides, "hoursWorked");
+        const shownWorkedDates = workedDates.filter((d) => d < BLANK_LIVE_TIME_FROM || overrideWorkedDays.includes(d));
+        const offDaysUntil = periodEnd < BLANK_LIVE_TIME_FROM ? periodEnd : addDaysISO(BLANK_LIVE_TIME_FROM, -1);
+        const shownOffDays = periodStart <= offDaysUntil ? countOffDaysInRange(t.off_days, periodStart, offDaysUntil) : 0;
         const redoRatePct = totalTickets > 0 ? (redoCount / totalTickets) * 100 : null;
         const milesPerTicket = totalTickets > 0 ? miles / totalTickets : null;
         const ticketsPerHour = hoursWorked > 0 ? totalTickets / hoursWorked : null;
@@ -680,18 +727,18 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           manager: t.manager_name || "—",
           tier: t.tier_level || "—",
           isActive: t.is_active,
-          daysWorked,
-          workedDates,
-          hoursWorked,
+          daysWorked: shownWorkedDates.length,
+          workedDates: shownWorkedDates,
+          hoursWorked: shownHours,
           totalTickets,
           minorTicketCount,
           majorTicketCount,
           redoCount,
           redoRatePct,
-          miles,
+          miles: shownMiles,
           milesPerTicket,
           ticketsPerHour,
-          offDaysCount: countOffDaysInRange(t.off_days, periodStart, periodEnd),
+          offDaysCount: shownOffDays,
           offDays: t.off_days ?? [],
           rescheduleCount,
           cancelledCount: cancelledByName.get(nameKey) ?? 0,
@@ -819,6 +866,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     const nameKey = mileageListFor.name.trim().toLowerCase();
     return mileageDaily
       .filter((d) => (d.isProfileId ? d.techKey === mileageListFor.id : d.techKey === nameKey))
+      .filter((d) => d.date < BLANK_LIVE_TIME_FROM) // blanked from this date — see BLANK_LIVE_TIME_FROM
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [mileageListFor, mileageDaily]);
 
@@ -832,7 +880,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     const dayMap = hoursDaily.get(hoursListFor.id);
     if (!dayMap) return [];
     return Array.from(dayMap.entries())
-      .filter(([, hrs]) => hrs > 0)
+      .filter(([date, hrs]) => hrs > 0 && date < BLANK_LIVE_TIME_FROM)
       .map(([date, hours]) => ({ date, hours }))
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [hoursListFor, hoursDaily]);
@@ -847,7 +895,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     if (!row) return [];
     const offDaySet = new Set(row.offDays);
     const dates: string[] = [];
-    for (let d = periodStart; d <= periodEnd; d = addDaysISO(d, 1)) {
+    for (let d = periodStart; d <= periodEnd && d < BLANK_LIVE_TIME_FROM; d = addDaysISO(d, 1)) {
       if (offDaySet.has(new Date(`${d}T00:00:00`).getDay())) dates.push(d);
     }
     return dates;
@@ -862,7 +910,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     const dayHours = hoursDaily.get(workDaysListFor.id);
     return [...row.workedDates]
       .sort((a, b) => b.localeCompare(a))
-      .map((date) => ({ date, hours: dayHours?.get(date) ?? null }));
+      .map((date) => ({ date, hours: date < BLANK_LIVE_TIME_FROM ? dayHours?.get(date) ?? null : null }));
   }, [workDaysListFor, rows, hoursDaily]);
 
   const sortedRows = useMemo(() => {
