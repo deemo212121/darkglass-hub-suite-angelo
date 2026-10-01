@@ -44,6 +44,7 @@ export interface MinimalCorrectionProfile {
 export function employeeInfoFor(correction: TimecardCorrectionRow, profiles: MinimalCorrectionProfile[]) {
   const p = profiles.find((x) => x.id === correction.profileId) ?? null;
   const manager = profiles.find((x) => x.id === correction.managerId) ?? null;
+  const accountant = correction.accountingReviewedBy ? profiles.find((x) => x.id === correction.accountingReviewedBy) ?? null : null;
   const { roleLabel } = getRoleDepartmentBreakdown(p?.role ?? null);
   return {
     employeeName: p?.display_name || p?.email || "",
@@ -51,6 +52,7 @@ export function employeeInfoFor(correction: TimecardCorrectionRow, profiles: Min
     jobTitle: roleLabel,
     department: p?.assigned_branch || "",
     directManagerName: manager?.display_name || manager?.email || "",
+    accountingApproverName: accountant?.display_name || accountant?.email || "",
   };
 }
 

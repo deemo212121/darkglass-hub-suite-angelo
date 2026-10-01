@@ -366,6 +366,8 @@ export function ApprovalChainPage({ mod, sub }: Props) {
                         const ppl = peopleAt(b);
                         const bms = ppl.filter((p) => holds(p, "BRANCH_MANAGER"));
                         const pms = ppl.filter((p) => holds(p, "PARTS_MANAGER"));
+                        // Other parts staff (Parts / Parts Team Leader) — they approve and clock in this branch's techs too.
+                        const partsStaff = ppl.filter((p) => !holds(p, "PARTS_MANAGER") && (holds(p, "PARTS") || holds(p, "PARTS_TEAM_LEADER")));
                         const techs = ppl.filter((p) => chainLevelOf(p) === "tech");
                         const open = expandedBranch === b;
                         return (
@@ -375,7 +377,7 @@ export function ApprovalChainPage({ mod, sub }: Props) {
                                 <ChevronRight className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-90" : ""}`} /> {b}
                               </button>
                               <span className="text-[11px] text-slate-400">
-                                BM: {bms.map(nameOf).join(", ") || <span className="text-amber-300">none</span>} · Parts Mgr: {pms.map(nameOf).join(", ") || <span className="text-amber-300">none</span>} · {techs.length} tech{techs.length === 1 ? "" : "s"}
+                                BM: {bms.map(nameOf).join(", ") || <span className="text-amber-300">none</span>} · Parts Mgr: {pms.map(nameOf).join(", ") || <span className="text-amber-300">none</span>} · Parts: {partsStaff.map(nameOf).join(", ") || <span className="text-amber-300">none</span>} · {techs.length} tech{techs.length === 1 ? "" : "s"}
                               </span>
                               <button type="button" onClick={() => window.confirm(`Remove ${b} from ${area.name}? It will have no Senior Branch Manager.`) && run(() => unassignBranch(b))} title="Remove branch" className="ml-auto p-1 rounded hover:bg-white/10 text-slate-400">
                                 <X className="h-3.5 w-3.5" />

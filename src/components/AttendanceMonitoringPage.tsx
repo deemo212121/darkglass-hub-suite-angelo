@@ -786,6 +786,18 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // PTO Management tab (KPI tile + both request lists) — same team scoping
   // as visibleProfiles/Daily Attendance above, so a manager-tier viewer only
   // ever sees their own team's PTO requests, never the whole company's.
+  // PTO Requests table status tabs — "denied" shows under Rejected.
+  const [ptoStatusTab, setPtoStatusTab] = useState<"pending" | "approved" | "rejected">("pending");
+  const ptoStatusMatches = (status: string, tab: "pending" | "approved" | "rejected") => (tab === "rejected" ? status === "denied" : status === tab);
+  // Dates / Submitted column sort — newest first; click a header to sort by it, again to flip.
+  const [ptoSort, setPtoSort] = useState<{ key: "dates" | "submitted"; dir: "desc" | "asc" }>({ key: "submitted", dir: "desc" });
+  const togglePtoSort = (key: "dates" | "submitted") =>
+    setPtoSort((cur) => (cur.key === key ? { key, dir: cur.dir === "desc" ? "asc" : "desc" } : { key, dir: "desc" }));
+  /** Submitted date as YYYY-MM-DD (local) — same format as the Dates column. */
+  const ptoSubmittedDay = (iso: string) => {
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? iso.slice(0, 10) : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
   const visiblePtoRequests = useMemo(() => {
     if (teamScopedIds === null) return ptoRequests;
     return ptoRequests.filter((r) => teamScopedIds.has(r.profileId));
@@ -798,6 +810,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     const types = ptoLeaveTab === "paid" ? PAID_LEAVE_PTO_TYPES : UNPAID_LEAVE_PTO_TYPES;
     return visiblePtoRequests.filter((r) => types.includes(r.ptoType));
   }, [visiblePtoRequests, ptoLeaveTab]);
+
+  // PTO Requests table rows: current status tab, sorted by the chosen column.
+  const sortedPtoTableRows = useMemo(() => {
+    const rows = leaveTabPtoRequests.filter((r) => ptoStatusMatches(r.status, ptoStatusTab));
+    const keyOf = (r: PtoRequestRow) => (ptoSort.key === "dates" ? `${r.startDate}|${r.createdAt}` : r.createdAt);
+    return [...rows].sort((a, b) => (ptoSort.dir === "desc" ? keyOf(b).localeCompare(keyOf(a)) : keyOf(a).localeCompare(keyOf(b))));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leaveTabPtoRequests, ptoStatusTab, ptoSort]);
 
   const entriesByKey = useMemo(() => {
     const map = new Map<string, CompanyTimecardEntry>();
@@ -2372,19 +2392,56 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     Unpaid Leave
                   </button>
                 </div>
-                <button onClick={() => setShowPtoForm(true)} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition">
-                  + New PTO Request
-                </button>
               </div>
 
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
-                <h2 className="text-lg font-bold text-white mb-4">PTO Requests</h2>
+                <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+                  <h2 className="text-lg font-bold text-white">PTO Requests</h2>
+                  <div className="inline-flex rounded-lg border border-white/10 bg-slate-800/40 p-0.5" role="tablist" aria-label="PTO status">
+                    {([
+                      ["pending", "Pending", "text-yellow-300"],
+                      ["approved", "Approved", "text-green-300"],
+                      ["rejected", "Rejected", "text-red-300"],
+                    ] as const).map(([key, label, tone]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        role="tab"
+                        aria-selected={ptoStatusTab === key}
+                        onClick={() => setPtoStatusTab(key)}
+                        className={`px-3 py-1 rounded-md text-xs font-semibold transition inline-flex items-center gap-1.5 ${ptoStatusTab === key ? `bg-white/10 ${tone}` : "text-slate-400 hover:text-white"}`}
+                      >
+                        {label}
+                        <span className="rounded-full bg-black/25 px-1.5 text-[10px] tabular-nums">{leaveTabPtoRequests.filter((r) => ptoStatusMatches(r.status, key)).length}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-white/10">
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Employee</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Type</th>
-                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Dates</th>
+                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">
+                        <button
+                          type="button"
+                          onClick={() => togglePtoSort("dates")}
+                          title="Sort — click to flip newest / oldest"
+                          className={`inline-flex items-center gap-1 uppercase hover:text-white ${ptoSort.key === "dates" ? "text-white" : ""}`}
+                        >
+                          Dates <span className="text-[10px]">{ptoSort.key === "dates" ? (ptoSort.dir === "desc" ? "▼" : "▲") : "↕"}</span>
+                        </button>
+                      </th>
+                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">
+                        <button
+                          type="button"
+                          onClick={() => togglePtoSort("submitted")}
+                          title="Sort — click to flip newest / oldest"
+                          className={`inline-flex items-center gap-1 uppercase hover:text-white ${ptoSort.key === "submitted" ? "text-white" : ""}`}
+                        >
+                          Submitted <span className="text-[10px]">{ptoSort.key === "submitted" ? (ptoSort.dir === "desc" ? "▼" : "▲") : "↕"}</span>
+                        </button>
+                      </th>
                       <th className="px-3 py-3 text-center text-xs font-semibold text-slate-400 uppercase">Days</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Actions</th>
@@ -2392,10 +2449,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   </thead>
                   <tbody>
                     {loading ? (
-                      <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
-                    ) : leaveTabPtoRequests.filter(r => r.status === "pending").length === 0 ? (
-                      <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">No pending PTO requests.</td></tr>
-                    ) : leaveTabPtoRequests.filter(r => r.status === "pending").map((request) => {
+                      <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
+                    ) : sortedPtoTableRows.length === 0 ? (
+                      <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">No {ptoStatusTab} PTO requests.</td></tr>
+                    ) : sortedPtoTableRows.map((request) => {
                       // request.managerId is a snapshot resolved once at
                       // submission time — if the requester's manager_name
                       // has since changed, canReviewPtoStage's fallback
@@ -2416,6 +2473,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                         <td className="px-3 py-3 text-white font-medium">{profileName(request.profileId)}</td>
                         <td className="px-3 py-3 text-slate-300">{PTO_TYPE_LABELS[request.ptoType]}</td>
                         <td className="px-3 py-3 text-slate-300">{request.startDate} to {request.endDate}</td>
+                        <td className="px-3 py-3 text-slate-300 whitespace-nowrap">{ptoSubmittedDay(request.createdAt)}</td>
                         <td className="px-3 py-3 text-center text-slate-300">{Math.round(request.hoursRequested / 8)}</td>
                         <td className="px-3 py-3">
                           <div className="flex flex-col gap-1">
@@ -2464,23 +2522,26 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                                 </button>
                               </div>
                             )}
-                            {request.exceptionType !== null && request.hrPaperworkStatus === "pending" && canReviewPtoStage(request, "hr", myProfileId, role, extraRoles, displayName, requesterManagerName, requesterManagersManagerName) && (
-                              request.managerSignatureUrl ? (
-                                <button type="button" onClick={() => setSigningPtoHrFor(request)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[10px] font-semibold transition">
-                                  Sign Exception Report (HR)
+                            {request.exceptionType !== null && request.hrPaperworkStatus === "pending" && request.hrStatus !== "pending" && canReviewPtoStage(request, "hr", myProfileId, role, extraRoles, displayName, requesterManagerName, requesterManagersManagerName) && (
+                              <div className="flex gap-1">
+                                <span className="text-[10px] text-slate-500 self-center">HR:</span>
+                                <button type="button" title="Sign the Exception Report as HR" onClick={() => setSigningPtoHrFor(request)} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs transition flex items-center gap-1">
+                                  <CheckCircle className="h-3 w-3" />
                                 </button>
-                              ) : (
-                                <span className="text-[10px] text-slate-500">Exception Report: awaiting manager signature</span>
-                              )
+                              </div>
                             )}
                             {request.hrStatus === "pending" && canReviewPtoStage(request, "hr", myProfileId, role, extraRoles, displayName, requesterManagerName, requesterManagersManagerName) && (
                               <div className="flex gap-1">
                                 <span className="text-[10px] text-slate-500 self-center">HR:</span>
-                                {request.exceptionType === null && (
-                                  <button type="button" title="Approve as HR" onClick={() => handlePtoStageAction(request, "hr", "approved")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
-                                    {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
-                                  </button>
-                                )}
+                                <button
+                          type="button"
+                          title={request.exceptionType !== null && request.hrPaperworkStatus === "pending" ? "Approve & sign as HR" : "Approve as HR"}
+                          onClick={() => (request.exceptionType !== null && request.hrPaperworkStatus === "pending" ? setSigningPtoHrFor(request) : handlePtoStageAction(request, "hr", "approved"))}
+                          disabled={busyPtoId === request.id}
+                          className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1"
+                        >
+                          {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
+                        </button>
                                 <button type="button" title="Reject as HR" onClick={() => handlePtoStageAction(request, "hr", "rejected")} disabled={busyPtoId === request.id} className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
                                   {busyPtoId === request.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />}
                                 </button>

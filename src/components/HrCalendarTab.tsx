@@ -1221,17 +1221,13 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                     return (
                       <div className="flex items-center gap-1.5">
                         <span className="text-[10px] text-muted-foreground w-12 shrink-0">Report:</span>
-                        {request.managerSignatureUrl ? (
-                          <button
-                            type="button"
-                            onClick={() => setSigningPtoHrFor(request)}
-                            className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[11px] font-semibold transition"
-                          >
-                            Sign Exception Report (HR)
-                          </button>
-                        ) : (
-                          <span className="text-[10px] text-muted-foreground">Exception Report: awaiting manager signature</span>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => setSigningPtoHrFor(request)}
+                          className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-[11px] font-semibold transition"
+                        >
+                          Approve &amp; Sign as HR
+                        </button>
                       </div>
                     );
                   };

@@ -257,13 +257,10 @@ export function PendingItemDetailModal({
             {hasExceptionReport && item.data.hrPaperworkStatus === "pending" && canReviewStage("hr") && (
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[11px] text-slate-400 w-20 shrink-0">Exception</span>
-                {item.data.managerSignatureUrl || isCorrection ? (
-                  <button type="button" onClick={() => setSigningHr(true)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition ml-auto">
-                    Sign Report (HR)
-                  </button>
-                ) : (
-                  <span className="text-[11px] text-slate-500 ml-auto">Awaiting manager signature</span>
-                )}
+                {/* HR doesn't wait for the manager — any 2 of Manager / HR / Accounting. */}
+                <button type="button" onClick={() => setSigningHr(true)} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition ml-auto">
+                  Approve &amp; Sign as HR
+                </button>
               </div>
             )}
             {actionError && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{actionError}</p>}

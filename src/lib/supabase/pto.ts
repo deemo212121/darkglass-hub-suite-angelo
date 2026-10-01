@@ -484,7 +484,8 @@ export function canReviewPtoStage(
     if (request.managerId) return false;
     return has("MANAGER");
   }
-  if (request.managerStatus !== "approved") return false;
+  // HR and Accounting no longer wait for the manager — any 2 of the 3 stages
+  // decide a leave request, in any order (migration 0332).
   if (stage === "hr") return has("HR");
   return has("FINANCE");
 }
@@ -729,6 +730,23 @@ ${line}` : line;
     throw new Error(error.message);
   }
   const updated = mapRow(data);
+
+  // Accounting approves with a click, not a signature — rebuild the Exception
+  // Report PDF so its "7. Accounting Approval" section shows who and when.
+  if (stage === "accounting" && decision === "approved" && updated.exceptionType !== null) {
+    void (async () => {
+      const [{ regeneratePtoExceptionReportPdf }, { employeeInfoForPto }, { getCompanyUsers }] = await Promise.all([
+        import("@/lib/ptoExceptionReportPdf"),
+        import("@/components/PtoSignModals"),
+        import("./users"),
+      ]);
+      const profiles = await getCompanyUsers();
+      const companyId = profiles.find((p) => p.id === updated.profileId)?.company_id;
+      if (!companyId) return;
+      const { pdfUrl } = await regeneratePtoExceptionReportPdf({ request: updated, companyId, employeeInfo: employeeInfoForPto(updated, profiles) });
+      await updatePtoPdfUrl(updated.id, pdfUrl);
+    })().catch((err) => console.error("Couldn't refresh the Exception Report PDF after Accounting approval:", err));
+  }
 
   const dateRange = `${request.startDate} to ${request.endDate}`;
   const stageLabel = stage === "manager" ? "your manager" : stage === "hr" ? "HR" : "Accounting";

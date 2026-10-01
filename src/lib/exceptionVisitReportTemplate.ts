@@ -93,6 +93,8 @@ export interface ExceptionVisitFormData {
   hrReceivedDate: string;
   hrReviewerName: string;
   hrActionStatus: "approved" | "additional_review_required" | "";
+  /** Accounting's approval (a click, not a signature) — printed as section 7 when present. */
+  accountingApproval?: { name: string; date: string } | null;
 }
 
 export interface ExceptionVisitSignatureEntry {
@@ -241,6 +243,16 @@ export function buildExceptionVisitReportBodyMarkup(
         </div>
         ${signRow("HR Signature", data.hrReviewerName, signatures.hr_staff)}
       </div>
+      ${
+        data.accountingApproval
+          ? `<div class="evr-section">
+        <div class="evr-section-title">7. Accounting Approval</div>
+        <div class="evr-checks"><span>${checkbox(true)} Approved</span></div>
+        <div class="evr-field"><span class="evr-label">Approved by:</span> <strong>${blank(data.accountingApproval.name)}</strong></div>
+        <div class="evr-field"><span class="evr-label">Date:</span> <strong>${blank(fmtDate(data.accountingApproval.date))}</strong></div>
+      </div>`
+          : ""
+      }
     </div>
   `;
 }

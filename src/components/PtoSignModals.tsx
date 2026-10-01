@@ -34,6 +34,7 @@ export interface MinimalPtoProfile {
 export function employeeInfoForPto(request: PtoRequestRow, profiles: MinimalPtoProfile[]) {
   const p = profiles.find((x) => x.id === request.profileId) ?? null;
   const manager = profiles.find((x) => x.id === request.managerId) ?? null;
+  const accountant = request.accountingReviewedBy ? profiles.find((x) => x.id === request.accountingReviewedBy) ?? null : null;
   const { roleLabel } = getRoleDepartmentBreakdown(p?.role ?? null);
   return {
     employeeName: p?.display_name || p?.email || "",
@@ -41,6 +42,7 @@ export function employeeInfoForPto(request: PtoRequestRow, profiles: MinimalPtoP
     jobTitle: roleLabel,
     department: p?.assigned_branch || "",
     directManagerName: manager?.display_name || manager?.email || "",
+    accountingApproverName: accountant?.display_name || accountant?.email || "",
   };
 }
 
