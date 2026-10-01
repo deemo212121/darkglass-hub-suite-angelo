@@ -15,6 +15,7 @@
  * working unchanged.
  */
 
+import { requireRejectReason } from "@/lib/rejectReason";
 import { chainCanApprove } from "@/lib/approvalDirectory";
 import { supabase } from "./client";
 import { createNotification } from "./notifications";
@@ -78,6 +79,8 @@ export interface TimecardCorrectionRow {
   hrReceivedDate: string | null;
   hrReviewerName: string | null;
   pdfUrl: string | null;
+  /** Why it was rejected — "Rejected by <name> (<step>): <reason>" lines (migration 0331). */
+  reviewNote: string | null;
 }
 
 export interface TimecardCorrectionHistoryRow {
@@ -90,8 +93,21 @@ export interface TimecardCorrectionHistoryRow {
   createdAt: string;
 }
 
-const SELECT_COLUMNS =
+const SELECT_COLUMNS_NO_NOTE =
   "id, profile_id, work_date, original_check_in, original_check_out, corrected_check_in, corrected_check_out, original_meal_start, original_meal_end, corrected_meal_start, corrected_meal_end, reason, status, requested_by, reviewed_by, reviewed_at, created_at, manager_id, manager_status, manager_reviewed_by, manager_reviewed_at, hr_status, hr_reviewed_by, hr_reviewed_at, accounting_status, accounting_reviewed_by, accounting_reviewed_at, exception_type, other_description, employee_signature_url, employee_signature_name, employee_signed_at, manager_comments, manager_signature_url, manager_signature_name, manager_signed_at, hr_paperwork_status, hr_signature_url, hr_signature_name, hr_signed_at, hr_received_date, hr_reviewer_name, pdf_url";
+const SELECT_COLUMNS = SELECT_COLUMNS_NO_NOTE + ", review_note";
+
+// review_note only exists after migration 0331 — if a read fails on it,
+// drop it for the rest of the session instead of breaking every list.
+let noteColumnMissing = false;
+async function selectWithNoteFallback(run: (cols: string) => PromiseLike<{ data: any; error: { message: string } | null }>): Promise<{ data: any; error: { message: string } | null }> {
+  let res = await run(noteColumnMissing ? SELECT_COLUMNS_NO_NOTE : SELECT_COLUMNS);
+  if (res.error && !noteColumnMissing && /review_note/.test(res.error.message)) {
+    noteColumnMissing = true;
+    res = await run(SELECT_COLUMNS_NO_NOTE);
+  }
+  return res;
+}
 
 function mapRow(row: any): TimecardCorrectionRow {
   return {
@@ -138,6 +154,7 @@ function mapRow(row: any): TimecardCorrectionRow {
     hrReceivedDate: row.hr_received_date ?? null,
     hrReviewerName: row.hr_reviewer_name ?? null,
     pdfUrl: row.pdf_url ?? null,
+    reviewNote: row.review_note ?? null,
   };
 }
 
@@ -150,11 +167,13 @@ const PAGE_SIZE = 1000;
 export async function getCompanyTimecardCorrections(): Promise<TimecardCorrectionRow[]> {
   const all: TimecardCorrectionRow[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await supabase
-      .from("timecard_corrections")
-      .select(SELECT_COLUMNS)
-      .order("created_at", { ascending: false })
-      .range(from, from + PAGE_SIZE - 1);
+    const { data, error } = await selectWithNoteFallback((cols) =>
+      supabase
+        .from("timecard_corrections")
+        .select(cols)
+        .order("created_at", { ascending: false })
+        .range(from, from + PAGE_SIZE - 1)
+    );
     if (error) {
       console.error("getCompanyTimecardCorrections error:", error.message);
       return [];
@@ -203,13 +222,9 @@ export async function getCompanyTimecardCorrectionHistory(): Promise<TimecardCor
  * status) — e.g. a detail popup — don't need a second fetch. */
 /** One employee's APPROVED corrections in a date range — used to label a fixed day "Corrected by <approver>". */
 export async function getApprovedCorrectionsForProfile(profileId: string, startDate: string, endDate: string): Promise<TimecardCorrectionRow[]> {
-  const { data, error } = await supabase
-    .from("timecard_corrections")
-    .select(SELECT_COLUMNS)
-    .eq("profile_id", profileId)
-    .eq("status", "approved")
-    .gte("work_date", startDate)
-    .lte("work_date", endDate);
+  const { data, error } = await selectWithNoteFallback((cols) =>
+    supabase.from("timecard_corrections").select(cols).eq("profile_id", profileId).eq("status", "approved").gte("work_date", startDate).lte("work_date", endDate)
+  );
   if (error) {
     console.error("getApprovedCorrectionsForProfile error:", error.message);
     return [];
@@ -218,12 +233,9 @@ export async function getApprovedCorrectionsForProfile(profileId: string, startD
 }
 
 export async function getPendingCorrectionsInRange(startDate: string, endDate: string): Promise<TimecardCorrectionRow[]> {
-  const { data, error } = await supabase
-    .from("timecard_corrections")
-    .select(SELECT_COLUMNS)
-    .eq("status", "pending")
-    .gte("work_date", startDate)
-    .lte("work_date", endDate);
+  const { data, error } = await selectWithNoteFallback((cols) =>
+    supabase.from("timecard_corrections").select(cols).eq("status", "pending").gte("work_date", startDate).lte("work_date", endDate)
+  );
   if (error) {
     console.error("getPendingCorrectionsInRange error:", error.message);
     return [];
@@ -457,9 +469,13 @@ export async function reviewCorrectionStage(
    * as every other signable-document flow in this app: render/upload in
    * the caller, persist the URL here).
    */
-  signature?: { url: string; name: string; comments: string; pdfUrl: string }
+  signature?: { url: string; name: string; comments: string; pdfUrl: string },
+  /** Why it's rejected — asked for with the shared popup when not given (throws RejectCancelledError if the reviewer cancels). */
+  rejectReason?: string
 ): Promise<void> {
   const nowIso = new Date().toISOString();
+  const stageLabelFor = stage === "manager" ? "Manager" : stage === "hr" ? "HR" : "Accounting";
+  const reason = decision === "rejected" ? await requireRejectReason(rejectReason, `Reject this time correction (${stageLabelFor})`) : "";
   const stagePayload: Record<string, unknown> =
     stage === "manager"
       ? { manager_status: decision, manager_reviewed_by: reviewerId, manager_reviewed_at: nowIso }
@@ -475,17 +491,27 @@ export async function reviewCorrectionStage(
     stagePayload.pdf_url = signature.pdfUrl;
   }
 
+  if (decision === "rejected") {
+    const { data: prev } = await supabase.from("timecard_corrections").select("review_note").eq("id", correction.id).maybeSingle();
+    const line = `Rejected by ${reviewerName} (${stageLabelFor}): ${reason}`;
+    stagePayload.review_note = prev?.review_note ? `${prev.review_note}\n${line}` : line;
+  }
   if (corrected?.checkIn !== undefined) stagePayload.corrected_check_in = corrected.checkIn || null;
   if (corrected?.checkOut !== undefined) stagePayload.corrected_check_out = corrected.checkOut || null;
   if (corrected?.mealStart !== undefined) stagePayload.corrected_meal_start = corrected.mealStart || null;
   if (corrected?.mealEnd !== undefined) stagePayload.corrected_meal_end = corrected.mealEnd || null;
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("timecard_corrections")
     .update(stagePayload)
     .eq("id", correction.id)
-    .select(SELECT_COLUMNS)
+    .select(noteColumnMissing ? SELECT_COLUMNS_NO_NOTE : SELECT_COLUMNS)
     .single();
+  // Before migration 0331 there's no review_note column — save the decision without it.
+  if (error && /review_note/.test(error.message)) {
+    delete stagePayload.review_note;
+    ({ data, error } = await supabase.from("timecard_corrections").update(stagePayload).eq("id", correction.id).select(SELECT_COLUMNS_NO_NOTE).single());
+  }
   if (error) {
     console.error("reviewCorrectionStage error:", error.message);
     throw new Error(error.message);
@@ -498,7 +524,7 @@ export async function reviewCorrectionStage(
       recipientId: correction.profileId,
       senderId: reviewerId,
       senderName: reviewerName,
-      body: `❌ Your time correction request for ${correction.workDate} was rejected by ${stageLabel}.`,
+      body: `❌ Your time correction request for ${correction.workDate} was rejected by ${stageLabel}. Reason: ${reason}`,
       linkTo: "/m/dashboard/employee-self-service?tab=requests",
     }).catch((err) => console.error("Failed to notify correction rejection:", err));
     return;

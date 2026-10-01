@@ -12,6 +12,7 @@
  * at any stage immediately denies the whole request).
  */
 
+import { requireRejectReason } from "@/lib/rejectReason";
 import { chainCanApprove } from "@/lib/approvalDirectory";
 import { supabase } from "./client";
 import { createNotification } from "./notifications";
@@ -682,9 +683,13 @@ export async function reviewPtoStage(
    * param for Time Correction, migration 0304). `pdfUrl` is the already-
    * rendered-and-uploaded PDF with this signature stamped on.
    */
-  signature?: { url: string; name: string; comments: string; pdfUrl: string }
+  signature?: { url: string; name: string; comments: string; pdfUrl: string },
+  /** Why it's rejected — asked for with the shared popup when not given (throws RejectCancelledError if the reviewer cancels). */
+  rejectReason?: string
 ): Promise<void> {
   const nowIso = new Date().toISOString();
+  const stepLabel = stage === "manager" ? "Manager" : stage === "hr" ? "HR" : "Accounting";
+  const reason = decision === "rejected" ? await requireRejectReason(rejectReason, `Reject this leave request (${stepLabel})`) : "";
   const payload: Record<string, unknown> =
     stage === "manager"
       ? { manager_status: decision, manager_reviewed_by: reviewerId, manager_reviewed_at: nowIso }
@@ -698,6 +703,14 @@ export async function reviewPtoStage(
     payload.manager_signed_at = nowIso;
     payload.manager_comments = signature.comments || null;
     payload.pdf_url = signature.pdfUrl;
+  }
+
+  if (decision === "rejected") {
+    // pto_requests.review_note — shown to the employee in Self-Service → My Requests.
+    const { data: prev } = await supabase.from("pto_requests").select("review_note").eq("id", request.id).maybeSingle();
+    const line = `Rejected by ${reviewerName} (${stepLabel}): ${reason}`;
+    payload.review_note = prev?.review_note ? `${prev.review_note}
+${line}` : line;
   }
 
   let { data, error } = await supabase
@@ -725,7 +738,7 @@ export async function reviewPtoStage(
       recipientId: request.profileId,
       senderId: reviewerId,
       senderName: reviewerName,
-      body: `❌ Your PTO request (${dateRange}) was rejected by ${stageLabel}.`,
+      body: `❌ Your PTO request (${dateRange}) was rejected by ${stageLabel}. Reason: ${reason}`,
       linkTo: "/m/dashboard/employee-self-service?tab=requests",
     }).catch((err) => console.error("Failed to notify PTO rejection:", err));
     return;

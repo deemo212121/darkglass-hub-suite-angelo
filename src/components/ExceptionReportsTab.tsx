@@ -197,14 +197,8 @@ export function ExceptionReportsTab() {
     if (!confirm(message)) return;
     setRejectingId(r.id);
     try {
-      await updateEmployeeRequestStatus(r.id, "rejected", myProfileId);
-      await createNotification({
-        recipientId: r.profileId,
-        senderId: myProfileId,
-        senderName: displayName || "HR",
-        body: `❌ Your ticket time dispute for ${ticket} was rejected by HR.`,
-        linkTo: "/m/dashboard/employee-self-service?tab=requests",
-      }).catch((err) => console.error("Failed to notify ticket dispute rejection:", err));
+      // Asks for the reason and notifies the employee (with it) — see updateEmployeeRequestStatus.
+      await updateEmployeeRequestStatus(r.id, "rejected", myProfileId, undefined, displayName || "HR");
       void logModuleActivity({
         module: "attendance-monitoring",
         actorName: displayName || "HR",
