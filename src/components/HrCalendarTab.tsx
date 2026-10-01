@@ -69,6 +69,12 @@ interface Props {
   employees: CalendarEmployee[];
   myProfileId: string | null;
   myDisplayName: string | null;
+  /**
+   * View-only copy (CSR Main Dashboard → Time Off Calendar): every filter
+   * still works, but no plotting, editing, cancelling, approving or signing —
+   * clicking a booked day only shows its details.
+   */
+  readOnly?: boolean;
 }
 
 type CellColor = "approved" | "pending" | "hrPlotted";
@@ -173,7 +179,7 @@ interface CellModalState {
   request?: PtoRequestRow;
 }
 
-export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) {
+export function HrCalendarTab({ employees, myProfileId, myDisplayName, readOnly = false }: Props) {
   const { role, extraRoles, companyId } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -501,6 +507,11 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
 
   const openCell = (employee: CalendarEmployee, date: string) => {
     const request = cellsByProfile.get(employee.id)?.get(date);
+    if (readOnly) {
+      // View-only: a booked day shows its details; an empty day does nothing.
+      if (request) setModal({ mode: "view", employee, date, request });
+      return;
+    }
     setFormError(null);
     setAttachFile(null);
     if (request) {
@@ -1011,7 +1022,7 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
                           <td
                             key={d.date}
                             onClick={() => {
-                              if (hasPendingCorrection) {
+                              if (hasPendingCorrection && !readOnly) {
                                 const correction = pendingCorrectionByKey.get(`${e.id}|${d.date}`);
                                 if (correction) {
                                   setPendingDetailModal({ profileName: e.name, date: d.date, item: { type: "correction", data: correction } });
@@ -1075,7 +1086,29 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName }: Props) 
         </div>
       )}
 
-      {modal && createPortal(
+      {modal && readOnly && modal.request && createPortal(
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={closeModal}>
+          <div className="panel w-full max-w-sm p-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold">{modal.employee.name}</h3>
+              <button type="button" onClick={closeModal} className="text-muted-foreground hover:text-white" aria-label="Close">✕</button>
+            </div>
+            <div className="space-y-1.5 text-sm">
+              <div><span className="text-muted-foreground">Type:</span> {PTO_TYPE_LABELS[modal.request.ptoType]}</div>
+              <div><span className="text-muted-foreground">Dates:</span> {modal.request.startDate} to {modal.request.endDate}</div>
+              <div><span className="text-muted-foreground">Status:</span> <span className="capitalize">{modal.request.status === "denied" ? "rejected" : modal.request.status}</span></div>
+              <div className="text-xs text-muted-foreground">
+                Manager: {modal.request.managerStatus} · HR: {modal.request.hrStatus} · Accounting: {modal.request.accountingStatus}
+              </div>
+              {modal.request.reason && <div className="text-xs text-slate-300 whitespace-pre-line">{modal.request.reason}</div>}
+            </div>
+            <p className="mt-3 text-[11px] text-muted-foreground">View only.</p>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {modal && !readOnly && createPortal(
         // Portaled straight to <body> — this panel's own overflow-hidden
         // (needed to clip the rounded corners around the wide day-grid)
         // otherwise clips a nested position:fixed modal to the panel's own

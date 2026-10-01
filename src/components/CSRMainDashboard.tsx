@@ -24,6 +24,7 @@
  * folds in the two tools that used to be their own tiles.
  */
 
+import { CsrTimeOffCalendarTab } from "@/components/CsrTimeOffCalendarTab";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -44,7 +45,7 @@ import { createCsrMistakeLogEntry } from "@/lib/supabase/csrMistakeLog";
 
 const MANAGER_TIER_ROLES = new Set(["ADMIN", "SUPERADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"]);
 
-type Tab = "todo" | "team-list" | "team-composition" | "flash-tech-grid";
+type Tab = "todo" | "team-list" | "team-composition" | "flash-tech-grid" | "time-off-calendar";
 
 interface TeamRow {
   profile: ProfileRow;
@@ -88,6 +89,7 @@ export function CSRMainDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef })
     ...(isManagerTier || isTeamLeader ? [{ key: "team-list" as Tab, label: "Team List" }] : []),
     ...(isManagerTier ? [{ key: "team-composition" as Tab, label: "Team Composition" }] : []),
     { key: "flash-tech-grid", label: "Flash Tech Grid" },
+    { key: "time-off-calendar", label: "Time Off Calendar" },
   ];
 
   return (
@@ -128,6 +130,7 @@ export function CSRMainDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef })
           </div>
         )}
         {tab === "flash-tech-grid" && <CsrFlashTechGrid />}
+        {tab === "time-off-calendar" && <CsrTimeOffCalendarTab />}
       </main>
     </div>
   );
