@@ -4814,11 +4814,32 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               <td className="px-4 py-3 text-slate-300">
                                 <span className="inline-flex items-center gap-1.5">
                                   {roleTypeLabel(row.employee)}
-                                  {row.employee.tierLevel && (
-                                    <span className="shrink-0 rounded-full border border-yellow-500/40 bg-yellow-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-yellow-300">
-                                      {row.employee.tierLevel}
-                                    </span>
-                                  )}
+                                  <span className="inline-flex shrink-0 flex-col items-center gap-1">
+                                    {row.employee.tierLevel && (
+                                      <span className="rounded-full border border-yellow-500/40 bg-yellow-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-yellow-300">
+                                        {row.employee.tierLevel}
+                                      </span>
+                                    )}
+                                    {isCarIqEligible(row.employee.role, row.employee.extraRoles) && (() => {
+                                      const hasCarIq = employeeInfoByProfileId.get(row.employee.id)?.hasCarIq;
+                                      const label = hasCarIq === true ? "With CarIQ" : hasCarIq === false ? "No CarIQ" : "CarIQ status not recorded";
+                                      return (
+                                        <span
+                                          title={label}
+                                          aria-label={label}
+                                          className={`rounded-full border px-1.5 py-0.5 text-[9px] font-semibold tracking-wide ${
+                                            hasCarIq === true
+                                              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                                              : hasCarIq === false
+                                                ? "border-red-500/40 bg-red-500/10 text-red-300"
+                                                : "border-slate-500/40 bg-slate-500/10 text-slate-400"
+                                          }`}
+                                        >
+                                          {hasCarIq === true ? "wCIQ" : hasCarIq === false ? "nCIQ" : "?"}
+                                        </span>
+                                      );
+                                    })()}
+                                  </span>
                                 </span>
                               </td>
                               <td className="px-4 py-3 text-center text-slate-300">
