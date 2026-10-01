@@ -14,6 +14,7 @@ import { getEntryForDate, saveEntry, type UITimeEntry, type PunchField } from ".
 import { getCompanyUsers, type ProfileRow } from "./users";
 import { createNotification } from "./notifications";
 import { isAttendanceFullAccessRole, isTraineeFallbackReviewerRole } from "@/lib/roleLabels";
+import { chainCanApprove } from "@/lib/approvalDirectory";
 import { getServerNow, zonedDateKey, type ScheduleTimezone } from "@/lib/serverTime";
 
 /** Same deep-link convention timecard_corrections' own notifications already
@@ -292,14 +293,20 @@ export async function getCompanyTraineeEntries(dateFrom?: string, dateTo?: strin
  * checks share this same tab as their always-available fallback surface.
  */
 export function canApproveTraineeDay(
-  entry: Pick<TraineeTimecardEntry, "managerId">,
+  entry: Pick<TraineeTimecardEntry, "managerId"> & { profileId?: string },
   viewerProfileId: string | null,
   viewerRole: string | null,
   viewerExtraRoles: string[] | null | undefined
 ): boolean {
   if (isAttendanceFullAccessRole(viewerRole, viewerExtraRoles)) return true;
-  if (isTraineeFallbackReviewerRole(viewerRole, viewerExtraRoles)) return true;
-  return !!viewerProfileId && entry.managerId === viewerProfileId;
+  // The trainee's own trainer always can.
+  if (!!viewerProfileId && entry.managerId === viewerProfileId) return true;
+  // Non-PH field trainees follow the Approval Chain: Branch Manager / Parts at
+  // their branch, their area's Senior Branch Manager, the top level. That
+  // replaces the old company-wide Senior Branch Manager fallback for them.
+  const chain = chainCanApprove(viewerProfileId, entry.profileId);
+  if (chain !== null) return chain;
+  return isTraineeFallbackReviewerRole(viewerRole, viewerExtraRoles);
 }
 
 /**
@@ -382,7 +389,16 @@ export interface TraineeReviewQueueItem {
  * flagging a trainee as a false no-show for a business day that, in their
  * own timezone, hasn't started (or ended) yet.
  */
-export async function getTraineeReviewQueue(managerProfileId: string): Promise<TraineeReviewQueueItem[]> {
+export async function getTraineeReviewQueue(
+  managerProfileId: string,
+  /**
+   * Also include trainees this viewer can approve through the Approval Chain
+   * (their branch's / area's trainees) — for the browsable mobile Team
+   * Approvals list only. Left off for the blocking popup and the Check Out
+   * gate, which stay limited to the trainee's own trainer.
+   */
+  opts?: { includeChain?: boolean }
+): Promise<TraineeReviewQueueItem[]> {
   const [entries, roster, serverNow] = await Promise.all([getCompanyTraineeEntries(), getCompanyUsers(), getServerNow()]);
   const manager = roster.find((p) => p.id === managerProfileId);
   const managerName = (manager?.display_name || "").trim().toLowerCase();
@@ -404,8 +420,14 @@ export async function getTraineeReviewQueue(managerProfileId: string): Promise<T
     .filter((e) => e.status === "pending")
     .map((entry) => {
       const trainee = roster.find((p) => p.id === entry.profileId);
+      // The trainee's CURRENT manager (not the one stamped at punch time),
+      // plus — for the browsable Team Approvals list only — trainees this
+      // viewer covers through the Approval Chain. Deactivated trainees drop
+      // out (and so never hold up anyone's Check Out).
       return trainee &&
-        isCurrentTraineeManager(trainee, entry, managerProfileId, manager?.display_name) &&
+        trainee.is_active &&
+        (isCurrentTraineeManager(trainee, entry, managerProfileId, manager?.display_name) ||
+          (opts?.includeChain && chainCanApprove(managerProfileId, entry.profileId) === true)) &&
         isCompleteDay(entry, trainee)
         ? { kind: "entry" as const, trainee, entry, workDate: entry.workDate }
         : null;
@@ -417,13 +439,13 @@ export async function getTraineeReviewQueue(managerProfileId: string): Promise<T
     if (!entryProfileIdsByWorkDate.has(e.workDate)) entryProfileIdsByWorkDate.set(e.workDate, new Set());
     entryProfileIdsByWorkDate.get(e.workDate)!.add(e.profileId);
   }
-  const noShowItems: TraineeReviewQueueItem[] = managerName
+  const noShowItems: TraineeReviewQueueItem[] = managerName || opts?.includeChain
     ? roster
         .filter(
           (p) =>
             p.employment_type === "trainee" &&
             p.is_active &&
-            (p.manager_name || "").trim().toLowerCase() === managerName
+            ((!!managerName && (p.manager_name || "").trim().toLowerCase() === managerName) || (opts?.includeChain && chainCanApprove(managerProfileId, p.id) === true))
         )
         .map((trainee) => {
           const traineeTz: ScheduleTimezone = trainee.schedule_timezone || "CST";

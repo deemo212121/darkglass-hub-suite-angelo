@@ -1887,7 +1887,7 @@ const adminMod: ModuleDef = {
     {
       slug: "approval-chain",
       title: "Approval Chain",
-      description: "Areas, Senior Branch Managers and branches — and who approves each field employee's Time Corrections / PTO and can clock them in (non-Philippines staff).",
+      description: "Areas, Senior Branch Managers and branches — and who approves each field employee's Time Corrections / PTO and can clock them in — plus the Philippines department chain.",
       custom: "approval-chain" as any,
       fields: [],
       seed: () => ({}),

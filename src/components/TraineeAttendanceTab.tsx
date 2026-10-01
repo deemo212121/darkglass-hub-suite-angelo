@@ -19,6 +19,7 @@
  * from AttendanceMonitoringPage rather than re-fetching them — this tab is
  * only ever mounted there.
  */
+import { chainCanApprove } from "@/lib/approvalDirectory";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearch } from "@tanstack/react-router";
 import type { ProfileRow } from "@/lib/supabase/users";
@@ -166,12 +167,16 @@ export function TraineeAttendanceTab({
       profiles.filter(
         (p) =>
           p.employment_type === "trainee" &&
+          // Deactivated accounts don't show up here.
+          p.is_active &&
           (showAll
             ? teamScopedIds === null || teamScopedIds.has(p.id) || isTraineeFallbackReviewerRole(role, extraRoles)
-            : viewerName !== "" && (p.manager_name || "").trim().toLowerCase() === viewerName)
+            : (viewerName !== "" && (p.manager_name || "").trim().toLowerCase() === viewerName) ||
+              // …plus trainees this viewer covers through the Approval Chain (their branch / area).
+              chainCanApprove(myProfileId, p.id) === true)
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [profiles, teamScopedIds, showAll, viewerName]
+    [profiles, teamScopedIds, showAll, viewerName, myProfileId]
   );
   const traineeIds = useMemo(() => new Set(visibleTrainees.map((p) => p.id)), [visibleTrainees]);
 
@@ -387,7 +392,7 @@ export function TraineeAttendanceTab({
                   onClick={() => setScope(s)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${scope === s ? "bg-primary/20 text-primary" : "bg-slate-800/50 text-slate-400 hover:text-white"}`}
                 >
-                  {s === "mine" ? "My Trainees" : "All Trainees"}
+                  {s === "mine" ? "My Trainees & Branch" : "All Trainees"}
                 </button>
               ))}
             </div>
@@ -522,12 +527,15 @@ export function TraineeAttendanceTab({
                 }
 
                 const entry = row.entry!;
-                // Fallback reviewers, or whoever is the trainee's manager NOW
-                // (not whoever was stamped on the entry at punch time).
+                // Full-access roles, whoever is the trainee's manager NOW (not
+                // whoever was stamped on the entry at punch time), or — when
+                // the trainee is governed by the Approval Chain — the chain's
+                // approvers, which replace the generic fallback reviewers.
+                const chainDecision = chainCanApprove(myProfileId, entry.profileId);
                 const canApprove =
                   isAttendanceFullAccessRole(role, extraRoles) ||
-                  isTraineeFallbackReviewerRole(role, extraRoles) ||
-                  isCurrentTraineeManager(profileById.get(entry.profileId), entry, myProfileId, viewerName);
+                  isCurrentTraineeManager(profileById.get(entry.profileId), entry, myProfileId, viewerName) ||
+                  (chainDecision !== null ? chainDecision : isTraineeFallbackReviewerRole(role, extraRoles));
                 const hours = calcWorkedHours({ checkIn: entry.checkIn, checkOut: entry.checkOut, mealStart: entry.mealStart, mealEnd: entry.mealEnd, notes: "" });
                 return (
                   <tr key={entry.id} className="border-b border-white/5 hover:bg-white/5 transition">

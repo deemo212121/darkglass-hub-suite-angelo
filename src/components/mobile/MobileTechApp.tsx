@@ -7332,10 +7332,9 @@ function MobileTeamApprovalsView({
     try {
       const [allProfiles, queue, correctionRows, ptoRows, requestRows] = await Promise.all([
         getCompanyUsers(),
-        // Own trainees only, whatever the viewer's role — the company-wide
-        // fallback lives on desktop Attendance Monitoring's Trainee
-        // Attendance tab, not here.
-        getTraineeReviewQueue(profileId),
+        // Own trainees plus the ones this viewer covers through the Approval
+        // Chain (Branch Manager / Parts at the trainee's branch, their SBM).
+        getTraineeReviewQueue(profileId, { includeChain: true }),
         getCompanyTimecardCorrections(),
         getCompanyPtoRequests(),
         getCompanyEmployeeRequests(),
