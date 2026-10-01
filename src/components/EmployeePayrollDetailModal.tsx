@@ -1266,12 +1266,12 @@ export function EmployeePayrollDetailModal({
           </div>
         </div>
 
-        <div className="overflow-y-auto flex-1 p-5 space-y-5">
+        <div className="overflow-y-auto flex-1 p-3 space-y-3">
           {/* KPI row */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
               <p className="text-xs text-slate-400 uppercase">Total Hours</p>
-              <p className="text-xl font-bold text-white mt-1">{fmtDecimal(totalHours)}</p>
+              <p className="text-lg font-bold text-white mt-1">{fmtDecimal(totalHours)}</p>
               <p className="text-xs text-slate-400 mt-0.5">
                 {fmtDecimal(totalHoursSplit.regular)} regular + {fmtDecimal(totalHoursSplit.overtime)} overtime
               </p>
@@ -1281,27 +1281,32 @@ export function EmployeePayrollDetailModal({
                 <div>
                   <p className="text-xs text-slate-400 uppercase">Current Rate</p>
                   {isCurrentlyFixed && currentEntry?.annualSalary ? (
-                    <p className="text-xl font-bold text-white mt-1">
+                    <p className="text-lg font-bold text-white mt-1">
                       ${currentEntry.annualSalary.toLocaleString()}/yr <span className="text-xs font-normal text-slate-400">(${perCutoffSalary(currentEntry.annualSalary, isPhPayroll).toFixed(2)}/cutoff)</span>
                     </p>
                   ) : (
-                    <p className="text-xl font-bold text-white mt-1">${rateNow.toFixed(2)}/hr</p>
+                    <p className="text-lg font-bold text-white mt-1">${rateNow.toFixed(2)}/hr</p>
                   )}
                 </div>
                 <div className="border-l border-white/10 pl-3">
                   <p className="text-xs text-slate-400 uppercase">Tier Level</p>
-                  <p className="text-xl font-bold text-white mt-1">{tierLevel || "Unassigned"}</p>
+                  <p className="text-lg font-bold text-white mt-1">{tierLevel || "Unassigned"}</p>
                 </div>
               </div>
             </div>
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
-              <p className="text-xs text-slate-400 uppercase">Field Start Date</p>
-              <p className="text-xl font-bold text-white mt-1">
-                {fieldStart.loading ? "Loading..." : fieldStart.error ? "Unable to load" : fieldStart.date
-                  ? new Date(`${fieldStart.date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-                  : "Not recorded"}
-              </p>
-              <p className="text-xs text-slate-400 mt-0.5">Field start recorded in HR Training List</p>
+              <div className="grid grid-cols-2 divide-x divide-white/10">
+                {[{ label: "Work Start", date: hrTraining.start || hireDate }, { label: "Field Start", date: fieldStart.date }].map(({ label, date }, index) => (
+                  <div key={label} className={index ? "pl-3" : "pr-3"}>
+                    <p className="text-[10px] text-slate-400 uppercase">{label}</p>
+                    <p className="text-sm font-semibold text-white mt-1">
+                      {fieldStart.loading ? "Loading..." : fieldStart.error ? "Unable to load" : date
+                        ? new Date(`${date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                        : "Not recorded"}
+                    </p>
+                  </div>
+                ))}
+              </div>
             </div>
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
               <div className="flex items-center justify-between gap-2">
@@ -1327,7 +1332,7 @@ export function EmployeePayrollDetailModal({
                   </div>
                 )}
               </div>
-              <p className="text-xl font-bold text-green-300 mt-1">${displayedPayFlat.toFixed(2)}</p>
+              <p className="text-lg font-bold text-green-300 mt-1">${displayedPayFlat.toFixed(2)}</p>
               {!isCurrentlyFixed && (
                 <p className="text-xs text-slate-400 mt-0.5" title="Flat — every hour (regular and overtime alike) at the same rate, no 1.5× multiplier. The Tech Activity Report step computes the real Hourly + OT total, including the FLSA weighted-regular-rate overtime premium once this period's incentive/bonus pay is folded in — this tile is just the state-floor check, not that final figure.">
                   {(totalHoursSplit.regular + totalHoursSplit.overtime).toFixed(3)} hrs flat = ${displayedPayFlat.toFixed(2)}
@@ -1337,7 +1342,7 @@ export function EmployeePayrollDetailModal({
           </div>
 
           {/* Salary history + add change */}
-          <div className="bg-slate-800/30 border border-white/10 rounded-lg p-4">
+          <div className="bg-slate-800/30 border border-white/10 rounded-lg p-3">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-white">Salary History</h3>
               <button
@@ -1474,8 +1479,8 @@ export function EmployeePayrollDetailModal({
           </div>
 
           {/* Trainee daily $100 guarantee window */}
-          <div className="bg-slate-800/30 border border-white/10 rounded-lg p-4">
-            <h3 className="text-sm font-semibold text-white mb-2">Trainee Status ? Manual Fallback</h3>
+          <div className="bg-slate-800/30 border border-white/10 rounded-lg p-3">
+            <h3 className="text-sm font-semibold text-white mb-2">Trainee Status (Manual Fallback)</h3>
             <div className="flex items-end gap-3 flex-wrap">
               <div>
                 <label className="block text-[10px] text-slate-400 uppercase mb-1">Training End Date</label>
@@ -1510,9 +1515,9 @@ export function EmployeePayrollDetailModal({
 
           {/* Weekly breakdown + unassigned-state flag (PH has no state concept, so it never shows there — Weekly Breakdown spans the full row instead of leaving an empty column beside it) */}
           {(weeklyBreakdown.length > 0 || (!isPhPayroll && unassignedStateDays.length > 0)) && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {weeklyBreakdown.length > 0 && (
-            <div className={`bg-slate-800/30 border border-white/10 rounded-lg p-4 ${isPhPayroll ? "md:col-span-2" : ""}`}>
+            <div className={`bg-slate-800/30 border border-white/10 rounded-lg p-3 ${isPhPayroll ? "md:col-span-2" : ""}`}>
               <h3 className="text-sm font-semibold text-white mb-2">Weekly Breakdown</h3>
               <ul className="space-y-1">
                 {weeklyBreakdown.map((w, i, arr) => {
@@ -1550,7 +1555,7 @@ export function EmployeePayrollDetailModal({
             </div>
           )}
           {!isPhPayroll && unassignedStateDays.length > 0 && (
-            <div className="bg-amber-950/20 border border-amber-500/30 rounded-lg p-4">
+            <div className="bg-amber-950/20 border border-amber-500/30 rounded-lg p-3">
               <h3 className="text-sm font-semibold text-amber-300 mb-2">
                 State Not Assigned — {unassignedStateDays.length} {unassignedStateDays.length === 1 ? "day" : "days"}
               </h3>
@@ -1570,7 +1575,7 @@ export function EmployeePayrollDetailModal({
           )}
 
           {/* Attendance table */}
-          <div className="bg-slate-800/30 border border-white/10 rounded-lg p-4">
+          <div className="bg-slate-800/30 border border-white/10 rounded-lg p-3">
             <div className="flex items-center justify-between mb-1">
               <h3 className="text-sm font-semibold text-white">Attendance — {rangeStart} to {rangeEnd}</h3>
               <div className="flex items-center gap-2">
