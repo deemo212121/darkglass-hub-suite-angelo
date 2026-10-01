@@ -12,6 +12,7 @@
  *  - Then we insert the matching row into Supabase `profiles`.
  */
 
+import { registerApprovalDirectory } from "@/lib/approvalDirectory";
 import { initializeApp, deleteApp, getApps } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword } from "firebase/auth";
 import { supabase } from "./client";
@@ -494,9 +495,16 @@ export async function getCompanyUsers(): Promise<ProfileRow[]> {
     return companyUsersCache.data;
   }
   if (companyUsersInFlight) return companyUsersInFlight;
-  companyUsersInFlight = fetchCompanyUsersUncached().finally(() => {
-    companyUsersInFlight = null;
-  });
+  companyUsersInFlight = fetchCompanyUsersUncached()
+    .then(async (rows) => {
+      // Approval chain data (profiles + which SBM owns which branch) — ready
+      // before any caller gets the users, so approval checks never run blind.
+      await registerApprovalDirectory(rows);
+      return rows;
+    })
+    .finally(() => {
+      companyUsersInFlight = null;
+    });
   const rows = await companyUsersInFlight;
   companyUsersCache = { data: rows, expiresAt: Date.now() + COMPANY_USERS_CACHE_TTL_MS };
   return rows;

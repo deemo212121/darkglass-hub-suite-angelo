@@ -1885,6 +1885,14 @@ const adminMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "approval-chain",
+      title: "Approval Chain",
+      description: "Areas, Senior Branch Managers and branches — and who approves each field employee's Time Corrections / PTO and can clock them in (non-Philippines staff).",
+      custom: "approval-chain" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
       slug: "it-tickets",
       title: "IT Tickets",
       description: "View and manage IT support tickets submitted by employees. IT and Admins can edit/assign/delete; Senior Managers can view.",

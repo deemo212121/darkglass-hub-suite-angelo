@@ -96,6 +96,8 @@ export function CorrectionsTab() {
   // manager at submission time can still act even if team scoping has since
   // moved them out), never removes it — same rule Attendance Monitoring's
   // own Corrections tab uses.
+  // Work Date column sort — newest first by default, click the header to flip.
+  const [workDateSort, setWorkDateSort] = useState<"desc" | "asc">("desc");
   const filteredCorrections = useMemo(() => {
     const q = correctionSearch.trim().toLowerCase();
     return corrections.filter((c) => {
@@ -106,6 +108,10 @@ export function CorrectionsTab() {
       return true;
     });
   }, [corrections, correctionSearch, correctionStatusFilter, correctionEraFilter, teamScopedIds, myProfileId, profiles]);
+  const sortedCorrections = useMemo(() => [...filteredCorrections].sort((a, b) => {
+      const d = a.workDate.localeCompare(b.workDate) || (a.createdAt ?? "").localeCompare(b.createdAt ?? "");
+      return workDateSort === "desc" ? -d : d;
+    }), [filteredCorrections, workDateSort]);
   const correctionPendingCount = useMemo(() => filteredCorrections.filter((c) => c.status === "pending").length, [filteredCorrections]);
 
   const visibleCorrectionHistory = useMemo(() => {
@@ -215,7 +221,16 @@ export function CorrectionsTab() {
           <thead>
             <tr className="border-b border-white/10">
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Employee</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Work Date</th>
+              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">
+                <button
+                  type="button"
+                  onClick={() => setWorkDateSort((d) => (d === "desc" ? "asc" : "desc"))}
+                  title={workDateSort === "desc" ? "Newest first — click for oldest first" : "Oldest first — click for newest first"}
+                  className="inline-flex items-center gap-1 uppercase hover:text-white"
+                >
+                  Work Date <span className="text-[10px]">{workDateSort === "desc" ? "▼" : "▲"}</span>
+                </button>
+              </th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Original → Corrected</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Reason</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
@@ -227,7 +242,7 @@ export function CorrectionsTab() {
               <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
             ) : filteredCorrections.length === 0 ? (
               <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
-            ) : filteredCorrections.map((c) => {
+            ) : sortedCorrections.map((c) => {
               const { requesterManagerName, requesterManagersManagerName } = managerChainFor(c.profileId);
               return (
               <tr key={c.id} className="border-b border-white/5 hover:bg-white/5 transition">
@@ -300,13 +315,10 @@ export function CorrectionsTab() {
                       </div>
                     )}
                     {c.exceptionType !== null && c.hrPaperworkStatus === "pending" && canReviewCorrectionStage(c, "hr", myProfileId, role, extraRoles) && (
-                      c.managerSignatureUrl ? (
-                        <button type="button" onClick={() => setSigningHrFor(c)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[10px] font-semibold transition">
-                          Sign Exception Report (HR)
-                        </button>
-                      ) : (
-                        <span className="text-[10px] text-slate-500">Exception Report: awaiting manager signature</span>
-                      )
+                      // HR doesn't wait for the manager — any 2 of Manager / HR / Accounting, in any order.
+                      <button type="button" onClick={() => setSigningHrFor(c)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[10px] font-semibold transition">
+                        Approve & Sign as HR
+                      </button>
                     )}
                     {c.accountingStatus === "pending" && canReviewCorrectionStage(c, "accounting", myProfileId, role, extraRoles) && (
                       <div className="flex gap-1">

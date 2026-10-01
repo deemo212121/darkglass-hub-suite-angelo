@@ -6,6 +6,7 @@
 
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import type { ProfileRow } from "@/lib/supabase/users";
+import { getChainData, chainLevelOf, chainCanApproveWith, chainCanClockInWith } from "@/lib/approvalDirectory";
 import {
   isAttendanceManagerTierRole,
   isAttendanceFullAccessRole,
@@ -123,6 +124,25 @@ export function visibleAttendanceProfileIds(
   if (isPartsStaffRole(viewer.role, viewer.extra_roles) && viewer.assigned_branch) {
     allProfiles.forEach((p) => {
       if (p.assigned_branch === viewer.assigned_branch && TECHNICIAN_PAY_ROLES.has(normalizeRole(p.role))) ids.add(p.id);
+    });
+  }
+  // Approval Chain (non-PH field staff, migration 0332): add every governed
+  // person this viewer can approve or clock in (Branch / Parts Manager →
+  // their branch's technicians; Senior Branch Manager → everyone in the
+  // branches they own), and drop governed people they can't act on — e.g. a
+  // Branch Manager from another Senior Branch Manager's area.
+  // Only branch-level / SBM / Parts viewers are narrowed this way; anyone else
+  // (e.g. a Technician Manager) keeps their Manager-field view, just without
+  // approve / clock-in rights on governed people.
+  const chain = getChainData();
+  const viewerLevel = chainLevelOf(viewer);
+  const narrowToChain = viewerLevel === "branch" || viewerLevel === "sbm" || isPartsStaffRole(viewer.role, viewer.extra_roles);
+  if (chain.byId.size > 0) {
+    allProfiles.forEach((p) => {
+      if (p.id === viewer.id || !chainLevelOf(p)) return;
+      const ok = chainCanApproveWith(chain, viewer.id, p.id) === true || chainCanClockInWith(chain, viewer.id, p.id) === true;
+      if (ok) ids.add(p.id);
+      else if (narrowToChain) ids.delete(p.id);
     });
   }
   return ids;

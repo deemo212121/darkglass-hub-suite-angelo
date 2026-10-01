@@ -57,6 +57,7 @@ import { RepairStatusesPage } from "@/components/RepairStatusesPage";
 import { DataMigrationPage } from "@/components/DataMigrationPage";
 import { LoginSecurityPage } from "@/components/LoginSecurityPage";
 import { AccessibilityManagementPage } from "@/components/AccessibilityManagementPage";
+import { ApprovalChainPage } from "@/components/ApprovalChainPage";
 import { FlashTechCalendarPage } from "@/components/FlashTechCalendarPage";
 // Richer parts components pulled from the upstream usapp repo. Where they
 // overlap with the existing *Page wrappers above we prefer the upstream
@@ -610,6 +611,8 @@ function SubModule() {
         ? <LoginSecurityPage mod={mod} sub={sub} />
         : (sub as any).custom === "accessibility-management"
         ? <AccessibilityManagementPage mod={mod} sub={sub} />
+        : (sub as any).custom === "approval-chain"
+        ? <ApprovalChainPage mod={mod} sub={sub} />
         : (sub as any).custom === "flash-tech-calendar"
         ? <FlashTechCalendarPage mod={mod} sub={sub} />
         : (sub as any).custom === "company-settings"

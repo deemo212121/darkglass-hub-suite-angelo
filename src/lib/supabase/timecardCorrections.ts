@@ -15,6 +15,7 @@
  * working unchanged.
  */
 
+import { chainCanApprove } from "@/lib/approvalDirectory";
 import { supabase } from "./client";
 import { createNotification } from "./notifications";
 import { getCompanyUsers } from "./users";
@@ -245,7 +246,7 @@ export async function getPendingCorrectionsInRange(startDate: string, endDate: s
  * final.
  */
 export function canReviewCorrectionStage(
-  request: Pick<TimecardCorrectionRow, "managerId">,
+  request: Pick<TimecardCorrectionRow, "managerId"> & { profileId?: string },
   stage: CorrectionStage,
   viewerProfileId: string | null,
   viewerRole: string | null | undefined,
@@ -277,7 +278,13 @@ export function canReviewCorrectionStage(
   const has = (r: string) => heldRoles.includes(r);
   if (has("SUPERADMIN") || has("SUPERSUPERADMIN")) return true;
   if (stage === "manager") {
-    // Team leaders (CSR/Claims/Parts _TEAM_LEADER) can't approve the manager
+    // Non-PH field staff (Technician → Branch / Parts Manager → Senior Branch
+    // Manager → Admin / Directors): the Approval Chain decides, by role +
+    // branch + area — migration 0332 enforces the same rule in the database.
+    // Checked first so the buttons match what the database allows.
+    const chain = chainCanApprove(viewerProfileId, request.profileId);
+    if (chain !== null) return chain;
+    // Everyone else: team leaders (CSR/Claims/Parts _TEAM_LEADER) can't approve the manager
     // stage — per the user's explicit call, a team member's time correction
     // is approved by a manager (e.g. Robyn Heredia), never their team
     // leader. CSR requests are routed to the team leader

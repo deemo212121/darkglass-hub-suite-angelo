@@ -31,6 +31,7 @@ import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { getLatestVisitUpdatesByProfileIds, getTicketsScheduledInRange, type LatestVisitUpdate, type ScheduledTicketRow } from "@/lib/supabase/tickets";
 import { resolveTeamLeadOrManager, visibleAttendanceProfileIds } from "@/lib/notifyRouting";
+import { chainCanClockIn } from "@/lib/approvalDirectory";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { ATTENDANCE_GRACE_MINUTES, addMinutesToHHMM, nowInTimezone, timezoneForBranch, DEFAULT_ATTENDANCE_TIMEZONE, payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule, toSeconds, ON_TIME_BUFFER_SECONDS } from "@/lib/attendanceGrace";
 import { getServerNow } from "@/lib/serverTime";
@@ -1492,6 +1493,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // the snapshot only ADDS visibility (for the rare case the requester's
   // manager_name doesn't currently resolve back to this viewer at all, e.g.
   // it's stale/blank but the id was captured correctly), never removes it.
+  // Work Date column sort — newest first by default, click the header to flip.
+  const [workDateSort, setWorkDateSort] = useState<"desc" | "asc">("desc");
   const filteredCorrections = useMemo(() => {
     const q = correctionSearch.trim().toLowerCase();
     return corrections.filter((c) => {
@@ -1525,6 +1528,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     allProfileById,
     myProfileId,
   ]);
+  const sortedCorrections = useMemo(() => [...filteredCorrections].sort((a, b) => {
+      const d = a.workDate.localeCompare(b.workDate) || (a.createdAt ?? "").localeCompare(b.createdAt ?? "");
+      return workDateSort === "desc" ? -d : d;
+    }), [filteredCorrections, workDateSort]);
   // Pending count among whatever's currently filtered/listed above — not
   // the whole company's pending total — so it stays meaningful once a
   // manager/branch/date filter narrows the table down.
@@ -1941,7 +1948,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               (by {record.clockedInBy})
                             </span>
                           )}
-                          {(record.date ?? dailyDate) === todayISO && TECHNICIAN_PAY_ROLES.has(record.role) && record.checkIn === "—" && !record.isOffDay && (
+                          {(record.date ?? dailyDate) === todayISO && TECHNICIAN_PAY_ROLES.has(record.role) && record.checkIn === "—" && !record.isOffDay && chainCanClockIn(myProfileId, record.profileId) !== false && (
                             <button
                               type="button"
                               disabled={clockingInIds.has(record.profileId)}
@@ -2658,7 +2665,16 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   <thead>
                     <tr className="border-b border-white/10">
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Employee</th>
-                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Work Date</th>
+                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">
+                <button
+                  type="button"
+                  onClick={() => setWorkDateSort((d) => (d === "desc" ? "asc" : "desc"))}
+                  title={workDateSort === "desc" ? "Newest first — click for oldest first" : "Oldest first — click for newest first"}
+                  className="inline-flex items-center gap-1 uppercase hover:text-white"
+                >
+                  Work Date <span className="text-[10px]">{workDateSort === "desc" ? "▼" : "▲"}</span>
+                </button>
+              </th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Original Time</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Requested Time</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Reason</th>
@@ -2671,7 +2687,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
                     ) : filteredCorrections.length === 0 ? (
                       <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" || correctionDepartmentFilter !== "all" || correctionBranchFilter !== "all" || correctionWorkDateFrom || correctionWorkDateTo ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
-                    ) : filteredCorrections.map((correction) => (
+                    ) : sortedCorrections.map((correction) => (
                       <tr key={correction.id} className="border-b border-white/5 hover:bg-white/5 transition">
                         <td className="px-3 py-3 text-white font-medium">
                           <a href={`/employee/${correction.profileId}`} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline cursor-pointer">
@@ -3007,13 +3023,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   </div>
                 )}
                 {selectedCorrection.exceptionType !== null && selectedCorrection.hrPaperworkStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "hr", myProfileId, role, extraRoles) && (
-                  selectedCorrection.managerSignatureUrl ? (
-                    <button onClick={() => setSigningHrCorrection(true)} className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition font-semibold text-sm">
-                      Sign Exception Report (HR)
-                    </button>
-                  ) : (
-                    <p className="text-xs text-slate-500">Exception Report: awaiting manager signature before HR can sign.</p>
-                  )
+                  // HR doesn't wait for the manager — any 2 of Manager / HR / Accounting, in any order.
+                  <button onClick={() => setSigningHrCorrection(true)} className="w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
+                    <CheckCircle className="h-4 w-4" />
+                    Approve & Sign as HR
+                  </button>
                 )}
                 {selectedCorrection.accountingStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "accounting", myProfileId, role, extraRoles) && (
                   <div className="grid gap-3 md:grid-cols-2">
@@ -3206,7 +3220,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           <span className="inline-block px-3 py-1 bg-red-500/20 text-red-300 text-xs font-semibold rounded border border-red-500/40">
                             No Clock In
                           </span>
-                          {record.date === todayISO && TECHNICIAN_PAY_ROLES.has(record.role) && (
+                          {record.date === todayISO && TECHNICIAN_PAY_ROLES.has(record.role) && chainCanClockIn(myProfileId, record.profileId) !== false && (
                             <button
                               type="button"
                               disabled={clockingInIds.has(record.profileId)}
