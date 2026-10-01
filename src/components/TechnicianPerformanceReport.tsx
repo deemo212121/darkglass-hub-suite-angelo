@@ -212,6 +212,8 @@ interface TechPerfRow {
   tier: string;
   isActive: boolean;
   daysWorked: number;
+  /** The dates behind daysWorked (punched days + days with an hours correction), ascending. */
+  workedDates: string[];
   hoursWorked: number;
   totalTickets: number;
   minorTicketCount: number;
@@ -336,6 +338,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const [ticketListFor, setTicketListFor] = useState<{ id: string; name: string } | null>(null);
   const [mileageListFor, setMileageListFor] = useState<{ id: string; name: string } | null>(null);
   const [offDaysListFor, setOffDaysListFor] = useState<{ id: string; name: string } | null>(null);
+  const [workDaysListFor, setWorkDaysListFor] = useState<{ id: string; name: string } | null>(null);
   const [hoursListFor, setHoursListFor] = useState<{ id: string; name: string } | null>(null);
   const [importing, setImporting] = useState(false);
   const [templateGenerating, setTemplateGenerating] = useState(false);
@@ -663,7 +666,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         const overrideWorkedDays = Array.from(techOverrides?.entries() ?? [])
           .filter(([, o]) => o.hoursWorked != null && o.hoursWorked > 0)
           .map(([date]) => date);
-        const daysWorked = new Set([...(daysByProfile.get(t.id) ?? []), ...overrideWorkedDays]).size;
+        const workedDates = Array.from(new Set([...(daysByProfile.get(t.id) ?? []), ...overrideWorkedDays])).sort();
+        const daysWorked = workedDates.length;
         const redoRatePct = totalTickets > 0 ? (redoCount / totalTickets) * 100 : null;
         const milesPerTicket = totalTickets > 0 ? miles / totalTickets : null;
         const ticketsPerHour = hoursWorked > 0 ? totalTickets / hoursWorked : null;
@@ -677,6 +681,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           tier: t.tier_level || "—",
           isActive: t.is_active,
           daysWorked,
+          workedDates,
           hoursWorked,
           totalTickets,
           minorTicketCount,
@@ -847,6 +852,18 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     }
     return dates;
   }, [offDaysListFor, rows, periodStart, periodEnd]);
+
+  // The dates behind a clicked Working Days count — exactly the set that
+  // produces daysWorked, with that day's hours where there are any.
+  const workDaysListRows = useMemo(() => {
+    if (!workDaysListFor) return [];
+    const row = rows.find((r) => r.id === workDaysListFor.id);
+    if (!row) return [];
+    const dayHours = hoursDaily.get(workDaysListFor.id);
+    return [...row.workedDates]
+      .sort((a, b) => b.localeCompare(a))
+      .map((date) => ({ date, hours: dayHours?.get(date) ?? null }));
+  }, [workDaysListFor, rows, hoursDaily]);
 
   const sortedRows = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
@@ -1695,6 +1712,22 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                               )}
                             </td>
                           );
+                          const workDaysCell = (
+                            <td className="px-3 py-2 text-right">
+                              {r.daysWorked > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setWorkDaysListFor({ id: r.id, name: r.name })}
+                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
+                                  title="View working dates"
+                                >
+                                  {r.daysWorked}
+                                </button>
+                              ) : (
+                                r.daysWorked
+                              )}
+                            </td>
+                          );
                           const hoursCell = (
                             <td className="px-3 py-2 text-right">
                               {r.hoursWorked > 0 ? (
@@ -1720,7 +1753,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                                 <td className="px-3 py-2 text-right">{r.redoCount}</td>
                                 {milesCell}
                                 {hoursCell}
-                                <td className="px-3 py-2 text-right">{r.daysWorked}</td>
+                                {workDaysCell}
                                 {offDaysCell}
                               </tr>
                             );
@@ -1754,7 +1787,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                             <td className="px-3 py-2 text-right">{r.ncnsCount}</td>
                             <td className="px-3 py-2 text-right">{r.cancelledCount}</td>
                             {milesCell}
-                            <td className="px-3 py-2 text-right">{r.daysWorked}</td>
+                            {workDaysCell}
                             {offDaysCell}
                             <td className="px-3 py-2 text-right text-muted-foreground">—</td>
                             {hoursCell}
@@ -1975,6 +2008,52 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                       <tr key={d} className="hover:bg-white/5">
                         <td className="px-3 py-2 text-slate-300">{d}</td>
                         <td className="px-3 py-2 text-slate-300">{new Date(`${d}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" })}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {workDaysListFor && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setWorkDaysListFor(null)}>
+          <div
+            className="bg-slate-900 border border-white/15 rounded-xl w-full max-w-sm max-h-[80vh] flex flex-col shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-slate-950 rounded-t-xl">
+              <div>
+                <p className="font-semibold text-white">Working Days — {workDaysListFor.name}</p>
+                <p className="text-xs text-slate-400">{periodStart} – {periodEnd} · {workDaysListRows.length} day{workDaysListRows.length === 1 ? "" : "s"}</p>
+              </div>
+              <button onClick={() => setWorkDaysListFor(null)} className="text-white/40 hover:text-white/80 transition">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="px-5 pt-3 text-[11px] text-slate-400">
+              Days with a timecard punch, or with hours entered as a manual correction, within this period.
+            </p>
+            <div className="overflow-y-auto flex-1 p-2">
+              {workDaysListRows.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-8">No working days in this period.</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-slate-400 uppercase">
+                      <th className="px-3 py-2">Date</th>
+                      <th className="px-3 py-2">Day</th>
+                      <th className="px-3 py-2 text-right">Hours</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {workDaysListRows.map((d) => (
+                      <tr key={d.date} className="hover:bg-white/5">
+                        <td className="px-3 py-2 text-slate-300">{d.date}</td>
+                        <td className="px-3 py-2 text-slate-300">{new Date(`${d.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" })}</td>
+                        <td className="px-3 py-2 text-right text-slate-300">{d.hours != null && d.hours > 0 ? fmt1(d.hours) : "—"}</td>
                       </tr>
                     ))}
                   </tbody>
