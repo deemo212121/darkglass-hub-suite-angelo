@@ -369,6 +369,11 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [selectedTechId, setSelectedTechId] = useState<string | null>(null);
+  // Per the user's call ("for now"), the table defaults to a short set of
+  // columns: Name, Minor/Major Completion, Redo, Mileage, Hours Worked,
+  // Working Days, Off Days. "Show all columns" brings back the full layout.
+  // CSV export / import template are unaffected.
+  const [showAllColumns, setShowAllColumns] = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
 
   const periodStart =
@@ -1312,6 +1317,14 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
               <h1 className="text-2xl font-bold">Technician Performance Report</h1>
             </div>
             <div className="ml-auto flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowAllColumns((v) => !v)}
+                className="btn text-xs px-2.5 py-1.5"
+                title="The table shows a short set of columns by default"
+              >
+                {showAllColumns ? "Show fewer columns" : "Show all columns"}
+              </button>
               {isFullAccess && (
                 <button onClick={handleExportCsv} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1.5">
                   <Download className="h-3.5 w-3.5" /> Export CSV
@@ -1571,6 +1584,18 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                 <div className="overflow-x-auto" ref={groupScrollRef}>
                   <table className="w-full text-sm">
                     <thead>
+                      {!showAllColumns ? (
+                      <tr className="border-b border-white/10 bg-white/5">
+                        <th className={thClass} onClick={() => toggleSort("name")}>Name{sortIndicator("name")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("minorTicketCount")}>Minor Comp{sortIndicator("minorTicketCount")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("majorTicketCount")}>Major Comp{sortIndicator("majorTicketCount")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("redoCount")}>Redo Count{sortIndicator("redoCount")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("miles")}>Mileage{sortIndicator("miles")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("hoursWorked")}>Hours of Work{sortIndicator("hoursWorked")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("daysWorked")}>Working Total Days{sortIndicator("daysWorked")}</th>
+                        <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Off Days</th>
+                      </tr>
+                      ) : (
                       <tr className="border-b border-white/10 bg-white/5">
                         <th className={thClass} onClick={() => toggleSort("name")}>Name{sortIndicator("name")}</th>
                         <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Variance</th>
@@ -1596,15 +1621,16 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("ticketsPerHour")}>Tickets/Hr{sortIndicator("ticketsPerHour")}</th>
                         <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Alerts</th>
                       </tr>
+                      )}
                     </thead>
                     <tbody>
                       {groupRows.length === 0 ? (
-                        <tr><td colSpan={23} className="px-4 py-8 text-center text-muted-foreground text-sm">No technicians match.</td></tr>
+                        <tr><td colSpan={showAllColumns ? 23 : 8} className="px-4 py-8 text-center text-muted-foreground text-sm">No technicians match.</td></tr>
                       ) : (
                         groupRows.map((r) => {
                           const variance = varianceByRowId.get(r.id) ?? null;
-                          return (
-                          <tr key={r.id} className="border-b border-white/5 hover:bg-white/5">
+                          // Cells shared by the short and full layouts.
+                          const nameCell = (
                             <td className="px-3 py-2 font-medium">
                               <button
                                 type="button"
@@ -1618,6 +1644,72 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                                 )}
                               </button>
                             </td>
+                          );
+                          const milesCell = (
+                            <td className="px-3 py-2 text-right">
+                              {r.miles > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setMileageListFor({ id: r.id, name: r.name })}
+                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
+                                  title="View mileage breakdown"
+                                >
+                                  {fmt1(r.miles)}
+                                </button>
+                              ) : (
+                                fmt1(r.miles)
+                              )}
+                            </td>
+                          );
+                          const offDaysCell = (
+                            <td className="px-3 py-2 text-right">
+                              {r.offDaysCount > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setOffDaysListFor({ id: r.id, name: r.name })}
+                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
+                                  title="View off-duty dates"
+                                >
+                                  {r.offDaysCount}
+                                </button>
+                              ) : (
+                                r.offDaysCount
+                              )}
+                            </td>
+                          );
+                          const hoursCell = (
+                            <td className="px-3 py-2 text-right">
+                              {r.hoursWorked > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setHoursListFor({ id: r.id, name: r.name })}
+                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
+                                  title="View hours breakdown"
+                                >
+                                  {fmt1(r.hoursWorked)}
+                                </button>
+                              ) : (
+                                fmt1(r.hoursWorked)
+                              )}
+                            </td>
+                          );
+                          if (!showAllColumns) {
+                            return (
+                              <tr key={r.id} className="border-b border-white/5 hover:bg-white/5">
+                                {nameCell}
+                                <td className="px-3 py-2 text-right">{r.minorTicketCount}</td>
+                                <td className="px-3 py-2 text-right">{r.majorTicketCount}</td>
+                                <td className="px-3 py-2 text-right">{r.redoCount}</td>
+                                {milesCell}
+                                {hoursCell}
+                                <td className="px-3 py-2 text-right">{r.daysWorked}</td>
+                                {offDaysCell}
+                              </tr>
+                            );
+                          }
+                          return (
+                          <tr key={r.id} className="border-b border-white/5 hover:bg-white/5">
+                            {nameCell}
                             <td className={`px-3 py-2 text-right font-semibold ${variance == null ? "text-muted-foreground" : variance > 0 ? "text-emerald-400" : variance < 0 ? "text-red-400" : "text-muted-foreground"}`}>
                               {fmtVariance(variance)}
                             </td>
@@ -1643,50 +1735,11 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                             <td className="px-3 py-2 text-right">{r.rescheduleCount}</td>
                             <td className="px-3 py-2 text-right">{r.ncnsCount}</td>
                             <td className="px-3 py-2 text-right">{r.cancelledCount}</td>
-                            <td className="px-3 py-2 text-right">
-                              {r.miles > 0 ? (
-                                <button
-                                  type="button"
-                                  onClick={() => setMileageListFor({ id: r.id, name: r.name })}
-                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
-                                  title="View mileage breakdown"
-                                >
-                                  {fmt1(r.miles)}
-                                </button>
-                              ) : (
-                                fmt1(r.miles)
-                              )}
-                            </td>
+                            {milesCell}
                             <td className="px-3 py-2 text-right">{r.daysWorked}</td>
-                            <td className="px-3 py-2 text-right">
-                              {r.offDaysCount > 0 ? (
-                                <button
-                                  type="button"
-                                  onClick={() => setOffDaysListFor({ id: r.id, name: r.name })}
-                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
-                                  title="View off-duty dates"
-                                >
-                                  {r.offDaysCount}
-                                </button>
-                              ) : (
-                                r.offDaysCount
-                              )}
-                            </td>
+                            {offDaysCell}
                             <td className="px-3 py-2 text-right text-muted-foreground">—</td>
-                            <td className="px-3 py-2 text-right">
-                              {r.hoursWorked > 0 ? (
-                                <button
-                                  type="button"
-                                  onClick={() => setHoursListFor({ id: r.id, name: r.name })}
-                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
-                                  title="View hours breakdown"
-                                >
-                                  {fmt1(r.hoursWorked)}
-                                </button>
-                              ) : (
-                                fmt1(r.hoursWorked)
-                              )}
-                            </td>
+                            {hoursCell}
                             <td className="px-3 py-2 text-muted-foreground">{r.location}</td>
                             <td className="px-3 py-2 text-muted-foreground">{r.manager}</td>
                             <td className="px-3 py-2 text-muted-foreground">{r.tier}</td>
