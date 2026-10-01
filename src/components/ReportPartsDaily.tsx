@@ -30,11 +30,12 @@
  * hand, per (staffer, day) — see partsPoTeamStaffDailyLog.ts.
  */
 
+import { CsrTimeOffCalendarTab } from "@/components/CsrTimeOffCalendarTab";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Loader2, LayoutDashboard, CheckCheck, Building2, ClipboardList, RotateCcw, Download, Package, PackageX, Users, Hourglass, Truck, Inbox, AlertTriangle, SearchX, ShieldAlert } from "lucide-react";
+import { ChevronLeft, Loader2, LayoutDashboard, CheckCheck, Building2, ClipboardList, RotateCcw, Download, Package, PackageX, Users, Hourglass, Truck, Inbox, AlertTriangle, SearchX, ShieldAlert, CalendarDays } from "lucide-react";
 import { BrandedLoader } from "@/components/BrandedLoader";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from "recharts";
@@ -95,6 +96,8 @@ const TABS = [
   { id: "pending-queue" as const, label: "Pending Queue", icon: ClipboardList },
   { id: "ra-returns" as const, label: "RA & Returns", icon: RotateCcw },
   { id: "done-activity" as const, label: "Done Activity", icon: CheckCheck },
+  // View-only copy of Employee Monitoring's Time Off Calendar (same as CSR Main Dashboard).
+  { id: "time-off-calendar" as const, label: "Time Off Calendar", icon: CalendarDays },
 ];
 type ReportPartsDailyTab = (typeof TABS)[number]["id"];
 
@@ -499,6 +502,9 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
       return next;
     });
   };
+  // Remarks popup (PO Daily Report) — the cell shows two lines; this holds the full text being read / edited.
+  const [remarkModal, setRemarkModal] = useState<{ branch: string; date: string; text: string } | null>(null);
+  const [savingRemark, setSavingRemark] = useState(false);
   const saveIssueField = async (branch: string, date: string, field: ManualTallyField, value: number | string) => {
     try {
       await upsertPartsDailyIssue(branch, date, { [field]: value } as Partial<Pick<PartsDailyIssueEntry, ManualTallyField>>);
@@ -738,7 +744,9 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
           ))}
         </div>
 
-        {tab !== "done-activity" && (
+        {tab === "time-off-calendar" && <CsrTimeOffCalendarTab />}
+
+        {tab !== "done-activity" && tab !== "time-off-calendar" && (
         <div className="panel mb-6"><div className="flex flex-wrap items-end gap-4">
           <div className="flex flex-col gap-1"><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date From</label>
             <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" /></div>
@@ -978,14 +986,19 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
                                   />
                                 </td>
                                 <td className="px-2 py-2">
-                                  <input
-                                    type="text"
-                                    value={entry.remarks}
-                                    onChange={(e) => updateIssueField(branch, date, "remarks", e.target.value)}
-                                    onBlur={(e) => saveIssueField(branch, date, "remarks", e.target.value)}
-                                    placeholder="—"
-                                    className="glass-input text-xs py-0.5 px-1.5 rounded w-full min-w-[140px]"
-                                  />
+                                  {/* Two lines here; click to read / edit the whole remark in a popup. */}
+                                  <button
+                                    type="button"
+                                    onClick={() => setRemarkModal({ branch, date, text: entry.remarks || "" })}
+                                    title={entry.remarks ? "Click to view / edit" : "Add a remark"}
+                                    className="w-full min-w-[180px] max-w-[320px] text-left text-xs rounded px-1.5 py-1 border border-transparent hover:border-white/15 hover:bg-white/5"
+                                  >
+                                    {entry.remarks ? (
+                                      <span className="line-clamp-2 whitespace-pre-line text-slate-200">{entry.remarks}</span>
+                                    ) : (
+                                      <span className="text-slate-500">—</span>
+                                    )}
+                                  </button>
                                 </td>
                               </tr>
                             );
@@ -1444,7 +1457,46 @@ export function ReportPartsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
           )}
         </div>
         )}
-      </main>
+              {remarkModal && createPortal(
+          <div className="fixed inset-0 z-[150] bg-black/70 flex items-center justify-center p-4" onClick={() => !savingRemark && setRemarkModal(null)}>
+            <div className="bg-slate-900 border border-white/10 rounded-xl w-full max-w-lg p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div>
+                  <h3 className="text-base font-bold text-white">Remarks — {remarkModal.branch}</h3>
+                  <p className="text-xs text-slate-400">{new Date(remarkModal.date + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" })}</p>
+                </div>
+                <button type="button" onClick={() => setRemarkModal(null)} disabled={savingRemark} className="text-slate-400 hover:text-white" aria-label="Close">✕</button>
+              </div>
+              <textarea
+                value={remarkModal.text}
+                onChange={(e) => setRemarkModal((m) => (m ? { ...m, text: e.target.value } : m))}
+                rows={8}
+                placeholder="Add a remark…"
+                className="w-full rounded-lg border border-white/10 bg-slate-800 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 whitespace-pre-wrap"
+              />
+              <div className="mt-3 flex justify-end gap-2">
+                <button type="button" onClick={() => setRemarkModal(null)} disabled={savingRemark} className="btn text-sm px-3 py-1.5">Cancel</button>
+                <button
+                  type="button"
+                  disabled={savingRemark}
+                  onClick={async () => {
+                    if (!remarkModal) return;
+                    setSavingRemark(true);
+                    updateIssueField(remarkModal.branch, remarkModal.date, "remarks", remarkModal.text);
+                    await saveIssueField(remarkModal.branch, remarkModal.date, "remarks", remarkModal.text);
+                    setSavingRemark(false);
+                    setRemarkModal(null);
+                  }}
+                  className="btn text-sm px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+                >
+                  {savingRemark ? "Saving…" : "Save"}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+</main>
 
       {detailModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setDetailModal(null)}>

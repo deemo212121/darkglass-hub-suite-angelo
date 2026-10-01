@@ -2,7 +2,10 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react
 import { createPortal } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Printer, Save, Check, History } from "lucide-react";
+import { ChevronLeft, Printer, Save, Check, History, PackageCheck } from "lucide-react";
+import { BranchBarChart } from "@/components/BranchBarChart";
+import { DonutSummaryCard } from "@/components/DonutSummaryCard";
+import { CollectionStatusSummary } from "@/components/CollectionStatusSummary";
 import { LOCATIONS } from "@/lib/locations";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers } from "@/lib/supabase/users";
@@ -178,6 +181,17 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
 
   const COLS=["Tech Name","Ticket #","Repair Status","Part No","Description","PO","Unique ID","Qty","Core Value","Part Status","Picked Up","Action",...(canSeeNotes?["Notes"]:[]),"In Transit"];
 
+  // Branch Summary (same as Part Daily Collection).
+  const PICKUP_NO_LOCATION = "(No location)";
+  const pickupBranchSummary = Array.from(new Set(rows.map((r) => r.location || PICKUP_NO_LOCATION)))
+    .map((loc) => {
+      const items = rows.filter((r) => (r.location || PICKUP_NO_LOCATION) === loc);
+      return { location: loc, notPickedUp: items.filter((r) => !r.pickedUp).length, pickedUp: items.filter((r) => r.pickedUp).length };
+    })
+    .filter((b) => b.notPickedUp + b.pickedUp > 0)
+    .sort((a, b) => b.notPickedUp - a.notPickedUp || a.location.localeCompare(b.location));
+  const pickupTotals = { notPickedUp: rows.filter((r) => !r.pickedUp).length, pickedUp: rows.filter((r) => r.pickedUp).length };
+
   return(<div className="min-h-screen flex flex-col"><main className="flex-1 w-full min-w-0 px-4 lg:px-6 py-8">
     <div className="flex items-center justify-between gap-3 mb-6">
       <div className="flex items-center gap-3">
@@ -190,6 +204,50 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
     </div>
 
     {/* Filters */}
+    {/* Same layout as Part Daily Collection: branch bar chart, status donut, and the per-branch written summary with each technician's attendance. */}
+    <div className="panel mb-6">
+      <div className="flex items-center gap-2.5 mb-4">
+        <PackageCheck className="h-4 w-4 text-blue-400 shrink-0" />
+        <div>
+          <h3 className="text-[0.95rem] font-semibold uppercase tracking-wide" style={{ color: "#64b5f6" }}>Branch Summary</h3>
+          <p className="text-xs text-muted-foreground -mt-0.5">Click a branch to filter the table below</p>
+        </div>
+      </div>
+      <div className="flex flex-col lg:flex-row gap-4 items-stretch">
+        <BranchBarChart
+          title="Parts for Pickup by Branch"
+          totalLabel="Total Parts for Pickup"
+          unitLabel="Number of Parts"
+          bars={pickupBranchSummary.map((b) => ({
+            location: b.location,
+            total: b.notPickedUp + b.pickedUp,
+            detail: `${b.notPickedUp} not picked up · ${b.pickedUp} picked up`,
+          }))}
+          selected={location}
+          onSelect={(l) => setLocation(l === PICKUP_NO_LOCATION ? "" : l)}
+          noLocationKey={PICKUP_NO_LOCATION}
+        />
+        <div className="flex-1 flex flex-wrap gap-4 lg:self-start">
+          <DonutSummaryCard
+            title="Status"
+            data={[
+              { name: "Picked up", value: pickupTotals.pickedUp },
+              { name: "Not picked up", value: pickupTotals.notPickedUp },
+            ]}
+            colorFor={(name) => (name === "Picked up" ? "#22c55e" : "#f59e0b")}
+            centerValue={String(pickupTotals.pickedUp + pickupTotals.notPickedUp)}
+            centerLabel="Total Parts"
+          />
+          <CollectionStatusSummary
+            items={rows.map((r) => ({ location: r.location, techName: r.techName, done: r.pickedUp }))}
+            verb="picked up"
+            heading="Parts Daily Pickup"
+            remarkSource="Pickup"
+          />
+        </div>
+      </div>
+    </div>
+
     <div className="panel mb-4">
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1 min-w-[140px]">

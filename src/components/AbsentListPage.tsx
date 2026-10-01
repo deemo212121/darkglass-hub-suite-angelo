@@ -25,6 +25,7 @@
  * buttons up top — both pages answer "who's out and why", so they live
  * together now instead of in two different modules.
  */
+import { PasswordGateModal, isGateUnlocked } from "@/components/PasswordGateModal";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -49,6 +50,9 @@ import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabas
 import { getPendingCorrectionsInRange, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { PendingItemDetailModal, type PendingItem } from "@/components/PendingItemDetailModal";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
+
+// Employee Monitoring → Attendance Status asks for the viewer's own login password (PasswordGateModal).
+const ATTENDANCE_STATUS_GATE = "employee-monitoring-attendance-status";
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
@@ -144,6 +148,8 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   // Monitoring already mount (TicketAttendanceTab.tsx takes no props and
   // fetches its own data), added as a third view so HR can check on-site
   // check-ins without leaving this page.
+  // Attendance Status asks for the viewer's own password first (once per browser session).
+  const [askAttendanceStatusPassword, setAskAttendanceStatusPassword] = useState(false);
   const [view, setView] = useState<"list" | "calendar" | "ptoManagement" | "exceptionReports" | "holidays" | "visitExceptions" | "exceededSickDays" | "pendingExplanations" | "attendanceStatus">("list");
   const [statsCardHidden, setStatsCardHidden] = useState(false);
   const [dateFrom, setDateFrom] = useState(todayISO());
@@ -1117,7 +1123,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           </button>
           <button
             type="button"
-            onClick={() => setView("attendanceStatus")}
+            onClick={() => (isGateUnlocked(ATTENDANCE_STATUS_GATE) ? setView("attendanceStatus") : setAskAttendanceStatusPassword(true))}
             className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "attendanceStatus" ? "bg-primary/20 text-primary" : ""}`}
           >
             <Users className="h-3.5 w-3.5" /> Attendance Status
@@ -1128,7 +1134,19 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           <HrCalendarTab employees={calendarEmployees} myProfileId={myProfileId} myDisplayName={displayName} />
         )}
 
-        {view === "attendanceStatus" && <EmployeeAttendanceStatusTab />}
+        {view === "attendanceStatus" && isGateUnlocked(ATTENDANCE_STATUS_GATE) && <EmployeeAttendanceStatusTab />}
+
+        {askAttendanceStatusPassword && (
+          <PasswordGateModal
+            gateKey={ATTENDANCE_STATUS_GATE}
+            title="Attendance Status"
+            onUnlocked={() => {
+              setAskAttendanceStatusPassword(false);
+              setView("attendanceStatus");
+            }}
+            onCancel={() => setAskAttendanceStatusPassword(false)}
+          />
+        )}
 
 
         {view === "ptoManagement" && <PtoManagementTab />}

@@ -12,7 +12,8 @@
  */
 import { CorrectionOverallBadge } from "@/components/CorrectionStageBadges";
 import { useEffect, useMemo, useState } from "react";
-import { Download, Loader2, RefreshCw, XCircle } from "lucide-react";
+import { Download, Loader2, Paperclip, RefreshCw, XCircle } from "lucide-react";
+import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
@@ -150,6 +151,10 @@ export function ExceptionReportsTab() {
   }, []);
 
   const profileById = new Map(profiles.map((p) => [p.id, p]));
+  // Ticket Dispute "Claimed Time" — shown in the technician's own time zone, same as Ticket Time Disputes.
+  const disputeTz = (id: string): ScheduleTimezone => (profileById.get(id)?.schedule_timezone as ScheduleTimezone) || "CST";
+  const fmtClaimed = (iso: string | null, tz: ScheduleTimezone) =>
+    iso ? new Intl.DateTimeFormat("en-US", { timeZone: TIME_ZONES[tz].timeZone, hour: "numeric", minute: "2-digit" }).format(new Date(iso)) : "?";
   const profileName = (id: string) => profileById.get(id)?.display_name || profileById.get(id)?.email || "—";
 
   const myProfile = myProfileId ? profileById.get(myProfileId) ?? null : null;
@@ -576,18 +581,21 @@ export function ExceptionReportsTab() {
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Ticket #</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Dispute Type</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Exception Type</th>
+              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Claimed Time</th>
+              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Reason</th>
+              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Photos</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Paperwork Status</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">PDF</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400"><Loader2 className="h-4 w-4 animate-spin inline" /></td></tr>
+              <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-400"><Loader2 className="h-4 w-4 animate-spin inline" /></td></tr>
             ) : ticketReports.length === 0 ? (
-              <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">No exception report PDFs yet.</td></tr>
+              <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-400">No exception report PDFs yet.</td></tr>
             ) : ticketReports.map((r) => {
               const mgrBadge = managerBadge(r);
-              const hrStatusBadge = hrBadge(r);
+              const hrStatusBadge = hrBadge(r, false);
               const submittedDate = r.createdAt.slice(0, 10);
               return (
                 <tr key={r.id} className="border-b border-white/5 hover:bg-white/5 transition">
@@ -611,6 +619,44 @@ export function ExceptionReportsTab() {
                     )}
                   </td>
                   <td className="px-3 py-3 text-slate-300">{r.exceptionType ? TICKET_DISPUTE_EXCEPTION_TYPE_LABELS[r.exceptionType] : "—"}</td>
+                  <td className="px-3 py-3 text-slate-200 whitespace-nowrap">
+                    {r.disputeMode === "reschedule" && (r.rescheduleActualDay || r.rescheduleDate) ? (
+                      <span className="text-blue-200">{r.rescheduleActualDay || "—"} → {r.rescheduleDate || "—"}</span>
+                    ) : r.disputedStartTime || r.disputedEndTime ? (
+                      <>
+                        {fmtClaimed(r.disputedStartTime, disputeTz(r.profileId))} – {fmtClaimed(r.disputedEndTime, disputeTz(r.profileId))}{" "}
+                        <span className="text-slate-500 text-[11px]">{disputeTz(r.profileId)}</span>
+                      </>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td className="px-3 py-3 text-slate-300 max-w-[240px]">
+                    <span className="line-clamp-2" title={r.details}>{r.details || "—"}</span>
+                  </td>
+                  <td className="px-3 py-3">
+                    {r.attachments.length === 0 ? (
+                      <span className="text-slate-500">—</span>
+                    ) : (
+                      <div className="flex flex-wrap gap-1">
+                        {r.attachments.map((a) => (
+                          <button
+                            key={a.url}
+                            type="button"
+                            onClick={() => setPreviewing({ url: a.url, title: `${profileName(r.profileId)} — ${r.ticketNo || "photo"}` })}
+                            title={a.name}
+                            className="block h-10 w-10 overflow-hidden rounded border border-white/10 bg-slate-800 hover:border-blue-500 transition"
+                          >
+                            {/\.pdf(\?|$)/i.test(a.url) ? (
+                              <span className="flex h-full w-full items-center justify-center text-slate-400"><Paperclip className="h-4 w-4" /></span>
+                            ) : (
+                              <img src={a.url} alt={a.name} className="h-full w-full object-cover" />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </td>
                   <td className="px-3 py-3">
                     <PaperworkStatus status={r.status} badges={[mgrBadge, hrStatusBadge]} />
                   </td>
@@ -632,7 +678,7 @@ export function ExceptionReportsTab() {
                       >
                         {regeneratingId === r.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />} Regenerate
                       </button>
-                      {isFullRequestsAdmin && r.hrPaperworkStatus === "pending" && r.managerSignatureUrl && (
+                      {isFullRequestsAdmin && r.hrPaperworkStatus === "pending" && (
                         <button
                           type="button"
                           onClick={() => setSigningTicketHr(r)}

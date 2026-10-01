@@ -1,3 +1,4 @@
+import { CollectionStatusSummary } from "@/components/CollectionStatusSummary";
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
@@ -319,20 +320,8 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
             centerValue={String(allBranchTotals.notCollected + allBranchTotals.collected)}
             centerLabel="Total Parts"
           />
-          <DonutSummaryCard
-            title="By Location"
-            data={locationDonutData}
-            colorFor={(name) => (name === "Other" ? DONUT_OTHER_COLOR : branchDonutHex(name))}
-            centerValue={String(locationDonutData.reduce((sum, d) => sum + d.value, 0))}
-            centerLabel="Total"
-          />
-          <DonutSummaryCard
-            title="By Collect Type"
-            data={collectTypeDonutData}
-            colorFor={(name, i) => (name === "Other" ? DONUT_OTHER_COLOR : CATEGORICAL_DONUT_HEX[i % CATEGORICAL_DONUT_HEX.length])}
-            centerValue={String(collectTypeDonutData.reduce((sum, d) => sum + d.value, 0))}
-            centerLabel="Total"
-          />
+          {/* Replaces the By Location / By Collect Type donuts: the written per-branch summary with each technician's attendance. */}
+          <CollectionStatusSummary items={summaryRows.map((r) => ({ location: r.location, techName: r.techName, done: r.collected }))} />
         </div>
       </div>
     </div>
