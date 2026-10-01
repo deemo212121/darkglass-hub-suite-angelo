@@ -19,7 +19,9 @@
 import {
   buildExceptionVisitReportBodyMarkup,
   exceptionVisitReportStyles,
+  isCorrectionIssueType,
   type ExceptionType,
+  type CorrectionIssueType,
   type ExceptionVisitFormData,
   type ExceptionVisitSignatures,
 } from "@/lib/exceptionVisitReportTemplate";
@@ -45,7 +47,7 @@ async function getLogoDataUrl(): Promise<string> {
 
 function formDataFromCorrection(
   workDate: string,
-  exceptionType: ExceptionType,
+  exceptionType: ExceptionType | CorrectionIssueType,
   otherDescription: string,
   reason: string,
   employeeInfo: CorrectionEmployeeInfo,
@@ -61,6 +63,8 @@ function formDataFromCorrection(
     dateOfIncident: workDate,
     exceptionType,
     otherDescription,
+    // Newer corrections print the "Issue" list; older ones (Missed Workday etc.) keep "Exception Type".
+    correctionIssue: exceptionType === "other" || isCorrectionIssueType(exceptionType),
     detailedReason: reason,
     managerComments: extra?.managerComments || "",
     hrReceivedDate: extra?.hrReceivedDate || "",
@@ -82,7 +86,7 @@ export async function buildCorrectionSubmissionPdf(input: {
   companyId: string;
   employeeInfo: CorrectionEmployeeInfo;
   workDate: string;
-  exceptionType: ExceptionType;
+  exceptionType: ExceptionType | CorrectionIssueType;
   otherDescription: string;
   reason: string;
   employeeSignatureDataUrl: string;

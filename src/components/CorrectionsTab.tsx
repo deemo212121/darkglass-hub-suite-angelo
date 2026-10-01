@@ -13,7 +13,9 @@
  * "browse and act, not the full power-user toolbox" scope this session's
  * mobile Team Approvals view already settled on for the identical data.
  */
+import { correctionIssueLabel, correctionIssueKey, correctionIssueOptions } from "@/lib/exceptionVisitReportTemplate";
 import { useEffect, useMemo, useState } from "react";
+import { CorrectionStageBadges, CorrectionOverallBadge } from "@/components/CorrectionStageBadges";
 import { Loader2, CheckCircle, XCircle } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
@@ -98,16 +100,19 @@ export function CorrectionsTab() {
   // own Corrections tab uses.
   // Work Date column sort — newest first by default, click the header to flip.
   const [workDateSort, setWorkDateSort] = useState<"desc" | "asc">("desc");
+  // Issue filter (Time Correction "Issue", migration 0333) — older corrections fall under Others.
+  const [correctionIssueFilter, setCorrectionIssueFilter] = useState<string>("all");
   const filteredCorrections = useMemo(() => {
     const q = correctionSearch.trim().toLowerCase();
     return corrections.filter((c) => {
       if ((c.exceptionType !== null) !== (correctionEraFilter === "new")) return false;
       if (teamScopedIds !== null && !teamScopedIds.has(c.profileId) && c.managerId !== myProfileId) return false;
       if (correctionStatusFilter !== "all" && c.status !== correctionStatusFilter) return false;
+      if (correctionIssueFilter !== "all" && correctionIssueKey(c.exceptionType) !== correctionIssueFilter) return false;
       if (q && !profileName(c.profileId).toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [corrections, correctionSearch, correctionStatusFilter, correctionEraFilter, teamScopedIds, myProfileId, profiles]);
+  }, [corrections, correctionSearch, correctionStatusFilter, correctionIssueFilter, correctionEraFilter, teamScopedIds, myProfileId, profiles]);
   const sortedCorrections = useMemo(() => [...filteredCorrections].sort((a, b) => {
       const d = a.workDate.localeCompare(b.workDate) || (a.createdAt ?? "").localeCompare(b.createdAt ?? "");
       return workDateSort === "desc" ? -d : d;
@@ -206,6 +211,19 @@ export function CorrectionsTab() {
               <option value="rejected">Rejected</option>
             </select>
           </div>
+          <div>
+            <label className="block text-xs text-slate-400 uppercase mb-2">Filter by Issue</label>
+            <select
+              value={correctionIssueFilter}
+              onChange={(e) => setCorrectionIssueFilter(e.target.value)}
+              className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+            >
+              <option value="all">All Issues</option>
+              {correctionIssueOptions(corrections).map((o) => (
+                <option key={o.value} value={o.value}>{o.label} ({o.count})</option>
+              ))}
+            </select>
+          </div>
           <div className="flex items-end justify-end gap-2 md:col-span-2">
             <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-2 text-sm">
               <span className="text-yellow-300/80">Pending: </span>
@@ -231,6 +249,7 @@ export function CorrectionsTab() {
                   Work Date <span className="text-[10px]">{workDateSort === "desc" ? "▼" : "▲"}</span>
                 </button>
               </th>
+              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Issue</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Original → Corrected</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Reason</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
@@ -239,15 +258,16 @@ export function CorrectionsTab() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
+              <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
             ) : filteredCorrections.length === 0 ? (
-              <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
+              <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
             ) : sortedCorrections.map((c) => {
               const { requesterManagerName, requesterManagersManagerName } = managerChainFor(c.profileId);
               return (
               <tr key={c.id} className="border-b border-white/5 hover:bg-white/5 transition">
                 <td className="px-3 py-3 text-white font-medium">{profileName(c.profileId)}</td>
                 <td className="px-3 py-3 text-slate-300">{c.workDate}</td>
+                <td className="px-3 py-3 text-slate-300">{correctionIssueLabel(c.exceptionType, c.otherDescription)}</td>
                 <td className="px-3 py-3 text-slate-300">
                   {c.originalCheckIn || "—"} → {c.originalCheckOut || "—"}
                   {(c.correctedCheckIn || c.correctedCheckOut) && (
@@ -256,29 +276,7 @@ export function CorrectionsTab() {
                 </td>
                 <td className="px-3 py-3 text-slate-300">{c.reason || "—"}</td>
                 <td className="px-3 py-3">
-                  <div className="flex flex-col gap-1">
-                    <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
-                      c.managerStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
-                      : c.managerStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
-                      : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
-                    }`}>
-                      Manager: {c.managerStatus.charAt(0).toUpperCase() + c.managerStatus.slice(1)}
-                    </span>
-                    <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
-                      c.hrStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
-                      : c.hrStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
-                      : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
-                    }`}>
-                      HR: {c.hrStatus.charAt(0).toUpperCase() + c.hrStatus.slice(1)}
-                    </span>
-                    <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
-                      c.accountingStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
-                      : c.accountingStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
-                      : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
-                    }`}>
-                      Accounting: {c.accountingStatus.charAt(0).toUpperCase() + c.accountingStatus.slice(1)}
-                    </span>
-                  </div>
+                  <CorrectionStageBadges row={c} />
                 </td>
                 <td className="px-3 py-3">
                   <div className="flex flex-col gap-1.5">
@@ -334,7 +332,7 @@ export function CorrectionsTab() {
                     {!(c.managerStatus === "pending" && canReviewCorrectionStage(c, "manager", myProfileId, role, extraRoles, displayName, requesterManagerName, requesterManagersManagerName)) &&
                      !(c.hrStatus === "pending" && canReviewCorrectionStage(c, "hr", myProfileId, role, extraRoles)) &&
                      !(c.accountingStatus === "pending" && canReviewCorrectionStage(c, "accounting", myProfileId, role, extraRoles)) && (
-                      <span className="text-xs text-slate-500">{c.status === "pending" ? "Awaiting review" : c.status === "approved" ? "Approved" : "Rejected"}</span>
+                      c.status === "pending" ? <span className="text-xs text-slate-500">Awaiting review</span> : <CorrectionOverallBadge status={c.status} size="md" />
                     )}
                   </div>
                 </td>

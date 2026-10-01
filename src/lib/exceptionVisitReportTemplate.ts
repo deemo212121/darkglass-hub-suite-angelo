@@ -21,6 +21,57 @@ export const EXCEPTION_TYPE_LABELS: Record<ExceptionType, string> = {
   other: "Other Operational Exception",
 };
 
+/**
+ * Time Correction "Issue" (migration 0333) — what went wrong, asked instead
+ * of the generic Exception Type on Time Corrections only. Shares the
+ * exception_type column; "other" means the same in both lists.
+ */
+export type CorrectionIssueType = "forgot_to_clock" | "system_issue" | "account_issue" | "internet_issue" | "other";
+
+export const CORRECTION_ISSUE_LABELS: Record<CorrectionIssueType, string> = {
+  forgot_to_clock: "Forgot to clock",
+  system_issue: "System Issue",
+  account_issue: "Account Issue",
+  internet_issue: "Internet Issue",
+  other: "Other",
+};
+
+const CORRECTION_ISSUE_ONLY = new Set<string>(["forgot_to_clock", "system_issue", "account_issue", "internet_issue"]);
+
+/** True for the Time Correction issue choices (not the shared "other"). */
+export function isCorrectionIssueType(t: string | null | undefined): t is CorrectionIssueType {
+  return !!t && CORRECTION_ISSUE_ONLY.has(t);
+}
+
+/** Issue filter key for a correction — its stored type, or "none" for requests filed before Exception Reports existed. */
+export function correctionIssueKey(t: string | null | undefined): string {
+  return t || "none";
+}
+
+const rankOf = (key: string) => (ISSUE_KEY_ORDER.includes(key) ? ISSUE_KEY_ORDER.indexOf(key) : ISSUE_KEY_ORDER.length);
+const ISSUE_KEY_ORDER = ["forgot_to_clock", "system_issue", "account_issue", "internet_issue", "other", "missed_workday", "late_early", "missed_visit", "none"];
+
+/**
+ * Issue filter options = exactly the issues present in the given corrections
+ * (same labels as the Issue column), with how many of each — new choices
+ * first, then older Exception Types.
+ */
+export function correctionIssueOptions(rows: { exceptionType: string | null }[]): { value: string; label: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const r of rows) counts.set(correctionIssueKey(r.exceptionType), (counts.get(correctionIssueKey(r.exceptionType)) ?? 0) + 1);
+  return [...counts.entries()]
+    .sort((a, b) => rankOf(a[0]) - rankOf(b[0]))
+    .map(([value, count]) => ({ value, label: value === "none" ? "No issue (older request)" : correctionIssueLabel(value), count }));
+}
+
+/** Display label for a correction's issue — new choices, or the original Exception Type for older corrections. */
+export function correctionIssueLabel(t: string | null | undefined, otherDescription?: string | null): string {
+  if (!t) return "—";
+  if (t === "other") return otherDescription?.trim() ? `Other: ${otherDescription.trim()}` : "Other";
+  if (isCorrectionIssueType(t)) return CORRECTION_ISSUE_LABELS[t];
+  return EXCEPTION_TYPE_LABELS[t as ExceptionType] ?? t;
+}
+
 export interface ExceptionVisitFormData {
   /** The employee's actual profile id — this form never writes back to the profile (document-only, no auto profile update), kept for consistency with every other signable form's shape. */
   employeeId: string;
@@ -31,8 +82,10 @@ export interface ExceptionVisitFormData {
   department: string;
   directManagerName: string;
   dateOfIncident: string;
-  exceptionType: ExceptionType;
+  exceptionType: ExceptionType | CorrectionIssueType;
   otherDescription: string;
+  /** Time Correction with the newer Issue choices (0333) — section 2 prints "Issue" instead of "Exception Type". */
+  correctionIssue?: boolean;
   detailedReason: string;
   /** Filled in by the manager alongside their own signature. */
   managerComments: string;
@@ -140,13 +193,24 @@ export function buildExceptionVisitReportBodyMarkup(
       </div>
 
       <div class="evr-section">
-        <div class="evr-section-title">2. Exception Type</div>
+        ${
+          data.correctionIssue
+            ? `<div class="evr-section-title">2. Issue</div>
+        <div class="evr-checks">
+          <span>${checkbox(data.exceptionType === "forgot_to_clock")} Forgot to clock</span>
+          <span>${checkbox(data.exceptionType === "system_issue")} System Issue</span>
+          <span>${checkbox(data.exceptionType === "account_issue")} Account Issue</span>
+          <span>${checkbox(data.exceptionType === "internet_issue")} Internet Issue</span>
+          <span class="evr-other-row">${checkbox(data.exceptionType === "other")} Other: ${escapeHtml(data.otherDescription)}</span>
+        </div>`
+            : `<div class="evr-section-title">2. Exception Type</div>
         <div class="evr-checks">
           <span>${checkbox(data.exceptionType === "missed_workday")} Missed Workday / Absence</span>
           <span>${checkbox(data.exceptionType === "late_early")} Late Arrival / Early Departure</span>
           <span>${checkbox(data.exceptionType === "missed_visit")} Missed Customer Appointment / Home Visit</span>
           <span class="evr-other-row">${checkbox(data.exceptionType === "other")} Other Operational Exception: ${escapeHtml(data.otherDescription)}</span>
-        </div>
+        </div>`
+        }
       </div>
 
       <div class="evr-section">

@@ -82,7 +82,7 @@ import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { isAttendanceFullAccessRole, isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { buildCorrectionSubmissionPdf } from "@/lib/timecardCorrectionPdf";
-import { EXCEPTION_TYPE_LABELS, type ExceptionType } from "@/lib/exceptionVisitReportTemplate";
+import { EXCEPTION_TYPE_LABELS, CORRECTION_ISSUE_LABELS, type ExceptionType, type CorrectionIssueType } from "@/lib/exceptionVisitReportTemplate";
 import { buildTicketDisputeSubmissionPdf } from "@/lib/ticketDisputeReportPdf";
 import { TICKET_DISPUTE_EXCEPTION_TYPE_LABELS, type TicketDisputeExceptionType } from "@/lib/ticketDisputeReportTemplate";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
@@ -9350,7 +9350,8 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
   const [correctionDate, setCorrectionDate] = useState("");
   // Employee Attendance & Visit Exception Report fields, folded directly
   // into this same request (migration 0304) — see timecardCorrectionPdf.ts.
-  const [exceptionType, setExceptionType] = useState<ExceptionType>("missed_workday");
+  // Time Correction "Issue" (migration 0333) — what went wrong.
+  const [exceptionType, setExceptionType] = useState<CorrectionIssueType>("forgot_to_clock");
   const [otherDescription, setOtherDescription] = useState("");
   const [employeeIdOverride, setEmployeeIdOverride] = useState("");
   const sigPad = useSignaturePad({ width: 400, height: 110, defaultName: userName || "" });
@@ -9406,6 +9407,10 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
     }
     if (!correctedCheckIn && !correctedCheckOut && !correctedMealStart && !correctedMealEnd) {
       setMsg("Enter at least one corrected time (check in, check out, meal start, or meal end).");
+      return;
+    }
+    if (exceptionType === "other" && !otherDescription.trim()) {
+      setMsg("Specify the issue for “Other”.");
       return;
     }
     if (!details.trim()) {
@@ -9522,7 +9527,7 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
       setCorrectedMealStart("");
       setCorrectedMealEnd("");
       setDetails("");
-      setExceptionType("missed_workday");
+      setExceptionType("forgot_to_clock");
       setOtherDescription("");
       setEmployeeIdOverride("");
       sigPad.clear();
@@ -9580,15 +9585,15 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
           <input className="mtech-bill-input full" type="text" value={employeeIdOverride} onChange={(e) => setEmployeeIdOverride(e.target.value)} placeholder="Not on file — type it in" />
         )}
 
-        <div className="mtech-section-title">Exception Type</div>
-        {(Object.keys(EXCEPTION_TYPE_LABELS) as ExceptionType[]).map((t) => (
+        <div className="mtech-section-title">Issue</div>
+        {(Object.keys(CORRECTION_ISSUE_LABELS) as CorrectionIssueType[]).map((t) => (
           <label key={t} style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.25rem 0", color: "#f1f5f9", fontSize: "0.85rem" }}>
             <input type="radio" name="mobileCorrectionExceptionType" checked={exceptionType === t} onChange={() => setExceptionType(t)} />
-            {EXCEPTION_TYPE_LABELS[t]}
+            {t === "other" ? "Other: Specify" : CORRECTION_ISSUE_LABELS[t]}
           </label>
         ))}
         {exceptionType === "other" && (
-          <input className="mtech-bill-input full" type="text" value={otherDescription} onChange={(e) => setOtherDescription(e.target.value)} placeholder="Describe the exception…" />
+          <input className="mtech-bill-input full" type="text" value={otherDescription} onChange={(e) => setOtherDescription(e.target.value)} placeholder="Specify the issue…" />
         )}
 
         <div className="mtech-section-title">Reason</div>
