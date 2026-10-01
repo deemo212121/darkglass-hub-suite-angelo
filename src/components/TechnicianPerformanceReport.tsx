@@ -370,8 +370,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [selectedTechId, setSelectedTechId] = useState<string | null>(null);
   // Per the user's call ("for now"), the table defaults to a short set of
-  // columns: Name, Minor/Major Completion, Redo, Mileage, Hours Worked,
-  // Working Days, Off Days. "Show all columns" brings back the full layout.
+  // columns: Name, Minor/Major Completion, Redo, Total/Average Completion,
+  // Mileage, Hours Worked, Working Days, Off Days. "Show all columns" brings back the full layout.
   // CSV export / import template are unaffected.
   const [showAllColumns, setShowAllColumns] = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
@@ -1590,6 +1590,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("minorTicketCount")}>Minor Comp{sortIndicator("minorTicketCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("majorTicketCount")}>Major Comp{sortIndicator("majorTicketCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("redoCount")}>Redo Count{sortIndicator("redoCount")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("totalTickets")}>Total Completion{sortIndicator("totalTickets")}</th>
+                        <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Average Completion</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("miles")}>Mileage{sortIndicator("miles")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("hoursWorked")}>Hours of Work{sortIndicator("hoursWorked")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("daysWorked")}>Working Total Days{sortIndicator("daysWorked")}</th>
@@ -1625,7 +1627,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                     </thead>
                     <tbody>
                       {groupRows.length === 0 ? (
-                        <tr><td colSpan={showAllColumns ? 23 : 8} className="px-4 py-8 text-center text-muted-foreground text-sm">No technicians match.</td></tr>
+                        <tr><td colSpan={showAllColumns ? 23 : 10} className="px-4 py-8 text-center text-muted-foreground text-sm">No technicians match.</td></tr>
                       ) : (
                         groupRows.map((r) => {
                           const variance = varianceByRowId.get(r.id) ?? null;
@@ -1693,6 +1695,25 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                               )}
                             </td>
                           );
+                          const totalCompletionCell = (
+                            <td className="px-3 py-2 text-right">
+                              {r.totalTickets > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setTicketListFor({ id: r.id, name: r.name })}
+                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
+                                  title="View completed tickets"
+                                >
+                                  {r.totalTickets}
+                                </button>
+                              ) : (
+                                r.totalTickets
+                              )}
+                            </td>
+                          );
+                          const averageCompletionCell = (
+                            <td className="px-3 py-2 text-right">{r.daysWorked > 0 ? fmt1(r.totalTickets / r.daysWorked) : "—"}</td>
+                          );
                           if (!showAllColumns) {
                             return (
                               <tr key={r.id} className="border-b border-white/5 hover:bg-white/5">
@@ -1700,6 +1721,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                                 <td className="px-3 py-2 text-right">{r.minorTicketCount}</td>
                                 <td className="px-3 py-2 text-right">{r.majorTicketCount}</td>
                                 <td className="px-3 py-2 text-right">{r.redoCount}</td>
+                                {totalCompletionCell}
+                                {averageCompletionCell}
                                 {milesCell}
                                 {hoursCell}
                                 <td className="px-3 py-2 text-right">{r.daysWorked}</td>
@@ -1717,21 +1740,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                             <td className="px-3 py-2 text-right">{r.minorTicketCount}</td>
                             <td className="px-3 py-2 text-right">{r.majorTicketCount}</td>
                             <td className="px-3 py-2 text-right">{r.redoCount}</td>
-                            <td className="px-3 py-2 text-right">
-                              {r.totalTickets > 0 ? (
-                                <button
-                                  type="button"
-                                  onClick={() => setTicketListFor({ id: r.id, name: r.name })}
-                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
-                                  title="View completed tickets"
-                                >
-                                  {r.totalTickets}
-                                </button>
-                              ) : (
-                                r.totalTickets
-                              )}
-                            </td>
-                            <td className="px-3 py-2 text-right">{r.daysWorked > 0 ? fmt1(r.totalTickets / r.daysWorked) : "—"}</td>
+                            {totalCompletionCell}
+                            {averageCompletionCell}
                             <td className="px-3 py-2 text-right">{r.rescheduleCount}</td>
                             <td className="px-3 py-2 text-right">{r.ncnsCount}</td>
                             <td className="px-3 py-2 text-right">{r.cancelledCount}</td>
