@@ -12,6 +12,7 @@
  * at any stage immediately denies the whole request).
  */
 
+import { chainCanApprove } from "@/lib/approvalDirectory";
 import { supabase } from "./client";
 import { createNotification } from "./notifications";
 import { getCompanyUsers } from "./users";
@@ -428,7 +429,7 @@ export async function removePtoAttachment(requestId: string, attachmentUrl: stri
  * sign-off needed.
  */
 export function canReviewPtoStage(
-  request: Pick<PtoRequestRow, "managerId" | "managerStatus">,
+  request: Pick<PtoRequestRow, "managerId" | "managerStatus"> & { profileId?: string },
   stage: PtoStage,
   viewerProfileId: string | null,
   viewerRole: string | null | undefined,
@@ -456,6 +457,11 @@ export function canReviewPtoStage(
   const has = (r: string) => heldRoles.includes(r);
   if (has("SUPERADMIN") || has("SUPERSUPERADMIN")) return true;
   if (stage === "manager") {
+    // Non-PH field staff (Technician → Branch / Parts Manager → Senior Branch
+    // Manager → Admin / Directors): the Approval Chain decides, by role +
+    // branch + area — migration 0329 enforces the same rule in the database.
+    const chain = chainCanApprove(viewerProfileId, request.profileId);
+    if (chain !== null) return chain;
     if (request.managerId === viewerProfileId) return true;
     // request.managerId is resolved ONCE, at submission time, from
     // whatever the requester's manager_name matched back then. If their

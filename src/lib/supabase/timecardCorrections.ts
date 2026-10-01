@@ -15,6 +15,7 @@
  * working unchanged.
  */
 
+import { chainCanApprove } from "@/lib/approvalDirectory";
 import { supabase } from "./client";
 import { createNotification } from "./notifications";
 import { getCompanyUsers } from "./users";
@@ -245,7 +246,7 @@ export async function getPendingCorrectionsInRange(startDate: string, endDate: s
  * final.
  */
 export function canReviewCorrectionStage(
-  request: Pick<TimecardCorrectionRow, "managerId">,
+  request: Pick<TimecardCorrectionRow, "managerId"> & { profileId?: string },
   stage: CorrectionStage,
   viewerProfileId: string | null,
   viewerRole: string | null | undefined,
@@ -277,6 +278,11 @@ export function canReviewCorrectionStage(
   const has = (r: string) => heldRoles.includes(r);
   if (has("SUPERADMIN") || has("SUPERSUPERADMIN")) return true;
   if (stage === "manager") {
+    // Non-PH field staff (Technician → Branch / Parts Manager → Senior Branch
+    // Manager → Admin / Directors): the Approval Chain decides, by role +
+    // branch + area — migration 0329 enforces the same rule in the database.
+    const chain = chainCanApprove(viewerProfileId, request.profileId);
+    if (chain !== null) return chain;
     if (request.managerId === viewerProfileId) return true;
     const currentManagerName = (requesterCurrentManagerName || "").trim().toLowerCase();
     const managersManagerName = (requesterManagersManagerName || "").trim().toLowerCase();

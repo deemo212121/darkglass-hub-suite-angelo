@@ -257,7 +257,7 @@ export function PendingItemDetailModal({
             {hasExceptionReport && item.data.hrPaperworkStatus === "pending" && canReviewStage("hr") && (
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[11px] text-slate-400 w-20 shrink-0">Exception</span>
-                {item.data.managerSignatureUrl ? (
+                {item.data.managerSignatureUrl || isCorrection ? (
                   <button type="button" onClick={() => setSigningHr(true)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition ml-auto">
                     Sign Report (HR)
                   </button>

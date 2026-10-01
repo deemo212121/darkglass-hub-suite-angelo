@@ -1,4 +1,5 @@
-﻿import { Fragment, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+﻿import { chainCanClockIn } from "@/lib/approvalDirectory";
+import { Fragment, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
 import { setDesktopOverride } from "@/lib/device";
@@ -7026,7 +7027,7 @@ function MobileClockInTeamView({ profileId, readOnly }: { profileId: string | nu
       const entryByProfile = new Map<string, CompanyTimecardEntry>(todayEntries.map((e) => [e.profileId, e]));
       const scoped = visibleAttendanceProfileIds(myProfile, allProfiles, csrComposition);
       const myTechnicians = allProfiles.filter(
-        (p) => p.is_active && (scoped === null || scoped.has(p.id)) && TECHNICIAN_PAY_ROLES.has(normalizeRole(p.role))
+        (p) => p.is_active && (scoped === null || scoped.has(p.id)) && TECHNICIAN_PAY_ROLES.has(normalizeRole(p.role)) && chainCanClockIn(myProfile.id, p.id) !== false
       );
       setRows(
         myTechnicians

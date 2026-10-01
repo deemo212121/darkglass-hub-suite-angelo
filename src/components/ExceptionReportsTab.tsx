@@ -48,12 +48,13 @@ function managerBadge(c: ExceptionReportLike): { label: string; className: strin
     : { label: "Manager: Pending", className: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30" };
 }
 
-function hrBadge(c: ExceptionReportLike): { label: string; className: string } {
+/** `hrWaitsForManager` false for Time Corrections — HR signs in any order there. */
+function hrBadge(c: ExceptionReportLike, hrWaitsForManager = true): { label: string; className: string } {
   if (c.hrPaperworkStatus === "approved") return { label: "HR: Approved", className: "bg-green-500/20 text-green-300 border-green-500/30" };
   if (c.hrPaperworkStatus === "additional_review_required") return { label: "HR: Additional Review Required", className: "bg-red-500/20 text-red-300 border-red-500/30" };
   // HR can't act until the manager has signed (see CorrectionSignModals.tsx/TicketDisputeSignModals.tsx) — reflect that in the label rather than a bare "Pending".
   return {
-    label: c.managerSignatureUrl ? "HR: Pending" : "HR: Awaiting Manager First",
+    label: c.managerSignatureUrl || !hrWaitsForManager ? "HR: Pending" : "HR: Awaiting Manager First",
     className: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30",
   };
 }
@@ -296,7 +297,12 @@ export function ExceptionReportsTab() {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }, [ptoRequests, search, teamScopedIds, myProfileId, profiles]);
 
-  const reports = allReports.filter((c) => inGroup(c.profileId));
+  // Work Date column sort (Time Correction view) — newest first by default.
+  const [workDateSort, setWorkDateSort] = useState<"desc" | "asc">("desc");
+  const reports = [...allReports.filter((c) => inGroup(c.profileId))].sort((a, b) => {
+      const d = a.workDate.localeCompare(b.workDate) || (a.createdAt ?? "").localeCompare(b.createdAt ?? "");
+      return workDateSort === "desc" ? -d : d;
+    });
   const ticketReports = allTicketReports.filter((r) => inGroup(r.profileId));
   const slUlReports = allSlUlReports.filter((r) => inGroup(r.profileId));
 
@@ -384,7 +390,16 @@ export function ExceptionReportsTab() {
           <thead>
             <tr className="border-b border-white/10">
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Employee</th>
-              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Work Date</th>
+              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">
+                <button
+                  type="button"
+                  onClick={() => setWorkDateSort((d) => (d === "desc" ? "asc" : "desc"))}
+                  title={workDateSort === "desc" ? "Newest first — click for oldest first" : "Oldest first — click for newest first"}
+                  className="inline-flex items-center gap-1 uppercase hover:text-white"
+                >
+                  Work Date <span className="text-[10px]">{workDateSort === "desc" ? "▼" : "▲"}</span>
+                </button>
+              </th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Actual Time</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Requested Time</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Exception Type</th>
@@ -400,7 +415,7 @@ export function ExceptionReportsTab() {
               <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">No exception report PDFs yet.</td></tr>
             ) : reports.map((c) => {
               const mgrBadge = managerBadge(c);
-              const hrStatusBadge = hrBadge(c);
+              const hrStatusBadge = hrBadge(c, false);
               return (
                 <tr key={c.id} className="border-b border-white/5 hover:bg-white/5 transition">
                   <td className="px-3 py-3">
@@ -445,7 +460,7 @@ export function ExceptionReportsTab() {
                       >
                         {regeneratingId === c.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />} Regenerate
                       </button>
-                      {isFullRequestsAdmin && c.hrPaperworkStatus === "pending" && c.managerSignatureUrl && (
+                      {isFullRequestsAdmin && c.hrPaperworkStatus === "pending" && (
                         <button
                           type="button"
                           onClick={() => setSigningCorrectionHr(c)}
