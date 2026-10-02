@@ -308,22 +308,26 @@ const shortPoints = (r: ShortRowInput): number => {
     + pts(GRADERS.avgHours(shortAvgHours(r)), AVG_HOURS_POINTS)
     + pts(GRADERS.avgMiles(shortAvgMiles(r)), AVG_MILES_POINTS);
 };
-// Letter grade from Points: SSS 11, SS 10, S 9, A 8, B 7, C 5–6, D 4 or
-// less — shown as medals (SSS royal with a crown, SS diamond, S gold,
-// A silver, B bronze, C steel, D iron).
+// Grade from Points: Master 11, Expert 10, Advanced 9, Proficient 8,
+// Competent 7, Developing 5–6, Needs Attention 4 or less — shown as medals
+// (royal with a crown, diamond, gold, silver, bronze, steel, iron). The
+// letter keys (SSS…D) are internal; people see the names.
 type LetterGrade = "SSS" | "SS" | "S" | "A" | "B" | "C" | "D";
 const LETTER_GRADES: LetterGrade[] = ["SSS", "SS", "S", "A", "B", "C", "D"];
 const letterGrade = (points: number): LetterGrade =>
   points >= 11 ? "SSS" : points >= 10 ? "SS" : points >= 9 ? "S" : points >= 8 ? "A" : points >= 7 ? "B" : points >= 5 ? "C" : "D";
 const LETTER_META: Record<LetterGrade, { medal: string; range: string; bg: string; text: string; rim: string; xlsxFill: string; xlsxFont: string }> = {
-  SSS: { medal: "Crown", range: "11 pts", bg: "linear-gradient(135deg,#fef3c7 0%,#f59e0b 20%,#be123c 55%,#581c87 100%)", text: "#fffbeb", rim: "#fde68a", xlsxFill: "FFBE123C", xlsxFont: "FFFFFBEB" },
-  SS: { medal: "Diamond", range: "10 pts", bg: "linear-gradient(135deg,#ffffff 0%,#cffafe 22%,#a5b4fc 48%,#f0abfc 72%,#e0f2fe 100%)", text: "#3b0764", rim: "#ffffff", xlsxFill: "FFC7D2FE", xlsxFont: "FF3B0764" },
-  S: { medal: "Gold", range: "9 pts", bg: "linear-gradient(135deg,#fff7c2 0%,#fcd34d 30%,#d97706 75%,#92400e 100%)", text: "#451a03", rim: "#fde68a", xlsxFill: "FFFCD34D", xlsxFont: "FF451A03" },
-  A: { medal: "Silver", range: "8 pts", bg: "linear-gradient(135deg,#ffffff 0%,#e2e8f0 30%,#94a3b8 75%,#475569 100%)", text: "#0f172a", rim: "#f1f5f9", xlsxFill: "FFE2E8F0", xlsxFont: "FF0F172A" },
-  B: { medal: "Bronze", range: "7 pts", bg: "linear-gradient(135deg,#ffe4c4 0%,#e0995e 30%,#b4622a 75%,#6b3410 100%)", text: "#2a1204", rim: "#fcd9b6", xlsxFill: "FFE0995E", xlsxFont: "FF2A1204" },
-  C: { medal: "Steel", range: "5–6 pts", bg: "linear-gradient(135deg,#e0f2fe 0%,#7dd3fc 30%,#0369a1 80%,#0c4a6e 100%)", text: "#f0f9ff", rim: "#bae6fd", xlsxFill: "FF7DD3FC", xlsxFont: "FF0C4A6E" },
-  D: { medal: "Iron", range: "4 pts or less", bg: "linear-gradient(135deg,#d4d4d8 0%,#71717a 40%,#3f3f46 80%,#18181b 100%)", text: "#fafafa", rim: "#a1a1aa", xlsxFill: "FFA1A1AA", xlsxFont: "FF18181B" },
+  SSS: { medal: "👑 Master", range: "11 pts", bg: "linear-gradient(135deg,#fef3c7 0%,#f59e0b 20%,#be123c 55%,#581c87 100%)", text: "#fffbeb", rim: "#fde68a", xlsxFill: "FFBE123C", xlsxFont: "FFFFFBEB" },
+  SS: { medal: "💎 Expert", range: "10 pts", bg: "linear-gradient(135deg,#ffffff 0%,#cffafe 22%,#a5b4fc 48%,#f0abfc 72%,#e0f2fe 100%)", text: "#3b0764", rim: "#ffffff", xlsxFill: "FFC7D2FE", xlsxFont: "FF3B0764" },
+  S: { medal: "🥇 Advanced", range: "9 pts", bg: "linear-gradient(135deg,#fff7c2 0%,#fcd34d 30%,#d97706 75%,#92400e 100%)", text: "#451a03", rim: "#fde68a", xlsxFill: "FFFCD34D", xlsxFont: "FF451A03" },
+  A: { medal: "🥈 Proficient", range: "8 pts", bg: "linear-gradient(135deg,#ffffff 0%,#e2e8f0 30%,#94a3b8 75%,#475569 100%)", text: "#0f172a", rim: "#f1f5f9", xlsxFill: "FFE2E8F0", xlsxFont: "FF0F172A" },
+  B: { medal: "🥉 Competent", range: "7 pts", bg: "linear-gradient(135deg,#ffe4c4 0%,#e0995e 30%,#b4622a 75%,#6b3410 100%)", text: "#2a1204", rim: "#fcd9b6", xlsxFill: "FFE0995E", xlsxFont: "FF2A1204" },
+  C: { medal: "⚙️ Developing", range: "5–6 pts", bg: "linear-gradient(135deg,#e0f2fe 0%,#7dd3fc 30%,#0369a1 80%,#0c4a6e 100%)", text: "#f0f9ff", rim: "#bae6fd", xlsxFill: "FF7DD3FC", xlsxFont: "FF0C4A6E" },
+  D: { medal: "🛡️ Needs Attention", range: "4 pts or less", bg: "linear-gradient(135deg,#d4d4d8 0%,#71717a 40%,#3f3f46 80%,#18181b 100%)", text: "#fafafa", rim: "#a1a1aa", xlsxFill: "FFA1A1AA", xlsxFont: "FF18181B" },
 };
+
+/** The grade's name without its emoji ("Master", "Needs Attention", …). */
+const gradeName = (g: LetterGrade) => LETTER_META[g].medal.replace(/^\S+\s+/, "");
 
 function GradeMedal({ grade, size = "md" }: { grade: LetterGrade; size?: "sm" | "md" }) {
   const meta = LETTER_META[grade];
@@ -343,7 +347,7 @@ function GradeMedal({ grade, size = "md" }: { grade: LetterGrade; size?: "sm" | 
           ? "0 0 10px rgba(251,191,36,0.55), 0 1px 4px rgba(0,0,0,0.45), inset 0 1px 1px rgba(255,255,255,0.6)"
           : "0 1px 4px rgba(0,0,0,0.45), inset 0 1px 1px rgba(255,255,255,0.6)",
       }}
-      title={`${grade} grade · ${meta.medal} (${meta.range})`}
+      title={`${meta.medal} (${meta.range})`}
     >
       {crowned && (
         <Crown
@@ -1359,7 +1363,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           const a = shortDailyAvg(r);
           const pts = shortPoints(r);
           return [
-            r.name, letterGrade(pts), pts, fmt1(a), shortTotalTicket(r), fmtRedoPct(p), r.daysWorked,
+            r.name, gradeName(letterGrade(pts)), pts, fmt1(a), shortTotalTicket(r), fmtRedoPct(p), r.daysWorked,
             fmt1(shortAvgHours(r)), fmt1(shortAvgMiles(r)), shortErrorCount(r),
             r.minorTicketCount, r.majorTicketCount, r.redoCount, fmt1(r.miles), fmt1(r.hoursWorked),
           ];
@@ -1421,7 +1425,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       sheet.columns = !showAllColumns ? [
         { header: "Name", key: "name", width: 26 },
         // Grade/Points: reference block only, never read back.
-        { header: "Grade", key: "shortGrade", width: 8 },
+        { header: "Grade", key: "shortGrade", width: 18 },
         { header: "Points", key: "shortPoints", width: 9 },
         { header: "Date", key: "date", width: 12 },
         // Same order as the table: the main factors, then the
@@ -1598,7 +1602,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       const noteRow = sheet.addRow({
         name: showAllColumns
           ? "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. Damage Assessment/Minor Ticket/Major Ticket/Redo/Total Completion/Reschedule/NCNS/Mileage/Hours Worked below are the CURRENT totals, for reference."
-          : "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. The numbers below are the CURRENT totals, for reference. Grade, Points, Average Tickets, Total Ticket, Redo %, Working Days, Average Hours, Average Mileage and Error Count are calculated, not read back on import. Grade: SSS 11, SS 10, S 9, A 8, B 7, C 5–6, D 4 or less. Points: Maximum 3, Great 2, Median 1, Effort 0, Alert −1 over Average Tickets/Total Ticket/Redo %/Working Days (Redo % and Working Days top out at 2); Average Hours over 12 a day is −1; Average Mileage 250+ a day is +1. Colors: blue Maximum, green Great, yellow Median, orange Effort, red Alert.",
+          : "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. The numbers below are the CURRENT totals, for reference. Grade, Points, Average Tickets, Total Ticket, Redo %, Working Days, Average Hours, Average Mileage and Error Count are calculated, not read back on import. Grade: Master 11, Expert 10, Advanced 9, Proficient 8, Competent 7, Developing 5–6, Needs Attention 4 or less. Points: Maximum 3, Great 2, Median 1, Effort 0, Alert −1 over Average Tickets/Total Ticket/Redo %/Working Days (Redo % and Working Days top out at 2); Average Hours over 12 a day is −1; Average Mileage 250+ a day is +1. Colors: blue Maximum, green Great, yellow Median, orange Effort, red Alert.",
       });
       noteRow.font = { italic: true, color: { argb: "FF64748B" } };
       for (const r of sortedRows) {
@@ -1648,7 +1652,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           row.getCell("shortPoints").value = pts;
           row.getCell("shortPoints").font = { bold: true };
           const gradeCell = row.getCell("shortGrade");
-          gradeCell.value = letter;
+          gradeCell.value = LETTER_META[letter].medal;
           gradeCell.alignment = { horizontal: "center" };
           gradeCell.font = { bold: true, color: { argb: LETTER_META[letter].xlsxFont } };
           gradeCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: LETTER_META[letter].xlsxFill } };
@@ -2267,7 +2271,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                       </tr>
                       <tr className="border-b border-white/10 bg-white/5">
                         <th className={thClass} onClick={() => toggleSort("name")}>Name{sortIndicator("name")}</th>
-                        <th className={`${thClass} text-center border-l border-white/10`} onClick={() => toggleSort("shortPoints")} title="SSS 11 · SS 10 · S 9 · A 8 · B 7 · C 5–6 · D 4 or less">Grade</th>
+                        <th className={`${thClass} border-l border-white/10`} onClick={() => toggleSort("shortPoints")} title="Master 11 · Expert 10 · Advanced 9 · Proficient 8 · Competent 7 · Developing 5–6 · Needs Attention 4 or less">Grade</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("shortPoints")} title="Maximum 3 · Great 2 · Median 1 · Effort 0 · Alert −1 (Redo % and Working Days max 2), summed over Average Tickets, Total Ticket, Redo % and Working Days; Average Hours over 12 a day −1; Average Mileage 250+ a day +1">Points{sortIndicator("shortPoints")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("shortDailyAvg")} title="Total Ticket ÷ Working Days">Average Tickets{sortIndicator("shortDailyAvg")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("shortTotalTicket")} title="Minor + Major − Redo">Total Ticket{sortIndicator("shortTotalTicket")}</th>
@@ -2418,8 +2422,11 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                             return (
                               <tr key={r.id} className="border-b border-white/5 hover:bg-white/5">
                                 {nameCell}
-                                <td className="px-3 py-1 text-center border-l border-white/10">
-                                  <GradeMedal grade={letterGrade(points)} />
+                                <td className="px-3 py-1 border-l border-white/10">
+                                  <span className="inline-flex items-center gap-2 whitespace-nowrap">
+                                    <GradeMedal grade={letterGrade(points)} />
+                                    <span className="text-xs font-semibold">{gradeName(letterGrade(points))}</span>
+                                  </span>
                                 </td>
                                 <td className="px-3 py-1.5 text-right">
                                   <span className="inline-flex justify-end min-w-[2.5rem] rounded-md bg-white/10 px-2 py-0.5 tabular-nums font-bold">{points}</span>
