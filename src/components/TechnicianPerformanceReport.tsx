@@ -1362,7 +1362,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     const workingDays = m((r) => r.daysWorked);
     const avgHours = m(shortAvgHours);
     const avgMiles = m(shortAvgMiles);
-    const errors = m(shortErrorCount);
+    // Error Count is the company total (every technician in view), not a median.
+    const errors = filteredRows.reduce((s, r) => s + shortErrorCount(r), 0);
     const show = (v: number | null, suffix = "") => (v == null ? "—" : `${fmt1(v)}${suffix}`);
     return {
       techCount: active.length,
@@ -1373,7 +1374,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         { label: "Working Days", icon: CalendarDays, value: show(workingDays), grade: workingDays == null ? null : GRADERS.workingDays(workingDays), hint: "Median working days" },
         { label: "Average Hours", icon: Clock, value: show(avgHours), grade: avgHours == null ? null : GRADERS.avgHours(avgHours), hint: "Median Hours of Work ÷ Working Days" },
         { label: "Average Mileage", icon: Route, value: show(avgMiles), grade: avgMiles == null ? null : GRADERS.avgMiles(avgMiles), hint: "Median Mileage ÷ Working Days" },
-        { label: "Error Count", icon: AlertTriangle, value: show(errors), grade: null as Grade | null, hint: "Median timecard issues + damages" },
+        { label: "Total Errors", icon: AlertTriangle, value: show(errors), grade: null as Grade | null, hint: "Total timecard issues + damages across every technician in view" },
       ],
     };
   }, [filteredRows]);
@@ -2114,7 +2115,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-4 justify-items-center">
               {medianKpis.items.map((m) => {
-                const hex = m.grade ? GRADE_HEX[m.grade] : m.label === "Error Count" && m.value !== "0" && m.value !== "—" ? "#f87171" : "#94a3b8";
+                const hex = m.grade ? GRADE_HEX[m.grade] : m.label === "Total Errors" && m.value !== "0" && m.value !== "—" ? "#f87171" : "#94a3b8";
                 const Icon = m.icon;
                 return (
                   <div
