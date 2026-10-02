@@ -1982,6 +1982,126 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           )}
         </div>
 
+        {/* Charts first, at the top of the page (moved up from below the filters). */}
+        {!loading && (
+          <div className="mb-5">
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="flex flex-wrap items-center gap-3 mb-4">
+                <div className="flex items-center gap-1.5">
+                  <Star className="h-4 w-4 text-emerald-400" />
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Top Technicians & Trend</p>
+                </div>
+                <div className="flex rounded-md overflow-hidden border border-white/15 text-xs ml-auto">
+                  {([["trend", "Trend"], ["top10", "Top 10 Technicians"]] as const).map(([v, label], i) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setChartView(v)}
+                      className={`px-3 py-1.5 ${i > 0 ? "border-l border-white/15" : ""} ${chartView === v ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <select
+                  value={chartScope}
+                  onChange={(e) => setChartScope(e.target.value)}
+                  className="glass-input text-xs py-1.5 px-3 rounded-md max-w-full"
+                  title="Which technicians the chart below covers"
+                >
+                  <option value="all">All branches (combined)</option>
+                  {sbmOptions.length > 0 && (
+                    <optgroup label="Senior Branch Manager">
+                      {sbmOptions.map((s) => (
+                        <option key={s.id} value={`sbm:${s.id}`}>{s.name} ({s.branches.join(", ")})</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  <optgroup label="Branch">
+                    {branchOptions.map((b) => (
+                      <option key={b} value={`branch:${b}`}>{b}</option>
+                    ))}
+                  </optgroup>
+                </select>
+              </div>
+              <div>
+                {chartView === "trend" && (
+                <div>
+                  <p className="text-[11px] font-semibold text-muted-foreground mb-1">Trend by pay period — median technician</p>
+                  {(() => {
+                    // Latest pay period that has data — its three medians as tiles.
+                    const latest = [...trendChart].reverse().find((p) => p.techCount > 0);
+                    if (!latest) return null;
+                    return (
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {[
+                          { label: "Median Average Tickets", value: latest.average != null ? String(latest.average) : "—", cls: "text-green-400 border-green-500/30 bg-green-500/10" },
+                          { label: "Median Total Ticket", value: latest.totalTicket != null ? String(latest.totalTicket) : "—", cls: "text-blue-400 border-blue-500/30 bg-blue-500/10" },
+                          { label: "Median Redo %", value: latest.redoPct != null ? `${latest.redoPct}%` : "—", cls: "text-red-400 border-red-500/30 bg-red-500/10" },
+                        ].map((m) => (
+                          <div key={m.label} className={`rounded-md border px-2.5 py-1 ${m.cls}`}>
+                            <span className="text-sm font-bold tabular-nums">{m.value}</span>
+                            <span className="ml-1.5 text-[10px] opacity-80">{m.label}</span>
+                          </div>
+                        ))}
+                        <span className="self-center text-[10px] text-muted-foreground">{latest.label} · {latest.techCount} technician{latest.techCount === 1 ? "" : "s"}</span>
+                      </div>
+                    );
+                  })()}
+                  <ResponsiveContainer width="100%" height={240} debounce={200}>
+                    <LineChart data={trendChart} margin={{ left: -10, right: 4, top: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
+                      <XAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 10 }} />
+                      <YAxis yAxisId="count" tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
+                      <YAxis yAxisId="avg" orientation="right" tick={{ fill: "#22c55e", fontSize: 11 }} />
+                      <Tooltip
+                        contentStyle={TOOLTIP_STYLE}
+                        formatter={(v: any, name: any) => [v == null ? "—" : name === "Median Redo %" ? `${v}%` : v, name]}
+                        labelFormatter={(label, payload) => {
+                          const n = payload?.[0]?.payload?.techCount;
+                          return n != null ? `${label} · ${n} technician${n === 1 ? "" : "s"}` : String(label);
+                        }}
+                      />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                      <Line yAxisId="avg" type="monotone" dataKey="average" name="Median Average Tickets" stroke="#22c55e" strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
+                      <Line yAxisId="count" type="monotone" dataKey="totalTicket" name="Median Total Ticket" stroke="#3b82f6" strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
+                      <Line yAxisId="count" type="monotone" dataKey="redoPct" name="Median Redo %" stroke="#ef4444" strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
+                    </LineChart>
+                  </ResponsiveContainer>
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Each point is the median technician in that pay period (technicians with no work that period are left out). Average Tickets uses the right-hand scale.
+                  </p>
+                </div>
+                )}
+                {chartView === "top10" && (
+                <div>
+                  <p className="text-[11px] font-semibold text-muted-foreground mb-1">Top 10 technicians — Points ({periodMode === "total" ? "all pay periods" : "selected pay period"})</p>
+                  {top10Chart.length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-16 text-center">No technicians in this scope.</p>
+                  ) : (
+                <ResponsiveContainer width="100%" height={240} debounce={200}>
+                  <BarChart data={top10Chart} margin={{ left: -10 }}>
+                    <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} />
+                    <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
+                    <Tooltip
+                      contentStyle={TOOLTIP_STYLE}
+                      cursor={{ fill: "rgba(148,163,184,0.1)" }}
+                      formatter={(v: any) => [v, "Points"]}
+                      labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName ?? ""}
+                    />
+                    <Bar dataKey="value" radius={[4, 4, 0, 0]} name="Points">
+                      {/* Bar color = that technician's medal */}
+                      {top10Chart.map((d, i) => <Cell key={i} fill={`#${LETTER_META[letterGrade(d.value)].xlsxFill.slice(2)}`} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+                  )}
+                </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
         {!loading && !showAllColumns && (
           // Short view: the median technician for the selected pay period on
           // each main factor (not Points), colored by that factor's grade.
@@ -2177,121 +2297,6 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                 </div>
               </div>
             )}
-            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-              <div className="flex flex-wrap items-center gap-3 mb-4">
-                <div className="flex items-center gap-1.5">
-                  <Star className="h-4 w-4 text-emerald-400" />
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Top Technicians & Trend</p>
-                </div>
-                <div className="flex rounded-md overflow-hidden border border-white/15 text-xs ml-auto">
-                  {([["trend", "Trend"], ["top10", "Top 10 Technicians"]] as const).map(([v, label], i) => (
-                    <button
-                      key={v}
-                      type="button"
-                      onClick={() => setChartView(v)}
-                      className={`px-3 py-1.5 ${i > 0 ? "border-l border-white/15" : ""} ${chartView === v ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <select
-                  value={chartScope}
-                  onChange={(e) => setChartScope(e.target.value)}
-                  className="glass-input text-xs py-1.5 px-3 rounded-md max-w-full"
-                  title="Which technicians the chart below covers"
-                >
-                  <option value="all">All branches (combined)</option>
-                  {sbmOptions.length > 0 && (
-                    <optgroup label="Senior Branch Manager">
-                      {sbmOptions.map((s) => (
-                        <option key={s.id} value={`sbm:${s.id}`}>{s.name} ({s.branches.join(", ")})</option>
-                      ))}
-                    </optgroup>
-                  )}
-                  <optgroup label="Branch">
-                    {branchOptions.map((b) => (
-                      <option key={b} value={`branch:${b}`}>{b}</option>
-                    ))}
-                  </optgroup>
-                </select>
-              </div>
-              <div>
-                {chartView === "trend" && (
-                <div>
-                  <p className="text-[11px] font-semibold text-muted-foreground mb-1">Trend by pay period — median technician</p>
-                  {(() => {
-                    // Latest pay period that has data — its three medians as tiles.
-                    const latest = [...trendChart].reverse().find((p) => p.techCount > 0);
-                    if (!latest) return null;
-                    return (
-                      <div className="flex flex-wrap gap-2 mb-2">
-                        {[
-                          { label: "Median Average Tickets", value: latest.average != null ? String(latest.average) : "—", cls: "text-green-400 border-green-500/30 bg-green-500/10" },
-                          { label: "Median Total Ticket", value: latest.totalTicket != null ? String(latest.totalTicket) : "—", cls: "text-blue-400 border-blue-500/30 bg-blue-500/10" },
-                          { label: "Median Redo %", value: latest.redoPct != null ? `${latest.redoPct}%` : "—", cls: "text-red-400 border-red-500/30 bg-red-500/10" },
-                        ].map((m) => (
-                          <div key={m.label} className={`rounded-md border px-2.5 py-1 ${m.cls}`}>
-                            <span className="text-sm font-bold tabular-nums">{m.value}</span>
-                            <span className="ml-1.5 text-[10px] opacity-80">{m.label}</span>
-                          </div>
-                        ))}
-                        <span className="self-center text-[10px] text-muted-foreground">{latest.label} · {latest.techCount} technician{latest.techCount === 1 ? "" : "s"}</span>
-                      </div>
-                    );
-                  })()}
-                  <ResponsiveContainer width="100%" height={240} debounce={200}>
-                    <LineChart data={trendChart} margin={{ left: -10, right: 4, top: 8 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
-                      <XAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 10 }} />
-                      <YAxis yAxisId="count" tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
-                      <YAxis yAxisId="avg" orientation="right" tick={{ fill: "#22c55e", fontSize: 11 }} />
-                      <Tooltip
-                        contentStyle={TOOLTIP_STYLE}
-                        formatter={(v: any, name: any) => [v == null ? "—" : name === "Median Redo %" ? `${v}%` : v, name]}
-                        labelFormatter={(label, payload) => {
-                          const n = payload?.[0]?.payload?.techCount;
-                          return n != null ? `${label} · ${n} technician${n === 1 ? "" : "s"}` : String(label);
-                        }}
-                      />
-                      <Legend wrapperStyle={{ fontSize: 11 }} />
-                      <Line yAxisId="avg" type="monotone" dataKey="average" name="Median Average Tickets" stroke="#22c55e" strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
-                      <Line yAxisId="count" type="monotone" dataKey="totalTicket" name="Median Total Ticket" stroke="#3b82f6" strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
-                      <Line yAxisId="count" type="monotone" dataKey="redoPct" name="Median Redo %" stroke="#ef4444" strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
-                    </LineChart>
-                  </ResponsiveContainer>
-                  <p className="text-[10px] text-muted-foreground mt-1">
-                    Each point is the median technician in that pay period (technicians with no work that period are left out). Average Tickets uses the right-hand scale.
-                  </p>
-                </div>
-                )}
-                {chartView === "top10" && (
-                <div>
-                  <p className="text-[11px] font-semibold text-muted-foreground mb-1">Top 10 technicians — Points ({periodMode === "total" ? "all pay periods" : "selected pay period"})</p>
-                  {top10Chart.length === 0 ? (
-                    <p className="text-xs text-muted-foreground py-16 text-center">No technicians in this scope.</p>
-                  ) : (
-                <ResponsiveContainer width="100%" height={240} debounce={200}>
-                  <BarChart data={top10Chart} margin={{ left: -10 }}>
-                    <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} />
-                    <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
-                    <Tooltip
-                      contentStyle={TOOLTIP_STYLE}
-                      cursor={{ fill: "rgba(148,163,184,0.1)" }}
-                      formatter={(v: any) => [v, "Points"]}
-                      labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName ?? ""}
-                    />
-                    <Bar dataKey="value" radius={[4, 4, 0, 0]} name="Points">
-                      {/* Bar color = that technician's medal */}
-                      {top10Chart.map((d, i) => <Cell key={i} fill={`#${LETTER_META[letterGrade(d.value)].xlsxFill.slice(2)}`} />)}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-                  )}
-                </div>
-                )}
-              </div>
-            </div>
             {!showAllColumns && (
               <details open className="group rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5">
                 <summary className="flex flex-wrap items-center gap-x-4 gap-y-1.5 cursor-pointer list-none select-none">
