@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Check, Copy, KeyRound, Loader2 } from "lucide-react";
+import { CalendarX2, Check, ChevronRight, Copy, KeyRound, Loader2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsersLite, type ProfileRow } from "@/lib/supabase/users";
 import { CLOCK_CODE_ALWAYS_VIEWERS, ensureCompanyClockInCode, getClockCodeViewerRoles } from "@/lib/supabase/clockInCodes";
 import { MissedClockInMeetings } from "@/components/MissedClockInMeetings";
+import { getPendingClockInMeetings } from "@/lib/supabase/clockInMeetings";
 
 /**
  * Mobile Home → today's company clock-in code, for whoever can see it
@@ -66,6 +67,39 @@ export function useCanSeeClockInMeetings(): boolean {
   const held = [role, ...(extraRoles ?? [])].map((r) => String(r ?? "").trim().toUpperCase());
   const allowed = new Set<string>([...CLOCK_CODE_ALWAYS_VIEWERS, "SUPERSUPERADMIN", ...viewerRoles.map((r) => r.toUpperCase())]);
   return held.some((r) => allowed.has(r));
+}
+
+/** Mobile Home card that opens the meetings list — shows how many are waiting. */
+export function MeetingsRequiredCard({ onOpen }: { onOpen: () => void }) {
+  const [count, setCount] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getPendingClockInMeetings().then((m) => { if (!cancelled) setCount(m.length); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+  const waiting = (count ?? 0) > 0;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex w-full items-center gap-3 px-4 py-3 text-left"
+      style={{
+        background: waiting ? "rgba(239, 68, 68, 0.12)" : "var(--mt-surface)",
+        border: `1px solid ${waiting ? "rgba(248, 113, 113, 0.45)" : "var(--mt-surface-border)"}`,
+        borderRadius: 14,
+      }}
+    >
+      <CalendarX2 className={`h-5 w-5 shrink-0 ${waiting ? "text-red-300" : "text-slate-300"}`} />
+      <div className="flex-1">
+        <div className="text-sm font-semibold text-white">Meetings required</div>
+        <div className="text-[11px] text-slate-300">Technicians who missed a clock-in or didn't fix a missed Time Out</div>
+      </div>
+      {count != null && (
+        <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold tabular-nums ${waiting ? "bg-red-500 text-white" : "bg-white/10 text-slate-300"}`}>{count}</span>
+      )}
+      <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />
+    </button>
+  );
 }
 
 /** Mobile → "Meetings required": the same list as the Clock-In Codes page. */

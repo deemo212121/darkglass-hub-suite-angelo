@@ -7,7 +7,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type Dispatch, type Set
 import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
 import { MyStandingCard, FixTimeOutBanner } from "@/components/mobile/MyStandingCard";
-import { MobileMeetingsView, TodaysClockInCodeCard, useCanSeeClockInMeetings } from "@/components/mobile/MobileMeetingsView";
+import { MeetingsRequiredCard, MobileMeetingsView, TodaysClockInCodeCard, useCanSeeClockInMeetings } from "@/components/mobile/MobileMeetingsView";
 import { setDesktopOverride } from "@/lib/device";
 import { useLiveLocation } from "@/lib/liveLocationContext";
 import {
@@ -6538,13 +6538,7 @@ function MobileHomeView({
       )}
       {!viewingReportName && canSeeMeetings && <TodaysClockInCodeCard />}
       {!viewingReportName && canSeeMeetings && (
-        <button type="button" onClick={onOpenMeetings} className="mtech-home-onsite" style={{ flexDirection: "row", alignItems: "center", textAlign: "left" }}>
-          <span style={{ flex: 1 }}>
-            <strong style={{ display: "block", fontSize: "0.9rem" }}>Meetings required</strong>
-            <span style={{ fontSize: "0.75rem", opacity: 0.8 }}>Technicians who missed a clock-in or didn't fix a missed Time Out</span>
-          </span>
-          <span aria-hidden>›</span>
-        </button>
+        <MeetingsRequiredCard onOpen={onOpenMeetings} />
       )}
 
       {viewingReportName ? null : loadError ? (
