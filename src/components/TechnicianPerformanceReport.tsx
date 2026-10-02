@@ -2107,7 +2107,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           // each main factor (not Points), colored by that factor's grade.
           <div className="mb-5 rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.05] to-white/[0.01] px-5 py-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-300/80">Median Technician</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-300/80">Company Standing</p>
               <p className="text-[11px] text-muted-foreground">
                 {periodMode === "total" ? "All pay periods" : `${fmtPayDate(periodStart)} – ${fmtPayDate(periodEnd)}`} · {medianKpis.techCount} technician{medianKpis.techCount === 1 ? "" : "s"} with work
               </p>
