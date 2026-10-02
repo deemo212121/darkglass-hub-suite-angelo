@@ -202,22 +202,42 @@ const PAGE_SIZE = 1000;
  *  no-photos payroll-hold reconciliation and the mileage report/CSV export,
  *  which both need every branch regardless of what's on screen).
  */
-export async function getMileageEntries(branch?: string): Promise<MileageEntry[]> {
-  const all: MileageEntry[] = [];
-  for (let from = 0; ; from += PAGE_SIZE) {
+export async function getMileageEntries(branch?: string, range?: { start: string; end: string }): Promise<MileageEntry[]> {
+  const pageQuery = (from: number, withCount = false) => {
     let query = supabase
       .from("mileage_entries")
-      .select(ENTRY_COLUMNS)
+      .select(ENTRY_COLUMNS, withCount ? { count: "exact" } : undefined)
       .order("work_date", { ascending: false })
       .order("id", { ascending: true });
     if (branch) query = query.eq("branch", branch);
-    const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
-    if (error) {
-      console.error("getMileageEntries error:", error.message);
+    // Optional work_date window — reading only the days a caller needs
+    // instead of the whole (ever-growing) history.
+    if (range) query = query.gte("work_date", range.start).lte("work_date", range.end);
+    return query.range(from, from + PAGE_SIZE - 1);
+  };
+
+  // First page also returns the total row count, so the remaining pages
+  // can be fetched at the same time instead of one after another (each
+  // 1000-row page is ~1.3 MB — sequential paging took ~13s for the full
+  // table). Pages are joined back in order, so the result is identical.
+  const first = await pageQuery(0, true);
+  if (first.error) {
+    console.error("getMileageEntries error:", first.error.message);
+    return [];
+  }
+  const all: MileageEntry[] = (first.data ?? []).map(mapRow);
+  const total = first.count ?? 0;
+  if (!first.data || first.data.length < PAGE_SIZE || total <= PAGE_SIZE) return all;
+
+  const rest = await Promise.all(
+    Array.from({ length: Math.ceil(total / PAGE_SIZE) - 1 }, (_, i) => pageQuery((i + 1) * PAGE_SIZE)),
+  );
+  for (const page of rest) {
+    if (page.error) {
+      console.error("getMileageEntries error:", page.error.message);
       return all;
     }
-    all.push(...(data ?? []).map(mapRow));
-    if (!data || data.length < PAGE_SIZE) break;
+    all.push(...(page.data ?? []).map(mapRow));
   }
   return all;
 }

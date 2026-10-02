@@ -589,7 +589,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         periodStart < BLANK_LIVE_TIME_FROM
           ? getTechRedoTickets(periodStart, periodEnd < BLANK_LIVE_TIME_FROM ? periodEnd : addDaysISO(BLANK_LIVE_TIME_FROM, -1))
           : Promise.resolve(new Map()),
-        getMileageEntries(),
+        // Only the period's days — the full history took ~13s to load.
+        getMileageEntries(undefined, { start: periodStart, end: periodEnd }),
         getCompanyTimecardEntries(periodStart, periodEnd),
         getTechCompletedTicketsDaily(periodStart, periodEnd),
         getTechnicianPerformanceOverrides(periodStart, periodEnd),
