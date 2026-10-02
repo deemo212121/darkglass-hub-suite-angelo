@@ -18,13 +18,14 @@
 import { requireRejectReason } from "@/lib/rejectReason";
 import { chainCanApprove } from "@/lib/approvalDirectory";
 import { supabase } from "./client";
+import { getServerNow, zonedDateKey } from "@/lib/serverTime";
 import { createNotification } from "./notifications";
 import { getCompanyUsers } from "./users";
 import { isAttendanceManagerTierRole } from "@/lib/roleLabels";
 
 export type CorrectionStatus = "pending" | "approved" | "rejected";
 export type CorrectionStage = "manager" | "hr" | "accounting";
-/** Original Exception Type values (older corrections) plus the Time Correction Issue choices (migration 0330). */
+/** Original Exception Type values (older corrections) plus the Time Correction Issue choices (migration 0333). */
 export type ExceptionType = "missed_workday" | "late_early" | "missed_visit" | "other" | "forgot_to_clock" | "system_issue" | "account_issue" | "internet_issue";
 export type HrPaperworkStatus = "pending" | "approved" | "additional_review_required";
 
@@ -79,7 +80,7 @@ export interface TimecardCorrectionRow {
   hrReceivedDate: string | null;
   hrReviewerName: string | null;
   pdfUrl: string | null;
-  /** Why it was rejected — "Rejected by <name> (<step>): <reason>" lines (migration 0331). */
+  /** Why it was rejected — "Rejected by <name> (<step>): <reason>" lines (migration 0334). */
   reviewNote: string | null;
 }
 
@@ -97,7 +98,7 @@ const SELECT_COLUMNS_NO_NOTE =
   "id, profile_id, work_date, original_check_in, original_check_out, corrected_check_in, corrected_check_out, original_meal_start, original_meal_end, corrected_meal_start, corrected_meal_end, reason, status, requested_by, reviewed_by, reviewed_at, created_at, manager_id, manager_status, manager_reviewed_by, manager_reviewed_at, hr_status, hr_reviewed_by, hr_reviewed_at, accounting_status, accounting_reviewed_by, accounting_reviewed_at, exception_type, other_description, employee_signature_url, employee_signature_name, employee_signed_at, manager_comments, manager_signature_url, manager_signature_name, manager_signed_at, hr_paperwork_status, hr_signature_url, hr_signature_name, hr_signed_at, hr_received_date, hr_reviewer_name, pdf_url";
 const SELECT_COLUMNS = SELECT_COLUMNS_NO_NOTE + ", review_note";
 
-// review_note only exists after migration 0331 — if a read fails on it,
+// review_note only exists after migration 0334 — if a read fails on it,
 // drop it for the rest of the session instead of breaking every list.
 let noteColumnMissing = false;
 async function selectWithNoteFallback(run: (cols: string) => PromiseLike<{ data: any; error: { message: string } | null }>): Promise<{ data: any; error: { message: string } | null }> {
@@ -293,9 +294,21 @@ export function canReviewCorrectionStage(
   if (stage === "manager") {
     // Non-PH field staff (Technician → Branch / Parts Manager → Senior Branch
     // Manager → Admin / Directors): the Approval Chain decides, by role +
-    // branch + area — migration 0329 enforces the same rule in the database.
+    // branch + area — migration 0332 enforces the same rule in the database.
+    // Checked first so the buttons match what the database allows.
     const chain = chainCanApprove(viewerProfileId, request.profileId);
     if (chain !== null) return chain;
+    // Everyone else: team leaders (CSR/Claims/Parts _TEAM_LEADER) can't approve the manager
+    // stage — per the user's explicit call, a team member's time correction
+    // is approved by a manager (e.g. Robyn Heredia), never their team
+    // leader. CSR requests are routed to the team leader
+    // (resolveTeamLeadOrManager), so the manager reaches them through the
+    // chain below: the requester's manager_name, or that person's own
+    // manager_name. Someone who ALSO holds a real manager-tier role (e.g.
+    // PARTS_TEAM_LEADER + PARTS_MANAGER) keeps it through that role.
+    const isTeamLeaderRole = (r: string) => r.endsWith("_TEAM_LEADER");
+    const nonLeaderRoles = heldRoles.filter((r) => !isTeamLeaderRole(r));
+    if (heldRoles.some(isTeamLeaderRole) && !isAttendanceManagerTierRole(nonLeaderRoles[0] ?? null, nonLeaderRoles.slice(1))) return false;
     if (request.managerId === viewerProfileId) return true;
     const currentManagerName = (requesterCurrentManagerName || "").trim().toLowerCase();
     const managersManagerName = (requesterManagersManagerName || "").trim().toLowerCase();
@@ -381,6 +394,20 @@ export function validateCorrectionTimes(t: { checkIn: string; checkOut: string; 
   return null;
 }
 
+/** Validate against the server clock in the employee's attendance timezone. */
+export async function validateTimecardCorrectionDate(profileId: string, workDate: string): Promise<void> {
+  const { data: profile, error } = await supabase
+    .from("profiles")
+    .select("schedule_timezone")
+    .eq("id", profileId)
+    .single();
+  if (error) throw error;
+  const today = zonedDateKey(await getServerNow(), profile.schedule_timezone === "EST" ? "EST" : "CST");
+  if (workDate > today) {
+    throw new Error("Time correction requests cannot be submitted for future dates. Choose today or an earlier date.");
+  }
+}
+
 export async function createTimecardCorrection(input: {
   id: string;
   profileId: string;
@@ -410,6 +437,7 @@ export async function createTimecardCorrection(input: {
   employeeSignatureName?: string;
   pdfUrl?: string;
 }): Promise<void> {
+  await validateTimecardCorrectionDate(input.profileId, input.workDate);
   const { error } = await supabase.from("timecard_corrections").insert({
     id: input.id,
     profile_id: input.profileId,
@@ -507,7 +535,7 @@ export async function reviewCorrectionStage(
     .eq("id", correction.id)
     .select(noteColumnMissing ? SELECT_COLUMNS_NO_NOTE : SELECT_COLUMNS)
     .single();
-  // Before migration 0331 there's no review_note column — save the decision without it.
+  // Before migration 0334 there's no review_note column — save the decision without it.
   if (error && /review_note/.test(error.message)) {
     delete stagePayload.review_note;
     ({ data, error } = await supabase.from("timecard_corrections").update(stagePayload).eq("id", correction.id).select(SELECT_COLUMNS_NO_NOTE).single());

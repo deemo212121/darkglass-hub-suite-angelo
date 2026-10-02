@@ -1,5 +1,5 @@
 /**
- * Approval Chain areas (migration 0329) — a named Area owned by one Senior
+ * Approval Chain areas (migration 0332) — a named Area owned by one Senior
  * Branch Manager. An area's branches aren't stored here: they're that SBM's
  * rows in senior_branch_manager_branches (seniorBranchManagerAssignments.ts),
  * the same table Branch Daily Report uses. Admin / SuperAdmin only (RLS).

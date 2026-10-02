@@ -42,7 +42,7 @@ export interface GmailConnectionStatus {
 
 /**
  * Extra roles (beyond Admin/SuperAdmin, who always can) allowed to connect /
- * disconnect one slot's Gmail — migration 0327. Empty when none granted or
+ * disconnect one slot's Gmail — migration 0329. Empty when none granted or
  * the migration hasn't been run yet.
  */
 export async function getGmailConnectRoles(region: GmailRegion): Promise<string[]> {

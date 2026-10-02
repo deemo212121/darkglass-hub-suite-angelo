@@ -1,17 +1,17 @@
 -- =====================================================================
--- 0335 — Approval Chain helper fix.
+-- 0338 — Approval Chain helper fix.
 --
--- 0329 was updated after it was first run (Parts / Parts Team Leader at
+-- 0332 was updated after it was first run (Parts / Parts Team Leader at
 -- branch level, and levels taken from ALL held roles via
--- chain_level_held). Databases that ran the ORIGINAL 0329 are missing
--- chain_level_held — so 0333/0334's chain_can_approve fails with
+-- chain_level_held). Databases that ran the ORIGINAL 0332 are missing
+-- chain_level_held — so 0336/0337's chain_can_approve fails with
 -- "function chain_level_held(text, text[]) does not exist" and every
 -- Manager-step approve/reject errors out (SuperAdmin included).
 --
--- This re-creates the current versions of the helpers 0329 defines. Safe
+-- This re-creates the current versions of the helpers 0332 defines. Safe
 -- to run more than once and on a database that already has them.
 --
--- Run once in the Supabase SQL Editor, after 0334.
+-- Run once in the Supabase SQL Editor, after 0337.
 -- =====================================================================
 
 create or replace function chain_level(p_role text)

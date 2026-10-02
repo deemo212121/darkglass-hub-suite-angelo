@@ -25,6 +25,8 @@ import { handleLoginLockoutRequest } from "./lib/server/loginLockoutBridge";
 import { handlePasswordResetRequest } from "./lib/server/passwordResetRequestBridge";
 import { handleItBypassLoginRequest } from "./lib/server/itBypassLoginBridge";
 
+const CANONICAL_ORIGIN = "https://adminhubsolution.com";
+
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
 };
@@ -123,6 +125,19 @@ export default {
     // error responses are returned verbatim instead of being swallowed into the
     // 500 HTML page.
     const url = new URL(request.url);
+    // The app's real address is adminhubsolution.com — anyone landing on the
+    // Worker's *.workers.dev address (old bookmarks/links) is sent to the same
+    // page there. Page navigations only: /api/* (OAuth callbacks, anything
+    // POSTing here) and /assets/* (a tab already open on workers.dev loading
+    // its next code chunk) are served as before.
+    if (
+      url.hostname.endsWith(".workers.dev") &&
+      (request.method === "GET" || request.method === "HEAD") &&
+      !url.pathname.startsWith("/api/") &&
+      !url.pathname.startsWith("/assets/")
+    ) {
+      return Response.redirect(`${CANONICAL_ORIGIN}${url.pathname}${url.search}`, 302);
+    }
     if (url.pathname === "/api/supabase-token") {
       const merged = await resolveServerEnv(env);
       return await handleSupabaseTokenRequest(request, merged);

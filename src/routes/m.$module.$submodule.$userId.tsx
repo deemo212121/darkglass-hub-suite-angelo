@@ -531,6 +531,8 @@ function UserDetailsPage() {
   });
   // Work plan grid state (per-location weekday/weekend + per-day slot).
   const [workPlan, setWorkPlan] = useState<WorkPlan>({});
+  /** location → end date of an active Flash Tech trip there (overlay only, not saved). */
+  const [flashTripByLoc, setFlashTripByLoc] = useState<Record<string, string>>({});
   // Employee Information tab (bank, personal, home address). Stored in Supabase
   // profiles.employee_info; powers the Work Map technician house pins.
   const [employeeInfo, setEmployeeInfo] = useState<Record<string, string>>({});
@@ -598,6 +600,18 @@ function UserDetailsPage() {
         });
         const { normalizeWorkPlan } = await import("@/lib/workPlan");
         setWorkPlan(normalizeWorkPlan(p.work_plan as any, LOCATIONS as unknown as string[]));
+        // Active Flash Tech trips show their destination as checked on the
+        // grid, read-only — an overlay, never saved into work_plan, so it
+        // unchecks itself once the trip ends.
+        try {
+          const { getActiveFlashTechDestinations } = await import("@/lib/supabase/flashTechTrips");
+          const trips = await getActiveFlashTechDestinations(p.id);
+          const byLoc: Record<string, string> = {};
+          for (const t of trips) {
+            if (!byLoc[t.location] || t.endDate > byLoc[t.location]) byLoc[t.location] = t.endDate;
+          }
+          if (!cancelled) setFlashTripByLoc(byLoc);
+        } catch { /* ignore */ }
         // Load saved employee info (bank/personal/home address) from Supabase.
         try {
           const { getProfileEmployeeInfo } = await import("@/lib/supabase/users");
@@ -978,22 +992,47 @@ function UserDetailsPage() {
                           {(LOCATIONS as unknown as string[]).map((loc) => {
                             const plan = workPlan[loc];
                             if (!plan) return null;
-                            const enabled = plan.weekday || plan.weekend;
+                            const tripEnd = flashTripByLoc[loc];
+                            // A trip only locks a box the saved plan leaves unchecked;
+                            // a box already checked stays editable as usual.
+                            const tripWeekday = !!tripEnd && !plan.weekday;
+                            const tripWeekend = !!tripEnd && !plan.weekend;
+                            const enabled = plan.weekday || plan.weekend || !!tripEnd;
+                            const tripTitle = tripEnd ? `Flash Tech trip until ${tripEnd} — unchecks automatically when the trip ends` : undefined;
                             return (
                               <tr key={loc} className={`border-b border-white/5 ${enabled ? "" : "opacity-60"}`}>
-                                <td className="px-3 py-2 font-medium text-slate-200 whitespace-nowrap">{loc}</td>
-                                <td className="px-3 py-2 text-center">
-                                  <input type="checkbox" checked={plan.weekday} onChange={(e) => setPlanFlag(loc, "weekday", e.target.checked)} />
+                                <td className="px-3 py-2 font-medium text-slate-200 whitespace-nowrap">
+                                  {loc}
+                                  {tripEnd && (
+                                    <div className="text-[10px] font-normal text-amber-300">Flash Tech trip · until {tripEnd}</div>
+                                  )}
                                 </td>
                                 <td className="px-3 py-2 text-center">
-                                  <input type="checkbox" checked={plan.weekend} onChange={(e) => setPlanFlag(loc, "weekend", e.target.checked)} />
+                                  <input
+                                    type="checkbox"
+                                    checked={plan.weekday || tripWeekday}
+                                    disabled={tripWeekday}
+                                    title={tripWeekday ? tripTitle : undefined}
+                                    onChange={(e) => setPlanFlag(loc, "weekday", e.target.checked)}
+                                    className={tripWeekday ? "accent-amber-400" : undefined}
+                                  />
+                                </td>
+                                <td className="px-3 py-2 text-center">
+                                  <input
+                                    type="checkbox"
+                                    checked={plan.weekend || tripWeekend}
+                                    disabled={tripWeekend}
+                                    title={tripWeekend ? tripTitle : undefined}
+                                    onChange={(e) => setPlanFlag(loc, "weekend", e.target.checked)}
+                                    className={tripWeekend ? "accent-amber-400" : undefined}
+                                  />
                                 </td>
                                 {WORK_PLAN_DAYS.map((day) => (
                                   <td key={day} className="px-2 py-2">
                                     <select
                                       value={plan.days[day] ?? "AM + PM"}
                                       onChange={(e) => setPlanDay(loc, day, e.target.value)}
-                                      disabled={!enabled}
+                                      disabled={!(plan.weekday || plan.weekend)}
                                       className="rounded-md border border-white/15 bg-slate-950/90 px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500 disabled:opacity-40"
                                     >
                                       {SLOT_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}

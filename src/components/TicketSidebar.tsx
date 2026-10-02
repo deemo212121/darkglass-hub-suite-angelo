@@ -8,6 +8,7 @@ import {
   ScrollText,
   Paperclip,
   ChevronRight,
+  BookOpen,
 } from "lucide-react";
 
 type TabKey = "general" | "tracking";
@@ -18,6 +19,7 @@ interface TicketSidebarProps {
 }
 
 const TRACKING_SECTIONS = [
+  { id: "section-tech-tips", label: "Tech Tips", icon: BookOpen },
   { id: "section-related-tickets", label: "Related Tickets", icon: Link2 },
   { id: "section-part-transaction", label: "Part Transaction", icon: Package },
   { id: "section-visit-log", label: "Visit Log", icon: ClipboardList },

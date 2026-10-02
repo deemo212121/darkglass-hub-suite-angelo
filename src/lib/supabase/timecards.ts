@@ -465,7 +465,7 @@ export async function saveEntry(
       notes: entry.notes || null,
       ...(opts?.clockedInBy ? { clocked_in_by: opts.clockedInBy } : {}),
       // A direct time edit (Payroll detail / Attendance Status), not a punch —
-      // shown as "Corrected by". Migration 0328.
+      // shown as "Corrected by". Migration 0331.
       ...(opts?.correctedBy ? { corrected_by: opts.correctedBy, corrected_at: new Date().toISOString() } : {}),
       // Only included when the caller explicitly sets it — otherwise a
       // punch-only save (clock in/out, corrections, etc.) would null out
@@ -473,7 +473,7 @@ export async function saveEntry(
       ...(entry.state !== undefined ? { state: entry.state || null } : {}),
     };
     let { error } = await supabase.from("timecard_entries").upsert(payload, { onConflict: "profile_id,work_date" });
-    // Before migration 0328 the corrected_by columns don't exist — fall back
+    // Before migration 0331 the corrected_by columns don't exist — fall back
     // to the old behaviour (stamp clocked_in_by) rather than failing the save.
     if (error && opts?.correctedBy && /corrected_(by|at)/.test(error.message)) {
       const { corrected_by: _cb, corrected_at: _ca, ...rest } = payload;
@@ -768,7 +768,7 @@ export interface AttendanceRow {
   clockedInBy?: string | null;
   /** The day's timecard notes (auto clock-out marker / review line). */
   notes?: string;
-  /** Who directly edited this day's times (Payroll detail / Attendance Status) — migration 0328. */
+  /** Who directly edited this day's times (Payroll detail / Attendance Status) — migration 0331. */
   correctedBy?: string | null;
 }
 
@@ -809,7 +809,7 @@ export async function getAttendanceForRange(
       .order("work_date", { ascending: true });
   type AttendanceQueryResult = { data: any[] | null; error: { message: string } | null };
   let { data, error } = (await runAttendanceQuery("work_date, check_in, check_out, meal_start, meal_end, state, clocked_in_by, notes, corrected_by")) as unknown as AttendanceQueryResult;
-  // Before migration 0328 there's no corrected_by column.
+  // Before migration 0331 there's no corrected_by column.
   if (error && /corrected_by/.test(error.message)) ({ data, error } = (await runAttendanceQuery("work_date, check_in, check_out, meal_start, meal_end, state, clocked_in_by, notes")) as unknown as AttendanceQueryResult);
   if (error) throw new Error(error.message);
 
@@ -1059,7 +1059,7 @@ export interface CompanyTimecardEntry {
   clockedInBy: string | null;
   /** The day's timecard notes — carries the system's "[Auto clock-out …]" marker. */
   notes: string;
-  /** Who directly edited this day's times (Payroll detail / Attendance Status) — migration 0328. */
+  /** Who directly edited this day's times (Payroll detail / Attendance Status) — migration 0331. */
   correctedBy: string | null;
 }
 
@@ -1074,7 +1074,7 @@ export async function getCompanyTimecardEntries(
   endDate: string
 ): Promise<CompanyTimecardEntry[]> {
   const all: CompanyTimecardEntry[] = [];
-  // corrected_by only exists after migration 0328 — drop it once if missing.
+  // corrected_by only exists after migration 0331 — drop it once if missing.
   let cols = "profile_id, work_date, check_in, check_out, meal_start, meal_end, clocked_in_by, notes, corrected_by";
   for (let from = 0; ; from += TIMECARD_ENTRIES_PAGE_SIZE) {
     const run = () =>

@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0327 — Which extra roles may Connect/Disconnect a Gmail slot.
+-- 0329 — Which extra roles may Connect/Disconnect a Gmail slot.
 --
 -- Admin/SuperAdmin can always connect Gmail (hardcoded, unchanged). This
 -- table lets an Admin grant additional roles per slot (region) — e.g. let
@@ -9,7 +9,7 @@
 -- The connect check itself runs server-side (gmailBridge.ts, service key);
 -- disconnect_gmail() below is widened to honour the same grants.
 --
--- Run once in the Supabase SQL Editor, after 0326.
+-- Run once in the Supabase SQL Editor, after 0328.
 -- =====================================================================
 
 create table if not exists gmail_connect_role_gates (

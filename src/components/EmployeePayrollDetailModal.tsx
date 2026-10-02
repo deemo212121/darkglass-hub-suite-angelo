@@ -1,5 +1,6 @@
+import { getTrainingDates } from "@/lib/supabase/trainingDates";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2, StickyNote } from "lucide-react";
+import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2, StickyNote, Download } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAuth } from "@/lib/auth";
 import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, hoursDiff, MEAL_ALWAYS_PAID_DEFAULT_HOURS, type AttendanceRow } from "@/lib/supabase/timecards";
@@ -8,6 +9,7 @@ import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
 import { getPendingCorrectionsInRange, getApprovedCorrectionsForProfile, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { attendanceCodeFor, correctionApproverId, autoClockOutInfo, ATTENDANCE_CODE_CLASS, ATTENDANCE_CODE_LABEL } from "@/lib/attendanceStatusCode";
 import { supabase } from "@/lib/supabase/client";
+import { resolveFieldStartDate, resolveTrainingRecord, trainingWindow, isTrainingDay } from "@/lib/fieldStartDate";
 import { PendingItemDetailModal, type PendingItem } from "@/components/PendingItemDetailModal";
 import { getCompanyPtoRequests, isPaidPtoType, type PtoRequestRow, type PtoType } from "@/lib/supabase/pto";
 import { getAttendanceNotes } from "@/lib/supabase/attendanceNotes";
@@ -232,11 +234,12 @@ export function EmployeePayrollDetailModal({
   const fallbackMonth = currentMonthBounds();
   const [rangeStart, setRangeStart] = useState(initialStart || fallbackMonth.start);
   const [rangeEnd, setRangeEnd] = useState(initialEnd || fallbackMonth.end);
+  const [downloadingAttendance, setDownloadingAttendance] = useState(false);
   const [loading, setLoading] = useState(true);
   const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
   // Only the partial calendar week BEFORE rangeStart (empty when rangeStart
   // is already a Sunday) — kept separate from `attendance` so nothing else
-  // here (the displayed table, totalHours, warnings) sees a widened range;
+  // here (the displayed table, totalHours) sees a widened range;
   // it exists solely to seed the weekly overtime carry-over below for a
   // sub-range that happens to start mid-week. See splitRegularOvertimeWeekly.
   const [seedAttendance, setSeedAttendance] = useState<AttendanceRow[]>([]);
@@ -306,6 +309,28 @@ export function EmployeePayrollDetailModal({
   // after this same edit round-trips through onRateChanged).
   const [trainingEndDateInput, setTrainingEndDateInput] = useState(trainingEndDate ?? "");
   const [savingTrainingEndDate, setSavingTrainingEndDate] = useState(false);
+  const [hrTraining, setHrTraining] = useState<{ start: string | null; fieldStart: string | null }>({ start: null, fieldStart: null });
+  const traineeWindow = trainingWindow(hrTraining.start, hrTraining.fieldStart, hireDate, trainingEndDateInput);
+  const [fieldStart, setFieldStart] = useState<{ date: string | null; loading: boolean; error: boolean }>({ date: null, loading: true, error: false });
+  useEffect(() => {
+    let cancelled = false;
+    setFieldStart({ date: null, loading: true, error: false });
+    setHrTraining({ start: null, fieldStart: null });
+    const loadFieldStart = async () => {
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles").select("email, phone_number, company_id, training_end_date").eq("id", profileId).single();
+      if (profileError) throw profileError;
+      const candidates = await getTrainingDates(profile.company_id);
+      const record = resolveTrainingRecord(profile, candidates);
+      const date = resolveFieldStartDate(profile, candidates);
+      if (!cancelled) setHrTraining({ start: record?.training_start_date ?? null, fieldStart: record?.training_end_date ?? null });
+      if (!cancelled) setFieldStart({ date, loading: false, error: false });
+    };
+    void loadFieldStart().catch(() => {
+      if (!cancelled) setFieldStart({ date: null, loading: false, error: true });
+    });
+    return () => { cancelled = true; };
+  }, [profileId, trainingEndDateInput]);
   useEffect(() => {
     setTrainingEndDateInput(trainingEndDate ?? "");
   }, [trainingEndDate]);
@@ -715,7 +740,6 @@ export function EmployeePayrollDetailModal({
       setSavingLegMileageId(null);
     }
   };
-  const warnings = useMemo(() => attendance.filter((r) => r.status !== "present" && r.status !== "day-off" && r.status !== "paid-leave"), [attendance]);
   // Worked days with no state assigned — the Min Wage Floor Check falls back
   // to the flat company rate for these (see TechActivityReportModal.tsx's
   // stateMinFloor), which understates the true floor whenever the real
@@ -834,16 +858,17 @@ export function EmployeePayrollDetailModal({
       const stateFloor = row.state ? STATE_MIN_WAGE_2026.find((s) => s.state === row.state)?.rate ?? null : null;
       const isMatched = stateFloor != null && stateFloor > companyRate;
       const effectiveRate = isMatched ? (stateFloor as number) : companyRate;
+      const dayOtMultiplier = isTrainingDay(row.date, traineeWindow) ? 1 : otMultiplier;
       map.set(row.date, {
         companyRate,
         effectiveRate,
         isMatched,
-        calculatedPay: folded.regular * companyRate + folded.overtime * companyRate * otMultiplier,
-        compliantPay: folded.regular * effectiveRate + folded.overtime * effectiveRate * otMultiplier,
+        calculatedPay: folded.regular * companyRate + folded.overtime * companyRate * dayOtMultiplier,
+        compliantPay: folded.regular * effectiveRate + folded.overtime * effectiveRate * dayOtMultiplier,
       });
     }
     return map;
-  }, [attendance, history, dailyHoursSplitByDate, otMultiplier]);
+  }, [attendance, history, dailyHoursSplitByDate, otMultiplier, traineeWindow.start, traineeWindow.end]);
 
   const payViewTotals = useMemo(() => {
     if (isCurrentlyFixed && currentEntry?.annualSalary) {
@@ -876,6 +901,19 @@ export function EmployeePayrollDetailModal({
     totals.compliant.total = totals.compliant.regularPay + totals.compliant.overtimePay;
     return totals;
   }, [attendance, history, dailyHoursSplitByDate, dailyPayByDate, isCurrentlyFixed, currentEntry, otMultiplier, isPhPayroll]);
+  const downloadAttendanceExcel = async () => {
+    if (downloadingAttendance || loading || attendance.length === 0 || attendanceEditing || savingRates || pendingRateChanges.length > 0) return;
+    setDownloadingAttendance(true);
+    try {
+      // Loaded on click — see AccountingDashboard's downloadFilteredAttendance.
+      const { downloadIndividualAttendanceWorkbook } = await import("@/lib/payrollAttendanceExport");
+      await downloadIndividualAttendanceWorkbook(employeeName, attendance, dailyHoursSplitByDate, dailyPayByDate, ticketStateByDate, isPhPayroll, rangeStart, rangeEnd);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Unable to download attendance. Please try again.");
+    } finally {
+      setDownloadingAttendance(false);
+    }
+  };
   const displayedPay = payViewTotals[payView];
   // Flat equivalent of displayedPay — every hour at the same (regular or
   // state-floor-matched) rate, no 1.5× overtime multiplier. This tile can't
@@ -1257,8 +1295,13 @@ export function EmployeePayrollDetailModal({
               </div>
             </div>
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
-              <p className="text-xs text-slate-400 uppercase">Warnings</p>
-              <p className="text-xl font-bold text-yellow-300 mt-1">{warnings.length}</p>
+              <p className="text-xs text-slate-400 uppercase">Field Start Date</p>
+              <p className="text-xl font-bold text-white mt-1">
+                {fieldStart.loading ? "Loading..." : fieldStart.error ? "Unable to load" : fieldStart.date
+                  ? new Date(`${fieldStart.date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                  : "Not recorded"}
+              </p>
+              <p className="text-xs text-slate-400 mt-0.5">Field start recorded in HR Training List</p>
             </div>
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
               <div className="flex items-center justify-between gap-2">
@@ -1432,23 +1475,23 @@ export function EmployeePayrollDetailModal({
 
           {/* Trainee daily $100 guarantee window */}
           <div className="bg-slate-800/30 border border-white/10 rounded-lg p-4">
-            <h3 className="text-sm font-semibold text-white mb-2">Trainee Status</h3>
+            <h3 className="text-sm font-semibold text-white mb-2">Trainee Status ? Manual Fallback</h3>
             <div className="flex items-end gap-3 flex-wrap">
               <div>
                 <label className="block text-[10px] text-slate-400 uppercase mb-1">Training End Date</label>
                 <input
                   type="date"
                   value={trainingEndDateInput}
-                  disabled={savingTrainingEndDate}
+                  disabled={savingTrainingEndDate || fieldStart.loading || fieldStart.error || traineeWindow.source === "hr"}
                   onChange={(e) => handleTrainingEndDateChange(e.target.value)}
-                  title="The $100/day guarantee applies to every day from this employee's hire date through this date, inclusive. A day already earning $100+ keeps its full pay — this only tops up days that fall short."
+                  title="Used only when the HR Start Date and Field Start Date range is unavailable. The $100/day guarantee applies to worked days from this employee's hire date through this date, inclusive. A day already earning $100+ keeps its full pay — this only tops up days that fall short."
                   className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-sm text-white disabled:opacity-50"
                 />
               </div>
               {trainingEndDateInput && (
                 <button
                   onClick={() => handleTrainingEndDateChange("")}
-                  disabled={savingTrainingEndDate}
+                  disabled={savingTrainingEndDate || fieldStart.loading || fieldStart.error || traineeWindow.source === "hr"}
                   className="text-xs text-slate-400 hover:text-red-400 disabled:opacity-50"
                 >
                   Clear
@@ -1457,7 +1500,9 @@ export function EmployeePayrollDetailModal({
               {savingTrainingEndDate && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
             </div>
             <p className="text-xs text-slate-400 mt-2">
-              {trainingEndDateInput
+              {fieldStart.loading ? "Loading HR training dates..." : fieldStart.error ? "Unable to load HR training dates." : traineeWindow.source === "hr"
+                ? `HR training: ${traineeWindow.start} through ${traineeWindow.end}. Eligible worked days are topped up to $100; Field Start day is excluded. The manual date is only a fallback.`
+                : trainingEndDateInput
                 ? `Days through ${trainingEndDateInput} are topped up to $100 if actual pay falls short that day; days after this date are paid normally.`
                 : "No trainee window set — the $100/day guarantee won't apply to any day this period."}
             </p>
@@ -1539,6 +1584,15 @@ export function EmployeePayrollDetailModal({
                     {savingRates ? "Saving…" : `Save Rate Changes (${pendingRateChanges.length})`}
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={downloadAttendanceExcel}
+                  disabled={downloadingAttendance || loading || attendance.length === 0 || attendanceEditing || savingRates || pendingRateChanges.length > 0}
+                  title={attendanceEditing || pendingRateChanges.length > 0 ? "Save or cancel your edits before downloading" : "Download attendance for the selected date range"}
+                  className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white flex items-center gap-1"
+                >
+                  {downloadingAttendance ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />} {downloadingAttendance ? "Exporting..." : "Download Excel"}
+                </button>
                 {attendanceEditing ? (
                   <>
                     <button
@@ -1855,9 +1909,9 @@ export function EmployeePayrollDetailModal({
                               ))}
                             </select>
                             {savingStateFor === row.date && <Loader2 className="inline-block h-3 w-3 ml-1 animate-spin text-slate-400" />}
-                            {trainingEndDateInput && row.date <= trainingEndDateInput && (!hireDate || row.date >= hireDate) && (
+                            {!fieldStart.loading && !fieldStart.error && traineeWindow.end && row.date <= traineeWindow.end && (!traineeWindow.start || row.date >= traineeWindow.start) && (
                               <span
-                                title={`Trainee day — the $100/day guarantee applies (through ${trainingEndDateInput}).`}
+                                title={`Trainee day — the $100/day guarantee applies (through ${traineeWindow.end}).`}
                                 className="inline-flex items-center gap-0.5 ml-1 px-1 py-0.5 rounded bg-sky-500/20 text-sky-300 text-[10px] font-semibold align-middle"
                               >
                                 Trainee

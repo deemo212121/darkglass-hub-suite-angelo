@@ -20,6 +20,23 @@ import { getCompanyUsers } from "./users";
 import { uploadPtoRequestAttachment, deleteAttachmentByUrl } from "@/lib/firebase/storage";
 
 export type PtoType = "vacation" | "sick" | "personal" | "holiday" | "unpaid" | "bereavement";
+
+/**
+ * Absent List's HR Status values that are leave types (see HrCalendarTab,
+ * which re-exports this). Lives here in src/lib, not in the component: a
+ * src/lib file importing a VALUE from a component makes the server bundle's
+ * "vendor" chunk depend on "app-components" (see vite.config.ts
+ * manualChunks), a chunk cycle that crashes the Worker at startup
+ * ("Cannot access 'cva' before initialization").
+ */
+export const HR_STATUS_TO_PTO_TYPE: Partial<Record<string, PtoType>> = {
+  Vacation: "vacation",
+  Sick: "sick",
+  Personal: "personal",
+  Holiday: "holiday",
+  Unpaid: "unpaid",
+  Bereavement: "bereavement",
+};
 export type PtoStatus = "pending" | "approved" | "denied" | "cancelled";
 export type PtoStageStatus = "pending" | "approved" | "rejected";
 export type PtoStage = "manager" | "hr" | "accounting";
@@ -460,7 +477,7 @@ export function canReviewPtoStage(
   if (stage === "manager") {
     // Non-PH field staff (Technician → Branch / Parts Manager → Senior Branch
     // Manager → Admin / Directors): the Approval Chain decides, by role +
-    // branch + area — migration 0329 enforces the same rule in the database.
+    // branch + area — migration 0332 enforces the same rule in the database.
     const chain = chainCanApprove(viewerProfileId, request.profileId);
     if (chain !== null) return chain;
     if (request.managerId === viewerProfileId) return true;
@@ -485,7 +502,7 @@ export function canReviewPtoStage(
     return has("MANAGER");
   }
   // HR and Accounting no longer wait for the manager — any 2 of the 3 stages
-  // decide a leave request, in any order (migration 0332).
+  // decide a leave request, in any order (migration 0335).
   if (stage === "hr") return has("HR");
   return has("FINANCE");
 }

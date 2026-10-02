@@ -22,7 +22,7 @@ export const EXCEPTION_TYPE_LABELS: Record<ExceptionType, string> = {
 };
 
 /**
- * Time Correction "Issue" (migration 0330) — what went wrong, asked instead
+ * Time Correction "Issue" (migration 0333) — what went wrong, asked instead
  * of the generic Exception Type on Time Corrections only. Shares the
  * exception_type column; "other" means the same in both lists.
  */
@@ -84,7 +84,7 @@ export interface ExceptionVisitFormData {
   dateOfIncident: string;
   exceptionType: ExceptionType | CorrectionIssueType;
   otherDescription: string;
-  /** Time Correction with the newer Issue choices (0330) — section 2 prints "Issue" instead of "Exception Type". */
+  /** Time Correction with the newer Issue choices (0333) — section 2 prints "Issue" instead of "Exception Type". */
   correctionIssue?: boolean;
   detailedReason: string;
   /** Filled in by the manager alongside their own signature. */

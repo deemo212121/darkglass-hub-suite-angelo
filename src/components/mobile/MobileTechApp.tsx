@@ -87,6 +87,7 @@ import { buildTicketDisputeSubmissionPdf } from "@/lib/ticketDisputeReportPdf";
 import { TICKET_DISPUTE_EXCEPTION_TYPE_LABELS, type TicketDisputeExceptionType } from "@/lib/ticketDisputeReportTemplate";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
+import { TechTipsPanel } from "@/components/TechTipsPanel";
 import { CorrectionManagerSignModal } from "@/components/CorrectionSignModals";
 import { PtoManagerSignModal } from "@/components/PtoSignModals";
 import { TicketDisputeManagerSignModal } from "@/components/TicketDisputeSignModals";
@@ -189,7 +190,7 @@ type View =
   | "notifications"
   | "announcements"
   | "branchreport";
-type DetailTab = "general" | "tracking" | "parts" | "billing";
+type DetailTab = "general" | "tracking" | "tips" | "parts" | "billing";
 
 
 // Repair-status options the tech can pick from when editing a visit row
@@ -3284,6 +3285,9 @@ function DetailView({
         <button className={tab === "tracking" ? "active" : ""} onClick={() => setTab("tracking")} type="button">
           Service Tracking
         </button>
+        <button className={tab === "tips" ? "active" : ""} onClick={() => setTab("tips")} type="button">
+          Tips
+        </button>
         <button className={tab === "parts" ? "active" : ""} onClick={() => setTab("parts")} type="button">
           Parts
         </button>
@@ -3296,6 +3300,7 @@ function DetailView({
         <DetailsTab ticket={ticket} authorName={authorName} authorRole={authorRole} />
       )}
       {tab === "tracking" && <RepairTab ticket={ticket} authorName={authorName} />}
+      {tab === "tips" && <TechTipsTab ticket={ticket} authorName={authorName} />}
       {tab === "parts" && <PartsTab ticket={ticket} authorName={authorName} />}
       {tab === "billing" && <BillingTab ticket={ticket} companyId={companyId} />}
     </div>
@@ -3552,6 +3557,38 @@ function DetailsTab({
 
       {/* Servicer Notes thread lives at the bottom of General Information */}
       <CommentThread ticket={ticket} authorName={authorName} authorRole={authorRole} />
+    </div>
+  );
+}
+
+/**
+ * "Tips" tab — the repair guide for this ticket's product, symptom-matched
+ * sections first, with the guide's test readings the tech records per visit
+ * (see TechTipsPanel / src/lib/techGuides.ts).
+ */
+function TechTipsTab({ ticket, authorName }: { ticket: Ticket; authorName: string }) {
+  const [visits, setVisits] = useState<NonNullable<Ticket["visits"]>>([]);
+  useEffect(() => {
+    let cancelled = false;
+    getTicketVisits(ticket.ticketNo)
+      .then((rows) => { if (!cancelled) setVisits(rows as any); })
+      .catch((e) => console.error("load visits for tech tips failed", e));
+    return () => { cancelled = true; };
+  }, [ticket.ticketNo]);
+  // Newest-first, so V# counts down from the total (same labeling as Service Tracking).
+  const visitOptions = visits.map((v, idx) => ({ id: v.id, label: `V${visits.length - idx}${v.scheduleDate ? ` · ${v.scheduleDate}` : ""}` }));
+  return (
+    <div className="mtech-panel">
+      <div className="mtech-section-title">Tech Tips</div>
+      <TechTipsPanel
+        ticketId={((ticket as any)._id as string | undefined) ?? null}
+        productType={ticket.productType || ""}
+        model={ticket.model}
+        symptom={visits[0]?.symptomCx || ""}
+        visits={visitOptions}
+        editable
+        authorName={authorName}
+      />
     </div>
   );
 }
@@ -9314,7 +9351,7 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
   const [correctionDate, setCorrectionDate] = useState("");
   // Employee Attendance & Visit Exception Report fields, folded directly
   // into this same request (migration 0304) — see timecardCorrectionPdf.ts.
-  // Time Correction "Issue" (migration 0330) — what went wrong.
+  // Time Correction "Issue" (migration 0333) — what went wrong.
   const [exceptionType, setExceptionType] = useState<CorrectionIssueType>("forgot_to_clock");
   const [otherDescription, setOtherDescription] = useState("");
   const [employeeIdOverride, setEmployeeIdOverride] = useState("");

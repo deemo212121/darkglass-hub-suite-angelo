@@ -35,8 +35,10 @@ import {
   correctionShiftMinutes,
   formatShift,
   CORRECTION_MEAL_REQUIRED_AFTER_MINUTES,
+  validateTimecardCorrectionDate,
   type TimecardCorrectionRow,
 } from "@/lib/supabase/timecardCorrections";
+import { zonedDateKey } from "@/lib/serverTime";
 import { buildCorrectionSubmissionPdf } from "@/lib/timecardCorrectionPdf";
 import { buildPtoSubmissionPdf } from "@/lib/ptoExceptionReportPdf";
 import { EXCEPTION_TYPE_LABELS, CORRECTION_ISSUE_LABELS, isCorrectionIssueType, type ExceptionType, type CorrectionIssueType } from "@/lib/exceptionVisitReportTemplate";
@@ -170,7 +172,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     // into Time Correction (migration 0304), Sick Leave, and Unpaid Leave
     // (migration 0306) requests — shared here since only one modal is ever
     // open at a time. See timecardCorrectionPdf.ts / ptoExceptionReportPdf.ts.
-    // Time Correction asks for the Issue (migration 0330) instead — see the
+    // Time Correction asks for the Issue (migration 0333) instead — see the
     // effect below that swaps the default when the modal type changes.
     exceptionType: "missed_workday" as ExceptionType | CorrectionIssueType,
     otherDescription: "",
@@ -733,6 +735,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             setSubmitting(false);
             return;
           }
+          // No future dates (same check createTimecardCorrection runs, here so it fails before anything else).
+          await validateTimecardCorrectionDate(myProfileId, formData.correctionDate);
           // Re-read the day's real punches at submit time for the "original"
           // times saved with the request (the 30-day attendance list misses
           // older dates).
@@ -1721,6 +1725,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                         <input
                           type="date"
                           title="Date"
+                          max={zonedDateKey(new Date(), companyProfiles.find((p) => p.id === myProfileId)?.schedule_timezone === "EST" ? "EST" : "CST")}
                           value={formData.correctionDate}
                           onChange={(e) => setFormData({ ...formData, correctionDate: e.target.value })}
                           className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"

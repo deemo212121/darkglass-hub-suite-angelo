@@ -1,3 +1,5 @@
+import { resolveTrainingRecord, trainingWindow, isTrainingDay } from "@/lib/fieldStartDate";
+import { getTrainingDates } from "@/lib/supabase/trainingDates";
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -205,6 +207,8 @@ export interface SupabaseEmployee {
    *  this lets someone who graduated mid-period keep the guarantee for
    *  their trainee days without it bleeding into days after graduation. */
   trainingEndDate: string | null;
+  hrTrainingStart?: string | null;
+  hrFieldStart?: string | null;
 }
 
 interface SalaryEntry {
@@ -1195,6 +1199,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [mileageTableLoading, setMileageTableLoading] = useState(false);
 
   // UI state
+  const [attendanceExportProgress, setAttendanceExportProgress] = useState<{ done: number; total: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -1609,7 +1614,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           for (let from = 0; ; from += PAGE_SIZE) {
             const { data, error } = await supabase
               .from("profiles")
-              .select("id,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded,is_active,schedule_timezone,employment_type,tier_level,training_end_date")
+              .select("id,company_id,phone_number,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded,is_active,schedule_timezone,employment_type,tier_level,training_end_date")
               .neq("role", "SUPERSUPERADMIN")
               .range(from, from + PAGE_SIZE - 1);
             if (error) return { data: null, error };
@@ -1705,7 +1710,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         .then(setCarIqHistory)
         .catch((err) => console.error("Failed to load Car IQ history:", err));
 
+      const trainingByCompany = new Map(await Promise.all(
+        [...new Set(((empRes.data ?? []) as any[]).map((p) => p.company_id as string).filter(Boolean))]
+          .map(async (id) => [id, await getTrainingDates(id)] as const)
+      ));
       setEmployees(((empRes.data ?? []) as any[]).map((p) => {
+        const hrTraining = resolveTrainingRecord(p, trainingByCompany.get(p.company_id) ?? []);
         const { department, roleLabel } = getRoleDepartmentBreakdown(p.role);
         return {
         id: p.id,
@@ -1732,6 +1742,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         isTrainee: p.employment_type === "trainee",
         tierLevel: p.tier_level ?? null,
         trainingEndDate: p.training_end_date ?? null,
+        hrTrainingStart: hrTraining?.training_start_date ?? null,
+        hrFieldStart: hrTraining?.training_end_date ?? null,
         };
       }) as SupabaseEmployee[]);
       setSalaryEntries((salRes.data ?? []) as SalaryEntry[]);
@@ -1848,6 +1860,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           .select("profile_id,employee_id,work_date,check_in,check_out,meal_start,meal_end,status")
           .gte("work_date", genStart)
           .lte("work_date", genEnd)
+          .order("id", { ascending: true })
           .range(from, from + PAGE_SIZE - 1);
         if (error) throw error;
         all.push(...((data ?? []) as TimecardEntry[]));
@@ -1891,6 +1904,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             .select("profile_id,employee_id,work_date,check_in,check_out,meal_start,meal_end,status")
             .gte("work_date", seedStart)
             .lt("work_date", genStart)
+            .order("id", { ascending: true })
             .range(from, from + PAGE_SIZE - 1);
           if (error) throw error;
           all.push(...((data ?? []) as TimecardEntry[]));
@@ -2282,22 +2296,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     return premium;
   }
 
-  // Trainee daily $100 guarantee (migration 0297, profiles.training_end_date):
-  // every day from hireDate through trainingEndDate (inclusive) is a trainee
-  // day. If that day's actual pay falls short of $100, the shortfall is
-  // topped up — a floor, not a flat replacement, so a trainee who has a big
-  // day and already clears $100 keeps the full amount rather than being
-  // clawed back to $100.
-  //
-  // "Actual pay" values overtime hours at rate + weightedRate*0.5 (straight
-  // time for the hour plus the same weighted-rate premium techHourlyPay
-  // already pays it), NOT the naive rate*1.5 this used before — that older
-  // convention double-counted a trainee's overtime: once at 1.5x here, and
-  // again via techHourlyPayOtPremium's weighted-rate premium, which is
-  // computed period-wide and always includes every overtime hour regardless
-  // of trainee status. See Bryson Baize (9/4: 2.78 OT hours) — his trainee
-  // shortfall came out $1.70 too high under the old rate*1.5 baseline
-  // because it assumed his overtime hadn't been paid for anywhere else yet.
+  // Eligible trainee worked days receive max(straight-time pay, $100).
+  // Their overtime hours are already included in straight-time pay and
+  // do not also receive the separate OT premium.
   const TRAINEE_DAILY_MATCH_TARGET = 100;
   function traineeDailyMatchFor(
     profileId: string,
@@ -2315,7 +2316,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       const dayHours = day.regular + day.overtime;
       if (dayHours <= 0) continue;
       const rate = hourlyRateOnDate(profileId, day.date, fallbackRate);
-      const actualDailyPay = dayHours * rate + day.overtime * weightedRate * 0.5;
+      const actualDailyPay = dayHours * rate;
       if (actualDailyPay < TRAINEE_DAILY_MATCH_TARGET) {
         match += TRAINEE_DAILY_MATCH_TARGET - actualDailyPay;
       }
@@ -2698,7 +2699,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const techStraightTimeAllHours = techDailyPay.straightAllHours;
     const techWeightedRegularRate = techTotalHours > 0 ? (techStraightTimeAllHours + techIncludablePay) / techTotalHours : hourlyRate;
     const techHourlyPayStraight = includeTech && isTechRole(emp) ? techStraightTimeAllHours : 0;
-    const techHourlyPayOtPremium = includeTech && isTechRole(emp) ? hours.overtime * techWeightedRegularRate * 0.5 : 0;
+    const traineeWindow = trainingWindow(emp.hrTrainingStart, emp.hrFieldStart,
+      employeeInfoByProfileId.get(emp.id)?.hireDate, emp.trainingEndDate);
+    const premiumHours = (dailyHoursByEmployeeId.get(emp.id) ?? []).reduce((sum, day) => sum + (isTrainingDay(day.date, traineeWindow) ? 0 : day.overtime), 0);
+    const techHourlyPayOtPremium = includeTech && isTechRole(emp) ? premiumHours * techWeightedRegularRate * 0.5 : 0;
     const techHourlyPayCompanyOnly = techHourlyPayStraight + techHourlyPayOtPremium;
     // A State-mode override (payroll_hourly_ot_overrides, migration 0289,
     // set from the payroll detail step's Compliant/"State" toggle) replaces
@@ -2730,8 +2734,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           emp.id,
           dailyHoursByEmployeeId.get(emp.id),
           hourlyRate,
-          employeeInfoByProfileId.get(emp.id)?.hireDate ?? null,
-          emp.trainingEndDate,
+          traineeWindow.start,
+          traineeWindow.end,
           techWeightedRegularRate
         )
       : 0;
@@ -3682,6 +3686,24 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           : b.employee.full_name.localeCompare(a.employee.full_name)
       )
     : visibleRowsUnsorted;
+  const checkedVisibleRows = visibleRows.filter(row => !row.employee.payrollExcluded);
+  const downloadFilteredAttendance = async () => {
+    if (attendanceExportProgress || checkedVisibleRows.length === 0) return;
+    const people = [...new Map(checkedVisibleRows.map(row => [row.employee.id, row.employee])).values()];
+    setAttendanceExportProgress({ done: 0, total: people.length });
+    try {
+      // Loaded on click: a static import pulled HrCalendarTab and its UI
+      // modules into the server bundle out of order ("Cannot access 'cva'
+      // before initialization"), and the Worker failed to start.
+      const { downloadPayrollAttendanceWorkbook } = await import("@/lib/payrollAttendanceExport");
+      await downloadPayrollAttendanceWorkbook(people, genStart, genEnd, effectiveCurrency === "USD" ? "US" : "PH",
+        (done, total) => setAttendanceExportProgress({ done, total }));
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Attendance download failed.");
+    } finally {
+      setAttendanceExportProgress(null);
+    }
+  };
   const visibleTotalUSD = visibleRows.reduce((s, r) => s + r.grossPayUSD, 0);
 
   // Grouped by department, both the department groups and each group's
@@ -4559,6 +4581,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     className="w-full max-w-sm bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
                   />
                 </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={downloadFilteredAttendance}
+                    disabled={loading || generating || attendanceExportProgress !== null || checkedVisibleRows.length === 0 || !genStart || !genEnd || genStart > genEnd}
+                    title="Download checked employees matching the current filters, with one worksheet per employee"
+                    className="px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white rounded font-semibold transition flex items-center gap-2"
+                  >
+                    {attendanceExportProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                    <span aria-live="polite">{attendanceExportProgress ? `Exporting ${attendanceExportProgress.done}/${attendanceExportProgress.total}` : "Download Excel"}</span>
+                  </button>
                 <button
                   type="button"
                   onClick={generatePayroll}
@@ -4589,6 +4622,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                       ? `Regenerate ${effectiveCurrency === "USD" ? "Office" : "PH"} Payroll`
                       : `Generate ${effectiveCurrency === "USD" ? "Office" : "PH"} Payroll`}
                 </button>
+                </div>
               </div>
                 <table className="w-full text-sm min-w-[700px]">
                   <thead>
@@ -4783,11 +4817,32 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               <td className="px-4 py-3 text-slate-300">
                                 <span className="inline-flex items-center gap-1.5">
                                   {roleTypeLabel(row.employee)}
-                                  {row.employee.tierLevel && (
-                                    <span className="shrink-0 rounded-full border border-yellow-500/40 bg-yellow-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-yellow-300">
-                                      {row.employee.tierLevel}
-                                    </span>
-                                  )}
+                                  <span className="inline-flex shrink-0 flex-col items-center gap-1">
+                                    {row.employee.tierLevel && (
+                                      <span className="rounded-full border border-yellow-500/40 bg-yellow-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-yellow-300">
+                                        {row.employee.tierLevel}
+                                      </span>
+                                    )}
+                                    {isCarIqEligible(row.employee.role, row.employee.extraRoles) && (() => {
+                                      const hasCarIq = employeeInfoByProfileId.get(row.employee.id)?.hasCarIq;
+                                      const label = hasCarIq === true ? "With CarIQ" : hasCarIq === false ? "No CarIQ" : "CarIQ status not recorded";
+                                      return (
+                                        <span
+                                          title={label}
+                                          aria-label={label}
+                                          className={`rounded-full border px-1.5 py-0.5 text-[9px] font-semibold tracking-wide ${
+                                            hasCarIq === true
+                                              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                                              : hasCarIq === false
+                                                ? "border-red-500/40 bg-red-500/10 text-red-300"
+                                                : "border-slate-500/40 bg-slate-500/10 text-slate-400"
+                                          }`}
+                                        >
+                                          {hasCarIq === true ? "wCIQ" : hasCarIq === false ? "nCIQ" : "?"}
+                                        </span>
+                                      );
+                                    })()}
+                                  </span>
                                 </span>
                               </td>
                               <td className="px-4 py-3 text-center text-slate-300">

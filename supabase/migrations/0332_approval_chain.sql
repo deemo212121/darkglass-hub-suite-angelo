@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0329 — Approval Chain: role + area/branch based approval routing,
+-- 0332 — Approval Chain: role + area/branch based approval routing,
 -- enforced in the database (not just hidden buttons).
 --
 -- Reuses what already exists:
@@ -38,7 +38,7 @@
 --
 -- Service-role / server writes (no signed-in user) are never blocked.
 --
--- Run once in the Supabase SQL Editor, after 0328.
+-- Run once in the Supabase SQL Editor, after 0331.
 -- =====================================================================
 
 -- ---------- Areas ------------------------------------------------------

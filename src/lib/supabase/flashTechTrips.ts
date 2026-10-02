@@ -7,6 +7,7 @@
  */
 import { supabase } from "./client";
 import { createExpense, type ExpenseRow } from "./expenses";
+import { normalizeLocationName } from "@/lib/locations";
 import { uploadFlashTechTripReceiptFile, deleteAttachmentByUrl } from "@/lib/firebase/storage";
 
 /** Tier Level values — kept identical to Master List's own Current
@@ -185,6 +186,37 @@ function mapExpenseRow(row: any): ExpenseRow {
 // Supabase caps an unbounded select at 1000 rows — a company's full Flash
 // Tech trip history can exceed that. Page through in chunks of 1000.
 const PAGE_SIZE = 1000;
+
+export interface ActiveFlashTechDestination {
+  location: string;
+  endDate: string;
+}
+
+/**
+ * Destination branches of this technician's trips that are "Open" right now
+ * — the same status the Flash Tech Tracker shows (a manual status_override
+ * wins; otherwise computed from the travel dates on the Chicago calendar).
+ * Used as a temporary overlay on the technician's Work Plan: while a trip
+ * is open, its destination counts as a planned location (auth.tsx's
+ * allowedLocations, and shown ticked/locked on the Work Plan tab), and it
+ * drops off on its own once the trip closes or is cancelled. Nothing is
+ * written to profiles.work_plan, so a branch they already worked at is
+ * never unticked afterwards, and editing/cancelling a trip applies at once.
+ */
+export async function getActiveFlashTechDestinations(profileId: string): Promise<ActiveFlashTechDestination[]> {
+  const { data, error } = await supabase
+    .from("flash_tech_trips")
+    .select("destination_location, start_date, end_date, status_override")
+    .eq("technician_profile_id", profileId);
+  if (error) {
+    console.error("getActiveFlashTechDestinations error:", error.message);
+    return [];
+  }
+  return (data ?? [])
+    .filter((r: any) => ((r.status_override as FlashTechStatus | null) || computeFlashTechTripStatus(r.start_date, r.end_date)) === "Open")
+    .map((r: any) => ({ location: normalizeLocationName(r.destination_location), endDate: r.end_date as string }))
+    .filter((d) => d.location !== "");
+}
 
 /** Every Flash Tech trip for the caller's company, with its linked expenses (if any) attached. */
 export async function getCompanyFlashTechTrips(): Promise<FlashTechTrip[]> {

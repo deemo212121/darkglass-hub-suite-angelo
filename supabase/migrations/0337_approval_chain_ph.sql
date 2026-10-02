@@ -1,11 +1,11 @@
 -- =====================================================================
--- 0334 — Approval Chain: Philippines staff.
+-- 0337 — Approval Chain: Philippines staff.
 --
 -- PH staff aren't organized by branch/area — they're organized by
 -- department. A PH staff member's Manager step (Time Corrections, PTO,
 -- trainee days) can be approved by:
 --   - their DEPARTMENT's manager(s), or
---   - the top level (same list as the US side, 0333 / chain_is_top).
+--   - the top level (same list as the US side, 0336 / chain_is_top).
 -- Team Leaders do not approve. A department manager's own request goes to
 -- the top level. No clock-in rules for PH (chain_can_clock_in stays NULL).
 --
@@ -19,7 +19,7 @@
 -- roleLabels.ts ROLE_DEPARTMENT_BREAKDOWN). Admin / SuperAdmin as the primary
 -- role is never governed.
 --
--- Run once in the Supabase SQL Editor, after 0333.
+-- Run once in the Supabase SQL Editor, after 0336.
 -- =====================================================================
 
 create table if not exists ph_department_managers (

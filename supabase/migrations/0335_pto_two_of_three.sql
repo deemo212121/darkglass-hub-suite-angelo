@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0332 — PTO / Sick / Unpaid Leave: any 2 of Manager / HR / Accounting.
+-- 0335 — PTO / Sick / Unpaid Leave: any 2 of Manager / HR / Accounting.
 --
 -- Previously a leave request needed the MANAGER first, then HR or
 -- Accounting (0036/0101). HR can't wait on the manager, so leave now
@@ -7,7 +7,7 @@
 -- approving, in any order, approves it; any stage rejecting denies it.
 -- Cancelled stays cancelled.
 --
--- Run once in the Supabase SQL Editor, after 0331.
+-- Run once in the Supabase SQL Editor, after 0334.
 -- =====================================================================
 
 create or replace function sync_pto_overall_status()

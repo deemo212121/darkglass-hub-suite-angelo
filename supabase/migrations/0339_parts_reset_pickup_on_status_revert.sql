@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0336 — Reset "picked up" when a part's status goes back.
+-- 0339 — Reset "picked up" when a part's status goes back.
 --
 -- Part Daily Pickup's ✓ (parts.picked_up / picked_up_date) is separate from
 -- the part's status. If the status is moved BACK to before pickup — Need PO,
@@ -12,7 +12,7 @@
 -- page, Part Receive, a sync). It only reacts to the status change — it
 -- doesn't touch distributor integrations or any other field.
 --
--- Run once in the Supabase SQL Editor, after 0335.
+-- Run once in the Supabase SQL Editor, after 0338.
 -- =====================================================================
 
 create or replace function parts_reset_pickup_on_status_revert()

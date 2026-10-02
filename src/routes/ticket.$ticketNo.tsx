@@ -19,6 +19,7 @@ import { TicketPhotos } from "@/components/TicketPhotos";
 import { MarconePartsOrderModal, type AddressBookEntry, type MarconePartLine } from "@/components/MarconePartsOrderModal";
 import { TruckStockBatchModal, type TruckStockBatchSelection } from "@/components/TruckStockBatchModal";
 import { TicketSidebar } from "@/components/TicketSidebar";
+import { TechTipsPanel } from "@/components/TechTipsPanel";
 import { TIME_FRAMES } from "@/lib/timeframes";
 import { CLAIM_STATUSES, CLAIM_TOS, PAYMENT_METHODS } from "@/lib/claimDropdowns";
 import { resolveTierCode } from "@/lib/tierCodes";
@@ -1216,6 +1217,8 @@ function TicketDetailsPage() {
     TICKET_DETAILS_TABS,
     "general",
   );
+  // Tracking tab's Tech Tips section starts collapsed.
+  const [techTipsOpen, setTechTipsOpen] = useState(false);
   const [newServicerNote, setNewServicerNote] = useState("");
   const [servicerComments, setServicerComments] = useState<Array<{ id: string; body: string; authorName: string; authorRole: string; createdAt: string }>>([]);
   const [newVisitStatus, setNewVisitStatus] = useState("Visited");
@@ -1513,6 +1516,8 @@ function TicketDetailsPage() {
   // once the ticket's model/problem description are known; re-runs if
   // either changes (e.g. after editing Product Information).
   const [partSuggestions, setPartSuggestions] = useState<PartSuggestion[]>([]);
+  // "Suggested (from past tickets)" chips start collapsed.
+  const [partSuggestionsOpen, setPartSuggestionsOpen] = useState(false);
   const [partSuggestionsLoading, setPartSuggestionsLoading] = useState(false);
 
   // Edit mode state for schedule information
@@ -5143,7 +5148,7 @@ function TicketDetailsPage() {
   // happens to be connected. An Admin can still connect the same account
   // to both if they want; nothing forces it to differ.
   const gmailRegion: GmailRegion = "PARTS";
-  // Admin/SuperAdmin always; other roles only if an Admin granted them via the gear (migration 0327).
+  // Admin/SuperAdmin always; other roles only if an Admin granted them via the gear (migration 0329).
   const myGmailRoles = [currentUserRole, ...(currentUserExtraRoles ?? [])].filter(Boolean).map((r) => String(r).toUpperCase());
   const isGmailAdmin = myGmailRoles.some((r) => r === "ADMIN" || r === "SUPERADMIN" || r === "SUPERSUPERADMIN");
   const [gmailConnectRoles, setGmailConnectRolesState] = useState<string[]>([]);
@@ -5680,7 +5685,16 @@ function TicketDetailsPage() {
             <div className="mt-1 text-[10px] text-slate-500">Checking past tickets for suggestions…</div>
           ) : partSuggestions.length > 0 ? (
             <div className="mt-1.5">
-              <div className="text-[9px] uppercase tracking-wide text-slate-500 mb-0.5">Suggested (from past tickets)</div>
+              <button
+                type="button"
+                onClick={() => setPartSuggestionsOpen((o) => !o)}
+                aria-expanded={partSuggestionsOpen}
+                className="flex items-center gap-1 text-[9px] uppercase tracking-wide text-slate-500 hover:text-slate-300 mb-0.5"
+              >
+                Suggested (from past tickets) · {partSuggestions.length}
+                <ChevronDown className={`h-3 w-3 transition-transform ${partSuggestionsOpen ? "rotate-180" : ""}`} />
+              </button>
+              {partSuggestionsOpen && (
               <div className="flex flex-wrap gap-1">
                 {partSuggestions.map((s) => (
                   <button
@@ -5697,6 +5711,7 @@ function TicketDetailsPage() {
                   </button>
                 ))}
               </div>
+              )}
             </div>
           ) : null}
         </td>
@@ -5959,7 +5974,7 @@ function TicketDetailsPage() {
                 const internalAlerts = alertMessages.filter((a) => a.showInternal);
                 if (internalAlerts.length === 0) return null;
                 return (
-                  <div className="flex items-center gap-2 flex-1">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
                     {internalAlerts.slice(0, 1).map((alert) => {
                       const by = (alert.createdBy && profileNameById[alert.createdBy]) || alert.createdBy || "Unknown";
                       const when = alert.createdAt ? new Date(alert.createdAt).toLocaleString() : "";
@@ -5970,7 +5985,8 @@ function TicketDetailsPage() {
                           title={`By ${by} • ${when}`}
                         >
                           <span className="text-amber-200 font-bold text-sm whitespace-nowrap">⚠️ ALERT:</span>
-                          <span className="text-white font-semibold text-sm truncate flex-1">{alert.text}</span>
+                          {/* Wraps to 2 lines inside the header card; the full text is on hover. */}
+                          <span className="text-white font-semibold text-sm line-clamp-2 break-words flex-1 min-w-0" title={alert.text}>{alert.text}</span>
                           <span className="text-amber-200/80 text-xs whitespace-nowrap hidden lg:inline font-medium">
                             {by.split('@')[0]} • {when.split(',')[0]}
                           </span>
@@ -7201,6 +7217,38 @@ function TicketDetailsPage() {
 
         {activeTab === "tracking" && (
           <div className="space-y-8">
+            {/* Tech Tips — the product's repair guide and what the tech
+                recorded against it per visit (filled in from the mobile
+                app's Tips tab; read-only here). */}
+            <div id="section-tech-tips" className="scroll-mt-28">
+              <button
+                type="button"
+                onClick={() => setTechTipsOpen((o) => !o)}
+                aria-expanded={techTipsOpen}
+                className="flex items-center gap-2 font-semibold text-slate-300 hover:text-white mb-4"
+              >
+                Tech Tips
+                <ChevronDown className={`h-4 w-4 transition-transform ${techTipsOpen ? "rotate-180" : ""}`} />
+                {!techTipsOpen && <span className="text-xs font-normal text-slate-500">Repair guide &amp; recorded test readings — click to show</span>}
+              </button>
+              {techTipsOpen && (
+              <div className="rounded-lg border border-white/10 bg-slate-900/40 p-4">
+                <TechTipsPanel
+                  ticketId={ticketDbId}
+                  productType={ticket?.productCategory || ""}
+                  model={ticket?.model}
+                  symptom={visitLogEntries[0]?.symptomCx || ""}
+                  visits={visitLogEntries.map((v, idx) => ({
+                    id: v.id,
+                    label: `V${visitLogEntries.length - idx}${v.scheduleDate ? ` · ${v.scheduleDate}` : ""}`,
+                  }))}
+                  editable={false}
+                  authorName=""
+                />
+              </div>
+              )}
+            </div>
+
             {/* Related Tickets */}
             <div id="section-related-tickets" className="scroll-mt-28">
               <h4 className="font-semibold text-slate-300 mb-4">Related Tickets</h4>

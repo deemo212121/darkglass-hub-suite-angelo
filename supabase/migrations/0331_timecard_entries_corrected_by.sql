@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0328 — Who directly corrected a day's punches.
+-- 0331 — Who directly corrected a day's punches.
 --
 -- clocked_in_by (0076) means "someone else clocked this person IN on
 -- their behalf" (a manager's proxy clock-in). It was also being reused by
@@ -10,7 +10,7 @@
 -- a punch — including when HR corrects their own timecard. Existing rows
 -- are left null (earlier edits can't be told apart from proxy clock-ins).
 --
--- Run once in the Supabase SQL Editor, after 0327.
+-- Run once in the Supabase SQL Editor, after 0330.
 -- =====================================================================
 
 alter table timecard_entries add column if not exists corrected_by uuid references profiles(id) on delete set null;

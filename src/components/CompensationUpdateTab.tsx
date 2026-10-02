@@ -74,6 +74,16 @@ function statusClass(doc: SignableDocument): string {
   return "bg-yellow-500/20 text-yellow-300 border-yellow-500/30";
 }
 
+/** The paper as the signing HR will see it — their name in the HR row (preview only; handleHrSign saves the real one). */
+function withHrSignerName(data: CompensationUpdateFormData, hrName: string): CompensationUpdateFormData {
+  if (!hrName) return data;
+  return {
+    ...data,
+    signers: { ...data.signers, hr_staff: { ...data.signers.hr_staff, name: hrName } },
+    recipientNames: { ...(data.recipientNames ?? {}), hr_staff: hrName },
+  };
+}
+
 export function CompensationUpdateTab() {
   const { uid, displayName, companyId } = useAuth();
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
@@ -493,7 +503,9 @@ export function CompensationUpdateTab() {
               <div className="bg-white/5 p-4 flex justify-center overflow-hidden" style={{ height: 1056 * 0.7 }}>
                 <div style={{ transform: "scale(0.7)", transformOrigin: "top center" }}>
                   <style dangerouslySetInnerHTML={{ __html: compensationUpdateStyles }} />
-                  <div dangerouslySetInnerHTML={{ __html: buildCompensationUpdateBodyMarkup(hrSignDoc.formData as CompensationUpdateFormData, logoDataUrl, hrSignDoc.signatures) }} />
+                  {/* The HR slot is "Any HR" until someone signs, so the paper
+                      has no HR name yet — show the HR who's signing now. */}
+                  <div dangerouslySetInnerHTML={{ __html: buildCompensationUpdateBodyMarkup(withHrSignerName(hrSignDoc.formData as CompensationUpdateFormData, displayName || ""), logoDataUrl, hrSignDoc.signatures) }} />
                 </div>
               </div>
               <div className="p-4 border-t border-white/10">

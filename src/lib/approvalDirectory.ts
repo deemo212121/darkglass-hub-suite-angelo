@@ -1,5 +1,5 @@
 /**
- * Approval Chain — app-side mirror of the database rules in migration 0329
+ * Approval Chain — app-side mirror of the database rules in migration 0332
  * (chain_can_approve / chain_can_clock_in). The database is what actually
  * enforces them (triggers on timecard_corrections, pto_requests and
  * timecard_entries); this copy only decides which buttons/rows to show so

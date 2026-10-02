@@ -212,6 +212,8 @@ interface TechPerfRow {
   tier: string;
   isActive: boolean;
   daysWorked: number;
+  /** The dates behind daysWorked (punched days + days with an hours correction), ascending. */
+  workedDates: string[];
   hoursWorked: number;
   totalTickets: number;
   minorTicketCount: number;
@@ -336,6 +338,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const [ticketListFor, setTicketListFor] = useState<{ id: string; name: string } | null>(null);
   const [mileageListFor, setMileageListFor] = useState<{ id: string; name: string } | null>(null);
   const [offDaysListFor, setOffDaysListFor] = useState<{ id: string; name: string } | null>(null);
+  const [workDaysListFor, setWorkDaysListFor] = useState<{ id: string; name: string } | null>(null);
   const [hoursListFor, setHoursListFor] = useState<{ id: string; name: string } | null>(null);
   const [importing, setImporting] = useState(false);
   const [templateGenerating, setTemplateGenerating] = useState(false);
@@ -369,6 +372,11 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [selectedTechId, setSelectedTechId] = useState<string | null>(null);
+  // Per the user's call ("for now"), the table defaults to a short set of
+  // columns: Name, Minor/Major Completion, Redo, Mileage, Hours Worked,
+  // Working Days, Off Days. "Show all columns" brings back the full layout.
+  // CSV export / import template are unaffected.
+  const [showAllColumns, setShowAllColumns] = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
 
   const periodStart =
@@ -658,7 +666,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         const overrideWorkedDays = Array.from(techOverrides?.entries() ?? [])
           .filter(([, o]) => o.hoursWorked != null && o.hoursWorked > 0)
           .map(([date]) => date);
-        const daysWorked = new Set([...(daysByProfile.get(t.id) ?? []), ...overrideWorkedDays]).size;
+        const workedDates = Array.from(new Set([...(daysByProfile.get(t.id) ?? []), ...overrideWorkedDays])).sort();
+        const daysWorked = workedDates.length;
         const redoRatePct = totalTickets > 0 ? (redoCount / totalTickets) * 100 : null;
         const milesPerTicket = totalTickets > 0 ? miles / totalTickets : null;
         const ticketsPerHour = hoursWorked > 0 ? totalTickets / hoursWorked : null;
@@ -672,6 +681,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           tier: t.tier_level || "—",
           isActive: t.is_active,
           daysWorked,
+          workedDates,
           hoursWorked,
           totalTickets,
           minorTicketCount,
@@ -843,6 +853,18 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     return dates;
   }, [offDaysListFor, rows, periodStart, periodEnd]);
 
+  // The dates behind a clicked Working Days count — exactly the set that
+  // produces daysWorked, with that day's hours where there are any.
+  const workDaysListRows = useMemo(() => {
+    if (!workDaysListFor) return [];
+    const row = rows.find((r) => r.id === workDaysListFor.id);
+    if (!row) return [];
+    const dayHours = hoursDaily.get(workDaysListFor.id);
+    return [...row.workedDates]
+      .sort((a, b) => b.localeCompare(a))
+      .map((date) => ({ date, hours: dayHours?.get(date) ?? null }));
+  }, [workDaysListFor, rows, hoursDaily]);
+
   const sortedRows = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
     const val = (r: TechPerfRow): string | number => {
@@ -979,7 +1001,21 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       const workbook = new ExcelJS.Workbook();
       const sheet = workbook.addWorksheet("Import Template");
 
-      sheet.columns = [
+      // The template follows the columns on screen: the short view gets the
+      // same short set (plus Date, which every day row needs), "Show all
+      // columns" gets the full layout. handleImportFile reads both sets of
+      // header names.
+      sheet.columns = !showAllColumns ? [
+        { header: "Name", key: "name", width: 26 },
+        { header: "Date", key: "date", width: 12 },
+        { header: "Minor Comp", key: "minorTicket", width: 13 },
+        { header: "Major Comp", key: "majorTicket", width: 13 },
+        { header: "Redo Count", key: "redoCount", width: 12 },
+        { header: "Mileage", key: "miles", width: 12 },
+        { header: "Hours of Work", key: "hoursWorked", width: 15 },
+        { header: "Working Total Days", key: "daysWorked", width: 19 },
+        { header: "Off Days", key: "offDays", width: 10 },
+      ] : [
         { header: "Name", key: "name", width: 26 },
         { header: "Variance", key: "variance", width: 12 },
         { header: "Damage Assessment", key: "damageAssessment", width: 18 },
@@ -1092,7 +1128,9 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       // re-import, see handleImportFile).
       sheet.addRow({});
       const noteRow = sheet.addRow({
-        name: "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. Damage Assessment/Minor Ticket/Major Ticket/Redo/Total Completion/Reschedule/NCNS/Mileage/Hours Worked below are the CURRENT totals, for reference.",
+        name: showAllColumns
+          ? "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. Damage Assessment/Minor Ticket/Major Ticket/Redo/Total Completion/Reschedule/NCNS/Mileage/Hours Worked below are the CURRENT totals, for reference."
+          : "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. The numbers below are the CURRENT totals, for reference. Working Total Days and Off Days aren't read back on import.",
       });
       noteRow.font = { italic: true, color: { argb: "FF64748B" } };
       for (const r of sortedRows) {
@@ -1117,7 +1155,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           manager: r.manager,
           tier: r.tier,
         });
-        styleVarianceCell(row.getCell("variance"), variance);
+        if (showAllColumns) styleVarianceCell(row.getCell("variance"), variance);
       }
 
       const buffer = await workbook.xlsx.writeBuffer();
@@ -1174,10 +1212,12 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         const ticketsIdx = idxAny("total completion", "total tickets");
         const redoIdx = idxAny("redo", "redo count");
         const milesIdx = idxAny("mileage", "miles");
-        const hoursIdx = idx("hours worked");
+        // Short-view template headers (Minor Comp/Major Comp/Hours of Work)
+        // are accepted alongside the full template's.
+        const hoursIdx = idxAny("hours worked", "hours of work");
         const damageAssessmentIdx = idx("damage assessment");
-        const minorTicketIdx = idx("minor ticket");
-        const majorTicketIdx = idx("major ticket");
+        const minorTicketIdx = idxAny("minor ticket", "minor comp");
+        const majorTicketIdx = idxAny("major ticket", "major comp");
         const rescheduleIdx = idx("reschedule");
         const ncnsIdx = idx("ncns");
         const locationIdx = idx("location");
@@ -1312,6 +1352,14 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
               <h1 className="text-2xl font-bold">Technician Performance Report</h1>
             </div>
             <div className="ml-auto flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowAllColumns((v) => !v)}
+                className="btn text-xs px-2.5 py-1.5"
+                title="The table shows a short set of columns by default"
+              >
+                {showAllColumns ? "Show fewer columns" : "Show all columns"}
+              </button>
               {isFullAccess && (
                 <button onClick={handleExportCsv} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1.5">
                   <Download className="h-3.5 w-3.5" /> Export CSV
@@ -1571,6 +1619,18 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                 <div className="overflow-x-auto" ref={groupScrollRef}>
                   <table className="w-full text-sm">
                     <thead>
+                      {!showAllColumns ? (
+                      <tr className="border-b border-white/10 bg-white/5">
+                        <th className={thClass} onClick={() => toggleSort("name")}>Name{sortIndicator("name")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("minorTicketCount")}>Minor Comp{sortIndicator("minorTicketCount")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("majorTicketCount")}>Major Comp{sortIndicator("majorTicketCount")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("redoCount")}>Redo Count{sortIndicator("redoCount")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("miles")}>Mileage{sortIndicator("miles")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("hoursWorked")}>Hours of Work{sortIndicator("hoursWorked")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("daysWorked")}>Working Total Days{sortIndicator("daysWorked")}</th>
+                        <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Off Days</th>
+                      </tr>
+                      ) : (
                       <tr className="border-b border-white/10 bg-white/5">
                         <th className={thClass} onClick={() => toggleSort("name")}>Name{sortIndicator("name")}</th>
                         <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Variance</th>
@@ -1596,15 +1656,16 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("ticketsPerHour")}>Tickets/Hr{sortIndicator("ticketsPerHour")}</th>
                         <th className="px-3 py-2 text-left text-xs text-muted-foreground uppercase">Alerts</th>
                       </tr>
+                      )}
                     </thead>
                     <tbody>
                       {groupRows.length === 0 ? (
-                        <tr><td colSpan={23} className="px-4 py-8 text-center text-muted-foreground text-sm">No technicians match.</td></tr>
+                        <tr><td colSpan={showAllColumns ? 23 : 8} className="px-4 py-8 text-center text-muted-foreground text-sm">No technicians match.</td></tr>
                       ) : (
                         groupRows.map((r) => {
                           const variance = varianceByRowId.get(r.id) ?? null;
-                          return (
-                          <tr key={r.id} className="border-b border-white/5 hover:bg-white/5">
+                          // Cells shared by the short and full layouts.
+                          const nameCell = (
                             <td className="px-3 py-2 font-medium">
                               <button
                                 type="button"
@@ -1618,6 +1679,88 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                                 )}
                               </button>
                             </td>
+                          );
+                          const milesCell = (
+                            <td className="px-3 py-2 text-right">
+                              {r.miles > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setMileageListFor({ id: r.id, name: r.name })}
+                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
+                                  title="View mileage breakdown"
+                                >
+                                  {fmt1(r.miles)}
+                                </button>
+                              ) : (
+                                fmt1(r.miles)
+                              )}
+                            </td>
+                          );
+                          const offDaysCell = (
+                            <td className="px-3 py-2 text-right">
+                              {r.offDaysCount > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setOffDaysListFor({ id: r.id, name: r.name })}
+                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
+                                  title="View off-duty dates"
+                                >
+                                  {r.offDaysCount}
+                                </button>
+                              ) : (
+                                r.offDaysCount
+                              )}
+                            </td>
+                          );
+                          const workDaysCell = (
+                            <td className="px-3 py-2 text-right">
+                              {r.daysWorked > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setWorkDaysListFor({ id: r.id, name: r.name })}
+                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
+                                  title="View working dates"
+                                >
+                                  {r.daysWorked}
+                                </button>
+                              ) : (
+                                r.daysWorked
+                              )}
+                            </td>
+                          );
+                          const hoursCell = (
+                            <td className="px-3 py-2 text-right">
+                              {r.hoursWorked > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setHoursListFor({ id: r.id, name: r.name })}
+                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
+                                  title="View hours breakdown"
+                                >
+                                  {fmt1(r.hoursWorked)}
+                                </button>
+                              ) : (
+                                fmt1(r.hoursWorked)
+                              )}
+                            </td>
+                          );
+                          if (!showAllColumns) {
+                            return (
+                              <tr key={r.id} className="border-b border-white/5 hover:bg-white/5">
+                                {nameCell}
+                                <td className="px-3 py-2 text-right">{r.minorTicketCount}</td>
+                                <td className="px-3 py-2 text-right">{r.majorTicketCount}</td>
+                                <td className="px-3 py-2 text-right">{r.redoCount}</td>
+                                {milesCell}
+                                {hoursCell}
+                                {workDaysCell}
+                                {offDaysCell}
+                              </tr>
+                            );
+                          }
+                          return (
+                          <tr key={r.id} className="border-b border-white/5 hover:bg-white/5">
+                            {nameCell}
                             <td className={`px-3 py-2 text-right font-semibold ${variance == null ? "text-muted-foreground" : variance > 0 ? "text-emerald-400" : variance < 0 ? "text-red-400" : "text-muted-foreground"}`}>
                               {fmtVariance(variance)}
                             </td>
@@ -1643,50 +1786,11 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                             <td className="px-3 py-2 text-right">{r.rescheduleCount}</td>
                             <td className="px-3 py-2 text-right">{r.ncnsCount}</td>
                             <td className="px-3 py-2 text-right">{r.cancelledCount}</td>
-                            <td className="px-3 py-2 text-right">
-                              {r.miles > 0 ? (
-                                <button
-                                  type="button"
-                                  onClick={() => setMileageListFor({ id: r.id, name: r.name })}
-                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
-                                  title="View mileage breakdown"
-                                >
-                                  {fmt1(r.miles)}
-                                </button>
-                              ) : (
-                                fmt1(r.miles)
-                              )}
-                            </td>
-                            <td className="px-3 py-2 text-right">{r.daysWorked}</td>
-                            <td className="px-3 py-2 text-right">
-                              {r.offDaysCount > 0 ? (
-                                <button
-                                  type="button"
-                                  onClick={() => setOffDaysListFor({ id: r.id, name: r.name })}
-                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
-                                  title="View off-duty dates"
-                                >
-                                  {r.offDaysCount}
-                                </button>
-                              ) : (
-                                r.offDaysCount
-                              )}
-                            </td>
+                            {milesCell}
+                            {workDaysCell}
+                            {offDaysCell}
                             <td className="px-3 py-2 text-right text-muted-foreground">—</td>
-                            <td className="px-3 py-2 text-right">
-                              {r.hoursWorked > 0 ? (
-                                <button
-                                  type="button"
-                                  onClick={() => setHoursListFor({ id: r.id, name: r.name })}
-                                  className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2"
-                                  title="View hours breakdown"
-                                >
-                                  {fmt1(r.hoursWorked)}
-                                </button>
-                              ) : (
-                                fmt1(r.hoursWorked)
-                              )}
-                            </td>
+                            {hoursCell}
                             <td className="px-3 py-2 text-muted-foreground">{r.location}</td>
                             <td className="px-3 py-2 text-muted-foreground">{r.manager}</td>
                             <td className="px-3 py-2 text-muted-foreground">{r.tier}</td>
@@ -1904,6 +2008,52 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                       <tr key={d} className="hover:bg-white/5">
                         <td className="px-3 py-2 text-slate-300">{d}</td>
                         <td className="px-3 py-2 text-slate-300">{new Date(`${d}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" })}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {workDaysListFor && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setWorkDaysListFor(null)}>
+          <div
+            className="bg-slate-900 border border-white/15 rounded-xl w-full max-w-sm max-h-[80vh] flex flex-col shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-slate-950 rounded-t-xl">
+              <div>
+                <p className="font-semibold text-white">Working Days — {workDaysListFor.name}</p>
+                <p className="text-xs text-slate-400">{periodStart} – {periodEnd} · {workDaysListRows.length} day{workDaysListRows.length === 1 ? "" : "s"}</p>
+              </div>
+              <button onClick={() => setWorkDaysListFor(null)} className="text-white/40 hover:text-white/80 transition">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="px-5 pt-3 text-[11px] text-slate-400">
+              Days with a timecard punch, or with hours entered as a manual correction, within this period.
+            </p>
+            <div className="overflow-y-auto flex-1 p-2">
+              {workDaysListRows.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-8">No working days in this period.</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-slate-400 uppercase">
+                      <th className="px-3 py-2">Date</th>
+                      <th className="px-3 py-2">Day</th>
+                      <th className="px-3 py-2 text-right">Hours</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {workDaysListRows.map((d) => (
+                      <tr key={d.date} className="hover:bg-white/5">
+                        <td className="px-3 py-2 text-slate-300">{d.date}</td>
+                        <td className="px-3 py-2 text-slate-300">{new Date(`${d.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" })}</td>
+                        <td className="px-3 py-2 text-right text-slate-300">{d.hours != null && d.hours > 0 ? fmt1(d.hours) : "—"}</td>
                       </tr>
                     ))}
                   </tbody>

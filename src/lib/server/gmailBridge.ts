@@ -166,7 +166,7 @@ export async function fetchProfileByFirebaseUid(
 
 /**
  * Admin/SuperAdmin can always connect; an Admin can also grant extra roles per
- * slot (gmail_connect_role_gates, migration 0327 — the ticket page gear).
+ * slot (gmail_connect_role_gates, migration 0329 — the ticket page gear).
  * Checks the primary role and every extra role. A missing table (migration not
  * run yet) just means no extra grants.
  */

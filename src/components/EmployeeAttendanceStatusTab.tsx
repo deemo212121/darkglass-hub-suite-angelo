@@ -111,7 +111,7 @@ function computeStatus(args: {
   // editor; an approved Time Correction names whoever approved it last.
   const approvedCorrection = corrections.find((c) => c.status === "approved");
   const approverId = approvedCorrection ? correctionApproverId(approvedCorrection) : null;
-  // Corrected = someone changed the times directly (corrected_by, migration 0328 —
+  // Corrected = someone changed the times directly (corrected_by, migration 0331 —
   // counts even on HR's own timecard) or an approved Time Correction.
   // A manager's proxy clock-in (clocked_in_by) is only "Clocked in by".
   const correctedBy = entry?.correctedBy

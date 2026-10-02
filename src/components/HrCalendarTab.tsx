@@ -89,14 +89,10 @@ type CellColor = "approved" | "pending" | "hrPlotted";
 // its own red cell instead of blending into the leave-type orange. The
 // remaining 2 HR Status options (Resigned/Terminated) aren't attendance
 // types at all and never populate a cell.
-export const HR_STATUS_TO_PTO_TYPE: Partial<Record<string, PtoType>> = {
-  Vacation: "vacation",
-  Sick: "sick",
-  Personal: "personal",
-  Holiday: "holiday",
-  Unpaid: "unpaid",
-  Bereavement: "bereavement",
-};
+// Defined in src/lib/supabase/pto.ts (so src/lib code can use it without
+// importing this component); re-exported for existing importers.
+import { HR_STATUS_TO_PTO_TYPE } from "@/lib/supabase/pto";
+export { HR_STATUS_TO_PTO_TYPE };
 
 // hrPlottedByProfile's cells can be a real PtoType (a leave type HR set via
 // Absent List's HR Status) OR the special "absent" marker (Absent List's own

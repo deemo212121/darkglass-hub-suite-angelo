@@ -1,6 +1,6 @@
 /**
  * Admin → Approval Chain. Manages and previews the role + area/branch
- * approval routing for NON-Philippines field staff (migration 0329):
+ * approval routing for NON-Philippines field staff (migration 0332):
  *
  *   Technician ──► Branch Manager / Parts / Parts Manager (same branch)
  *              ──► Senior Branch Manager (owns the branch's area)
@@ -367,7 +367,7 @@ export function ApprovalChainPage({ mod, sub }: Props) {
 
         {areasMissing && (
           <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-            Run migration <code>0329_approval_chain.sql</code> in Supabase to turn on Areas and the database enforcement.
+            Run migration <code>0332_approval_chain.sql</code> in Supabase to turn on Areas and the database enforcement.
           </div>
         )}
         {error && <div className="mb-4 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</div>}
@@ -392,7 +392,7 @@ export function ApprovalChainPage({ mod, sub }: Props) {
                 <div className="text-xs uppercase tracking-wide text-slate-400">Top level — approves Senior Branch Managers and everyone below</div>
                 <span className="text-[10px] text-slate-500">{topIds.length > 0 ? "· custom list" : "· from roles (Admin / Technical Director / Asst. Director)"}</span>
                 {!editingTop && (
-                  <button type="button" onClick={startEditTop} disabled={busy || areasMissing} className="ml-auto text-xs font-semibold text-blue-300 hover:text-blue-200 disabled:opacity-40" title={areasMissing ? "Run migration 0333 first" : undefined}>
+                  <button type="button" onClick={startEditTop} disabled={busy || areasMissing} className="ml-auto text-xs font-semibold text-blue-300 hover:text-blue-200 disabled:opacity-40" title={areasMissing ? "Run migration 0336 first" : undefined}>
                     Edit
                   </button>
                 )}

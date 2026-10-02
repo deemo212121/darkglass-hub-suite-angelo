@@ -1,7 +1,7 @@
 /**
  * Settings popup (Admin/SuperAdmin only) for which roles may Connect /
  * Disconnect one Gmail slot — e.g. the ticket page's Parts/Drop-Ship Gmail.
- * Admin/SuperAdmin always can; this grants extra roles (migration 0327).
+ * Admin/SuperAdmin always can; this grants extra roles (migration 0329).
  */
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, X } from "lucide-react";

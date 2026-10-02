@@ -80,7 +80,7 @@ export function PhApprovalChainPanel({
 
       {migrationMissing && (
         <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-          Run migration <code>0334_approval_chain_ph.sql</code> in Supabase to turn on the Philippines chain and editable department managers.
+          Run migration <code>0337_approval_chain_ph.sql</code> in Supabase to turn on the Philippines chain and editable department managers.
         </div>
       )}
 
@@ -117,7 +117,7 @@ export function PhApprovalChainPanel({
                     type="button"
                     onClick={() => startEdit(dept, managers)}
                     disabled={busy || migrationMissing}
-                    title={migrationMissing ? "Run migration 0334 first" : "Edit managers"}
+                    title={migrationMissing ? "Run migration 0337 first" : "Edit managers"}
                     className="ml-auto p-1 rounded text-slate-400 hover:text-white hover:bg-white/10 disabled:opacity-40"
                   >
                     <Pencil className="h-3.5 w-3.5" />

@@ -43,7 +43,9 @@ export async function resolveTeamLeadOrManager(
       if (mine) {
         const leader = members.find((m) => m.teamId === mine.teamId && m.isLeader);
         const leaderProfile = leader ? allProfiles.find((p) => p.id === leader.profileId && p.is_active) : null;
-        if (leaderProfile) return leaderProfile;
+        // A team leader is the leader of their own team — never route their
+        // own request to themselves; fall through to their manager_name.
+        if (leaderProfile && leaderProfile.id !== profile.id) return leaderProfile;
       }
     } catch {
       // CSR team composition unavailable — fall through to manager_name match.
@@ -124,7 +126,7 @@ export function visibleAttendanceProfileIds(
       if (p.assigned_branch === viewer.assigned_branch && TECHNICIAN_PAY_ROLES.has(normalizeRole(p.role))) ids.add(p.id);
     });
   }
-  // Approval Chain (non-PH field staff, migration 0329): add every governed
+  // Approval Chain (non-PH field staff, migration 0332): add every governed
   // person this viewer can approve or clock in (Branch / Parts Manager →
   // their branch's technicians; Senior Branch Manager → everyone in the
   // branches they own), and drop governed people they can't act on — e.g. a
