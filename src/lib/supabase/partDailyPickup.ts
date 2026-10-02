@@ -97,7 +97,8 @@ export async function updatePartPickupRow(
   const payload: Record<string, unknown> = {};
   if (updates.pickedUp !== undefined) {
     payload.picked_up = updates.pickedUp;
-    if (updates.pickedUp) payload.picked_up_date = new Date().toISOString().slice(0, 10);
+    // Ticked → today's date; unticked → clear it, so an undone pickup leaves no stale date behind.
+    payload.picked_up_date = updates.pickedUp ? new Date().toISOString().slice(0, 10) : null;
   }
   if (updates.action !== undefined) payload.pickup_action = updates.action;
   if (updates.comment !== undefined) payload.note = updates.comment;

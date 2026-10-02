@@ -281,17 +281,13 @@ export function TicketTimeDisputesTab() {
                   </button>
                 </div>
                 {isFullRequestsAdmin && r.exceptionType !== null && r.hrPaperworkStatus === "pending" && (
-                  r.managerSignatureUrl ? (
                     <button
                       type="button"
                       onClick={() => setSigningHrFor(r)}
                       className="mt-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition"
                     >
-                      Sign Exception Report (HR)
+                      Approve & Sign as HR
                     </button>
-                  ) : (
-                    <p className="text-[11px] text-slate-500 mt-2">Exception Report: awaiting manager signature</p>
-                  )
                 )}
               </div>
             ))}
@@ -371,17 +367,13 @@ export function TicketTimeDisputesTab() {
                   <p className="text-sm text-emerald-300 font-semibold mt-2">Response: {r.reviewNote}</p>
                 )}
                 {isFullRequestsAdmin && r.exceptionType !== null && r.hrPaperworkStatus === "pending" && (
-                  r.managerSignatureUrl ? (
                     <button
                       type="button"
                       onClick={() => setSigningHrFor(r)}
                       className="mt-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition"
                     >
-                      Sign Exception Report (HR)
+                      Approve & Sign as HR
                     </button>
-                  ) : (
-                    <p className="text-[11px] text-slate-500 mt-2">Exception Report: awaiting manager signature</p>
-                  )
                 )}
               </div>
             ))}
