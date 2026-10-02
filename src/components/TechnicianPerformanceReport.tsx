@@ -577,7 +577,20 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const periodEnd = periodMode === "total" ? todayStr() : customEnd;
   const periodWeeks = daysBetween(periodStart, periodEnd) / 7;
 
+  // One load at a time per period: React (dev mode) and period changes
+  // used to start several overlapping loads that each downloaded
+  // everything — tripling the traffic. A second call for the same period
+  // while one is running is ignored, and results from a load whose period
+  // has since changed are dropped instead of overwriting the newer one.
+  const loadSeqRef = useRef(0);
+  const loadInFlightKeyRef = useRef<string | null>(null);
+
   const load = async () => {
+    const loadKey = `${periodStart}|${periodEnd}`;
+    if (loadInFlightKeyRef.current === loadKey) return;
+    loadInFlightKeyRef.current = loadKey;
+    const seq = ++loadSeqRef.current;
+    const isStale = () => seq !== loadSeqRef.current;
     setLoading(true);
     setError(null);
     // Load watchdog: names every request still unfinished after 25s and
@@ -593,16 +606,16 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         if (secs > 5) console.info(`[tech-perf] ${label} finished after ${secs.toFixed(1)}s`);
       });
     };
-    let watchdog: ReturnType<typeof setTimeout> | undefined;
-    const stuck = new Promise<never>((_, reject) => {
-      watchdog = setTimeout(() => {
-        const names = Array.from(pending.keys());
-        console.warn("[tech-perf] still waiting after 25s on:", names);
-        reject(new Error(`The report is still waiting after 25 seconds on: ${names.join(", ") || "(nothing — a calculation is stuck)"}. Please send this message to IT.`));
-      }, 25_000);
-    });
+    // Doesn't give up — a slow connection still gets its data — but after
+    // 25s it says what it's still waiting on (cleared once the data lands).
+    const watchdog: ReturnType<typeof setTimeout> = setTimeout(() => {
+      if (isStale()) return;
+      const names = Array.from(pending.keys());
+      console.warn("[tech-perf] still waiting after 25s on:", names);
+      setError(`Still loading — this is taking longer than usual (waiting on: ${names.join(", ") || "calculations"}). It will finish on its own; if it never does, send this message to IT.`);
+    }, 25_000);
     try {
-      const [allUsers, composition, repairCounts, redoMap, mileageEntries, timecardEntries, dailyCompleted, overrides, reschedules, cancelledCounts, damageDocs, timecardCorrections] = await Promise.race([stuck, Promise.all([
+      const [allUsers, composition, repairCounts, redoMap, mileageEntries, timecardEntries, dailyCompleted, overrides, reschedules, cancelledCounts, damageDocs, timecardCorrections] = await Promise.race([Promise.all([
         track("users", getCompanyUsers()),
         track("CSR teams", getCsrTeamComposition().catch(() => null)),
         track("repair counts", getTechCompletedRepairCounts(periodStart, periodEnd)),
@@ -623,6 +636,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       ])]);
       clearTimeout(watchdog);
       console.info(`[tech-perf] data loaded in ${((Date.now() - started) / 1000).toFixed(1)}s`);
+      if (isStale()) return;
+      setError(null);
       const timecardIssuesByProfileId = new Map<string, number>();
       for (const c of timecardCorrections) timecardIssuesByProfileId.set(c.profileId, (timecardIssuesByProfileId.get(c.profileId) ?? 0) + 1);
       setUsers(allUsers);
@@ -956,10 +971,11 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       });
       setRows(computed);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load technician performance data.");
+      if (!isStale()) setError(err instanceof Error ? err.message : "Failed to load technician performance data.");
     } finally {
       clearTimeout(watchdog);
-      setLoading(false);
+      if (loadInFlightKeyRef.current === loadKey) loadInFlightKeyRef.current = null;
+      if (!isStale()) setLoading(false);
     }
   };
 
