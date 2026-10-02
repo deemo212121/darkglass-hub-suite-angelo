@@ -82,7 +82,7 @@ import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getTechCompletedRepairCounts, getTechCompletedTicketsDaily, getTechRedoTickets, getTechCancelledTicketCounts, type TechCompletedTicketDaily } from "@/lib/supabase/techPayroll";
 import { getMileageEntries, mileageEffectiveTotal } from "@/lib/supabase/mileage";
 import { getCompanyTicketReschedules } from "@/lib/supabase/ticketReschedules";
-import { getSignableDocuments } from "@/lib/supabase/signableDocuments";
+import { getSignableDocumentRecipients } from "@/lib/supabase/signableDocuments";
 import { getCompanyTimecardEntries, calcWorkedHours, computeMealTimeCredit, startOfWeekSunday, addDaysISO } from "@/lib/supabase/timecards";
 import { getCorrectionsInRange } from "@/lib/supabase/timecardCorrections";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
@@ -580,26 +580,49 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const load = async () => {
     setLoading(true);
     setError(null);
+    // Load watchdog: names every request still unfinished after 25s and
+    // stops waiting, so a stuck request shows up as a clear error instead
+    // of an endless spinner.
+    const pending = new Map<string, number>();
+    const started = Date.now();
+    const track = <T,>(label: string, p: Promise<T>): Promise<T> => {
+      pending.set(label, Date.now());
+      return p.finally(() => {
+        pending.delete(label);
+        const secs = (Date.now() - started) / 1000;
+        if (secs > 5) console.info(`[tech-perf] ${label} finished after ${secs.toFixed(1)}s`);
+      });
+    };
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    const stuck = new Promise<never>((_, reject) => {
+      watchdog = setTimeout(() => {
+        const names = Array.from(pending.keys());
+        console.warn("[tech-perf] still waiting after 25s on:", names);
+        reject(new Error(`The report is still waiting after 25 seconds on: ${names.join(", ") || "(nothing — a calculation is stuck)"}. Please send this message to IT.`));
+      }, 25_000);
+    });
     try {
-      const [allUsers, composition, repairCounts, redoMap, mileageEntries, timecardEntries, dailyCompleted, overrides, reschedules, cancelledCounts, damageDocs, timecardCorrections] = await Promise.all([
-        getCompanyUsers(),
-        getCsrTeamComposition().catch(() => null),
-        getTechCompletedRepairCounts(periodStart, periodEnd),
+      const [allUsers, composition, repairCounts, redoMap, mileageEntries, timecardEntries, dailyCompleted, overrides, reschedules, cancelledCounts, damageDocs, timecardCorrections] = await Promise.race([stuck, Promise.all([
+        track("users", getCompanyUsers()),
+        track("CSR teams", getCsrTeamComposition().catch(() => null)),
+        track("repair counts", getTechCompletedRepairCounts(periodStart, periodEnd)),
         // Redo tickets carry no date, so the blanked range (BLANK_LIVE_TIME_FROM
         // onward) is cut off at the fetch: only redos completed before it count live.
-        periodStart < BLANK_LIVE_TIME_FROM
+        track("redo tickets", periodStart < BLANK_LIVE_TIME_FROM
           ? getTechRedoTickets(periodStart, periodEnd < BLANK_LIVE_TIME_FROM ? periodEnd : addDaysISO(BLANK_LIVE_TIME_FROM, -1))
-          : Promise.resolve(new Map()),
+          : Promise.resolve(new Map())),
         // Only the period's days — the full history took ~13s to load.
-        getMileageEntries(undefined, { start: periodStart, end: periodEnd }),
-        getCompanyTimecardEntries(periodStart, periodEnd),
-        getTechCompletedTicketsDaily(periodStart, periodEnd),
-        getTechnicianPerformanceOverrides(periodStart, periodEnd),
-        getCompanyTicketReschedules(periodStart, periodEnd),
-        getTechCancelledTicketCounts(periodStart, periodEnd),
-        getSignableDocuments("damage").catch(() => []),
-        getCorrectionsInRange(periodStart, periodEnd).catch(() => []),
-      ]);
+        track("mileage", getMileageEntries(undefined, { start: periodStart, end: periodEnd }, { summaryOnly: true })),
+        track("timecards", getCompanyTimecardEntries(periodStart, periodEnd)),
+        track("daily tickets", getTechCompletedTicketsDaily(periodStart, periodEnd)),
+        track("corrections (overrides)", getTechnicianPerformanceOverrides(periodStart, periodEnd)),
+        track("reschedules", getCompanyTicketReschedules(periodStart, periodEnd)),
+        track("cancelled tickets", getTechCancelledTicketCounts(periodStart, periodEnd)),
+        track("damage documents", getSignableDocumentRecipients("damage").catch(() => [])),
+        track("timecard issues", getCorrectionsInRange(periodStart, periodEnd).catch(() => [])),
+      ])]);
+      clearTimeout(watchdog);
+      console.info(`[tech-perf] data loaded in ${((Date.now() - started) / 1000).toFixed(1)}s`);
       const timecardIssuesByProfileId = new Map<string, number>();
       for (const c of timecardCorrections) timecardIssuesByProfileId.set(c.profileId, (timecardIssuesByProfileId.get(c.profileId) ?? 0) + 1);
       setUsers(allUsers);
@@ -935,6 +958,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load technician performance data.");
     } finally {
+      clearTimeout(watchdog);
       setLoading(false);
     }
   };

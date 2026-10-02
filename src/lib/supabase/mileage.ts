@@ -202,11 +202,21 @@ const PAGE_SIZE = 1000;
  *  no-photos payroll-hold reconciliation and the mileage report/CSV export,
  *  which both need every branch regardless of what's on screen).
  */
-export async function getMileageEntries(branch?: string, range?: { start: string; end: string }): Promise<MileageEntry[]> {
+// Just what a per-day mileage total needs (mileageEffectiveTotal + who/
+// where/when) — ~10x smaller than ENTRY_COLUMNS (no addresses, map links,
+// notes…). Other MileageEntry fields come back empty with this.
+const SUMMARY_COLUMNS = "id, profile_id, technician_name, branch, work_date, total_mileage, mileage_override, mileage_adjustment, deleted_at";
+
+export async function getMileageEntries(
+  branch?: string,
+  range?: { start: string; end: string },
+  opts?: { summaryOnly?: boolean },
+): Promise<MileageEntry[]> {
+  const columns = opts?.summaryOnly ? SUMMARY_COLUMNS : ENTRY_COLUMNS;
   const pageQuery = (from: number, withCount = false) => {
     let query = supabase
       .from("mileage_entries")
-      .select(ENTRY_COLUMNS, withCount ? { count: "exact" } : undefined)
+      .select(columns, withCount ? { count: "exact" } : undefined)
       .order("work_date", { ascending: false })
       .order("id", { ascending: true });
     if (branch) query = query.eq("branch", branch);
