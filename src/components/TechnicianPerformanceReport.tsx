@@ -73,7 +73,7 @@ import { createPortal } from "react-dom";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ChevronDown, ChevronLeft, Download, Upload, RefreshCw, X, MapPin, UserSquare2, Star, CalendarClock, ChevronRight, PencilLine, Crown, AlertTriangle } from "lucide-react";
+import { ChevronDown, ChevronLeft, Download, Upload, RefreshCw, X, MapPin, UserSquare2, Star, CalendarClock, ChevronRight, PencilLine, Crown, AlertTriangle, Gauge, Ticket, RotateCcw, CalendarDays, Clock, Route } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { BrandedLoader } from "@/components/BrandedLoader";
@@ -271,6 +271,8 @@ const GRADE_META: Record<Grade, { label: string; pill: string; dot: string; xlsx
   alert: { label: "Alert", pill: "bg-red-500/15 text-red-300 ring-red-400/30", dot: "bg-red-400", xlsxFill: "FFFEE2E2", xlsxFont: "FFB91C1C" },
 };
 const GRADE_ORDER: Grade[] = ["max", "great", "median", "effort", "alert"];
+/** Solid grade colors for glows / bubble accents (same hues as the pills). */
+const GRADE_HEX: Record<Grade, string> = { max: "#38bdf8", great: "#34d399", median: "#facc15", effort: "#fb923c", alert: "#f87171" };
 // Higher is better: thresholds are the minimum for Maximum/Great/Median/Effort.
 const gradeAtLeast = (v: number | null, [max, great, median, effort]: [number, number, number, number]): Grade | null =>
   v == null ? null : v >= max ? "max" : v >= great ? "great" : v >= median ? "median" : v >= effort ? "effort" : "alert";
@@ -1342,6 +1344,40 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     };
   }, [filteredRows, showAllColumns]);
 
+  // Short-view summary bubbles: the median technician on each main factor
+  // (except Points) for the selected period — technicians with no work and
+  // no tickets are left out, same as the trend chart.
+  const medianKpis = useMemo(() => {
+    const median = (vals: number[]): number | null => {
+      if (vals.length === 0) return null;
+      const s = [...vals].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+    };
+    const active = filteredRows.filter((r) => r.daysWorked > 0 || r.minorTicketCount + r.majorTicketCount > 0);
+    const m = (f: (r: TechPerfRow) => number) => median(active.map(f));
+    const avgTickets = m(shortDailyAvg);
+    const totalTicket = m(shortTotalTicket);
+    const redoPct = m((r) => shortRedoPct(r) ?? 0);
+    const workingDays = m((r) => r.daysWorked);
+    const avgHours = m(shortAvgHours);
+    const avgMiles = m(shortAvgMiles);
+    const errors = m(shortErrorCount);
+    const show = (v: number | null, suffix = "") => (v == null ? "—" : `${fmt1(v)}${suffix}`);
+    return {
+      techCount: active.length,
+      items: [
+        { label: "Average Tickets", icon: Gauge, value: show(avgTickets), grade: avgTickets == null ? null : GRADERS.dailyAvg(avgTickets), hint: "Median Total Ticket ÷ Working Days" },
+        { label: "Total Ticket", icon: Ticket, value: show(totalTicket), grade: totalTicket == null ? null : GRADERS.totalTicket(totalTicket), hint: "Median Minor + Major − Redo" },
+        { label: "Redo %", icon: RotateCcw, value: show(redoPct, "%"), grade: redoPct == null ? null : GRADERS.redoPct(redoPct), hint: "Median Redo ÷ (Minor + Major)" },
+        { label: "Working Days", icon: CalendarDays, value: show(workingDays), grade: workingDays == null ? null : GRADERS.workingDays(workingDays), hint: "Median working days" },
+        { label: "Average Hours", icon: Clock, value: show(avgHours), grade: avgHours == null ? null : GRADERS.avgHours(avgHours), hint: "Median Hours of Work ÷ Working Days" },
+        { label: "Average Mileage", icon: Route, value: show(avgMiles), grade: avgMiles == null ? null : GRADERS.avgMiles(avgMiles), hint: "Median Mileage ÷ Working Days" },
+        { label: "Error Count", icon: AlertTriangle, value: show(errors), grade: null as Grade | null, hint: "Median timecard issues + damages" },
+      ],
+    };
+  }, [filteredRows]);
+
   // Variance = each technician's Total Completion vs. the average of
   // every technician CURRENTLY in view (Location/Manager/Tier/Search-
   // filtered, same population pageKpis rolls up), as a signed %. Keyed
@@ -1946,7 +1982,43 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           )}
         </div>
 
-        {!loading && (
+        {!loading && !showAllColumns && (
+          // Short view: the median technician for the selected pay period on
+          // each main factor (not Points), colored by that factor's grade.
+          <div className="mb-5 rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.05] to-white/[0.01] px-5 py-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-300/80">Median Technician</p>
+              <p className="text-[11px] text-muted-foreground">
+                {periodMode === "total" ? "All pay periods" : `${fmtPayDate(periodStart)} – ${fmtPayDate(periodEnd)}`} · {medianKpis.techCount} technician{medianKpis.techCount === 1 ? "" : "s"} with work
+              </p>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-4 justify-items-center">
+              {medianKpis.items.map((m) => {
+                const hex = m.grade ? GRADE_HEX[m.grade] : m.label === "Error Count" && m.value !== "0" && m.value !== "—" ? "#f87171" : "#94a3b8";
+                const Icon = m.icon;
+                return (
+                  <div
+                    key={m.label}
+                    title={m.hint}
+                    className="relative flex h-32 w-32 flex-col items-center justify-center rounded-full text-center transition-transform hover:scale-105"
+                    style={{
+                      background: `radial-gradient(circle at 30% 25%, ${hex}38 0%, ${hex}14 45%, rgba(255,255,255,0.02) 75%)`,
+                      boxShadow: `0 0 0 1px ${hex}55 inset, 0 0 24px ${hex}26, 0 6px 16px rgba(0,0,0,0.35)`,
+                    }}
+                  >
+                    <Icon className="h-4 w-4 mb-1" style={{ color: hex }} aria-hidden />
+                    <span className="text-2xl font-extrabold tabular-nums leading-none" style={{ color: hex }}>{m.value}</span>
+                    <span className="mt-1.5 px-2 text-[10px] font-semibold uppercase tracking-wide text-foreground/80 leading-tight">{m.label}</span>
+                    {m.grade && (
+                      <span className="mt-1 text-[9px] font-medium" style={{ color: hex }}>{GRADE_META[m.grade].label}</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        {!loading && showAllColumns && (
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5">
             {[
               { label: "Technicians", icon: UserSquare2, accent: "blue", value: pageKpis.techCount },
