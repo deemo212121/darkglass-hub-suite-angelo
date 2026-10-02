@@ -586,7 +586,12 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const loadInFlightKeyRef = useRef<string | null>(null);
 
   const load = async () => {
-    const loadKey = `${periodStart}|${periodEnd}`;
+    // Live tickets / mileage / timecards only matter for the full view or a
+    // period reaching before BLANK_LIVE_TIME_FROM — from then on the short
+    // view's figures come only from the per-day corrections, so those
+    // (slow, heavy) downloads are skipped.
+    const needLive = showAllColumns || periodStart < BLANK_LIVE_TIME_FROM;
+    const loadKey = `${periodStart}|${periodEnd}|${needLive ? "live" : "corrections"}`;
     if (loadInFlightKeyRef.current === loadKey) return;
     loadInFlightKeyRef.current = loadKey;
     const seq = ++loadSeqRef.current;
@@ -618,19 +623,19 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       const [allUsers, composition, repairCounts, redoMap, mileageEntries, timecardEntries, dailyCompleted, overrides, reschedules, cancelledCounts, damageDocs, timecardCorrections] = await Promise.race([Promise.all([
         track("users", getCompanyUsers()),
         track("CSR teams", getCsrTeamComposition().catch(() => null)),
-        track("repair counts", getTechCompletedRepairCounts(periodStart, periodEnd)),
+        track("repair counts", needLive ? getTechCompletedRepairCounts(periodStart, periodEnd) : Promise.resolve([])),
         // Redo tickets carry no date, so the blanked range (BLANK_LIVE_TIME_FROM
         // onward) is cut off at the fetch: only redos completed before it count live.
         track("redo tickets", periodStart < BLANK_LIVE_TIME_FROM
           ? getTechRedoTickets(periodStart, periodEnd < BLANK_LIVE_TIME_FROM ? periodEnd : addDaysISO(BLANK_LIVE_TIME_FROM, -1))
           : Promise.resolve(new Map())),
         // Only the period's days — the full history took ~13s to load.
-        track("mileage", getMileageEntries(undefined, { start: periodStart, end: periodEnd }, { summaryOnly: true })),
-        track("timecards", getCompanyTimecardEntries(periodStart, periodEnd)),
-        track("daily tickets", getTechCompletedTicketsDaily(periodStart, periodEnd)),
+        track("mileage", needLive ? getMileageEntries(undefined, { start: periodStart, end: periodEnd }, { summaryOnly: true }) : Promise.resolve([])),
+        track("timecards", needLive ? getCompanyTimecardEntries(periodStart, periodEnd) : Promise.resolve([])),
+        track("daily tickets", needLive ? getTechCompletedTicketsDaily(periodStart, periodEnd) : Promise.resolve([])),
         track("corrections (overrides)", getTechnicianPerformanceOverrides(periodStart, periodEnd)),
-        track("reschedules", getCompanyTicketReschedules(periodStart, periodEnd)),
-        track("cancelled tickets", getTechCancelledTicketCounts(periodStart, periodEnd)),
+        track("reschedules", needLive ? getCompanyTicketReschedules(periodStart, periodEnd) : Promise.resolve([])),
+        track("cancelled tickets", needLive ? getTechCancelledTicketCounts(periodStart, periodEnd) : Promise.resolve([])),
         track("damage documents", getSignableDocumentRecipients("damage").catch(() => [])),
         track("timecard issues", getCorrectionsInRange(periodStart, periodEnd).catch(() => [])),
       ])]);
@@ -979,7 +984,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     }
   };
 
-  useEffect(() => { void load(); }, [periodStart, periodEnd]);
+  useEffect(() => { void load(); }, [periodStart, periodEnd, showAllColumns || periodStart < BLANK_LIVE_TIME_FROM]);
 
   const me = useMemo(() => users.find((u) => u.firebase_uid === uid) || null, [users, uid]);
   const scoped = useMemo(
