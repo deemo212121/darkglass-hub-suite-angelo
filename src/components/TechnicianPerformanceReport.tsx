@@ -219,15 +219,15 @@ function MultiSelect({
 type PeriodMode = "total" | "custom";
 
 // Pay periods: the first is the irregular 08-27 → 09-12 (2026); after
-// that they're biweekly Monday → Saturday (09-14 → 09-26, 09-28 → 10-10,
-// ...), skipping the Sunday between periods. Listed up to the one that
+// that they're back-to-back 14-day periods, Sunday → Saturday, Sundays
+// included (09-13 → 09-26, 09-27 → 10-10, ...). Listed up to the one that
 // contains (or most recently started before) today.
 const FIRST_PAY_PERIOD = { start: "2026-08-27", end: "2026-09-12" };
 const payPeriodsThrough = (today: string): { start: string; end: string }[] => {
   const periods = [FIRST_PAY_PERIOD];
-  let start = addDaysISO(FIRST_PAY_PERIOD.end, 2);
+  let start = addDaysISO(FIRST_PAY_PERIOD.end, 1);
   while (start <= today) {
-    periods.push({ start, end: addDaysISO(start, 12) });
+    periods.push({ start, end: addDaysISO(start, 13) });
     start = addDaysISO(start, 14);
   }
   return periods;
