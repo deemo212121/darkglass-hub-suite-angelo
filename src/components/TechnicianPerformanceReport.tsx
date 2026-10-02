@@ -94,6 +94,7 @@ import {
   bulkUpsertTechnicianPerformanceOverrides,
   type DailyPerformanceOverride,
 } from "@/lib/supabase/technicianPerformanceOverrides";
+import { getSeniorBranchManagerAssignments, type SbmBranchAssignment } from "@/lib/supabase/seniorBranchManagerAssignments";
 
 const TOOLTIP_STYLE = {
   background: "#ffffff",
@@ -1155,14 +1156,96 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     else { setSortKey(key); setSortDir("asc"); }
   };
 
+  // Chart scope: every branch combined, one Senior Branch Manager's
+  // branches, or a single branch — drives the Top 10 and the trend chart.
+  const [chartScope, setChartScope] = useState<string>("all");
+  const [sbmAssignments, setSbmAssignments] = useState<SbmBranchAssignment[]>([]);
+  useEffect(() => {
+    getSeniorBranchManagerAssignments().then(setSbmAssignments).catch(() => setSbmAssignments([]));
+  }, []);
+  const sbmOptions = useMemo(() => {
+    const nameById = new Map(users.map((u) => [u.id, u.display_name || u.email]));
+    const byProfile = new Map<string, string[]>();
+    for (const a of sbmAssignments) {
+      if (!byProfile.has(a.profileId)) byProfile.set(a.profileId, []);
+      byProfile.get(a.profileId)!.push(a.branch);
+    }
+    return Array.from(byProfile.entries())
+      .map(([id, branches]) => ({ id, name: nameById.get(id) ?? "Senior Branch Manager", branches: branches.sort() }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [sbmAssignments, users]);
+  const branchOptions = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.location).filter((l) => l && l !== "—"))).sort(),
+    [rows],
+  );
+  const scopeBranches = useMemo((): Set<string> | null => {
+    if (chartScope.startsWith("branch:")) return new Set([chartScope.slice(7)]);
+    if (chartScope.startsWith("sbm:")) return new Set(sbmOptions.find((s) => s.id === chartScope.slice(4))?.branches ?? []);
+    return null;
+  }, [chartScope, sbmOptions]);
+  const inChartScope = (r: TechPerfRow) => !scopeBranches || scopeBranches.has(r.location);
+
   const top10Chart = useMemo(
-    () => [...filteredRows]
+    () => filteredRows
+      .filter(inChartScope)
       // Ranked by Points; ties go to the higher Total Ticket.
       .sort((a, b) => shortPoints(b) - shortPoints(a) || shortTotalTicket(b) - shortTotalTicket(a))
       .slice(0, 10)
       .map((r) => ({ name: r.name.split(" ")[0] || r.name, fullName: r.name, value: shortPoints(r) })),
-    [filteredRows],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filteredRows, scopeBranches],
   );
+
+  // Trend by pay period: the median technician's Average Tickets, Total
+  // Ticket and Redo % for each pay period, within the chart scope. Every
+  // pay period is on/after BLANK_LIVE_TIME_FROM, where the report's figures
+  // come only from the per-day corrections — so one corrections read covers
+  // every period. Technicians with no work and no tickets in a period are
+  // left out of that period's median.
+  const [trendOverrides, setTrendOverrides] = useState<Map<string, Map<string, DailyPerformanceOverride>>>(new Map());
+  useEffect(() => {
+    const last = payPeriods[payPeriods.length - 1];
+    getTechnicianPerformanceOverrides(FIRST_PAY_PERIOD.start, last.end).then(setTrendOverrides).catch(() => setTrendOverrides(new Map()));
+  }, [rows, payPeriods]);
+  const trendChart = useMemo(() => {
+    const median = (vals: number[]) => {
+      if (vals.length === 0) return null;
+      const s = [...vals].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+    };
+    const today = todayStr();
+    const techs = filteredRows.filter(inChartScope);
+    return payPeriods
+      .filter((p) => p.start <= today)
+      .map((p) => {
+        const avg: number[] = [], total: number[] = [], redoPct: number[] = [];
+        for (const t of techs) {
+          let minor = 0, major = 0, redo = 0, days = 0;
+          for (const [date, o] of trendOverrides.get(t.id) ?? []) {
+            if (date < p.start || date > p.end) continue;
+            minor += o.minorTicket ?? 0;
+            major += o.majorTicket ?? 0;
+            redo += o.redoCount ?? 0;
+            if (o.hoursWorked != null && o.hoursWorked > 0) days += 1;
+          }
+          if (days === 0 && minor + major === 0) continue;
+          const tt = minor + major - redo;
+          total.push(tt);
+          avg.push(days > 0 ? tt / days : 0);
+          redoPct.push(minor + major > 0 ? (redo / (minor + major)) * 100 : 0);
+        }
+        const round1 = (v: number | null) => (v == null ? null : Math.round(v * 10) / 10);
+        return {
+          label: `${p.start.slice(5, 7)}/${p.start.slice(8, 10)}–${p.end.slice(5, 7)}/${p.end.slice(8, 10)}`,
+          average: round1(median(avg)),
+          totalTicket: round1(median(total)),
+          redoPct: round1(median(redoPct)),
+          techCount: total.length,
+        };
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trendOverrides, filteredRows, scopeBranches, payPeriods]);
 
   // Same stat-tile treatment as the Technician Details modal's Daily
   // Activity Log row — a page-level rollup of whatever's currently
@@ -1969,13 +2052,66 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                 </div>
               </div>
             )}
-            {top10Chart.length > 0 && (
-              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-                <div className="flex items-center gap-1.5 mb-4">
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="flex flex-wrap items-center gap-3 mb-4">
+                <div className="flex items-center gap-1.5">
                   <Star className="h-4 w-4 text-emerald-400" />
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Top 10 Technicians — Points</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Top Technicians & Trend</p>
                 </div>
-                <ResponsiveContainer width="100%" height={200} debounce={200}>
+                <select
+                  value={chartScope}
+                  onChange={(e) => setChartScope(e.target.value)}
+                  className="glass-input text-xs py-1.5 px-3 rounded-md ml-auto"
+                  title="Which technicians the two charts below cover"
+                >
+                  <option value="all">All branches (combined)</option>
+                  {sbmOptions.length > 0 && (
+                    <optgroup label="Senior Branch Manager">
+                      {sbmOptions.map((s) => (
+                        <option key={s.id} value={`sbm:${s.id}`}>{s.name} ({s.branches.join(", ")})</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  <optgroup label="Branch">
+                    {branchOptions.map((b) => (
+                      <option key={b} value={`branch:${b}`}>{b}</option>
+                    ))}
+                  </optgroup>
+                </select>
+              </div>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div>
+                  <p className="text-[11px] font-semibold text-muted-foreground mb-1">Trend by pay period — median technician</p>
+                  <ResponsiveContainer width="100%" height={240} debounce={200}>
+                    <LineChart data={trendChart} margin={{ left: -10, right: 4, top: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
+                      <XAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 10 }} />
+                      <YAxis yAxisId="count" tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
+                      <YAxis yAxisId="avg" orientation="right" tick={{ fill: "#22c55e", fontSize: 11 }} />
+                      <Tooltip
+                        contentStyle={TOOLTIP_STYLE}
+                        formatter={(v: any, name: any) => [v == null ? "—" : name === "Redo %" ? `${v}%` : v, name]}
+                        labelFormatter={(label, payload) => {
+                          const n = payload?.[0]?.payload?.techCount;
+                          return n != null ? `${label} · ${n} technician${n === 1 ? "" : "s"}` : String(label);
+                        }}
+                      />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                      <Line yAxisId="avg" type="monotone" dataKey="average" name="Average Tickets" stroke="#22c55e" strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
+                      <Line yAxisId="count" type="monotone" dataKey="totalTicket" name="Total Ticket" stroke="#3b82f6" strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
+                      <Line yAxisId="count" type="monotone" dataKey="redoPct" name="Redo %" stroke="#ef4444" strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
+                    </LineChart>
+                  </ResponsiveContainer>
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Each point is the median technician in that pay period (technicians with no work that period are left out). Average Tickets uses the right-hand scale.
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold text-muted-foreground mb-1">Top 10 technicians — Points ({periodMode === "total" ? "all pay periods" : "selected pay period"})</p>
+                  {top10Chart.length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-16 text-center">No technicians in this scope.</p>
+                  ) : (
+                <ResponsiveContainer width="100%" height={240} debounce={200}>
                   <BarChart data={top10Chart} margin={{ left: -10 }}>
                     <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} />
                     <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
@@ -1991,8 +2127,10 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
+                  )}
+                </div>
               </div>
-            )}
+            </div>
             {!showAllColumns && (
               <details open className="group rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5">
                 <summary className="flex flex-wrap items-center gap-x-4 gap-y-1.5 cursor-pointer list-none select-none">
