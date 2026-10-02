@@ -233,6 +233,30 @@ export async function getApprovedCorrectionsForProfile(profileId: string, startD
   return (data ?? []).map(mapRow);
 }
 
+/** Every correction (any status) whose work_date falls in the range — each
+ * one is a timecard issue on that day (Technician Performance's Error Count). */
+export async function getCorrectionsInRange(startDate: string, endDate: string): Promise<TimecardCorrectionRow[]> {
+  const all: TimecardCorrectionRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await selectWithNoteFallback((cols) =>
+      supabase
+        .from("timecard_corrections")
+        .select(cols)
+        .gte("work_date", startDate)
+        .lte("work_date", endDate)
+        .order("work_date", { ascending: true })
+        .range(from, from + PAGE_SIZE - 1)
+    );
+    if (error) {
+      console.error("getCorrectionsInRange error:", error.message);
+      return [];
+    }
+    all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
 export async function getPendingCorrectionsInRange(startDate: string, endDate: string): Promise<TimecardCorrectionRow[]> {
   const { data, error } = await selectWithNoteFallback((cols) =>
     supabase.from("timecard_corrections").select(cols).eq("status", "pending").gte("work_date", startDate).lte("work_date", endDate)
