@@ -1,4 +1,8 @@
-﻿import { chainCanClockIn } from "@/lib/approvalDirectory";
+﻿import { chainCanClockIn, isChainTopApprover } from "@/lib/approvalDirectory";
+import { traineeFlagFor, traineeFlagLabel, type TraineeFlag } from "@/lib/traineeFlag";
+import { ClockInCodePrompt } from "@/components/ClockInCodePrompt";
+import { isClockInCodeRequired } from "@/lib/supabase/clockInCodes";
+import { getTrainingDates } from "@/lib/supabase/trainingDates";
 import { Fragment, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
@@ -68,6 +72,7 @@ import {
   getTraineeEntryForDate,
   saveTraineePunch,
   clearTraineePunch,
+  getCompanyTraineeEntries,
   getPendingTraineeReviewCount,
   getTraineeReviewQueue,
   approveTraineeDay,
@@ -990,6 +995,8 @@ export function MobileTechApp() {
   // mobile they never actually saw these 3 tiles until this fix). False
   // (hidden) until `users` finishes loading, same fail-closed default
   // `roster` above uses.
+  // Approval Chain top level: Clock In Team for every branch, even with no team of their own.
+  const clockInAllBranches = useMemo(() => users.length > 0 && isChainTopApprover(profileId), [users, profileId]);
   const hasTeamUnderMe = useMemo(() => {
     if (users.length === 0) return false;
     if (isAttendanceFullAccessRole(role, extraRoles)) return true;
@@ -1456,7 +1463,7 @@ export function MobileTechApp() {
         showBack={showTopBack}
         onBack={handleTopBack}
         onOpenTimecard={() => setView("timecard")}
-        showClockInTeam={hasTeamUnderMe}
+        showClockInTeam={hasTeamUnderMe || clockInAllBranches}
         onOpenClockInTeam={() => setView("clockinteam")}
         showViewAsTeam={isRealSuperAdmin}
         onOpenViewAsTeam={() => setView("viewasteam")}
@@ -1723,6 +1730,7 @@ export function MobileTechApp() {
             onOpenTicketsTab={() => setView("tickets")}
             onOpenOnHoldTab={() => setView("onhold")}
             showClockInTeam={hasTeamUnderMe}
+            clockInAllBranches={clockInAllBranches}
             onOpenClockInTeam={() => setView("clockinteam")}
             onOpenTeamAttendance={() => setView("teamattendance")}
             onOpenTeamApprovals={() => setView("teamapprovals")}
@@ -6083,6 +6091,7 @@ function MobileHomeView({
   onOpenTicketsTab,
   onOpenOnHoldTab,
   showClockInTeam,
+  clockInAllBranches,
   onOpenClockInTeam,
   onOpenTeamAttendance,
   onOpenTeamApprovals,
@@ -6115,6 +6124,8 @@ function MobileHomeView({
   onOpenTicketsTab: () => void;
   onOpenOnHoldTab: () => void;
   showClockInTeam: boolean;
+  /** Approval Chain top level — shows Clock In Team (all branches) even without a team of their own. */
+  clockInAllBranches?: boolean;
   onOpenClockInTeam: () => void;
   onOpenTeamAttendance: () => void;
   onOpenTeamApprovals: () => void;
@@ -6383,9 +6394,19 @@ function MobileHomeView({
     }
   };
 
-  const handleTimeIn = () => {
+  // Field staff enter today's company code from HR before Time In is stamped (migration 0344).
+  const [codePromptOpen, setCodePromptOpen] = useState(false);
+  const handleTimeIn = async () => {
     if (!canTimeIn) return;
-    void persistPunch("checkIn");
+    let needCode: boolean;
+    try {
+      needCode = await isClockInCodeRequired();
+    } catch {
+      alert("Time In needs a connection to check today's clock-in code. Try again when you have signal.");
+      return;
+    }
+    if (needCode) setCodePromptOpen(true);
+    else void persistPunch("checkIn");
   };
 
   const handleTimeOut = () => {
@@ -6424,7 +6445,7 @@ function MobileHomeView({
     {
       key: "clockinteam", label: "Clock In Team",
       description: "Your team's technicians, today",
-      onClick: onOpenClockInTeam, show: showClockInTeam,
+      onClick: onOpenClockInTeam, show: showClockInTeam || !!clockInAllBranches,
     },
     {
       key: "teamattendance", label: "Team Attendance",
@@ -6499,6 +6520,18 @@ function MobileHomeView({
         </div>
       ) : (
       <div className="mtech-timecard-summary mtech-home-clockrow">
+        {codePromptOpen && scheduleProfileId && (
+          <ClockInCodePrompt
+            profileId={scheduleProfileId}
+            onVerified={async () => {
+              // Stamp, then reload today's entry so the Time In card shows the exact saved time.
+              await persistPunch("checkIn");
+              setCodePromptOpen(false);
+              setReloadNonce((n) => n + 1);
+            }}
+            onCancel={() => setCodePromptOpen(false)}
+          />
+        )}
         <ClockCard
           label="Time In" value={entry.checkIn ? entry.checkIn.slice(0, 5) : ""} valueClass="in"
           canAct={canTimeIn}
@@ -7030,9 +7063,16 @@ interface ClockInTechRow {
   branch: string | null;
   checkIn: string;
   clockedInByName: string | null;
+  /** Trainees punch into the trainee timecard (Trainee Attendance), not the regular one. */
+  trainee: boolean;
+  /** The trainee's current manager (from their Manager field) — stamped on the trainee punch. */
+  managerId: string | null;
+  /** Trainee / not-started flag (HR training start date). */
+  traineeFlag: TraineeFlag | null;
 }
 
 function MobileClockInTeamView({ profileId, readOnly }: { profileId: string | null; readOnly?: boolean }) {
+  const [allBranches, setAllBranches] = useState(false);
   const [rows, setRows] = useState<ClockInTechRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [clockingIn, setClockingIn] = useState<Set<string>>(new Set());
@@ -7048,10 +7088,11 @@ function MobileClockInTeamView({ profileId, readOnly }: { profileId: string | nu
     }
     setLoading(true);
     try {
-      const [allProfiles, csrComposition, todayEntries] = await Promise.all([
+      const [allProfiles, csrComposition, todayEntries, todayTraineeEntries] = await Promise.all([
         getCompanyUsers(),
         getCsrTeamComposition().catch(() => null),
         getCompanyTimecardEntries(todayKey, todayKey),
+        getCompanyTraineeEntries(todayKey, todayKey).catch(() => []),
       ]);
       const myProfile = allProfiles.find((p) => p.id === profileId) ?? null;
       if (!myProfile) {
@@ -7060,20 +7101,31 @@ function MobileClockInTeamView({ profileId, readOnly }: { profileId: string | nu
       }
       const nameById = new Map(allProfiles.map((p) => [p.id, p.display_name || p.email]));
       const entryByProfile = new Map<string, CompanyTimecardEntry>(todayEntries.map((e) => [e.profileId, e]));
-      const scoped = visibleAttendanceProfileIds(myProfile, allProfiles, csrComposition);
+      const traineeEntryByProfile = new Map(todayTraineeEntries.map((e) => [e.profileId, e]));
+      const trainingCandidates = await getTrainingDates(myProfile.company_id).catch(() => []);
+      const idByName = new Map(allProfiles.filter((p) => p.display_name).map((p) => [p.display_name!.trim().toLowerCase(), p.id]));
+      // The Approval Chain's top level sees every branch's technicians.
+      const everyBranch = isChainTopApprover(myProfile.id);
+      setAllBranches(everyBranch);
+      const scoped = everyBranch ? null : visibleAttendanceProfileIds(myProfile, allProfiles, csrComposition);
       const myTechnicians = allProfiles.filter(
         (p) => p.is_active && (scoped === null || scoped.has(p.id)) && TECHNICIAN_PAY_ROLES.has(normalizeRole(p.role)) && chainCanClockIn(myProfile.id, p.id) !== false
       );
       setRows(
         myTechnicians
           .map((p) => {
-            const entry = entryByProfile.get(p.id);
+            const trainee = p.employment_type === "trainee";
+            const entry = trainee ? undefined : entryByProfile.get(p.id);
+            const traineeEntry = trainee ? traineeEntryByProfile.get(p.id) : undefined;
             return {
               id: p.id,
               name: p.display_name || p.email,
               branch: p.assigned_branch,
-              checkIn: entry?.checkIn || "",
+              checkIn: (trainee ? traineeEntry?.checkIn : entry?.checkIn) || "",
               clockedInByName: entry?.clockedInBy ? nameById.get(entry.clockedInBy) || null : null,
+              trainee,
+              managerId: trainee ? idByName.get((p.manager_name || "").trim().toLowerCase()) ?? traineeEntry?.managerId ?? null : null,
+              traineeFlag: traineeFlagFor(p, trainingCandidates, todayKey),
             };
           })
           .sort((a, b) => a.name.localeCompare(b.name))
@@ -7102,12 +7154,17 @@ function MobileClockInTeamView({ profileId, readOnly }: { profileId: string | nu
       const serverNow = await getServerNow();
       const { hhmm } = nowInTimezone(branchTz, serverNow);
       const seconds = String(serverNow.getSeconds()).padStart(2, "0");
-      await saveTimecardEntry(
-        tech.id,
-        todayKey,
-        { checkIn: `${hhmm}:${seconds}`, checkOut: "", mealStart: "", mealEnd: "", notes: "" },
-        { clockedInBy: profileId }
-      );
+      if (tech.trainee) {
+        // Trainee day goes to Trainee Attendance for their manager to review, same as their own punch.
+        await saveTraineePunch(tech.id, todayKey, "checkIn", `${hhmm}:${seconds}`, tech.managerId);
+      } else {
+        await saveTimecardEntry(
+          tech.id,
+          todayKey,
+          { checkIn: `${hhmm}:${seconds}`, checkOut: "", mealStart: "", mealEnd: "", notes: "" },
+          { clockedInBy: profileId }
+        );
+      }
       await load();
     } catch (e) {
       alert(`Failed to clock in: ${e instanceof Error ? e.message : "Unknown error"}`);
@@ -7124,17 +7181,31 @@ function MobileClockInTeamView({ profileId, readOnly }: { profileId: string | nu
     <div className="mtech-scroll mtech-clockin">
       <div className="mtech-clockin-heading">
         <div className="mtech-clockin-title">Clock In Team</div>
-        <div className="mtech-clockin-sub">Your direct-report technicians, today</div>
+        <div className="mtech-clockin-sub">{allBranches ? "Technicians at every branch, today" : "Your direct-report technicians, today"}</div>
       </div>
 
       {loading && <div className="mtech-muted">Loading your team…</div>}
-      {!loading && rows.length === 0 && <div className="mtech-muted">No technicians report to you.</div>}
+      {!loading && rows.length === 0 && <div className="mtech-muted">No technicians at your branch or reporting to you.</div>}
 
       <div className="mtech-clockin-list">
         {rows.map((tech) => (
           <div key={tech.id} className="mtech-clockin-row">
             <div className="mtech-clockin-row-info">
-              <div className="mtech-clockin-row-name">{tech.name}</div>
+              <div className="mtech-clockin-row-name">
+                {tech.name}
+                {tech.traineeFlag && (
+                  <span
+                    style={{
+                      marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 4,
+                      ...(tech.traineeFlag.notStarted
+                        ? { background: "rgba(148,163,184,0.18)", color: "#cbd5e1", border: "1px solid rgba(148,163,184,0.4)" }
+                        : { background: "rgba(245,158,11,0.18)", color: "#fbbf24", border: "1px solid rgba(245,158,11,0.4)" }),
+                    }}
+                  >
+                    {traineeFlagLabel(tech.traineeFlag).toUpperCase()}
+                  </span>
+                )}
+              </div>
               <div className="mtech-clockin-row-status">
                 {tech.checkIn
                   ? `Clocked in ${tech.checkIn.slice(0, 5)}${tech.clockedInByName ? ` (by ${tech.clockedInByName})` : ""}`
@@ -7176,6 +7247,10 @@ interface TeamAttendanceRow {
   checkOut: string;
   mealStart: string;
   mealEnd: string;
+  /** Trainee / not-started flag (HR training start date). */
+  traineeFlag: TraineeFlag | null;
+  /** Trainee day still waiting on the manager's review. */
+  traineePending: boolean;
 }
 
 function MobileTeamAttendanceView({ profileId }: { profileId: string | null }) {
@@ -7193,10 +7268,12 @@ function MobileTeamAttendanceView({ profileId }: { profileId: string | null }) {
     }
     setLoading(true);
     try {
-      const [allProfiles, csrComposition, todayEntries] = await Promise.all([
+      const [allProfiles, csrComposition, todayEntries, todayTraineeEntries] = await Promise.all([
         getCompanyUsers(),
         getCsrTeamComposition().catch(() => null),
         getCompanyTimecardEntries(todayKey, todayKey),
+        // Trainees punch into the trainee timecard — read it too, or they look "not clocked in".
+        getCompanyTraineeEntries(todayKey, todayKey).catch(() => []),
       ]);
       const myProfile = allProfiles.find((p) => p.id === profileId) ?? null;
       if (!myProfile) {
@@ -7204,12 +7281,16 @@ function MobileTeamAttendanceView({ profileId }: { profileId: string | null }) {
         return;
       }
       const entryByProfile = new Map<string, CompanyTimecardEntry>(todayEntries.map((e) => [e.profileId, e]));
+      const traineeEntryByProfile = new Map(todayTraineeEntries.map((e) => [e.profileId, e]));
+      const trainingCandidates = await getTrainingDates(myProfile.company_id).catch(() => []);
       const scoped = visibleAttendanceProfileIds(myProfile, allProfiles, csrComposition);
       const myTeam = allProfiles.filter((p) => p.id !== profileId && p.is_active && (scoped === null || scoped.has(p.id)));
       setRows(
         myTeam
           .map((p) => {
-            const entry = entryByProfile.get(p.id);
+            const traineeEntry = p.employment_type === "trainee" ? traineeEntryByProfile.get(p.id) : undefined;
+            // An approved trainee day is also copied to the regular timecard; otherwise the trainee row is the real one.
+            const entry = entryByProfile.get(p.id) ?? traineeEntry;
             return {
               id: p.id,
               name: p.display_name || p.email,
@@ -7218,6 +7299,8 @@ function MobileTeamAttendanceView({ profileId }: { profileId: string | null }) {
               checkOut: entry?.checkOut || "",
               mealStart: entry?.mealStart || "",
               mealEnd: entry?.mealEnd || "",
+              traineeFlag: traineeFlagFor(p, trainingCandidates, todayKey),
+              traineePending: traineeEntry?.status === "pending",
             };
           })
           .sort((a, b) => a.name.localeCompare(b.name))
@@ -7251,7 +7334,21 @@ function MobileTeamAttendanceView({ profileId }: { profileId: string | null }) {
           return (
             <div key={r.id} className="mtech-clockin-row">
               <div className="mtech-clockin-row-info">
-                <div className="mtech-clockin-row-name">{r.name}</div>
+                <div className="mtech-clockin-row-name">
+                  {r.name}
+                  {r.traineeFlag && (
+                    <span
+                      style={{
+                        marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 4,
+                        ...(r.traineeFlag.notStarted
+                          ? { background: "rgba(148,163,184,0.18)", color: "#cbd5e1", border: "1px solid rgba(148,163,184,0.4)" }
+                          : { background: "rgba(245,158,11,0.18)", color: "#fbbf24", border: "1px solid rgba(245,158,11,0.4)" }),
+                      }}
+                    >
+                      {traineeFlagLabel(r.traineeFlag).toUpperCase()}
+                    </span>
+                  )}
+                </div>
                 <div className="mtech-clockin-row-status">
                   {r.checkIn ? `In ${r.checkIn.slice(0, 5)}` : "—"}
                   {" · "}
@@ -7265,6 +7362,7 @@ function MobileTeamAttendanceView({ profileId }: { profileId: string | null }) {
                   )}
                 </div>
                 {flag && <div className="mtech-clockin-row-flag">{flag}</div>}
+                {r.traineePending && r.checkIn && <div className="mtech-clockin-row-status">Trainee day — waiting for manager review</div>}
               </div>
             </div>
           );
@@ -7805,18 +7903,28 @@ function MobileTeamApprovalsView({
 // so it can't answer "are this specific manager's underlings showing up
 // right"). Deliberately read-only throughout (see readOnly props below) —
 // this is a verification tool, not a way to act as someone else.
+// Roles you can "View as" — branch managers and the branch Parts staff. Matches primary or extra roles.
+const VIEW_AS_ROLES = ["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER", "PARTS", "PARTS_MANAGER", "PARTS_TEAM_LEADER"] as const;
+
 function MobileViewAsTeamView({ users }: { users: ProfileRow[] }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [subTab, setSubTab] = useState<"clockin" | "attendance" | "approvals">("attendance");
+  const [roleFilter, setRoleFilter] = useState<string>("");
 
+  const heldViewAsRoles = (u: ProfileRow) => {
+    const held = [u.role, ...(u.extra_roles ?? [])].map((r) => String(r || "").toUpperCase());
+    return VIEW_AS_ROLES.filter((r) => held.includes(r));
+  };
   const managers = useMemo(
     () =>
       users
-        .filter((u) => u.is_active && (u.role === "BRANCH_MANAGER" || u.role === "SENIOR_BRANCH_MANAGER"))
-        .map((u) => ({ id: u.id, name: u.display_name || u.email || "Unnamed", branch: u.assigned_branch, role: u.role }))
+        .filter((u) => u.is_active && heldViewAsRoles(u).length > 0)
+        .map((u) => ({ id: u.id, name: u.display_name || u.email || "Unnamed", branch: u.assigned_branch, role: u.role, roles: heldViewAsRoles(u) }))
         .sort((a, b) => (a.branch || "").localeCompare(b.branch || "") || a.name.localeCompare(b.name)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [users]
   );
+  const shown = roleFilter ? managers.filter((m) => m.roles.includes(roleFilter as (typeof VIEW_AS_ROLES)[number])) : managers;
 
   const selected = users.find((u) => u.id === selectedId) ?? null;
 
@@ -7825,11 +7933,18 @@ function MobileViewAsTeamView({ users }: { users: ProfileRow[] }) {
       <div className="mtech-scroll mtech-clockin">
         <div className="mtech-clockin-heading">
           <div className="mtech-clockin-title">View as Manager</div>
-          <div className="mtech-clockin-sub">Pick a Branch/Senior Branch Manager to preview their team screens, read-only</div>
+          <div className="mtech-clockin-sub">Pick a Branch Manager or Parts person to preview their team screens, read-only</div>
+        </div>
+        <div className="mtech-approvals-tabs" style={{ flexWrap: "wrap" }}>
+          {["", ...VIEW_AS_ROLES].map((r) => (
+            <button key={r || "all"} type="button" className={`mtech-approvals-tab ${roleFilter === r ? "active" : ""}`} onClick={() => setRoleFilter(r)}>
+              {r ? ROLE_LABELS[r] ?? r : "All"} ({r ? managers.filter((m) => m.roles.includes(r as (typeof VIEW_AS_ROLES)[number])).length : managers.length})
+            </button>
+          ))}
         </div>
         <div className="mtech-clockin-list">
-          {managers.length === 0 && <div className="mtech-muted">No active Branch/Senior Branch Managers found.</div>}
-          {managers.map((m) => (
+          {shown.length === 0 && <div className="mtech-muted">No active people with this role.</div>}
+          {shown.map((m) => (
             <button
               key={m.id}
               type="button"
@@ -7838,7 +7953,7 @@ function MobileViewAsTeamView({ users }: { users: ProfileRow[] }) {
             >
               <div className="mtech-clockin-row-info">
                 <div className="mtech-clockin-row-name">{m.name}</div>
-                <div className="mtech-clockin-row-status">{ROLE_LABELS[m.role] ?? m.role} · {m.branch || "No branch"}</div>
+                <div className="mtech-clockin-row-status">{m.roles.map((r) => ROLE_LABELS[r] ?? r).join(" + ")} · {m.branch || "No branch"}</div>
               </div>
             </button>
           ))}

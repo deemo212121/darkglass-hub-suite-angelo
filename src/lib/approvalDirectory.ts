@@ -205,6 +205,8 @@ export function chainCanClockInWith(data: ChainData, viewerId: string | null | u
   const roles = heldRoles(v);
   const has = (...xs: string[]) => xs.some((x) => roles.includes(x));
   if (has("SUPERADMIN", "SUPERSUPERADMIN", "ADMIN", "HR", "FINANCE", "TECHNICAL_DIRECTOR", "TECHNICAL_ASSISTANT_DIRECTOR")) return true;
+  // The Approval Chain's top level clocks in at every branch (migration 0340).
+  if (isTopApprover(data, v)) return true;
   const sameBranch = !!normBranch(v.assigned_branch) && normBranch(v.assigned_branch) === normBranch(t.assigned_branch);
   if (level === "tech") return (has("PARTS", "PARTS_TEAM_LEADER", "PARTS_MANAGER", "BRANCH_MANAGER") && sameBranch) || ownsBranch(data, v.id, t.assigned_branch);
   if (level === "branch") return ownsBranch(data, v.id, t.assigned_branch);
@@ -218,6 +220,12 @@ export function chainCanApprove(viewerId: string | null | undefined, requesterId
 
 export function chainCanClockIn(viewerId: string | null | undefined, targetId: string | null | undefined): boolean | null {
   return chainCanClockInWith(registry, viewerId, targetId);
+}
+
+/** Is this person on the Approval Chain's top level (registered company data)? They can clock in technicians at every branch. */
+export function isChainTopApprover(profileId: string | null | undefined): boolean {
+  const p = profileId ? registry.byId.get(profileId) : undefined;
+  return !!p && p.is_active !== false && isTopApprover(registry, p);
 }
 
 /** Everyone who can approve this requester's Manager step, grouped by tier — for previews. */

@@ -24,6 +24,8 @@ import {
 } from "@/lib/supabase/timecards";
 import { getAttendanceNotes, upsertAttendanceNote } from "@/lib/supabase/attendanceNotes";
 import { getCompanyTraineeEntries, type TraineeTimecardEntry } from "@/lib/supabase/traineeTimecards";
+import { traineeFlagFor, traineeFlagLabel, type TrainingCandidate } from "@/lib/traineeFlag";
+import { getTrainingDates } from "@/lib/supabase/trainingDates";
 import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabase/companyHolidays";
 import { getBranchRoles, type BranchRoles } from "@/lib/supabase/generalInfo";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
@@ -61,6 +63,11 @@ import {
   type CorrectionStatus,
 } from "@/lib/supabase/timecardCorrections";
 import { CorrectionManagerSignModal, CorrectionHrSignModal } from "@/components/CorrectionSignModals";
+
+/** A pending trainee punch shown as a regular timecard entry (approved days are already copied to timecard_entries). */
+function traineeAsEntry(t: TraineeTimecardEntry): CompanyTimecardEntry {
+  return { profileId: t.profileId, workDate: t.workDate, checkIn: t.checkIn, checkOut: t.checkOut, mealStart: t.mealStart, mealEnd: t.mealEnd, clockedInBy: null, notes: "", correctedBy: null };
+}
 
 interface DailyRecord {
   profileId: string;
@@ -324,6 +331,13 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [loading, setLoading] = useState(true);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
+  // HR training dates (Hiring) — for the "Trainee — not started" flag on Missing Clock In.
+  const [trainingCandidates, setTrainingCandidates] = useState<TrainingCandidate[]>([]);
+  const trainingCompanyId = profiles[0]?.company_id ?? null;
+  useEffect(() => {
+    if (!trainingCompanyId) return;
+    getTrainingDates(trainingCompanyId).then(setTrainingCandidates).catch(() => setTrainingCandidates([]));
+  }, [trainingCompanyId]);
   // employee_info.hireDate per profile — a new hire has no attendance
   // obligation before this date, but every day-iteration loop below used to
   // only account for off_days/company holidays/future dates, so a
@@ -624,8 +638,13 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     } else {
       for (const e of dailyDateEntries) map.set(e.profileId, e);
     }
+    // A trainee's punch sits in the trainee timecard until their manager approves the day —
+    // count it as their clock-in so they don't show as Missing Clock In.
+    for (const t of traineeEntries) {
+      if (t.workDate === dailyDate && t.status === "pending" && t.checkIn && !map.has(t.profileId)) map.set(t.profileId, traineeAsEntry(t));
+    }
     return map;
-  }, [dailyDate, rangeStart, rangeEnd, entries, dailyDateEntries]);
+  }, [dailyDate, rangeStart, rangeEnd, entries, dailyDateEntries, traineeEntries]);
 
   // Custom Attendance Summary — lets HR/managers pick any date range instead
   // of being limited to the current week or month-to-date. Defaults to the
@@ -947,8 +966,12 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const rangeEntryByKey = useMemo(() => {
     const map = new Map<string, CompanyTimecardEntry>();
     for (const e of rangeFilterEntries) map.set(`${e.profileId}|${e.workDate}`, e);
+    for (const t of traineeEntries) {
+      const k = `${t.profileId}|${t.workDate}`;
+      if (t.status === "pending" && t.checkIn && !map.has(k)) map.set(k, traineeAsEntry(t));
+    }
     return map;
-  }, [rangeFilterEntries]);
+  }, [rangeFilterEntries, traineeEntries]);
 
   // One record per employee per date in [filterDateFrom, filterDateTo], inclusive.
   const rangeRecords: DailyRecord[] = useMemo(() => {
@@ -3272,7 +3295,17 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     <div key={record.profileId} className="bg-slate-800/50 border border-red-500/30 rounded-lg p-4 hover:bg-slate-800/70 transition">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
-                          <p className="text-white font-semibold">{record.name}</p>
+                          <p className="text-white font-semibold flex flex-wrap items-center gap-1.5">
+                            {record.name}
+                            {(() => {
+                              const flag = traineeFlagFor(profiles.find((p) => p.id === record.profileId), trainingCandidates, record.date || dailyDate);
+                              return flag ? (
+                                <span className={`px-1.5 py-px rounded text-[10px] font-bold border ${flag.notStarted ? "bg-slate-500/20 text-slate-300 border-slate-500/40" : "bg-amber-500/15 text-amber-300 border-amber-500/40"}`}>
+                                  {traineeFlagLabel(flag)}
+                                </span>
+                              ) : null;
+                            })()}
+                          </p>
                           <p className="text-xs text-slate-400 mt-1">{record.department || "—"} • {record.location || "—"}</p>
                           <p className="text-xs text-slate-500 mt-2">Manager: {record.manager || "—"}</p>
                         </div>

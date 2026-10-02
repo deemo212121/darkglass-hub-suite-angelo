@@ -1,3 +1,4 @@
+import { ClockInCodeModal } from "@/components/ClockInCodeModal";
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
@@ -48,6 +49,8 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const canSeeNotes = heldRoles.includes("PARTS_ORDER") || heldRoles.includes("SUPERADMIN");
   const [location,setLocation]=useState("");const [locOpen,setLocOpen]=useState(false);
   const [tech,setTech]=useState("");const [techOpen,setTechOpen]=useState(false);
+  // Picking a technician offers "Clock in with HR's code" when they aren't clocked in yet (ClockInCodeModal decides).
+  const [codeTech,setCodeTech]=useState<string|null>(null);
   const [pickupDate,setPickupDate]=useState(TODAY);
   const [rows,setRows]=useState<PartPickupRow[]>([]);
   const [technicianRoster,setTechnicianRoster]=useState<string[]>([]);
@@ -239,7 +242,7 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
         <div className="flex flex-col gap-1 min-w-[160px]">
           <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Technician</label>
           <button ref={techD.ref} onClick={()=>setTechOpen(o=>!o)} className="glass-input w-full text-sm py-1.5 px-3 rounded-md flex items-center justify-between gap-2"><span className={tech?"":"text-muted-foreground"}>{tech||"All"}</span><Chev o={techOpen}/></button>
-          {techOpen&&techD.pos&&createPortal(<div ref={techL} style={{...DS,top:techD.pos.top,left:techD.pos.left,width:techD.pos.width}}><button onClick={()=>{setTech("");setTechOpen(false);}} className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${tech===""?"bg-blue-600 text-white":"text-slate-400"}`}>— All —</button>{technicianRoster.map((t,i)=><button key={i} onClick={()=>{setTech(t);setTechOpen(false);}} className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${tech===t?"bg-blue-600 text-white":""}`}>{t}</button>)}</div>,document.body)}
+          {techOpen&&techD.pos&&createPortal(<div ref={techL} style={{...DS,top:techD.pos.top,left:techD.pos.left,width:techD.pos.width}}><button onClick={()=>{setTech("");setTechOpen(false);}} className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${tech===""?"bg-blue-600 text-white":"text-slate-400"}`}>— All —</button>{technicianRoster.map((t,i)=><button key={i} onClick={()=>{setTech(t);setTechOpen(false);setCodeTech(t);}} className={`w-full text-left px-3 py-2 text-sm hover:bg-white/5 ${tech===t?"bg-blue-600 text-white":""}`}>{t}</button>)}</div>,document.body)}
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Pickup Date*</label>
@@ -318,6 +321,7 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
       {saved&&<span className="text-green-400 text-sm flex items-center gap-1"><Check className="h-4 w-4"/>Saved successfully</span>}
       <button onClick={handleSave} disabled={saving||loading||rows.length===0} className="btn bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2 px-8 disabled:opacity-50"><Save className="h-3.5 w-3.5"/>{saving?"Saving…":"Save All Changes"}</button>
     </div>
+    {codeTech&&<ClockInCodeModal techName={codeTech} onClose={()=>setCodeTech(null)}/>}
   </main>
 
   {activityLogOpen && (

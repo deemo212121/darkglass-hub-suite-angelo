@@ -32,6 +32,8 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Clock3 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { ClockInCodePrompt } from "@/components/ClockInCodePrompt";
+import { isClockInCodeRequired } from "@/lib/supabase/clockInCodes";
 import { getMyProfileSchedule, getEntryForDate, saveEntry, clearPunch as sbClearPunch, canEditPunch, resolveScheduledShiftHours, type UITimeEntry, type PunchField } from "@/lib/supabase/timecards";
 import { getTraineeEntryForDate, saveTraineePunch, clearTraineePunch, getPendingTraineeReviewCount, SELF_CHECKED_OUT_EVENT, type TraineeTimecardStatus } from "@/lib/supabase/traineeTimecards";
 import { getCompanyUsers } from "@/lib/supabase/users";
@@ -339,13 +341,23 @@ export function TimeClockButtons() {
   // either, since HR/managers reviewing the day want it to read as pure PTO).
   const ptoBlockMessage = "You have an approved PTO for today, so time punches are disabled.";
 
-  const handleTimeIn = () => {
+  // Field staff enter today's company code from HR before Time In is stamped (migration 0344).
+  const [codePromptOpen, setCodePromptOpen] = useState(false);
+  const handleTimeIn = async () => {
     if (entry.checkIn) return;
     if (onApprovedPtoToday) {
       alert(ptoBlockMessage);
       return;
     }
-    withLock(() => void persistPunch("checkIn"));
+    let needCode: boolean;
+    try {
+      needCode = await isClockInCodeRequired();
+    } catch {
+      alert("Time In needs a connection to check today's clock-in code. Try again.");
+      return;
+    }
+    if (needCode) setCodePromptOpen(true);
+    else withLock(() => void persistPunch("checkIn"));
   };
 
   const handleTimeOut = () => {
@@ -453,6 +465,18 @@ export function TimeClockButtons() {
 
   return (
     <div className="flex h-9 items-center gap-1 rounded-full border border-[var(--color-panel-border)] bg-[var(--color-panel)] px-1">
+      {codePromptOpen && profileId && (
+        <ClockInCodePrompt
+          profileId={profileId}
+          onVerified={async () => {
+            // Stamp, then re-read today's entry so the pill shows the exact saved time.
+            await persistPunch("checkIn");
+            setCodePromptOpen(false);
+            if (profileId) await loadToday(profileId);
+          }}
+          onCancel={() => setCodePromptOpen(false)}
+        />
+      )}
       {entry.checkIn ? (
         renderPunchedPill("checkIn", entry.checkIn, "text-green-300", `Timed in at ${fmtTime(entry.checkIn)}`)
       ) : (
