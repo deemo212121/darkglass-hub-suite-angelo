@@ -78,7 +78,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { BrandedLoader } from "@/components/BrandedLoader";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
-import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsersLite, type ProfileRow } from "@/lib/supabase/users";
 import { getTechCompletedRepairCounts, getTechCompletedTicketsDaily, getTechRedoTickets, getTechCancelledTicketCounts, type TechCompletedTicketDaily } from "@/lib/supabase/techPayroll";
 import { getMileageEntries, mileageEffectiveTotal } from "@/lib/supabase/mileage";
 import { getCompanyTicketReschedules } from "@/lib/supabase/ticketReschedules";
@@ -625,7 +625,9 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     }, 25_000);
     try {
       const [allUsers, composition, repairCounts, redoMap, mileageEntries, timecardEntries, dailyCompleted, overrides, reschedules, cancelledCounts, damageDocs, timecardCorrections] = await Promise.race([Promise.all([
-        track("users", getCompanyUsers()),
+        // Own lean roster, not the app-wide getCompanyUsers (which can stall
+        // behind other pages and once held this report up indefinitely).
+        track("users", getCompanyUsersLite()),
         track("CSR teams", getCsrTeamComposition().catch(() => null)),
         track("repair counts", needLive ? getTechCompletedRepairCounts(periodStart, periodEnd) : Promise.resolve([])),
         // Redo tickets carry no date, so the blanked range (BLANK_LIVE_TIME_FROM
