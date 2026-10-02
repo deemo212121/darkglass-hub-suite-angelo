@@ -24,6 +24,7 @@ import { handleAdminPasswordRequest } from "./lib/server/adminPasswordBridge";
 import { handleLoginLockoutRequest } from "./lib/server/loginLockoutBridge";
 import { handlePasswordResetRequest } from "./lib/server/passwordResetRequestBridge";
 import { handleItBypassLoginRequest } from "./lib/server/itBypassLoginBridge";
+import { isPageVisit, logSiteVisit } from "./lib/server/siteVisitLog";
 
 const CANONICAL_ORIGIN = "https://adminhubsolution.com";
 
@@ -223,6 +224,14 @@ export default {
     if (url.pathname === "/api/it-bypass-login") {
       const merged = await resolveServerEnv(env);
       return await handleItBypassLoginRequest(request, merged);
+    }
+
+    // Record who opened the page (IP + Cloudflare location), signed in or
+    // not — in the background so the page itself never waits on it. Live
+    // site only: local dev has no real visitor IP.
+    const waitUntil = (ctx as { waitUntil?: (p: Promise<unknown>) => void } | null)?.waitUntil;
+    if (waitUntil && !url.hostname.endsWith(".workers.dev") && url.hostname !== "localhost" && url.hostname !== "127.0.0.1" && isPageVisit(request, url)) {
+      waitUntil.call(ctx, resolveServerEnv(env).then((merged) => logSiteVisit(request, url, merged)));
     }
 
     try {

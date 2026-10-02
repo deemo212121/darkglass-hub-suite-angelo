@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, RefreshCw, ArrowUp, ArrowDown, ArrowUpDown, Lock, Send, ShieldCheck, ShieldAlert, History } from "lucide-react";
+import { ChevronLeft, RefreshCw, ArrowUp, ArrowDown, ArrowUpDown, Lock, Send, ShieldCheck, ShieldAlert, History, Globe } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getCompanyUsers, updateCompanyUser, type ProfileRow } from "@/lib/supabase/users";
 import { getCompanyLoginEvents, type LoginEvent } from "@/lib/supabase/loginEvents";
@@ -13,6 +13,7 @@ import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { haversineMiles } from "@/lib/mapEngine";
 import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
+import { SiteVisitorsTab } from "@/components/SiteVisitorsTab";
 
 interface Props {
   mod: ModuleDef;
@@ -99,7 +100,7 @@ function computeUserStats(profile: ProfileRow, events: LoginEvent[]): UserLoginS
   return { profile, lastEvent, mostUsedIp, unusualLocation, usualLocationLabel };
 }
 
-const TAB_VALUES = ["security", "lockouts", "lockoutHistory"] as const;
+const TAB_VALUES = ["security", "lockouts", "lockoutHistory", "siteVisitors"] as const;
 
 export function LoginSecurityPage({ mod, sub }: Props) {
   const navigate = useNavigate();
@@ -324,6 +325,7 @@ export function LoginSecurityPage({ mod, sub }: Props) {
             { id: "security", label: "Login Security", icon: ShieldCheck },
             { id: "lockouts", label: "Login Lockouts", icon: ShieldAlert },
             { id: "lockoutHistory", label: "Lockout History", icon: History },
+            { id: "siteVisitors", label: "Site Visitors", icon: Globe },
           ] as const
         ).map((tab) => {
           const Icon = tab.icon;
@@ -721,6 +723,8 @@ export function LoginSecurityPage({ mod, sub }: Props) {
           </div>
         </>
       )}
+
+      {activeTab === "siteVisitors" && <SiteVisitorsTab loginEvents={events} profiles={profiles} />}
     </main>
   );
 }
