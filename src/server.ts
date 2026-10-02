@@ -287,6 +287,18 @@ export default {
       ),
     );
 
+    // Yesterday's missed technician clock-ins -> "meeting required" + notify
+    // their managers (migration 0348). Idempotent, so every hourly tick can
+    // run it; only the first one after midnight Central actually adds rows.
+    ctx.waitUntil(
+      import("./lib/server/missedClockInMeetings").then(
+        ({ runMissedClockInMeetings }) => runMissedClockInMeetings(merged),
+      ).then(
+        (result) => { if (result.newMeetings || result.errors.length) console.log("missedClockInMeetings:", JSON.stringify(result)); },
+        (error) => console.error("missedClockInMeetings failed:", error),
+      ),
+    );
+
     // No separate cron entry for this either — the hourly tick above lands on an
     // exact America/Chicago hour boundary too (see passwordResetSchedule.ts's
     // header comment), so this just checks "is it Monday 00:00 Chicago time

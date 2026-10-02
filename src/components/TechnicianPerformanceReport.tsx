@@ -85,6 +85,7 @@ import { getCompanyTicketReschedules } from "@/lib/supabase/ticketReschedules";
 import { getSignableDocumentRecipients } from "@/lib/supabase/signableDocuments";
 import { getCompanyTimecardEntries, calcWorkedHours, computeMealTimeCredit, startOfWeekSunday, addDaysISO } from "@/lib/supabase/timecards";
 import { getCorrectionsInRange } from "@/lib/supabase/timecardCorrections";
+import { getClockInMeetingsInRange } from "@/lib/supabase/clockInMeetings";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { TECHNICIAN_PAY_ROLES, normalizeRole, isMealAlwaysPaidRole, isFinanceRole, isCompanySuperAdminRole } from "@/lib/roleLabels";
@@ -254,8 +255,8 @@ const shortAvgMiles = (r: { miles: number; daysWorked: number }): number =>
   r.daysWorked > 0 ? r.miles / r.daysWorked : 0;
 // Error Count = timecard issues (correction requests) + damages (damage
 // documents issued). Shown, not scored.
-const shortErrorCount = (r: { timecardIssueCount: number; damageAssessmentCount: number }): number =>
-  r.timecardIssueCount + r.damageAssessmentCount;
+const shortErrorCount = (r: { timecardIssueCount: number; damageAssessmentCount: number; missedClockInCount: number }): number =>
+  r.timecardIssueCount + r.damageAssessmentCount + r.missedClockInCount;
 // Redo % with no tickets reads (and grades) as 0%, same as any other 0.
 const fmtRedoPct = (p: number | null) => `${fmt1(p ?? 0)}%`;
 
@@ -443,6 +444,8 @@ interface TechPerfRow {
   damageAssessmentCount: number;
   /** Timecard correction requests filed for work days in the period. */
   timecardIssueCount: number;
+  /** Scheduled work days with no Time In (migration 0348 — "meeting required"). */
+  missedClockInCount: number;
   /** No live source at all (see this file's header comment) — purely
    *  whatever's been manually entered via a technician_daily_performance_
    *  overrides correction, 0 otherwise. */
@@ -626,7 +629,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       setError(`Still loading — this is taking longer than usual (waiting on: ${names.join(", ") || "calculations"}). It will finish on its own; if it never does, send this message to IT.`);
     }, 25_000);
     try {
-      const [allUsers, composition, repairCounts, redoMap, mileageEntries, timecardEntries, dailyCompleted, overrides, reschedules, cancelledCounts, damageDocs, timecardCorrections] = await Promise.race([Promise.all([
+      const [allUsers, composition, repairCounts, redoMap, mileageEntries, timecardEntries, dailyCompleted, overrides, reschedules, cancelledCounts, damageDocs, timecardCorrections, missedClockIns] = await Promise.race([Promise.all([
         // Own lean roster, not the app-wide getCompanyUsers (which can stall
         // behind other pages and once held this report up indefinitely).
         track("users", getCompanyUsersLite()),
@@ -646,6 +649,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         track("cancelled tickets", needLive ? getTechCancelledTicketCounts(periodStart, periodEnd) : Promise.resolve([])),
         track("damage documents", getSignableDocumentRecipients("damage").catch(() => [])),
         track("timecard issues", getCorrectionsInRange(periodStart, periodEnd).catch(() => [])),
+        track("missed clock-ins", getClockInMeetingsInRange(periodStart, periodEnd).catch(() => [])),
       ])]);
       clearTimeout(watchdog);
       console.info(`[tech-perf] data loaded in ${((Date.now() - started) / 1000).toFixed(1)}s`);
@@ -975,6 +979,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           cancelledCount: cancelledByName.get(nameKey) ?? 0,
           damageAssessmentCount,
           timecardIssueCount: timecardIssuesByProfileId.get(t.id) ?? 0,
+          missedClockInCount: missedClockIns.filter((m) => m.profileId === t.id).length,
           ncnsCount,
           highRedoAlert: redoRatePct != null && redoRatePct > 5,
           routeMileageAlert: milesPerTicket != null && milesPerTicket > 30,
@@ -1374,7 +1379,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         { label: "Working Days", icon: CalendarDays, value: show(workingDays), grade: workingDays == null ? null : GRADERS.workingDays(workingDays), hint: "Median working days" },
         { label: "Average Hours", icon: Clock, value: show(avgHours), grade: avgHours == null ? null : GRADERS.avgHours(avgHours), hint: "Median Hours of Work ÷ Working Days" },
         { label: "Average Mileage", icon: Route, value: show(avgMiles), grade: avgMiles == null ? null : GRADERS.avgMiles(avgMiles), hint: "Median Mileage ÷ Working Days" },
-        { label: "Total Errors", icon: AlertTriangle, value: show(errors), grade: null as Grade | null, hint: "Total timecard issues + damages across every technician in view" },
+        { label: "Total Errors", icon: AlertTriangle, value: show(errors), grade: null as Grade | null, hint: "Total timecard issues + damages + missed clock-ins across every technician in view" },
       ],
     };
   }, [filteredRows]);
@@ -2397,7 +2402,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("daysWorked")}>Working Days{sortIndicator("daysWorked")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("shortAvgHours")} title="Hours of Work ÷ Working Days">Average Hours{sortIndicator("shortAvgHours")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("shortAvgMiles")} title="Mileage ÷ Working Days">Average Mileage{sortIndicator("shortAvgMiles")}</th>
-                        <th className={`${thClass} text-right border-r border-white/10`} onClick={() => toggleSort("shortErrorCount")} title="Timecard issues (correction requests) + damages (damage documents)">Error Count{sortIndicator("shortErrorCount")}</th>
+                        <th className={`${thClass} text-right border-r border-white/10`} onClick={() => toggleSort("shortErrorCount")} title="Timecard issues (correction requests) + damages (damage documents) + missed clock-ins">Error Count{sortIndicator("shortErrorCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("minorTicketCount")}>Minor Comp{sortIndicator("minorTicketCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("majorTicketCount")}>Major Comp{sortIndicator("majorTicketCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("redoCount")}>Redo Count{sortIndicator("redoCount")}</th>
@@ -2557,7 +2562,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                                 {gradedTd(GRADERS.avgMiles(shortAvgMiles(r)), fmt1(shortAvgMiles(r)))}
                                 <td
                                   className={`px-3 py-2 text-right tabular-nums font-semibold border-r border-white/10 ${shortErrorCount(r) > 0 ? "text-red-300" : "text-muted-foreground"}`}
-                                  title={`Timecard issues: ${r.timecardIssueCount} · Damages: ${r.damageAssessmentCount}`}
+                                  title={`Timecard issues: ${r.timecardIssueCount} · Damages: ${r.damageAssessmentCount} · Missed clock-ins: ${r.missedClockInCount}`}
                                 >
                                   {shortErrorCount(r)}
                                 </td>
