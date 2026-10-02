@@ -10,19 +10,22 @@ export interface ClockInMeeting {
   id: string;
   profileId: string;
   missedDate: string;
+  /** missed_clock_in = no Time In; missed_time_out = auto clock-out not corrected before the next Time In (0349). */
+  kind: "missed_clock_in" | "missed_time_out";
   status: "required" | "done";
   doneByName: string | null;
   doneAt: string | null;
   note: string | null;
 }
 
-const COLUMNS = "id, profile_id, missed_date, status, done_by_name, done_at, note";
+const COLUMNS = "id, profile_id, missed_date, kind, status, done_by_name, done_at, note";
 
 function mapRow(r: any): ClockInMeeting {
   return {
     id: r.id,
     profileId: r.profile_id,
     missedDate: r.missed_date,
+    kind: r.kind === "missed_time_out" ? "missed_time_out" : "missed_clock_in",
     status: r.status === "done" ? "done" : "required",
     doneByName: r.done_by_name ?? null,
     doneAt: r.done_at ?? null,

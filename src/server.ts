@@ -298,6 +298,16 @@ export default {
         (error) => console.error("missedClockInMeetings failed:", error),
       ),
     );
+    // Missed Time Out not corrected before the next Time In -> correction
+    // meeting (migration 0349). Also idempotent.
+    ctx.waitUntil(
+      import("./lib/server/missedClockInMeetings").then(
+        ({ runMissedTimeOutMeetings }) => runMissedTimeOutMeetings(merged),
+      ).then(
+        (result) => { if (result.newMeetings || result.errors.length) console.log("missedTimeOutMeetings:", JSON.stringify(result)); },
+        (error) => console.error("missedTimeOutMeetings failed:", error),
+      ),
+    );
 
     // No separate cron entry for this either — the hourly tick above lands on an
     // exact America/Chicago hour boundary too (see passwordResetSchedule.ts's

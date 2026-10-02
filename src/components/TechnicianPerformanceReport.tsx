@@ -1379,7 +1379,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         { label: "Working Days", icon: CalendarDays, value: show(workingDays), grade: workingDays == null ? null : GRADERS.workingDays(workingDays), hint: "Median working days" },
         { label: "Average Hours", icon: Clock, value: show(avgHours), grade: avgHours == null ? null : GRADERS.avgHours(avgHours), hint: "Median Hours of Work ÷ Working Days" },
         { label: "Average Mileage", icon: Route, value: show(avgMiles), grade: avgMiles == null ? null : GRADERS.avgMiles(avgMiles), hint: "Median Mileage ÷ Working Days" },
-        { label: "Total Errors", icon: AlertTriangle, value: show(errors), grade: null as Grade | null, hint: "Total timecard issues + damages + missed clock-ins across every technician in view" },
+        { label: "Total Errors", icon: AlertTriangle, value: show(errors), grade: null as Grade | null, hint: "Total timecard issues + damages + missed clock-ins / Time Outs across every technician in view" },
       ],
     };
   }, [filteredRows]);
@@ -2402,7 +2402,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("daysWorked")}>Working Days{sortIndicator("daysWorked")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("shortAvgHours")} title="Hours of Work ÷ Working Days">Average Hours{sortIndicator("shortAvgHours")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("shortAvgMiles")} title="Mileage ÷ Working Days">Average Mileage{sortIndicator("shortAvgMiles")}</th>
-                        <th className={`${thClass} text-right border-r border-white/10`} onClick={() => toggleSort("shortErrorCount")} title="Timecard issues (correction requests) + damages (damage documents) + missed clock-ins">Error Count{sortIndicator("shortErrorCount")}</th>
+                        <th className={`${thClass} text-right border-r border-white/10`} onClick={() => toggleSort("shortErrorCount")} title="Timecard issues (correction requests) + damages (damage documents) + missed clock-ins and uncorrected missed Time Outs">Error Count{sortIndicator("shortErrorCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("minorTicketCount")}>Minor Comp{sortIndicator("minorTicketCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("majorTicketCount")}>Major Comp{sortIndicator("majorTicketCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("redoCount")}>Redo Count{sortIndicator("redoCount")}</th>
@@ -2562,7 +2562,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                                 {gradedTd(GRADERS.avgMiles(shortAvgMiles(r)), fmt1(shortAvgMiles(r)))}
                                 <td
                                   className={`px-3 py-2 text-right tabular-nums font-semibold border-r border-white/10 ${shortErrorCount(r) > 0 ? "text-red-300" : "text-muted-foreground"}`}
-                                  title={`Timecard issues: ${r.timecardIssueCount} · Damages: ${r.damageAssessmentCount} · Missed clock-ins: ${r.missedClockInCount}`}
+                                  title={`Timecard issues: ${r.timecardIssueCount} · Damages: ${r.damageAssessmentCount} · Missed clock-in / Time Out: ${r.missedClockInCount}`}
                                 >
                                   {shortErrorCount(r)}
                                 </td>
