@@ -7,7 +7,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type Dispatch, type Set
 import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
 import { MyStandingCard, FixTimeOutBanner } from "@/components/mobile/MyStandingCard";
-import { MobileMeetingsView, useCanSeeClockInMeetings } from "@/components/mobile/MobileMeetingsView";
+import { MobileMeetingsView, TodaysClockInCodeCard, useCanSeeClockInMeetings } from "@/components/mobile/MobileMeetingsView";
 import { setDesktopOverride } from "@/lib/device";
 import { useLiveLocation } from "@/lib/liveLocationContext";
 import {
@@ -6536,6 +6536,7 @@ function MobileHomeView({
           <MyStandingCard profileId={scheduleProfileId} today={todayKey} />
         </>
       )}
+      {!viewingReportName && canSeeMeetings && <TodaysClockInCodeCard />}
       {!viewingReportName && canSeeMeetings && (
         <button type="button" onClick={onOpenMeetings} className="mtech-home-onsite" style={{ flexDirection: "row", alignItems: "center", textAlign: "left" }}>
           <span style={{ flex: 1 }}>
