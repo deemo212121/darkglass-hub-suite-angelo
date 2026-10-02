@@ -97,6 +97,7 @@ import { HrOnboardingChecklistPage } from "@/components/HrOnboardingChecklistPag
 import { TechnicianFormChecklistPage } from "@/components/TechnicianFormChecklistPage";
 import { HiringAnalyticsPage } from "@/components/HiringAnalyticsPage";
 import { CandidateReviewsPage } from "@/components/CandidateReviewsPage";
+import { ClockInCodesTab } from "@/components/ClockInCodesTab";
 import { TrainingListPage } from "@/components/TrainingListPage";
 import { AbsentListPage } from "@/components/AbsentListPage";
 import { RepairKnowledgeBase } from "@/components/RepairKnowledgeBase";
@@ -585,6 +586,8 @@ function SubModule() {
         ? <TrainingListPage />
         : (sub as any).custom === "candidate-reviews"
         ? <CandidateReviewsPage />
+        : (sub as any).custom === "clock-in-codes"
+        ? <ClockInCodesTab standalone backModule={mod.slug} />
         : (sub as any).custom === "absent-list"
         ? <AbsentListPage mod={mod} sub={sub} />
         : (sub as any).custom === "flash-tech"
