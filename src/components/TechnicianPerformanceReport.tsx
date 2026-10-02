@@ -1210,6 +1210,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   // Chart scope: every branch combined, one Senior Branch Manager's
   // branches, or a single branch — drives the Top 10 and the trend chart.
   const [chartScope, setChartScope] = useState<string>("all");
+  // Which chart the card shows — the trend or the Top 10 (one at a time).
+  const [chartView, setChartView] = useState<"trend" | "top10">("trend");
   const [sbmAssignments, setSbmAssignments] = useState<SbmBranchAssignment[]>([]);
   useEffect(() => {
     getSeniorBranchManagerAssignments().then(setSbmAssignments).catch(() => setSbmAssignments([]));
@@ -2109,11 +2111,23 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                   <Star className="h-4 w-4 text-emerald-400" />
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Top Technicians & Trend</p>
                 </div>
+                <div className="flex rounded-md overflow-hidden border border-white/15 text-xs ml-auto">
+                  {([["trend", "Trend"], ["top10", "Top 10 Technicians"]] as const).map(([v, label], i) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setChartView(v)}
+                      className={`px-3 py-1.5 ${i > 0 ? "border-l border-white/15" : ""} ${chartView === v ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 <select
                   value={chartScope}
                   onChange={(e) => setChartScope(e.target.value)}
-                  className="glass-input text-xs py-1.5 px-3 rounded-md ml-auto"
-                  title="Which technicians the two charts below cover"
+                  className="glass-input text-xs py-1.5 px-3 rounded-md max-w-full"
+                  title="Which technicians the chart below covers"
                 >
                   <option value="all">All branches (combined)</option>
                   {sbmOptions.length > 0 && (
@@ -2130,7 +2144,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                   </optgroup>
                 </select>
               </div>
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <div>
+                {chartView === "trend" && (
                 <div>
                   <p className="text-[11px] font-semibold text-muted-foreground mb-1">Trend by pay period — median technician</p>
                   {(() => {
@@ -2177,6 +2192,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                     Each point is the median technician in that pay period (technicians with no work that period are left out). Average Tickets uses the right-hand scale.
                   </p>
                 </div>
+                )}
+                {chartView === "top10" && (
                 <div>
                   <p className="text-[11px] font-semibold text-muted-foreground mb-1">Top 10 technicians — Points ({periodMode === "total" ? "all pay periods" : "selected pay period"})</p>
                   {top10Chart.length === 0 ? (
@@ -2200,6 +2217,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                 </ResponsiveContainer>
                   )}
                 </div>
+                )}
               </div>
             </div>
             {!showAllColumns && (
