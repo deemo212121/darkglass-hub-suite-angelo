@@ -6,6 +6,8 @@ import { getTrainingDates } from "@/lib/supabase/trainingDates";
 import { Fragment, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
+import { MyStandingCard, FixTimeOutBanner } from "@/components/mobile/MyStandingCard";
+import { MobileMeetingsView, useCanSeeClockInMeetings } from "@/components/mobile/MobileMeetingsView";
 import { setDesktopOverride } from "@/lib/device";
 import { useLiveLocation } from "@/lib/liveLocationContext";
 import {
@@ -162,6 +164,7 @@ const openNativePicker = (e: React.MouseEvent<HTMLInputElement>) => {
 };
 
 type View =
+  | "meetings"
   | "roster"
   | "tickets"
   | "map"
@@ -1702,6 +1705,8 @@ export function MobileTechApp() {
           <MobileTimeCorrectionView userName={headerName} profileId={profileId} companyId={companyId} role={role} prefillDate={correctionPrefillDate} />
         )}
 
+        {effectiveView === "meetings" && <MobileMeetingsView />}
+
         {effectiveView === "notifications" && (
           <div className="mtech-scroll">
             <div className="mtech-payroll-heading">
@@ -1739,6 +1744,8 @@ export function MobileTechApp() {
             onOpenTimeOff={() => setView("timeoff")}
             onOpenTicketTimeDispute={() => setView("tickettimedispute")}
             onOpenCorrection={() => { setCorrectionPrefillDate(null); setView("correction"); }}
+            onFixTimeOut={(date) => { setCorrectionPrefillDate(date); setView("correction"); }}
+            onOpenMeetings={() => setView("meetings")}
             onOpenTimecard={() => setView("timecard")}
             onOpenTicketAttendance={() => setView("ticketattendance")}
             showBranchReport={isBranchReportRole}
@@ -6100,6 +6107,8 @@ function MobileHomeView({
   onOpenTimeOff,
   onOpenTicketTimeDispute,
   onOpenCorrection,
+  onFixTimeOut,
+  onOpenMeetings,
   onOpenTimecard,
   onOpenTicketAttendance,
   showBranchReport,
@@ -6134,6 +6143,9 @@ function MobileHomeView({
   onOpenTimeOff: () => void;
   onOpenTicketTimeDispute: () => void;
   onOpenCorrection: () => void;
+  /** Open Time Correction pre-filled with this date (missed Time Out banner). */
+  onFixTimeOut: (date: string) => void;
+  onOpenMeetings: () => void;
   onOpenTimecard: () => void;
   onOpenTicketAttendance: () => void;
   showBranchReport: boolean;
@@ -6193,6 +6205,10 @@ function MobileHomeView({
   // in the shift, block Meal/Check-Out with a false "it's a new day" error)
   // once the two dates diverged mid-shift.
   const todayKey = zonedDateKey(now, scheduleTimezone);
+  // Technicians see their own standing + the missed Time Out banner;
+  // whoever can see the clock-in code handles the meetings list.
+  const needsStanding = String(role ?? "").trim().toUpperCase() === "TECHNICIAN";
+  const canSeeMeetings = useCanSeeClockInMeetings();
 
   useEffect(() => {
     if (!uid) return;
@@ -6512,6 +6528,23 @@ function MobileHomeView({
           onOpenOnHoldTab={onOpenOnHoldTab}
         />
       </div>
+
+      {/* Missed Time Out fix-it banner + the tech's own Technician Performance standing. */}
+      {!viewingReportName && scheduleProfileId && needsStanding && (
+        <>
+          <FixTimeOutBanner profileId={scheduleProfileId} today={todayKey} onFix={onFixTimeOut} />
+          <MyStandingCard profileId={scheduleProfileId} today={todayKey} />
+        </>
+      )}
+      {!viewingReportName && canSeeMeetings && (
+        <button type="button" onClick={onOpenMeetings} className="mtech-home-onsite" style={{ flexDirection: "row", alignItems: "center", textAlign: "left" }}>
+          <span style={{ flex: 1 }}>
+            <strong style={{ display: "block", fontSize: "0.9rem" }}>Meetings required</strong>
+            <span style={{ fontSize: "0.75rem", opacity: 0.8 }}>Technicians who missed a clock-in or didn't fix a missed Time Out</span>
+          </span>
+          <span aria-hidden>›</span>
+        </button>
+      )}
 
       {viewingReportName ? null : loadError ? (
         <div className="mtech-home-clockerror">
