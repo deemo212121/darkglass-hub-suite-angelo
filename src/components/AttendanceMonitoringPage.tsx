@@ -35,6 +35,7 @@ import { getLatestVisitUpdatesByProfileIds, getTicketsScheduledInRange, type Lat
 import { resolveTeamLeadOrManager, visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { correctionIssueLabel, correctionIssueKey, correctionIssueOptions } from "@/lib/exceptionVisitReportTemplate";
 import { chainCanClockIn } from "@/lib/approvalDirectory";
+import { ClockInCodePrompt } from "@/components/ClockInCodePrompt";
 import { CorrectionStageBadges, CorrectionOverallBadge } from "@/components/CorrectionStageBadges";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { ATTENDANCE_GRACE_MINUTES, addMinutesToHHMM, nowInTimezone, timezoneForBranch, DEFAULT_ATTENDANCE_TIMEZONE, payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule, toSeconds, ON_TIME_BUFFER_SECONDS } from "@/lib/attendanceGrace";
@@ -1366,9 +1367,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // src/lib/serverTime.ts), not the manager's own browser clock, for the
   // same reason self-punches do (TimeClockMenu.tsx).
   const [clockingInIds, setClockingInIds] = useState<Set<string>>(new Set());
+  // "Clock In" on a missing clock-in needs today's clock-in code first
+  // (checked by the database for that employee, "entered by" this viewer).
+  const [codeFor, setCodeFor] = useState<DailyRecord | null>(null);
   const handleProxyClockIn = async (record: DailyRecord) => {
     if (!myProfileId) return;
-    if (!window.confirm(`Clock in ${record.name} now?`)) return;
     setClockingInIds((prev) => new Set(prev).add(record.profileId));
     try {
       const branchTz = timezoneForBranch(record.location);
@@ -1614,6 +1617,16 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
   return (
     <div className="min-h-screen flex flex-col">
+      {codeFor && (
+        <ClockInCodePrompt
+          profileId={codeFor.profileId}
+          onVerified={async () => {
+            await handleProxyClockIn(codeFor);
+            setCodeFor(null);
+          }}
+          onCancel={() => setCodeFor(null)}
+        />
+      )}
       {/* Floating quick-nav — duplicates the tab row below as a left-edge
           panel so jumping between tabs doesn't need scrolling back up on a
           long page. Collapsed to icons-only by default; the chevron
@@ -2001,7 +2014,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                             <button
                               type="button"
                               disabled={clockingInIds.has(record.profileId)}
-                              onClick={() => handleProxyClockIn(record)}
+                              onClick={() => setCodeFor(record)}
                               className="ml-2 inline-flex items-center px-2 py-0.5 rounded-md bg-green-500/20 hover:bg-green-500/30 disabled:opacity-50 text-green-300 text-xs font-semibold transition"
                             >
                               {clockingInIds.has(record.profileId) ? "Clocking in…" : "Clock In"}
@@ -3317,7 +3330,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                             <button
                               type="button"
                               disabled={clockingInIds.has(record.profileId)}
-                              onClick={() => handleProxyClockIn(record)}
+                              onClick={() => setCodeFor(record)}
                               className="inline-flex items-center px-2 py-0.5 rounded-md bg-green-500/20 hover:bg-green-500/30 disabled:opacity-50 text-green-300 text-xs font-semibold transition"
                             >
                               {clockingInIds.has(record.profileId) ? "Clocking in…" : "Clock In"}

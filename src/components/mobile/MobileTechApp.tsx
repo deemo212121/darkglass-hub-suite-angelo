@@ -7171,9 +7171,12 @@ function MobileClockInTeamView({ profileId, readOnly }: { profileId: string | nu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileId]);
 
+  // Clocking someone in needs today's clock-in code first (checked by the
+  // database for that technician, "entered by" this manager) — then the
+  // Time In below is stamped.
+  const [codeFor, setCodeFor] = useState<ClockInTechRow | null>(null);
   const handleClockIn = async (tech: ClockInTechRow) => {
     if (!profileId) return;
-    if (!window.confirm(`Clock in ${tech.name} now?`)) return;
     setClockingIn((prev) => new Set(prev).add(tech.id));
     try {
       const branchTz = timezoneForBranch(tech.branch);
@@ -7207,6 +7210,16 @@ function MobileClockInTeamView({ profileId, readOnly }: { profileId: string | nu
 
   return (
     <div className="mtech-scroll mtech-clockin">
+      {codeFor && (
+        <ClockInCodePrompt
+          profileId={codeFor.id}
+          onVerified={async () => {
+            await handleClockIn(codeFor);
+            setCodeFor(null);
+          }}
+          onCancel={() => setCodeFor(null)}
+        />
+      )}
       <div className="mtech-clockin-heading">
         <div className="mtech-clockin-title">Clock In Team</div>
         <div className="mtech-clockin-sub">{allBranches ? "Technicians at every branch, today" : "Your direct-report technicians, today"}</div>
@@ -7245,7 +7258,7 @@ function MobileClockInTeamView({ profileId, readOnly }: { profileId: string | nu
                 type="button"
                 className="mtech-clockin-btn"
                 disabled={clockingIn.has(tech.id)}
-                onClick={() => handleClockIn(tech)}
+                onClick={() => setCodeFor(tech)}
               >
                 {clockingIn.has(tech.id) ? "…" : "Clock In"}
               </button>
