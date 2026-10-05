@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarX2, Check, Loader2 } from "lucide-react";
+import { CalendarCheck2, CalendarX2, Check, Loader2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import type { ProfileRow } from "@/lib/supabase/users";
-import { getPendingClockInMeetings, markClockInMeetingDone, type ClockInMeeting } from "@/lib/supabase/clockInMeetings";
+import { getDoneClockInMeetings, getPendingClockInMeetings, markClockInMeetingDone, type ClockInMeeting } from "@/lib/supabase/clockInMeetings";
 
 /**
  * Clock-In Codes page → "Meetings required": technicians who missed a
@@ -18,6 +18,8 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Bumped after "Mark done" so the Meetings done list below picks it up.
+  const [doneReload, setDoneReload] = useState(0);
 
   const load = async () => {
     setLoading(true);
@@ -48,6 +50,7 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
       setDoneFor(null);
       setNote("");
       await load();
+      setDoneReload((n) => n + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't save.");
     } finally {
@@ -56,6 +59,7 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
   };
 
   return (
+    <div className="space-y-4">
     <div className="panel p-0 text-slate-100">
       <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10">
         <CalendarX2 className="h-4 w-4 text-red-300" />
@@ -146,6 +150,112 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
           </div>
         </div>
       )}
+    </div>
+      <DoneClockInMeetings profiles={profiles} reloadKey={doneReload} />
+    </div>
+  );
+}
+
+/** "YYYY-MM-DD" n days before today (local). */
+const daysAgoISO = (n: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+/**
+ * "Meetings done" — meetings already held (status done in clock_in_meetings),
+ * filterable by the missed day's date range and the technician's branch.
+ * They still count as errors on the Technician Performance Report.
+ */
+function DoneClockInMeetings({ profiles, reloadKey }: { profiles: ProfileRow[]; reloadKey: number }) {
+  const [from, setFrom] = useState(() => daysAgoISO(30));
+  const [to, setTo] = useState(() => daysAgoISO(0));
+  const [branch, setBranch] = useState("all");
+  const [rows, setRows] = useState<ClockInMeeting[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    const [a, b] = from <= to ? [from, to] : [to, from];
+    getDoneClockInMeetings(a, b).then((r) => {
+      if (!cancelled) { setRows(r); setLoading(false); }
+    });
+    return () => { cancelled = true; };
+  }, [from, to, reloadKey]);
+
+  const byId = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
+  const tidy = (b: string | null | undefined) => String(b ?? "").trim().replace(/\s*,\s*/g, ", ");
+  const branchOf = (profileId: string) => tidy(byId.get(profileId)?.assigned_branch) || "—";
+  const branches = useMemo(() => Array.from(new Set(rows.map((r) => branchOf(r.profileId)))).sort((a, b) => a.localeCompare(b)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, byId]);
+  const shown = branch === "all" ? rows : rows.filter((r) => branchOf(r.profileId) === branch);
+
+  const fmtDay = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  const fmtWhen = (iso: string | null) => (iso ? new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—");
+  const inputCls = "glass-input rounded-md px-2 py-1 text-xs text-slate-100";
+
+  return (
+    <div className="panel p-0 text-slate-100">
+      <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-white/10">
+        <CalendarCheck2 className="h-4 w-4 text-green-300" />
+        <span className="text-sm font-semibold text-white">Meetings done ({shown.length})</span>
+        {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+        <div className="ml-auto flex flex-wrap items-center gap-2 text-xs">
+          <label className="flex items-center gap-1 text-slate-300">
+            From <input type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} className={inputCls} />
+          </label>
+          <label className="flex items-center gap-1 text-slate-300">
+            To <input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} className={inputCls} />
+          </label>
+          <select value={branch} onChange={(e) => setBranch(e.target.value)} className={inputCls}>
+            <option value="all">All branches</option>
+            {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+        </div>
+      </div>
+      <p className="px-4 pt-2 text-[11px] text-muted-foreground">Dates are the missed day. Held meetings still count as errors on the Technician Performance Report.</p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-white/10 bg-white/5 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+              <th className="px-3 py-2">Technician</th>
+              <th className="px-3 py-2">Branch</th>
+              <th className="px-3 py-2">Day</th>
+              <th className="px-3 py-2">Reason</th>
+              <th className="px-3 py-2">Done by</th>
+              <th className="px-3 py-2">Done on</th>
+              <th className="px-3 py-2">Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {!loading && shown.length === 0 && (
+              <tr>
+                <td colSpan={7} className="px-3 py-4 text-center text-muted-foreground">No meetings done in this range.</td>
+              </tr>
+            )}
+            {shown.map((m) => (
+              <tr key={m.id} className="border-b border-white/5 align-top">
+                <td className="px-3 py-2 whitespace-nowrap font-medium text-white">{byId.get(m.profileId)?.display_name || "Loading…"}</td>
+                <td className="px-3 py-2 whitespace-nowrap text-slate-300">{branchOf(m.profileId)}</td>
+                <td className="px-3 py-2 whitespace-nowrap tabular-nums text-slate-100">{fmtDay(m.missedDate)}</td>
+                <td className="px-3 py-2 whitespace-nowrap">
+                  {m.kind === "missed_time_out" ? (
+                    <span className="rounded-full bg-orange-500/15 px-2 py-0.5 text-[10px] font-semibold text-orange-300">Missed Time Out</span>
+                  ) : (
+                    <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-300">Missed clock-in</span>
+                  )}
+                </td>
+                <td className="px-3 py-2 whitespace-nowrap text-slate-100">{m.doneByName || "—"}</td>
+                <td className="px-3 py-2 whitespace-nowrap tabular-nums text-slate-300">{fmtWhen(m.doneAt)}</td>
+                <td className="px-3 py-2 min-w-[12rem] text-slate-300">{m.note || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -64,6 +64,24 @@ export async function getPendingClockInMeetings(): Promise<ClockInMeeting[]> {
   return (data ?? []).map(mapRow);
 }
 
+/** Meetings already held, for missed days between startDate and endDate, most recent first. */
+export async function getDoneClockInMeetings(startDate: string, endDate: string): Promise<ClockInMeeting[]> {
+  const { data, error } = await supabase
+    .from("clock_in_meetings")
+    .select(COLUMNS)
+    .eq("status", "done")
+    .gte("missed_date", startDate)
+    .lte("missed_date", endDate)
+    .order("missed_date", { ascending: false })
+    .order("done_at", { ascending: false })
+    .limit(2000);
+  if (error) {
+    console.warn("getDoneClockInMeetings:", error.message);
+    return [];
+  }
+  return (data ?? []).map(mapRow);
+}
+
 export async function markClockInMeetingDone(id: string, doneByName: string, note: string): Promise<void> {
   const { data, error } = await supabase
     .from("clock_in_meetings")
