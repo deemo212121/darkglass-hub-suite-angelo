@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { runTour, takeQueuedTour } from "@/lib/tours/runTour";
-import { TICKET_TOURS, ALL_TICKET_TOURS, PRACTICE_TICKET_NO } from "@/lib/tours/ticketTours";
+import { TICKET_TOURS, ALL_TICKET_TOURS, PRACTICE_TICKET_NO, canSeeTicketTour, TICKET_TOUR_DEPARTMENT } from "@/lib/tours/ticketTours";
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
@@ -4428,6 +4428,7 @@ function TicketDetailsPage() {
   // Guided tour handed over from Guides (e.g. "Working a ticket (CSR)").
   const tourStartedRef = useRef(false);
   const [tourMenuOpen, setTourMenuOpen] = useState(false);
+  const myTicketTours = ALL_TICKET_TOURS.filter((t) => canSeeTicketTour(TICKET_TOUR_DEPARTMENT[t.id] ?? "", currentUserRole, currentUserExtraRoles));
   useEffect(() => {
     if (!ticket || tourStartedRef.current) return;
     const tourId = takeQueuedTour(`ticket:${ticketNo}`);
@@ -6043,7 +6044,8 @@ function TicketDetailsPage() {
               >
                 <Send className="h-4 w-4" />
               </button>
-              {/* Guided tours of this page, one per department (Guides module). */}
+              {/* Guided tours of this page — only your department's (Admin / Super Admin see all). */}
+              {myTicketTours.length > 0 && (
               <div className="relative">
                 <button
                   type="button"
@@ -6059,7 +6061,7 @@ function TicketDetailsPage() {
                   <>
                     <div className="fixed inset-0 z-30" onClick={() => setTourMenuOpen(false)} />
                     <div className="absolute left-0 top-full mt-1 z-40 w-64 rounded-lg border border-white/10 bg-slate-900 p-1 shadow-2xl">
-                      {ALL_TICKET_TOURS.map((t) => (
+                      {myTicketTours.map((t) => (
                         <button
                           key={t.id}
                           type="button"
@@ -6077,6 +6079,7 @@ function TicketDetailsPage() {
                   </>
                 )}
               </div>
+              )}
               {ticketNo === PRACTICE_TICKET_NO && (
                 <span className="rounded border border-amber-400/40 bg-amber-500/15 px-2 py-1 text-xs font-semibold text-amber-200">
                   Practice ticket — made-up details, nothing here is saved
