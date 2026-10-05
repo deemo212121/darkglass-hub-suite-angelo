@@ -32,14 +32,33 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
   const fmtDate = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 
   // Technicians with more than one open meeting are listed together.
+  // Filters — missed-day date range (blank = any, so an old meeting that's
+  // still waiting is never hidden by default) and the technician's branch.
+  const [reqFrom, setReqFrom] = useState("");
+  const [reqTo, setReqTo] = useState("");
+  const [reqBranch, setReqBranch] = useState("all");
+  const tidyBranch = (b: string | null | undefined) => String(b ?? "").trim().replace(/\s*,\s*/g, ", ");
+  const branchOfTech = (profileId: string) => tidyBranch(byId.get(profileId)?.assigned_branch) || "—";
+  const reqBranches = useMemo(
+    () => Array.from(new Set(meetings.map((m) => branchOfTech(m.profileId)))).sort((a, b) => a.localeCompare(b)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [meetings, byId],
+  );
+  const shownMeetings = useMemo(
+    () => meetings.filter((m) =>
+      (!reqFrom || m.missedDate >= reqFrom) && (!reqTo || m.missedDate <= reqTo) && (reqBranch === "all" || branchOfTech(m.profileId) === reqBranch)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [meetings, reqFrom, reqTo, reqBranch, byId],
+  );
+
   const grouped = useMemo(() => {
     const map = new Map<string, ClockInMeeting[]>();
-    for (const m of meetings) {
+    for (const m of shownMeetings) {
       if (!map.has(m.profileId)) map.set(m.profileId, []);
       map.get(m.profileId)!.push(m);
     }
     return Array.from(map.entries()).sort((a, b) => b[1].length - a[1].length);
-  }, [meetings]);
+  }, [shownMeetings]);
 
   const markDone = async () => {
     if (!doneFor) return;
@@ -61,10 +80,27 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
   return (
     <div className="space-y-4">
     <div className="panel p-0 text-slate-100">
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10">
+      <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-white/10">
         <CalendarX2 className="h-4 w-4 text-red-300" />
-        <span className="text-sm font-semibold text-white">Meetings required ({meetings.length})</span>
+        <span className="text-sm font-semibold text-white">
+          Meetings required ({shownMeetings.length}{shownMeetings.length !== meetings.length ? ` of ${meetings.length}` : ""})
+        </span>
         {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+        <div className="ml-auto flex flex-wrap items-center gap-2 text-xs">
+          <label className="flex items-center gap-1 text-slate-300">
+            From <input type="date" value={reqFrom} max={reqTo || undefined} onChange={(e) => setReqFrom(e.target.value)} className="glass-input rounded-md px-2 py-1 text-xs text-slate-100" />
+          </label>
+          <label className="flex items-center gap-1 text-slate-300">
+            To <input type="date" value={reqTo} min={reqFrom || undefined} onChange={(e) => setReqTo(e.target.value)} className="glass-input rounded-md px-2 py-1 text-xs text-slate-100" />
+          </label>
+          <select value={reqBranch} onChange={(e) => setReqBranch(e.target.value)} className="glass-input rounded-md px-2 py-1 text-xs text-slate-100">
+            <option value="all">All branches</option>
+            {reqBranches.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+          {(reqFrom || reqTo || reqBranch !== "all") && (
+            <button type="button" onClick={() => { setReqFrom(""); setReqTo(""); setReqBranch("all"); }} className="text-blue-300 hover:underline">Clear</button>
+          )}
+        </div>
       </div>
       <div className="mx-4 mt-3 rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
         <p className="font-semibold">Critical rules</p>
@@ -92,9 +128,9 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
             </tr>
           </thead>
           <tbody>
-            {!loading && meetings.length === 0 && (
+            {!loading && shownMeetings.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">No meetings needed.</td>
+                <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">{meetings.length === 0 ? "No meetings needed." : "No meetings match these filters."}</td>
               </tr>
             )}
             {grouped.map(([profileId, list]) =>
