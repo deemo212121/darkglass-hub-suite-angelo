@@ -30,14 +30,25 @@ export function resolveFieldStartDate(
   return resolveTrainingRecord(profile, candidates)?.training_end_date || profile.training_end_date || null;
 }
 
+/** Open-ended window end for a current trainee with no Field Start yet. */
+export const ONGOING_TRAINING_END = "9999-12-31";
+
+/**
+ * The $100/day trainee window. A recorded Field Start decides it: training
+ * runs from the HR training start (or hire date) through the day before
+ * Field Start. With no Field Start, the Master List's employment status
+ * decides — Trainee means still in training (open-ended), Regular means none.
+ */
 export function trainingWindow(start: string | null | undefined, fieldStart: string | null | undefined,
-  hireDate: string | null | undefined, manualEnd: string | null | undefined) {
-  if (start && fieldStart && fieldStart >= start) {
+  hireDate: string | null | undefined, isCurrentTrainee: boolean) {
+  const from = start || hireDate || null;
+  if (fieldStart && (!from || fieldStart >= from)) {
     const end = new Date(`${fieldStart}T00:00:00Z`);
     end.setUTCDate(end.getUTCDate() - 1);
-    return { start, end: end.toISOString().slice(0, 10), source: "hr" as const };
+    return { start: from, end: end.toISOString().slice(0, 10), source: "hr" as const };
   }
-  return { start: hireDate || null, end: manualEnd || null, source: "manual" as const };
+  if (isCurrentTrainee) return { start: from, end: ONGOING_TRAINING_END, source: "trainee" as const };
+  return { start: from, end: null, source: "none" as const };
 }
 
 /** The trainee minimum absorbs OT; a trainee day's base pay is topped up once. */

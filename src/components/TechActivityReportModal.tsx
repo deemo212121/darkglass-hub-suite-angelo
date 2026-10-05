@@ -233,7 +233,7 @@ export function TechActivityReportModal({
   // already paid) rather than an independent state-OT-floor check.
   const totalHoursForMatch = hoursWorked + overtimeHours;
   const regularRateAfterMinMatch = totalHoursForMatch > 0 ? techWeightedRegularRate + matchMin / totalHoursForMatch : techWeightedRegularRate;
-  const traineeWindow = trainingWindow(employee.hrTrainingStart, employee.hrFieldStart, hireDate, employee.trainingEndDate);
+  const traineeWindow = trainingWindow(employee.hrTrainingStart, employee.hrFieldStart, hireDate, employee.isTrainee);
   const premiumHours = periodDayInfo.reduce((sum, day) => {
     if (day.date < periodStart || day.date > periodEnd || isTrainingDay(day.date, traineeWindow)) return sum;
     return sum + (dailySplit.get(day.date)?.overtime ?? 0);
@@ -294,7 +294,7 @@ export function TechActivityReportModal({
   // a phantom $12.73 shortfall against the $100 target.
   const TRAINEE_DAILY_MATCH_TARGET = 100;
   const techTraineeMatch = useMemo(() => {
-    const window = trainingWindow(employee.hrTrainingStart, employee.hrFieldStart, hireDate, employee.trainingEndDate);
+    const window = trainingWindow(employee.hrTrainingStart, employee.hrFieldStart, hireDate, employee.isTrainee);
     const trainingEndDate = window.end;
     if (!trainingEndDate) return 0;
     let match = 0;
@@ -315,7 +315,7 @@ export function TechActivityReportModal({
     }
     return match;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [periodDayInfo, dailySplit, periodStart, periodEnd, hireDate, employee.trainingEndDate, employee.hrTrainingStart, employee.hrFieldStart, salaryHistory, hourlyRate, techWeightedRegularRate]);
+  }, [periodDayInfo, dailySplit, periodStart, periodEnd, hireDate, employee.hrTrainingStart, employee.hrFieldStart, employee.isTrainee, salaryHistory, hourlyRate, techWeightedRegularRate]);
 
   // The Guaranteed Minimum Salary Match, recomputed HERE (rather than using
   // row.techGuaranteedSalaryMatch from AccountingDashboard.tsx) because that

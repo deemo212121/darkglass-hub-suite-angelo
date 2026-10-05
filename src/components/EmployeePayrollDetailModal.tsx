@@ -18,7 +18,6 @@ import { getTicketAttendanceForTechnician, slotSortKey, type TicketAttendanceRow
 import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
 import { getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
 import { getMileageEntries, setMileageEstimateTime, setMileageLegMileage, type MileageEntry } from "@/lib/supabase/mileage";
-import { updateCompanyUser } from "@/lib/supabase/users";
 import { STATE_MIN_WAGE_2026, normalizeStateName, highestRateAmong, FEDERAL_MIN_WAGE } from "@/lib/stateMinWage";
 import {
   getSalaryHistory,
@@ -43,15 +42,10 @@ interface Props {
   extraRoles?: string[] | null;
   /** profiles.tier_level (migration 0162) — same field Master List's "Current Technicians" tab and Staff List's "Tier Level" tab edit. Shown in the Current Rate tile; "Unassigned" when blank. */
   tierLevel?: string | null;
-  /** profiles.training_end_date (migration 0297) — the trainee daily $100
-   *  guarantee applies to every day from this employee's hireDate through
-   *  this date, inclusive. Editable here, next to Salary History. */
-  trainingEndDate?: string | null;
-  /** profiles.employee_info.hireDate — the trainee window's start (see
-   *  trainingEndDate above). Only used to badge Attendance rows; omitting it
-   *  just means the badge shows for every day up to trainingEndDate instead
-   *  of being bounded below by hire date. */
+  /** profiles.employee_info.hireDate — the trainee window's start when HR has no training start date. */
   hireDate?: string | null;
+  /** Master List employment status is Trainee — with no Field Start recorded, keeps the $100/day window open (see trainingWindow). */
+  isTrainee?: boolean;
   requiredCheckIn?: string;
   requiredCheckOut?: string;
   workingHours?: number | null;
@@ -197,8 +191,8 @@ export function EmployeePayrollDetailModal({
   role,
   extraRoles,
   tierLevel,
-  trainingEndDate,
   hireDate,
+  isTrainee = false,
   requiredCheckIn,
   requiredCheckOut,
   workingHours,
@@ -303,14 +297,9 @@ export function EmployeePayrollDetailModal({
   // behind a "Done"/"Save" button like Rate or the punch edits above.
   const [stateEdits, setStateEdits] = useState<Record<string, string>>({});
   const [savingStateFor, setSavingStateFor] = useState<string | null>(null);
-  // Trainee daily $100 guarantee window — see traineeDailyMatchFor in
-  // AccountingDashboard.tsx. Local input synced from the trainingEndDate
-  // prop; re-syncs whenever the caller re-fetches with a fresh value (e.g.
-  // after this same edit round-trips through onRateChanged).
-  const [trainingEndDateInput, setTrainingEndDateInput] = useState(trainingEndDate ?? "");
-  const [savingTrainingEndDate, setSavingTrainingEndDate] = useState(false);
+  // Trainee daily $100 guarantee window — see trainingWindow / traineeDailyMatchFor in AccountingDashboard.tsx.
   const [hrTraining, setHrTraining] = useState<{ start: string | null; fieldStart: string | null }>({ start: null, fieldStart: null });
-  const traineeWindow = trainingWindow(hrTraining.start, hrTraining.fieldStart, hireDate, trainingEndDateInput);
+  const traineeWindow = trainingWindow(hrTraining.start, hrTraining.fieldStart, hireDate, isTrainee);
   const [fieldStart, setFieldStart] = useState<{ date: string | null; loading: boolean; error: boolean }>({ date: null, loading: true, error: false });
   useEffect(() => {
     let cancelled = false;
@@ -323,17 +312,14 @@ export function EmployeePayrollDetailModal({
       const candidates = await getTrainingDates(profile.company_id);
       const record = resolveTrainingRecord(profile, candidates);
       const date = resolveFieldStartDate(profile, candidates);
-      if (!cancelled) setHrTraining({ start: record?.training_start_date ?? null, fieldStart: record?.training_end_date ?? null });
+      if (!cancelled) setHrTraining({ start: record?.training_start_date ?? null, fieldStart: date });
       if (!cancelled) setFieldStart({ date, loading: false, error: false });
     };
     void loadFieldStart().catch(() => {
       if (!cancelled) setFieldStart({ date: null, loading: false, error: true });
     });
     return () => { cancelled = true; };
-  }, [profileId, trainingEndDateInput]);
-  useEffect(() => {
-    setTrainingEndDateInput(trainingEndDate ?? "");
-  }, [trainingEndDate]);
+  }, [profileId]);
   // Calculated = company rate as-is. Compliant = the higher of company rate
   // vs. that day's assigned state's minimum wage — not an equally-valid
   // alternative view, but the legally required number whenever a day's
@@ -877,7 +863,6 @@ export function EmployeePayrollDetailModal({
       // pay is shown (Current Rate tile, Tech Activity Report's Hourly Pay
       // line). Using monthlySalary here inflated it to annual/12 (e.g. a
       // $72,000/yr salary showed $6,000.00 instead of the correct $2,769.23).
-      // PH's cutoff is semi-monthly (24/yr), not the US's bi-weekly (26/yr).
       const fixed = perCutoffSalary(currentEntry.annualSalary, isPhPayroll);
       return {
         calculated: { regularPay: fixed, overtimePay: 0, total: fixed },
@@ -1209,30 +1194,6 @@ export function EmployeePayrollDetailModal({
     }
   };
 
-  // Trainee daily $100 guarantee window (migration 0297) — saves immediately
-  // like State above, not staged behind a form. Same debounced onRateChanged
-  // as handleStateChange, sharing the same timer ref: whichever one fires
-  // last wins, so editing both in quick succession still only reloads the
-  // dashboard once.
-  const handleTrainingEndDateChange = async (value: string) => {
-    const prev = trainingEndDateInput;
-    setTrainingEndDateInput(value);
-    setSavingTrainingEndDate(true);
-    try {
-      await updateCompanyUser(profileId, { trainingEndDate: value || null });
-      if (rateChangedDebounceRef.current) clearTimeout(rateChangedDebounceRef.current);
-      rateChangedDebounceRef.current = setTimeout(() => {
-        rateChangedDebounceRef.current = null;
-        onRateChanged?.();
-      }, 800);
-    } catch (err) {
-      alert(`Failed to save Training End Date: ${err instanceof Error ? err.message : "Unknown error"}`);
-      setTrainingEndDateInput(prev);
-    } finally {
-      setSavingTrainingEndDate(false);
-    }
-  };
-
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div
@@ -1417,7 +1378,7 @@ export function EmployeePayrollDetailModal({
                 </div>
                 {rateForm.compensationType === "fixed" && Number(rateForm.annualSalary) > 0 && (
                   <p className="text-[11px] text-slate-400">
-                    = ${monthlySalary(Number(rateForm.annualSalary)).toFixed(2)}/month · ${perCutoffSalary(Number(rateForm.annualSalary), isPhPayroll).toFixed(2)}/cutoff {isPhPayroll ? "(semi-monthly)" : "(bi-weekly)"}
+                    = ${monthlySalary(Number(rateForm.annualSalary)).toFixed(2)}/month · ${perCutoffSalary(Number(rateForm.annualSalary), isPhPayroll).toFixed(2)}/cutoff (bi-weekly)
                   </p>
                 )}
                 <div className="flex justify-end">
@@ -1476,41 +1437,6 @@ export function EmployeePayrollDetailModal({
                 </tbody>
               </table>
             )}
-          </div>
-
-          {/* Trainee daily $100 guarantee window */}
-          <div className="bg-slate-800/30 border border-white/10 rounded-lg p-3">
-            <h3 className="text-sm font-semibold text-white mb-2">Trainee Status (Manual Fallback)</h3>
-            <div className="flex items-end gap-3 flex-wrap">
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase mb-1">Training End Date</label>
-                <input
-                  type="date"
-                  value={trainingEndDateInput}
-                  disabled={savingTrainingEndDate || fieldStart.loading || fieldStart.error || traineeWindow.source === "hr"}
-                  onChange={(e) => handleTrainingEndDateChange(e.target.value)}
-                  title="Used only when the HR Start Date and Field Start Date range is unavailable. The $100/day guarantee applies to worked days from this employee's hire date through this date, inclusive. A day already earning $100+ keeps its full pay — this only tops up days that fall short."
-                  className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-sm text-white disabled:opacity-50"
-                />
-              </div>
-              {trainingEndDateInput && (
-                <button
-                  onClick={() => handleTrainingEndDateChange("")}
-                  disabled={savingTrainingEndDate || fieldStart.loading || fieldStart.error || traineeWindow.source === "hr"}
-                  className="text-xs text-slate-400 hover:text-red-400 disabled:opacity-50"
-                >
-                  Clear
-                </button>
-              )}
-              {savingTrainingEndDate && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
-            </div>
-            <p className="text-xs text-slate-400 mt-2">
-              {fieldStart.loading ? "Loading HR training dates..." : fieldStart.error ? "Unable to load HR training dates." : traineeWindow.source === "hr"
-                ? `HR training: ${traineeWindow.start} through ${traineeWindow.end}. Eligible worked days are topped up to $100; Field Start day is excluded. The manual date is only a fallback.`
-                : trainingEndDateInput
-                ? `Days through ${trainingEndDateInput} are topped up to $100 if actual pay falls short that day; days after this date are paid normally.`
-                : "No trainee window set — the $100/day guarantee won't apply to any day this period."}
-            </p>
           </div>
 
           {/* Weekly breakdown + unassigned-state flag (PH has no state concept, so it never shows there — Weekly Breakdown spans the full row instead of leaving an empty column beside it) */}
@@ -1916,7 +1842,7 @@ export function EmployeePayrollDetailModal({
                             {savingStateFor === row.date && <Loader2 className="inline-block h-3 w-3 ml-1 animate-spin text-slate-400" />}
                             {!fieldStart.loading && !fieldStart.error && traineeWindow.end && row.date <= traineeWindow.end && (!traineeWindow.start || row.date >= traineeWindow.start) && (
                               <span
-                                title={`Trainee day — the $100/day guarantee applies (through ${traineeWindow.end}).`}
+                                title={traineeWindow.source === "trainee" ? "Trainee day — the $100/day guarantee applies (still in training)." : `Trainee day — the $100/day guarantee applies (through ${traineeWindow.end}).`}
                                 className="inline-flex items-center gap-0.5 ml-1 px-1 py-0.5 rounded bg-sky-500/20 text-sky-300 text-[10px] font-semibold align-middle"
                               >
                                 Trainee

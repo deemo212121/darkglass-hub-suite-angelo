@@ -1744,7 +1744,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         tierLevel: p.tier_level ?? null,
         trainingEndDate: p.training_end_date ?? null,
         hrTrainingStart: hrTraining?.training_start_date ?? null,
-        hrFieldStart: hrTraining?.training_end_date ?? null,
+        // HR's Field Start, else profiles.training_end_date — the same
+        // fallback the Training List page shows as Field Start.
+        hrFieldStart: hrTraining?.training_end_date ?? p.training_end_date ?? null,
         };
       }) as SupabaseEmployee[]);
       setSalaryEntries((salRes.data ?? []) as SalaryEntry[]);
@@ -2701,7 +2703,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const techWeightedRegularRate = techTotalHours > 0 ? (techStraightTimeAllHours + techIncludablePay) / techTotalHours : hourlyRate;
     const techHourlyPayStraight = includeTech && isTechRole(emp) ? techStraightTimeAllHours : 0;
     const traineeWindow = trainingWindow(emp.hrTrainingStart, emp.hrFieldStart,
-      employeeInfoByProfileId.get(emp.id)?.hireDate, emp.trainingEndDate);
+      employeeInfoByProfileId.get(emp.id)?.hireDate, emp.isTrainee);
     const premiumHours = (dailyHoursByEmployeeId.get(emp.id) ?? []).reduce((sum, day) => sum + (isTrainingDay(day.date, traineeWindow) ? 0 : day.overtime), 0);
     const techHourlyPayOtPremium = includeTech && isTechRole(emp) ? premiumHours * techWeightedRegularRate * 0.5 : 0;
     const techHourlyPayCompanyOnly = techHourlyPayStraight + techHourlyPayOtPremium;
@@ -6147,8 +6149,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           role={detailEmployee.role}
           extraRoles={detailEmployee.extraRoles}
           tierLevel={detailEmployee.tierLevel}
-          trainingEndDate={detailEmployee.trainingEndDate}
           hireDate={employeeInfoByProfileId.get(detailEmployee.id)?.hireDate || null}
+          isTrainee={detailEmployee.isTrainee}
           requiredCheckIn={detailEmployee.requiredCheckIn}
           requiredCheckOut={detailEmployee.requiredCheckOut}
           workingHours={detailEmployee.workingHours}

@@ -43,8 +43,8 @@ export function TraineeMonitoringTab(p: Props) {
   const [roles, setRoles] = useState<Set<string>>(new Set());
   const invalid = !p.start || !p.end || p.start > p.end;
   const trainees = p.employees.filter(e => {
-    const window = trainingWindow(e.hrTrainingStart, e.hrFieldStart, p.hireDates.get(e.id), e.trainingEndDate);
-    return window.end ? window.end >= p.start && (!window.start || window.start <= p.end) : e.isTrainee;
+    const window = trainingWindow(e.hrTrainingStart, e.hrFieldStart, p.hireDates.get(e.id), e.isTrainee);
+    return !!window.end && window.end >= p.start && (!window.start || window.start <= p.end);
   });
   const rows = trainees.filter(e => e.full_name.toLowerCase().includes(p.search.trim().toLowerCase())
     && (!p.departments.size || p.departments.has(e.department || ""))

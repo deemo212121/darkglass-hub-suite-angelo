@@ -41,7 +41,7 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
-import { CalendarPlus, Check, ChevronDown, ChevronLeft, ChevronRight, GraduationCap, Loader2, RefreshCw, UserX, X } from "lucide-react";
+import { CalendarPlus, Check, ChevronDown, ChevronLeft, ChevronRight, GraduationCap, Loader2, RefreshCw, Trash2, UserX, X } from "lucide-react";
 import {
   getCandidates,
   updateCandidateTrainingDates,
@@ -159,6 +159,11 @@ function FieldStartCell({
     setEditing(false);
   };
   const cancel = () => setEditing(false);
+  const remove = () => {
+    if (!window.confirm("Remove this Field Start date?")) return;
+    onSave("");
+    setEditing(false);
+  };
 
   if (editing) {
     return (
@@ -192,6 +197,17 @@ function FieldStartCell({
         >
           <X className="h-3.5 w-3.5" />
         </button>
+        {value && (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={remove}
+            title="Remove Field Start date"
+            className="shrink-0 grid place-items-center h-7 w-7 rounded-md border border-red-500/30 text-red-400 hover:text-red-300 hover:bg-red-500/10 disabled:opacity-30"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
     );
   }
