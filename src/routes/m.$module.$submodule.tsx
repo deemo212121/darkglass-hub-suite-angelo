@@ -101,6 +101,7 @@ import { ClockInCodesTab } from "@/components/ClockInCodesTab";
 import { TicketGuidesPage } from "@/components/TicketGuidesPage";
 import { SelfServiceGuidePage } from "@/components/SelfServiceGuidePage";
 import { GettingStartedGuidePage } from "@/components/GettingStartedGuidePage";
+import { ApproverGuidePage } from "@/components/ApproverGuidePage";
 import { TrainingListPage } from "@/components/TrainingListPage";
 import { AbsentListPage } from "@/components/AbsentListPage";
 import { RepairKnowledgeBase } from "@/components/RepairKnowledgeBase";
@@ -595,6 +596,8 @@ function SubModule() {
         ? <SelfServiceGuidePage />
         : (sub as any).custom === "getting-started-guide"
         ? <GettingStartedGuidePage />
+        : (sub as any).custom === "approver-guide"
+        ? <ApproverGuidePage />
         : (sub as any).custom === "clock-in-codes"
         ? <ClockInCodesTab standalone backModule={mod.slug} />
         : (sub as any).custom === "absent-list"

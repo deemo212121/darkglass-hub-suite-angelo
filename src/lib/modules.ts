@@ -2182,6 +2182,15 @@ const guidesMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "approving-requests",
+      title: "Approving Requests",
+      description: "Managers and above: clocking in from Missing Clock In, and approving PTO, leave, sick leave, time corrections, ticket disputes and trainee days.",
+      custom: "approver-guide" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
       slug: "self-service",
       title: "Self-Service Guide",
       description: "For everyone: your time clock, payslips, attendance, and requesting PTO, sick leave, time corrections or unpaid leave.",
