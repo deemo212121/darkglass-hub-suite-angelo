@@ -311,6 +311,9 @@ function CheckboxFilter({
   );
 }
 
+/** "Jackson,TN" / " Jackson ,  TN" → "Jackson, TN" — so one branch typed two ways shows (and filters) once. */
+const normBranchLabel = (b: string | null | undefined): string => String(b ?? "").trim().replace(/s*,s*/g, ", ");
+
 export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
@@ -1010,14 +1013,19 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     () => Array.from(new Set(alertBaseRecords.map((r) => r.department).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
     [alertBaseRecords]
   );
+  // Every branch the viewer can see (not just the ones with someone missing
+  // right now — a branch with nobody missing still belongs in the list),
+  // with spelling variants like "Jackson,TN" / "Jackson, TN" merged.
   const alertLocations = useMemo(
-    () => Array.from(new Set(alertBaseRecords.map((r) => r.location).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [alertBaseRecords]
+    () =>
+      Array.from(new Set([...visibleProfiles.map((p) => normBranchLabel(p.assigned_branch)), ...alertBaseRecords.map((r) => normBranchLabel(r.location))].filter(Boolean)))
+        .sort((a, b) => a.localeCompare(b)),
+    [alertBaseRecords, visibleProfiles]
   );
   const alertFilteredRecords = useMemo(
     () =>
       alertBaseRecords.filter(
-        (r) => (alertDeptFilter === "all" || r.department === alertDeptFilter) && (alertLocationFilter === "all" || r.location === alertLocationFilter)
+        (r) => (alertDeptFilter === "all" || r.department === alertDeptFilter) && (alertLocationFilter === "all" || normBranchLabel(r.location) === alertLocationFilter)
       ),
     [alertBaseRecords, alertDeptFilter, alertLocationFilter]
   );
@@ -1039,7 +1047,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       if (record.checkIn === "—") return false;
       if (searchEmployee && !record.name.toLowerCase().includes(searchEmployee.toLowerCase())) return false;
       if (filterDepartments.length > 0 && !filterDepartments.includes(record.department)) return false;
-      if (filterLocations.length > 0 && !filterLocations.includes(record.location)) return false;
+      if (filterLocations.length > 0 && !filterLocations.includes(normBranchLabel(record.location))) return false;
       // checkIn is already guaranteed above — this now only additionally
       // requires a completed checkOut.
       if (completeOnly && record.checkOut === "—") return false;
@@ -1069,7 +1077,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const departments = Array.from(
     new Set(visibleProfiles.map(profileDepartment).filter(Boolean))
   ) as string[];
-  const locations = Array.from(new Set(visibleProfiles.map((p) => p.assigned_branch).filter(Boolean))) as string[];
+  const locations = Array.from(new Set(visibleProfiles.map((p) => normBranchLabel(p.assigned_branch)).filter(Boolean))).sort((a, b) => a.localeCompare(b));
 
   // Weekly/Monthly summary tables get their own department + branch filters
   // since they're a separate section below the Daily Attendance table/filters.
@@ -1233,7 +1241,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         if (record.checkIn !== "—" || record.isOffDay || record.hasPendingCorrection) return false;
         if (searchEmployee && !record.name.toLowerCase().includes(searchEmployee.toLowerCase())) return false;
         if (filterDepartments.length > 0 && !filterDepartments.includes(record.department)) return false;
-        if (filterLocations.length > 0 && !filterLocations.includes(record.location)) return false;
+        if (filterLocations.length > 0 && !filterLocations.includes(normBranchLabel(record.location))) return false;
         return true;
       })
       .sort((a, b) => (dateRangeActive && a.date !== b.date ? (a.date! < b.date! ? -1 : 1) : a.name.localeCompare(b.name)));
