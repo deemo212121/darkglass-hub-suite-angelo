@@ -1,4 +1,4 @@
-import { createFileRoute, Link, Navigate, Outlet, notFound, useLocation } from "@tanstack/react-router";
+import { createFileRoute, Link, Navigate, Outlet, notFound, redirect, useLocation } from "@tanstack/react-router";
 import { useRedirectGuard } from "@/lib/useRedirectGuard";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
@@ -148,6 +148,10 @@ import { OperationsDashboard } from "@/components/OperationsDashboard";
 import { ReceivingStatusPage } from "@/components/ReceivingStatusPage";
 import { TicketOperationReport } from "@/components/TicketOperationReport";
 
+const MOVED_SUBMODULES: Record<string, { module: string; submodule: string }> = {
+  "tickets/operation": { module: "bizops", submodule: "operation" },
+};
+
 export const Route = createFileRoute("/m/$module/$submodule")({
   ssr: false,
   head: ({ params }) => ({
@@ -156,6 +160,9 @@ export const Route = createFileRoute("/m/$module/$submodule")({
     }],
   }),
   loader: async ({ params }) => {
+    // Pages that moved to another module — old links/bookmarks land on the new spot.
+    const moved = MOVED_SUBMODULES[`${params.module}/${params.submodule}`];
+    if (moved) throw redirect({ to: "/m/$module/$submodule", params: moved, replace: true });
     const m = getModule(params.module);
     const s = getSubModule(params.module, params.submodule);
     if (!m || !s) throw notFound();

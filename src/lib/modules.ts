@@ -1144,14 +1144,6 @@ const ticketsMod: ModuleDef = {
       fields: [],
       seed: () => ({}),
     },
-    {
-      slug: "operation",
-      title: "Operation",
-      description: "Live ticket counts per status, company-wide — includes backorder & cancel tracking.",
-      custom: "ticket-operation-report" as any,
-      fields: [],
-      seed: () => ({}),
-    },
   ],
 };
 
@@ -2108,6 +2100,14 @@ const bizOpsMod: ModuleDef = {
   tagline: "Business operations",
   accent: "#94a3b8",
   submodules: [
+    {
+      slug: "operation",
+      title: "Operation",
+      description: "Live ticket counts per status, company-wide — includes backorder & cancel tracking.",
+      custom: "ticket-operation-report" as any,
+      fields: [],
+      seed: () => ({}),
+    },
     {
       slug: "operations-dashboard",
       title: "Operations Dashboard",
