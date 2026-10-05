@@ -464,7 +464,7 @@ export function TimeClockButtons() {
   };
 
   return (
-    <div className="flex h-9 items-center gap-1 rounded-full border border-[var(--color-panel-border)] bg-[var(--color-panel)] px-1">
+    <div data-tour="time-clock" className="flex h-9 items-center gap-1 rounded-full border border-[var(--color-panel-border)] bg-[var(--color-panel)] px-1">
       {codePromptOpen && profileId && (
         <ClockInCodePrompt
           profileId={profileId}

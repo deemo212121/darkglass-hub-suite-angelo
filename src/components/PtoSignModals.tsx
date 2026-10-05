@@ -55,15 +55,18 @@ interface SignModalBaseProps {
   onClose: () => void;
   /** Called after a successful sign — caller should refetch and close. */
   onSigned: () => void;
+  /** Guided-tour preview with a sample request: shows the window, never signs or saves. */
+  preview?: boolean;
 }
 
-export function PtoManagerSignModal({ request, companyId, profiles, reviewerId, reviewerName, onClose, onSigned }: SignModalBaseProps) {
+export function PtoManagerSignModal({ request, companyId, profiles, reviewerId, reviewerName, onClose, onSigned, preview }: SignModalBaseProps) {
   const [comments, setComments] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sigPad = useSignaturePad({ width: 400, height: 110, defaultName: reviewerName });
 
   const handleSubmit = async () => {
+    if (preview) { setError("This is a sample for the guided tour — nothing is signed."); return; }
     if (!reviewerId || !companyId) { setError("Missing your profile/company — try again in a moment."); return; }
     if (!sigPad.hasContent()) { setError("Please add your signature first."); return; }
     const dataUrl = sigPad.toDataURL();
@@ -88,7 +91,7 @@ export function PtoManagerSignModal({ request, companyId, profiles, reviewerId, 
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-900 border border-white/10 rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
+      <div data-tour="sign-modal" className="bg-slate-900 border border-white/10 rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
         <div className="flex items-start justify-between mb-4">
           <h3 className="text-lg font-bold text-white">Manager / SBM Review &amp; Approval</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white transition p-1"><X className="h-4 w-4" /></button>
@@ -102,12 +105,15 @@ export function PtoManagerSignModal({ request, companyId, profiles, reviewerId, 
           <div>
             <label className="block text-xs text-slate-400 uppercase mb-2">Your Signature</label>
             <canvas {...sigPad.canvasProps} className={`bg-white rounded-md border border-white/15 block mx-auto w-full max-w-sm ${sigPad.canvasProps.className}`} />
-            <div className="mt-2"><SignaturePadControls pad={sigPad} /></div>
+            <div data-tour="sign-pad" className="mt-2"><SignaturePadControls pad={sigPad} /></div>
           </div>
         </div>
+        {preview && (
+          <p className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-md px-2.5 py-2 mb-3">Sample request for the guided tour — nothing here is signed or saved.</p>
+        )}
         {error && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mb-3">{error}</p>}
         <div className="flex gap-3">
-          <button type="button" onClick={handleSubmit} disabled={submitting} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-1.5">
+          <button type="button" onClick={handleSubmit} disabled={submitting || preview} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-1.5">
             {submitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             {submitting ? "Submitting…" : "Confirm & Sign"}
           </button>
@@ -118,7 +124,7 @@ export function PtoManagerSignModal({ request, companyId, profiles, reviewerId, 
   );
 }
 
-export function PtoHrSignModal({ request, companyId, profiles, reviewerId, reviewerName, onClose, onSigned }: SignModalBaseProps) {
+export function PtoHrSignModal({ request, companyId, profiles, reviewerId, reviewerName, onClose, onSigned, preview }: SignModalBaseProps) {
   const [receivedDate, setReceivedDate] = useState(new Date().toISOString().slice(0, 10));
   const [actionStatus, setActionStatus] = useState<"approved" | "additional_review_required">("approved");
   const [submitting, setSubmitting] = useState(false);
@@ -126,6 +132,7 @@ export function PtoHrSignModal({ request, companyId, profiles, reviewerId, revie
   const sigPad = useSignaturePad({ width: 400, height: 110, defaultName: reviewerName });
 
   const handleSubmit = async () => {
+    if (preview) { setError("This is a sample for the guided tour — nothing is signed."); return; }
     if (!reviewerId || !companyId) { setError("Missing your profile/company — try again in a moment."); return; }
     if (!sigPad.hasContent()) { setError("Please add your signature first."); return; }
     const dataUrl = sigPad.toDataURL();
@@ -157,7 +164,7 @@ export function PtoHrSignModal({ request, companyId, profiles, reviewerId, revie
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-900 border border-white/10 rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
+      <div data-tour="sign-modal" className="bg-slate-900 border border-white/10 rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
         <div className="flex items-start justify-between mb-4">
           <h3 className="text-lg font-bold text-white">HR Department Use Only</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white transition p-1"><X className="h-4 w-4" /></button>
@@ -184,12 +191,15 @@ export function PtoHrSignModal({ request, companyId, profiles, reviewerId, revie
           <div>
             <label className="block text-xs text-slate-400 uppercase mb-2">Your Signature</label>
             <canvas {...sigPad.canvasProps} className={`bg-white rounded-md border border-white/15 block mx-auto w-full max-w-sm ${sigPad.canvasProps.className}`} />
-            <div className="mt-2"><SignaturePadControls pad={sigPad} /></div>
+            <div data-tour="sign-pad" className="mt-2"><SignaturePadControls pad={sigPad} /></div>
           </div>
         </div>
+        {preview && (
+          <p className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-md px-2.5 py-2 mb-3">Sample request for the guided tour — nothing here is signed or saved.</p>
+        )}
         {error && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mb-3">{error}</p>}
         <div className="flex gap-3">
-          <button type="button" onClick={handleSubmit} disabled={submitting} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-1.5">
+          <button type="button" onClick={handleSubmit} disabled={submitting || preview} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-1.5">
             {submitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             {submitting ? "Submitting…" : "Confirm & Sign"}
           </button>

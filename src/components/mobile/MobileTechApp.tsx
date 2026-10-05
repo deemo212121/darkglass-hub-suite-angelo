@@ -3,6 +3,8 @@ import { traineeFlagFor, traineeFlagLabel, type TraineeFlag } from "@/lib/traine
 import { ClockInCodePrompt } from "@/components/ClockInCodePrompt";
 import { isClockInCodeRequired } from "@/lib/supabase/clockInCodes";
 import { getTrainingDates } from "@/lib/supabase/trainingDates";
+import { runTour } from "@/lib/tours/runTour";
+import { MOBILE_TOURS, MOBILE_TOUR_CATEGORIES, type MobileTour } from "@/lib/tours/mobileTours";
 import { Fragment, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
@@ -28,6 +30,7 @@ import {
   WifiOff,
   Pencil,
   Trash2,
+  Compass,
 } from "lucide-react";
 // Mobile shell is an isolated surface — no navigation to desktop routes,
 // no device-override toggle. The desktop UI is available only from an
@@ -187,7 +190,8 @@ type View =
   | "correction"
   | "notifications"
   | "announcements"
-  | "branchreport";
+  | "branchreport"
+  | "guides";
 type DetailTab = "general" | "tracking" | "tips" | "parts" | "billing";
 
 // Zero-padded "HH:MM"/"HH:MM:SS" strings sort chronologically as plain
@@ -1372,6 +1376,25 @@ export function MobileTechApp() {
     setView("detail");
   };
 
+  // Guided tours (Guides tab): "tab" switches the screen ("detail:<tab>" =
+  // a tab inside the open ticket); the "ticket" panel opens one of the
+  // person's own tickets. Look-only — nothing is tapped or saved.
+  const mobileTourOpts = {
+    setTab: (t: string) => {
+      if (t.startsWith("detail:")) setDetailTab(t.slice("detail:".length) as DetailTab);
+      else setView(t as View);
+    },
+    openPanel: (panel: string) => {
+      if (panel !== "ticket") return;
+      const t = todaysTickets[0] ?? myTickets[0];
+      if (t) {
+        setActiveTicketNo(t.ticketNo);
+        setView("detail");
+      }
+    },
+    closePanel: () => {},
+  };
+
   // Slide-in side navigation replaced by persistent bottom nav bar.
 
   const headerName = displayName || email || "User";
@@ -1411,6 +1434,8 @@ export function MobileTechApp() {
       ? "payroll"
       : effectiveView === "map"
       ? "route"
+      : effectiveView === "guides"
+      ? "guides"
       : effectiveView === "home" ||
         effectiveView === "timecard" ||
         effectiveView === "clockinteam" ||
@@ -1763,6 +1788,17 @@ export function MobileTechApp() {
           />
         )}
 
+        {effectiveView === "guides" && (
+          <MobileGuidesView
+            isManager={hasTeamUnderMe || isRealSuperAdmin}
+            isSeniorBranchManager={
+              isRealSuperAdmin ||
+              [role, ...(extraRoles ?? [])].some((r) => String(r || "").toUpperCase() === "SENIOR_BRANCH_MANAGER")
+            }
+            onStart={(tour) => void runTour(tour, mobileTourOpts)}
+          />
+        )}
+
         {effectiveView === "parts" && (
           <MobileStubView
             title="Part Pickup"
@@ -1850,7 +1886,7 @@ function MobileHeaderClock({ uid }: { uid: string | null }) {
 
   if (!display) return null;
   return (
-    <div className="mtech-app-header-clock" title={`${TIME_ZONES[tz].label} · server time`}>
+    <div data-tour="m-header-clock" className="mtech-app-header-clock" title={`${TIME_ZONES[tz].label} · server time`}>
       <span className="mtech-app-header-clock-time">{display}</span>
       <span className="mtech-app-header-clock-zone">{tz}</span>
     </div>
@@ -2096,7 +2132,7 @@ function AppHeaderMobile({
 }
 
 // ── Persistent bottom navigation bar ────────────────────────────────────
-type BottomTab = "home" | "tickets" | "route" | "chat" | "onhold" | "payroll";
+type BottomTab = "home" | "tickets" | "route" | "chat" | "onhold" | "payroll" | "guides";
 const BOTTOM_TABS: Array<{ id: BottomTab; label: string; icon: React.ReactNode }> = [
   { id: "home",    label: "Home",      icon: <Home        className="mtech-bottom-tab-svg" /> },
   { id: "tickets", label: "Tickets",   icon: <TicketIcon  className="mtech-bottom-tab-svg" /> },
@@ -2104,6 +2140,7 @@ const BOTTOM_TABS: Array<{ id: BottomTab; label: string; icon: React.ReactNode }
   { id: "chat",    label: "Chat",      icon: <MessageCircle className="mtech-bottom-tab-svg" /> },
   { id: "onhold",  label: "On Hold",   icon: <PauseCircle className="mtech-bottom-tab-svg" /> },
   { id: "payroll", label: "Payroll",   icon: <DollarSign  className="mtech-bottom-tab-svg" /> },
+  { id: "guides",  label: "Guides",    icon: <Compass     className="mtech-bottom-tab-svg" /> },
 ];
 
 function BottomNav({
@@ -2122,13 +2159,14 @@ function BottomNav({
   tabs?: typeof BOTTOM_TABS;
 }) {
   return (
-    <nav className="mtech-bottom-nav" aria-label="Main navigation">
+    <nav data-tour="m-nav" className="mtech-bottom-nav" aria-label="Main navigation">
       {tabs.map((tab) => {
         const badgeCount = tab.id === "chat" ? unreadDmCount : tab.id === "tickets" ? missingTimestampCount : 0;
         return (
         <button
           key={tab.id}
           type="button"
+          data-tour={`m-nav-${tab.id}`}
           className={`mtech-bottom-tab${active === tab.id ? " mtech-bottom-tab-active" : ""}`}
           onClick={() => onSelect(tab.id)}
           aria-label={badgeCount > 0 ? `${tab.label}, ${badgeCount} ${tab.id === "chat" ? "unread" : "missing timestamp"}` : tab.label}
@@ -3591,7 +3629,7 @@ function TechTipsTab({ ticket, authorName }: { ticket: Ticket; authorName: strin
   // Newest-first, so V# counts down from the total (same labeling as Service Tracking).
   const visitOptions = visits.map((v, idx) => ({ id: v.id, label: `V${visits.length - idx}${v.scheduleDate ? ` · ${v.scheduleDate}` : ""}` }));
   return (
-    <div className="mtech-panel">
+    <div data-tour="m-detail-tips" className="mtech-panel">
       <div className="mtech-section-title">Tech Tips</div>
       <TechTipsPanel
         ticketId={((ticket as any)._id as string | undefined) ?? null}
@@ -4241,7 +4279,7 @@ function PartsTab({ ticket, authorName }: { ticket: Ticket; authorName: string }
   };
 
   return (
-    <div className="mtech-panel">
+    <div data-tour="m-detail-parts" className="mtech-panel">
       <div className="mtech-section-title">Part Transactions</div>
       <div className="mtech-muted mtech-parts-hint">
         Read-only for everything except <strong>Part Status</strong>. Tap the
@@ -4959,7 +4997,7 @@ function BillingTab({ ticket, companyId }: { ticket: Ticket; companyId: string |
   const money = (n: number) => `$${n.toFixed(2)}`;
 
   return (
-    <div className="mtech-panel">
+    <div data-tour="m-detail-billing" className="mtech-panel">
       <div className="mtech-section-title">Billing Info</div>
 
       <table className="mtech-bill">
@@ -5962,7 +6000,7 @@ function HomeOnSiteCard({
   const offlineReady = geocodeTotal > 0 && geocodeReadyCount === geocodeTotal;
 
   return (
-    <div className="mtech-home-onsite">
+    <div data-tour="m-onsite" className="mtech-home-onsite">
       <div className="mtech-home-onsite-title">On-Site Check-In</div>
       {checkinsLoadError && (
         <div className="mtech-home-clockerror">
@@ -6547,7 +6585,7 @@ function MobileHomeView({
           <button type="button" onClick={() => { setLoadError(false); setReloadNonce((n) => n + 1); }}>Retry</button>
         </div>
       ) : (
-      <div className="mtech-timecard-summary mtech-home-clockrow">
+      <div data-tour="m-clock" className="mtech-timecard-summary mtech-home-clockrow">
         {codePromptOpen && scheduleProfileId && (
           <ClockInCodePrompt
             profileId={scheduleProfileId}
@@ -6625,7 +6663,7 @@ function MobileHomeView({
 
       <div className="mtech-home-grid">
         {menuTiles.map((t) => (
-          <button key={t.key} className="mtech-home-tile" type="button" onClick={t.onClick}>
+          <button key={t.key} data-tour={`m-tile-${t.key}`} className="mtech-home-tile" type="button" onClick={t.onClick}>
             <span className="mtech-home-tile-label">{t.label}</span>
             <span className="mtech-home-tile-desc">{t.description}</span>
           </button>
@@ -6965,7 +7003,7 @@ function MobileTimecardView({
     : null;
 
   return (
-    <div className="mtech-scroll mtech-timecard">
+    <div data-tour="m-view-timecard" className="mtech-scroll mtech-timecard">
       <div className="mtech-cal-nav">
         <button type="button" className="mtech-cal-nav-btn" onClick={() => changeMonth(-1)} aria-label="Previous month">
           <ChevronLeft className="mtech-cal-nav-icon" />
@@ -7209,7 +7247,7 @@ function MobileClockInTeamView({ profileId, readOnly }: { profileId: string | nu
   };
 
   return (
-    <div className="mtech-scroll mtech-clockin">
+    <div data-tour="m-view-clockinteam" className="mtech-scroll mtech-clockin">
       {codeFor && (
         <ClockInCodePrompt
           profileId={codeFor.id}
@@ -7360,7 +7398,7 @@ function MobileTeamAttendanceView({ profileId }: { profileId: string | null }) {
   }, [profileId]);
 
   return (
-    <div className="mtech-scroll mtech-clockin">
+    <div data-tour="m-view-teamattendance" className="mtech-scroll mtech-clockin">
       <div className="mtech-clockin-heading">
         <div className="mtech-clockin-title">Team Attendance</div>
         <div className="mtech-clockin-sub">Your direct reports' check-in/out, today</div>
@@ -8400,7 +8438,7 @@ function MobileItSupportView({ userName }: { userName: string }) {
           placeholder="Describe what's happening…"
         />
 
-        <button type="button" className="mtech-save-btn" onClick={submit} disabled={submitting}>
+        <button type="button" data-tour="m-submit" className="mtech-save-btn" onClick={submit} disabled={submitting}>
           {submitting ? "Submitting…" : "Submit Ticket"}
         </button>
         {msg && <div className="mtech-save-msg">{msg}</div>}
@@ -8668,7 +8706,7 @@ function MobilePayrollDisputeView({
           <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>{files.length} file{files.length === 1 ? "" : "s"} selected</p>
         )}
 
-        <button type="button" className="mtech-save-btn" onClick={submit} disabled={submitting}>
+        <button type="button" data-tour="m-submit" className="mtech-save-btn" onClick={submit} disabled={submitting}>
           {submitting ? "Submitting…" : "Submit Dispute"}
         </button>
         {msg && <div className="mtech-save-msg">{msg}</div>}
@@ -8866,7 +8904,7 @@ function MobileTimeOffView({ userName, profileId }: { userName: string; profileI
   };
 
   return (
-    <div className="mtech-scroll">
+    <div data-tour="m-view-timeoff" className="mtech-scroll">
       <div className="mtech-payroll-heading">
         <div className="mtech-payroll-name">Time Off Request</div>
         <div className="mtech-payroll-sub">Request PTO, sick leave, or unpaid time off</div>
@@ -8909,7 +8947,7 @@ function MobileTimeOffView({ userName, profileId }: { userName: string; profileI
           placeholder="Why are you requesting time off?"
         />
 
-        <button type="button" className="mtech-save-btn" onClick={submit} disabled={submitting}>
+        <button type="button" data-tour="m-submit" className="mtech-save-btn" onClick={submit} disabled={submitting}>
           {submitting ? "Submitting…" : "Submit Request"}
         </button>
         {msg && <div className="mtech-save-msg">{msg}</div>}
@@ -9269,7 +9307,7 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, role, tec
   };
 
   return (
-    <div className="mtech-scroll">
+    <div data-tour="m-view-tickettimedispute" className="mtech-scroll">
       <div className="mtech-payroll-heading">
         <div className="mtech-payroll-name">Ticket Time Dispute</div>
         <div className="mtech-payroll-sub">Report a failed check-in, or a ticket that got rescheduled</div>
@@ -9424,7 +9462,7 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, role, tec
           <SignaturePadControls pad={sigPad} />
         </div>
 
-        <button type="button" className="mtech-save-btn" onClick={submit} disabled={submitting}>
+        <button type="button" data-tour="m-submit" className="mtech-save-btn" onClick={submit} disabled={submitting}>
           {submitting ? "Submitting…" : "Submit Dispute"}
         </button>
         {submitSuccess ? (
@@ -9701,7 +9739,7 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
   };
 
   return (
-    <div className="mtech-scroll">
+    <div data-tour="m-view-correction" className="mtech-scroll">
       <div className="mtech-payroll-heading">
         <div className="mtech-payroll-name">Time Correction</div>
         <div className="mtech-payroll-sub">Request a fix to a check-in, check-out, or meal punch</div>
@@ -9766,7 +9804,7 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
           <SignaturePadControls pad={sigPad} />
         </div>
 
-        <button type="button" className="mtech-save-btn" onClick={submit} disabled={submitting}>
+        <button type="button" data-tour="m-submit" className="mtech-save-btn" onClick={submit} disabled={submitting}>
           {submitting ? "Submitting…" : "Submit Correction"}
         </button>
         {submitSuccess ? (
@@ -9834,6 +9872,51 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
 
 // Generic "coming soon on mobile" screen for views where the desktop
 // implementation isn't practical on a phone.
+/** Guides tab: step-by-step tours of the app, grouped by category. Manager tours only show to managers. */
+function MobileGuidesView({
+  isManager,
+  isSeniorBranchManager,
+  onStart,
+}: {
+  isManager: boolean;
+  isSeniorBranchManager: boolean;
+  onStart: (tour: MobileTour) => void;
+}) {
+  const visible = MOBILE_TOURS.filter(
+    (t) => t.audience === "everyone" || (t.audience === "manager" && isManager) || (t.audience === "sbm" && isSeniorBranchManager)
+  );
+  return (
+    <div className="mtech-scroll mtech-clockin">
+      <div className="mtech-clockin-heading">
+        <div className="mtech-clockin-title">Guides</div>
+        <div className="mtech-clockin-sub">Short tours of the app. They only show you around — nothing is tapped or saved.</div>
+      </div>
+      {MOBILE_TOUR_CATEGORIES.map((cat) => {
+        const tours = visible.filter((t) => t.category === cat);
+        if (tours.length === 0) return null;
+        return (
+          <div key={cat} style={{ marginBottom: 14 }}>
+            <div className="mtech-section-title" style={{ padding: "0 4px" }}>{cat}</div>
+            <div className="mtech-clockin-list">
+              {tours.map((t) => (
+                <div key={t.id} className="mtech-clockin-row">
+                  <div className="mtech-clockin-row-info">
+                    <div className="mtech-clockin-row-name">{t.title}</div>
+                    <div className="mtech-clockin-row-status">{t.summary} · {t.steps.length} steps</div>
+                  </div>
+                  <button type="button" className="mtech-clockin-btn" onClick={() => onStart(t)}>
+                    Start
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function MobileStubView({ title, message }: { title: string; message: string }) {
   return (
     <div className="mtech-scroll mtech-stub">

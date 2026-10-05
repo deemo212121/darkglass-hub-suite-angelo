@@ -167,7 +167,7 @@ export function AppHeader() {
   return (
     <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--color-background)]/70 border-b border-[var(--color-panel-border)]">
       <div className="w-full px-4 lg:px-6 py-2.5 flex items-center gap-3">
-        <Link to="/home" className="flex shrink-0 items-center gap-3">
+        <Link to="/home" data-tour="hdr-home" className="flex shrink-0 items-center gap-3">
           <img src={logo} alt="Admin Hub Solutions" className="logo-img h-9 w-9 object-contain" />
           <div className="hidden md:block">
             <div className="font-display font-semibold tracking-tight leading-none">Admin Hub Solutions</div>
@@ -177,10 +177,12 @@ export function AppHeader() {
         {ready && email && (
           <>
             <span className="hidden sm:block h-7 w-px shrink-0 bg-[var(--color-panel-border)]" aria-hidden="true" />
-            <ModuleNavigator />
+            <div data-tour="hdr-modules" className="flex min-w-0 items-center">
+              <ModuleNavigator />
+            </div>
           </>
         )}
-        <div className="ml-auto hidden xl:block shrink-0">
+        <div data-tour="hdr-clock" className="ml-auto hidden xl:block shrink-0">
           <CentralClock zoneKey={profileZone || "CST"} />
         </div>
         {/* The icon strip (clock buttons, theme toggle, announcements,

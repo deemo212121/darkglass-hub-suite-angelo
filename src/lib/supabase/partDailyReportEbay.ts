@@ -332,3 +332,78 @@ export async function getEbayBranchStatusHistory(): Promise<EbayBranchStatusChan
   if (error) throw error;
   return (data || []).map((r: any) => ({ branch: r.branch, date: r.note_date, status: r.listings_status as string }));
 }
+
+// ---------- Excel import (EbayImportModal) ----------
+
+/** Which of these eBay order IDs already exist (any date) — for skipping duplicates on import. */
+export async function getExistingEbayOrderExtIds(ids: string[]): Promise<Set<string>> {
+  const found = new Set<string>();
+  const unique = [...new Set(ids.filter(Boolean))];
+  for (let i = 0; i < unique.length; i += 200) {
+    const { data, error } = await supabase.from("ebay_orders").select("order_ext_id").in("order_ext_id", unique.slice(i, i + 200));
+    if (error) throw error;
+    for (const r of data || []) if (r.order_ext_id) found.add(String(r.order_ext_id));
+  }
+  return found;
+}
+
+type NewEbayOrder = Omit<EbayOrderRow, "id" | "createdAt">;
+type NewEbayListing = Omit<EbayListingRow, "id" | "createdAt">;
+
+/** Insert many orders (chunks of 500). Returns the new row ids, so the import can be undone. */
+export async function bulkCreateEbayOrders(rows: NewEbayOrder[]): Promise<string[]> {
+  const ids: string[] = [];
+  for (let i = 0; i < rows.length; i += 500) {
+    const { data, error } = await supabase
+      .from("ebay_orders")
+      .insert(
+        rows.slice(i, i + 500).map((r) => ({
+          order_ext_id: r.orderExtId || null,
+          part_no: r.partNo || null,
+          quantity: r.quantity,
+          status: r.status,
+          order_earnings: r.orderEarnings,
+          order_date: r.orderDate,
+          sales_account: r.salesAccount,
+          branch: r.branch,
+          notes: r.notes || null,
+        }))
+      )
+      .select("id");
+    if (error) throw error;
+    ids.push(...(data || []).map((d: any) => d.id));
+  }
+  return ids;
+}
+
+/** Insert many listings (chunks of 500). Returns the new row ids. */
+export async function bulkCreateEbayListings(rows: NewEbayListing[]): Promise<string[]> {
+  const ids: string[] = [];
+  for (let i = 0; i < rows.length; i += 500) {
+    const { data, error } = await supabase
+      .from("ebay_listings")
+      .insert(
+        rows.slice(i, i + 500).map((r) => ({
+          part_no: r.partNo || null,
+          ebay_account: r.ebayAccount,
+          branch: r.branch,
+          price: r.price,
+          quantity: r.quantity,
+          listed_date: r.listedDate,
+          status: r.status,
+        }))
+      )
+      .select("id");
+    if (error) throw error;
+    ids.push(...(data || []).map((d: any) => d.id));
+  }
+  return ids;
+}
+
+/** Undo an import. */
+export async function deleteEbayRowsByIds(table: "ebay_orders" | "ebay_listings", ids: string[]): Promise<void> {
+  for (let i = 0; i < ids.length; i += 200) {
+    const { error } = await supabase.from(table).delete().in("id", ids.slice(i, i + 200));
+    if (error) throw error;
+  }
+}

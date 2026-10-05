@@ -1,4 +1,6 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
+import { runTour, takeQueuedTour } from "@/lib/tours/runTour";
+import { TICKET_TOURS, ALL_TICKET_TOURS, PRACTICE_TICKET_NO } from "@/lib/tours/ticketTours";
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
@@ -8,7 +10,7 @@ import type { EncompassPartInfo } from "@/lib/encompassApi";
 import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, placeEncompassOrder, isEncompassDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
 import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
 import { PART_STATUS_OPTIONS } from "@/lib/partStatuses";
-import { Copy, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone, ClipboardCheck, ChevronDown, X, Search, Settings } from "lucide-react";
+import { Copy, Compass, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone, ClipboardCheck, ChevronDown, X, Search, Settings } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { isFirebaseReady, auth as firebaseAuth } from "@/lib/firebase/config";
 import { getGmailConnectionStatus, getGmailConnectRoles, disconnectGmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
@@ -892,8 +894,64 @@ const DEFAULT_TICKET: TicketData = {
   servicerNotes: [],
 };
 
+/** Sample parts shown on the practice ticket (Guides tours) — on screen only; every parts action is blocked there. */
+const PRACTICE_PARTS: PartTransactionRow[] = [
+  {
+    id: "practice-part-1", partNo: "WE04X24719", partDist: "Marcone", partDesc: "BUTTON START ASM (practice)",
+    poNo: "", poDate: "", invoiceNo: "", invoiceDate: "", quantity: "1",
+    partPrice: "14.93", coreValue: "0", shipCost: "0", markup: "0", totalMarkup: "14.93", claimTo: "",
+    status: "Need PO", note: "Practice part — not ordered yet", visitId: "", orderNo: "", eta: "",
+    inTracking: "", raDate: "", raNo: "", outTracking: "", creditNo: "", hold: "No", cxPaid: "No",
+    createdBy: "Guides", lastModifiedBy: "Guides",
+  },
+  {
+    id: "practice-part-2", partNo: "WE49X21826", partDist: "Marcone", partDesc: "IDLER PULLEY (practice)",
+    poNo: "TOUR-DEMO-AV", poDate: "2026-10-01", invoiceNo: "", invoiceDate: "", quantity: "1",
+    partPrice: "38.20", coreValue: "0", shipCost: "0", markup: "0", totalMarkup: "38.20", claimTo: "",
+    status: "PO Made", note: "Practice part — ordered", visitId: "", orderNo: "PRACTICE-ORDER", eta: "2026-10-07",
+    inTracking: "1Z-PRACTICE", raDate: "", raNo: "", outTracking: "", creditNo: "", hold: "No", cxPaid: "No",
+    createdBy: "Guides", lastModifiedBy: "Guides",
+  },
+  {
+    id: "practice-part-3", partNo: "WE12X20435", partDist: "In-House", partDesc: "DRUM BELT (practice)",
+    poNo: "INH-PRACTICE", poDate: "2026-09-30", invoiceNo: "", invoiceDate: "", quantity: "1",
+    partPrice: "9.50", coreValue: "0", shipCost: "0", markup: "0", totalMarkup: "9.50", claimTo: "",
+    status: "Part Ready", note: "Practice part — received, ready for the tech", visitId: "", orderNo: "", eta: "",
+    inTracking: "", raDate: "", raNo: "", outTracking: "", creditNo: "", hold: "No", cxPaid: "No",
+    createdBy: "Guides", lastModifiedBy: "Guides",
+  },
+];
+
 const TICKET_DATA: Record<string, TicketData> = {
   "017151274136": DEFAULT_TICKET,
+  // Guides practice ticket (PRACTICE_TICKET_NO): made-up details, lives only
+  // here — never saved to the database, so it can't show up in lists or reports.
+  [PRACTICE_TICKET_NO]: {
+    ...DEFAULT_TICKET,
+    ticketNo: PRACTICE_TICKET_NO,
+    callNo: PRACTICE_TICKET_NO,
+    account: "PRACTICE",
+    status: "CSR-Assigned to ASC",
+    location: "Atlanta",
+    firstName: "PRACTICE",
+    lastName: "CUSTOMER",
+    address: "123 TRAINING WAY",
+    address2: "",
+    city: "ATLANTA",
+    state: "Georgia",
+    zip: "30301",
+    homePhone: "555-0100",
+    cellPhone: "555-0100",
+    email: "practice.customer@example.com",
+    brand: "GENERAL ELECTRIC",
+    model: "GTX33EASKWW",
+    serialNo: "PRACTICE-0001",
+    accountNo: "PRACTICE",
+    problemDescription: "PRACTICE TICKET — DRYER WILL NOT START. (Used by Guides tours; nothing here is real or saved.)",
+    customerNotes: [
+      { date: "10/05/2026 09:00:00", notes: "Practice note: customer prefers a morning visit. (Sample text for the Guides tour.)", by: "GUIDES" },
+    ],
+  },
   "039873174136": {
     ...DEFAULT_TICKET,
     ticketNo: "039873174136",
@@ -1627,6 +1685,11 @@ function TicketDetailsPage() {
         setVisitsLoaded(true);
       });
     
+    // Practice ticket (Guides): sample parts, kept on screen only.
+    if (ticketNo === PRACTICE_TICKET_NO) {
+      setPartRows(PRACTICE_PARTS);
+      setPartRowsLoaded(true);
+    } else
     // Load parts from Supabase
     sbGetTicketParts(ticketNo)
       .then((parts) => {
@@ -3558,7 +3621,16 @@ function TicketDetailsPage() {
   // Submit POs for all parts that need them. Splits Marcone parts (which
   // open the Marcone Parts Order modal for CSR review) from non-Marcone
   // parts (which go through the existing silent batch flow).
+  // Practice ticket (Guides tours): every parts action stops here — Submit POs
+  // could otherwise open the Marcone/Encompass popup and place a real order.
+  const practiceBlocked = () => {
+    if (ticketNo !== PRACTICE_TICKET_NO) return false;
+    alert("This is the practice ticket for Guides — nothing here is saved or ordered. Open a real ticket to do this for real.");
+    return true;
+  };
+
   const submitAllPOs = async () => {
+    if (practiceBlocked()) return;
     if (!canOrderParts) {
       alert("Only Parts Team Leader, Parts Manager, Admin, or Super Admin can submit part orders.");
       return;
@@ -3714,6 +3786,7 @@ function TicketDetailsPage() {
   // currently needs a PO. The modal itself fetches the matching
   // truck_stock rows and lets the user pick a source branch per part.
   const openTruckStockBatch = () => {
+    if (practiceBlocked()) return;
     if (partsEditDisabled) {
       alert(`Parts are locked because this ticket is "${ticket?.status}". Only Parts / Claims / Admin / Manager / Branch Manager roles can edit them.`);
       return;
@@ -3840,6 +3913,10 @@ function TicketDetailsPage() {
 
   const syncPartsFromNotes = useCallback(async () => {
     if (!ticketNo) return;
+    if (ticketNo === PRACTICE_TICKET_NO) {
+      alert("This is the practice ticket for Guides — nothing here is saved or ordered. Open a real ticket to do this for real.");
+      return;
+    }
     if (runningNotes.length === 0) {
       alert("No ServicePower running notes loaded yet. Hit Refresh on Customer Notes first.");
       return;
@@ -4341,6 +4418,22 @@ function TicketDetailsPage() {
     if (ticket?.technician) names.add(ticket.technician);
     return Array.from(names).sort((a, b) => a.localeCompare(b));
   }, [liveTechnicians, ticket?.technician]);
+
+  // Guided tour handed over from Guides (e.g. "Working a ticket (CSR)").
+  const tourStartedRef = useRef(false);
+  const [tourMenuOpen, setTourMenuOpen] = useState(false);
+  useEffect(() => {
+    if (!ticket || tourStartedRef.current) return;
+    const tourId = takeQueuedTour(`ticket:${ticketNo}`);
+    const def = tourId ? TICKET_TOURS[tourId] : undefined;
+    if (!def) return;
+    tourStartedRef.current = true;
+    // Let the page finish laying out first. Deliberately not cleared on
+    // re-render: the ticket refreshes a few times while it loads, and
+    // cancelling here meant the tour never started.
+    window.setTimeout(() => void runTour(def, { setTab: (tab) => setActiveTab(tab as TicketDetailsTab) }), 900);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticket, ticketNo]);
 
   const isClaimsRole = useMemo(() => {
     const primary = String(currentUserRole || "").toUpperCase();
@@ -4859,6 +4952,7 @@ function TicketDetailsPage() {
   };
 
   const refreshMarconeOrderStatus = async (row: PartTransactionRow) => {
+    if (practiceBlocked()) return;
     if (!row.orderNo?.trim()) {
       alert("This part has no vendor Order # to refresh.");
       return;
@@ -4912,6 +5006,7 @@ function TicketDetailsPage() {
   const dirtyRowCount = Object.keys(rowEdits).length;
 
   const saveAllRowEdits = async () => {
+    if (practiceBlocked()) return;
     if (!canEditParts) {
       alert("Your role can only order parts, not add or edit them. Ask a Parts/Claims/Manager-tier user to make this change.");
       return;
@@ -5019,6 +5114,7 @@ function TicketDetailsPage() {
   };
 
   const savePartRow = async () => {
+    if (practiceBlocked()) return;
     if (!canEditParts) {
       alert("Your role can only order parts, not add or edit them. Ask a Parts/Claims/Manager-tier user to make this change.");
       return;
@@ -5203,6 +5299,7 @@ function TicketDetailsPage() {
   };
 
   const openDropshipModal = (rows: PartTransactionRow[]) => {
+    if (practiceBlocked()) return;
     if (rows.length === 0) return;
     setDropshipRows(rows);
     setDropshipTo("");
@@ -5270,6 +5367,7 @@ function TicketDetailsPage() {
   // Bulk-send only makes sense within one PO — mixing POs into a single
   // email would misrepresent which parts belong to which order.
   const openBulkDropshipModal = () => {
+    if (practiceBlocked()) return;
     const rows = partRows.filter((r) => dropshipSelectedIds.has(r.id));
     if (rows.length === 0) return;
     const distinctPos = new Set(rows.map((r) => r.poNo || ""));
@@ -5362,6 +5460,7 @@ function TicketDetailsPage() {
   };
 
   const deletePartRow = async (rowId: string) => {
+    if (practiceBlocked()) return;
     if (!canEditParts) {
       alert("Your role can only order parts, not add or edit them. Ask a Parts/Claims/Manager-tier user to make this change.");
       return;
@@ -5636,9 +5735,10 @@ function TicketDetailsPage() {
         <td className="px-2 py-1.5 text-slate-500 w-10" rowSpan={2}></td>
         <td className="px-1 py-1.5">
           <div className="flex gap-1">
-            <input value={partDraft.partNo} onChange={(e) => setPartDraft((d) => ({ ...d, partNo: e.target.value }))} className={`flex-1 min-w-0 rounded border border-white/15 bg-slate-950 px-2 py-1 font-semibold focus:outline-none focus:border-blue-500 ${partDraft.status ? partStatusTextClass(partDraft.status) : "text-white"}`} placeholder="Part No*" />
+            <input data-tour="part-no" value={partDraft.partNo} onChange={(e) => setPartDraft((d) => ({ ...d, partNo: e.target.value }))} className={`flex-1 min-w-0 rounded border border-white/15 bg-slate-950 px-2 py-1 font-semibold focus:outline-none focus:border-blue-500 ${partDraft.status ? partStatusTextClass(partDraft.status) : "text-white"}`} placeholder="Part No*" />
             <button
               type="button"
+              data-tour="part-lookup"
               onClick={handleMarconeLookup}
               disabled={marconeLookupBusy || partsEditDisabled || !partDraft.partNo.trim() || !partDraft.partDist.trim()}
               title={
@@ -5684,7 +5784,7 @@ function TicketDetailsPage() {
           {partSuggestionsLoading ? (
             <div className="mt-1 text-[10px] text-slate-500">Checking past tickets for suggestions…</div>
           ) : partSuggestions.length > 0 ? (
-            <div className="mt-1.5">
+            <div data-tour="part-suggestions" className="mt-1.5">
               <button
                 type="button"
                 onClick={() => setPartSuggestionsOpen((o) => !o)}
@@ -5716,7 +5816,7 @@ function TicketDetailsPage() {
           ) : null}
         </td>
         <td className="px-1 py-1.5">
-          <select value={partDraft.partDist} onChange={(e) => setPartDraft((d) => ({ ...d, partDist: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500">
+          <select data-tour="part-dist" value={partDraft.partDist} onChange={(e) => setPartDraft((d) => ({ ...d, partDist: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500">
             <option value="">Dist.*</option>
             {/* In-house transfer values like "In-House (Asheville)" are
                 stamped by the Use in-house button on the Marcone Lookup
@@ -5770,7 +5870,7 @@ function TicketDetailsPage() {
       </tr>
       <tr className="bg-slate-900/40 align-top border-b border-white/10">
         <td className="px-1 py-1.5">
-          <select value={partDraft.status} onChange={(e) => setPartDraft((d) => ({ ...d, status: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500">
+          <select data-tour="part-status" value={partDraft.status} onChange={(e) => setPartDraft((d) => ({ ...d, status: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500">
             <option value="">Status*</option>
             {PART_STATUS_OPTIONS.map((s) => <option key={s}>{s}</option>)}
           </select>
@@ -5821,6 +5921,7 @@ function TicketDetailsPage() {
         <td className="px-2 py-1.5 whitespace-nowrap">
           <button
             type="button"
+            data-tour="part-add"
             onClick={savePartRow}
             disabled={partsEditDisabled || !canEditParts}
             className={`rounded border px-3 py-1 text-xs font-semibold transition ${
@@ -5929,6 +6030,45 @@ function TicketDetailsPage() {
               >
                 <Send className="h-4 w-4" />
               </button>
+              {/* Guided tours of this page, one per department (Guides module). */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setTourMenuOpen((o) => !o)}
+                  disabled={!ticket}
+                  title="Take a guided tour of this page"
+                  aria-expanded={tourMenuOpen}
+                  className="inline-flex items-center gap-1.5 rounded border border-sky-400/40 bg-sky-500/15 px-2.5 py-2 text-xs font-semibold text-sky-200 transition hover:bg-sky-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Compass className="h-4 w-4" /> Tour
+                </button>
+                {tourMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-30" onClick={() => setTourMenuOpen(false)} />
+                    <div className="absolute left-0 top-full mt-1 z-40 w-64 rounded-lg border border-white/10 bg-slate-900 p-1 shadow-2xl">
+                      {ALL_TICKET_TOURS.map((t) => (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => {
+                            setTourMenuOpen(false);
+                            void runTour(t, { setTab: (tab) => setActiveTab(tab as TicketDetailsTab) });
+                          }}
+                          className="w-full rounded-md px-3 py-2 text-left hover:bg-white/8"
+                        >
+                          <div className="text-sm font-semibold text-white">{t.title}</div>
+                          <div className="text-[11px] text-slate-400">{t.steps.length} steps</div>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+              {ticketNo === PRACTICE_TICKET_NO && (
+                <span className="rounded border border-amber-400/40 bg-amber-500/15 px-2 py-1 text-xs font-semibold text-amber-200">
+                  Practice ticket — made-up details, nothing here is saved
+                </span>
+              )}
 
               {/* Claims Readiness — compact alert next to the ticket
                   actions, showing what's missing before this ticket can go
@@ -6013,7 +6153,7 @@ function TicketDetailsPage() {
               })()}
             </div>
             <div>
-              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+              <div data-tour="ticket-header" className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                 <h1 className="text-3xl font-bold text-white">Ticket #{ticketNo}</h1>
 
                 {ticket ? (
@@ -6147,7 +6287,7 @@ function TicketDetailsPage() {
             place that switches the same four sections. */}
         <div className="md:hidden sticky top-[64px] z-10 -mx-1 px-1 pb-2">
           <div className="overflow-x-auto">
-            <div className="flex gap-1 rounded-lg border border-white/10 bg-slate-900/85 backdrop-blur-md p-1 shadow-sm shadow-blue-900/20 w-max">
+            <div data-tour="ticket-tabs" className="flex gap-1 rounded-lg border border-white/10 bg-slate-900/85 backdrop-blur-md p-1 shadow-sm shadow-blue-900/20 w-max">
               {([
                 { tab: "general", label: "General" },
                 { tab: "tracking", label: "Tracking" },
@@ -6240,7 +6380,7 @@ function TicketDetailsPage() {
               </div>
 
               {/* Customer Information - Prominent Display */}
-              <div className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
+              <div data-tour="ticket-customer" className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
                 <h4 className="font-semibold text-slate-300 text-sm">Customer</h4>
                 {!isEditingCustomerInfo ? (
                   <>
@@ -6445,7 +6585,7 @@ function TicketDetailsPage() {
               </div>
 
               {/* Product Information */}
-              <div className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
+              <div data-tour="ticket-product" className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <h4 className="font-semibold text-slate-300">Product Information</h4>
                   <div className="flex items-center gap-2 flex-wrap">
@@ -6910,7 +7050,7 @@ function TicketDetailsPage() {
               )}
 
               {/* Schedule Information */}
-              <div className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
+              <div data-tour="ticket-schedule" className="space-y-4 mb-8 rounded-lg border border-blue-500/30 bg-blue-900/20 p-4">
                 <div className="flex items-center justify-between">
                   <h4 className="font-semibold text-slate-300">Schedule Information</h4>
                   {!isEditingScheduleInfo ? (
@@ -6998,7 +7138,7 @@ function TicketDetailsPage() {
               </div>
 
               {/* Problem Description (read-only — synced from ServicePower) */}
-              <div className="space-y-4 mb-8">
+              <div data-tour="ticket-problem" className="space-y-4 mb-8">
                 <h4 className="font-semibold text-slate-300">Problem Description</h4>
                 <div className="bg-slate-900/50 border border-white/10 rounded p-4 text-sm text-slate-300">
                   {ticket.problemDescription || "—"}
@@ -7010,7 +7150,7 @@ function TicketDetailsPage() {
                   etc.) types on the SP work order shows up here for the
                   technician. Notes auto-load when the ticket opens; the
                   refresh button forces a fresh pull from SP. */}
-              <div className="space-y-4 mb-8">
+              <div data-tour="ticket-notes" className="space-y-4 mb-8">
                 <div className="flex items-center justify-between gap-2">
                   <h4 className="font-semibold text-slate-300">Customer Notes</h4>
                   <div className="flex items-center gap-2">
@@ -7145,7 +7285,7 @@ function TicketDetailsPage() {
 
               {/* Claims Readiness Checklist — visible to every role, see claimsReadiness above */}
               {claimsReadiness && (
-                <div className="mb-8 rounded-xl border border-slate-700 overflow-hidden">
+                <div data-tour="ticket-claims-readiness" className="mb-8 rounded-xl border border-slate-700 overflow-hidden">
                   <div className={`flex items-center justify-between px-4 py-3 ${claimsReadiness.allDone ? "bg-emerald-900/30 border-b border-emerald-700/30" : "bg-slate-900/60 border-b border-slate-700"}`}>
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-semibold text-slate-200">Claims Readiness</span>
@@ -7364,11 +7504,13 @@ function TicketDetailsPage() {
                     }}
                     className="rounded border border-blue-400/40 bg-blue-600/20 px-3 py-1.5 text-xs font-semibold text-blue-200 transition hover:bg-blue-600/30"
                     title="View all parts"
+                    data-tour="part-view-log"
                   >
                     View Log
                   </button>
                   <button 
                     type="button"
+                    data-tour="part-sync-notes"
                     onClick={() => void syncPartsFromNotes()}
                     disabled={partsEditDisabled || syncingNotesParts}
                     className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
@@ -7386,6 +7528,7 @@ function TicketDetailsPage() {
                   </button>
                   <button 
                     type="button"
+                    data-tour="part-truck-stock"
                     onClick={openTruckStockBatch}
                     disabled={partsEditDisabled}
                     className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
@@ -7399,6 +7542,7 @@ function TicketDetailsPage() {
                   </button>
                   <button
                     type="button"
+                    data-tour="part-submit-pos"
                     onClick={submitAllPOs}
                     disabled={partsEditDisabled || !canOrderParts}
                     className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
@@ -7418,6 +7562,7 @@ function TicketDetailsPage() {
                   </button>
                   <button
                     type="button"
+                    data-tour="part-update"
                     onClick={saveAllRowEdits}
                     disabled={partsEditDisabled || !canEditParts || rowEditsSaving || dirtyRowCount === 0}
                     className={`rounded border px-3 py-1.5 text-xs font-semibold transition ${
@@ -7589,7 +7734,7 @@ function TicketDetailsPage() {
                             updateRowField(row.id, field, v);
                         return (
                         <React.Fragment key={row.id}>
-                          <tr className={`align-top transition-colors ${isDirty ? "bg-blue-500/10" : "bg-slate-900/30"}`}>
+                          <tr data-tour="part-row" className={`align-top transition-colors ${isDirty ? "bg-blue-500/10" : "bg-slate-900/30"}`}>
                             <td className="px-2 py-1.5 text-slate-400 font-semibold w-10" rowSpan={2}>
                               P{index + 1}
                               {isDirty ? (
@@ -7626,7 +7771,7 @@ function TicketDetailsPage() {
                           </tr>
                           <tr className={`align-top border-b border-white/5 ${isDirty ? "bg-blue-500/5" : "bg-slate-900/20"}`}>
                             <td className={cellWrap}>
-                              <select value={String(val("status") ?? "")} onChange={(e) => set("status", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={`${selectCls} text-blue-300 font-semibold`}>
+                              <select data-tour="part-row-status" value={String(val("status") ?? "")} onChange={(e) => set("status", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={`${selectCls} text-blue-300 font-semibold`}>
                                 <option value="">Status*</option>
                                 {PART_STATUS_OPTIONS.map((s) => <option key={s}>{s}</option>)}
                               </select>
@@ -7664,6 +7809,7 @@ function TicketDetailsPage() {
                               {row.orderNo && (isMarconeDist(row.partDist) || isEncompassDist(row.partDist)) ? (
                                 <button
                                   type="button"
+                                  data-tour="part-refresh"
                                   onClick={() => refreshMarconeOrderStatus(row)}
                                   disabled={marconeRefreshingId === row.id}
                                   className="rounded border border-amber-400/40 bg-amber-500/15 px-2 py-1 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 mr-1 disabled:opacity-40"
@@ -7674,6 +7820,7 @@ function TicketDetailsPage() {
                               ) : null}
                               <button
                                 type="button"
+                                data-tour="part-send"
                                 onClick={() => openDropshipModal([row])}
                                 disabled={partsEditDisabled || !canEditParts}
                                 className={`rounded border px-2 py-1 text-xs font-semibold transition mr-1 ${
@@ -7826,7 +7973,7 @@ function TicketDetailsPage() {
                 </div>
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
-                <button type="button" onClick={openVisitCreateModal} className="rounded-md border border-blue-400/40 bg-blue-500/20 px-4 py-2 text-sm font-semibold text-blue-200 transition hover:bg-blue-500/30">
+                <button type="button" data-tour="ticket-add-visit" onClick={openVisitCreateModal} className="rounded-md border border-blue-400/40 bg-blue-500/20 px-4 py-2 text-sm font-semibold text-blue-200 transition hover:bg-blue-500/30">
                   Add Visit
                 </button>
                 {/* NSA has no button here — its Communication log is

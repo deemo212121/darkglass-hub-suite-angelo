@@ -4,7 +4,9 @@ import { Footer } from "@/components/Footer";
 import { useAuth } from "@/lib/auth";
 import { MODULES } from "@/lib/modules";
 import { ArrowRight, Settings } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { runTour, takeQueuedTour } from "@/lib/tours/runTour";
+import { DESKTOP_GETTING_STARTED_TOUR, GETTING_STARTED_TARGET } from "@/lib/tours/desktopTours";
 import { shouldUseMobile } from "@/lib/device";
 import { isModuleAllowed, isModuleAllowedForTrainee, isModuleAllowedForFrozen } from "@/lib/roleLabels";
 import { canAccessSubmodule } from "@/lib/submoduleAccess";
@@ -55,6 +57,15 @@ function Home() {
     }
   }, [ready, email, role, navigate]);
   
+  // Guides → Getting Started hands its tour over to this page.
+  const tourStartedRef = useRef(false);
+  useEffect(() => {
+    if (!ready || !email || tourStartedRef.current) return;
+    if (takeQueuedTour(GETTING_STARTED_TARGET) !== DESKTOP_GETTING_STARTED_TOUR.id) return;
+    tourStartedRef.current = true;
+    window.setTimeout(() => void runTour(DESKTOP_GETTING_STARTED_TOUR), 900);
+  }, [ready, email]);
+
   if (!ready) return null;
   if (!email) return null;
   if (role && role.toUpperCase() === "SUPERSUPERADMIN") return null;
@@ -67,11 +78,11 @@ function Home() {
           <h1 className="text-3xl font-semibold tracking-tight">Welcome back</h1>
           <p className="text-muted-foreground">Choose a module to get started.</p>
         </div>
-        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+        <div data-tour="home-modules" className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
           {MODULES.filter((m) => isModuleAllowed(role, m.slug, extraRoles) && isModuleAllowedForTrainee(isTrainee, m.slug) && isModuleAllowedForFrozen(isFrozen, m.slug)).map((m) => {
             const visibleSubmodules = m.submodules.filter((s) => !s.hiddenFromGrid && canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee, isFrozen));
             return (
-            <div key={m.slug} className="module-card group relative flex h-full flex-col">
+            <div key={m.slug} data-tour={`home-module-${m.slug}`} className="module-card group relative flex h-full flex-col">
               <div className="flex items-center gap-2.5 mb-3">
                 {canManageAccess && (
                   <button
