@@ -2202,7 +2202,7 @@ const guidesMod: ModuleDef = {
   ],
 };
 
-export const MODULES: ModuleDef[] = [dashboardMod, guidesMod, csrMod, ticketsMod, partsMod, reportMod, claimsMod, accountingMod, hrMod, branchTechMod, triageMod, bizOpsMod, adminMod];
+export const MODULES: ModuleDef[] = [dashboardMod, csrMod, ticketsMod, partsMod, reportMod, claimsMod, accountingMod, hrMod, branchTechMod, triageMod, bizOpsMod, adminMod, guidesMod];
 
 export function getModule(slug: string) {
   return MODULES.find((m) => m.slug === slug);
