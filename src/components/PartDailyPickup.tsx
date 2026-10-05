@@ -1,3 +1,5 @@
+import { PartsDoneBanner } from "@/components/PartsDoneBanner";
+import { PartsDoneButton } from "@/components/PartsDoneButton";
 import { ClockInCodeModal } from "@/components/ClockInCodeModal";
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
@@ -177,14 +179,18 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const pickupTotals = { notPickedUp: rows.filter((r) => !r.pickedUp).length, pickedUp: rows.filter((r) => r.pickedUp).length };
 
   return(<div className="min-h-screen flex flex-col"><main className="flex-1 w-full min-w-0 px-4 lg:px-6 py-8">
+    <PartsDoneBanner />
     <div className="flex items-center justify-between gap-3 mb-6">
       <div className="flex items-center gap-3">
         <button type="button" onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4"/></button>
         <h1 className="text-2xl font-bold">{sub.title}</h1>
       </div>
-      <button type="button" onClick={openActivityLog} className="btn hover:bg-white/15 inline-flex items-center gap-2 text-xs">
-        <History className="h-3.5 w-3.5" /> View Activity
-      </button>
+      <div className="flex items-center gap-2">
+        <PartsDoneButton />
+        <button type="button" onClick={openActivityLog} className="btn hover:bg-white/15 inline-flex items-center gap-2 text-xs">
+          <History className="h-3.5 w-3.5" /> View Activity
+        </button>
+      </div>
     </div>
 
     {/* Filters */}

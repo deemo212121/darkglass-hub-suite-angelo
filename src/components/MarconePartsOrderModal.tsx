@@ -33,6 +33,8 @@ export interface AddressBookEntry {
 export interface MarconePartLine {
   id: string;        // PartTransactionRow.id
   partNo: string;
+  /** Brand saved on the part, "<Distributor>|<code>" (parts.dist_brand). */
+  distBrand?: string;
   partDesc: string;
   partPrice: string; // raw string from the grid
   coreValue: string; // raw string from the grid
@@ -48,7 +50,14 @@ export interface MarconePartsOrderModalProps {
   addressBook: AddressBookEntry[];
   /** Resolve handler for Place Order. Throws on failure. */
   onPlaceOrder: (payload: MarconeOrderPayload) => Promise<void>;
+  /** Which distributor this popup orders from — sets the title and the Make (Marcone) / MFG (Encompass) column. */
+  vendor?: "Marcone" | "Encompass";
 }
+
+/** Default email on every Marcone / Encompass order form. */
+const DEFAULT_ORDER_EMAIL = "logistics@usinhomeservices.com";
+
+type BrandChoice = { code: string; name?: string; totalAvailable: number };
 
 const SHIP_METHODS = [
   "FedEx Ground",
@@ -79,6 +88,8 @@ type LineState = {
   partPrice: number;
   coreValue: number;
   orderQty: number;
+  /** Make (Marcone) / MFG code (Encompass) to order. "" = the distributor's first match. */
+  make: string;
 };
 
 
@@ -98,7 +109,13 @@ export function MarconePartsOrderModal({
   defaultShipTo,
   addressBook,
   onPlaceOrder,
+  vendor = "Marcone",
 }: MarconePartsOrderModalProps) {
+  const brandColumn = vendor === "Encompass" ? "MFG" : "Make";
+  // Brands (with stock) per part number, loaded when the popup opens.
+  const [brands, setBrands] = useState<Record<string, BrandChoice[] | "loading" | "error">>({});
+  // Stable key so a re-render of the ticket page doesn't reload the brands.
+  const partNosKey = Array.from(new Set(parts.map((p) => (p.partNo || "").trim().toUpperCase()).filter(Boolean))).join("|");
   // ── Line state — derived from props.parts when the modal opens ─────────
   const [lines, setLines] = useState<LineState[]>([]);
   // ── Form state ─────────────────────────────────────────────────────────
@@ -122,18 +139,54 @@ export function MarconePartsOrderModal({
         partPrice: toNumber(p.partPrice),
         coreValue: toNumber(p.coreValue),
         orderQty: Math.max(1, toNumber(p.quantity) || 1),
+        make: (() => {
+          const [dist, code] = String(p.distBrand || "").split("|");
+          return dist?.toLowerCase() === vendor.toLowerCase() && code ? code : "";
+        })(),
       })),
     );
     setPoNo(ticketNo);
     setShipMethod("");
     setSelectedAddressId("");
-    setShipTo(defaultShipTo);
+    setShipTo({ ...defaultShipTo, email: DEFAULT_ORDER_EMAIL });
     setIsPlacing(false);
     setError(null);
     setAttempted(false);
   }, [open, parts, ticketNo, defaultShipTo]);
 
   // Escape closes the modal (Requirement 5.2).
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    const partNos = partNosKey ? partNosKey.split("|") : [];
+    setBrands(Object.fromEntries(partNos.map((n) => [n, "loading" as const])));
+    void (async () => {
+      const lookup =
+        vendor === "Encompass"
+          ? (await import("@/lib/encompassApi")).encompassLookupPartBrands
+          : (await import("@/lib/marconeApi")).marconeLookupPartBrands;
+      for (const n of partNos) {
+        let list: BrandChoice[] | "error";
+        try {
+          list = await lookup(n);
+        } catch {
+          list = "error";
+        }
+        if (cancelled) return;
+        setBrands((prev) => ({ ...prev, [n]: list }));
+        // No saved brand on the line yet → preselect the brand with the most stock (list is sorted that way).
+        if (Array.isArray(list) && list.length > 0) {
+          const best = list[0].code;
+          setLines((prev) => prev.map((l) => (l.partNo.trim().toUpperCase() === n && !l.make ? { ...l, make: best } : l)));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, partNosKey, vendor]);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -176,7 +229,8 @@ export function MarconePartsOrderModal({
   const pickAddress = (id: string) => {
     setSelectedAddressId(id);
     const entry = addressBook.find((a) => a.id === id);
-    if (entry) setShipTo({ ...entry.shipTo });
+    // Keep the order email (logistics by default) when switching addresses.
+    if (entry) setShipTo((prev) => ({ ...entry.shipTo, email: prev.email || DEFAULT_ORDER_EMAIL }));
   };
 
   const updateShipTo = (field: keyof ShipToAddress, value: string) =>
@@ -202,6 +256,7 @@ export function MarconePartsOrderModal({
             quantity: l.orderQty,
             unitPrice: l.partPrice,
             coreValue: l.coreValue,
+            ...(l.make ? { make: l.make } : {}),
           })),
       };
       await onPlaceOrder(payload);
@@ -225,7 +280,7 @@ export function MarconePartsOrderModal({
       >
         {/* Header bar — Marcone blue */}
         <div className="bg-[#1f7cf3] text-white px-4 py-2 flex items-center justify-between rounded-t-md">
-          <span className="font-semibold tracking-wide">Marcone Parts Order</span>
+          <span className="font-semibold tracking-wide">{vendor} Parts Order</span>
           <button
             type="button"
             aria-label="Close"
@@ -245,6 +300,7 @@ export function MarconePartsOrderModal({
                 <th className="px-2 py-1 text-left">Ticket #</th>
                 <th className="px-2 py-1 text-center w-16">Select</th>
                 <th className="px-2 py-1 text-left">Part No</th>
+                <th className="px-2 py-1 text-left" title={`${brandColumn}: the brand ${vendor} will ship — each with its stock`}>{brandColumn}</th>
                 <th className="px-2 py-1 text-left">Description</th>
                 <th className="px-2 py-1 text-right w-24">Price</th>
                 <th className="px-2 py-1 text-right w-24">Core Value</th>
@@ -254,8 +310,8 @@ export function MarconePartsOrderModal({
             <tbody>
               {lines.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-2 py-6 text-center text-slate-500">
-                    No Marcone parts to order.
+                  <td colSpan={8} className="px-2 py-6 text-center text-slate-500">
+                    No {vendor} parts to order.
                   </td>
                 </tr>
               ) : (
@@ -274,6 +330,29 @@ export function MarconePartsOrderModal({
                       />
                     </td>
                     <td className="px-2 py-1.5 text-blue-300 font-semibold">{l.partNo}</td>
+                    <td className="px-2 py-1.5">
+                      {(() => {
+                        const b = brands[l.partNo.trim().toUpperCase()];
+                        if (b === "loading") return <span className="text-xs text-slate-500">Loading…</span>;
+                        const list = Array.isArray(b) ? b : [];
+                        return (
+                          <select
+                            value={l.make}
+                            onChange={(e) => setLines((prev) => prev.map((x) => (x.partId === l.partId ? { ...x, make: e.target.value } : x)))}
+                            className="max-w-[190px] rounded border border-white/15 bg-slate-950 px-1 py-0.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                            title={`${brandColumn} to order`}
+                          >
+                            <option value="">{b === "error" ? "Couldn't load — first match" : "First match"}</option>
+                            {l.make && !list.some((o) => o.code === l.make) && <option value={l.make}>{l.make}</option>}
+                            {list.map((o) => (
+                              <option key={o.code} value={o.code}>
+                                {o.code}{o.name ? ` · ${o.name}` : ""} — {o.totalAvailable > 0 ? `${o.totalAvailable} in stock` : "out of stock"}
+                              </option>
+                            ))}
+                          </select>
+                        );
+                      })()}
+                    </td>
                     <td className="px-2 py-1.5 text-slate-300">{l.partDesc || "—"}</td>
                     <td className="px-2 py-1.5 text-right text-slate-200">{money(l.partPrice)}</td>
                     <td className="px-2 py-1.5 text-right text-slate-200">{money(l.coreValue)}</td>

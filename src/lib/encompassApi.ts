@@ -123,6 +123,32 @@ export interface EncompassPartLookupResult {
  * so callers (the ticket page's Lookup button) can treat both vendors the
  * same way.
  */
+/**
+ * Every brand (mfgCode) Encompass has for this part number, with stock —
+ * the same partsInformation call as encompassLookupPart, keeping every
+ * result instead of the first. In-stock first. Read-only.
+ */
+export async function encompassLookupPartBrands(partNumber: string): Promise<Array<{ code: string; name?: string; description?: string; totalAvailable: number }>> {
+  if (!partNumber?.trim()) return [];
+  const result = await encompassRequest<{ parts?: any[] }>("/restfulservice/partsInformation", {
+    searchPartNumber: partNumber.trim(),
+    destinationZipCode: "",
+  });
+  const parts: any[] = (result.data as any)?.data?.parts ?? [];
+  const seen = new Set<string>();
+  const out: Array<{ code: string; name?: string; description?: string; totalAvailable: number }> = [];
+  for (const p of parts) {
+    const code = String(p?.mfgCode || "").trim();
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    const total = Array.isArray(p.availabilityByLocation)
+      ? p.availabilityByLocation.reduce((sum: number, l: any) => sum + (toNum(l.available) || 0), 0)
+      : 0;
+    out.push({ code, name: p.mfgName, description: p.partDescription || p.detailedPartDescription, totalAvailable: total });
+  }
+  return out.sort((a, b) => b.totalAvailable - a.totalAvailable);
+}
+
 export async function encompassLookupPart(args: {
   partNumber: string;
   destinationZipCode?: string;

@@ -296,6 +296,42 @@ export async function marconeLookupPart(args: {
 }
 
 
+/** One brand (Marcone "make") a part number exists under, with its stock. */
+export interface DistBrandOption {
+  code: string;
+  name?: string;
+  description?: string;
+  totalAvailable: number;
+}
+
+/**
+ * Every brand Marcone has for this part number (the same /parts/lookup call
+ * as marconeLookupPart, but keeping all partResults instead of the first),
+ * in-stock first. Read-only.
+ */
+export async function marconeLookupPartBrands(partNumber: string): Promise<DistBrandOption[]> {
+  if (!partNumber?.trim()) return [];
+  const result = await marconeRequest<MarconeLookupRawResponse>("/parts/lookup", {
+    method: "POST",
+    body: { partNumber: partNumber.trim(), quantity: 1 },
+  });
+  if (!result.success) return [];
+  const raw = (result.data as MarconeLookupRawResponse) || {};
+  const seen = new Set<string>();
+  const out: DistBrandOption[] = [];
+  for (const r of raw.partResults ?? []) {
+    const code = String(r.make || "").trim();
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    const total =
+      typeof r.totalWarehouseQty === "number"
+        ? r.totalWarehouseQty
+        : (r.inventory ?? []).reduce((sum, inv) => sum + (Number(inv.quantityAvailable ?? 0) || 0), 0);
+    out.push({ code, description: r.description, totalAvailable: total });
+  }
+  return out.sort((a, b) => b.totalAvailable - a.totalAvailable);
+}
+
 // ─── Order Status ───────────────────────────────────────────────────────
 
 /**

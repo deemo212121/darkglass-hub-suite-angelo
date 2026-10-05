@@ -301,6 +301,32 @@ export const PARTS_TICKET_TOUR: TourDef = {
   ],
 };
 
+/**
+ * Who sees each department's ticket tour (primary or extra role). Admin and
+ * Super Admin see every tour. Claims is listed for when its tour is written.
+ */
+export const TICKET_TOUR_ROLES: Record<string, string[]> = {
+  csr: ["CSR", "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER"],
+  triage: ["TRIAGE_USER", "TRIAGE_MANAGER"],
+  parts: ["PARTS", "PARTS_TEAM_LEADER", "PARTS_MANAGER", "PARTS_ORDER"],
+  claims: ["CLAIMS", "CLAIMS_TEAM_LEADER", "CLAIMS_MANAGER"],
+};
+const SEE_ALL_TOURS = ["ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"];
+
+/** Can someone with these roles see this department's ticket tour ("csr" | "triage" | "parts" | "claims")? */
+export function canSeeTicketTour(department: string, role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  const held = [role, ...(extraRoles ?? [])].map((r) => String(r || "").toUpperCase());
+  if (held.some((r) => SEE_ALL_TOURS.includes(r))) return true;
+  return held.some((r) => (TICKET_TOUR_ROLES[department] ?? []).includes(r));
+}
+
+/** Tour id -> department, for the ticket page's Tour menu. */
+export const TICKET_TOUR_DEPARTMENT: Record<string, string> = {
+  "ticket-csr": "csr",
+  "ticket-triage": "triage",
+  "ticket-parts": "parts",
+};
+
 /** Every ticket tour, in the order the Tour menu lists them. */
 export const ALL_TICKET_TOURS: TourDef[] = [CSR_TICKET_TOUR, TRIAGE_TICKET_TOUR, PARTS_TICKET_TOUR];
 

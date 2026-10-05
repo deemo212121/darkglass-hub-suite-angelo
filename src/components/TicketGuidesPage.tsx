@@ -8,7 +8,8 @@ import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, Compass, PlayCircle, Ticket, Clock } from "lucide-react";
 import { queueTour, type TourDef } from "@/lib/tours/runTour";
-import { CSR_TICKET_TOUR, TRIAGE_TICKET_TOUR, PARTS_TICKET_TOUR, PRACTICE_TICKET_NO } from "@/lib/tours/ticketTours";
+import { CSR_TICKET_TOUR, TRIAGE_TICKET_TOUR, PARTS_TICKET_TOUR, PRACTICE_TICKET_NO, canSeeTicketTour } from "@/lib/tours/ticketTours";
+import { useAuth } from "@/lib/auth";
 
 interface DepartmentTour {
   key: string;
@@ -28,8 +29,11 @@ export function TicketGuidesPage() {
   const navigate = useNavigate();
   // Runs on the practice ticket by default; any real ticket number works too.
   const [ticketNo, setTicketNo] = useState(PRACTICE_TICKET_NO);
-  const [deptKey, setDeptKey] = useState(DEPARTMENTS[0].key);
-  const dept = DEPARTMENTS.find((d) => d.key === deptKey) ?? DEPARTMENTS[0];
+  // Each department only sees its own tour (Admin / Super Admin see all).
+  const { role, extraRoles } = useAuth();
+  const visible = DEPARTMENTS.filter((d) => canSeeTicketTour(d.key, role, extraRoles));
+  const [deptKey, setDeptKey] = useState("");
+  const dept = visible.find((d) => d.key === deptKey) ?? visible[0];
   const isPractice = ticketNo.trim() === PRACTICE_TICKET_NO;
 
   const start = (tour: TourDef) => {
@@ -87,9 +91,16 @@ export function TicketGuidesPage() {
         )}
       </div>
 
-      {/* Department tabs */}
+      {!dept && (
+        <section className="rounded-xl border border-dashed border-white/15 p-6 text-center text-sm text-slate-400">
+          There's no ticket guide for your role yet. Ticket guides are for CSR, Technical Support (Triage), Parts and Claims.
+        </section>
+      )}
+
+      {/* Department tabs (only the ones for your role) */}
+      {visible.length > 1 && (
       <div className="flex flex-wrap gap-1.5">
-        {DEPARTMENTS.map((d) => (
+        {visible.map((d) => (
           <button
             key={d.key}
             type="button"
@@ -107,8 +118,9 @@ export function TicketGuidesPage() {
           </button>
         ))}
       </div>
+      )}
 
-      {dept.tour ? (
+      {dept && (dept.tour ? (
         <section className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
           <div className="flex flex-wrap items-start gap-3">
             <div className="flex-1 min-w-[240px]">
@@ -145,7 +157,7 @@ export function TicketGuidesPage() {
           <h2 className="text-sm font-semibold text-slate-300">{dept.label} tour — coming soon</h2>
           <p className="text-sm text-slate-400 mt-1">{dept.intro}</p>
         </section>
-      )}
+      ))}
     </main>
   );
 }

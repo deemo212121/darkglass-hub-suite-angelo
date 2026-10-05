@@ -54,7 +54,26 @@ export interface MarconeOrderPayload {
     quantity: number;
     unitPrice: number;
     coreValue: number;
+    /** Brand chosen in the order popup's Make (Marcone) / MFG (Encompass) column. Wins over the part's saved brand and the first match. */
+    make?: string;
   }>;
+}
+
+/**
+ * The brand saved on a part (parts.dist_brand, "<Distributor>|<code>",
+ * migration 0353) if it was picked for THIS distributor — otherwise null and
+ * the order falls back to the distributor's first match, as before.
+ */
+async function savedBrandFor(partId: string, distributor: "Marcone" | "Encompass"): Promise<string | null> {
+  if (!partId) return null;
+  try {
+    const { data, error } = await supabase.from("parts").select("dist_brand").eq("id", partId).maybeSingle();
+    if (error || !data?.dist_brand) return null;
+    const [dist, code] = String(data.dist_brand).split("|");
+    return dist?.toLowerCase() === distributor.toLowerCase() && code?.trim() ? code.trim() : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface StoredPartOrder {
@@ -375,10 +394,14 @@ export async function placeMarconeOrder(payload: MarconeOrderPayload): Promise<M
     warehouseNumber: string;
   }> = [];
   for (const line of payload.lineItems) {
-    const lookup = await marconeLookupPart({
-      partNumber: line.partNumber,
-      quantity: line.quantity || 1,
-    });
+    // The brand picked on the ticket wins; otherwise Marcone's first match.
+    const picked = line.make?.trim() || (await savedBrandFor(line.partId, "Marcone"));
+    const lookup = picked
+      ? { success: true, data: { make: picked } as { make?: string; errorMessage?: string }, error: undefined as string | undefined }
+      : await marconeLookupPart({
+          partNumber: line.partNumber,
+          quantity: line.quantity || 1,
+        });
     const make = lookup.success && lookup.data?.make ? lookup.data.make.trim() : "";
     if (!make) {
       throw new Error(
@@ -592,7 +615,11 @@ export async function placeEncompassOrder(payload: MarconeOrderPayload): Promise
   const { encompassLookupPart, encompassCreateOrder, encompassOrderStatus } = await import("@/lib/encompassApi");
   const resolvedItems: Array<{ mfgCode: string; partNumber: string; orderQuantity: number }> = [];
   for (const line of payload.lineItems) {
-    const lookup = await encompassLookupPart({ partNumber: line.partNumber });
+    // The brand picked on the ticket wins; otherwise Encompass's first match.
+    const picked = line.make?.trim() || (await savedBrandFor(line.partId, "Encompass"));
+    const lookup = picked
+      ? { success: true, data: { mfgCode: picked } as { mfgCode?: string }, error: undefined as string | undefined }
+      : await encompassLookupPart({ partNumber: line.partNumber });
     const mfgCode = lookup.success && lookup.data?.mfgCode ? lookup.data.mfgCode.trim() : "";
     if (!mfgCode) {
       throw new Error(
