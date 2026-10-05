@@ -1,3 +1,5 @@
+import { PartsDoneBanner } from "@/components/PartsDoneBanner";
+import { PartsDoneButton } from "@/components/PartsDoneButton";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -104,13 +106,14 @@ function businessDaysBetween(fromISO: string, toISO: string): number {
   return count;
 }
 
-// Days late vs. ETA, excluding weekends — measured to the receive date
-// once received, otherwise still counting up against today. No ETA
-// means there's nothing to measure against.
+// How long the part has sat since the carrier delivered it, excluding
+// weekends — measured to the receive date once received, otherwise still
+// counting up against today. Starts from the Delivered Date (not the ETA);
+// no delivered date yet means it hasn't arrived, so there's no aging.
 function agingDays(item: PartReceiveRow): number | null {
-  if (!item.eta) return null;
+  if (!item.deliveredDate) return null;
   const asOf = item.qtyReceived > 0 && item.receivedDate ? item.receivedDate : new Date().toISOString().slice(0, 10);
-  return businessDaysBetween(item.eta, asOf);
+  return businessDaysBetween(item.deliveredDate.slice(0, 10), asOf);
 }
 
 function agingClass(days: number | null): string {
@@ -131,7 +134,7 @@ function carrierTrackingNumber(item: Pick<PartReceiveRow, "tracking" | "shipMeth
 }
 
 function agingLabel(days: number | null): string {
-  return days === null ? "—" : days > 0 ? `${days}d` : "On time";
+  return days === null ? "—" : `${days}d`;
 }
 
 // Column visibility (persisted per browser) — same "Columns (n/m)" /
@@ -652,6 +655,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
   return (
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 min-w-0 w-full px-3 py-8">
+        <PartsDoneBanner />
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-6">
             <button type="button" onClick={goBack} className="btn hover:bg-white/15">
@@ -706,6 +710,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
                     </button>
                   )}
                 </div>
+                <PartsDoneButton />
                 <button
                   type="button"
                   onClick={openActivityLog}

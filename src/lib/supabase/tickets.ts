@@ -1855,6 +1855,8 @@ export interface UIPartRow {
   id: string;
   partNo: string;
   partDist: string;
+  /** Brand chosen for a Marcone / Encompass part, "<Distributor>|<code>" (migration 0348). Empty = first match. */
+  distBrand?: string;
   partDesc: string;
   poNo: string;
   poDate: string;
@@ -1897,11 +1899,16 @@ const dateOrNull = (v: unknown) => {
 };
 
 /** Map a Supabase parts row to the flat UI part-row shape. */
+// parts.dist_brand exists once migration 0348 has run — learnt from the rows we read.
+let distBrandColumnKnown = false;
+
 function rowToPart(row: any): UIPartRow {
+  if (row && "dist_brand" in row) distBrandColumnKnown = true;
   return {
     id: row.id,
     partNo: row.part_no ?? "",
     partDist: row.part_dist ?? "",
+    ...(row && "dist_brand" in row ? { distBrand: row.dist_brand ?? "" } : {}),
     partDesc: row.part_desc ?? "",
     poNo: row.po_no ?? "",
     poDate: row.po_date ?? "",
@@ -1963,7 +1970,15 @@ function partToColumns(part: Partial<UIPartRow>) {
     cx_paid: part.cxPaid === "Y" || part.cxPaid === "Yes",
     distributor_no: part.distributorNo ?? null,
     job_code: part.jobCode ?? null,
+    // Only sent once the column is known to exist (or a brand was actually picked),
+    // so saving parts keeps working before migration 0348 is run.
+    ...(part.distBrand !== undefined && (part.distBrand !== "" || distBrandColumnKnown) ? { dist_brand: part.distBrand || null } : {}),
   };
+}
+
+/** A write that failed only because parts.dist_brand doesn't exist yet → retry without it. */
+function isMissingDistBrand(error: { code?: string; message?: string } | null): boolean {
+  return !!error && (error.code === "42703" || /dist_brand/.test(error.message || "")) && /dist_brand/.test(error.message || "");
 }
 
 /**
@@ -2004,11 +2019,16 @@ export async function addTicketPart(ticketNo: string, part: Partial<UIPartRow>):
   const ticketId = await getTicketId(ticketNo);
   if (!ticketId) throw new Error(`Ticket ${ticketNo} not found`);
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("parts")
     .insert({ ticket_id: ticketId, ...partToColumns(part) })
     .select("*")
     .single();
+  if (isMissingDistBrand(error)) {
+    // Migration 0348 not run yet — save the part without the brand.
+    const { dist_brand: _skip, ...cols } = partToColumns(part) as Record<string, unknown>;
+    ({ data, error } = await supabase.from("parts").insert({ ticket_id: ticketId, ...cols }).select("*").single());
+  }
   if (error) {
     console.error("addTicketPart error:", error.message);
     throw new Error(error.message);
@@ -2018,10 +2038,15 @@ export async function addTicketPart(ticketNo: string, part: Partial<UIPartRow>):
 
 /** Update an existing part by id. */
 export async function updateTicketPart(partId: string, part: Partial<UIPartRow>): Promise<void> {
-  const { error } = await supabase
+  let { error } = await supabase
     .from("parts")
     .update(partToColumns(part))
     .eq("id", partId);
+  if (isMissingDistBrand(error)) {
+    // Migration 0348 not run yet — save the part without the brand.
+    const { dist_brand: _skip, ...cols } = partToColumns(part) as Record<string, unknown>;
+    ({ error } = await supabase.from("parts").update(cols).eq("id", partId));
+  }
   if (error) {
     console.error("updateTicketPart error:", error.message);
     throw new Error(error.message);

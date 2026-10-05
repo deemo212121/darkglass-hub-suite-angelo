@@ -5,6 +5,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { PartInfoModal, type PartInfoVendor } from "@/components/PartInfoModal";
+import { DistBrandSelect } from "@/components/DistBrandSelect";
 import type { MarconePartInfo } from "@/lib/marconeApi";
 import type { EncompassPartInfo } from "@/lib/encompassApi";
 import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, placeEncompassOrder, isEncompassDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
@@ -280,6 +281,8 @@ interface PartTransactionRow {
   id: string;
   partNo: string;
   partDist: string;
+  /** Marcone / Encompass brand to order, "<Distributor>|<code>" (DistBrandSelect, migration 0348). */
+  distBrand?: string;
   partDesc: string;
   poNo: string;
   poDate: string;
@@ -777,6 +780,7 @@ function createAuditEntry(params: Omit<AuditLogEntry, "id" | "timestamp">): Audi
 const PART_FIELD_LABELS: Record<keyof Omit<PartTransactionRow, "id" | "createdBy" | "lastModifiedBy">, string> = {
   partNo: "Part No",
   partDist: "Part Dist.",
+  distBrand: "Brand",
   partDesc: "Part Desc",
   poNo: "PO No",
   poDate: "P/O Date",
@@ -1507,6 +1511,8 @@ function TicketDetailsPage() {
     { partNumber: string; vendor: PartInfoVendor; marcone?: MarconePartInfo; encompass?: EncompassPartInfo } | null
   >(null);
   const [partInfoOpen, setPartInfoOpen] = useState(false);
+  // 🔍 on a saved part row: Part Info for that row's part number (looks it up itself).
+  const [rowPartInfo, setRowPartInfo] = useState<{ partNumber: string; vendor: PartInfoVendor } | null>(null);
   // Which Part No the draft's current partDesc/partPrice/coreValue actually
   // belong to — either the last part a Lookup was run for, or (when editing
   // an existing row) that row's own saved part number. Lets handleMarconeLookup
@@ -5829,6 +5835,13 @@ function TicketDetailsPage() {
               <option key={d}>{d}</option>
             ))}
           </select>
+          <DistBrandSelect
+            partNumber={partDraft.partNo}
+            partDist={partDraft.partDist}
+            value={partDraft.distBrand ?? ""}
+            onChange={(v) => setPartDraft((d) => ({ ...d, distBrand: v }))}
+            className="mt-1 w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-[11px] text-white focus:outline-none focus:border-blue-500"
+          />
         </td>
         <td className="px-1 py-1.5">
           <input value={partDraft.partDesc} onChange={(e) => setPartDraft((d) => ({ ...d, partDesc: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Description" />
@@ -7653,6 +7666,9 @@ function TicketDetailsPage() {
                       <Settings className="h-3.5 w-3.5" />
                     </button>
                   )}
+                  {rowPartInfo && (
+                    <PartInfoModal partNumber={rowPartInfo.partNumber} initialVendor={rowPartInfo.vendor} onClose={() => setRowPartInfo(null)} />
+                  )}
                   {gmailRolesOpen && (
                     <GmailConnectRolesModal
                       region={gmailRegion}
@@ -7741,7 +7757,24 @@ function TicketDetailsPage() {
                                 <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-blue-400" title="Unsaved changes — click Update to save" />
                               ) : null}
                             </td>
-                            <td className={cellWrap}><input value={String(val("partNo") ?? "")} onChange={(e) => set("partNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={`w-full rounded border border-white/10 bg-slate-950/80 px-2 py-1 font-semibold focus:outline-none focus:border-blue-500 disabled:opacity-50 ${val("status") ? partStatusTextClass(String(val("status"))) : "text-blue-300"}`} placeholder="Part No*" /></td>
+                            <td className={cellWrap}>
+                              <div className="flex gap-1">
+                                <input value={String(val("partNo") ?? "")} onChange={(e) => set("partNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={`w-full min-w-0 rounded border border-white/10 bg-slate-950/80 px-2 py-1 font-semibold focus:outline-none focus:border-blue-500 disabled:opacity-50 ${val("status") ? partStatusTextClass(String(val("status"))) : "text-blue-300"}`} placeholder="Part No*" />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const partNumber = String(val("partNo") ?? "").trim();
+                                    if (partNumber) setRowPartInfo({ partNumber, vendor: isEncompassDist(String(val("partDist") ?? "")) ? "encompass" : "marcone" });
+                                  }}
+                                  disabled={!String(val("partNo") ?? "").trim()}
+                                  title="Part info & stock at each warehouse (Marcone / Encompass)"
+                                  aria-label="Part info"
+                                  className="shrink-0 rounded border border-sky-400/40 bg-sky-500/15 px-1.5 py-1 text-sky-200 hover:bg-sky-500/25 disabled:opacity-30 disabled:cursor-not-allowed transition"
+                                >
+                                  <Search className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </td>
                             <td className={cellWrap}>
                               <select value={String(val("partDist") ?? "")} onChange={(e) => set("partDist", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={selectCls}>
                                 <option value="">Dist.*</option>
@@ -7750,6 +7783,14 @@ function TicketDetailsPage() {
                                   <option key={d}>{d}</option>
                                 ))}
                               </select>
+                              <DistBrandSelect
+                                partNumber={String(val("partNo") ?? "")}
+                                partDist={String(val("partDist") ?? "")}
+                                value={String(val("distBrand") ?? "")}
+                                onChange={(v) => set("distBrand", v)}
+                                disabled={partsEditDisabled || !canEditParts}
+                                className={`${selectCls} mt-1 text-[11px]`}
+                              />
                             </td>
                             <td className={cellWrap}><input value={String(val("partDesc") ?? "")} onChange={(e) => set("partDesc", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Description" /></td>
                             <td className={cellWrap}><input value={String(val("poNo") ?? "")} onChange={(e) => set("poNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="PO No" /></td>
@@ -9834,6 +9875,7 @@ function TicketDetailsPage() {
         parts={marconeModal.parts.map((p): MarconePartLine => ({
           id: p.id,
           partNo: p.partNo,
+          distBrand: p.distBrand,
           partDesc: p.partDesc,
           partPrice: p.partPrice,
           coreValue: p.coreValue,
@@ -9843,6 +9885,7 @@ function TicketDetailsPage() {
         defaultShipTo={defaultShipTo}
         addressBook={partAddressBook}
         onPlaceOrder={handleMarconePlaceOrder}
+        vendor="Marcone"
       />
 
       {/* Encompass Parts Order modal — same component as Marcone's (its UI
@@ -9854,6 +9897,7 @@ function TicketDetailsPage() {
         parts={encompassModal.parts.map((p): MarconePartLine => ({
           id: p.id,
           partNo: p.partNo,
+          distBrand: p.distBrand,
           partDesc: p.partDesc,
           partPrice: p.partPrice,
           coreValue: p.coreValue,
@@ -9863,6 +9907,7 @@ function TicketDetailsPage() {
         defaultShipTo={defaultShipTo}
         addressBook={partAddressBook}
         onPlaceOrder={handleEncompassPlaceOrder}
+        vendor="Encompass"
       />
 
       {/* Truck Stock batch modal — opens from the Truck Stock button next
