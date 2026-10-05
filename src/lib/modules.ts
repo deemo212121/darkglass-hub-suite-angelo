@@ -2155,7 +2155,45 @@ const bizOpsMod: ModuleDef = {
   ],
 };
 
-export const MODULES: ModuleDef[] = [dashboardMod, csrMod, ticketsMod, partsMod, reportMod, claimsMod, accountingMod, hrMod, branchTechMod, triageMod, bizOpsMod, adminMod];
+// Guided tours (TicketGuidesPage). Each tour highlights the real page step by
+// step; nothing is changed while it runs. More guide tiles can join later.
+const guidesMod: ModuleDef = {
+  slug: "guides",
+  label: "Guides",
+  tagline: "Step-by-step tours of AHS for each department",
+  accent: "#38bdf8",
+  submodules: [
+    {
+      slug: "getting-started",
+      title: "Getting Started",
+      description: "Finding your way: the header, modules, notifications, messages, your account and the home page.",
+      custom: "getting-started-guide" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "tickets",
+      title: "Ticket Guides",
+      description: "Tours of the ticket page for CSR, Triage, Parts and Claims.",
+      custom: "ticket-guides" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "self-service",
+      title: "Self-Service Guide",
+      description: "For everyone: your time clock, payslips, attendance, and requesting PTO, sick leave, time corrections or unpaid leave.",
+      custom: "self-service-guide" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+  ],
+};
+
+export const MODULES: ModuleDef[] = [dashboardMod, guidesMod, csrMod, ticketsMod, partsMod, reportMod, claimsMod, accountingMod, hrMod, branchTechMod, triageMod, bizOpsMod, adminMod];
 
 export function getModule(slug: string) {
   return MODULES.find((m) => m.slug === slug);

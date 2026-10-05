@@ -41,6 +41,7 @@ import {
   type EbayBranchCent,
 } from "@/lib/supabase/partDailyReportEbay";
 import { LOCATIONS } from "@/lib/locations";
+import { EbayImportModal } from "@/components/EbayImportModal";
 
 // Color coding per order status, reused for status chips/dropdown-adjacent
 // badges wherever a status shows up on this page.
@@ -218,6 +219,8 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
   const [branchStatusHistory, setBranchStatusHistory] = useState<EbayBranchStatusChange[]>([]);
   const [partsStaffNames, setPartsStaffNames] = useState<string[]>([]);
   const [ebayAccounts, setEbayAccounts] = useState<EbayAccount[]>([]);
+  // Import Excel — the team's Google Sheets workbook (EbayImportModal).
+  const [importOpen, setImportOpen] = useState(false);
   const [newAccountName, setNewAccountName] = useState("");
   const [addingAccount, setAddingAccount] = useState(false);
 
@@ -1157,6 +1160,14 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
   return (
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 w-full min-w-0 px-4 lg:px-6 py-8">
+      {importOpen && (
+        <EbayImportModal
+          accounts={ebayAccountNames}
+          activityTargetType={EBAY_ACTIVITY_TARGET_TYPE}
+          onClose={() => setImportOpen(false)}
+          onImported={() => { load(); loadActiveListings(); }}
+        />
+      )}
         <div className="flex items-center justify-between gap-3 mb-6">
           <div className="flex items-center gap-3">
             <button type="button" onClick={goBack} className="btn hover:bg-white/15">
@@ -1167,6 +1178,9 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
           <div className="flex items-center gap-2">
             <button type="button" onClick={openActivityLog} className="btn hover:bg-white/15 inline-flex items-center gap-2 text-xs">
               <History className="h-3.5 w-3.5" /> View Activity
+            </button>
+            <button type="button" onClick={() => setImportOpen(true)} className="btn flex items-center gap-2 px-3 text-sm" title="Upload the team's eBay sheet (.xlsx) instead of typing it in">
+              <FileSpreadsheet className="h-3.5 w-3.5 text-green-400" /> Import Excel
             </button>
             <button type="button" onClick={() => handleExport("excel")} disabled={exportBusy !== null} className="btn flex items-center gap-2 px-3 text-sm disabled:opacity-50">
               <FileSpreadsheet className="h-3.5 w-3.5" /> {exportBusy === "excel" ? "Generating…" : "Download Excel"}

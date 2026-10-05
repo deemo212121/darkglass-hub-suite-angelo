@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { useTourRunning } from "@/lib/tours/useTourRunning";
 import {
   FileText,
   Wrench,
@@ -40,7 +41,10 @@ const TRACKING_SECTIONS = [
  *    overlaps open menus or dialogs.
  */
 export function TicketSidebar({ activeTab, setActiveTab }: TicketSidebarProps) {
-  const [open, setOpen] = useState(false);
+  const [hoverOpen, setOpen] = useState(false);
+  // Stays slid out during a guided tour so the tour can point at it.
+  const tourRunning = useTourRunning();
+  const open = hoverOpen || tourRunning;
   const closeTimer = useRef<number | null>(null);
 
   const cancelClose = () => {
@@ -108,7 +112,7 @@ export function TicketSidebar({ activeTab, setActiveTab }: TicketSidebarProps) {
           open ? "translate-x-0" : "-translate-x-[110%]"
         }`}
       >
-        <div className="rounded-xl border border-white/10 bg-slate-900/85 backdrop-blur-md p-2.5 shadow-2xl">
+        <div data-tour="ticket-sections" className="rounded-xl border border-white/10 bg-slate-900/85 backdrop-blur-md p-2.5 shadow-2xl">
           <div className="px-2 py-1.5">
             <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
               Ticket Sections

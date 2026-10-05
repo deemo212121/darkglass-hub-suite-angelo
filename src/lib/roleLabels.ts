@@ -318,7 +318,8 @@ const CSR_RESTRICTED_ROLES = new Set(["CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAG
  * the way "dashboard" itself still has below, since every submodule in
  * the CSR module is already CSR-department content.
  */
-const CSR_ALLOWED_MODULES = new Set(["dashboard", "tickets", "csr"]);
+// "guides": CSR agents are the first audience for the guided tours (Guides module).
+const CSR_ALLOWED_MODULES = new Set(["dashboard", "tickets", "csr", "guides"]);
 
 /** Within the Dashboard module, the only submodules the CSR department may open. */
 const CSR_ALLOWED_DASHBOARD_SUBMODULES = new Set([

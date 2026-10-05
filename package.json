@@ -63,6 +63,7 @@
     "dexie": "^4.4.2",
     "docx": "^9.7.1",
     "dompurify": "^3.4.14",
+    "driver.js": "^1.9.0",
     "embla-carousel-react": "^8.6.0",
     "exceljs": "^4.4.0",
     "firebase": "^12.14.0",

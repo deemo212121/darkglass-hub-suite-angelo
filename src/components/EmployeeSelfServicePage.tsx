@@ -1,5 +1,7 @@
-import { ChevronLeft, DollarSign, Clock, ListTodo, Download, Eye, EyeOff, TrendingUp, AlertCircle, CheckCircle2, XCircle, Plus, FileText, X } from "lucide-react";
+import { ChevronLeft, Compass, DollarSign, Clock, ListTodo, Download, Eye, EyeOff, TrendingUp, AlertCircle, CheckCircle2, XCircle, Plus, FileText, X } from "lucide-react";
 import { useState, useMemo, useRef, useEffect } from "react";
+import { runTour, takeQueuedTour } from "@/lib/tours/runTour";
+import { SELF_SERVICE_TOUR, SELF_SERVICE_TOUR_TARGET } from "@/lib/tours/selfServiceTour";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -130,6 +132,28 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState<"pto" | "sick" | "correction" | "unpaidLeave">("pto");
+  // Guided tour: switch tabs and open / close a request form for the steps inside it.
+  const tourOpts = {
+    setTab: (t: string) => setActiveTab(t as typeof activeTab),
+    openPanel: (panel: string) => {
+      setSubmitSuccess(false);
+      setModalType(panel as typeof modalType);
+      setShowModal(true);
+    },
+    closePanel: () => setShowModal(false),
+  };
+
+  // Guided tour handed over from Guides → Self-Service Guide.
+  const tourStartedRef = useRef(false);
+  useEffect(() => {
+    if (tourStartedRef.current) return;
+    const id = takeQueuedTour(SELF_SERVICE_TOUR_TARGET);
+    if (id !== SELF_SERVICE_TOUR.id) return;
+    tourStartedRef.current = true;
+    window.setTimeout(() => void runTour(SELF_SERVICE_TOUR, tourOpts), 900);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [attendanceView, setAttendanceView] = useState<"daily" | "monthly">("daily");
   // Real Supabase-backed attendance for the My Attendance tab.
   const [liveAttendance, setLiveAttendance] = useState<AttendanceRow[]>([]);
@@ -1068,10 +1092,18 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             </h1>
             <p className="text-sm text-muted-foreground">{sub.description}</p>
           </div>
+          <button
+            type="button"
+            onClick={() => void runTour(SELF_SERVICE_TOUR, tourOpts)}
+            title="Take a guided tour of this page"
+            className="mt-3 inline-flex items-center gap-1.5 rounded border border-sky-400/40 bg-sky-500/15 px-2.5 py-1.5 text-xs font-semibold text-sky-200 transition hover:bg-sky-500/25"
+          >
+            <Compass className="h-4 w-4" /> Tour
+          </button>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-2 mb-8 border-b border-white/10 overflow-x-auto">
+        <div data-tour="ess-tabs" className="flex gap-2 mb-8 border-b border-white/10 overflow-x-auto">
           {tabs.map(tab => {
             const Icon = tab.icon;
             return (
@@ -1094,7 +1126,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         {/* Dashboard Tab */}
         {activeTab === "dashboard" && (
           <div className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+            <div data-tour="ess-summary" className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-2">Current Payroll</p>
                 <p className="text-2xl font-bold text-green-300">{myPayslips[0] ? `$${myPayslips[0].netPay.toFixed(2)}` : "—"}</p>
@@ -1127,7 +1159,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             </div>
 
             {/* Attendance Summary Detail */}
-            <div className="grid gap-4 md:grid-cols-2">
+            <div data-tour="ess-dashboard-detail" className="grid gap-4 md:grid-cols-2">
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <h3 className="text-sm font-bold text-white mb-4">Total Attendances</h3>
                 <div className="space-y-3">
@@ -1202,6 +1234,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   </div>
                   <button
                     type="button"
+                    data-tour="ess-view-payslip"
                     onClick={() => handleViewPayslip(myPayslips[0].runId)}
                     className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition flex items-center justify-center gap-2"
                   >
@@ -1213,7 +1246,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             </div>
 
             {/* Previous Payroll History */}
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+            <div data-tour="ess-payroll-history" className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
               <h3 className="text-sm font-bold text-white mb-4">Previous Payroll History</h3>
               {myPayslips.length <= 1 ? (
                 <p className="text-xs text-slate-400">No earlier payroll history yet.</p>
@@ -1285,7 +1318,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
               </div>
             )}
 
-            <div className="flex gap-2 flex-wrap items-center">
+            <div data-tour="ess-att-views" className="flex gap-2 flex-wrap items-center">
               <button
                 onClick={() => setAttendanceView("daily")}
                 className={`px-4 py-2 rounded text-xs font-semibold transition ${
@@ -1379,6 +1412,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   </table>
                 </div>
                 <button
+                  data-tour="ess-att-download"
                   onClick={() => handleDownload("attendance")}
                   className="mt-4 w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition flex items-center justify-center gap-2"
                 >
@@ -1425,7 +1459,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             )}
 
             {/* Attendance Summary */}
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+            <div data-tour="ess-att-summary" className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
               <h3 className="text-sm font-bold text-white mb-4">Attendance Summary</h3>
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
@@ -1449,7 +1483,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         {activeTab === "requests" && (
           <div className="space-y-6">
             {/* Request Summary */}
-            <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
+            <div data-tour="ess-req-summary" className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
               <button
                 type="button"
                 onClick={() => setSummaryModal("pto")}
@@ -1516,8 +1550,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 You're not yet eligible for PTO — employees need 1 year of tenure first. You'll be eligible starting {ptoEligibleOn}.
               </div>
             )}
-            <div className="grid gap-3 md:grid-cols-2">
-              <button
+            <div data-tour="ess-req-buttons" className="grid gap-3 md:grid-cols-2">
+              <button data-tour="ess-req-pto"
                 type="button"
                 onClick={() => {
                   const myProfile = companyProfiles.find((p) => p.id === myProfileId);
@@ -1536,7 +1570,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 <Plus className="h-4 w-4" />
                 PTO Request
               </button>
-              <button
+              <button data-tour="ess-req-sick"
                 type="button"
                 onClick={() => {
                   const myProfile = companyProfiles.find((p) => p.id === myProfileId);
@@ -1554,14 +1588,14 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 <Plus className="h-4 w-4" />
                 Sick Leave Request
               </button>
-              <button
+              <button data-tour="ess-req-correction"
                 onClick={() => { setModalType("correction"); setShowModal(true); correctionSigPad.clear(); }}
                 className="px-4 py-3 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
               >
                 <Plus className="h-4 w-4" />
                 Time Correction Request
               </button>
-              <button
+              <button data-tour="ess-req-unpaid"
                 type="button"
                 onClick={() => {
                   const myProfile = companyProfiles.find((p) => p.id === myProfileId);
@@ -1582,7 +1616,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             </div>
 
             {/* Requests List */}
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+            <div data-tour="ess-track-status" className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-bold text-white">Track Status</h3>
                 <select
@@ -1657,7 +1691,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   {(modalType === "pto" || modalType === "sick" || modalType === "unpaidLeave") && (
                     <>
                       {modalType === "pto" && (
-                        <div>
+                        <div data-tour="ess-form-leave-type">
                           <label className="text-xs font-semibold text-white block mb-1">Leave Type</label>
                           <select
                             value={formData.leaveType}
@@ -1668,7 +1702,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           </select>
                         </div>
                       )}
-                      <div className="grid grid-cols-2 gap-2">
+                      <div data-tour="ess-form-position" className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="text-xs font-semibold text-white block mb-1">Position</label>
                           <select
@@ -1696,7 +1730,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           </select>
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-2">
+                      <div data-tour="ess-form-dates" className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="text-xs font-semibold text-white block mb-1">Start Date</label>
                           <input 
@@ -1720,7 +1754,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   )}
                   {modalType === "correction" && (
                     <>
-                      <div>
+                      <div data-tour="ess-form-corr-date">
                         <label className="text-xs font-semibold text-white block mb-1">Date</label>
                         <input
                           type="date"
@@ -1741,7 +1775,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           </p>
                         )}
                       </div>
-                      <div className="grid grid-cols-2 gap-2">
+                      <div data-tour="ess-form-corr-times" className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="text-xs font-semibold text-white block mb-1">Corrected Check In <span className="text-red-400">*</span></label>
                           <input
@@ -1765,7 +1799,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           />
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-2">
+                      <div data-tour="ess-form-corr-meal" className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="text-xs font-semibold text-white block mb-1">Corrected Meal Start {correctionMealRequired && <span className="text-red-400">*</span>}</label>
                           <input
@@ -1826,7 +1860,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           </div>
                         );
                       })()}
-                      <div>
+                      <div data-tour="ess-form-issue">
                         <label className="text-xs font-semibold text-white block mb-1">{modalType === "correction" ? "Issue" : "Exception Type"}</label>
                         <div className="flex flex-col gap-1.5">
                           {(modalType === "correction"
@@ -1856,7 +1890,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       </div>
                     </>
                   )}
-                  <div>
+                  <div data-tour="ess-form-reason">
                     <label className="text-xs font-semibold text-white block mb-1">Details / Reason</label>
                     <textarea
                       placeholder="Please provide details..."
@@ -1875,7 +1909,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                         {...correctionSigPad.canvasProps}
                         className={`bg-white rounded-md border border-white/15 block mx-auto w-full max-w-sm ${correctionSigPad.canvasProps.className}`}
                       />
-                      <div className="mt-2">
+                      <div data-tour="ess-form-sign" className="mt-2">
                         <SignaturePadControls pad={correctionSigPad} />
                       </div>
                     </div>
@@ -1889,14 +1923,14 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                         {...leaveSigPad.canvasProps}
                         className={`bg-white rounded-md border border-white/15 block mx-auto w-full max-w-sm ${leaveSigPad.canvasProps.className}`}
                       />
-                      <div className="mt-2">
+                      <div data-tour="ess-form-sign-leave" className="mt-2">
                         <SignaturePadControls pad={leaveSigPad} />
                       </div>
                     </div>
                   )}
                 </div>
 
-                <div className="flex gap-3 mt-4">
+                <div data-tour="ess-form-submit" className="flex gap-3 mt-4">
                   <button
                     type="button"
                     onClick={() => setShowModal(false)}
