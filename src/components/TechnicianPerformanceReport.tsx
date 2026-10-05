@@ -120,6 +120,8 @@ const TOOLTIP_STYLE = {
  * to turn it off.
  */
 const BLANK_LIVE_TIME_FROM = "2026-08-27";
+/** "Jackson,TN" and "Jackson, TN" are the same branch — compare with the comma spacing tidied. */
+const normBranchName = (b: string | null | undefined) => String(b ?? "").trim().toLowerCase().replace(/\s*,\s*/g, ", ");
 
 const CHART_BAR_FILL = "#3b82f6";
 const COMPARE_BAR_FILLS = ["#3b82f6", "#f59e0b", "#10b981", "#ec4899", "#8b5cf6", "#06b6d4"];
@@ -635,7 +637,9 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         const identity = e.profileId ?? nameKey;
         if (!byMap.has(identity)) byMap.set(identity, new Map());
         const days = byMap.get(identity)!;
-        if (techBranch && e.branch !== techBranch) {
+        // Compared with the comma spacing tidied — tickets/mileage often say
+        // "Jackson,TN" where the profile says "Jackson, TN" (same branch).
+        if (techBranch && normBranchName(e.branch) !== normBranchName(techBranch)) {
           // Doesn't count toward the total, but tracked so the breakdown
           // popup can show it was seen and excluded (which branch it was
           // tagged to), instead of just silently vanishing.

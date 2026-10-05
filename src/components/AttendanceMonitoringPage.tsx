@@ -312,7 +312,7 @@ function CheckboxFilter({
 }
 
 /** "Jackson,TN" / " Jackson ,  TN" → "Jackson, TN" — so one branch typed two ways shows (and filters) once. */
-const normBranchLabel = (b: string | null | undefined): string => String(b ?? "").trim().replace(/s*,s*/g, ", ");
+const normBranchLabel = (b: string | null | undefined): string => String(b ?? "").trim().replace(/\s*,\s*/g, ", ");
 
 export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
