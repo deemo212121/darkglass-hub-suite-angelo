@@ -56,10 +56,10 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
   };
 
   return (
-    <div className="panel p-0">
+    <div className="panel p-0 text-slate-100">
       <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10">
         <CalendarX2 className="h-4 w-4 text-red-300" />
-        <span className="text-sm font-semibold">Meetings required ({meetings.length})</span>
+        <span className="text-sm font-semibold text-white">Meetings required ({meetings.length})</span>
         {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
       </div>
       <div className="mx-4 mt-3 rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
@@ -94,18 +94,15 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
               </tr>
             )}
             {grouped.map(([profileId, list]) =>
-              list.map((m, i) => (
+              list.map((m) => (
                 <tr key={m.id} className="border-b border-white/5">
-                  <td className="px-3 py-2 whitespace-nowrap font-medium">
-                    {i === 0 ? (
-                      <>
-                        {byId.get(profileId)?.display_name || "Unknown"}
-                        {list.length > 1 && <span className="ml-2 rounded-full bg-red-500/15 px-1.5 py-0.5 text-[10px] text-red-300">{list.length} missed</span>}
-                      </>
-                    ) : null}
+                  {/* Name + branch on every row — a technician with several open meetings shows on each one. */}
+                  <td className="px-3 py-2 whitespace-nowrap font-medium text-white">
+                    {byId.get(profileId)?.display_name || "Loading…"}
+                    {list.length > 1 && <span className="ml-2 rounded-full bg-red-500/15 px-1.5 py-0.5 text-[10px] text-red-300">{list.length} missed</span>}
                   </td>
-                  <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">{i === 0 ? byId.get(profileId)?.assigned_branch || "—" : ""}</td>
-                  <td className="px-3 py-2 whitespace-nowrap tabular-nums">{fmtDate(m.missedDate)}</td>
+                  <td className="px-3 py-2 whitespace-nowrap text-slate-300">{byId.get(profileId)?.assigned_branch || "—"}</td>
+                  <td className="px-3 py-2 whitespace-nowrap tabular-nums text-slate-100">{fmtDate(m.missedDate)}</td>
                   <td className="px-3 py-2 whitespace-nowrap">
                     {m.kind === "missed_time_out" ? (
                       <span className="rounded-full bg-orange-500/15 px-2 py-0.5 text-[10px] font-semibold text-orange-300" title="Auto clock-out, no correction sent before the next Time In">Missed Time Out — not corrected</span>
@@ -127,7 +124,7 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
 
       {doneFor && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 p-4" onClick={() => !saving && setDoneFor(null)}>
-          <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-[var(--color-panel,#0f172a)] p-5" onClick={(e) => e.stopPropagation()}>
+          <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-[var(--color-panel,#0f172a)] p-5 text-slate-100" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-base font-semibold">Meeting done</h3>
             <p className="mt-1 text-xs text-muted-foreground">
               {byId.get(doneFor.profileId)?.display_name || "Technician"} · {doneFor.kind === "missed_time_out" ? "missed Time Out" : "missed clock-in"} {fmtDate(doneFor.missedDate)}
