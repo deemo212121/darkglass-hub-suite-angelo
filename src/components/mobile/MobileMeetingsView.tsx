@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { CalendarX2, Check, ChevronRight, Copy, KeyRound, Loader2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsersLite, type ProfileRow } from "@/lib/supabase/users";
-import { CLOCK_CODE_ALWAYS_VIEWERS, ensureCompanyClockInCode, getClockCodeViewerRoles } from "@/lib/supabase/clockInCodes";
+import { ensureCompanyClockInCode } from "@/lib/supabase/clockInCodes";
+import { supabase } from "@/lib/supabase/client";
 import { MissedClockInMeetings } from "@/components/MissedClockInMeetings";
 import { getPendingClockInMeetings } from "@/lib/supabase/clockInMeetings";
 
@@ -59,14 +60,20 @@ export function TodaysClockInCodeCard() {
  * clock_code_viewer() uses) handles missed clock-in / Time Out meetings.
  */
 export function useCanSeeClockInMeetings(): boolean {
-  const { role, extraRoles } = useAuth();
-  const [viewerRoles, setViewerRoles] = useState<string[]>([]);
+  // Ask the database itself (clock_code_viewer()) — it's the real rule, and
+  // it can be stricter than the ticked "Who can see this code" list (Parts
+  // roles stay blocked even when ticked). A client-side guess would show
+  // cards that then fail to load.
+  const { uid } = useAuth();
+  const [allowed, setAllowed] = useState(false);
   useEffect(() => {
-    getClockCodeViewerRoles().then(setViewerRoles).catch(() => setViewerRoles([]));
-  }, []);
-  const held = [role, ...(extraRoles ?? [])].map((r) => String(r ?? "").trim().toUpperCase());
-  const allowed = new Set<string>([...CLOCK_CODE_ALWAYS_VIEWERS, "SUPERSUPERADMIN", ...viewerRoles.map((r) => r.toUpperCase())]);
-  return held.some((r) => allowed.has(r));
+    let cancelled = false;
+    supabase.rpc("clock_code_viewer").then(({ data, error }) => {
+      if (!cancelled) setAllowed(!error && data === true);
+    });
+    return () => { cancelled = true; };
+  }, [uid]);
+  return allowed;
 }
 
 /** Mobile Home card that opens the meetings list — shows how many are waiting. */
