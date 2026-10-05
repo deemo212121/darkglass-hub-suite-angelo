@@ -2,6 +2,7 @@ import { getTrainingDates } from "@/lib/supabase/trainingDates";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2, StickyNote, Download } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { TimeInput24 } from "@/components/TimeInput24";
 import { useAuth } from "@/lib/auth";
 import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, hoursDiff, MEAL_ALWAYS_PAID_DEFAULT_HOURS, type AttendanceRow } from "@/lib/supabase/timecards";
 import { isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, hasAnyTechnicianPayRole } from "@/lib/roleLabels";
@@ -1676,41 +1677,33 @@ export function EmployeePayrollDetailModal({
                         {attendanceEditing ? (
                           <>
                             <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
-                              <input
-                                type="time"
-                                step="1"
+                              <TimeInput24
                                 value={edit?.checkIn ?? row.clockIn}
-                                onChange={(e) => handleAttendanceEdit(row.date, "checkIn", e.target.value)}
-                                className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
+                                onChange={(v) => handleAttendanceEdit(row.date, "checkIn", v)}
+                                className="w-20 font-mono text-xs bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
                               />
                             </td>
                             <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
-                              <input
-                                type="time"
-                                step="1"
+                              <TimeInput24
                                 value={edit?.mealStart ?? row.mealStart}
-                                onChange={(e) => handleAttendanceEdit(row.date, "mealStart", e.target.value)}
-                                className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
+                                onChange={(v) => handleAttendanceEdit(row.date, "mealStart", v)}
+                                className="w-20 font-mono text-xs bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
                               />
                             </td>
                             <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
-                              <input
-                                type="time"
-                                step="1"
+                              <TimeInput24
                                 value={edit?.mealEnd ?? row.mealEnd}
-                                onChange={(e) => handleAttendanceEdit(row.date, "mealEnd", e.target.value)}
-                                className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
+                                onChange={(v) => handleAttendanceEdit(row.date, "mealEnd", v)}
+                                className="w-20 font-mono text-xs bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
                               />
                             </td>
                             <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center gap-1.5">
-                                <input
-                                  type="time"
-                                  step="1"
-                                  value={edit?.checkOut ?? row.clockOut}
-                                  onChange={(e) => handleAttendanceEdit(row.date, "checkOut", e.target.value)}
-                                  className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
-                                />
+                                <TimeInput24
+                                value={edit?.checkOut ?? row.clockOut}
+                                onChange={(v) => handleAttendanceEdit(row.date, "checkOut", v)}
+                                className="w-20 font-mono text-xs bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
+                              />
                                 <button
                                   type="button"
                                   onClick={() => clearAttendanceRow(row.date)}
