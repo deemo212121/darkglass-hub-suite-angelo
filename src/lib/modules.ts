@@ -328,6 +328,17 @@ const accountingMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    {
+      // Same Flash Tech page as HR Dashboard → Flash Tech (and /m/hr/flash-tech) —
+      // Finance schedules trips and fills in the hotel/rental/receipt Tracker.
+      slug: "flash-tech",
+      title: "Flash Tech",
+      description: "Technician travel trips — schedule (Calendar) or fill in hotel/rental/receipt tracking detail (Tracker).",
+      custom: "flash-tech" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
     // Same submodule (slug "absent-list") also lives under the HR module's
     // own tile grid — carried over here too so it's reachable from either
     // module, same AbsentListPage either way (dispatch in
