@@ -162,11 +162,20 @@ export function TraineeAttendanceTab({
   // chain, and not the whole company even for Admin/HR. The actual roster
   // (Masterlist's Employment Type), not derived from who has punched — a
   // trainee who hasn't clocked in at all still shows up.
+  // People HR has since switched to Regular can still have trainee days
+  // waiting for review — the review popup lists those, so this page must
+  // too, or the popup could never be cleared. Loaded once, all dates.
+  const [pendingFormerTraineeIds, setPendingFormerTraineeIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    getCompanyTraineeEntries()
+      .then((rows) => setPendingFormerTraineeIds(new Set(rows.filter((r) => r.status === "pending").map((r) => r.profileId))))
+      .catch(() => setPendingFormerTraineeIds(new Set()));
+  }, []);
   const visibleTrainees = useMemo(
     () =>
       profiles.filter(
         (p) =>
-          p.employment_type === "trainee" &&
+          (p.employment_type === "trainee" || pendingFormerTraineeIds.has(p.id)) &&
           // Deactivated accounts don't show up here.
           p.is_active &&
           (showAll
@@ -176,7 +185,7 @@ export function TraineeAttendanceTab({
               chainCanApprove(myProfileId, p.id) === true)
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [profiles, teamScopedIds, showAll, viewerName, myProfileId]
+    [profiles, teamScopedIds, showAll, viewerName, myProfileId, pendingFormerTraineeIds]
   );
   const traineeIds = useMemo(() => new Set(visibleTrainees.map((p) => p.id)), [visibleTrainees]);
 
@@ -205,7 +214,9 @@ export function TraineeAttendanceTab({
     const withEntry: Row[] = entries.map((e) => ({ kind: "entry", entry: e, profileId: e.profileId }));
     const punchedIds = new Set(entries.map((e) => e.profileId));
     const withoutEntry: Row[] = visibleTrainees
-      .filter((p) => !punchedIds.has(p.id))
+      // Former trainees (now Regular) are only here for their leftover
+      // pending days — no "hasn't clocked in" placeholder for them.
+      .filter((p) => p.employment_type === "trainee" && !punchedIds.has(p.id))
       .map((p) => ({ kind: "placeholder", entry: null, profileId: p.id }));
     return [...withEntry, ...withoutEntry].sort((a, b) => {
       // Newest day first, then by trainee name; placeholders last.
