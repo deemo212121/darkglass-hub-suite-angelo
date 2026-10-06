@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { AlertTriangle, ChevronRight, Loader2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { AlertTriangle, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import {
   GRADERS, GRADE_META, GradeMedal, fmtPayDate, gradeName, letterGrade, payPeriodsThrough,
   shortAvgHours, shortAvgMiles, shortDailyAvg, shortErrorCount, shortPoints, shortRedoPct, shortTotalTicket,
@@ -12,25 +12,54 @@ const fmtDay = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("
 
 /**
  * Mobile Home → "My standing": the technician's own grade medal, points and
- * main factors (colored like the Technician Performance Report) for the
- * current pay period, their error count, and any meeting they still need.
+ * main factors (colored like the Technician Performance Report), their
+ * error count, and any meeting they still need. Opens on the last COMPLETED
+ * pay period (the current one is only partly in); swipe or use the arrows
+ * to move between pay periods, from the first one up to the current one.
  */
 export function MyStandingCard({ profileId, today }: { profileId: string; today: string }) {
-  const period = payPeriodsThrough(today).slice(-1)[0];
-  const [data, setData] = useState<MyPerformance | null>(null);
+  const periods = payPeriodsThrough(today);
+  const lastIdx = periods.length - 1;
+  // Start on the most recent pay period that has already ended — e.g.
+  // 09/13–09/26 while 09/27–10/10 is still running.
+  const completedIdx = periods.map((p) => p.end < today).lastIndexOf(true);
+  const [idx, setIdx] = useState(completedIdx >= 0 ? completedIdx : lastIdx);
+  const period = periods[Math.min(idx, lastIdx)];
+  const isCurrent = period.end >= today;
+  const label = isCurrent ? "Current pay period" : idx === completedIdx ? "Last pay period" : "Pay period";
+
+  // The last loaded period stays on screen (dimmed) while the next one loads.
+  const [loaded, setLoaded] = useState<{ key: string; data: MyPerformance } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const key = `${period.start}|${period.end}`;
+  const loading = loaded?.key !== key;
+  const data = loaded?.data ?? null;
 
   useEffect(() => {
     let cancelled = false;
+    setError(null);
     getMyPerformance(profileId, period.start, period.end)
-      .then((d) => { if (!cancelled) setData(d); })
+      .then((d) => { if (!cancelled) setLoaded({ key: `${period.start}|${period.end}`, data: d }); })
       .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : "Couldn't load"); });
     return () => { cancelled = true; };
   }, [profileId, period.start, period.end]);
 
+  const older = () => setIdx((i) => Math.max(0, i - 1));
+  const newer = () => setIdx((i) => Math.min(lastIdx, i + 1));
+  // Swipe left = newer, swipe right = older.
+  const touchX = useRef<number | null>(null);
+  const onTouchStart = (e: React.TouchEvent) => { touchX.current = e.touches[0].clientX; };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    if (touchX.current === null) return;
+    const dx = e.changedTouches[0].clientX - touchX.current;
+    touchX.current = null;
+    if (dx <= -50) newer();
+    else if (dx >= 50) older();
+  };
+
   const card = { background: "var(--mt-surface)", border: "1px solid var(--mt-surface-border)", borderRadius: 14 } as const;
 
-  if (error) return null; // don't clutter Home if it can't load
+  if (error && !data) return null; // don't clutter Home if it can't load
   if (!data) {
     return (
       <div style={card} className="flex items-center gap-2 px-4 py-3 text-xs text-slate-300">
@@ -55,11 +84,25 @@ export function MyStandingCard({ profileId, today }: { profileId: string; today:
   const openMeetings = data.meetings.filter((m) => m.status === "required");
 
   return (
-    <div style={card} className="px-4 py-3">
-      <div className="flex items-center justify-between">
+    <div style={card} className="px-4 py-3" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+      <div className="flex items-center justify-between gap-2">
         <span className="text-[11px] font-bold uppercase tracking-wide text-slate-300">My standing</span>
-        <span className="text-[10px] text-slate-400">{fmtPayDate(period.start)} – {fmtPayDate(period.end)}</span>
+        <div className="flex items-center gap-1">
+          <button type="button" onClick={older} disabled={idx === 0} aria-label="Previous pay period" className="rounded-md p-1 text-slate-300 disabled:opacity-30">
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <div className="text-right leading-tight">
+            <div className={`text-[10px] font-semibold ${isCurrent ? "text-sky-300" : "text-slate-300"}`}>{label}</div>
+            <div className="text-[10px] text-slate-400">{fmtPayDate(period.start)} – {fmtPayDate(period.end)}</div>
+          </div>
+          <button type="button" onClick={newer} disabled={idx >= lastIdx} aria-label="Next pay period" className="rounded-md p-1 text-slate-300 disabled:opacity-30">
+            <ChevronRight className="h-4 w-4" />
+          </button>
+          {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />}
+        </div>
       </div>
+      {error && <p className="mt-1 text-[10px] text-red-300">Couldn't load this pay period.</p>}
+      <div className={loading ? "opacity-50 transition-opacity" : "transition-opacity"}>
 
       <div className="mt-3 flex items-center gap-3">
         <GradeMedal grade={grade} />
@@ -90,13 +133,14 @@ export function MyStandingCard({ profileId, today }: { profileId: string; today:
           <ul className="mt-1 space-y-0.5">
             {openMeetings.map((m) => (
               <li key={m.id}>
-                {fmtDay(m.missedDate)} — {m.kind === "missed_time_out" ? "missed Time Out, not corrected in time" : "missed clock-in"}
+                {fmtDay(m.missedDate)} — {m.kind === "missed_time_out" ? "missed Time Out, not corrected in time" : "no clock-in by 10 AM"}
               </li>
             ))}
           </ul>
         </div>
       )}
-      <p className="mt-2 text-[10px] text-slate-400">From the numbers entered for this pay period. Some data can be incomplete — ask your manager if something looks wrong.</p>
+      </div>
+      <p className="mt-2 text-[10px] text-slate-400">{isCurrent ? "This pay period is still running, so the numbers will change." : "From the numbers entered for this pay period."} Some data can be incomplete — ask your manager if something looks wrong.</p>
     </div>
   );
 }
