@@ -7,6 +7,7 @@ import { ArrowRight, Settings } from "lucide-react";
 import { HomeToday } from "@/components/home/HomeToday";
 import { useAttention, badgeText } from "@/lib/attention";
 import { moduleIcon } from "@/lib/moduleIcons";
+import logoUrl from "@/assets/logo.png";
 import { useEffect, useRef, useState } from "react";
 import { runTour, takeQueuedTour } from "@/lib/tours/runTour";
 import { DESKTOP_GETTING_STARTED_TOUR, GETTING_STARTED_TARGET } from "@/lib/tours/desktopTours";
@@ -77,7 +78,9 @@ function Home() {
   return (
     <>
       <AppHeader />
-      <main className="max-w-[1400px] mx-auto px-6 py-8 page-fade-in">
+      {/* Brand watermark: the logo's shape as a faint silhouette behind the page. */}
+      <div className="home-watermark" style={{ ["--logo" as string]: `url("${logoUrl}")` }} aria-hidden />
+      <main className="relative z-[1] max-w-[1400px] mx-auto px-6 py-8 page-fade-in">
         <HomeToday />
         <h2 className="home-section-title">Your modules</h2>
         <div data-tour="home-modules" className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">

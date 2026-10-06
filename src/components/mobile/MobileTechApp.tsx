@@ -72,7 +72,7 @@ import {
 } from "@/lib/supabase/messaging";
 import { getTicketBilling, saveTicketBilling, type TicketBilling } from "@/lib/supabase/billing";
 import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supabase/payslips";
-import { getMyProfileSchedule, getMonthEntries, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, savePunch, clearPunch, canEditPunch, resolveScheduledShiftHours, type UITimeEntry, type CompanyTimecardEntry, type PunchField } from "@/lib/supabase/timecards";
+import { getMyProfileSchedule, getMonthEntries, getEntryForDate, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, savePunch, clearPunch, canEditPunch, resolveScheduledShiftHours, type UITimeEntry, type CompanyTimecardEntry, type PunchField } from "@/lib/supabase/timecards";
 import {
   getTraineeEntryForDate,
   saveTraineePunch,
@@ -133,7 +133,17 @@ import { getUndismissedMobilePopupAlerts, dismissTicketAlert, type TicketAlert }
 import { createItTicket, getItTickets, type ItTicketRow, type ItTicketPriority } from "@/lib/supabase/itTickets";
 import { createEmployeeRequest, getCompanyEmployeeRequests, updateEmployeeRequestStatus, canReviewTicketDispute, notifyRequestReviewers, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { createPtoRequest, getCompanyPtoRequests, canReviewPtoStage, reviewPtoStage, type PtoType, type PtoRequestRow } from "@/lib/supabase/pto";
-import { createTimecardCorrection, getCompanyTimecardCorrections, canReviewCorrectionStage, reviewCorrectionStage, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
+import {
+  createTimecardCorrection,
+  getCompanyTimecardCorrections,
+  canReviewCorrectionStage,
+  reviewCorrectionStage,
+  validateCorrectionTimes,
+  correctionShiftMinutes,
+  formatShift,
+  CORRECTION_MEAL_REQUIRED_AFTER_MINUTES,
+  type TimecardCorrectionRow,
+} from "@/lib/supabase/timecardCorrections";
 import { createNotification } from "@/lib/supabase/notifications";
 import { getMileageEntries, resetMileageRouteConfirmation, type MileageEntry } from "@/lib/supabase/mileage";
 import { NotificationsMenu } from "@/components/NotificationsMenu";
@@ -194,14 +204,6 @@ type View =
   | "guides";
 type DetailTab = "general" | "tracking" | "tips" | "parts" | "billing";
 
-// Zero-padded "HH:MM"/"HH:MM:SS" strings sort chronologically as plain
-// strings, so this catches the classic native <input type="time"> mistake
-// of leaving the AM/PM half wrong — mirrors EmployeeSelfServicePage.tsx's
-// local helper of the same name (kept as its own copy since neither file
-// exports page-local helpers).
-function isCheckOutBeforeCheckIn(checkIn: string, checkOut: string): boolean {
-  return !!checkIn && !!checkOut && checkOut <= checkIn;
-}
 
 // Repair-status options the tech can pick from when editing a visit row
 // on mobile. Same set the desktop Add Visit modal uses so both surfaces
@@ -9589,6 +9591,24 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
     void load();
   }, [profileId]);
 
+  const shiftMinutes = correctionShiftMinutes(correctedCheckIn, correctedCheckOut);
+  const mealRequired = shiftMinutes !== null && shiftMinutes > CORRECTION_MEAL_REQUIRED_AFTER_MINUTES;
+  // Pre-fill the meal fields with the meal actually punched on the picked
+  // date (only while they're still blank), so the tech only adjusts what's
+  // wrong or fills in a meal they forgot to punch.
+  useEffect(() => {
+    if (!profileId || !correctionDate) return;
+    let cancelled = false;
+    getEntryForDate(profileId, correctionDate)
+      .then((e) => {
+        if (cancelled || !(e?.mealStart || e?.mealEnd)) return;
+        setCorrectedMealStart((prev) => prev || e?.mealStart || "");
+        setCorrectedMealEnd((prev) => prev || e?.mealEnd || "");
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [profileId, correctionDate]);
+
   const submit = async () => {
     if (!profileId) {
       setMsg("Your profile hasn't loaded yet — try again in a moment.");
@@ -9598,8 +9618,15 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
       setMsg("Select the date you're correcting.");
       return;
     }
-    if (!correctedCheckIn && !correctedCheckOut && !correctedMealStart && !correctedMealEnd) {
-      setMsg("Enter at least one corrected time (check in, check out, meal start, or meal end).");
+    const timesError = validateCorrectionTimes({
+      checkIn: correctedCheckIn,
+      checkOut: correctedCheckOut,
+      mealStart: correctedMealStart,
+      mealEnd: correctedMealEnd,
+    });
+    if (timesError) {
+      setMsgIsError(true);
+      setMsg(timesError);
       return;
     }
     if (exceptionType === "other" && !otherDescription.trim()) {
@@ -9629,21 +9656,8 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
       const [y, m] = correctionDate.split("-").map(Number);
       const monthEntries = await getMonthEntries(profileId, y, m - 1);
       const existing = monthEntries[correctionDate];
-
-      const effectiveCheckIn = correctedCheckIn || existing?.checkIn || "";
-      const effectiveCheckOut = correctedCheckOut || existing?.checkOut || "";
-      if (isCheckOutBeforeCheckIn(effectiveCheckIn, effectiveCheckOut)) {
-        setMsg(`Check out (${effectiveCheckOut}) is before check in (${effectiveCheckIn}). Double-check the time.`);
-        setSubmitting(false);
-        return;
-      }
-      const effectiveMealStart = correctedMealStart || existing?.mealStart || "";
-      const effectiveMealEnd = correctedMealEnd || existing?.mealEnd || "";
-      if (isCheckOutBeforeCheckIn(effectiveMealStart, effectiveMealEnd)) {
-        setMsg(`Meal end (${effectiveMealEnd}) is before meal start (${effectiveMealStart}). Double-check the time.`);
-        setSubmitting(false);
-        return;
-      }
+      const submittedMealStart = correctedMealStart;
+      const submittedMealEnd = correctedMealEnd;
 
       const myProfile = companyProfiles.find((p) => p.id === profileId) ?? null;
       const managerProfile = myProfile ? await resolveTeamLeadOrManager(myProfile, companyProfiles) : null;
@@ -9676,8 +9690,8 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
         correctedCheckOut,
         originalMealStart: existing?.mealStart || "",
         originalMealEnd: existing?.mealEnd || "",
-        correctedMealStart,
-        correctedMealEnd,
+        correctedMealStart: submittedMealStart,
+        correctedMealEnd: submittedMealEnd,
         reason: details.trim(),
         requestedBy: profileId,
         managerId: managerProfile?.id ?? null,
@@ -9749,19 +9763,25 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
         <div className="mtech-section-title" style={{ marginTop: 0 }}>Date</div>
         <input className="mtech-bill-input full" type="date" value={correctionDate} onChange={(e) => setCorrectionDate(e.target.value)} onClick={openNativePicker} />
 
-        <div className="mtech-section-title">Corrected Check In</div>
+        <div className="mtech-section-title">Corrected Check In <span style={{ color: "#f87171" }}>*</span></div>
         <input className="mtech-bill-input full" type="time" value={correctedCheckIn} onChange={(e) => setCorrectedCheckIn(e.target.value)} onClick={openNativePicker} />
 
-        <div className="mtech-section-title">Corrected Check Out</div>
+        <div className="mtech-section-title">Corrected Check Out <span style={{ color: "#f87171" }}>*</span></div>
         <input className="mtech-bill-input full" type="time" value={correctedCheckOut} onChange={(e) => setCorrectedCheckOut(e.target.value)} onClick={openNativePicker} />
 
-        <div className="mtech-section-title">Corrected Meal Start</div>
+        <div className="mtech-section-title">Corrected Meal Start {mealRequired && <span style={{ color: "#f87171" }}>*</span>}</div>
         <input className="mtech-bill-input full" type="time" value={correctedMealStart} onChange={(e) => setCorrectedMealStart(e.target.value)} onClick={openNativePicker} />
 
-        <div className="mtech-section-title">Corrected Meal End</div>
+        <div className="mtech-section-title">Corrected Meal End {mealRequired && <span style={{ color: "#f87171" }}>*</span>}</div>
         <input className="mtech-bill-input full" type="time" value={correctedMealEnd} onChange={(e) => setCorrectedMealEnd(e.target.value)} onClick={openNativePicker} />
 
-        <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>Fill in only the field(s) that were wrong — the rest is left as recorded.</p>
+        <p className="mtech-muted" style={{ padding: "0.25rem 0", color: mealRequired ? "#fcd34d" : undefined }}>
+          {shiftMinutes === null
+            ? "Check in and check out are required. Meal start/end are required only when the shift is over 6 hours."
+            : mealRequired
+            ? `Shift is ${formatShift(shiftMinutes)} — over 6 hours, so meal start and end are required.`
+            : `Shift is ${formatShift(shiftMinutes)} — meal break optional (required only over 6 hours).`}
+        </p>
 
         <div className="mtech-section-title">Technician ID</div>
         {companyProfiles.find((p) => p.id === profileId)?.technician_id ? (

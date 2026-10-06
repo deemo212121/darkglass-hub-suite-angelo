@@ -364,6 +364,60 @@ export function canReviewCorrectionStage(
  * same pre-generated-key pattern MobileTicketTimeDisputeView already uses
  * for its own attachments) and passes the resulting URLs in here.
  */
+/** A shift longer than this (corrected check-in → check-out) must include a meal break. */
+export const CORRECTION_MEAL_REQUIRED_AFTER_MINUTES = 6 * 60;
+
+function timeToMinutes(t: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(t.trim());
+  return m ? Number(m[1]) * 60 + Number(m[2]) + Number(m[3] ?? 0) / 60 : null;
+}
+
+/** Minutes between two "HH:MM[:SS]" times, or null if either is blank/unparseable or out isn't after in. */
+export function correctionShiftMinutes(checkIn: string, checkOut: string): number | null {
+  const a = timeToMinutes(checkIn);
+  const b = timeToMinutes(checkOut);
+  return a === null || b === null || b <= a ? null : b - a;
+}
+
+/** e.g. 390 → "6h 30m". */
+export function formatShift(minutes: number): string {
+  const total = Math.round(minutes);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+/**
+ * Rules every Time Correction Request submission must pass (desktop and
+ * mobile share this): corrected check-in and check-out are both required;
+ * a meal break is required once the corrected shift runs over 6 hours
+ * (optional at 6 hours or less); and any meal given must be complete, in
+ * order, and inside the shift.
+ * Returns an error message to show, or null when valid.
+ */
+export function validateCorrectionTimes(t: { checkIn: string; checkOut: string; mealStart: string; mealEnd: string }): string | null {
+  if (!t.checkIn || !t.checkOut) return "Corrected Check In and Corrected Check Out are both required.";
+  const shift = correctionShiftMinutes(t.checkIn, t.checkOut);
+  if (shift === null) return `Check out (${t.checkOut}) must be after check in (${t.checkIn}). Double-check the AM/PM on the time picker.`;
+  const hasMealStart = Boolean(t.mealStart);
+  const hasMealEnd = Boolean(t.mealEnd);
+  if (shift > CORRECTION_MEAL_REQUIRED_AFTER_MINUTES && (!hasMealStart || !hasMealEnd)) {
+    return "This shift is over 6 hours, so Corrected Meal Start and Corrected Meal End are both required.";
+  }
+  if (hasMealStart !== hasMealEnd) return "Enter both Corrected Meal Start and Corrected Meal End, or leave both blank.";
+  if (hasMealStart && hasMealEnd) {
+    if (correctionShiftMinutes(t.mealStart, t.mealEnd) === null) {
+      return `Meal end (${t.mealEnd}) must be after meal start (${t.mealStart}). Double-check the AM/PM on the time picker.`;
+    }
+    const inMin = timeToMinutes(t.checkIn)!;
+    const outMin = timeToMinutes(t.checkOut)!;
+    if (timeToMinutes(t.mealStart)! < inMin || timeToMinutes(t.mealEnd)! > outMin) {
+      return "The meal break has to fall between the corrected check in and check out.";
+    }
+  }
+  return null;
+}
+
 /** Validate against the server clock in the employee's attendance timezone. */
 export async function validateTimecardCorrectionDate(profileId: string, workDate: string): Promise<void> {
   const { data: profile, error } = await supabase
@@ -720,22 +774,3 @@ export async function updateCorrectionPdfUrl(correctionId: string, pdfUrl: strin
   }
 }
 
-function correctionTimeToMinutes(t: string): number | null {
-  const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(t.trim());
-  return m ? Number(m[1]) * 60 + Number(m[2]) + Number(m[3] ?? 0) / 60 : null;
-}
-
-/** Minutes between two "HH:MM[:SS]" times, or null if either is blank/unparseable or out isn't after in. */
-export function correctionShiftMinutes(checkIn: string, checkOut: string): number | null {
-  const a = correctionTimeToMinutes(checkIn);
-  const b = correctionTimeToMinutes(checkOut);
-  return a === null || b === null || b <= a ? null : b - a;
-}
-
-/** e.g. 390 → "6h 30m". */
-export function formatShift(minutes: number): string {
-  const total = Math.round(minutes);
-  const h = Math.floor(total / 60);
-  const m = total % 60;
-  return m ? `${h}h ${m}m` : `${h}h`;
-}
