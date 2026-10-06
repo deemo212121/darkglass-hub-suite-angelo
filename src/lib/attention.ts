@@ -32,11 +32,12 @@ import { getCompanyEmployeeRequests, canReviewTicketDispute } from "@/lib/supaba
 import { getCorrectionExemptions } from "@/lib/supabase/correctionExemptions";
 import { getMyNotifications } from "@/lib/supabase/notifications";
 import { getUnreadCounts } from "@/lib/supabase/messaging";
+import { getCoachingWaitingCount } from "@/lib/supabase/csrCoachingLogs";
 
 /** Corrections allowed per person per month (Exceeded → Time Corrections). */
 export const MAX_CORRECTIONS_PER_MONTH = 2;
 
-export type AttentionKind = "pto" | "sick" | "corrections" | "disputes" | "over-limit" | "notifications" | "messages";
+export type AttentionKind = "pto" | "sick" | "corrections" | "disputes" | "over-limit" | "coaching" | "notifications" | "messages";
 export type AttentionTone = "warn" | "alert" | "info";
 
 export interface AttentionItem {
@@ -62,6 +63,8 @@ export interface Attention {
 
 const COMPANY_WIDE_ROLES = new Set(["ADMIN", "SUPERADMIN", "SUPERSUPERADMIN", "HR", "FINANCE"]);
 const LIMIT_ROLES = new Set(["ADMIN", "HR", "SUPERADMIN"]);
+// Can be coached or coach on CSR → Coaching Log.
+const COACHING_ROLES = new Set(["CSR", "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER", "ADMIN", "SUPERADMIN"]);
 const CACHE_MS = 60_000;
 
 let cache: { key: string; at: number; data: Attention } | null = null;
@@ -204,6 +207,21 @@ async function compute(who: Who): Promise<Attention> {
         title: `More than ${MAX_CORRECTIONS_PER_MONTH} corrections this month — Exceeded → Time Corrections`,
         to: absentPage,
       });
+  }
+
+  // Coaching logs to fill in / sign (the person coached) or to sign (the coach).
+  const coachingWaiting = myId && heldRoles.some((r) => COACHING_ROLES.has(r)) ? await getCoachingWaitingCount(myId).catch(() => 0) : 0;
+  if (coachingWaiting > 0) {
+    const coachingPage: [string, string] = ["csr", "coaching-log"];
+    bump(coachingPage, coachingWaiting);
+    items.push({
+      kind: "coaching",
+      count: coachingWaiting,
+      label: coachingWaiting === 1 ? "Coaching log to fill in or sign" : "Coaching logs to fill in or sign",
+      tone: "warn",
+      title: "CSR → Coaching Log",
+      to: coachingPage,
+    });
   }
 
   const unreadNotifications = notifications.filter((n) => !n.isRead).length;

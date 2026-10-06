@@ -17,8 +17,8 @@
  * rules are enforced by the table's triggers and RLS too — this page only
  * mirrors them so people aren't offered buttons that would be refused.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { ChevronLeft, ClipboardCheck, History, Lock, Plus, RotateCcw, Trash2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -43,6 +43,11 @@ import {
   signAsCreator,
   deleteCoachingLog,
   restoreCoachingLog,
+  markCoachingLogSent,
+  sendCoachingLogMessage,
+  coachingStatus,
+  isCoachingWaitingOn,
+  type CoachingStatus,
   type CoachingLog,
   type CoachingLogEvent,
 } from "@/lib/supabase/csrCoachingLogs";
@@ -79,15 +84,8 @@ function fmtDateTime(iso: string | null): string {
   return new Date(iso).toLocaleString(undefined, { month: "2-digit", day: "2-digit", year: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-type Status = "coach" | "csr" | "csr_sign" | "creator_sign" | "locked";
-
-function statusOf(l: CoachingLog): Status {
-  if (l.csrSignedAt && l.creatorSignedAt) return "locked";
-  if (l.csrSignedAt) return "creator_sign";
-  if (!l.summary.trim() || !l.coachingDiscussion.trim() || !l.tlActionPlan.trim()) return "coach";
-  if (!l.csrExplanation.trim() || !l.csrActionPlan.trim()) return "csr";
-  return "csr_sign";
-}
+type Status = CoachingStatus;
+const statusOf = coachingStatus;
 
 const STATUS_LABEL: Record<Status, string> = {
   coach: "Coach to fill in",
@@ -108,6 +106,7 @@ const STATUS_CLASS: Record<Status, string> = {
 const EVENT_LABEL: Record<CoachingLogEvent["action"], string> = {
   created: "Created",
   edited: "Edited",
+  sent: "Sent to CSR",
   csr_signed: "CSR signed",
   creator_signed: "Coach signed",
   deleted: "Deleted",
@@ -168,6 +167,16 @@ export function CsrCoachingLogPage({ mod, sub }: Props) {
 
   useEffect(() => { void load(); }, [load]);
 
+  // Opened from a Team Messenger / bell link (…/coaching-log?log=<id>) —
+  // each link opens its log once, even when already on this page.
+  const linkedLogId = String((useLocation().search as Record<string, unknown>)?.log ?? "");
+  const handledLink = useRef("");
+  useEffect(() => {
+    if (!linkedLogId || loading || handledLink.current === linkedLogId) return;
+    handledLink.current = linkedLogId;
+    if (logs.some((l) => l.id === linkedLogId)) setOpenId(linkedLogId);
+  }, [linkedLogId, loading, logs]);
+
   const replaceLog = (l: CoachingLog) => setLogs((prev) => prev.map((x) => (x.id === l.id ? l : x)));
   const refreshEvents = () => {
     if (canReadAll) getCoachingLogEvents().then(setEvents).catch(() => {});
@@ -190,13 +199,7 @@ export function CsrCoachingLogPage({ mod, sub }: Props) {
 
   const waitingOnMe = useMemo(
     () =>
-      logs.filter((l) => {
-        if (l.deletedAt || !myId) return false;
-        const s = statusOf(l);
-        if (l.csrProfileId === myId) return s === "csr" || s === "csr_sign";
-        if (l.createdBy === myId) return s === "creator_sign";
-        return false;
-      }),
+      logs.filter((l) => isCoachingWaitingOn(l, myId)),
     [logs, myId]
   );
 
@@ -441,6 +444,27 @@ export function CsrCoachingLogPage({ mod, sub }: Props) {
   );
 }
 
+/**
+ * "Send to CSR": a Team Messenger message from the coach with a link to the
+ * log plus a bell notification, then stamps it sent (History tab). Returns
+ * the updated log, or the same one if only the stamp failed.
+ */
+async function sendLogToCsr(log: CoachingLog, myId: string, myName: string): Promise<CoachingLog> {
+  await sendCoachingLogMessage({
+    fromId: myId,
+    fromName: myName || "Coach",
+    toId: log.csrProfileId,
+    logId: log.id,
+    body: `📋 Coaching Log (${fmtDate(log.coachingDate)}) from ${myName || "your coach"} is ready for you. Please fill in II. CSR's Explanation and IV. CSR's Action Plan, then sign.`,
+  });
+  try {
+    return await markCoachingLogSent(log.id);
+  } catch (e: any) {
+    toast.warning(e?.message || "Sent, but couldn't record it as sent.");
+    return log;
+  }
+}
+
 function NewCoachingLogModal({
   users,
   teams,
@@ -488,7 +512,7 @@ function NewCoachingLogModal({
     setTeam(t ? t.name : "");
   };
 
-  const submit = async () => {
+  const submit = async (andSend: boolean) => {
     const csr = active.find((u) => u.id === csrId);
     if (!csr) { setErr("Choose who this coaching log is for."); return; }
     if (!date) { setErr("Coaching date is required."); return; }
@@ -507,6 +531,17 @@ function NewCoachingLogModal({
         coachingDiscussion: discussion.trim(),
         tlActionPlan: tlPlan.trim(),
       });
+      if (andSend && myId) {
+        try {
+          const sent = await sendLogToCsr(created, myId, myName);
+          toast.success(`Sent to ${created.csrName}.`);
+          onCreated(sent);
+        } catch (e: any) {
+          toast.error(`Created, but sending failed: ${e?.message || "unknown error"} — use Send on the log to try again.`);
+          onCreated(created);
+        }
+        return;
+      }
       onCreated(created);
     } catch (e: any) {
       setErr(e?.message || "Couldn't create the coaching log.");
@@ -525,7 +560,10 @@ function NewCoachingLogModal({
       footer={
         <>
           <button type="button" className="btn" onClick={onClose} disabled={saving}>Cancel</button>
-          <button type="button" className="btn btn-primary" onClick={submit} disabled={saving}>{saving ? "Creating…" : "Create"}</button>
+          <button type="button" className="btn" onClick={() => submit(false)} disabled={saving}>{saving ? "Creating…" : "Create"}</button>
+          <button type="button" className="btn btn-primary" onClick={() => submit(true)} disabled={saving} title="Create it and send it to the person in Team Messenger">
+            {saving ? "Working…" : "Create & Send"}
+          </button>
         </>
       }
     >
@@ -592,6 +630,9 @@ function CoachingLogModal({
   const locked = !!(log.csrSignedAt && log.creatorSignedAt);
   const coachEditable = canWrite && !isTarget && !log.csrSignedAt && !deleted;
   const csrEditable = isTarget && !log.csrSignedAt && !deleted;
+  // The coach side can send it to the person coached until they've signed.
+  const canSend = !!myId && canWrite && !isTarget && !deleted && !log.csrSignedAt;
+  const [sending, setSending] = useState(false);
 
   const [f, setF] = useState(() => ({
     ticketNumber: log.ticketNumber,
@@ -664,14 +705,38 @@ function CoachingLogModal({
           ? `Deleted by ${log.deletedByName || "—"} on ${fmtDateTime(log.deletedAt)} — view only. Restore it from the Deleted tab to continue.`
           : locked
             ? "Signed by both — locked, view only."
-            : `Created by ${log.createdByName || "—"} on ${fmtDateTime(log.createdAt)}`
+            : `Created by ${log.createdByName || "—"} on ${fmtDateTime(log.createdAt)}${
+                log.sentAt ? ` · Sent to ${log.csrName} on ${fmtDateTime(log.sentAt)}` : canSend ? " · Not sent yet" : ""
+              }`
       }
       size="xl"
       busy={saving || !!signing}
       onClose={onClose}
       footer={
         <>
-          <button type="button" className="btn" onClick={onClose} disabled={saving}>Close</button>
+          <button type="button" className="btn" onClick={onClose} disabled={saving || sending}>Close</button>
+          {canSend && (
+            <button
+              type="button"
+              className="btn"
+              disabled={saving || sending}
+              title={`Send it to ${log.csrName} in Team Messenger, with a link to this log`}
+              onClick={async () => {
+                if (dirty && !(await save())) return;
+                setSending(true);
+                try {
+                  onSaved(await sendLogToCsr(log, myId!, myName));
+                  toast.success(`Sent to ${log.csrName}.`);
+                } catch (e: any) {
+                  toast.error(e?.message || "Couldn't send.");
+                } finally {
+                  setSending(false);
+                }
+              }}
+            >
+              {sending ? "Sending…" : log.sentAt ? `Resend to ${log.csrName.split(" ")[0]}` : `Send to ${log.csrName.split(" ")[0]}`}
+            </button>
+          )}
           {(coachEditable || csrEditable) && (
             <button type="button" className="btn btn-primary" onClick={() => void save()} disabled={saving || !dirty}>
               {saving ? "Saving…" : "Save"}
@@ -769,6 +834,21 @@ function CoachingLogModal({
             onSaved(updated);
             setSigning(null);
             toast.success(updated.creatorSignedAt ? "Signed — the coaching log is now locked." : "Signed.");
+            // Let the other side know, the same way the log was sent.
+            const coachName = updated.teamLeaderName || updated.createdByName || "the coach";
+            const to = signing === "csr" ? updated.createdBy : updated.csrProfileId;
+            if (myId && to && to !== myId) {
+              sendCoachingLogMessage({
+                fromId: myId,
+                fromName: myName || (signing === "csr" ? updated.csrName : coachName),
+                toId: to,
+                logId: updated.id,
+                body:
+                  signing === "csr"
+                    ? `✍️ ${updated.csrName} signed the Coaching Log (${fmtDate(updated.coachingDate)}). Your signature is next.`
+                    : `✅ Your Coaching Log (${fmtDate(updated.coachingDate)}) is signed by you and ${coachName} and is now locked.`,
+              }).catch(() => toast.warning("Signed, but the message to the other person couldn't be sent."));
+            }
           }}
         />
       )}
