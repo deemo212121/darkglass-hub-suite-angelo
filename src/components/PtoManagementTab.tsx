@@ -240,9 +240,13 @@ export function PtoManagementTab() {
             key={key}
             type="button"
             onClick={() => setPtoLeaveTab(key)}
-            className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${ptoLeaveTab === key ? "bg-blue-600 text-white" : "bg-white/5 text-slate-400 hover:bg-white/10"}`}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition ${ptoLeaveTab === key ? "bg-blue-600 text-white" : "bg-white/5 text-slate-400 hover:bg-white/10"}`}
           >
             {label}
+            {(() => {
+              const n = visiblePtoRequests.filter((r) => (key === "paid" ? PAID_LEAVE_PTO_TYPES : UNPAID_LEAVE_PTO_TYPES).includes(r.ptoType) && r.status === "pending").length;
+              return n > 0 ? <span className="home-badge home-badge--sm" title={`${n} pending`}>{n > 99 ? "99+" : n}</span> : null;
+            })()}
           </button>
         ))}
       </div>

@@ -66,6 +66,7 @@ import {
   type CorrectionStatus,
 } from "@/lib/supabase/timecardCorrections";
 import { CorrectionManagerSignModal, CorrectionHrSignModal } from "@/components/CorrectionSignModals";
+import { useAttention, badgeText } from "@/lib/attention";
 
 /** A pending trainee punch shown as a regular timecard entry (approved days are already copied to timecard_entries). */
 function traineeAsEntry(t: TraineeTimecardEntry): CompanyTimecardEntry {
@@ -329,6 +330,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { uid, ready, allowedLocations, displayName, role, extraRoles, companyId } = useAuth();
+  // What's waiting on this viewer per tab (shared with Home's attention strip) — red badges on the tabs.
+  const tabCounts = useAttention()?.tabCounts ?? {};
+  const tabBadge = (tabId: string) => tabCounts[`attendance-monitoring:${tabId}`] ?? 0;
   // Attendance notes (the quick "Add Note" / Notify Individual / Notify Team
   // Lead flow) are open to HR/Finance/Admin for the whole roster, and to
   // manager-tier roles for their own direct reports — the row itself is
@@ -843,6 +847,12 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // Time-Off Management tab's Paid Leave / Unpaid Leave split — only the
   // two request lists inside that tab use this; ptoPendingApproval (KPI
   // tile) and anything else keeps reading visiblePtoRequests directly.
+  /** Red badge on the Paid / Unpaid Leave buttons: pending requests in that group. */
+  const pendingLeaveBadge = (group: "paid" | "unpaid") => {
+    const types = group === "paid" ? PAID_LEAVE_PTO_TYPES : UNPAID_LEAVE_PTO_TYPES;
+    const n = visiblePtoRequests.filter((r) => types.includes(r.ptoType) && r.status === "pending").length;
+    return n > 0 ? <span className="home-badge home-badge--sm" title={`${n} pending`}>{badgeText(n)}</span> : null;
+  };
   const leaveTabPtoRequests = useMemo(() => {
     const types = ptoLeaveTab === "paid" ? PAID_LEAVE_PTO_TYPES : UNPAID_LEAVE_PTO_TYPES;
     return visiblePtoRequests.filter((r) => types.includes(r.ptoType));
@@ -1698,8 +1708,12 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     : "text-slate-400 hover:bg-white/10 hover:text-slate-200"
                 }`}
               >
-                <Icon className="h-4 w-4 shrink-0" />
+                <span className="relative shrink-0">
+                  <Icon className="h-4 w-4" />
+                  {!sidebarExpanded && tabBadge(tab.id) > 0 && <span className="absolute -right-1.5 -top-1.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-slate-900" />}
+                </span>
                 {sidebarExpanded && <span>{tab.label}</span>}
+                {sidebarExpanded && tabBadge(tab.id) > 0 && <span className="home-badge home-badge--sm ml-auto">{badgeText(tabBadge(tab.id))}</span>}
               </button>
             </div>
           );
@@ -1821,6 +1835,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`px-4 py-2 border-b-2 transition whitespace-nowrap flex items-center gap-2 ${activeTab === tab.id ? "border-blue-500 text-blue-300" : "border-transparent text-slate-400 hover:text-slate-300"}`}>
                   <Icon className="h-4 w-4" />
                   {tab.label}
+                  {tabBadge(tab.id) > 0 && (
+                    <span className="home-badge home-badge--sm" title={`${tabBadge(tab.id)} waiting on you`}>{badgeText(tabBadge(tab.id))}</span>
+                  )}
                 </button>
               );
             })}
@@ -2465,19 +2482,21 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 <div data-tour="am-pto-leave" className="flex gap-2">
                   <button
                     onClick={() => setPtoLeaveTab("paid")}
-                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${
+                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition ${
                       ptoLeaveTab === "paid" ? "bg-blue-600 text-white" : "bg-white/5 text-slate-400 hover:bg-white/10"
                     }`}
                   >
                     Paid Leave
+                    {pendingLeaveBadge("paid")}
                   </button>
                   <button
                     onClick={() => setPtoLeaveTab("unpaid")}
-                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${
+                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition ${
                       ptoLeaveTab === "unpaid" ? "bg-blue-600 text-white" : "bg-white/5 text-slate-400 hover:bg-white/10"
                     }`}
                   >
                     Unpaid Leave
+                    {pendingLeaveBadge("unpaid")}
                   </button>
                 </div>
               </div>

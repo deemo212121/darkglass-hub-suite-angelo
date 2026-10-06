@@ -1,4 +1,6 @@
 import { PartsDoneBanner } from "@/components/PartsDoneBanner";
+import { useAttention, badgeText } from "@/lib/attention";
+import { moduleIcon } from "@/lib/moduleIcons";
 import { createFileRoute, Link, Navigate, notFound, Outlet } from "@tanstack/react-router";
 import { useRedirectGuard } from "@/lib/useRedirectGuard";
 import { useEffect, useState } from "react";
@@ -79,6 +81,8 @@ export const Route = createFileRoute("/m/$module")({
 
 function ModuleIndex() {
   const { ready, email, role, extraRoles, uid, companyId, displayName, isTrainee, isFrozen } = useAuth();
+  // Pending counts per page (shared with Home) — red badges on the page cards.
+  const pageCounts = useAttention()?.pageCounts ?? {};
   // Route.useLoaderData()'s type resolves to `undefined` for this route in
   // the current @tanstack/react-router version — a known inference gap for
   // parent routes with children, not a real runtime issue (the loader
@@ -364,19 +368,20 @@ function ModuleIndex() {
       : m.submodules
   ).filter((s: SubModuleDef) => !s.hiddenFromGrid);
 
+  const ModuleIcon = moduleIcon(m.slug);
   return (
     <>
       <AppHeader />
-      <main className="max-w-[1400px] mx-auto px-6 py-8 page-fade-in">
+      <main className="max-w-[1400px] mx-auto px-6 py-8 page-fade-in" style={{ ["--accent" as string]: m.accent }}>
         {m.slug === "parts" && <PartsDoneBanner />}
-        <div className="flex items-center justify-between gap-3 mb-5">
-          <div className="flex items-center gap-3">
-            <Link to="/home" className="btn"><ChevronLeft className="h-4 w-4" />Home</Link>
-            <div>
-              <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-                <span className="inline-block h-2.5 w-2.5 rounded-full bg-primary" />
-                {m.label}
-              </h1>
+        <div className="flex items-center justify-between gap-3 mb-6">
+          <div className="flex items-center gap-3 min-w-0">
+            <Link to="/home" className="btn btn-ghost" aria-label="Home"><ChevronLeft className="h-4 w-4" />Home</Link>
+            <span className="home-module-icon module-hero-icon" aria-hidden>
+              <ModuleIcon />
+            </span>
+            <div className="min-w-0">
+              <h1 className="module-hero-title">{m.label}</h1>
               <p className="text-sm text-muted-foreground">{m.tagline}</p>
             </div>
           </div>
@@ -510,11 +515,14 @@ function ModuleIndex() {
                 key={s.slug}
                 to="/m/$module/$submodule"
                 params={{ module: m.slug, submodule: s.slug }}
-                className="module-card group"
+                className="module-card home-module page-card group"
               >
                 <div className="flex items-center gap-2 mb-2">
                   <h3 className="font-semibold">{s.title}</h3>
-                  <ArrowRight className="ml-auto h-4 w-4 opacity-60 group-hover:translate-x-1 transition" />
+                  {(pageCounts[`${m.slug}/${s.slug}`] ?? 0) > 0 && (
+                    <span className="home-badge" title="Waiting on you">{badgeText(pageCounts[`${m.slug}/${s.slug}`])}</span>
+                  )}
+                  <ArrowRight className="ml-auto h-4 w-4 shrink-0 opacity-50 group-hover:opacity-100 group-hover:translate-x-1 transition" />
                 </div>
                 <p className="text-sm text-muted-foreground">{s.description}</p>
               </Link>
@@ -532,11 +540,14 @@ function ModuleIndex() {
                 key={s.slug}
                 to="/m/$module/$submodule"
                 params={{ module: m.slug, submodule: s.slug }}
-                className="module-card group"
+                className="module-card home-module page-card group"
               >
                 <div className="flex items-center gap-2 mb-2">
                   <h3 className="font-semibold">{s.title}</h3>
-                  <ArrowRight className="ml-auto h-4 w-4 opacity-60 group-hover:translate-x-1 transition" />
+                  {(pageCounts[`${m.slug}/${s.slug}`] ?? 0) > 0 && (
+                    <span className="home-badge" title="Waiting on you">{badgeText(pageCounts[`${m.slug}/${s.slug}`])}</span>
+                  )}
+                  <ArrowRight className="ml-auto h-4 w-4 shrink-0 opacity-50 group-hover:opacity-100 group-hover:translate-x-1 transition" />
                 </div>
                 <p className="text-sm text-muted-foreground">{s.description}</p>
               </Link>

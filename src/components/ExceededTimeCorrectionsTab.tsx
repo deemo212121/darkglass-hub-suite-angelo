@@ -38,8 +38,9 @@ import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
 import { EmptyState } from "@/components/ui-kit/EmptyState";
 import { TableSkeleton } from "@/components/ui-kit/TableSkeleton";
 
+import { MAX_CORRECTIONS_PER_MONTH } from "@/lib/attention";
 /** Corrections allowed per person per month; more than this is flagged. */
-export const MAX_CORRECTIONS_PER_MONTH = 2;
+export { MAX_CORRECTIONS_PER_MONTH };
 
 const PH_BRANCH = "Philippines";
 

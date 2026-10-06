@@ -45,6 +45,7 @@ import { EmployeeAttendanceStatusTab } from "@/components/EmployeeAttendanceStat
 import { VisitExceptionReportTab } from "@/components/VisitExceptionReportTab";
 import { ExceptionReportsTab } from "@/components/ExceptionReportsTab";
 import { ExceededTimeCorrectionsTab } from "@/components/ExceededTimeCorrectionsTab";
+import { useAttention, badgeText } from "@/lib/attention";
 import { HolidayCalendarTab } from "@/components/HolidayCalendarTab";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabase/companyHolidays";
@@ -153,6 +154,12 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   const [askAttendanceStatusPassword, setAskAttendanceStatusPassword] = useState(false);
   const [view, setView] = useState<"list" | "calendar" | "ptoManagement" | "exceptionReports" | "holidays" | "visitExceptions" | "exceededSickDays" | "pendingExplanations" | "attendanceStatus">("list");
   const [exceededTab, setExceededTab] = useState<"sickDays" | "timeCorrections">("sickDays");
+  // What's waiting per tab (shared with Home's attention strip) — red badges on the tabs.
+  const tabCounts = useAttention()?.tabCounts ?? {};
+  const tabBadge = (key: string) => {
+    const n = tabCounts[`absent-list:${key}`] ?? 0;
+    return n > 0 ? <span className="home-badge home-badge--sm" title={`${n} waiting`}>{badgeText(n)}</span> : null;
+  };
   const [statsCardHidden, setStatsCardHidden] = useState(false);
   const [dateFrom, setDateFrom] = useState(todayISO());
   const [dateTo, setDateTo] = useState(todayISO());
@@ -1087,6 +1094,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
             className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "ptoManagement" ? "bg-primary/20 text-primary" : ""}`}
           >
             <Umbrella className="h-3.5 w-3.5" /> PTO Management
+            {tabBadge("ptoManagement")}
           </button>
           <button
             type="button"
@@ -1115,6 +1123,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
             className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "exceededSickDays" ? "bg-primary/20 text-primary" : ""}`}
           >
             <HeartPulse className="h-3.5 w-3.5" /> Exceeded
+            {tabBadge("exceeded")}
           </button>
           <button
             type="button"
@@ -1175,6 +1184,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
               className={`btn btn-sm ${exceededTab === "timeCorrections" ? "bg-primary/20 text-primary" : ""}`}
             >
               <History className="h-3.5 w-3.5" /> Time Corrections
+              {tabBadge("timeCorrections")}
             </button>
           </div>
         )}
