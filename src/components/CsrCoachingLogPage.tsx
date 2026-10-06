@@ -20,7 +20,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { ChevronLeft, ClipboardCheck, History, Lock, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { ChevronLeft, ClipboardCheck, Eye, History, Lock, Plus, RotateCcw, Send, Trash2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -140,6 +140,23 @@ export function CsrCoachingLogPage({ mod, sub }: Props) {
   const [creating, setCreating] = useState(false);
   const [confirm, setConfirm] = useState<{ log: CoachingLog; action: "delete" | "restore" } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [sendingId, setSendingId] = useState<string | null>(null);
+
+  // Same rule as the Send button inside a log: coach side, until the person coached has signed.
+  const canSendRow = (l: CoachingLog) => !!myId && canWrite && l.csrProfileId !== myId && !l.deletedAt && !l.csrSignedAt;
+  const sendFromList = async (l: CoachingLog) => {
+    if (!myId) return;
+    setSendingId(l.id);
+    try {
+      replaceLog(await sendLogToCsr(l, myId, displayName || ""));
+      refreshEvents();
+      toast.success(`${l.sentAt ? "Resent" : "Sent"} to ${l.csrName}.`);
+    } catch (e: any) {
+      toast.error(e?.message || "Couldn't send.");
+    } finally {
+      setSendingId(null);
+    }
+  };
 
   const load = useCallback(async () => {
     if (!uid) return;
@@ -346,7 +363,7 @@ export function CsrCoachingLogPage({ mod, sub }: Props) {
                 <th className="px-3 py-2">Ticket #</th>
                 <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">{tab === "deleted" ? "Deleted by" : "Created by"}</th>
-                {canWrite && <th className="px-3 py-2 text-right">Actions</th>}
+                <th className="px-3 py-2 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -367,9 +384,23 @@ export function CsrCoachingLogPage({ mod, sub }: Props) {
                     <td className="px-3 py-2 whitespace-nowrap">
                       {tab === "deleted" ? `${l.deletedByName || "—"} · ${fmtDateTime(l.deletedAt)}` : l.createdByName || "—"}
                     </td>
-                    {canWrite && (
-                      <td className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
-                        {l.csrProfileId === myId ? null : tab === "deleted" ? (
+                    <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex flex-wrap items-center justify-end gap-1.5">
+                        <button type="button" className="btn text-xs" onClick={() => setOpenId(l.id)}>
+                          <Eye className="h-3.5 w-3.5" /> View
+                        </button>
+                        {tab === "active" && canSendRow(l) && (
+                          <button
+                            type="button"
+                            className={`btn text-xs ${l.sentAt ? "" : "btn-primary"}`}
+                            disabled={sendingId === l.id}
+                            title={l.sentAt ? `Sent ${fmtDateTime(l.sentAt)}${l.sentByName ? " by " + l.sentByName : ""} — send it again` : `Send it to ${l.csrName} in Team Messenger`}
+                            onClick={() => void sendFromList(l)}
+                          >
+                            <Send className="h-3.5 w-3.5" /> {sendingId === l.id ? "Sending…" : l.sentAt ? "Resend" : "Send"}
+                          </button>
+                        )}
+                        {canWrite && l.csrProfileId !== myId && (tab === "deleted" ? (
                           <button type="button" className="btn text-xs" onClick={() => setConfirm({ log: l, action: "restore" })}>
                             <RotateCcw className="h-3.5 w-3.5" /> Restore
                           </button>
@@ -377,9 +408,9 @@ export function CsrCoachingLogPage({ mod, sub }: Props) {
                           <button type="button" className="btn btn-danger text-xs" onClick={() => setConfirm({ log: l, action: "delete" })}>
                             <Trash2 className="h-3.5 w-3.5" /> Delete
                           </button>
-                        )}
-                      </td>
-                    )}
+                        ))}
+                      </div>
+                    </td>
                   </tr>
                 );
               })}
