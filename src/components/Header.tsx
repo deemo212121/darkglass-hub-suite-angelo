@@ -20,6 +20,7 @@ import { setDesktopOverride, setMobileMode } from "@/lib/device";
 import { getMyFullProfile } from "@/lib/supabase/users";
 import { LocationSharingBadge } from "@/components/LocationSharingBadge";
 import { ModuleNavigator } from "@/components/ModuleNavigator";
+import { AnnouncementMarquee } from "@/components/AnnouncementMarquee";
 
 /**
  * Live reference clock in the header — this app's operations run across
@@ -301,6 +302,7 @@ export function AppHeader() {
           )}
         </div>
       </div>
+      <AnnouncementMarquee />
     </header>
   );
 }

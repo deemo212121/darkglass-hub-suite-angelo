@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Avatar } from "@/components/header/menuKit";
 import { ChevronLeft, Hash, Home, Lock, MessageCircle, Plus, Search, Send, UserPlus, Users2, X } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -587,209 +588,168 @@ export function TeamMessenger({ mod, sub }: Props) {
       : "";
   const isAnnouncementsChannel = active?.kind === "channel" && active.channel.is_announcement;
 
+  // Chat bubbles: group back-to-back messages from the same person (within
+  // 5 minutes) under one name, and drop a date line when the day changes.
+  const dayLabel = (iso: string) => {
+    const d = new Date(iso);
+    const today = new Date();
+    const y = new Date();
+    y.setDate(today.getDate() - 1);
+    if (d.toDateString() === today.toDateString()) return "Today";
+    if (d.toDateString() === y.toDateString()) return "Yesterday";
+    return d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", ...(d.getFullYear() !== today.getFullYear() ? { year: "numeric" } : {}) });
+  };
+  const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+
   return (
-    <main className="max-w-[1600px] mx-auto px-4 py-6 lg:px-6">
-      <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
-        <Link to="/home" className="inline-flex items-center hover:text-foreground" aria-label="Home" title="Home">
-          <Home className="h-3.5 w-3.5" />
-        </Link>
-        <span>›</span>
-        <Link to="/m/$module" params={{ module: mod.slug }} className="hover:text-foreground">{mod.label}</Link>
-        <span>›</span>
-        <span className="text-foreground font-medium">{sub.title}</span>
-      </div>
-
-      <div className="flex items-center gap-3 mb-5">
-        <button type="button" onClick={goBack} className="btn">
-          <ChevronLeft className="h-4 w-4" />
-          {mod.label}
-        </button>
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Team Messenger</h1>
-          <p className="text-sm text-muted-foreground">Chat with employees, teams, and broadcast channels.</p>
-        </div>
-      </div>
-
+    <main className="tm-page">
       {error && (
-        <div className="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200">
+        <div className="mb-3 rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200">
           {error}
         </div>
       )}
 
-      <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)_300px]">
-        <aside className="rounded-2xl border border-white/15 bg-white/8 p-4 text-white backdrop-blur-md">
-          <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/80 px-3 py-2">
-            <Search className="h-4 w-4 text-slate-400" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search people or channels"
-              className="w-full bg-transparent text-sm text-white placeholder:text-slate-500 focus:outline-none"
-            />
+      <div className="tm-shell">
+        <aside className="tm-side">
+          <div className="tm-side-head">
+            <button type="button" onClick={goBack} className="btn btn-ghost btn-sm" aria-label={`Back to ${mod.label}`} title={`Back to ${mod.label}`}>
+              <ChevronLeft />
+            </button>
+            <h1 className="text-base font-bold">Messenger</h1>
           </div>
+          <label className="tm-search">
+            <Search className="h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search people or channels" />
+          </label>
 
-          <div className="mt-4">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-                <Hash className="h-3.5 w-3.5" />
-                Channels
-              </div>
+          <div className="tm-side-scroll">
+            <div className="tm-section">
+              <span className="flex items-center gap-1.5">
+                <Hash className="h-3.5 w-3.5" /> Channels
+              </span>
               {canManageChannels && (
                 <button
                   type="button"
                   onClick={() => { setNewChannelDeptFilter(""); setIsCreateChannelOpen(true); }}
-                  className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-300 transition hover:bg-white/10 hover:text-white"
+                  className="tm-mini"
                   title="Create a new channel"
                 >
                   <Plus className="h-3 w-3" /> New
                 </button>
               )}
             </div>
-            <div className="space-y-2">
-              {channels.map((ch) => {
-                const isActive = active?.kind === "channel" && active.id === ch.id;
-                return (
-                  <button
-                    key={ch.id}
-                    onClick={() => setActive({ kind: "channel", id: ch.id, channel: ch })}
-                    className={`w-full rounded-xl border px-3 py-3 text-left transition ${
-                      isActive
-                        ? "border-blue-400/50 bg-blue-500/15 text-white"
-                        : "border-white/10 bg-slate-950/70 text-slate-200 hover:bg-white/8 hover:text-white"
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      {ch.is_private ? <Lock className="h-4 w-4 text-slate-400" /> : <Hash className="h-4 w-4 text-slate-400" />}
-                      <span className="font-semibold">{ch.title}</span>
-                      {ch.is_announcement && (
-                        <span className="ml-auto rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] uppercase tracking-wider text-amber-300">
-                          Broadcast
-                        </span>
-                      )}
-                    </div>
-                    {ch.subtitle && <div className="mt-1 text-xs text-slate-400">{ch.subtitle}</div>}
-                  </button>
-                );
-              })}
-              {channels.length === 0 && (
-                <div className="rounded-xl border border-dashed border-white/10 bg-slate-950/70 px-3 py-3 text-xs text-slate-400">
-                  Loading channels…
-                </div>
-              )}
-            </div>
-          </div>
+            {channels.map((ch) => {
+              const isActive = active?.kind === "channel" && active.id === ch.id;
+              return (
+                <button key={ch.id} onClick={() => setActive({ kind: "channel", id: ch.id, channel: ch })} className={`tm-item ${isActive ? "tm-item--on" : ""}`}>
+                  <span className="tm-chan-icon" aria-hidden>
+                    {ch.is_private ? <Lock /> : <Hash />}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5">
+                      <span className="truncate font-semibold">{ch.title.replace(/^#/, "")}</span>
+                      {ch.is_announcement && <span className="tm-tag">Broadcast</span>}
+                    </span>
+                    {ch.subtitle && <span className="block truncate text-[11px] text-[var(--color-muted-foreground)]">{ch.subtitle}</span>}
+                  </span>
+                </button>
+              );
+            })}
+            {channels.length === 0 && <div className="px-3 py-2 text-xs text-[var(--color-muted-foreground)]">Loading channels…</div>}
 
-          <div className="mt-5">
-            <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-              <Users2 className="h-3.5 w-3.5" />
-              Employees
+            <div className="tm-section mt-3">
+              <span className="flex items-center gap-1.5">
+                <Users2 className="h-3.5 w-3.5" /> People
+              </span>
             </div>
-            <div className="max-h-[42rem] space-y-2 overflow-y-auto pr-1">
-              {filteredContacts.map((r) => {
-                const isActive = active?.kind === "dm" && active.participant.id === r.id;
-                return (
-                  <button
-                    key={r.id}
-                    onClick={() => openDm(r)}
-                    className={`w-full rounded-xl border px-3 py-3 text-left transition ${
-                      isActive
-                        ? "border-blue-400/50 bg-blue-500/15 text-white"
-                        : "border-white/10 bg-slate-950/70 text-slate-200 hover:bg-white/8 hover:text-white"
-                    }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className="relative shrink-0">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-xs font-bold text-white">
-                          {initials(r.display_name || r.email)}
-                        </div>
-                        <span
-                          className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-slate-950 ${PRESENCE_DOT_CLASS[resolvePresenceStatus(r)]}`}
-                          title={PRESENCE_LABEL[resolvePresenceStatus(r)]}
-                        />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate font-semibold">{r.display_name || r.email}</div>
-                        <div className="truncate text-xs text-slate-400">
-                          {r.role}{r.assigned_branch ? ` · ${r.assigned_branch}` : ""}
-                        </div>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-              {filteredContacts.length === 0 && (
-                <div className="rounded-xl border border-dashed border-white/10 bg-slate-950/70 px-3 py-3 text-xs text-slate-400">
-                  No teammates match that search.
-                </div>
-              )}
-            </div>
+            {filteredContacts.map((r) => {
+              const isActive = active?.kind === "dm" && active.participant.id === r.id;
+              const status = resolvePresenceStatus(r);
+              return (
+                <button key={r.id} onClick={() => openDm(r)} className={`tm-item ${isActive ? "tm-item--on" : ""}`}>
+                  <span className="relative shrink-0">
+                    <Avatar name={r.display_name || r.email} />
+                    <span className={`tm-presence ${PRESENCE_DOT_CLASS[status]}`} title={PRESENCE_LABEL[status]} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-semibold">{r.display_name || r.email}</span>
+                    <span className="block truncate text-[11px] text-[var(--color-muted-foreground)]">
+                      {r.role}
+                      {r.assigned_branch ? ` · ${r.assigned_branch}` : ""}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+            {filteredContacts.length === 0 && <div className="px-3 py-2 text-xs text-[var(--color-muted-foreground)]">No teammates match that search.</div>}
           </div>
         </aside>
 
-        <section className="rounded-2xl border border-white/15 bg-white/8 p-4 text-white backdrop-blur-md">
-          <div className="flex items-start justify-between gap-4 border-b border-white/10 pb-4">
-            <div>
-              <div className="text-xs uppercase tracking-[0.12em] text-slate-400">
-                {active?.kind === "channel" ? "Channel" : active?.kind === "dm" ? "Direct Message" : ""}
-              </div>
-              <h2 className="mt-1 flex items-center gap-2 text-2xl font-bold">
-                {activeTitle}
-                {active?.kind === "dm" && (
-                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-300" title={PRESENCE_LABEL[resolvePresenceStatus(active.participant)]}>
-                    <span className={`h-2 w-2 rounded-full ${PRESENCE_DOT_CLASS[resolvePresenceStatus(active.participant)]}`} />
-                    {PRESENCE_LABEL[resolvePresenceStatus(active.participant)]}
-                  </span>
-                )}
-              </h2>
-              {activeSubtitle && <p className="mt-1 text-sm text-slate-300">{activeSubtitle}</p>}
+        <section className="tm-chat">
+          <header className="tm-chat-head">
+            {active?.kind === "dm" ? (
+              <span className="relative shrink-0">
+                <Avatar name={activeTitle} />
+                <span className={`tm-presence ${PRESENCE_DOT_CLASS[resolvePresenceStatus(active.participant)]}`} />
+              </span>
+            ) : active?.kind === "channel" ? (
+              <span className="tm-chan-icon tm-chan-icon--lg" aria-hidden>
+                {active.channel.is_private ? <Lock /> : <Hash />}
+              </span>
+            ) : null}
+            <div className="min-w-0">
+              <h2 className="truncate text-base font-bold">{active?.kind === "channel" ? activeTitle.replace(/^#/, "") : activeTitle || "Pick a conversation"}</h2>
+              <p className="truncate text-xs text-[var(--color-muted-foreground)]">
+                {active?.kind === "dm" ? `${PRESENCE_LABEL[resolvePresenceStatus(active.participant)]} · ${activeSubtitle}` : activeSubtitle || (active ? "" : "Choose a channel or a teammate on the left.")}
+              </p>
             </div>
-            <div className="rounded-xl border border-white/10 bg-slate-950/80 px-3 py-2 text-right text-xs text-slate-400">
-              <div className="font-semibold text-white">{currentUserName}</div>
-              <div>{role || ""}</div>
-            </div>
-          </div>
+          </header>
 
-          <div className="mt-4 max-h-[50rem] space-y-3 overflow-y-auto pr-1">
-            {loadingThread && (
-              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
-                Loading messages…
-              </div>
-            )}
-            {!loadingThread && messages.length === 0 && (
-              <div className="rounded-xl border border-dashed border-white/10 bg-slate-950/60 px-4 py-3 text-sm text-slate-400">
-                No messages yet. Be the first to say hi.
-              </div>
-            )}
-            {messages.map((m) => {
+          <div className="tm-messages">
+            {loadingThread && <div className="tm-note">Loading messages…</div>}
+            {!loadingThread && active && messages.length === 0 && <div className="tm-note">No messages yet. Be the first to say hi.</div>}
+            {messages.map((m, i) => {
               const isMe = m.sender_id === profileId;
               const isSystem = m.kind === "system";
+              const prev = messages[i - 1];
+              const newDay = !prev || new Date(prev.created_at).toDateString() !== new Date(m.created_at).toDateString();
+              const grouped =
+                !newDay && !!prev && prev.kind !== "system" && !isSystem && prev.sender_id === m.sender_id && new Date(m.created_at).getTime() - new Date(prev.created_at).getTime() < 5 * 60_000;
               return (
-                <div
-                  key={m.id}
-                  className={`rounded-2xl border px-4 py-3 text-sm shadow-sm ${
-                    isSystem
-                      ? "border-white/10 bg-white/5 text-slate-300"
-                      : isMe
-                        ? "ml-auto max-w-[82%] border-blue-500/30 bg-blue-500/15 text-white"
-                        : "mr-auto max-w-[82%] border-white/10 bg-slate-950/90 text-slate-100"
-                  }`}
-                >
-                  <div className="mb-1 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.08em] text-slate-400">
-                    <span>{m.sender_name || (isMe ? currentUserName : "—")}</span>
-                    <span>{formatTimestamp(m.created_at)}</span>
-                  </div>
-                  <MessageBody
-                    text={m.body}
-                    className="whitespace-pre-wrap leading-6"
-                    mentionNames={active?.kind === "channel" ? mentionNames : undefined}
-                  />
+                <div key={m.id}>
+                  {newDay && (
+                    <div className="tm-day">
+                      <span>{dayLabel(m.created_at)}</span>
+                    </div>
+                  )}
+                  {isSystem ? (
+                    <div className="tm-system">
+                      <MessageBody text={m.body} className="whitespace-pre-wrap" />
+                      <span className="tm-time">{clock(m.created_at)}</span>
+                    </div>
+                  ) : (
+                    <div className={`tm-msg ${isMe ? "tm-msg--me" : ""} ${grouped ? "tm-msg--grouped" : ""}`}>
+                      {!isMe && <span className="tm-msg-avatar">{!grouped && <Avatar name={m.sender_name} />}</span>}
+                      <div className="tm-msg-col">
+                        {!grouped && (
+                          <div className="tm-msg-meta">
+                            <span className="font-semibold">{isMe ? "You" : m.sender_name || "—"}</span>
+                            <span title={formatTimestamp(m.created_at)}>{clock(m.created_at)}</span>
+                          </div>
+                        )}
+                        <div className="tm-bubble" title={formatTimestamp(m.created_at)}>
+                          <MessageBody text={m.body} className="whitespace-pre-wrap" mentionNames={active?.kind === "channel" ? mentionNames : undefined} />
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
             <div ref={endRef} />
           </div>
 
-          <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/80 p-3">
+          <div className="tm-composer">
             <label htmlFor="team-messenger-draft" className="sr-only">Message composer</label>
             <div className="relative">
               {mentionTrigger && mentionSuggestions.length > 0 && (
@@ -832,11 +792,12 @@ export function TeamMessenger({ mod, sub }: Props) {
                       ? `Message ${activeTitle}… (type @ to mention someone)`
                       : `Message ${activeTitle}…`
                 }
-                className="glass-input min-h-28 w-full resize-none rounded-xl bg-slate-900 text-white placeholder:text-slate-500"
+                rows={2}
+                className="tm-input"
               />
             </div>
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <div className="text-xs text-slate-400">
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <div className="text-[11px] text-[var(--color-muted-foreground)]">
                 {isAnnouncementsChannel && !canPostAnnouncement
                   ? "Only admins, managers, and HR can post announcements."
                   : "Enter sends. Shift+Enter for newline."}
@@ -844,19 +805,19 @@ export function TeamMessenger({ mod, sub }: Props) {
               <button
                 onClick={send}
                 disabled={!active || (isAnnouncementsChannel && !canPostAnnouncement) || !draft.trim()}
-                className="btn btn-primary inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
+                className="btn btn-primary btn-sm"
               >
-                <Send className="h-4 w-4" />
+                <Send />
                 Send
               </button>
             </div>
           </div>
         </section>
 
-        <aside className="rounded-2xl border border-white/15 bg-white/8 p-4 text-white backdrop-blur-md">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+        <aside className="tm-details">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--color-muted-foreground)]">
             <MessageCircle className="h-3.5 w-3.5" />
-            Thread Details
+            Details
           </div>
 
           {active?.kind === "channel" ? (

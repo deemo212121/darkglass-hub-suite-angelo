@@ -23,8 +23,9 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { Bell, CheckCheck, ChevronLeft, Mail, Star, Trash2 } from "lucide-react";
+import { KindIcon, MenuEmpty, fullTime, previewText, shortTime } from "@/components/header/menuKit";
 import { AppHeader } from "@/components/Header";
-import { useMergedNotifications, timeAgo, type MergedNotif } from "@/hooks/useMergedNotifications";
+import { useMergedNotifications, type MergedNotif } from "@/hooks/useMergedNotifications";
 
 interface NotificationCenterPanelProps {
   /** Same purpose as NotificationsMenu.tsx's onLinkClick — mobile passes its
@@ -118,185 +119,113 @@ export function NotificationCenterPanel({ onLinkClick }: NotificationCenterPanel
   };
 
   const renderItem = (n: MergedNotif) => (
-    <div key={n.id} className="group flex items-start gap-1 hover:bg-white/5 transition-colors">
-      <button
-        type="button"
-        onClick={() => handleSelect(n)}
-        className={`flex-1 min-w-0 flex items-start gap-3 px-4 py-3.5 text-left ${n.linkTo ? "cursor-pointer" : "cursor-default"}`}
-      >
-        <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full border text-blue-300 bg-blue-400/10 border-blue-400/20">
-          <Bell className="h-4 w-4" />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center justify-between gap-2">
-            <span className={`truncate text-sm font-semibold ${n.isRead ? "text-muted-foreground" : "text-foreground"}`}>{n.senderName || "System"}</span>
-            <span className="shrink-0 text-[11px] text-muted-foreground">{timeAgo(n.createdAt)}</span>
+    <div key={n.id} className={`nc-row group ${n.isRead ? "nc-row--read" : "nc-row--unread"}`}>
+      <button type="button" onClick={() => handleSelect(n)} className={`nc-row-main ${n.linkTo ? "cursor-pointer" : "cursor-default"}`}>
+        <KindIcon body={n.body} />
+        <span className="hm-row-body">
+          <span className="hm-row-top">
+            <span className="hm-row-name">{n.senderName || "System"}</span>
+            {activeTab === ALL_TAB && <span className="nc-cat">{n.category}</span>}
+            <span className="hm-row-time ml-auto" title={fullTime(n.createdAt)}>
+              {shortTime(n.createdAt)}
+            </span>
           </span>
-          {activeTab === ALL_TAB && (
-            <span className="mt-0.5 inline-block text-[10px] text-blue-300/80">{n.category}</span>
-          )}
-          <span className={`mt-1 block text-xs leading-5 whitespace-pre-wrap ${n.isRead ? "text-muted-foreground" : "text-foreground/80"}`}>{n.body}</span>
+          <span className="nc-text">{previewText(n.body)}</span>
         </span>
-        {!n.isRead && <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-red-500" />}
+        {!n.isRead && <span className="hm-dot mt-1.5" aria-label="Unread" />}
       </button>
-      <button
-        type="button"
-        onClick={() => toggleStar(n)}
-        title={n.starred ? "Unstar" : "Star"}
-        aria-label={n.starred ? "Unstar" : "Star"}
-        className={`mt-3.5 shrink-0 grid h-7 w-7 place-items-center rounded-md transition-opacity hover:bg-amber-500/10 hover:text-amber-300 ${
-          n.starred ? "text-amber-400 opacity-100" : "text-muted-foreground opacity-40 group-hover:opacity-100"
-        }`}
-      >
-        <Star className="h-3.5 w-3.5" fill={n.starred ? "currentColor" : "none"} />
-      </button>
-      {n.isRead && (
-        <button
-          type="button"
-          onClick={() => markUnread(n)}
-          title="Mark as unread"
-          aria-label="Mark as unread"
-          className="mt-3.5 shrink-0 grid h-7 w-7 place-items-center rounded-md text-muted-foreground opacity-40 group-hover:opacity-100 hover:bg-blue-500/10 hover:text-blue-300 transition-opacity"
-        >
-          <Mail className="h-3.5 w-3.5" />
+      <div className="nc-actions">
+        <button type="button" onClick={() => toggleStar(n)} title={n.starred ? "Unstar" : "Star"} aria-label={n.starred ? "Unstar" : "Star"} className={`nc-act ${n.starred ? "nc-act--starred" : ""}`}>
+          <Star fill={n.starred ? "currentColor" : "none"} />
         </button>
-      )}
-      <button
-        type="button"
-        onClick={() => deleteOne(n)}
-        title="Delete notification"
-        aria-label="Delete notification"
-        className="mt-3.5 mr-3 shrink-0 grid h-7 w-7 place-items-center rounded-md text-muted-foreground opacity-40 group-hover:opacity-100 hover:bg-red-500/10 hover:text-red-300 transition-opacity"
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-      </button>
+        {n.isRead && (
+          <button type="button" onClick={() => markUnread(n)} title="Mark as unread" aria-label="Mark as unread" className="nc-act">
+            <Mail />
+          </button>
+        )}
+        <button type="button" onClick={() => deleteOne(n)} title="Delete notification" aria-label="Delete notification" className="nc-act nc-act--danger">
+          <Trash2 />
+        </button>
+      </div>
     </div>
   );
 
   return (
-    <div className="panel p-0 overflow-hidden flex flex-col">
-      <div className="px-4 py-4 border-b border-white/10 flex items-center justify-between gap-3">
-        <div>
+    <div className="nc-panel">
+      <div className="nc-head">
+        <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h2 className="font-semibold text-sm">Notifications</h2>
-            {unread > 0 && (
-              <span className="grid h-5 min-w-5 place-items-center rounded-full bg-red-500 px-1.5 text-[11px] font-bold text-white">{unread}</span>
-            )}
+            <h2 className="text-base font-bold">Notifications</h2>
+            {unread > 0 && <span className="hm-count">{unread > 99 ? "99+" : unread}</span>}
           </div>
-          <p className="text-[10px] text-muted-foreground mt-0.5">{unread} unread</p>
+          <p className="text-xs text-[var(--color-muted-foreground)]">{unread > 0 ? `${unread} unread` : "All caught up"}</p>
         </div>
         {unread > 0 && (
-          <button onClick={() => markAll()} className="btn text-xs px-3 py-1.5 flex items-center gap-1.5 shrink-0">
-            <CheckCheck className="h-3.5 w-3.5" /> Mark all read
+          <button onClick={() => markAll()} className="btn btn-sm shrink-0">
+            <CheckCheck /> Mark all read
           </button>
         )}
       </div>
 
       {groups.length === 0 ? (
-        <div className="p-12 text-center text-sm text-muted-foreground">No notifications yet.</div>
+        <MenuEmpty icon={<Bell />} text="No notifications yet." />
       ) : (
-        <div className="flex">
-          {/* Left sidebar — departments */}
-          <div className="w-40 sm:w-48 shrink-0 border-r border-white/10 flex flex-col gap-0.5 py-2 overflow-y-auto" style={{ maxHeight: "68vh" }}>
-            {(
-              [[ALL_TAB, notifs], ...groups] as [string, MergedNotif[]][]
-            ).map(([category, items]) => {
+        <div className="nc-body">
+          <nav className="nc-side" aria-label="Departments">
+            {([[ALL_TAB, notifs], ...groups] as [string, MergedNotif[]][]).map(([category, items]) => {
               const unreadInGroup = items.filter((n) => !n.isRead).length;
               const active = activeTab === category;
               return (
-                <button
-                  key={category}
-                  type="button"
-                  onClick={() => setActiveTab(category)}
-                  className={`flex items-center justify-between gap-2 mx-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-left transition-colors ${
-                    active
-                      ? "bg-primary/10 text-foreground"
-                      : "text-muted-foreground hover:text-foreground hover:bg-white/5"
-                  }`}
-                >
+                <button key={category} type="button" onClick={() => setActiveTab(category)} className={`nc-side-item ${active ? "nc-side-item--on" : ""}`}>
                   <span className="truncate">{category}</span>
-                  <span className="flex items-center gap-1 shrink-0">
-                    <span className="text-[10px] text-muted-foreground">{items.length}</span>
-                    {unreadInGroup > 0 && (
-                      <span className="grid h-4 min-w-4 place-items-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">{unreadInGroup}</span>
-                    )}
+                  <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                    {unreadInGroup > 0 ? <span className="hm-count">{unreadInGroup}</span> : <span className="nc-side-n">{items.length}</span>}
                   </span>
                 </button>
               );
             })}
-          </div>
+          </nav>
 
-          {/* Right content — Starred/Unread/Read filter, then the list */}
-          <div className="flex-1 min-w-0 flex flex-col">
-            <div className="flex flex-wrap gap-1.5 px-4 py-2.5 border-b border-white/10 bg-white/[0.02]">
+          <div className="flex min-w-0 flex-1 flex-col">
+            <div className="nc-filters">
               {READ_FILTERS.map((f) => {
                 const active = readFilter === f.id;
-                const count = filterCounts[f.id];
                 return (
-                  <button
-                    key={f.id}
-                    type="button"
-                    onClick={() => setReadFilter(f.id)}
-                    className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors border ${
-                      active
-                        ? f.id === "starred"
-                          ? "bg-amber-500/10 border-amber-400/30 text-amber-300"
-                          : "bg-primary/10 border-primary/30 text-foreground"
-                        : "border-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"
-                    }`}
-                  >
-                    {f.id === "starred" && <Star className="h-3 w-3" fill={active ? "currentColor" : "none"} />}
-                    {f.label}
-                    <span className="text-[10px] text-muted-foreground">{count}</span>
+                  <button key={f.id} type="button" onClick={() => setReadFilter(f.id)} className={`ann-chip ${active ? "ann-chip--on" : ""}`}>
+                    {f.id === "starred" && <Star className="mr-1 inline h-3 w-3" fill={active ? "currentColor" : "none"} />}
+                    {f.label} <span className="ml-1 opacity-60">{filterCounts[f.id]}</span>
                   </button>
                 );
               })}
             </div>
 
-            {subjectGroups && subjectGroups.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 px-4 py-2 border-b border-white/10">
-                <button
-                  type="button"
-                  onClick={() => setSubjectFilter(null)}
-                  className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors border ${
-                    !subjectFilter
-                      ? "bg-primary/10 border-primary/30 text-foreground"
-                      : "border-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"
-                  }`}
-                >
+            {subjectGroups && subjectGroups.length > 1 && (
+              <div className="nc-subjects">
+                <button type="button" onClick={() => setSubjectFilter(null)} className={`nc-subject ${!subjectFilter ? "nc-subject--on" : ""}`}>
                   All subjects
                 </button>
                 {subjectGroups.map(([subject, items]) => (
-                  <button
-                    key={subject}
-                    type="button"
-                    onClick={() => setSubjectFilter(subject)}
-                    className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors border ${
-                      subjectFilter === subject
-                        ? "bg-primary/10 border-primary/30 text-foreground"
-                        : "border-transparent text-muted-foreground hover:text-foreground hover:bg-white/5"
-                    }`}
-                  >
-                    {subject} <span className="text-muted-foreground">{items.length}</span>
+                  <button key={subject} type="button" onClick={() => setSubjectFilter(subject)} className={`nc-subject ${subjectFilter === subject ? "nc-subject--on" : ""}`}>
+                    {subject} <span className="opacity-60">{items.length}</span>
                   </button>
                 ))}
               </div>
             )}
 
-            <div className="overflow-y-auto" style={{ maxHeight: "60vh" }}>
+            <div className="nc-list">
               {filteredVisible.length === 0 ? (
-                <div className="p-8 text-center text-sm text-muted-foreground">Nothing here.</div>
+                <MenuEmpty icon={<Bell />} text="Nothing here." />
               ) : filteredSubjectGroups ? (
                 filteredSubjectGroups.map(([subject, items]) => (
                   <div key={subject}>
-                    <div className="sticky top-0 z-10 px-4 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide bg-slate-900/95 backdrop-blur border-y border-white/10">
-                      {subject} <span className="normal-case font-normal">· {items.length}</span>
+                    <div className="nc-subject-head">
+                      {subject} <span className="font-normal normal-case">· {items.length}</span>
                     </div>
-                    <div className="divide-y divide-white/5">{items.map(renderItem)}</div>
+                    {items.map(renderItem)}
                   </div>
                 ))
               ) : (
-                <div className="divide-y divide-white/5">{filteredVisible.map(renderItem)}</div>
+                filteredVisible.map(renderItem)
               )}
             </div>
           </div>
@@ -311,10 +240,17 @@ export function NotificationCenterPage() {
   return (
     <div className="min-h-screen bg-background">
       <AppHeader />
-      <main className="max-w-4xl mx-auto p-4">
-        <Link to="/home" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 w-fit mb-4">
-          <ChevronLeft className="h-3.5 w-3.5" /> Home
-        </Link>
+      <main className="mx-auto w-full max-w-6xl px-6 py-8">
+        <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="home-eyebrow">Inbox</p>
+            <h1 className="home-title">Notifications</h1>
+            <p className="home-sub">Everything sent to you — approvals, requests, reminders and alerts.</p>
+          </div>
+          <Link to="/home" className="btn btn-ghost">
+            <ChevronLeft /> Home
+          </Link>
+        </div>
         <NotificationCenterPanel />
       </main>
     </div>

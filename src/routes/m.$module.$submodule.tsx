@@ -1,4 +1,5 @@
 import { createFileRoute, Link, Navigate, Outlet, notFound, redirect, useLocation } from "@tanstack/react-router";
+import { PageTrail } from "@/components/PageTrail";
 import { useRedirectGuard } from "@/lib/useRedirectGuard";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
@@ -432,6 +433,7 @@ function SubModule() {
   return (
     <>
       <AppHeader />
+      <PageTrail mod={mod} sub={sub} />
       {sub.slug === "overall-status"
         ? <OverallStatusPage mod={mod} sub={sub} companyId={companyId} />
         : sub.slug === "repair-forecast"

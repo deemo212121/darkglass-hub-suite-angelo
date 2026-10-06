@@ -69,6 +69,9 @@ interface Knock {
   body: string;
 }
 
+/** Dispatch on window to open the messenger from anywhere (e.g. the Home "Unread messages" card). */
+export const OPEN_MESSENGER_EVENT = "ahs:open-messenger";
+
 export function FloatingMessenger() {
   const { ready, email, uid, displayName } = useAuth();
   const navigate = useNavigate();
@@ -77,6 +80,11 @@ export function FloatingMessenger() {
   const [profileId, setProfileId] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<"list" | "thread">("list");
+  useEffect(() => {
+    const openMessenger = () => setOpen(true);
+    window.addEventListener(OPEN_MESSENGER_EVENT, openMessenger);
+    return () => window.removeEventListener(OPEN_MESSENGER_EVENT, openMessenger);
+  }, []);
   const [inbox, setInbox] = useState<DmInboxEntry[]>([]);
   const [users, setUsers] = useState<ProfileRow[]>([]);
   const [search, setSearch] = useState("");
