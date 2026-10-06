@@ -1,5 +1,6 @@
 import { AlertCircle, AlertTriangle, Compass, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, ChevronRight, ChevronDown, Download, Calendar, FileText, CheckCircle, XCircle, Loader2, Settings } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
+import { toast } from "sonner";
 import { runTour, takeQueuedTour } from "@/lib/tours/runTour";
 import { APPROVER_TOUR, APPROVER_TOUR_TARGET } from "@/lib/tours/approverTour";
 import { useTourRunning } from "@/lib/tours/useTourRunning";
@@ -566,6 +567,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       setCorrectionHistory(historyRows);
     } catch (error) {
       console.error("Failed to load attendance data:", error);
+      toast.error("Couldn't load attendance data — check your connection and refresh the page.");
     } finally {
       setLoading(false);
     }
