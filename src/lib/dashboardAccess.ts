@@ -95,6 +95,8 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   // chain. Same audience shape as attendance-monitoring above.
   "absent-list": ["ADMIN", "HR", "FINANCE", "TECHNICAL_ASSISTANT_DIRECTOR", ...ATTENDANCE_MANAGER_TIER_ROLES_ARRAY],
   "live-chat-support": ["ADMIN", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER"],
+  // CSR Coaching Log (migration 0356): agents only ever see their own logs (RLS).
+  "coaching-log": ["ADMIN", "CSR_MANAGER", "CSR_TEAM_LEADER", "CSR_AGENT", "HR", "SENIOR_MANAGER"],
   // IT Tickets now lives only in the Admin module (m.$module.$submodule.tsx
   // reuses this same list via getDashboardRoleGate("it-tickets") to carve
   // an exception into the Admin-module's Admin/SuperAdmin-only gate) — IT
@@ -129,6 +131,7 @@ const CSR_MODULE_SUBMODULE_SLUGS = new Set([
   "csr-status-summary",
   "reschedule-requests",
   "csr-candidate-reviews",
+  "coaching-log",
 ]);
 
 export function getDashboardRoleGate(subSlug: string): string[] | null {

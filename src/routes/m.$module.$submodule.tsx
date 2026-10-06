@@ -139,6 +139,7 @@ import { CSRTeamDailyReport } from "@/components/CSRTeamDailyReport";
 import { CsrRescheduleRequestsPage } from "@/components/CsrRescheduleRequestsPage";
 import { CsrGhTracker } from "@/components/CsrGhTracker";
 import { CsrLtpReport } from "@/components/CsrLtpReport";
+import { CsrCoachingLogPage } from "@/components/CsrCoachingLogPage";
 import { CSRCallTracker } from "@/components/CSRCallTracker";
 import { CSRStatusSummary } from "@/components/CSRStatusSummary";
 import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
@@ -577,6 +578,8 @@ function SubModule() {
         ? <CsrGhTracker mod={mod} sub={sub} />
         : (sub as any).custom === "csr-ltp-report"
         ? <CsrLtpReport mod={mod} sub={sub} />
+        : (sub as any).custom === "csr-coaching-log"
+        ? <CsrCoachingLogPage mod={mod} sub={sub} />
         : (sub as any).custom === "csr-daily-report"
         ? <ReportCSRDaily mod={mod} sub={sub} />
         : (sub as any).custom === "call-tracker"

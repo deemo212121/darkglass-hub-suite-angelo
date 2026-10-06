@@ -264,6 +264,14 @@ const csrMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    {
+      slug: "coaching-log",
+      title: "Coaching Log",
+      description: "CSR coaching sessions: the coach and the CSR each fill in their part, then both sign.",
+      custom: "csr-coaching-log" as any,
+      fields: [],
+      seed: () => ({}),
+    },
     // Same shortcut-copy pattern as Branch/Technician's own tiles below —
     // reuses HR's exact page (dispatch is by `custom` alone), just
     // reachable from here too. Own slug ("csr-candidate-reviews", not the
