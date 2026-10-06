@@ -1,8 +1,35 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarCheck2, CalendarX2, Check, Loader2 } from "lucide-react";
+import { CalendarCheck2, CalendarClock, CalendarX2, Check, Loader2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import type { ProfileRow } from "@/lib/supabase/users";
-import { getDoneClockInMeetings, getPendingClockInMeetings, markClockInMeetingDone, type ClockInMeeting } from "@/lib/supabase/clockInMeetings";
+import {
+  getDoneClockInMeetings,
+  getFirstTimeIns,
+  getForcedClockOutsAwaitingCorrection,
+  getPendingClockInMeetings,
+  markClockInMeetingDone,
+  type ClockInMeeting,
+  type ForcedClockOut,
+} from "@/lib/supabase/clockInMeetings";
+
+// Same people the hourly meeting jobs cover: role TECHNICIAN (primary or extra), not Philippines.
+const isMeetingTech = (p: ProfileRow | undefined) =>
+  !!p &&
+  [p.role, ...(p.extra_roles ?? [])].some((r) => String(r ?? "").trim().toUpperCase() === "TECHNICIAN") &&
+  String(p.assigned_branch ?? "").trim().toLowerCase() !== "philippines";
+
+/** "14:05:00" -> "2:05 PM". */
+function fmtClock(hms: string | null | undefined): string {
+  if (!hms) return "";
+  const [h, m] = hms.split(":").map(Number);
+  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+}
+
+function isoDaysAgo(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 /**
  * Clock-In Codes page → "Meetings required": technicians who missed a
@@ -21,9 +48,21 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
   // Bumped after "Mark done" so the Meetings done list below picks it up.
   const [doneReload, setDoneReload] = useState(0);
 
+  // First Time In for each missed-clock-in day (a clock-in after 10 AM still counts — shown next to it).
+  const [timeIns, setTimeIns] = useState<Map<string, string>>(new Map());
+  // Forced clock-outs still inside the correction window.
+  const [forced, setForced] = useState<ForcedClockOut[]>([]);
+
   const load = async () => {
     setLoading(true);
-    setMeetings(await getPendingClockInMeetings());
+    const [rows, forcedRows] = await Promise.all([
+      getPendingClockInMeetings(),
+      // Same window as the hourly Time Out job: the last 14 days, from the day the rule started.
+      getForcedClockOutsAwaitingCorrection(["2026-10-03", isoDaysAgo(14)].sort()[1]),
+    ]);
+    setMeetings(rows);
+    setForced(forcedRows);
+    setTimeIns(await getFirstTimeIns(rows.filter((m) => m.kind === "missed_clock_in").map((m) => ({ profileId: m.profileId, date: m.missedDate }))));
     setLoading(false);
   };
   useEffect(() => { void load(); }, []);
@@ -77,8 +116,48 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
     }
   };
 
+  const forcedShown = forced.filter((f) => isMeetingTech(byId.get(f.profileId)));
+
   return (
     <div className="space-y-4">
+    {forcedShown.length > 0 && (
+      <div className="panel p-0 text-slate-100">
+        <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-white/10">
+          <CalendarClock className="h-4 w-4 text-orange-300" />
+          <span className="text-sm font-semibold text-white">Forced clock-out — waiting for correction ({forcedShown.length})</span>
+        </div>
+        <p className="px-4 pt-2 text-[11px] text-muted-foreground">
+          Still clocked in at midnight, so the system clocked them out. They need to send a Time Correction request before their next Time In —
+          otherwise it moves to Meetings required below as a missed Time Out (1 error).
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+                <th className="px-3 py-2">Technician</th>
+                <th className="px-3 py-2">Branch</th>
+                <th className="px-3 py-2">Day</th>
+                <th className="px-3 py-2">Clocked out at</th>
+                <th className="px-3 py-2">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {forcedShown.map((f) => (
+                <tr key={`${f.profileId}|${f.workDate}`} className="border-b border-white/5">
+                  <td className="px-3 py-2 whitespace-nowrap font-medium text-white">{byId.get(f.profileId)?.display_name || "—"}</td>
+                  <td className="px-3 py-2 whitespace-nowrap text-slate-300">{byId.get(f.profileId)?.assigned_branch || "—"}</td>
+                  <td className="px-3 py-2 whitespace-nowrap tabular-nums text-slate-100">{fmtDate(f.workDate)}</td>
+                  <td className="px-3 py-2 whitespace-nowrap tabular-nums text-slate-100">{fmtClock(f.checkOut) || "—"}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    <span className="rounded-full bg-orange-500/15 px-2 py-0.5 text-[10px] font-semibold text-orange-300">Waiting for correction</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )}
     <div className="panel p-0 text-slate-100">
       <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-white/10">
         <CalendarX2 className="h-4 w-4 text-red-300" />
@@ -111,8 +190,9 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
         <p className="mt-1">Maverick Team will support with time card adjustments.</p>
       </div>
       <p className="px-4 pt-2 text-[11px] text-muted-foreground">
-        <span className="font-semibold text-slate-300">Missed clock-in:</span> a scheduled work day with no Time In (not a day off, approved PTO or a holiday).{" "}
-        <span className="font-semibold text-slate-300">Missed Time Out:</span> the day was closed by an automatic clock-out and no correction was sent before the next Time In —
+        <span className="font-semibold text-slate-300">Missed clock-in:</span> no Time In by 10 AM (their local time) on a scheduled work day (not a day off, approved PTO or a holiday) —
+        it shows from 10 AM, and clocking in later doesn't remove it.{" "}
+        <span className="font-semibold text-slate-300">Missed Time Out:</span> the day was closed by the midnight forced clock-out (or an automatic clock-out) and no correction was sent before the next Time In —
         a minor error with a mandatory correction meeting with the Branch Manager or above. Each one is 1 error on the Technician Performance Report;
         marking the meeting done doesn't remove it.
       </p>
@@ -146,8 +226,12 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
                   <td className="px-3 py-2 whitespace-nowrap">
                     {m.kind === "missed_time_out" ? (
                       <span className="rounded-full bg-orange-500/15 px-2 py-0.5 text-[10px] font-semibold text-orange-300" title="Auto clock-out, no correction sent before the next Time In">Missed Time Out — not corrected</span>
+                    ) : timeIns.get(`${m.profileId}|${m.missedDate}`) ? (
+                      <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-300" title="No Time In by 10 AM — clocking in later doesn't remove it">
+                        No clock-in by 10 AM — clocked in {fmtClock(timeIns.get(`${m.profileId}|${m.missedDate}`))}
+                      </span>
                     ) : (
-                      <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-300">Missed clock-in</span>
+                      <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-300">Missed clock-in — no Time In by 10 AM</span>
                     )}
                   </td>
                   <td className="px-3 py-2 text-right">

@@ -91,3 +91,65 @@ export async function markClockInMeetingDone(id: string, doneByName: string, not
   if (error) throw new Error(error.message);
   if (!data || data.length === 0) throw new Error("You don't have permission to mark this meeting done.");
 }
+
+/** First Time In per "profileId|date" for the given technician-days — shows a late (after 10 AM) clock-in next to its meeting. */
+export async function getFirstTimeIns(pairs: { profileId: string; date: string }[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (pairs.length === 0) return out;
+  const ids = Array.from(new Set(pairs.map((p) => p.profileId)));
+  const dates = Array.from(new Set(pairs.map((p) => p.date)));
+  const { data, error } = await supabase
+    .from("timecard_entries")
+    .select("profile_id, work_date, check_in")
+    .in("profile_id", ids)
+    .in("work_date", dates)
+    .not("check_in", "is", null)
+    .limit(5000);
+  if (error) {
+    console.warn("getFirstTimeIns:", error.message);
+    return out;
+  }
+  for (const r of data ?? []) {
+    const k = `${r.profile_id}|${r.work_date}`;
+    const prev = out.get(k);
+    if (!prev || String(r.check_in) < prev) out.set(k, String(r.check_in));
+  }
+  return out;
+}
+
+export interface ForcedClockOut {
+  profileId: string;
+  workDate: string;
+  checkOut: string | null;
+}
+
+/**
+ * Days closed by the midnight forced clock-out (or the arrived-home auto
+ * clock-out) that aren't a meeting yet and have no Time Correction request:
+ * the technician still has until their next Time In to send one. Once that
+ * passes uncorrected, the hourly job turns it into a "missed Time Out"
+ * meeting (0349) and it leaves this list.
+ */
+export async function getForcedClockOutsAwaitingCorrection(fromDate: string): Promise<ForcedClockOut[]> {
+  const [entriesRes, meetingsRes, correctionsRes] = await Promise.all([
+    supabase
+      .from("timecard_entries")
+      .select("profile_id, work_date, check_out")
+      .gte("work_date", fromDate)
+      .like("notes", "%[Auto clock-out%")
+      .order("work_date", { ascending: false })
+      .limit(2000),
+    supabase.from("clock_in_meetings").select("profile_id, missed_date").eq("kind", "missed_time_out").gte("missed_date", fromDate).limit(5000),
+    supabase.from("timecard_corrections").select("profile_id, work_date").gte("work_date", fromDate).limit(5000),
+  ]);
+  if (entriesRes.error) {
+    console.warn("getForcedClockOutsAwaitingCorrection:", entriesRes.error.message);
+    return [];
+  }
+  const done = new Set<string>();
+  for (const m of meetingsRes.data ?? []) done.add(`${m.profile_id}|${m.missed_date}`);
+  for (const c of correctionsRes.data ?? []) done.add(`${c.profile_id}|${c.work_date}`);
+  return (entriesRes.data ?? [])
+    .filter((e: any) => !done.has(`${e.profile_id}|${e.work_date}`))
+    .map((e: any) => ({ profileId: e.profile_id, workDate: e.work_date, checkOut: e.check_out ?? null }));
+}

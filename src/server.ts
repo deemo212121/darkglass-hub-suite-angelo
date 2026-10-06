@@ -298,6 +298,16 @@ export default {
         (error) => console.error("missedClockInMeetings failed:", error),
       ),
     );
+    // No Time In by 10 AM local time today -> "meeting required" right away
+    // (same table/kind as above, so the next-day check never doubles it).
+    ctx.waitUntil(
+      import("./lib/server/missedClockInMeetings").then(
+        ({ runNoClockInByTenMeetings }) => runNoClockInByTenMeetings(merged),
+      ).then(
+        (result) => { if (result.newMeetings || result.errors.length) console.log("noClockInByTenMeetings:", JSON.stringify(result)); },
+        (error) => console.error("noClockInByTenMeetings failed:", error),
+      ),
+    );
     // Missed Time Out not corrected before the next Time In -> correction
     // meeting (migration 0349). Also idempotent.
     ctx.waitUntil(

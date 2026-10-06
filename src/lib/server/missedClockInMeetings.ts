@@ -319,3 +319,147 @@ export async function runMissedTimeOutMeetings(env: Record<string, string | unde
   }
   return summary;
 }
+
+// ───────────────────────────────────────────────────────────────────────
+// No Time In by 10 AM (same day). From 10:00 in the technician's own time
+// zone, a scheduled work day with no Time In yet — or a Time In after 10:00
+// — gets a 'missed_clock_in' meeting for TODAY (1 error on the report).
+// Clocking in later doesn't remove it; the Clock-In Codes list shows the
+// late Time In next to it. Same skips as the next-day check above (day off,
+// approved PTO, US holiday, trainee, Philippines) and the same recipients.
+// Runs on the hourly tick; the row is unique per (technician, day, kind),
+// so the next-day check above never doubles it.
+// ───────────────────────────────────────────────────────────────────────
+
+const CLOCK_IN_CUTOFF = "10:00";
+const SCHEDULE_TZ_TO_IANA: Record<string, string> = { CST: "America/Chicago", EST: "America/New_York" };
+
+interface LateSummary {
+  checked: number;
+  late: number;
+  newMeetings: number;
+  notificationsSent: number;
+  errors: string[];
+}
+
+export async function runNoClockInByTenMeetings(env: Record<string, string | undefined>): Promise<LateSummary> {
+  const summary: LateSummary = { checked: 0, late: 0, newMeetings: 0, notificationsSent: 0, errors: [] };
+  const g = globalThis as any;
+  const supabaseUrl = (g.__SUPABASE_URL__ || undefined) ?? env.VITE_SUPABASE_URL;
+  const serviceKey = (g.__SUPABASE_SERVICE_KEY__ || undefined) ?? env.SUPABASE_SERVICE_KEY;
+  if (!supabaseUrl || !serviceKey) {
+    summary.errors.push("Missing Supabase URL/service key.");
+    return summary;
+  }
+  const headers = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" };
+  const get = async <T,>(path: string): Promise<T[]> => {
+    const res = await fetch(`${supabaseUrl}/rest/v1/${path}`, { headers });
+    if (!res.ok) throw new Error(`${path.split("?")[0]}: HTTP ${res.status}`);
+    return res.json();
+  };
+
+  type P = Profile & { schedule_timezone?: string | null };
+  let profiles: P[];
+  try {
+    profiles = await get<P>("profiles?select=id,company_id,display_name,role,extra_roles,manager_name,assigned_branch,off_days,employment_type,schedule_timezone,created_at&is_active=eq.true");
+  } catch {
+    profiles = await get<P>("profiles?select=id,company_id,display_name,role,extra_roles,manager_name,assigned_branch,off_days,created_at&is_active=eq.true");
+  }
+
+  // Technicians whose local clock has passed 10:00 today.
+  const candidates: { p: P; date: string }[] = [];
+  for (const p of profiles) {
+    if (!isTechnician(p) || norm(p.assigned_branch) === "philippines" || norm(p.employment_type) === "trainee") continue;
+    const tz = SCHEDULE_TZ_TO_IANA[String(p.schedule_timezone ?? "").trim().toUpperCase()] ?? timezoneForBranch(p.assigned_branch);
+    const local = nowInTimezone(tz);
+    if (local.hhmm < CLOCK_IN_CUTOFF || local.dateISO < MISSED_CLOCK_IN_FROM) continue;
+    if (p.created_at.slice(0, 10) > local.dateISO) continue;
+    candidates.push({ p, date: local.dateISO });
+  }
+  if (candidates.length === 0) return summary;
+  const dates = Array.from(new Set(candidates.map((c) => c.date))).sort();
+  const inDates = `in.(${dates.join(",")})`;
+
+  const [entries, ptos, holidays, branchRoles, sbmBranches] = await Promise.all([
+    get<{ profile_id: string; work_date: string; check_in: string | null }>(`timecard_entries?select=profile_id,work_date,check_in&work_date=${inDates}&limit=5000`),
+    get<{ profile_id: string; start_date: string; end_date: string }>(`pto_requests?select=profile_id,start_date,end_date&status=eq.approved&start_date=lte.${dates[dates.length - 1]}&end_date=gte.${dates[0]}`).catch(() => []),
+    get<{ date: string; country: string | null }>(`company_holidays?select=date,country&date=${inDates}`).catch(() => []),
+    get<{ branch: string; branch_manager: string | null; parts_manager: string | null }>("general_info_branch_roles?select=branch,branch_manager,parts_manager").catch(() => []),
+    get<{ profile_id: string; branch: string }>("senior_branch_manager_branches?select=profile_id,branch").catch(() => []),
+  ]);
+  const usHoliday = new Set(holidays.filter((h) => !h.country || String(h.country).toUpperCase() !== "PH").map((h) => h.date));
+  const firstIn = new Map<string, string>();
+  for (const e of entries) {
+    if (!e.check_in) continue;
+    const k = `${e.profile_id}|${e.work_date}`;
+    const prev = firstIn.get(k);
+    if (!prev || e.check_in < prev) firstIn.set(k, e.check_in);
+  }
+
+  const late: { p: P; date: string }[] = [];
+  for (const { p, date } of candidates) {
+    summary.checked++;
+    if (usHoliday.has(date)) continue;
+    if ((p.off_days ?? []).includes(new Date(`${date}T00:00:00Z`).getUTCDay())) continue;
+    if (ptos.some((t) => t.profile_id === p.id && t.start_date <= date && t.end_date >= date)) continue;
+    const checkIn = firstIn.get(`${p.id}|${date}`);
+    if (checkIn && checkIn.slice(0, 5) <= CLOCK_IN_CUTOFF) continue; // clocked in by 10:00
+    late.push({ p, date });
+  }
+  summary.late = late.length;
+
+  const byName = (companyId: string, name: string | null | undefined) => {
+    const n = norm(name);
+    return n ? profiles.find((o) => o.company_id === companyId && norm(o.display_name) === n)?.id ?? null : null;
+  };
+  const branchRoleRow = new Map(branchRoles.map((r) => [norm(r.branch), r]));
+  const toNotify = new Map<string, { companyId: string; names: string[] }>();
+
+  for (const { p, date } of late) {
+    try {
+      const res = await fetch(`${supabaseUrl}/rest/v1/clock_in_meetings?on_conflict=profile_id,missed_date,kind`, {
+        method: "POST",
+        headers: { ...headers, Prefer: "return=representation,resolution=ignore-duplicates" },
+        body: JSON.stringify({ company_id: p.company_id, profile_id: p.id, missed_date: date, kind: "missed_clock_in" }),
+      });
+      if (!res.ok) { summary.errors.push(`${p.display_name}: HTTP ${res.status}`); continue; }
+      const inserted: unknown[] = await res.json();
+      if (inserted.length === 0) continue; // already on the list
+      summary.newMeetings++;
+
+      const recipients = new Set<string>();
+      const manager = byName(p.company_id, p.manager_name);
+      if (manager) recipients.add(manager);
+      const row = branchRoleRow.get(norm(p.assigned_branch));
+      for (const name of [row?.branch_manager, row?.parts_manager]) {
+        const id = byName(p.company_id, name);
+        if (id) recipients.add(id);
+      }
+      for (const s of sbmBranches) if (norm(s.branch) === norm(p.assigned_branch)) recipients.add(s.profile_id);
+      recipients.delete(p.id);
+      for (const r of recipients) {
+        if (!toNotify.has(r)) toNotify.set(r, { companyId: p.company_id, names: [] });
+        toNotify.get(r)!.names.push(p.display_name || "A technician");
+      }
+    } catch (e) {
+      summary.errors.push(`${p.display_name}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  for (const [recipientId, { companyId, names }] of toNotify) {
+    const preview = names.slice(0, 5).join(", ") + (names.length > 5 ? `, +${names.length - 5} more` : "");
+    const body = `${names.length} technician${names.length === 1 ? "" : "s"} didn't clock in by 10 AM today — meeting required: ${preview}.`;
+    try {
+      const res = await fetch(`${supabaseUrl}/rest/v1/notifications`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ company_id: companyId, recipient_id: recipientId, sender_id: null, sender_name: "Clock-In Monitor", body, link_to: MEETINGS_PAGE }),
+      });
+      if (res.ok) summary.notificationsSent++;
+      else summary.errors.push(`Notify ${recipientId}: HTTP ${res.status}`);
+    } catch (e) {
+      summary.errors.push(`Notify ${recipientId}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return summary;
+}
