@@ -234,6 +234,8 @@ import { getJotformSubmissions, getDeletedJotformSubmissions, updateJotformSubmi
 import { getCustomFormSubmissions } from "@/lib/supabase/customForms";
 import { FLASH_TECH_TIER_LEVELS } from "@/lib/supabase/flashTechTrips";
 import { CustomFormsPanel } from "./CustomFormsPanel";
+import * as XLSX from "xlsx";
+import { exportToCSV } from "@/lib/csvExport";
 
 // Formats a <input type="date"> value ("YYYY-MM-DD") as a long-form date
 // ("July 17, 2026") via the multi-arg Date constructor (new Date(y, m-1, d),
@@ -17069,6 +17071,52 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [masterListDeptSearchFiltered, masterListColFilters]);
 
+  /**
+   * Download what the Master List is showing right now — current tab,
+   * search and column filters, same order and same displayed values as the
+   * table (masterListColumnValueGetters) — as Excel or CSV. Active people
+   * first, then everyone no longer active, like the table.
+   */
+  const downloadMasterList = (format: "xlsx" | "csv") => {
+    const v = masterListColumnValueGetters;
+    const showBranch = masterListDept === "Parts Manager and Parts";
+    const showTier = masterListDept === "Current Technicians";
+    const cols: { header: string; get: (e: Employee) => string | number }[] = [
+      ...(showBranch ? [{ header: "Branch", get: (e: Employee) => e.branch || "" }] : []),
+      { header: "Status", get: v.status },
+      { header: "Start Date", get: v.startDate },
+      { header: "Separation Date", get: v.separationDate },
+      { header: "Name", get: v.name },
+      { header: "Email", get: (e) => e.email || "" },
+      { header: "Phone", get: v.phone },
+      { header: "Address", get: v.address },
+      { header: "Department", get: v.department },
+      { header: "Position", get: v.position },
+      { header: "Hours of Work", get: v.hoursOfWork },
+      { header: "Total Work Hours", get: (e) => (e.workingHours != null ? e.workingHours : "") },
+      { header: "Meal Time (min)", get: (e) => (e.mealMinutes != null ? e.mealMinutes : "") },
+      { header: "Sick Leave (remaining/allowance)", get: v.sickLeave },
+      { header: "Vacation Leave (remaining/allowance)", get: v.vacationLeave },
+      ...(showTier ? [{ header: "Tier Level", get: v.tierLevel }] : []),
+      { header: "Employment Status", get: v.employmentStatus },
+      { header: "Warnings", get: (e: Employee) => approvedWarningCountByProfile.get(e.id) ?? 0 },
+    ];
+    const ordered = [...masterListFiltered.filter((e) => e.status === "active"), ...masterListFiltered.filter((e) => e.status !== "active")];
+    const rows = ordered.map((e) => cols.map((c) => c.get(e)));
+    const tabName = masterListDept === "__all__" ? "All" : masterListDept === MASTER_LIST_TRAINEE_TAB ? "Trainee" : masterListDept;
+    const base = `Master List - ${tabName}`.replace(/[\\/:*?"<>|]/g, "-");
+    if (format === "csv") {
+      exportToCSV(base, cols.map((c) => c.header), rows);
+      return;
+    }
+    const sheet = XLSX.utils.aoa_to_sheet([cols.map((c) => c.header), ...rows]);
+    sheet["!cols"] = cols.map((c, i) => ({ wch: Math.min(40, Math.max(c.header.length, ...rows.map((r) => String(r[i] ?? "").length)) + 2) }));
+    sheet["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length, c: cols.length - 1 } }) };
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, tabName.slice(0, 31).replace(/[\\/?*[\]:]/g, "-") || "Master List");
+    XLSX.writeFile(book, `${base}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
   const buildMasterListOptionsExcluding = (excludeKey: MasterListColumnFilterKey): string[] => {
     const values = new Set<string>();
     for (const e of masterListDeptSearchFiltered) {
@@ -19694,14 +19742,34 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <div className="panel p-0 overflow-hidden">
         <div className="px-4 py-4 border-b border-white/10 flex flex-wrap justify-between items-center gap-3">
           <h2 className="font-semibold text-sm">Master List</h2>
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-            <input
-              value={masterListSearch}
-              onChange={(e) => setMasterListSearch(e.target.value)}
-              placeholder="Name, email, branch, or position…"
-              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
-            />
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => downloadMasterList("xlsx")}
+              disabled={masterListFiltered.length === 0}
+              className="btn btn-sm"
+              title="Download the rows shown (this tab, search and filters) as an Excel file"
+            >
+              <Download /> Excel
+            </button>
+            <button
+              type="button"
+              onClick={() => downloadMasterList("csv")}
+              disabled={masterListFiltered.length === 0}
+              className="btn btn-sm"
+              title="Download the rows shown (this tab, search and filters) as a CSV file"
+            >
+              <Download /> CSV
+            </button>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              <input
+                value={masterListSearch}
+                onChange={(e) => setMasterListSearch(e.target.value)}
+                placeholder="Name, email, branch, or position…"
+                className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+              />
+            </div>
           </div>
         </div>
 
