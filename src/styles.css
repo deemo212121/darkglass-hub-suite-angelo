@@ -14651,3 +14651,62 @@ button.home-attn:focus-visible { outline: 2px solid var(--tone); outline-offset:
 .receipt svg { width: 0.85rem; height: 0.85rem; flex-shrink: 0; }
 .receipt--seen { color: #38bdf8; }
 :root[data-theme="light"] .receipt--seen { color: #0284c7; }
+
+/* ── Chat message actions: ⋯ menu, reactions, reply, forward (keep last) ── */
+.tm-bubble-row { display: flex; align-items: center; gap: 0.25rem; max-width: 100%; }
+.tm-msg--me .tm-bubble-row { flex-direction: row-reverse; }
+.tm-more {
+  display: grid; place-items: center; width: 1.75rem; height: 1.75rem; border-radius: 999px;
+  color: var(--color-muted-foreground); opacity: 0; transition: opacity .12s ease, background .12s ease, color .12s ease;
+}
+.tm-more svg { width: 1rem; height: 1rem; }
+.tm-msg:hover .tm-more, .tm-more:focus-visible, .tm-more--open { opacity: 1; }
+.tm-more:hover, .tm-more--open { color: var(--color-foreground); background: color-mix(in oklab, var(--color-foreground) 9%, transparent); }
+@media (hover: none) { .tm-more { opacity: 0.7; } }
+.tm-menu {
+  position: absolute; z-index: 40; top: 50%; left: calc(100% + 4px); transform: translateY(-50%);
+  min-width: 13rem; padding: 0.35rem; border-radius: 12px;
+  border: 1px solid var(--color-panel-border); background: var(--color-card);
+  box-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.55);
+}
+.tm-menu--left { left: auto; right: calc(100% + 4px); }
+.tm-menu-emojis { display: flex; justify-content: space-between; gap: 0.15rem; padding: 0.15rem 0.15rem 0.4rem; margin-bottom: 0.25rem; border-bottom: 1px solid var(--color-panel-border); }
+.tm-emoji { display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: 8px; font-size: 1.15rem; transition: transform .1s ease, background .1s ease; }
+.tm-emoji:hover { transform: scale(1.18); background: color-mix(in oklab, var(--color-foreground) 8%, transparent); }
+.tm-menu-item { display: flex; align-items: center; gap: 0.55rem; width: 100%; padding: 0.45rem 0.55rem; border-radius: 8px; font-size: 0.85rem; color: var(--color-foreground); text-align: left; }
+.tm-menu-item svg { width: 0.95rem; height: 0.95rem; color: var(--color-muted-foreground); }
+.tm-menu-item:hover { background: color-mix(in oklab, var(--color-foreground) 7%, transparent); }
+.tm-reactions { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.3rem; }
+.tm-msg--me .tm-reactions { justify-content: flex-end; }
+.tm-react {
+  display: inline-flex; align-items: center; gap: 0.3rem; height: 1.6rem; padding: 0 0.5rem; border-radius: 999px;
+  font-size: 0.8rem; color: var(--color-foreground);
+  border: 1px solid var(--color-panel-border); background: var(--color-panel);
+  transition: border-color .12s ease, background .12s ease;
+}
+.tm-react .tabular-nums { font-size: 0.72rem; font-weight: 600; color: var(--color-muted-foreground); }
+.tm-react:hover { border-color: color-mix(in oklab, var(--color-primary) 50%, transparent); }
+.tm-react--mine { border-color: color-mix(in oklab, var(--color-primary) 60%, transparent); background: color-mix(in oklab, var(--color-primary) 16%, transparent); }
+.tm-react--mine .tabular-nums { color: var(--color-primary); }
+.tm-fwd { display: inline-flex; align-items: center; gap: 0.3rem; margin: 0 0.25rem 0.2rem; font-size: 0.7rem; font-style: italic; color: var(--color-muted-foreground); }
+.tm-quote {
+  display: flex; flex-direction: column; max-width: 100%; margin-bottom: 0.2rem; padding: 0.35rem 0.65rem;
+  border-radius: 10px; border-left: 3px solid var(--color-primary);
+  background: color-mix(in oklab, var(--color-foreground) 6%, transparent); text-align: left;
+}
+.tm-quote:hover { background: color-mix(in oklab, var(--color-foreground) 10%, transparent); }
+.tm-quote-name { font-size: 0.7rem; font-weight: 700; color: var(--color-primary); }
+.tm-quote-text { font-size: 0.78rem; color: var(--color-muted-foreground); overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: pre-line; overflow-wrap: anywhere; }
+.tm-replybar {
+  display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.5rem; padding: 0.45rem 0.6rem;
+  border-radius: 10px; border-left: 3px solid var(--color-primary);
+  background: color-mix(in oklab, var(--color-primary) 8%, var(--color-panel));
+}
+/* Floating messenger: the ⋯ menu opens under the message (the panel is narrow). */
+.fm-menu { top: calc(100% + 4px); left: 0; right: auto; transform: none; }
+.fm-menu--mine { left: auto; right: 0; }
+.fm-msg .tm-more { width: 1.5rem; height: 1.5rem; }
+.fm-msg .tm-reactions { margin-top: 0.2rem; }
+.fm-forward { border-top: 1px solid var(--color-panel-border); background: var(--color-card); }
+.fm-msg:hover .tm-more { opacity: 1; }
+.fm-msg--mine .tm-reactions { justify-content: flex-end; }

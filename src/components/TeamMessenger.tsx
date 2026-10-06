@@ -15,7 +15,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Avatar } from "@/components/header/menuKit";
 import { ReceiptMark } from "@/components/ReceiptMark";
 import { receiptFor, useDmReceipt } from "@/lib/supabase/readReceipts";
-import { ChevronLeft, Hash, Home, Lock, MessageCircle, Plus, Search, Send, UserPlus, Users2, X } from "lucide-react";
+import { ChevronLeft, Copy, CornerUpLeft, Forward, Hash, Home, Lock, MessageCircle, MoreHorizontal, Plus, Search, Send, UserPlus, Users2, X } from "lucide-react";
+import { toast } from "sonner";
+import { AppModal } from "@/components/ui-kit/AppModal";
+import {
+  QUICK_REACTIONS,
+  getMessageLinks,
+  getReactions,
+  saveMessageLink,
+  subscribeReactions,
+  toggleReaction,
+  type MessageLink,
+  type ReactionGroup,
+} from "@/lib/supabase/messageExtras";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -127,6 +139,14 @@ export function TeamMessenger({ mod, sub }: Props) {
   const [active, setActive] = useState<ActiveThread | null>(null);
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [draft, setDraft] = useState("");
+  // Reactions / replies / forwards (migration 0361).
+  const [reactions, setReactions] = useState<Map<string, ReactionGroup[]>>(new Map());
+  const [links, setLinks] = useState<Map<string, MessageLink>>(new Map());
+  const [replyTo, setReplyTo] = useState<MessageRow | null>(null);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [forwardMsg, setForwardMsg] = useState<MessageRow | null>(null);
+  const [forwardSearch, setForwardSearch] = useState("");
+  const [forwarding, setForwarding] = useState(false);
   const [search, setSearch] = useState("");
   const [loadingThread, setLoadingThread] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -509,6 +529,12 @@ export function TeamMessenger({ mod, sub }: Props) {
       });
       // Optimistically append; the realtime subscription will dedupe by id.
       setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+      if (replyTo) {
+        const replyToId = replyTo.id;
+        setReplyTo(null);
+        setLinks((prev) => new Map(prev).set(row.id, { replyToId, forwardedFromMessageId: null, forwardedFromName: null }));
+        saveMessageLink(row.id, { replyToId }).catch((err) => toast.error(err instanceof Error ? err.message : "Couldn't save the reply link."));
+      }
 
       // Notify anyone @mentioned via the autocomplete AND still present in
       // the sent text (covers a mention that got backspaced out afterward).
@@ -583,6 +609,112 @@ export function TeamMessenger({ mod, sub }: Props) {
       setError(err instanceof Error ? err.message : String(err));
     }
   };
+
+  // Reactions and reply/forward links for the loaded messages — refetched as
+  // messages arrive (links are saved just after their message, so look
+  // again a moment later) and live whenever anyone reacts.
+  const messageIdsKey = messages.map((m) => m.id).join(",");
+  useEffect(() => {
+    if (!messageIdsKey) {
+      setReactions(new Map());
+      setLinks(new Map());
+      return;
+    }
+    let alive = true;
+    const ids = messageIdsKey.split(",");
+    const load = () => {
+      getReactions(ids).then((r) => alive && setReactions(r));
+      getMessageLinks(ids).then((l) => alive && setLinks((prev) => new Map([...prev, ...l])));
+    };
+    load();
+    const again = window.setTimeout(load, 1500);
+    const unsub = subscribeReactions(() => getReactions(ids).then((r) => alive && setReactions(r)));
+    return () => {
+      alive = false;
+      window.clearTimeout(again);
+      unsub();
+    };
+  }, [messageIdsKey]);
+
+  // Close the ⋯ menu on any outside click.
+  useEffect(() => {
+    if (!menuFor) return;
+    const close = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest(".tm-menu, .tm-more")) setMenuFor(null);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [menuFor]);
+
+  const react = async (m: MessageRow, emoji: string) => {
+    if (!profileId) return;
+    setMenuFor(null);
+    const mine = (reactions.get(m.id) ?? []).find((g) => g.emoji === emoji)?.profileIds.includes(profileId) ?? false;
+    // Show it right away; the realtime refresh confirms it.
+    setReactions((prev) => {
+      const next = new Map(prev);
+      const list = (next.get(m.id) ?? []).map((g) => ({ ...g, profileIds: [...g.profileIds] }));
+      const g = list.find((x) => x.emoji === emoji);
+      if (mine && g) g.profileIds = g.profileIds.filter((id) => id !== profileId);
+      else if (g) g.profileIds.push(profileId);
+      else list.push({ emoji, profileIds: [profileId] });
+      next.set(m.id, list.filter((x) => x.profileIds.length > 0));
+      return next;
+    });
+    try {
+      await toggleReaction(m.id, emoji, profileId, mine);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't react — try again.");
+      getReactions(messageIdsKey.split(",")).then(setReactions);
+    }
+  };
+
+  const startReply = (m: MessageRow) => {
+    setMenuFor(null);
+    setReplyTo(m);
+    window.setTimeout(() => draftRef.current?.focus(), 0);
+  };
+
+  const copyText = async (m: MessageRow) => {
+    setMenuFor(null);
+    try {
+      await navigator.clipboard.writeText(m.body);
+      toast.success("Copied");
+    } catch {
+      toast.error("Couldn't copy");
+    }
+  };
+
+  const forwardTo = async (target: { kind: "channel"; channel: ChannelRow } | { kind: "dm"; person: ProfileRow }) => {
+    if (!forwardMsg || !profileId) return;
+    setForwarding(true);
+    try {
+      const dmThreadId = target.kind === "dm" ? (await getOrCreateDmThread(profileId, target.person.id)).id : null;
+      const row = await sendMessageRow({
+        channelId: target.kind === "channel" ? target.channel.id : null,
+        dmThreadId,
+        senderId: profileId,
+        senderName: currentUserName,
+        body: forwardMsg.body,
+        isAnnouncement: target.kind === "channel" && target.channel.is_announcement,
+      });
+      const fromName = links.get(forwardMsg.id)?.forwardedFromName || forwardMsg.sender_name || "someone";
+      await saveMessageLink(row.id, { forwardedFromMessageId: forwardMsg.id, forwardedFromName: fromName }).catch(() => undefined);
+      const isHere = active && ((target.kind === "channel" && active.kind === "channel" && active.id === target.channel.id) || (target.kind === "dm" && active.kind === "dm" && active.id === dmThreadId));
+      if (isHere) {
+        setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+        setLinks((prev) => new Map(prev).set(row.id, { replyToId: null, forwardedFromMessageId: forwardMsg.id, forwardedFromName: fromName }));
+      }
+      toast.success(`Forwarded to ${target.kind === "channel" ? target.channel.title : target.person.display_name || target.person.email}`);
+      setForwardMsg(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't forward — try again.");
+    } finally {
+      setForwarding(false);
+    }
+  };
+
+  const nameOf = (id: string) => (id === profileId ? "You" : contacts.find((c) => c.id === id)?.display_name || "Someone");
 
   // Live Sent / Delivered / Seen for the open DM (re-checks every few seconds and on each new message).
   const receipt = useDmReceipt(active?.kind === "dm" ? active.id : null, active?.kind === "dm" ? active.participant.id : null, messages.length);
@@ -753,9 +885,70 @@ export function TeamMessenger({ mod, sub }: Props) {
                             {isMe && active?.kind === "dm" && m.id !== lastMine?.id && <ReceiptMark status={receiptFor(m.created_at, receipt)} state={receipt} />}
                           </div>
                         )}
-                        <div className="tm-bubble" title={formatTimestamp(m.created_at)}>
-                          <MessageBody text={m.body} className="whitespace-pre-wrap" mentionNames={active?.kind === "channel" ? mentionNames : undefined} />
+                        {links.get(m.id)?.forwardedFromName && (
+                          <div className="tm-fwd">
+                            <Forward className="h-3 w-3" /> Forwarded from {links.get(m.id)!.forwardedFromName}
+                          </div>
+                        )}
+                        {(() => {
+                          const replyId = links.get(m.id)?.replyToId;
+                          if (!replyId) return null;
+                          const orig = messages.find((x) => x.id === replyId);
+                          return (
+                            <button
+                              type="button"
+                              className="tm-quote"
+                              onClick={() => document.getElementById(`msg-${replyId}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                              title="Go to the original message"
+                            >
+                              <span className="tm-quote-name">{orig ? (orig.sender_id === profileId ? "You" : orig.sender_name || "—") : "Original message"}</span>
+                              <span className="tm-quote-text">{orig ? orig.body : "Not loaded"}</span>
+                            </button>
+                          );
+                        })()}
+                        <div className="tm-bubble-row">
+                          <div className="tm-bubble" id={`msg-${m.id}`} title={formatTimestamp(m.created_at)}>
+                            <MessageBody text={m.body} className="whitespace-pre-wrap" mentionNames={active?.kind === "channel" ? mentionNames : undefined} />
+                          </div>
+                          <div className="relative">
+                            <button type="button" className={`tm-more ${menuFor === m.id ? "tm-more--open" : ""}`} onClick={() => setMenuFor(menuFor === m.id ? null : m.id)} aria-label="Message actions" title="More">
+                              <MoreHorizontal />
+                            </button>
+                            {menuFor === m.id && (
+                              <div className={`tm-menu ${isMe ? "tm-menu--left" : ""}`} role="menu">
+                                <div className="tm-menu-emojis">
+                                  {QUICK_REACTIONS.map((e) => (
+                                    <button key={e} type="button" onClick={() => void react(m, e)} className="tm-emoji" aria-label={`React ${e}`}>
+                                      {e}
+                                    </button>
+                                  ))}
+                                </div>
+                                <button type="button" role="menuitem" className="tm-menu-item" onClick={() => startReply(m)}>
+                                  <CornerUpLeft /> Reply
+                                </button>
+                                <button type="button" role="menuitem" className="tm-menu-item" onClick={() => { setMenuFor(null); setForwardSearch(""); setForwardMsg(m); }}>
+                                  <Forward /> Forward
+                                </button>
+                                <button type="button" role="menuitem" className="tm-menu-item" onClick={() => void copyText(m)}>
+                                  <Copy /> Copy text
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
+                        {(reactions.get(m.id) ?? []).length > 0 && (
+                          <div className="tm-reactions">
+                            {(reactions.get(m.id) ?? []).map((g) => {
+                              const mineR = !!profileId && g.profileIds.includes(profileId);
+                              return (
+                                <button key={g.emoji} type="button" onClick={() => void react(m, g.emoji)} className={`tm-react ${mineR ? "tm-react--mine" : ""}`} title={g.profileIds.map(nameOf).join(", ")}>
+                                  <span>{g.emoji}</span>
+                                  <span className="tabular-nums">{g.profileIds.length}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                         {m.id === lastMine?.id && <ReceiptMark status={receiptFor(m.created_at, receipt)} state={receipt} withText className="mt-1 mr-1" />}
                       </div>
                     </div>
@@ -767,6 +960,18 @@ export function TeamMessenger({ mod, sub }: Props) {
           </div>
 
           <div className="tm-composer">
+            {replyTo && (
+              <div className="tm-replybar">
+                <CornerUpLeft className="h-3.5 w-3.5 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] font-semibold">Replying to {replyTo.sender_id === profileId ? "yourself" : replyTo.sender_name || "—"}</div>
+                  <div className="truncate text-[12px] text-[var(--color-muted-foreground)]">{replyTo.body}</div>
+                </div>
+                <button type="button" onClick={() => setReplyTo(null)} className="btn btn-ghost btn-sm" aria-label="Cancel reply">
+                  <X />
+                </button>
+              </div>
+            )}
             <label htmlFor="team-messenger-draft" className="sr-only">Message composer</label>
             <div className="relative">
               {mentionTrigger && mentionSuggestions.length > 0 && (
@@ -1069,6 +1274,45 @@ export function TeamMessenger({ mod, sub }: Props) {
             </div>
           </div>
         </div>
+      )}
+      {forwardMsg && (
+        <AppModal
+          title="Forward message"
+          description={forwardMsg.body.length > 120 ? `${forwardMsg.body.slice(0, 117)}…` : forwardMsg.body}
+          busy={forwarding}
+          onClose={() => setForwardMsg(null)}
+        >
+          <label className="tm-search !mx-0 !mt-0">
+            <Search className="h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
+            <input autoFocus value={forwardSearch} onChange={(e) => setForwardSearch(e.target.value)} placeholder="Search people or channels" />
+          </label>
+          <div className="mt-2 max-h-[50vh] overflow-y-auto">
+            {channels
+              .filter((ch) => (!ch.is_announcement || canPostAnnouncement) && ch.title.toLowerCase().includes(forwardSearch.trim().toLowerCase()))
+              .map((ch) => (
+                <button key={ch.id} type="button" disabled={forwarding} onClick={() => void forwardTo({ kind: "channel", channel: ch })} className="tm-item">
+                  <span className="tm-chan-icon" aria-hidden>
+                    {ch.is_private ? <Lock /> : <Hash />}
+                  </span>
+                  <span className="truncate font-semibold">{ch.title.replace(/^#/, "")}</span>
+                  <Forward className="ml-auto h-4 w-4 opacity-50" />
+                </button>
+              ))}
+            {contacts
+              .filter((c) => (c.display_name || c.email || "").toLowerCase().includes(forwardSearch.trim().toLowerCase()))
+              .slice(0, 50)
+              .map((c) => (
+                <button key={c.id} type="button" disabled={forwarding} onClick={() => void forwardTo({ kind: "dm", person: c })} className="tm-item">
+                  <Avatar name={c.display_name || c.email} />
+                  <span className="min-w-0">
+                    <span className="block truncate font-semibold">{c.display_name || c.email}</span>
+                    <span className="block truncate text-[11px] text-[var(--color-muted-foreground)]">{c.role}{c.assigned_branch ? ` · ${c.assigned_branch}` : ""}</span>
+                  </span>
+                  <Forward className="ml-auto h-4 w-4 opacity-50" />
+                </button>
+              ))}
+          </div>
+        </AppModal>
       )}
     </main>
   );
