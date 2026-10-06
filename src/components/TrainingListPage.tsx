@@ -122,9 +122,30 @@ function eachDate(from: string, to: string): string[] {
   return dates;
 }
 
-/** hr_candidates and profiles share no FK — phone number (digits only) is the only thing linking a candidate to their real employee/timecard account. */
+/** hr_candidates and profiles share no FK — phone number (digits only) and email are what link a candidate to their real employee/timecard account. */
 function normalizePhone(phone: string | null | undefined): string {
   return (phone || "").replace(/\D/g, "");
+}
+
+function normalizeEmail(email: string | null | undefined): string {
+  return (email || "").trim().toLowerCase();
+}
+
+/** Match keys for one person — phone and email — so an account missing its phone number still matches its hiring record by email. */
+function personKeys(phone: string | null | undefined, email: string | null | undefined): string[] {
+  const keys: string[] = [];
+  const ph = normalizePhone(phone);
+  const em = normalizeEmail(email);
+  if (ph) keys.push(`phone:${ph}`);
+  if (em) keys.push(`email:${em}`);
+  return keys;
+}
+
+/** A hiring record's real account — phone first, then email. */
+function findLinkedProfile(profiles: ProfileRow[], phone: string | null | undefined, email: string | null | undefined): ProfileRow | undefined {
+  const ph = normalizePhone(phone);
+  const em = normalizeEmail(email);
+  return (ph ? profiles.find((p) => normalizePhone(p.phone_number) === ph) : undefined) ?? (em ? profiles.find((p) => normalizeEmail(p.email) === em) : undefined);
 }
 
 /**
@@ -327,7 +348,7 @@ export function TrainingListPage({ embedded }: { embedded?: boolean } = {}) {
       // can be flagged straight on their account (a re-hire, a manual
       // correction) without ever getting a proper "training" status row in
       // hr_candidates, which would otherwise make them invisible here.
-      // Merged into "Current Trainee" below (deduped by phone against
+      // Merged into "Current Trainee" below (deduped by phone or email against
       // hr_candidates rows). hireDate (employee_info) stands in for Start
       // Date, training_end_date (0297) for Field Start.
       const traineeProfiles = profileRows.filter((p) => p.employment_type === "trainee");
@@ -350,14 +371,14 @@ export function TrainingListPage({ embedded }: { embedded?: boolean } = {}) {
       // training_end_date, or — for a trainee who only has an hr_candidates
       // record — their linked real account found by phone number match.
       const serverToday = (await getServerNow()).toISOString().slice(0, 10);
-      const candidateEndByPhone = new Map<string, string>();
+      const candidateEndByPerson = new Map<string, string>();
       for (const c of candidateRows) {
-        const phone = normalizePhone(c.phone);
-        if (phone && c.trainingEndDate) candidateEndByPhone.set(phone, c.trainingEndDate);
+        if (!c.trainingEndDate) continue;
+        for (const k of personKeys(c.phone, c.email)) candidateEndByPerson.set(k, c.trainingEndDate);
       }
       const dueProfileIds = new Set<string>();
       for (const p of traineeProfiles) {
-        const effectiveFieldStart = trainingEndByProfileId.get(p.id) || candidateEndByPhone.get(normalizePhone(p.phone_number));
+        const effectiveFieldStart = trainingEndByProfileId.get(p.id) || personKeys(p.phone_number, p.email).map((k) => candidateEndByPerson.get(k)).find(Boolean);
         if (effectiveFieldStart && effectiveFieldStart <= serverToday) dueProfileIds.add(p.id);
       }
       if (dueProfileIds.size > 0) {
@@ -436,7 +457,7 @@ export function TrainingListPage({ embedded }: { embedded?: boolean } = {}) {
       fieldStartDate: c.trainingEndDate,
       candidate: c,
     }));
-    const alreadyShownPhones = new Set(fromCandidates.map((r) => normalizePhone(r.phone)).filter(Boolean));
+    const alreadyShown = new Set(fromCandidates.flatMap((r) => personKeys(r.phone, r.email)));
     const fromMasterList: UnifiedRow[] = masterListTrainees
       .filter((t) => {
         // Same "not still continuing" exclusion as hr_candidates' own
@@ -445,7 +466,7 @@ export function TrainingListPage({ embedded }: { embedded?: boolean } = {}) {
         // up here, same as a withdrawn candidate does.
         if (t.employeeInfo.terminateDate) return false;
         const hireDate = t.employeeInfo.hireDate || null;
-        return hireDate && hireDate >= dateFrom && hireDate <= dateTo && !(t.phone && alreadyShownPhones.has(normalizePhone(t.phone)));
+        return hireDate && hireDate >= dateFrom && hireDate <= dateTo && !personKeys(t.phone, t.email).some((k) => alreadyShown.has(k));
       })
       .map((t) => ({
         key: `profile:${t.profileId}`,
@@ -478,9 +499,9 @@ export function TrainingListPage({ embedded }: { embedded?: boolean } = {}) {
   // Current Trainee.
   const fieldStartSection = useMemo(() => {
     const candidateRows = candidates.filter((c) => c.trainingEndDate && !NOT_CONTINUING_EXCLUDED_STATUSES.has(c.status));
-    const candidatePhones = new Set(candidateRows.map((c) => normalizePhone(c.phone)).filter(Boolean));
+    const candidatePeople = new Set(candidateRows.flatMap((c) => personKeys(c.phone, c.email)));
     const masterListRows = masterListFieldStarts.filter(
-      (t) => t.trainingEndDate && !t.employeeInfo.terminateDate && !(t.phone && candidatePhones.has(normalizePhone(t.phone)))
+      (t) => t.trainingEndDate && !t.employeeInfo.terminateDate && !personKeys(t.phone, t.email).some((k) => candidatePeople.has(k))
     );
     if (candidateRows.length === 0 && masterListRows.length === 0) return null;
 
@@ -1023,6 +1044,7 @@ function UnifiedBranchTable({
                                     <td colSpan={7} className="px-3 py-2">
                                       <TraineeDailyPunches
                                         phone={row.phone}
+                                        email={row.email}
                                         startDate={row.startDate}
                                         endDate={row.fieldStartDate}
                                         directProfileId={row.masterList?.profileId}
@@ -1053,7 +1075,7 @@ function UnifiedBranchTable({
           name={quitTarget.name}
           willDeactivateAccount={
             !!quitTarget.masterList ||
-            (!!quitTarget.candidate && profiles.some((p) => normalizePhone(p.phone_number) === normalizePhone(quitTarget.candidate!.phone)))
+            (!!quitTarget.candidate && !!findLinkedProfile(profiles, quitTarget.candidate.phone, quitTarget.candidate.email))
           }
           onClose={() => setQuitTarget(null)}
           onConfirm={async (dateLeft, reason) => {
@@ -1063,8 +1085,7 @@ function UnifiedBranchTable({
               // Deactivate their real account too, if they have one — same
               // phone match TraineeDailyPunches uses. A pure pipeline
               // candidate with no profile yet has nothing to deactivate.
-              const normalizedPhone = normalizePhone(quitTarget.candidate.phone);
-              const linkedProfile = normalizedPhone ? profiles.find((p) => normalizePhone(p.phone_number) === normalizedPhone) : undefined;
+              const linkedProfile = findLinkedProfile(profiles, quitTarget.candidate.phone, quitTarget.candidate.email);
               if (linkedProfile) {
                 await updateCompanyUser(linkedProfile.id, { isActive: false });
                 // Master List's own Status column reads employee_info.
@@ -1120,6 +1141,7 @@ function UnifiedBranchTable({
  */
 function TraineeDailyPunches({
   phone,
+  email,
   startDate,
   endDate,
   directProfileId,
@@ -1128,6 +1150,7 @@ function TraineeDailyPunches({
   dateTo,
 }: {
   phone: string | null;
+  email?: string | null;
   startDate: string | null;
   endDate: string | null;
   directProfileId?: string;
@@ -1154,12 +1177,9 @@ function TraineeDailyPunches({
       setLoading(true);
       setError(null);
       try {
-        const normalizedPhone = normalizePhone(phone);
         const profile = directProfileId
           ? profiles.find((p) => p.id === directProfileId)
-          : normalizedPhone
-          ? profiles.find((p) => normalizePhone(p.phone_number) === normalizedPhone)
-          : undefined;
+          : findLinkedProfile(profiles, phone, email);
         if (!cancelled) setLinked(!!profile);
         // Two sources, not one: a trainee still mid-training punches into
         // trainee_timecard_entries, but once their day's approved (or once
@@ -1188,7 +1208,7 @@ function TraineeDailyPunches({
     return () => {
       cancelled = true;
     };
-  }, [directProfileId, phone, rangeStart, rangeEnd, profiles]);
+  }, [directProfileId, phone, email, rangeStart, rangeEnd, profiles]);
 
   if (loading) return <p className="px-1 py-1.5 text-[11px] text-slate-400">Loading punches…</p>;
   if (error) return <p className="px-1 py-1.5 text-[11px] text-red-300">{error}</p>;

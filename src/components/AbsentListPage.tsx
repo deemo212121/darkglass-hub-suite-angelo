@@ -44,6 +44,7 @@ import { PtoManagementTab } from "@/components/PtoManagementTab";
 import { EmployeeAttendanceStatusTab } from "@/components/EmployeeAttendanceStatusTab";
 import { VisitExceptionReportTab } from "@/components/VisitExceptionReportTab";
 import { ExceptionReportsTab } from "@/components/ExceptionReportsTab";
+import { ExceededTimeCorrectionsTab } from "@/components/ExceededTimeCorrectionsTab";
 import { HolidayCalendarTab } from "@/components/HolidayCalendarTab";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabase/companyHolidays";
@@ -151,6 +152,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   // Attendance Status asks for the viewer's own password first (once per browser session).
   const [askAttendanceStatusPassword, setAskAttendanceStatusPassword] = useState(false);
   const [view, setView] = useState<"list" | "calendar" | "ptoManagement" | "exceptionReports" | "holidays" | "visitExceptions" | "exceededSickDays" | "pendingExplanations" | "attendanceStatus">("list");
+  const [exceededTab, setExceededTab] = useState<"sickDays" | "timeCorrections">("sickDays");
   const [statsCardHidden, setStatsCardHidden] = useState(false);
   const [dateFrom, setDateFrom] = useState(todayISO());
   const [dateTo, setDateTo] = useState(todayISO());
@@ -1112,7 +1114,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
             onClick={() => setView("exceededSickDays")}
             className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${view === "exceededSickDays" ? "bg-primary/20 text-primary" : ""}`}
           >
-            <HeartPulse className="h-3.5 w-3.5" /> Exceeded Sick Days
+            <HeartPulse className="h-3.5 w-3.5" /> Exceeded
           </button>
           <button
             type="button"
@@ -1159,6 +1161,25 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         {view === "visitExceptions" && <VisitExceptionReportTab />}
 
         {view === "exceededSickDays" && (
+          <div className="mb-3 flex gap-2">
+            <button
+              type="button"
+              onClick={() => setExceededTab("sickDays")}
+              className={`btn btn-sm ${exceededTab === "sickDays" ? "bg-primary/20 text-primary" : ""}`}
+            >
+              <HeartPulse className="h-3.5 w-3.5" /> Sick Days
+            </button>
+            <button
+              type="button"
+              onClick={() => setExceededTab("timeCorrections")}
+              className={`btn btn-sm ${exceededTab === "timeCorrections" ? "bg-primary/20 text-primary" : ""}`}
+            >
+              <History className="h-3.5 w-3.5" /> Time Corrections
+            </button>
+          </div>
+        )}
+        {view === "exceededSickDays" && exceededTab === "timeCorrections" && <ExceededTimeCorrectionsTab profiles={visibleProfiles} canExempt={[role, ...(extraRoles ?? [])].some((r) => ["ADMIN", "HR", "SUPERADMIN"].includes(normalizeRole(r)))} myName={displayName || ""} myProfileId={myProfileId} />}
+        {view === "exceededSickDays" && exceededTab === "sickDays" && (
           <div className="panel p-4">
             <div className="flex items-center gap-2 mb-1">
               <h2 className="text-base font-semibold">Exceeded Sick Days</h2>

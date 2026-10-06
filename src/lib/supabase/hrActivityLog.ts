@@ -100,6 +100,8 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   part_daily_pickup_marked_picked_up: "Marked picked up",
   part_daily_pickup_unmarked_picked_up: "Unmarked picked up",
   part_daily_collection_marked_collected: "Marked collected",
+  time_correction_exempted: "Exempted time correction from the monthly limit",
+  time_correction_exemption_removed: "Removed time correction exemption",
   part_daily_collection_unmarked_collected: "Unmarked collected",
   technician_frozen: "Froze account",
   technician_unfrozen: "Unfroze account",

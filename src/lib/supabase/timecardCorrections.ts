@@ -719,3 +719,23 @@ export async function updateCorrectionPdfUrl(correctionId: string, pdfUrl: strin
     throw new Error(error.message);
   }
 }
+
+function correctionTimeToMinutes(t: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(t.trim());
+  return m ? Number(m[1]) * 60 + Number(m[2]) + Number(m[3] ?? 0) / 60 : null;
+}
+
+/** Minutes between two "HH:MM[:SS]" times, or null if either is blank/unparseable or out isn't after in. */
+export function correctionShiftMinutes(checkIn: string, checkOut: string): number | null {
+  const a = correctionTimeToMinutes(checkIn);
+  const b = correctionTimeToMinutes(checkOut);
+  return a === null || b === null || b <= a ? null : b - a;
+}
+
+/** e.g. 390 → "6h 30m". */
+export function formatShift(minutes: number): string {
+  const total = Math.round(minutes);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}

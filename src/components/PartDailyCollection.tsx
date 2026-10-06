@@ -1,3 +1,7 @@
+import { AppModal } from "@/components/ui-kit/AppModal";
+import { EmptyState } from "@/components/ui-kit/EmptyState";
+import { TableSkeleton } from "@/components/ui-kit/TableSkeleton";
+import { toast } from "sonner";
 import { PartsDoneBanner } from "@/components/PartsDoneBanner";
 import { PartsDoneButton } from "@/components/PartsDoneButton";
 import { CollectionStatusSummary } from "@/components/CollectionStatusSummary";
@@ -73,7 +77,6 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const [show,setShow]=useState<"open"|"done"|"all">("open");
   const notCollected=show!=="done";const collected=show!=="open";
   const [flashId,setFlashId]=useState<string|null>(null);
-  const [restockToast,setRestockToast]=useState("");
   const [technicianRoster,setTechnicianRoster]=useState<string[]>([]);
   const [rows,setRows]=useState<PartCollectionRow[]>([]);
   const [loading,setLoading]=useState(false);
@@ -285,8 +288,7 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
         ticketNo: row.ticketNo,
         link: `/ticket/${row.ticketNo}`,
       });
-      setRestockToast("Part marked as back in stock — Parts Manager notified.");
-      setTimeout(() => setRestockToast(""), 4000);
+      toast.success("Part marked as back in stock — Parts Manager notified.");
     } catch (err) {
       console.error("Restock notification failed:", err);
     }
@@ -328,8 +330,10 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
       loadSummaryRows();
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
+      toast.success(`Saved ${changed.length} ${changed.length === 1 ? "change" : "changes"}`);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Failed to save changes");
+      toast.error("Couldn't save — your changes are still here. Try Save again.");
     } finally {
       setSaving(false);
     }
@@ -347,10 +351,10 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   return(<div className="min-h-screen flex flex-col"><main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
     <PartsDoneBanner />
     <div className="flex items-center justify-between gap-3 mb-6">
-      <div className="flex items-center gap-3"><button type="button" onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4"/></button><h1 className="text-2xl font-bold">{sub.title}</h1></div>
+      <div className="flex items-center gap-3"><button type="button" onClick={goBack} className="btn btn-ghost" aria-label="Back"><ChevronLeft className="h-4 w-4"/></button><h1 className="text-2xl font-bold">{sub.title}</h1></div>
       <div className="flex items-center gap-2">
         <PartsDoneButton />
-        <button type="button" onClick={openActivityLog} className="btn hover:bg-white/15 inline-flex items-center gap-2 text-xs">
+        <button type="button" onClick={openActivityLog} className="btn btn-sm">
           <History className="h-3.5 w-3.5" /> View Activity
         </button>
       </div>
@@ -416,7 +420,7 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
           <input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} className="glass-input text-sm py-1.5 px-2 rounded-md w-32.5"/>
         </div>
         <div className="flex items-end gap-2 pb-0.5">
-          <button onClick={()=>window.print()} className="btn flex items-center gap-2 px-4"><Printer className="h-3.5 w-3.5"/>Print</button>
+          <button type="button" onClick={()=>window.print()} className="btn"><Printer/>Print</button>
         </div>
       </div>
       <div className="flex flex-wrap items-end gap-3 mt-3">
@@ -438,7 +442,7 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
           <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Scan Parts Here (Unique ID)</label>
           <div className="flex gap-2">
             <input ref={scanRef} value={scanUniqueId} onChange={e=>setScanUniqueId(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")handleScan();}} placeholder="Scan or type, then Enter" className="glass-input text-sm py-1.5 px-3 rounded-md flex-1"/>
-            <button onClick={handleScan} className="btn flex items-center gap-2 px-3 bg-blue-600 hover:bg-blue-700 text-white"><ScanLine className="h-3.5 w-3.5"/>Collect</button>
+            <button type="button" onClick={handleScan} className="btn btn-primary"><ScanLine/>Collect</button>
           </div>
         </div>
       </div>
@@ -448,17 +452,15 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
       {loadError ? (
         <p className="text-sm text-red-400 px-4 py-6">Failed to load parts: {loadError}</p>
       ) : loading && rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground px-4 py-6">Loading…</p>
+        <TableSkeleton rows={8} cols={7} />
       ) : rows.length === 0 ? (
-        <div className="px-4 py-6 text-sm text-muted-foreground">
-          {show === "open" && statusCounts.done > 0 ? (
-            <>Nothing left to collect here. {statusCounts.done} collected {statusCounts.done === 1 ? "part is" : "parts are"} hidden. <button type="button" onClick={() => setShow("done")} className="text-blue-400 hover:underline">Show collected</button></>
-          ) : show === "done" && statusCounts.open > 0 ? (
-            <>No collected parts yet. {statusCounts.open} not collected. <button type="button" onClick={() => setShow("open")} className="text-blue-400 hover:underline">Show not collected</button></>
-          ) : (
-            "No parts match these filters. Parts show here after they're picked up on Part Daily Pickup."
-          )}
-        </div>
+        show === "open" && statusCounts.done > 0 ? (
+          <EmptyState icon={<PackageCheck />} title="Nothing left to collect here" hint={`${statusCounts.done} collected ${statusCounts.done === 1 ? "part is" : "parts are"} hidden.`} action={<button type="button" onClick={() => setShow("done")} className="btn btn-sm">Show collected</button>} />
+        ) : show === "done" && statusCounts.open > 0 ? (
+          <EmptyState title="No collected parts yet" hint={`${statusCounts.open} not collected.`} action={<button type="button" onClick={() => setShow("open")} className="btn btn-sm">Show not collected</button>} />
+        ) : (
+          <EmptyState title="No parts match these filters" hint="Parts show here after they're picked up on Part Daily Pickup." />
+        )
       ) : (
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
@@ -474,10 +476,10 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
                   {r.collected ? (
                     <div className="flex items-center gap-1.5 whitespace-nowrap">
                       <span className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-semibold bg-green-500/15 text-green-300 border border-green-500/30"><CheckCircle className="h-3.5 w-3.5" />Collected</span>
-                      <button type="button" onClick={() => toggleCollected(r.id)} className="rounded p-1 text-slate-400 hover:text-orange-300 hover:bg-orange-500/10" title="Undo — mark as not collected"><Undo2 className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => toggleCollected(r.id)} className="btn btn-ghost btn-sm" title="Undo — mark as not collected" aria-label="Undo"><Undo2 className="h-3.5 w-3.5" /></button>
                     </div>
                   ) : (
-                    <button type="button" onClick={() => toggleCollected(r.id)} className="inline-flex items-center gap-1 rounded px-3 py-1 text-[11px] font-semibold border border-blue-500/50 bg-blue-600 text-white hover:bg-blue-700" title="Mark as collected">
+                    <button type="button" onClick={() => toggleCollected(r.id)} className="btn btn-primary btn-sm" title="Mark as collected">
                       Collect
                     </button>
                   )}
@@ -501,7 +503,7 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
                 </td>
                 <td className="px-2 py-2 text-center font-semibold">{r.quantity}</td>
                 <td className="px-2 py-2">
-                  <select value={r.collectType} onChange={e => setRowCollectType(r.id, e.target.value)} className="glass-input text-xs py-1 px-1.5 rounded w-full min-w-[120px]">
+                  <select value={r.collectType} onChange={e => setRowCollectType(r.id, e.target.value)} className="ui-select text-xs w-full min-w-[120px]">
                     <option value="">—</option>
                     {COLLECT_TYPES.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
@@ -541,42 +543,35 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
       ) : (
         <span className="text-xs text-muted-foreground mr-auto">Click Collect on each part (or scan its Unique ID), then Save.</span>
       )}
-      {dirtyCount > 0 && <button type="button" onClick={discardChanges} disabled={saving} className="btn text-sm px-4">Discard</button>}
-      <button onClick={handleSave} disabled={saving || dirtyCount === 0} className="btn bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2 px-8 disabled:opacity-50">{saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}{saving ? "Saving…" : "Save"}</button>
+      {dirtyCount > 0 && <button type="button" onClick={discardChanges} disabled={saving} className="btn">Discard</button>}
+      <button onClick={handleSave} disabled={saving || dirtyCount === 0} className="btn btn-primary px-8">{saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}{saving ? "Saving…" : "Save"}</button>
     </div>
-    {restockToast&&<div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl border border-green-500/30 bg-green-500/15 px-4 py-3 text-sm text-green-300 shadow-2xl backdrop-blur-md"><CheckCircle className="h-4 w-4"/>{restockToast}</div>}
   </main>
 
   {activityLogOpen && (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setActivityLogOpen(false)}>
-      <div className="w-full max-w-2xl max-h-[80vh] flex flex-col rounded-lg border border-white/10 bg-slate-900 p-6" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold text-white">Part Daily Collection Activity</h3>
-          <button type="button" onClick={() => setActivityLogOpen(false)} className="text-slate-400 hover:text-white text-xl leading-none">×</button>
+    <AppModal title="Part Daily Collection Activity" description="Who marked parts collected or not collected, and when." size="lg" onClose={() => setActivityLogOpen(false)}>
+      {activityLogLoading ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : activityLogError ? (
+        <p className="text-sm text-red-400">{activityLogError}</p>
+      ) : activityLogEntries.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No activity logged yet.</p>
+      ) : (
+        <div>
+          <ul className="space-y-2">
+            {activityLogEntries.map((entry) => (
+              <li key={entry.id} className="rounded border border-white/10 bg-white/5 px-3 py-2 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-slate-200">{activityActionLabel(entry.action)}</span>
+                  <span className="text-xs text-slate-500 whitespace-nowrap">{new Date(entry.createdAt).toLocaleString()}</span>
+                </div>
+                {entry.targetLabel && <div className="text-xs text-blue-300 mt-0.5">{entry.targetLabel}</div>}
+                <div className="text-xs text-slate-500 mt-0.5">{entry.actorName || "Unknown"}</div>
+              </li>
+            ))}
+          </ul>
         </div>
-        {activityLogLoading ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
-        ) : activityLogError ? (
-          <p className="text-sm text-red-400">{activityLogError}</p>
-        ) : activityLogEntries.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No activity logged yet.</p>
-        ) : (
-          <div className="overflow-y-auto flex-1 -mx-2 px-2">
-            <ul className="space-y-2">
-              {activityLogEntries.map((entry) => (
-                <li key={entry.id} className="rounded border border-white/10 bg-white/5 px-3 py-2 text-sm">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold text-slate-200">{activityActionLabel(entry.action)}</span>
-                    <span className="text-xs text-slate-500 whitespace-nowrap">{new Date(entry.createdAt).toLocaleString()}</span>
-                  </div>
-                  {entry.targetLabel && <div className="text-xs text-blue-300 mt-0.5">{entry.targetLabel}</div>}
-                  <div className="text-xs text-slate-500 mt-0.5">{entry.actorName || "Unknown"}</div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </div>
-    </div>
+      )}
+    </AppModal>
   )}
   </div>);}
