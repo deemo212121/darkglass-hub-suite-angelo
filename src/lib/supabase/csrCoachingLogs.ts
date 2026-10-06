@@ -135,10 +135,8 @@ export async function createCoachingLog(input: NewCoachingLogInput): Promise<Coa
   return mapRow(data);
 }
 
-/** Coach side: header + sections I, III, V. */
+/** Coach side: header + sections I, III, V. The coach (Team Leader line) is fixed to the log's creator. */
 export interface CoachFieldsInput {
-  teamLeaderProfileId: string | null;
-  teamLeaderName: string | null;
   ticketNumber: string;
   team: string;
   coachingDate: string;
@@ -155,8 +153,6 @@ async function updateRow(id: string, patch: Record<string, unknown>): Promise<Co
 
 export function saveCoachFields(id: string, f: CoachFieldsInput): Promise<CoachingLog> {
   return updateRow(id, {
-    team_leader_profile_id: f.teamLeaderProfileId,
-    team_leader_name: f.teamLeaderName,
     ticket_number: f.ticketNumber,
     team: f.team,
     coaching_date: f.coachingDate,

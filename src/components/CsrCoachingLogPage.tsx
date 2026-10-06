@@ -53,9 +53,8 @@ const READ_ALL_ROLES = [...WRITE_ROLES, "HR", "SENIOR_MANAGER"];
 // Can coach anyone (agents and TLs) and sees every log. A TL only coaches the
 // agents on their own CSR team and only sees those logs (migration 0357).
 const MANAGER_ROLES = ["ADMIN", "SUPERADMIN", "CSR_MANAGER"];
-// Who can be coached / who can coach — picked by role, primary or extra.
+// Who can be coached — picked by role, primary or extra.
 const COACHABLE_ROLES = new Set(["CSR", "CSR_AGENT", "CSR_TEAM_LEADER"]);
-const COACH_ROLES = new Set(["CSR_TEAM_LEADER", "CSR_MANAGER"]);
 const TL_ROLE = new Set(["CSR_TEAM_LEADER"]);
 
 function holds(p: ProfileRow, set: Set<string>): boolean {
@@ -350,7 +349,7 @@ export function CsrCoachingLogPage({ mod, sub }: Props) {
                   <tr key={l.id} className="border-b border-[var(--color-panel-border)]/60 hover:bg-white/[0.03] cursor-pointer" onClick={() => setOpenId(l.id)}>
                     <td className="px-3 py-2 whitespace-nowrap">{fmtDate(l.coachingDate)}</td>
                     <td className="px-3 py-2 font-medium">{l.csrName}</td>
-                    <td className="px-3 py-2">{l.teamLeaderName || "—"}</td>
+                    <td className="px-3 py-2">{l.teamLeaderName || l.createdByName || "—"}</td>
                     <td className="px-3 py-2">{l.team || "—"}</td>
                     <td className="px-3 py-2">{l.ticketNumber || "—"}</td>
                     <td className="px-3 py-2">
@@ -405,7 +404,6 @@ export function CsrCoachingLogPage({ mod, sub }: Props) {
           myId={myId}
           myName={displayName || ""}
           canWrite={canWrite}
-          users={users}
           onClose={() => setOpenId(null)}
           onSaved={(l) => { replaceLog(l); refreshEvents(); }}
         />
@@ -464,10 +462,11 @@ function NewCoachingLogModal({
     const teammates = new Set((teams?.members ?? []).filter((m) => myTeams.has(m.teamId)).map((m) => m.profileId));
     return base.filter((u) => teammates.has(u.id) && !holds(u, TL_ROLE));
   }, [active, myId, isManager, teams]);
-  const coaches = useMemo(() => active.filter((u) => holds(u, COACH_ROLES)), [active]);
+  // Whoever creates the log is the coach — shown on the "Team Leader" line.
+  const me = active.find((u) => u.id === myId) ?? null;
+  const myName = me ? me.display_name || me.username || "" : "";
 
   const [csrId, setCsrId] = useState("");
-  const [tlId, setTlId] = useState(myId && coaches.some((c) => c.id === myId) ? myId : "");
   const [team, setTeam] = useState("");
   const [ticket, setTicket] = useState("");
   const [date, setDate] = useState(todayIso());
@@ -477,31 +476,26 @@ function NewCoachingLogModal({
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Picking the CSR pre-fills their team and that team's leader.
+  // Picking the person pre-fills their CSR team.
   const pickCsr = (id: string) => {
     setCsrId(id);
     const member = teams?.members.find((m) => m.profileId === id);
     const t = member ? teams?.teams.find((x) => x.id === member.teamId) : undefined;
-    if (t) {
-      setTeam(t.name);
-      const leader = teams?.members.find((m) => m.teamId === t.id && m.isLeader && m.profileId !== id);
-      if (leader && coaches.some((c) => c.id === leader.profileId)) setTlId(leader.profileId);
-    }
+    setTeam(t ? t.name : "");
   };
 
   const submit = async () => {
     const csr = active.find((u) => u.id === csrId);
-    if (!csr) { setErr("Choose the CSR being coached."); return; }
+    if (!csr) { setErr("Choose who this coaching log is for."); return; }
     if (!date) { setErr("Coaching date is required."); return; }
-    const tl = active.find((u) => u.id === tlId) ?? null;
     setSaving(true);
     setErr(null);
     try {
       const created = await createCoachingLog({
         csrProfileId: csr.id,
         csrName: csr.display_name || csr.username || "",
-        teamLeaderProfileId: tl?.id ?? null,
-        teamLeaderName: tl ? tl.display_name || tl.username || "" : null,
+        teamLeaderProfileId: myId,
+        teamLeaderName: myName || null,
         ticketNumber: ticket.trim(),
         team: team.trim(),
         coachingDate: date,
@@ -532,10 +526,14 @@ function NewCoachingLogModal({
       }
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="CSR's Name">
+        <Field label="Coaching for">
           <select className="glass-input w-full text-sm" value={csrId} onChange={(e) => pickCsr(e.target.value)}>
-            <option value="">Select CSR…</option>
-            {coachable.map((u) => <option key={u.id} value={u.id}>{u.display_name || u.username}</option>)}
+            <option value="">Select person…</option>
+            {coachable.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.display_name || u.username}{holds(u, TL_ROLE) ? " — Team Leader" : ""}
+              </option>
+            ))}
           </select>
           {!isManager && (
             <p className="mt-1 text-[11px] text-muted-foreground">
@@ -545,11 +543,8 @@ function NewCoachingLogModal({
             </p>
           )}
         </Field>
-        <Field label="Team Leader">
-          <select className="glass-input w-full text-sm" value={tlId} onChange={(e) => setTlId(e.target.value)}>
-            <option value="">—</option>
-            {coaches.map((u) => <option key={u.id} value={u.id}>{u.display_name || u.username}</option>)}
-          </select>
+        <Field label="Coach (Team Leader)">
+          <div className="glass-input w-full text-sm opacity-80 cursor-default">{myName || "You"} <span className="text-muted-foreground">(you)</span></div>
         </Field>
         <Field label="Ticket Number">
           <input className="glass-input w-full text-sm" value={ticket} onChange={(e) => setTicket(e.target.value)} />
@@ -577,7 +572,6 @@ function CoachingLogModal({
   myId,
   myName,
   canWrite,
-  users,
   onClose,
   onSaved,
 }: {
@@ -585,7 +579,6 @@ function CoachingLogModal({
   myId: string | null;
   myName: string;
   canWrite: boolean;
-  users: ProfileRow[];
   onClose: () => void;
   onSaved: (l: CoachingLog) => void;
 }) {
@@ -596,14 +589,7 @@ function CoachingLogModal({
   const coachEditable = canWrite && !isTarget && !log.csrSignedAt && !deleted;
   const csrEditable = isTarget && !log.csrSignedAt && !deleted;
 
-  const coaches = useMemo(
-    () => users.filter((u) => u.is_active && holds(u, COACH_ROLES)).sort((a, b) => (a.display_name || "").localeCompare(b.display_name || "")),
-    [users]
-  );
-
   const [f, setF] = useState(() => ({
-    teamLeaderProfileId: log.teamLeaderProfileId,
-    teamLeaderName: log.teamLeaderName,
     ticketNumber: log.ticketNumber,
     team: log.team,
     coachingDate: log.coachingDate,
@@ -618,7 +604,6 @@ function CoachingLogModal({
   const [signing, setSigning] = useState<"csr" | "creator" | null>(null);
 
   const coachDirty =
-    f.teamLeaderProfileId !== log.teamLeaderProfileId ||
     f.ticketNumber !== log.ticketNumber ||
     f.team !== log.team ||
     f.coachingDate !== log.coachingDate ||
@@ -639,8 +624,6 @@ function CoachingLogModal({
       let updated = log;
       if (coachEditable && coachDirty) {
         updated = await saveCoachFields(log.id, {
-          teamLeaderProfileId: f.teamLeaderProfileId,
-          teamLeaderName: f.teamLeaderName,
           ticketNumber: f.ticketNumber.trim(),
           team: f.team.trim(),
           coachingDate: f.coachingDate,
@@ -695,24 +678,7 @@ function CoachingLogModal({
       <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 text-sm">
         <HeaderRow label="CSR's Name"><span className="font-medium">{log.csrName}</span></HeaderRow>
         <HeaderRow label="Team Leader">
-          {coachEditable ? (
-            <select
-              className="glass-input w-full text-sm py-1"
-              value={f.teamLeaderProfileId ?? ""}
-              onChange={(e) => {
-                const u = coaches.find((c) => c.id === e.target.value);
-                setF((p) => ({ ...p, teamLeaderProfileId: u?.id ?? null, teamLeaderName: u ? u.display_name || u.username || "" : null }));
-              }}
-            >
-              <option value="">—</option>
-              {f.teamLeaderProfileId && !coaches.some((c) => c.id === f.teamLeaderProfileId) && (
-                <option value={f.teamLeaderProfileId}>{f.teamLeaderName}</option>
-              )}
-              {coaches.map((u) => <option key={u.id} value={u.id}>{u.display_name || u.username}</option>)}
-            </select>
-          ) : (
-            f.teamLeaderName || "—"
-          )}
+          {log.teamLeaderName || log.createdByName || "—"}
         </HeaderRow>
         <HeaderRow label="Ticket Number">
           {coachEditable ? <input className="glass-input w-full text-sm py-1" value={f.ticketNumber} onChange={(e) => set("ticketNumber")(e.target.value)} /> : f.ticketNumber || "—"}
