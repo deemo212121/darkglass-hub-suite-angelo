@@ -13,6 +13,8 @@
  * no periodic "did anything change?" check here.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ReceiptMark } from "@/components/ReceiptMark";
+import { getDmReceipts, receiptFor, useDmReceipt, type DmReceiptState } from "@/lib/supabase/readReceipts";
 import { useNavigate } from "@tanstack/react-router";
 import { MessageCircle, X, Send, Search, ChevronLeft, ExternalLink } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -328,6 +330,29 @@ export function FloatingMessenger() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileId]);
 
+  // Sent / Delivered / Seen — the open conversation (live), and the inbox rows whose last message is mine.
+  const threadReceipt = useDmReceipt(activeThread?.id ?? null, activeThread?.otherProfileId || null, messages.length);
+  const [inboxReceipts, setInboxReceipts] = useState<Map<string, DmReceiptState>>(new Map());
+  const myLastThreads = inbox.filter((e) => e.lastMessageSenderId === profileId && e.otherProfileId).map((e) => `${e.threadId}|${e.otherProfileId}`).join(",");
+  useEffect(() => {
+    if (!open || view !== "list" || !myLastThreads) return;
+    let alive = true;
+    const load = () => {
+      if (document.visibilityState === "hidden") return;
+      const threads = myLastThreads.split(",").map((k) => {
+        const [threadId, otherProfileId] = k.split("|");
+        return { threadId, otherProfileId };
+      });
+      getDmReceipts(threads).then((m) => alive && setInboxReceipts(m)).catch(() => undefined);
+    };
+    load();
+    const timer = window.setInterval(load, 8000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [open, view, myLastThreads]);
+
   if (!ready || !email || !profileId) return null;
 
   const searchResults =
@@ -455,6 +480,9 @@ export function FloatingMessenger() {
                             </span>
                             <span className="mt-0.5 flex items-center justify-between gap-2">
                               <span className={`truncate text-xs ${entry.unreadCount > 0 ? "text-slate-100" : "text-slate-400"}`}>
+                                {entry.lastMessageSenderId === profileId && (
+                                  <ReceiptMark status={receiptFor(entry.lastMessageAt, inboxReceipts.get(entry.threadId))} state={inboxReceipts.get(entry.threadId)} className="mr-1 align-[-2px]" />
+                                )}
                                 {entry.lastMessageSenderId === profileId ? "You: " : ""}
                                 {entry.lastMessageBody || "No messages yet"}
                               </span>
@@ -477,13 +505,15 @@ export function FloatingMessenger() {
                 {messages.length === 0 ? (
                   <p className="px-2 py-6 text-center text-xs text-slate-500">No messages yet — say hello.</p>
                 ) : (
-                  messages.map((m) => {
+                  messages.map((m, i) => {
                     const mine = m.sender_id === profileId;
+                    const isLastMine = mine && !messages.slice(i + 1).some((x) => x.sender_id === profileId);
                     return (
-                      <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                      <div key={m.id} className={`flex flex-col ${mine ? "items-end" : "items-start"}`}>
                         <div className={`max-w-[75%] min-w-0 rounded-2xl px-3 py-1.5 text-sm ${mine ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-100"}`}>
                           <MessageBody text={m.body} className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]" />
                         </div>
+                        {isLastMine && <ReceiptMark status={receiptFor(m.created_at, threadReceipt)} state={threadReceipt} withText className="mt-0.5 mr-1" />}
                       </div>
                     );
                   })

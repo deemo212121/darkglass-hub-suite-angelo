@@ -14645,3 +14645,9 @@ button.home-attn:focus-visible { outline: 2px solid var(--tone); outline-offset:
   mask: var(--logo) center / contain no-repeat;
 }
 :root[data-theme="light"] .home-watermark { opacity: 0.05; }
+
+/* ── Read receipts (keep last) ─────────────────────────────────────────── */
+.receipt { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.68rem; font-weight: 600; line-height: 1; color: var(--color-muted-foreground); white-space: nowrap; }
+.receipt svg { width: 0.85rem; height: 0.85rem; flex-shrink: 0; }
+.receipt--seen { color: #38bdf8; }
+:root[data-theme="light"] .receipt--seen { color: #0284c7; }

@@ -13,6 +13,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Avatar } from "@/components/header/menuKit";
+import { ReceiptMark } from "@/components/ReceiptMark";
+import { receiptFor, useDmReceipt } from "@/lib/supabase/readReceipts";
 import { ChevronLeft, Hash, Home, Lock, MessageCircle, Plus, Search, Send, UserPlus, Users2, X } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -298,6 +300,14 @@ export function TeamMessenger({ mod, sub }: Props) {
       dmThreadId: active.kind === "dm" ? active.id : null,
       onMessage: (row) => {
         setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+        // Reading it right here counts as Seen for the sender.
+        if (profileId && row.sender_id !== profileId && document.visibilityState === "visible") {
+          void markThreadRead({
+            profileId,
+            channelId: active.kind === "channel" ? active.id : null,
+            dmThreadId: active.kind === "dm" ? active.id : null,
+          }).catch(() => undefined);
+        }
       },
     });
 
@@ -574,6 +584,9 @@ export function TeamMessenger({ mod, sub }: Props) {
     }
   };
 
+  // Live Sent / Delivered / Seen for the open DM (re-checks every few seconds and on each new message).
+  const receipt = useDmReceipt(active?.kind === "dm" ? active.id : null, active?.kind === "dm" ? active.participant.id : null, messages.length);
+
   if (!ready) return null;
 
   const activeTitle = active?.kind === "channel"
@@ -600,6 +613,8 @@ export function TeamMessenger({ mod, sub }: Props) {
     return d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", ...(d.getFullYear() !== today.getFullYear() ? { year: "numeric" } : {}) });
   };
   const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  // Sent / Delivered / Seen on my messages in a DM; the latest one also says it in words.
+  const lastMine = active?.kind === "dm" ? [...messages].reverse().find((m) => m.sender_id === profileId && m.kind !== "system") : undefined;
 
   return (
     <main className="tm-page">
@@ -735,11 +750,13 @@ export function TeamMessenger({ mod, sub }: Props) {
                           <div className="tm-msg-meta">
                             <span className="font-semibold">{isMe ? "You" : m.sender_name || "—"}</span>
                             <span title={formatTimestamp(m.created_at)}>{clock(m.created_at)}</span>
+                            {isMe && active?.kind === "dm" && m.id !== lastMine?.id && <ReceiptMark status={receiptFor(m.created_at, receipt)} state={receipt} />}
                           </div>
                         )}
                         <div className="tm-bubble" title={formatTimestamp(m.created_at)}>
                           <MessageBody text={m.body} className="whitespace-pre-wrap" mentionNames={active?.kind === "channel" ? mentionNames : undefined} />
                         </div>
+                        {m.id === lastMine?.id && <ReceiptMark status={receiptFor(m.created_at, receipt)} state={receipt} withText className="mt-1 mr-1" />}
                       </div>
                     </div>
                   )}
