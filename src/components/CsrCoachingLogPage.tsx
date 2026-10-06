@@ -334,7 +334,7 @@ export function CsrCoachingLogPage({ mod, sub }: Props) {
               <tr className="text-left text-xs uppercase text-muted-foreground border-b border-[var(--color-panel-border)]">
                 <th className="px-3 py-2">Coaching date</th>
                 <th className="px-3 py-2">CSR</th>
-                <th className="px-3 py-2">Team leader</th>
+                <th className="px-3 py-2">Coach</th>
                 <th className="px-3 py-2">Team</th>
                 <th className="px-3 py-2">Ticket #</th>
                 <th className="px-3 py-2">Status</th>
@@ -462,7 +462,7 @@ function NewCoachingLogModal({
     const teammates = new Set((teams?.members ?? []).filter((m) => myTeams.has(m.teamId)).map((m) => m.profileId));
     return base.filter((u) => teammates.has(u.id) && !holds(u, TL_ROLE));
   }, [active, myId, isManager, teams]);
-  // Whoever creates the log is the coach — shown on the "Team Leader" line.
+  // Whoever creates the log is the coach.
   const me = active.find((u) => u.id === myId) ?? null;
   const myName = me ? me.display_name || me.username || "" : "";
 
@@ -543,7 +543,7 @@ function NewCoachingLogModal({
             </p>
           )}
         </Field>
-        <Field label="Coach (Team Leader)">
+        <Field label="Coach">
           <div className="glass-input w-full text-sm opacity-80 cursor-default">{myName || "You"} <span className="text-muted-foreground">(you)</span></div>
         </Field>
         <Field label="Ticket Number">
@@ -560,7 +560,7 @@ function NewCoachingLogModal({
       <div className="mt-4 space-y-3">
         <Section n="I" title="Summary of the Scenario" value={summary} onChange={setSummary} editable />
         <Section n="III" title="Coaching Discussion" value={discussion} onChange={setDiscussion} editable />
-        <Section n="V" title="Team Leader's Action Plan" value={tlPlan} onChange={setTlPlan} editable />
+        <Section n="V" title="Coach's Action Plan" value={tlPlan} onChange={setTlPlan} editable />
       </div>
       {err && <p className="mt-3 text-sm text-red-300">{err}</p>}
     </AppModal>
@@ -677,7 +677,7 @@ function CoachingLogModal({
     >
       <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 text-sm">
         <HeaderRow label="CSR's Name"><span className="font-medium">{log.csrName}</span></HeaderRow>
-        <HeaderRow label="Team Leader">
+        <HeaderRow label="Coach">
           {log.teamLeaderName || log.createdByName || "—"}
         </HeaderRow>
         <HeaderRow label="Ticket Number">
@@ -692,11 +692,11 @@ function CoachingLogModal({
       </div>
 
       <div className="mt-5 space-y-4">
-        <Section n="I" title="Summary of the Scenario" who="Team Leader / CSR Manager" value={f.summary} onChange={set("summary")} editable={coachEditable} />
+        <Section n="I" title="Summary of the Scenario" who={log.teamLeaderName || log.createdByName || "Coach"} value={f.summary} onChange={set("summary")} editable={coachEditable} />
         <Section n="II" title="CSR's Explanation" who={log.csrName} value={f.csrExplanation} onChange={set("csrExplanation")} editable={csrEditable} />
-        <Section n="III" title="Coaching Discussion" who="Coach" value={f.coachingDiscussion} onChange={set("coachingDiscussion")} editable={coachEditable} />
+        <Section n="III" title="Coaching Discussion" who={log.teamLeaderName || log.createdByName || "Coach"} value={f.coachingDiscussion} onChange={set("coachingDiscussion")} editable={coachEditable} />
         <Section n="IV" title="CSR's Action Plan" who={log.csrName} value={f.csrActionPlan} onChange={set("csrActionPlan")} editable={csrEditable} />
-        <Section n="V" title="Team Leader's Action Plan" who={log.createdByName || "Coach"} value={f.tlActionPlan} onChange={set("tlActionPlan")} editable={coachEditable} />
+        <Section n="V" title="Coach's Action Plan" who={log.teamLeaderName || log.createdByName || "Coach"} value={f.tlActionPlan} onChange={set("tlActionPlan")} editable={coachEditable} />
 
         <div>
           <h3 className="text-sm font-semibold"><span className="inline-block w-8">VI.</span>Acknowledgement</h3>
@@ -727,7 +727,7 @@ function CoachingLogModal({
               }
             />
             <SignatureSlot
-              label="Team Leader's Signature"
+              label="Coach's Signature"
               person={log.createdByName || "Creator"}
               signature={log.creatorSignature}
               signedName={log.creatorSignedName}
