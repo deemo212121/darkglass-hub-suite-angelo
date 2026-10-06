@@ -31,6 +31,10 @@ import {
   type TimecardCorrectionRow,
 } from "@/lib/supabase/timecardCorrections";
 import { EXCEPTION_TYPE_LABELS, CORRECTION_ISSUE_LABELS } from "@/lib/exceptionVisitReportTemplate";
+import { getCompanyPtoRequests, HR_STATUS_TO_PTO_TYPE, type PtoRequestRow, type PtoType } from "@/lib/supabase/pto";
+import { getAttendanceNotes, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
+import { getCompanyTraineeEntries } from "@/lib/supabase/traineeTimecards";
+import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
 import { EmptyState } from "@/components/ui-kit/EmptyState";
 import { TableSkeleton } from "@/components/ui-kit/TableSkeleton";
 
@@ -95,6 +99,32 @@ function monthBounds(month: string): { start: string; end: string } {
   return { start: `${month}-01`, end: `${month}-${String(last).padStart(2, "0")}` };
 }
 
+/** "start|end" range key → its two dates. */
+function rangeBounds(range: string): { start: string; end: string } {
+  const [start, end] = range.split("|");
+  return { start, end };
+}
+
+/** How many calendar months a range touches (Oct 15 – Nov 3 = 2). */
+function monthsInRange(range: string): number {
+  const { start, end } = rangeBounds(range);
+  const [sy, sm] = start.split("-").map(Number);
+  const [ey, em] = end.split("-").map(Number);
+  return Math.max(1, (ey - sy) * 12 + (em - sm) + 1);
+}
+
+/** "October 2026" for a whole month, otherwise "Oct 3 – Nov 12, 2026". */
+function rangeLabel(range: string): string {
+  const { start, end } = rangeBounds(range);
+  const whole = monthBounds(start.slice(0, 7));
+  if (start === whole.start && end === whole.end) return monthLabel(start.slice(0, 7));
+  const d = (iso: string, withYear: boolean) => {
+    const [y, m, dd] = iso.split("-").map(Number);
+    return new Date(y, m - 1, dd).toLocaleDateString(undefined, { month: "short", day: "numeric", ...(withYear ? { year: "numeric" } : {}) });
+  };
+  return `${d(start, start.slice(0, 4) !== end.slice(0, 4))} – ${d(end, true)}`;
+}
+
 function monthLabel(month: string): string {
   const [y, m] = month.split("-").map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
@@ -134,6 +164,151 @@ function countsTowardLimit(c: TimecardCorrectionRow, activeExemption: Map<string
   return c.status !== "rejected" && !activeExemption.has(c.id);
 }
 
+/** Leave columns, same letters as the Time Off Calendar. A = Unnoticed. */
+const LEAVE_COLUMNS: { letter: LeaveLetter; label: string }[] = [
+  { letter: "V", label: "Vacation" },
+  { letter: "S", label: "Sick" },
+  { letter: "P", label: "Personal" },
+  { letter: "H", label: "Holiday" },
+  { letter: "U", label: "Unpaid" },
+  { letter: "B", label: "Bereavement" },
+  { letter: "A", label: "Unnoticed + Absent — marked Unnoticed, pending/rejected leave, or a missed workday with nothing filed" },
+];
+type LeaveLetter = "V" | "S" | "P" | "H" | "U" | "B" | "A";
+const PTO_LETTER: Record<PtoType, LeaveLetter> = { vacation: "V", sick: "S", personal: "P", holiday: "H", unpaid: "U", bereavement: "B" };
+
+function nextISO(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(y, m - 1, d + 1);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+
+/** Why a day landed in A: marked/requested (Unnoticed) vs. nothing at all (Absent). */
+type AKind = "unnoticed" | "absent";
+
+/** One counted leave day — what it came from, for the details popup. */
+interface LeaveDay {
+  date: string;
+  letter: LeaveLetter;
+  /** The leave request behind it, if any. */
+  request: PtoRequestRow | null;
+  /** The Absent List HR Status behind it, if any. */
+  hrNote: string | null;
+  /** Only on A days. */
+  aKind?: AKind;
+}
+
+/** What the person did on each day of the range — used to spot days with no update at all. */
+interface DayActivity {
+  /** Days they clocked in (regular or trainee timecard). */
+  punched: Set<string>;
+  /** Days they filed a time correction for. */
+  corrected: Set<string>;
+}
+
+/**
+ * Working days per leave letter for one person in [start, end]. Per day:
+ *  - an approved request counts as its type;
+ *  - a pending or rejected (denied) request counts as A (Unnoticed);
+ *  - otherwise the Absent List's HR Status — a leave type counts as that
+ *    type, Unnoticed (old label "Absent") as A (Unnoticed);
+ *  - otherwise, a past workday with no clock-in and no correction filed
+ *    counts as A (Absent) — nothing was done about it at all.
+ * Rest days (profile off_days, Sat/Sun when unset), company holidays, days
+ * before the account existed, today/future days (for Absent) and cancelled
+ * requests don't count.
+ */
+function leaveCounts(
+  profile: ProfileRow,
+  requests: PtoRequestRow[],
+  notes: AttendanceNoteRow[],
+  start: string,
+  end: string,
+  activity: DayActivity | null,
+  holidays: Set<string>,
+  today: string
+): { counts: Record<LeaveLetter, number>; days: LeaveDay[] } {
+  const out: Record<LeaveLetter, number> = { V: 0, S: 0, P: 0, H: 0, U: 0, B: 0, A: 0 };
+  const rest = new Set(profile.off_days && profile.off_days.length > 0 ? profile.off_days : [0, 6]);
+  const isRest = (iso: string) => rest.has(new Date(`${iso}T00:00:00`).getDay());
+  const byDay = new Map<string, LeaveDay & { approved: boolean }>();
+  for (const r of requests) {
+    if (r.status === "cancelled" || !r.startDate || !r.endDate) continue;
+    const approved = r.status === "approved";
+    const from = r.startDate > start ? r.startDate : start;
+    const to = r.endDate < end ? r.endDate : end;
+    for (let d = from; d <= to; d = nextISO(d)) {
+      if (isRest(d)) continue;
+      if (byDay.get(d)?.approved) continue; // an approved request wins the day
+      byDay.set(d, approved
+        ? { date: d, letter: PTO_LETTER[r.ptoType], request: r, hrNote: null, approved }
+        : { date: d, letter: "A", aKind: "unnoticed", request: r, hrNote: null, approved });
+    }
+  }
+  for (const n of notes) {
+    if (n.noteDate < start || n.noteDate > end || byDay.has(n.noteDate) || isRest(n.noteDate)) continue;
+    if (n.hrNote === "Absent" || n.hrNote === "Unnoticed") {
+      byDay.set(n.noteDate, { date: n.noteDate, letter: "A", aKind: "unnoticed", request: null, hrNote: n.hrNote, approved: true });
+      continue;
+    }
+    const t = HR_STATUS_TO_PTO_TYPE[n.hrNote];
+    if (t) byDay.set(n.noteDate, { date: n.noteDate, letter: PTO_LETTER[t], request: null, hrNote: n.hrNote, approved: true });
+  }
+  if (activity) {
+    const since = (profile.created_at || "").slice(0, 10);
+    const lastPast = end < today ? end : prevISO(today);
+    for (let d = start; d <= lastPast; d = nextISO(d)) {
+      if (byDay.has(d) || isRest(d) || holidays.has(d) || (since && d < since)) continue;
+      if (activity.punched.has(d) || activity.corrected.has(d)) continue;
+      byDay.set(d, { date: d, letter: "A", aKind: "absent", request: null, hrNote: null, approved: true });
+    }
+  }
+  const days: LeaveDay[] = [];
+  for (const v of byDay.values()) {
+    out[v.letter]++;
+    days.push({ date: v.date, letter: v.letter, request: v.request, hrNote: v.hrNote, aKind: v.aKind });
+  }
+  days.sort((a, b) => a.date.localeCompare(b.date));
+  return { counts: out, days };
+}
+
+function prevISO(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(y, m - 1, d - 1);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+
+function todayISO(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Same-request days collapse into one row in the details popup. */
+interface LeaveGroup {
+  key: string;
+  days: string[];
+  request: PtoRequestRow | null;
+  hrNote: string | null;
+}
+function groupLeaveDays(days: LeaveDay[]): LeaveGroup[] {
+  const groups: LeaveGroup[] = [];
+  const byRequest = new Map<string, LeaveGroup>();
+  for (const d of days) {
+    if (d.request) {
+      let g = byRequest.get(d.request.id);
+      if (!g) {
+        g = { key: d.request.id, days: [], request: d.request, hrNote: null };
+        byRequest.set(d.request.id, g);
+        groups.push(g);
+      }
+      g.days.push(d.date);
+    } else {
+      groups.push({ key: `${d.hrNote ?? "none"}:${d.date}`, days: [d.date], request: null, hrNote: d.hrNote });
+    }
+  }
+  return groups;
+}
+
 const STATUS_STYLE: Record<string, string> = {
   approved: "bg-green-500/15 text-green-300 border-green-500/30",
   pending: "bg-amber-500/15 text-amber-300 border-amber-500/30",
@@ -169,7 +344,12 @@ export function ExceededTimeCorrectionsTab({
   myName: string;
   myProfileId: string | null;
 }) {
-  const [month, setMonth] = useState(currentMonth());
+  const [rangeFrom, setRangeFrom] = useState(monthBounds(currentMonth()).start);
+  const [rangeTo, setRangeTo] = useState(monthBounds(currentMonth()).end);
+  /** "start|end", in order — the key everything below is computed/cached by. */
+  const range = rangeFrom <= rangeTo ? `${rangeFrom}|${rangeTo}` : `${rangeTo}|${rangeFrom}`;
+  /** 2 per month, times however many calendar months the range touches. */
+  const allowed = MAX_CORRECTIONS_PER_MONTH * monthsInRange(range);
   const [region, setRegion] = useState<Region>("TECH");
   const [search, setSearch] = useState("");
   const [overOnly, setOverOnly] = useState(false);
@@ -178,6 +358,11 @@ export function ExceededTimeCorrectionsTab({
   const [entriesByMonth, setEntriesByMonth] = useState<Map<string, CompanyTimecardEntry[]>>(new Map());
   const [entriesLoading, setEntriesLoading] = useState(false);
   const [exemptions, setExemptions] = useState<CorrectionExemption[]>([]);
+  const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
+  const [traineeByRange, setTraineeByRange] = useState<Map<string, { profileId: string; workDate: string; checkIn: string }[]>>(new Map());
+  const [holidaysByRange, setHolidaysByRange] = useState<Map<string, Set<string>>>(new Map());
+  const [leaveDetail, setLeaveDetail] = useState<{ profileId: string; person: string; letter: LeaveLetter } | null>(null);
+  const [notesByMonth, setNotesByMonth] = useState<Map<string, AttendanceNoteRow[]>>(new Map());
   const [dialog, setDialog] = useState<ExemptDialog | null>(null);
   const [dialogReason, setDialogReason] = useState("");
   const [dialogSaving, setDialogSaving] = useState(false);
@@ -187,7 +372,63 @@ export function ExceededTimeCorrectionsTab({
       .then(setCorrections)
       .catch(() => setCorrections([]));
     getCorrectionExemptions().then(setExemptions);
+    getCompanyPtoRequests()
+      .then(setPtoRequests)
+      .catch(() => setPtoRequests([]));
   }, []);
+
+  // Absent List HR Status for the range — loaded once per range viewed.
+  useEffect(() => {
+    if (notesByMonth.has(range)) return;
+    let cancelled = false;
+    const { start, end } = rangeBounds(range);
+    getAttendanceNotes(start, end)
+      .then((rows) => !cancelled && setNotesByMonth((prev) => new Map(prev).set(range, rows)))
+      .catch(() => !cancelled && setNotesByMonth((prev) => new Map(prev).set(range, [])));
+    return () => {
+      cancelled = true;
+    };
+  }, [range, notesByMonth]);
+
+  const leaveByProfile = useMemo(() => {
+    const { start, end } = rangeBounds(range);
+    const notes = notesByMonth.get(range) ?? [];
+    const reqByProfile = new Map<string, PtoRequestRow[]>();
+    for (const r of ptoRequests) {
+      if (!r.startDate || !r.endDate || r.endDate < start || r.startDate > end) continue;
+      if (!reqByProfile.has(r.profileId)) reqByProfile.set(r.profileId, []);
+      reqByProfile.get(r.profileId)!.push(r);
+    }
+    const notesByProfile = new Map<string, AttendanceNoteRow[]>();
+    for (const n of notes) {
+      if (!notesByProfile.has(n.profileId)) notesByProfile.set(n.profileId, []);
+      notesByProfile.get(n.profileId)!.push(n);
+    }
+    // Absent needs the punches, trainee punches and holidays for the range;
+    // until they've loaded, A shows only Unnoticed.
+    const punches = entriesByMonth.get(range);
+    const trainee = traineeByRange.get(range);
+    const holidays = holidaysByRange.get(range) ?? new Set<string>();
+    const activityByProfile = new Map<string, DayActivity>();
+    if (punches && trainee && corrections) {
+      const act = (id: string) => {
+        if (!activityByProfile.has(id)) activityByProfile.set(id, { punched: new Set(), corrected: new Set() });
+        return activityByProfile.get(id)!;
+      };
+      for (const e of punches) if (e.checkIn) act(e.profileId).punched.add(e.workDate);
+      for (const e of trainee) if (e.checkIn) act(e.profileId).punched.add(e.workDate);
+      for (const c of corrections) if (c.workDate >= start && c.workDate <= end) act(c.profileId).corrected.add(c.workDate);
+    }
+    const ready = !!(punches && trainee && corrections && holidaysByRange.has(range));
+    const today = todayISO();
+    const map = new Map<string, ReturnType<typeof leaveCounts>>();
+    for (const p of profiles)
+      map.set(
+        p.id,
+        leaveCounts(p, reqByProfile.get(p.id) ?? [], notesByProfile.get(p.id) ?? [], start, end, ready ? activityByProfile.get(p.id) ?? { punched: new Set(), corrected: new Set() } : null, holidays, today)
+      );
+    return map;
+  }, [range, ptoRequests, notesByMonth, profiles, entriesByMonth, traineeByRange, holidaysByRange, corrections]);
 
   const activeExemption = useMemo(() => {
     const map = new Map<string, CorrectionExemption>();
@@ -241,15 +482,15 @@ export function ExceededTimeCorrectionsTab({
     }
   };
 
-  // A month's punches load once, the first time someone in it is opened.
+  // A range's punches load once, the first time someone in it is opened.
   useEffect(() => {
-    if (!openId || entriesByMonth.has(month)) return;
+    if (entriesByMonth.has(range)) return;
     let cancelled = false;
     setEntriesLoading(true);
-    const { start, end } = monthBounds(month);
+    const { start, end } = rangeBounds(range);
     getCompanyTimecardEntries(start, end)
       .then((rows) => {
-        if (!cancelled) setEntriesByMonth((prev) => new Map(prev).set(month, rows));
+        if (!cancelled) setEntriesByMonth((prev) => new Map(prev).set(range, rows));
       })
       .finally(() => {
         if (!cancelled) setEntriesLoading(false);
@@ -257,11 +498,25 @@ export function ExceededTimeCorrectionsTab({
     return () => {
       cancelled = true;
     };
-  }, [openId, month, entriesByMonth]);
+  }, [range, entriesByMonth]);
+
+  useEffect(() => {
+    if (traineeByRange.has(range) && holidaysByRange.has(range)) return;
+    let cancelled = false;
+    const { start, end } = rangeBounds(range);
+    Promise.all([getCompanyTraineeEntries(start, end).catch(() => []), getCompanyHolidaysInRange(start, end).catch(() => [])]).then(([trainee, holidays]) => {
+      if (cancelled) return;
+      setTraineeByRange((prev) => new Map(prev).set(range, trainee));
+      setHolidaysByRange((prev) => new Map(prev).set(range, new Set(holidays.map((h) => h.date))));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [range, traineeByRange, holidaysByRange]);
 
   const rows = useMemo<PersonRow[]>(() => {
     if (!corrections) return [];
-    const { start, end } = monthBounds(month);
+    const { start, end } = rangeBounds(range);
     const byProfile = new Map<string, TimecardCorrectionRow[]>();
     for (const c of corrections) {
       if (c.workDate < start || c.workDate > end) continue;
@@ -278,16 +533,16 @@ export function ExceededTimeCorrectionsTab({
       const mine = (byProfile.get(p.id) ?? []).sort((a, b) => a.workDate.localeCompare(b.workDate));
       const exemptCount = mine.filter((c) => activeExemption.has(c.id)).length;
       const counted = mine.filter((c) => countsTowardLimit(c, activeExemption)).length;
-      if (overOnly && counted <= MAX_CORRECTIONS_PER_MONTH) continue;
+      if (overOnly && counted <= allowed) continue;
       out.push({ profile: p, group, corrections: mine, counted, exemptCount });
     }
     return out.sort(
       (a, b) => b.counted - a.counted || b.corrections.length - a.corrections.length || (a.profile.display_name || "").localeCompare(b.profile.display_name || "")
     );
-  }, [corrections, profiles, month, search, overOnly, activeExemption]);
+  }, [corrections, profiles, range, search, overOnly, activeExemption, allowed]);
 
   const regionRows = rows.filter((r) => regionOf(r.group) === region);
-  const overCount = (list: PersonRow[]) => list.filter((r) => r.counted > MAX_CORRECTIONS_PER_MONTH).length;
+  const overCount = (list: PersonRow[]) => list.filter((r) => r.counted > allowed).length;
 
   return (
     <div className="panel p-4">
@@ -295,13 +550,17 @@ export function ExceededTimeCorrectionsTab({
         <h2 className="text-base font-semibold">Exceeded Time Corrections</h2>
       </div>
       <p className="text-xs text-slate-400 mb-4">
-        Timecard corrections each person filed for {monthLabel(month)}, counted by the day being corrected. {MAX_CORRECTIONS_PER_MONTH} a month is the maximum — anyone over it is flagged. Rejected and exempt corrections don't count. Click a name to see their timecards for the month.
+        Timecard corrections each person filed for {rangeLabel(range)}, counted by the day being corrected. {MAX_CORRECTIONS_PER_MONTH} a month is the maximum ({allowed} for this range) — anyone over it is flagged. Rejected and exempt corrections don't count. V / S / P / H / U / B / A are leave days in the range — A = Unnoticed (marked, or pending/rejected leave) + Absent (missed workday, nothing filed); click a number for the days. Click a name to see their timecards.
       </p>
 
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <div>
-          <label className="block text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Month</label>
-          <input type="month" value={month} onChange={(e) => e.target.value && setMonth(e.target.value)} className="glass-input" />
+          <label className="block text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">From</label>
+          <input type="date" value={rangeFrom} onChange={(e) => e.target.value && setRangeFrom(e.target.value)} className="glass-input" />
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">To</label>
+          <input type="date" value={rangeTo} onChange={(e) => e.target.value && setRangeTo(e.target.value)} className="glass-input" />
         </div>
         <div className="flex-1 min-w-[200px]">
           <label className="block text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Search</label>
@@ -336,7 +595,7 @@ export function ExceededTimeCorrectionsTab({
         <EmptyState
           compact
           title={overOnly ? "No one is over the limit" : "No employees to show"}
-          hint={overOnly ? `Nobody in this list filed more than ${MAX_CORRECTIONS_PER_MONTH} corrections in ${monthLabel(month)}.` : undefined}
+          hint={overOnly ? `Nobody in this list filed more than ${allowed} corrections in ${rangeLabel(range)}.` : undefined}
         />
       ) : (
         <div className="space-y-5">
@@ -360,13 +619,18 @@ export function ExceededTimeCorrectionsTab({
                         <th className="px-3 py-2 font-semibold">Name</th>
                         <th className="px-3 py-2 font-semibold">{g.key === "PH" ? "Role" : "Branch"}</th>
                         <th className="px-3 py-2 font-semibold">Corrections</th>
+                        {LEAVE_COLUMNS.map((c) => (
+                          <th key={c.letter} className="w-9 px-1 py-2 text-center font-semibold" title={c.label}>
+                            {c.letter}
+                          </th>
+                        ))}
                         <th className="px-3 py-2 font-semibold">Status</th>
                       </tr>
                     </thead>
                     <tbody>
                       {list.map((r) => {
                         const n = r.counted;
-                        const over = n > MAX_CORRECTIONS_PER_MONTH;
+                        const over = n > allowed;
                         const open = openId === r.profile.id;
                         const counts = { approved: 0, pending: 0, rejected: 0 } as Record<string, number>;
                         for (const c of r.corrections) counts[c.status] = (counts[c.status] ?? 0) + 1;
@@ -387,8 +651,8 @@ export function ExceededTimeCorrectionsTab({
                                 {g.key === "PH" ? ROLE_LABELS[normalizeRole(r.profile.role)] ?? r.profile.role : r.profile.assigned_branch || "—"}
                               </td>
                               <td className="px-3 py-2 tabular-nums">
-                                <span className={`font-semibold ${over ? "text-red-300" : n === MAX_CORRECTIONS_PER_MONTH ? "text-amber-300" : ""}`}>{n}</span>
-                                <span className="text-slate-500"> / {MAX_CORRECTIONS_PER_MONTH}</span>
+                                <span className={`font-semibold ${over ? "text-red-300" : n === allowed ? "text-amber-300" : ""}`}>{n}</span>
+                                <span className="text-slate-500"> / {allowed}</span>
                                 {r.corrections.length > 0 && (
                                   <span className="ml-2 text-[11px] text-slate-400">
                                     {[
@@ -398,12 +662,30 @@ export function ExceededTimeCorrectionsTab({
                                   </span>
                                 )}
                               </td>
+                              {LEAVE_COLUMNS.map((c) => {
+                                const v = leaveByProfile.get(r.profile.id)?.counts[c.letter] ?? 0;
+                                return (
+                                  <td key={c.letter} className="w-9 px-1 py-2 text-center tabular-nums" title={`${c.label}: ${v} day${v === 1 ? "" : "s"}`}>
+                                    {v === 0 ? (
+                                      <span className="text-slate-600">·</span>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => setLeaveDetail({ profileId: r.profile.id, person: r.profile.display_name || r.profile.email || "", letter: c.letter })}
+                                        className={`min-w-[1.6rem] rounded px-1 font-semibold underline decoration-dotted underline-offset-2 hover:bg-white/10 ${c.letter === "A" ? "text-red-300" : ""}`}
+                                      >
+                                        {v}
+                                      </button>
+                                    )}
+                                  </td>
+                                );
+                              })}
                               <td className="px-3 py-2">
                                 {over ? (
                                   <span className="inline-flex items-center gap-1 rounded border border-red-500/40 bg-red-500/15 px-2 py-0.5 text-[11px] font-semibold text-red-300">
                                     <Flag className="h-3 w-3" /> Over limit
                                   </span>
-                                ) : n === MAX_CORRECTIONS_PER_MONTH ? (
+                                ) : n === allowed ? (
                                   <span className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-300">At limit</span>
                                 ) : (
                                   <span className="text-[11px] text-slate-500">OK</span>
@@ -412,13 +694,13 @@ export function ExceededTimeCorrectionsTab({
                             </tr>
                             {open && (
                               <tr className="border-b border-white/5 bg-black/30">
-                                <td colSpan={4} className="px-3 py-3">
+                                <td colSpan={4 + LEAVE_COLUMNS.length} className="px-3 py-3">
                                   <MonthTimecards
-                                    month={month}
+                                    range={range}
                                     profileId={r.profile.id}
                                     corrections={r.corrections}
-                                    entries={entriesByMonth.get(month)}
-                                    loading={entriesLoading && !entriesByMonth.has(month)}
+                                    entries={entriesByMonth.get(range)}
+                                    loading={entriesLoading && !entriesByMonth.has(range)}
                                     activeExemption={activeExemption}
                                     exemptionHistory={exemptionHistory}
                                     canExempt={canExempt}
@@ -439,6 +721,75 @@ export function ExceededTimeCorrectionsTab({
           })}
         </div>
       )}
+
+      {leaveDetail && (() => {
+        const col = LEAVE_COLUMNS.find((c) => c.letter === leaveDetail.letter)!;
+        const days = (leaveByProfile.get(leaveDetail.profileId)?.days ?? []).filter((d) => d.letter === leaveDetail.letter);
+        const isA = leaveDetail.letter === "A";
+        const sections = isA
+          ? [
+              { title: "Unnoticed", hint: "Marked Unnoticed on the Absent List, or a leave request that's still pending or was rejected.", days: days.filter((d) => d.aKind === "unnoticed") },
+              { title: "Absent", hint: "Missed workday — no clock-in, and nothing was filed or marked.", days: days.filter((d) => d.aKind === "absent") },
+            ]
+          : [{ title: "", hint: "", days }];
+        const dayList = (ds: string[]) => (ds.length === 1 ? fmtDay(ds[0]) : `${fmtDay(ds[0])} – ${fmtDay(ds[ds.length - 1])}`);
+        return (
+          <AppModal
+            size="md"
+            title={`${isA ? "Unnoticed + Absent" : col.label} — ${leaveDetail.person}`}
+            description={`${days.length} day${days.length === 1 ? "" : "s"} in ${rangeLabel(range)}`}
+            onClose={() => setLeaveDetail(null)}
+          >
+            <div className="space-y-5">
+              {sections.map((sec) => (
+                <section key={sec.title || "all"}>
+                  {sec.title && (
+                    <div className="mb-1.5">
+                      <h3 className="text-sm font-semibold">
+                        {sec.title} <span className="font-normal text-[var(--color-muted-foreground)]">({sec.days.length})</span>
+                      </h3>
+                      <p className="text-[11px] text-[var(--color-muted-foreground)]">{sec.hint}</p>
+                    </div>
+                  )}
+                  {sec.days.length === 0 ? (
+                    <p className="text-[13px] text-[var(--color-muted-foreground)]">None.</p>
+                  ) : (
+                    <div className="divide-y divide-[var(--color-panel-border)] rounded-lg border border-[var(--color-panel-border)]">
+                      {groupLeaveDays(sec.days).map((g) => {
+                        const r = g.request;
+                        const status = r ? (r.status === "denied" ? "rejected" : r.status) : null;
+                        return (
+                          <div key={g.key} className="px-3 py-2.5 text-[13px]">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-semibold">{dayList(g.days)}</span>
+                              {g.days.length > 1 && <span className="text-[11px] text-[var(--color-muted-foreground)]">{g.days.length} working days</span>}
+                              {r ? (
+                                <span className={`rounded border px-1.5 py-px text-[11px] font-semibold capitalize ${STATUS_STYLE[status!] ?? ""}`}>{status} request</span>
+                              ) : g.hrNote ? (
+                                <span className="rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-px text-[11px] font-semibold text-sky-300">Set by HR</span>
+                              ) : (
+                                <span className="rounded border border-red-500/30 bg-red-500/10 px-1.5 py-px text-[11px] font-semibold text-red-300">No clock-in · nothing filed</span>
+                              )}
+                            </div>
+                            {r && (
+                              <div className="mt-1">
+                                {LEAVE_COLUMNS.find((c) => c.letter === PTO_LETTER[r.ptoType])?.label} request · {fmtDay(r.startDate)}
+                                {r.endDate !== r.startDate ? ` – ${fmtDay(r.endDate)}` : ""}
+                                {r.reason && <div className="text-[var(--color-muted-foreground)]">"{r.reason}"</div>}
+                              </div>
+                            )}
+                            {!r && g.hrNote && <div className="mt-1">Absent List HR Status: {g.hrNote}</div>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
+              ))}
+            </div>
+          </AppModal>
+        );
+      })()}
 
       {dialog && (
         <AppModal
@@ -499,7 +850,7 @@ export function ExceededTimeCorrectionsTab({
 }
 
 function MonthTimecards({
-  month,
+  range,
   profileId,
   corrections,
   entries,
@@ -510,7 +861,7 @@ function MonthTimecards({
   onExempt,
   onRemove,
 }: {
-  month: string;
+  range: string;
   profileId: string;
   corrections: TimecardCorrectionRow[];
   entries: CompanyTimecardEntry[] | undefined;
@@ -546,7 +897,7 @@ function MonthTimecards({
     <div>
       <div className="mb-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-300">
         <span>
-          <strong>{monthLabel(month)}</strong>
+          <strong>{rangeLabel(range)}</strong>
         </span>
         <span>Days worked: <strong className="tabular-nums">{daysWorked}</strong></span>
         <span>Hours: <strong className="tabular-nums">{formatShift(workedMinutes)}</strong></span>
@@ -556,7 +907,7 @@ function MonthTimecards({
         )}
       </div>
       {days.length === 0 ? (
-        <p className="text-xs text-slate-400">No timecards this month.</p>
+        <p className="text-xs text-slate-400">No timecards in this range.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-xs">

@@ -3,7 +3,26 @@ import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { useAuth } from "@/lib/auth";
 import { MODULES } from "@/lib/modules";
-import { ArrowRight, Settings } from "lucide-react";
+import {
+  ArrowRight,
+  Settings,
+  LayoutDashboard,
+  Headset,
+  Calculator,
+  Users,
+  Truck,
+  Ticket,
+  FileCheck2,
+  BarChart3,
+  ShieldHalf,
+  Wrench,
+  Stethoscope,
+  Briefcase,
+  Compass,
+  Boxes,
+  type LucideIcon,
+} from "lucide-react";
+import { HomeToday, type PageCounts } from "@/components/home/HomeToday";
 import { useEffect, useRef, useState } from "react";
 import { runTour, takeQueuedTour } from "@/lib/tours/runTour";
 import { DESKTOP_GETTING_STARTED_TOUR, GETTING_STARTED_TARGET } from "@/lib/tours/desktopTours";
@@ -13,6 +32,23 @@ import { canAccessSubmodule } from "@/lib/submoduleAccess";
 import { useModuleRoleGateOverrides } from "@/lib/moduleAccess";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { ModuleAccessQuickEditModal } from "@/components/ModuleAccessQuickEditModal";
+
+/** One icon per module, shown in a tile tinted with the module's accent. */
+const MODULE_ICONS: Record<string, LucideIcon> = {
+  dashboard: LayoutDashboard,
+  csr: Headset,
+  accounting: Calculator,
+  hr: Users,
+  parts: Truck,
+  tickets: Ticket,
+  claims: FileCheck2,
+  report: BarChart3,
+  admin: ShieldHalf,
+  "branch-technician": Wrench,
+  triage: Stethoscope,
+  bizops: Briefcase,
+  guides: Compass,
+};
 
 export const Route = createFileRoute("/home")({
   ssr: false,
@@ -33,6 +69,7 @@ function Home() {
   // editor whose changes wouldn't even affect their own access to see it.
   const canManageAccess = role === "ADMIN" || role === "SUPERADMIN";
   const [accessModalFor, setAccessModalFor] = useState<{ mod: ModuleDef; submodule?: SubModuleDef } | null>(null);
+  const [pageCounts, setPageCounts] = useState<PageCounts>({});
 
   useEffect(() => {
     if (!ready) return;
@@ -74,16 +111,24 @@ function Home() {
     <>
       <AppHeader />
       <main className="max-w-[1400px] mx-auto px-6 py-8 page-fade-in">
-        <div className="mb-6">
-          <h1 className="text-3xl font-semibold tracking-tight">Welcome back</h1>
-          <p className="text-muted-foreground">Choose a module to get started.</p>
-        </div>
+        <HomeToday onCounts={setPageCounts} />
+        <h2 className="home-section-title">Your modules</h2>
         <div data-tour="home-modules" className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
           {MODULES.filter((m) => isModuleAllowed(role, m.slug, extraRoles) && isModuleAllowedForTrainee(isTrainee, m.slug) && isModuleAllowedForFrozen(isFrozen, m.slug)).map((m) => {
             const visibleSubmodules = m.submodules.filter((s) => !s.hiddenFromGrid && canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee, isFrozen));
+            const Icon = MODULE_ICONS[m.slug] ?? Boxes;
+            const moduleCount = visibleSubmodules.reduce((n, s) => n + (pageCounts[`${m.slug}/${s.slug}`] ?? 0), 0);
             return (
-            <div key={m.slug} data-tour={`home-module-${m.slug}`} className="module-card group relative flex h-full flex-col">
-              <div className="flex items-center gap-2.5 mb-3">
+            <div
+              key={m.slug}
+              data-tour={`home-module-${m.slug}`}
+              className="module-card home-module group relative flex h-full flex-col"
+              style={{ ["--accent" as string]: m.accent }}
+            >
+              <div className="flex items-center gap-3 mb-3">
+                <Link to="/m/$module" params={{ module: m.slug }} className="home-module-icon" aria-hidden tabIndex={-1}>
+                  <Icon />
+                </Link>
                 {canManageAccess && (
                   <button
                     type="button"
@@ -99,24 +144,25 @@ function Home() {
                     <Settings className="h-3 w-3" />
                   </button>
                 )}
-                <span className="inline-block h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: m.accent }} />
                 <Link to="/m/$module" params={{ module: m.slug }} className="flex flex-1 items-center gap-2 min-w-0">
-                  <h2 className="text-xl font-semibold truncate">{m.label}</h2>
-                  <ArrowRight className="ml-auto h-4 w-4 opacity-60 group-hover:translate-x-1 transition shrink-0" />
+                  <h2 className="text-lg font-semibold truncate">{m.label}</h2>
+                  {moduleCount > 0 && <span className="home-badge">{moduleCount}</span>}
+                  <ArrowRight className="ml-auto h-4 w-4 opacity-50 group-hover:opacity-100 group-hover:translate-x-1 transition shrink-0" />
                 </Link>
               </div>
               <Link to="/m/$module" params={{ module: m.slug }} className="block">
                 <p className="text-sm text-muted-foreground mb-4">{m.tagline}</p>
               </Link>
-              <ul className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+              <ul className="home-sublinks">
                 {visibleSubmodules.slice(0, 6).map((s) => (
                   <li key={s.slug} className="group/sub flex items-center gap-1 min-w-0">
                     <Link
-                      to="/m/$module"
-                      params={{ module: m.slug }}
-                      className="text-foreground/80 hover:text-foreground truncate min-w-0"
+                      to="/m/$module/$submodule"
+                      params={{ module: m.slug, submodule: s.slug }}
+                      className="home-sublink"
                     >
-                      • {s.title}
+                      <span className="truncate">{s.title}</span>
+                      {(pageCounts[`${m.slug}/${s.slug}`] ?? 0) > 0 && <span className="home-badge home-badge--sm">{pageCounts[`${m.slug}/${s.slug}`]}</span>}
                     </Link>
                     {canManageAccess && (
                       <button
@@ -137,8 +183,8 @@ function Home() {
                 ))}
               </ul>
               {visibleSubmodules.length > 6 && (
-                <Link to="/m/$module" params={{ module: m.slug }} className="text-xs text-muted-foreground mt-2 block hover:text-foreground">
-                  +{visibleSubmodules.length - 6} more
+                <Link to="/m/$module" params={{ module: m.slug }} className="home-more">
+                  +{visibleSubmodules.length - 6} more in {m.label}
                 </Link>
               )}
             </div>

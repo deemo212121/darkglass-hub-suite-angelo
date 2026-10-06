@@ -116,6 +116,18 @@ function plottedTypeLetter(t: PlottedType): string {
 // Thursday gets "Th" (not "T") so it's distinct from Tuesday in this narrow column header.
 const DOW_LABELS = ["S", "M", "T", "W", "Th", "F", "S"];
 
+/** Longest range the grid will draw (about 6 months). */
+const MAX_RANGE_DAYS = 186;
+
+/** This month's 1st through the last day of next month — the calendar's default view. */
+function defaultRange(): { from: string; to: string } {
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth(), 1);
+  const last = new Date(now.getFullYear(), now.getMonth() + 2, 0);
+  const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return { from: iso(first), to: iso(last) };
+}
+
 const PTO_TYPE_LABELS: Record<PtoType, string> = {
   vacation: "Vacation",
   sick: "Sick",
@@ -184,7 +196,8 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName, readOnly 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [requests, setRequests] = useState<PtoRequestRow[]>([]);
-  const [monthOffset, setMonthOffset] = useState(0);
+  const [rangeFrom, setRangeFrom] = useState(defaultRange().from);
+  const [rangeTo, setRangeTo] = useState(defaultRange().to);
 
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<PlottedType | "all">("all");
@@ -229,30 +242,28 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName, readOnly 
     void load();
   }, []);
 
-  // Two-month rolling window, same span the reference tracker shows —
-  // Prev/Next slides it a month at a time, Today snaps back.
-  const months = useMemo(() => {
-    const base = addMonths(new Date(), monthOffset);
-    return [base, addMonths(base, 1)];
-  }, [monthOffset]);
-
+  // Manual From–To range (defaults to this month + next). A range typed
+  // backwards is read in order; anything past MAX_RANGE_DAYS is cut off so
+  // the grid stays usable.
   const days = useMemo(() => {
     const out: { date: string; day: number; dow: string; dowIndex: number; monthLabel: string }[] = [];
-    for (const m of months) {
-      const count = daysInMonth(m.getFullYear(), m.getMonth());
-      for (let day = 1; day <= count; day++) {
-        const dt = new Date(m.getFullYear(), m.getMonth(), day);
-        out.push({
-          date: `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
-          day,
-          dow: DOW_LABELS[dt.getDay()],
-          dowIndex: dt.getDay(),
-          monthLabel: m.toLocaleDateString(undefined, { month: "long", year: "numeric" }),
-        });
-      }
+    const [a, b] = rangeFrom <= rangeTo ? [rangeFrom, rangeTo] : [rangeTo, rangeFrom];
+    const [ay, am, ad] = a.split("-").map(Number);
+    const [by, bm, bd] = b.split("-").map(Number);
+    if (!ay || !by) return out;
+    const end = new Date(by, bm - 1, bd);
+    for (let dt = new Date(ay, am - 1, ad); dt <= end && out.length < MAX_RANGE_DAYS; dt.setDate(dt.getDate() + 1)) {
+      out.push({
+        date: `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`,
+        day: dt.getDate(),
+        dow: DOW_LABELS[dt.getDay()],
+        dowIndex: dt.getDay(),
+        monthLabel: dt.toLocaleDateString(undefined, { month: "long", year: "numeric" }),
+      });
     }
     return out;
-  }, [months]);
+  }, [rangeFrom, rangeTo]);
+  const isDefaultRange = rangeFrom === defaultRange().from && rangeTo === defaultRange().to;
 
   // Company Holidays (Absent List's Holiday Calendar tab) — one shared
   // calendar for everyone, US and Philippines staff alike (per HR's
@@ -790,18 +801,20 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName, readOnly 
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" onClick={() => setMonthOffset((o) => o - 1)} className="btn text-xs px-2 py-1.5">
-            <ChevronLeft className="h-3.5 w-3.5" />
-          </button>
-          <span className="text-xs font-medium min-w-[13rem] text-center">
-            {months[0].toLocaleDateString(undefined, { month: "long", year: "numeric" })} – {months[1].toLocaleDateString(undefined, { month: "long", year: "numeric" })}
-          </span>
-          <button type="button" onClick={() => setMonthOffset((o) => o + 1)} className="btn text-xs px-2 py-1.5">
-            <ChevronRight className="h-3.5 w-3.5" />
-          </button>
-          {monthOffset !== 0 && (
-            <button type="button" onClick={() => setMonthOffset(0)} className="btn text-xs px-2.5 py-1.5">
-              Today
+          <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">From</label>
+          <input type="date" value={rangeFrom} onChange={(e) => e.target.value && setRangeFrom(e.target.value)} className="glass-input text-xs" />
+          <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">To</label>
+          <input type="date" value={rangeTo} onChange={(e) => e.target.value && setRangeTo(e.target.value)} className="glass-input text-xs" />
+          {!isDefaultRange && (
+            <button
+              type="button"
+              onClick={() => {
+                setRangeFrom(defaultRange().from);
+                setRangeTo(defaultRange().to);
+              }}
+              className="btn text-xs px-2.5 py-1.5"
+            >
+              Reset
             </button>
           )}
         </div>
@@ -919,18 +932,18 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName, readOnly 
       ) : error ? (
         <div className="p-4 text-sm text-red-300">{error}</div>
       ) : (
-        <div className="overflow-x-auto" onClick={() => roleDropdownOpen && setRoleDropdownOpen(false)}>
+        <div className="overflow-auto max-h-[calc(100vh-220px)]" onClick={() => roleDropdownOpen && setRoleDropdownOpen(false)}>
           <table className="border-collapse text-xs min-w-max">
             <thead>
               <tr>
-                <th className="sticky left-0 z-20 bg-slate-900 border-b border-r border-white/10 px-3 py-1.5 text-left font-semibold w-64">
+                <th className="sticky left-0 top-0 z-30 bg-slate-900 border-b border-r border-white/10 px-3 py-1.5 text-left font-semibold w-64">
                   Technician
                 </th>
                 {days.map((d) => (
                   <th
                     key={d.date}
-                    className={`border-b border-l border-white/5 px-1 py-1 text-center font-normal w-7 ${
-                      d.date === todayStr ? "bg-blue-500/20" : ""
+                    className={`sticky top-0 z-20 border-b border-l border-white/5 px-1 py-1 text-center font-normal w-7 ${
+                      d.date === todayStr ? "hr-cal-today bg-[color-mix(in_oklab,#3b82f6_20%,#0f172a)]" : "bg-slate-900"
                     }`}
                     title={d.monthLabel}
                   >
