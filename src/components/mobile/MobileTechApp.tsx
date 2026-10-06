@@ -1971,10 +1971,14 @@ function AppHeaderMobile({
     return () => { document.documentElement.style.removeProperty("--mt-header-h"); };
   }, [isOnline]);
 
-  const initials = userName
-    .split(/[\s.@]/)[0]
-    .slice(0, 2)
-    .toUpperCase() || "U";
+  // Same rule as the desktop header: "Justin Lee" -> "JL" (was "JU", the
+  // first two letters of the first name); an email uses its local part.
+  const initials = (() => {
+    const localPart = userName.includes("@") ? userName.split("@")[0] ?? userName : userName;
+    const parts = localPart.split(/[\s._-]/).filter(Boolean);
+    if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+    return localPart.slice(0, 2).toUpperCase() || "U";
+  })();
   return (
     <>
     {!isOnline && (
