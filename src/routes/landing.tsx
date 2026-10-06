@@ -131,11 +131,11 @@ function Landing() {
     // company has a login alias set (see migration 0066, 0085), that's the
     // only value accepted here — the canonical company ID only still works
     // for companies with no alias configured.
-    const typed = pendingCompany.toUpperCase();
+    const typed = pendingCompany.trim().toUpperCase();
     const matches = companyLoginAlias
-      ? companyLoginAlias.toUpperCase() === typed
+      ? companyLoginAlias.trim().toUpperCase() === typed
       : companyId
-        ? companyId.toUpperCase() === typed
+        ? companyId.trim().toUpperCase() === typed
         : false;
     if (companyId && !matches) {
       setErr("Invalid company ID for this account.");
@@ -174,20 +174,22 @@ function Landing() {
 
     try {
       // Determine if input is email or username
-      const isEmail = form.emailOrUsername.includes('@');
+      const loginName = form.emailOrUsername.trim();
+      const companyCode = form.company.trim();
+      const isEmail = loginName.includes('@');
       
-      let userEmail = form.emailOrUsername;
+      let userEmail = loginName;
       
       if (!isEmail) {
         // It's a username - look up the email from Supabase first.
         const { getUserByUsername, isValidCompanyCode } = await import("@/lib/supabase/users");
-        const user = await getUserByUsername(form.emailOrUsername, form.company);
+        const user = await getUserByUsername(loginName, companyCode);
 
         if (!user) {
           // Distinguish "wrong company code" from "wrong username" instead
           // of always blaming the username — a common case is typing a
           // company's old legacy code after it's switched to alias-only.
-          const companyOk = await isValidCompanyCode(form.company);
+          const companyOk = await isValidCompanyCode(companyCode);
           setErr(
             companyOk
               ? `User "${form.emailOrUsername}" not found in company ${form.company}`
@@ -214,7 +216,7 @@ function Landing() {
 
       // Hand off to the validation effect; keep the button in "submitting"
       // state until it resolves (it clears submitting + pendingCompany).
-      setPendingCompany(form.company);
+      setPendingCompany(companyCode);
 
       // Navigation will happen automatically via useEffect once validated.
     } catch (error: any) {
