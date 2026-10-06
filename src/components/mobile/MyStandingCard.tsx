@@ -46,15 +46,19 @@ export function MyStandingCard({ profileId, today }: { profileId: string; today:
 
   const older = () => setIdx((i) => Math.max(0, i - 1));
   const newer = () => setIdx((i) => Math.min(lastIdx, i + 1));
-  // Swipe left = newer, swipe right = older.
-  const touchX = useRef<number | null>(null);
-  const onTouchStart = (e: React.TouchEvent) => { touchX.current = e.touches[0].clientX; };
+  // Swipe left = newer, swipe right = older. Only a clearly sideways swipe
+  // counts, so scrolling Home up/down never flips the pay period.
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const onTouchStart = (e: React.TouchEvent) => { touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; };
   const onTouchEnd = (e: React.TouchEvent) => {
-    if (touchX.current === null) return;
-    const dx = e.changedTouches[0].clientX - touchX.current;
-    touchX.current = null;
-    if (dx <= -50) newer();
-    else if (dx >= 50) older();
+    const start = touchStart.current;
+    touchStart.current = null;
+    if (!start) return;
+    const dx = e.changedTouches[0].clientX - start.x;
+    const dy = e.changedTouches[0].clientY - start.y;
+    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    if (dx < 0) newer();
+    else older();
   };
 
   const card = { background: "var(--mt-surface)", border: "1px solid var(--mt-surface-border)", borderRadius: 14 } as const;
@@ -88,14 +92,14 @@ export function MyStandingCard({ profileId, today }: { profileId: string; today:
       <div className="flex items-center justify-between gap-2">
         <span className="text-[11px] font-bold uppercase tracking-wide text-slate-300">My standing</span>
         <div className="flex items-center gap-1">
-          <button type="button" onClick={older} disabled={idx === 0} aria-label="Previous pay period" className="rounded-md p-1 text-slate-300 disabled:opacity-30">
+          <button type="button" onClick={older} disabled={idx === 0} aria-label="Previous pay period" className="-m-2 rounded-md p-3 text-slate-300 disabled:opacity-30">
             <ChevronLeft className="h-4 w-4" />
           </button>
           <div className="text-right leading-tight">
             <div className={`text-[10px] font-semibold ${isCurrent ? "text-sky-300" : "text-slate-300"}`}>{label}</div>
             <div className="text-[10px] text-slate-400">{fmtPayDate(period.start)} – {fmtPayDate(period.end)}</div>
           </div>
-          <button type="button" onClick={newer} disabled={idx >= lastIdx} aria-label="Next pay period" className="rounded-md p-1 text-slate-300 disabled:opacity-30">
+          <button type="button" onClick={newer} disabled={idx >= lastIdx} aria-label="Next pay period" className="-m-2 rounded-md p-3 text-slate-300 disabled:opacity-30">
             <ChevronRight className="h-4 w-4" />
           </button>
           {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />}
