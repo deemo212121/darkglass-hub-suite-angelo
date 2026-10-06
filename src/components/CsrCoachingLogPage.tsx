@@ -29,6 +29,7 @@ import { SignaturePadControls } from "@/components/SignaturePad";
 import { AppModal } from "@/components/ui-kit/AppModal";
 import { EmptyState } from "@/components/ui-kit/EmptyState";
 import { TableSkeleton } from "@/components/ui-kit/TableSkeleton";
+import usihsLogo from "@/assets/us-in-home-services-logo.png";
 import { hasDashboardAccess } from "@/lib/dashboardAccess";
 import { getMyProfileId, getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
@@ -617,6 +618,7 @@ function CoachingLogModal({
   const dirty = (coachEditable && coachDirty) || (csrEditable && csrDirty);
 
   const allFilled = [f.summary, f.csrExplanation, f.coachingDiscussion, f.csrActionPlan, f.tlActionPlan].every((s) => s.trim());
+  const coachName = log.teamLeaderName || log.createdByName || "Coach";
   const canSignCsr = isTarget && !log.csrSignedAt && !deleted;
   const canSignCreator = isCreator && !!log.csrSignedAt && !log.creatorSignedAt && !deleted;
 
@@ -678,70 +680,81 @@ function CoachingLogModal({
         </>
       }
     >
-      <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 text-sm">
-        <HeaderRow label="CSR's Name"><span className="font-medium">{log.csrName}</span></HeaderRow>
-        <HeaderRow label="Coach">
-          {log.teamLeaderName || log.createdByName || "—"}
-        </HeaderRow>
-        <HeaderRow label="Ticket Number">
-          {coachEditable ? <input className="glass-input w-full text-sm py-1" value={f.ticketNumber} onChange={(e) => set("ticketNumber")(e.target.value)} /> : f.ticketNumber || "—"}
-        </HeaderRow>
-        <HeaderRow label="Team">
-          {coachEditable ? <input className="glass-input w-full text-sm py-1" value={f.team} onChange={(e) => set("team")(e.target.value)} /> : f.team || "—"}
-        </HeaderRow>
-        <HeaderRow label="Coaching Date">
-          {coachEditable ? <input type="date" className="glass-input w-full text-sm py-1" value={f.coachingDate} onChange={(e) => set("coachingDate")(e.target.value)} /> : fmtDate(f.coachingDate)}
-        </HeaderRow>
-      </div>
-
-      <div className="mt-5 space-y-4">
-        <Section n="I" title="Summary of the Scenario" who={log.teamLeaderName || log.createdByName || "Coach"} value={f.summary} onChange={set("summary")} editable={coachEditable} />
-        <Section n="II" title="CSR's Explanation" who={log.csrName} value={f.csrExplanation} onChange={set("csrExplanation")} editable={csrEditable} />
-        <Section n="III" title="Coaching Discussion" who={log.teamLeaderName || log.createdByName || "Coach"} value={f.coachingDiscussion} onChange={set("coachingDiscussion")} editable={coachEditable} />
-        <Section n="IV" title="CSR's Action Plan" who={log.csrName} value={f.csrActionPlan} onChange={set("csrActionPlan")} editable={csrEditable} />
-        <Section n="V" title="Coach's Action Plan" who={log.teamLeaderName || log.createdByName || "Coach"} value={f.tlActionPlan} onChange={set("tlActionPlan")} editable={coachEditable} />
-
-        <div>
-          <h3 className="text-sm font-semibold"><span className="inline-block w-8">VI.</span>Acknowledgement</h3>
-          <p className="text-sm text-muted-foreground ml-8 mt-1">I acknowledge that this coaching session was discussed and understood.</p>
-          <div className="ml-8 mt-3 grid gap-3 sm:grid-cols-2">
-            <SignatureSlot
-              label="CSR's Signature"
-              person={log.csrName}
-              signature={log.csrSignature}
-              signedName={log.csrSignedName}
-              signedAt={log.csrSignedAt}
-              pendingNote={log.csrSignedAt ? "" : "Signs first, once every section is filled in."}
-              action={
-                canSignCsr ? (
-                  <button
-                    type="button"
-                    className="btn btn-primary text-xs"
-                    disabled={!allFilled || saving}
-                    title={allFilled ? undefined : "Every section (I–V) must be filled in first."}
-                    onClick={async () => {
-                      if (dirty && !(await save())) return;
-                      setSigning("csr");
-                    }}
-                  >
-                    Sign
-                  </button>
-                ) : null
-              }
-            />
-            <SignatureSlot
-              label="Coach's Signature"
-              person={log.createdByName || "Creator"}
-              signature={log.creatorSignature}
-              signedName={log.creatorSignedName}
-              signedAt={log.creatorSignedAt}
-              pendingNote={log.creatorSignedAt ? "" : log.csrSignedAt ? "Signs second (whoever created this log)." : "Signs after the CSR."}
-              action={canSignCreator ? <button type="button" className="btn btn-primary text-xs" onClick={() => setSigning("creator")}>Sign</button> : null}
-            />
+      <div className="coaching-paper mx-auto w-full max-w-[816px] rounded-sm bg-white px-5 py-8 text-[#111] shadow-lg sm:px-14 sm:py-12" style={{ fontFamily: "Arial, Helvetica, sans-serif", colorScheme: "light" }}>
+        <div className="flex items-center gap-4 sm:gap-8">
+          <img src={usihsLogo} alt="US In Home Services" className="h-20 w-20 shrink-0 sm:h-28 sm:w-28" />
+          <div className="flex-1 text-center">
+            <div className="text-base font-bold tracking-wide sm:text-[22px]">CUSTOMER SERVICE REPRESENTATIVE</div>
+            <div className="mt-1 text-sm sm:text-[19px]">COACHING LOG ( CSR DEPARTMENT )</div>
           </div>
-          {isTarget && !log.csrSignedAt && !allFilled && !deleted && (
-            <p className="ml-8 mt-2 text-xs text-amber-300">Fill in II and IV (and wait for the coach to finish I, III and V) before signing. After you sign, the log can't be edited.</p>
-          )}
+        </div>
+
+        <div className="mt-8 space-y-1.5 text-sm sm:mt-12 sm:pl-6">
+          <PaperField label="CSR's Name">{log.csrName}</PaperField>
+          <PaperField label="Coach">{log.teamLeaderName || log.createdByName || ""}</PaperField>
+          <PaperField label="Ticket Number">
+            {coachEditable ? <input className={PAPER_INPUT} value={f.ticketNumber} onChange={(e) => set("ticketNumber")(e.target.value)} /> : f.ticketNumber}
+          </PaperField>
+          <PaperField label="Team">
+            {coachEditable ? <input className={PAPER_INPUT} value={f.team} onChange={(e) => set("team")(e.target.value)} /> : f.team}
+          </PaperField>
+          <PaperField label="Coaching Date">
+            {coachEditable ? <input type="date" className={PAPER_INPUT} value={f.coachingDate} onChange={(e) => set("coachingDate")(e.target.value)} /> : fmtDate(f.coachingDate)}
+          </PaperField>
+        </div>
+
+        <div className="mt-8 space-y-7 sm:pl-6">
+          <PaperSection n="I." title="SUMMARY OF THE SCENARIO:" who={coachName} value={f.summary} onChange={set("summary")} editable={coachEditable} />
+          <PaperSection n="II." title="CSR's EXPLANATION" who={log.csrName} value={f.csrExplanation} onChange={set("csrExplanation")} editable={csrEditable} />
+          <PaperSection n="III." title="COACHING DISCUSSION" who={coachName} value={f.coachingDiscussion} onChange={set("coachingDiscussion")} editable={coachEditable} />
+          <PaperSection n="IV." title="CSR's ACTION PLAN" who={log.csrName} value={f.csrActionPlan} onChange={set("csrActionPlan")} editable={csrEditable} />
+          <PaperSection n="V." title="COACH'S ACTION PLAN" who={coachName} value={f.tlActionPlan} onChange={set("tlActionPlan")} editable={coachEditable} />
+
+          <div>
+            <h3 className="flex text-sm font-bold">
+              <span className="w-10 shrink-0">VI.</span>
+              <span>ACKNOWLEDGEMENT</span>
+            </h3>
+            <p className="mt-2 pl-10 text-sm">I acknowledge that this coaching session was discussed and understood.</p>
+            <div className="mt-6 space-y-5 pl-10">
+              <PaperSignature
+                label="CSR's Signature"
+                person={log.csrName}
+                signature={log.csrSignature}
+                signedName={log.csrSignedName}
+                signedAt={log.csrSignedAt}
+                note={log.csrSignedAt ? "" : "Signs first, once every section is filled in."}
+                action={
+                  canSignCsr ? (
+                    <button
+                      type="button"
+                      className="btn btn-primary text-xs"
+                      disabled={!allFilled || saving}
+                      title={allFilled ? undefined : "Every section (I–V) must be filled in first."}
+                      onClick={async () => {
+                        if (dirty && !(await save())) return;
+                        setSigning("csr");
+                      }}
+                    >
+                      Sign
+                    </button>
+                  ) : null
+                }
+              />
+              <PaperSignature
+                label="Coach's Signature"
+                person={coachName}
+                signature={log.creatorSignature}
+                signedName={log.creatorSignedName}
+                signedAt={log.creatorSignedAt}
+                note={log.creatorSignedAt ? "" : log.csrSignedAt ? "Signs second (whoever created this log)." : "Signs after the CSR."}
+                action={canSignCreator ? <button type="button" className="btn btn-primary text-xs" onClick={() => setSigning("creator")}>Sign</button> : null}
+              />
+            </div>
+            {isTarget && !log.csrSignedAt && !allFilled && !deleted && (
+              <p className="mt-3 pl-10 text-xs text-amber-700">Fill in II and IV (and wait for the coach to finish I, III and V) before signing. After you sign, the log can't be edited.</p>
+            )}
+          </div>
         </div>
       </div>
 
@@ -801,13 +814,64 @@ function SignModal({ defaultName, onClose, onSign }: { defaultName: string; onCl
   );
 }
 
-function SignatureSlot({
+// Paper look (white page, black text) — inputs are styled explicitly so they
+// stay light in dark mode.
+const PAPER_INPUT =
+  "w-full max-w-xs rounded-none border-0 border-b border-gray-400 bg-transparent px-1 py-0.5 text-sm text-[#111] outline-none focus:border-blue-600";
+const PAPER_TEXTAREA =
+  "mt-2 w-full min-h-[96px] rounded border border-gray-300 bg-white p-2 text-sm text-[#111] outline-none focus:border-blue-600";
+
+function PaperField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex min-h-[28px] items-center gap-2">
+      <span className="w-32 shrink-0 font-bold">{label}:</span>
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  );
+}
+
+function PaperSection({
+  n,
+  title,
+  who,
+  value,
+  onChange,
+  editable,
+}: {
+  n: string;
+  title: string;
+  who: string;
+  value: string;
+  onChange: (v: string) => void;
+  editable: boolean;
+}) {
+  return (
+    <div>
+      <h3 className="flex flex-wrap items-baseline text-sm font-bold">
+        <span className="w-10 shrink-0">{n}</span>
+        <span>{title}</span>
+        <span className="ml-2 text-[11px] font-normal text-gray-500">— {who}</span>
+      </h3>
+      <div className="pl-10">
+        {editable ? (
+          <textarea className={PAPER_TEXTAREA} value={value} onChange={(e) => onChange(e.target.value)} />
+        ) : value ? (
+          <p className="mt-2 whitespace-pre-wrap text-sm">{value}</p>
+        ) : (
+          <p className="mt-2 text-sm italic text-gray-400">Not filled in yet.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PaperSignature({
   label,
   person,
   signature,
   signedName,
   signedAt,
-  pendingNote,
+  note,
   action,
 }: {
   label: string;
@@ -815,35 +879,22 @@ function SignatureSlot({
   signature: string | null;
   signedName: string | null;
   signedAt: string | null;
-  pendingNote: string;
+  note: string;
   action: React.ReactNode;
 }) {
+  const signed = !!(signedAt && signature);
   return (
-    <div className="rounded-lg border border-[var(--color-panel-border)] p-3">
-      <div className="text-xs font-semibold uppercase text-muted-foreground">{label}</div>
-      {signedAt && signature ? (
-        <>
-          <img src={signature} alt={`${label} — ${signedName || person}`} className="mt-2 h-14 w-auto max-w-full bg-white rounded" />
-          <div className="mt-1 text-xs">{signedName || person} · <span className="text-muted-foreground">Date: {fmtDateTime(signedAt)}</span></div>
-        </>
-      ) : (
-        <>
-          <div className="mt-2 text-sm">{person}</div>
-          <div className="mt-1 flex items-center justify-between gap-2">
-            <span className="text-xs text-muted-foreground">{pendingNote}</span>
-            {action}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function HeaderRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-2 min-h-[32px]">
-      <span className="w-32 shrink-0 font-semibold">{label}:</span>
-      <div className="flex-1 min-w-0">{children}</div>
+    <div>
+      <div className="flex flex-wrap items-end gap-x-2 gap-y-2 text-sm">
+        <span className="font-bold">{label}:</span>
+        <span className="flex h-14 w-56 items-end justify-center border-b border-[#111] sm:w-64">
+          {signed && <img src={signature!} alt={`${label} — ${signedName || person}`} title={signedName || person} className="max-h-[52px] w-auto max-w-full" />}
+        </span>
+        <span className="font-bold">Date:</span>
+        <span className="w-28 border-b border-[#111] pb-0.5 text-center">{signed ? fmtDate(signedAt) : " "}</span>
+        {!signed && action}
+      </div>
+      <div className="mt-1 text-[11px] text-gray-500">{signed ? `${signedName || person} · ${fmtDateTime(signedAt)}` : `${person}${note ? " — " + note : ""}`}</div>
     </div>
   );
 }
