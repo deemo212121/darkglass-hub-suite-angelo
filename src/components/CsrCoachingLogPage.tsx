@@ -9,8 +9,10 @@
  *   VI. Acknowledgement → the person coached signs first (every section
  *     filled), then whoever created the log. Both signed = locked.
  *
- * HR and Senior Managers can read everything; the person coached sees only
- * their own logs. Delete is a soft delete (restorable) and every create /
+ * CSR Manager / Admin / Super Admin see and manage everything (and are the
+ * only ones who can coach a TL); HR and Senior Managers read everything; a
+ * TL sees and manages only their own team's agents' logs (migration 0357);
+ * the person coached sees only their own logs. Delete is a soft delete (restorable) and every create /
  * edit / sign / delete / restore shows on the History tab. All of these
  * rules are enforced by the table's triggers and RLS too — this page only
  * mirrors them so people aren't offered buttons that would be refused.
@@ -48,9 +50,13 @@ interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
 const WRITE_ROLES = ["ADMIN", "SUPERADMIN", "CSR_MANAGER", "CSR_TEAM_LEADER"];
 const READ_ALL_ROLES = [...WRITE_ROLES, "HR", "SENIOR_MANAGER"];
+// Can coach anyone (agents and TLs) and sees every log. A TL only coaches the
+// agents on their own CSR team and only sees those logs (migration 0357).
+const MANAGER_ROLES = ["ADMIN", "SUPERADMIN", "CSR_MANAGER"];
 // Who can be coached / who can coach — picked by role, primary or extra.
 const COACHABLE_ROLES = new Set(["CSR", "CSR_AGENT", "CSR_TEAM_LEADER"]);
 const COACH_ROLES = new Set(["CSR_TEAM_LEADER", "CSR_MANAGER"]);
+const TL_ROLE = new Set(["CSR_TEAM_LEADER"]);
 
 function holds(p: ProfileRow, set: Set<string>): boolean {
   if (set.has(String(p.role || "").toUpperCase())) return true;
@@ -114,6 +120,7 @@ export function CsrCoachingLogPage({ mod, sub }: Props) {
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const canWrite = hasDashboardAccess(WRITE_ROLES, role, extraRoles);
   const canReadAll = hasDashboardAccess(READ_ALL_ROLES, role, extraRoles);
+  const isManager = hasDashboardAccess(MANAGER_ROLES, role, extraRoles);
 
   const [myId, setMyId] = useState<string | null>(null);
   const [logs, setLogs] = useState<CoachingLog[]>([]);
@@ -230,7 +237,7 @@ export function CsrCoachingLogPage({ mod, sub }: Props) {
       </div>
       <p className="text-sm text-muted-foreground mb-5 sm:ml-[52px]">
         {canReadAll
-          ? "Coaching sessions for the CSR department. The person coached fills in II and IV and signs first, then whoever created the log signs — after that it's locked."
+          ? `${isManager || !canWrite ? "Coaching sessions for the CSR department." : "Coaching sessions for your team."} The person coached fills in II and IV and signs first, then whoever created the log signs — after that it's locked.`
           : "Your coaching sessions. Fill in II (your explanation) and IV (your action plan), then sign."}
       </p>
 
@@ -356,7 +363,7 @@ export function CsrCoachingLogPage({ mod, sub }: Props) {
                     </td>
                     {canWrite && (
                       <td className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
-                        {tab === "deleted" ? (
+                        {l.csrProfileId === myId ? null : tab === "deleted" ? (
                           <button type="button" className="btn text-xs" onClick={() => setConfirm({ log: l, action: "restore" })}>
                             <RotateCcw className="h-3.5 w-3.5" /> Restore
                           </button>
@@ -380,6 +387,7 @@ export function CsrCoachingLogPage({ mod, sub }: Props) {
           users={users}
           teams={teams}
           myId={myId}
+          isManager={isManager}
           onClose={() => setCreating(false)}
           onCreated={(l) => {
             setLogs((prev) => [l, ...prev]);
@@ -435,17 +443,27 @@ function NewCoachingLogModal({
   users,
   teams,
   myId,
+  isManager,
   onClose,
   onCreated,
 }: {
   users: ProfileRow[];
   teams: CsrTeamComposition | null;
   myId: string | null;
+  isManager: boolean;
   onClose: () => void;
   onCreated: (l: CoachingLog) => void;
 }) {
   const active = useMemo(() => users.filter((u) => u.is_active).sort((a, b) => (a.display_name || "").localeCompare(b.display_name || "")), [users]);
-  const coachable = useMemo(() => active.filter((u) => u.id !== myId && holds(u, COACHABLE_ROLES)), [active, myId]);
+  // Managers: every CSR agent and TL. A TL: only the agents (not other TLs)
+  // on their own CSR team(s) — same rule the database enforces.
+  const coachable = useMemo(() => {
+    const base = active.filter((u) => u.id !== myId && holds(u, COACHABLE_ROLES));
+    if (isManager) return base;
+    const myTeams = new Set((teams?.members ?? []).filter((m) => m.profileId === myId).map((m) => m.teamId));
+    const teammates = new Set((teams?.members ?? []).filter((m) => myTeams.has(m.teamId)).map((m) => m.profileId));
+    return base.filter((u) => teammates.has(u.id) && !holds(u, TL_ROLE));
+  }, [active, myId, isManager, teams]);
   const coaches = useMemo(() => active.filter((u) => holds(u, COACH_ROLES)), [active]);
 
   const [csrId, setCsrId] = useState("");
@@ -519,6 +537,13 @@ function NewCoachingLogModal({
             <option value="">Select CSR…</option>
             {coachable.map((u) => <option key={u.id} value={u.id}>{u.display_name || u.username}</option>)}
           </select>
+          {!isManager && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {coachable.length === 0
+                ? "No agents found on your CSR team — ask a CSR Manager to add you to a team in Team Composition."
+                : "Agents on your own CSR team. A CSR Manager creates logs for Team Leaders."}
+            </p>
+          )}
         </Field>
         <Field label="Team Leader">
           <select className="glass-input w-full text-sm" value={tlId} onChange={(e) => setTlId(e.target.value)}>
