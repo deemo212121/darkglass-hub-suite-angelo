@@ -18,7 +18,7 @@
  * mirrors them so people aren't offered buttons that would be refused.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { ChevronLeft, ClipboardCheck, History, Lock, Plus, RotateCcw, Trash2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -219,26 +219,29 @@ export function CsrCoachingLogPage({ mod, sub }: Props) {
   };
 
   return (
-    <main className="max-w-[1400px] mx-auto px-4 py-6">
-      <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
-        <Link to="/home" className="hover:text-foreground">🏠</Link><span>›</span>
-        <Link to="/m/$module" params={{ module: mod.slug }} className="hover:text-foreground">{mod.label}</Link><span>›</span>
-        <span className="text-foreground font-medium">{sub.title}</span>
-      </div>
-      <div className="flex flex-wrap items-center gap-3 mb-1">
-        <button type="button" onClick={goBack} className="btn"><ChevronLeft className="h-4 w-4" /></button>
-        <h1 className="text-xl font-bold">Coaching Log</h1>
-        {canWrite && (
-          <button type="button" onClick={() => setCreating(true)} className="btn btn-primary ml-auto">
-            <Plus className="h-4 w-4" /> New Coaching Log
+    <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
+      <div className="mb-8">
+        <div className="flex items-center gap-3 mb-6">
+          <button type="button" onClick={goBack} className="btn hover:bg-white/15">
+            <ChevronLeft className="h-4 w-4" /> {mod.label}
           </button>
-        )}
+        </div>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-4xl font-display font-bold tracking-tight mb-2">{sub.title}</h1>
+            <p className="text-lg text-muted-foreground">
+              {canReadAll
+                ? `${isManager || !canWrite ? "Coaching sessions for the CSR department." : "Coaching sessions for your team."} The person coached fills in II and IV and signs first, then whoever created the log signs — after that it's locked.`
+                : "Your coaching sessions. Fill in II (your explanation) and IV (your action plan), then sign."}
+            </p>
+          </div>
+          {canWrite && (
+            <button type="button" onClick={() => setCreating(true)} className="btn btn-primary">
+              <Plus className="h-4 w-4" /> New Coaching Log
+            </button>
+          )}
+        </div>
       </div>
-      <p className="text-sm text-muted-foreground mb-5 sm:ml-[52px]">
-        {canReadAll
-          ? `${isManager || !canWrite ? "Coaching sessions for the CSR department." : "Coaching sessions for your team."} The person coached fills in II and IV and signs first, then whoever created the log signs — after that it's locked.`
-          : "Your coaching sessions. Fill in II (your explanation) and IV (your action plan), then sign."}
-      </p>
 
       {error && <div className="panel mb-4 border-red-500/30 bg-red-500/5 text-sm text-red-300 px-4 py-3">{error}</div>}
 
