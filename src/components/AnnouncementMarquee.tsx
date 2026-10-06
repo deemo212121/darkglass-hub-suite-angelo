@@ -13,11 +13,16 @@ import { sampleTicker } from "@/lib/announcementSamples";
 
 const REFRESH_MS = 5 * 60_000;
 
+// The header remounts on every page change; remember the last load so the
+// bar doesn't disappear and pop back (or flash samples) while it refetches.
+let lastLoad: { items: MarqueeItem[]; enabled: boolean } | null = null;
+
 export function AnnouncementMarquee() {
   const { ready, uid } = useAuth();
   const navigate = useNavigate();
-  const [items, setItems] = useState<MarqueeItem[]>([]);
-  const [enabled, setEnabled] = useState(true);
+  const [items, setItems] = useState<MarqueeItem[]>(() => lastLoad?.items ?? []);
+  const [enabled, setEnabled] = useState(() => lastLoad?.enabled ?? true);
+  const [loaded, setLoaded] = useState(() => lastLoad !== null);
   const [, setTick] = useState(0);
 
   useEffect(() => {
@@ -26,9 +31,11 @@ export function AnnouncementMarquee() {
     const load = () => {
       setTick((t) => t + 1); // preview samples live in memory — re-read them too
       Promise.all([getTickerItems(), getTickerEnabled()]).then(([rows, on]) => {
+        lastLoad = { items: rows, enabled: on };
         if (!alive) return;
         setItems(rows);
         setEnabled(on);
+        setLoaded(true);
       });
     };
     load();
@@ -43,6 +50,7 @@ export function AnnouncementMarquee() {
 
   // Real lines: active ones, none while the ticker is switched off.
   // Local preview only: sample lines when there are no real lines at all.
+  if (!loaded) return null;
   const isSample = items.length === 0;
   const shown = isSample ? sampleTicker() : enabled ? items.filter((i) => i.isActive) : [];
   if (shown.length === 0) return null;
