@@ -50,6 +50,8 @@ export interface MasterPhContractorAgreementFormData {
   contractorSignatureDataUrl: string;
   employerDateSigned: string;
   employerSignatureDataUrl: string;
+  /** Name of the HR/manager who countersigned — set when the employer signature is added. Missing on documents countersigned before it was recorded. */
+  employerName?: string;
 }
 
 const escapeHtml = (s: string) =>
@@ -170,7 +172,7 @@ export function buildMasterPhContractorAgreementBodyMarkup(data: MasterPhContrac
       <p style="font-style:italic;">By signing below, I certify that I have read, understood, and voluntarily agree to all the terms, policies, and conditions outlined in this Master Philippines Independent Contractor Comprehensive Agreement (including Personal Data, Confidentiality, and Leave Policies).</p>
 
       ${signRow("Contractor Signature", data.employeeName, data.contractorDateSigned, data.contractorSignatureDataUrl)}
-      ${signRow("Employer Representative Signature", "", data.employerDateSigned, data.employerSignatureDataUrl)}
+      ${signRow("Employer Representative Signature", data.employerName || "", data.employerDateSigned, data.employerSignatureDataUrl)}
     </div>
   `;
 }
