@@ -140,6 +140,9 @@ function Landing() {
     if (companyId && !matches) {
       setErr("Invalid company ID for this account.");
       setSubmitting(false);
+      // logout() ends in a full navigation to /landing, which would wipe
+      // the message above — stash it for the restore effect below.
+      sessionStorage.setItem("ahs:loginErrorAfterReload", "Invalid company ID for this account.");
       // Keep pendingCompany set until sign-out actually completes — the
       // redirect effect below only bails out while pendingCompany is
       // truthy, and Firebase's signOut + the auth listener clearing
@@ -267,6 +270,10 @@ function Landing() {
     const pending = sessionStorage.getItem("ahs:loginErrorAfterReload");
     if (pending) {
       setErr(pending);
+      // Below lg the form (and its error banner) lives in the bottom sheet,
+      // which starts closed after the reload — reopen it so the message is
+      // actually seen instead of the page looking like it just refreshed.
+      setMobileSignInOpen(true);
       sessionStorage.removeItem("ahs:loginErrorAfterReload");
     }
   }, []);
