@@ -47,9 +47,9 @@ export function PartsDoneBanner() {
         <button
           type="button"
           onClick={() => window.dispatchEvent(new Event(OPEN_PARTS_DONE_EVENT))}
-          className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
+          className="btn btn-primary btn-sm"
         >
-          <CheckCheck className="h-3.5 w-3.5" /> DONE
+          <CheckCheck /> DONE
         </button>
       </div>
       <ul className="mt-2 space-y-1 pl-7">
