@@ -2575,3 +2575,59 @@ export async function logTicketAuditEntry(entry: {
     throw new Error(error.message);
   }
 }
+
+/**
+ * Who worked on which ticket since `sinceIso`: ticket number → profile ids.
+ * Sources that record the person: ticket_audit_log (status / technician /
+ * schedule changes, changed_by — written by the trg_ticket_audit trigger),
+ * ticket_comments (created_by) and visits (updated_by). Used by the CSR To
+ * Do List to drop tickets a CSR already touched today. Rows with no person
+ * (system / sync writes) are skipped. These tables reference tickets by a
+ * composite FK that embedded selects don't resolve reliably, so ticket ids
+ * are mapped to ticket numbers in a second query.
+ */
+export async function getTicketTouchersSince(sinceIso: string): Promise<Map<string, Set<string>>> {
+  // PostgREST caps each response (~1000 rows), so page through.
+  const pageAll = async (table: string, actorColumn: string, tsColumn: string): Promise<{ ticketId: string; actor: string }[]> => {
+    const rows: { ticketId: string; actor: string }[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase
+        .from(table)
+        .select(`ticket_id, ${actorColumn}`)
+        .gte(tsColumn, sinceIso)
+        .not(actorColumn, "is", null)
+        .order(tsColumn)
+        .range(from, from + 999);
+      if (error) throw error;
+      for (const r of (data ?? []) as unknown as Record<string, string | null>[]) {
+        if (r.ticket_id && r[actorColumn]) rows.push({ ticketId: r.ticket_id, actor: r[actorColumn] as string });
+      }
+      if (!data || data.length < 1000) break;
+    }
+    return rows;
+  };
+  const soft = (p: Promise<{ ticketId: string; actor: string }[]>, what: string) =>
+    p.catch((err) => {
+      console.error(`getTicketTouchersSince (${what}):`, err);
+      return [] as { ticketId: string; actor: string }[];
+    });
+  const parts = await Promise.all([
+    pageAll("ticket_audit_log", "changed_by", "created_at"),
+    soft(pageAll("ticket_comments", "created_by", "created_at"), "comments"),
+    soft(pageAll("visits", "updated_by", "updated_at"), "visits"),
+  ]);
+  const actorsById = new Map<string, Set<string>>();
+  for (const r of parts.flat()) {
+    if (!actorsById.has(r.ticketId)) actorsById.set(r.ticketId, new Set());
+    actorsById.get(r.ticketId)!.add(r.actor);
+  }
+
+  const out = new Map<string, Set<string>>();
+  const idList = Array.from(actorsById.keys());
+  for (let i = 0; i < idList.length; i += 200) {
+    const { data, error } = await supabase.from("tickets").select("id, ticket_no").in("id", idList.slice(i, i + 200));
+    if (error) throw error;
+    for (const r of data ?? []) if (r.ticket_no) out.set(r.ticket_no, actorsById.get(r.id) ?? new Set());
+  }
+  return out;
+}

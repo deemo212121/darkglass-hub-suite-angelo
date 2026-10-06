@@ -9,6 +9,12 @@
  *   CSR Acknowledge     (CSR-Acknowledged)         — 0 days aging / beyond 0
  *   OP Waiting          (OP-Waiting for Part)      — 3 or more status spent days
  *
+ * Only tickets NO CSR has touched yet today (Central time): once a CSR
+ * changes its status / technician / schedule, comments on it, or edits a
+ * visit, it drops off until tomorrow — and comes back then if it's still in
+ * one of these queues. A ticket a technician or the system moved into a
+ * queue today hasn't been touched by CSR, so it still shows.
+ *
  * No queue selected = every to-do ticket. "Aging" = calendar days since the
  * ticket was created; "status spent" = calendar days since its last status
  * change (status_changed_at is only stamped on a change, so a ticket still
@@ -19,12 +25,29 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { RefreshCw } from "lucide-react";
 import type { Ticket } from "@/lib/ticketData";
-import { getCompanyTickets } from "@/lib/supabase/tickets";
+import { getCompanyTickets, getTicketTouchersSince } from "@/lib/supabase/tickets";
+import { getCompanyUsers } from "@/lib/supabase/users";
+import { normalizeRole } from "@/lib/roleLabels";
 import { LOCATIONS, normalizeLocationName } from "@/lib/locations";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 
 const OP_WAITING_MIN_DAYS = 3;
+const CSR_ROLES = new Set(["CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER"]);
+const COMPANY_TZ = "America/Chicago";
+
+/** Today's midnight in Central time, as a UTC ISO timestamp. */
+function centralMidnightIso(now: Date = new Date()): string {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", { timeZone: COMPANY_TZ, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" })
+      .formatToParts(now)
+      .map((p) => [p.type, p.value])
+  );
+  // Central wall-clock time read as if it were UTC, minus the real instant = the zone offset.
+  const wallAsUtc = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute, +parts.second);
+  const offsetMs = wallAsUtc - Math.floor(now.getTime() / 1000) * 1000;
+  return new Date(Date.UTC(+parts.year, +parts.month - 1, +parts.day) - offsetMs).toISOString();
+}
 const PAGE_SIZE_OPTIONS = [25, 50, 75, 100, 125] as const;
 
 type BucketKey = "voicemail" | "sched-0" | "sched-over" | "ack-0" | "ack-over" | "op-3plus";
@@ -130,6 +153,7 @@ const NUMERIC_SORT = new Set<ColumnKey>(["aging", "spent"]);
 
 export function CSRToDoListContent() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [touchedToday, setTouchedToday] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
   const [bucket, setBucket] = useState<BucketKey | null>(null);
@@ -142,8 +166,28 @@ export function CSRToDoListContent() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    getCompanyTickets()
-      .then((rows) => !cancelled && setTickets(rows))
+    Promise.all([
+      getCompanyTickets(),
+      // A failure here just means nothing gets hidden — better than an empty list.
+      getTicketTouchersSince(centralMidnightIso()).catch((err) => {
+        console.error("CSR To Do List: failed to load today's ticket activity:", err);
+        return new Map<string, Set<string>>();
+      }),
+      getCompanyUsers().catch(() => []),
+    ])
+      .then(([rows, touchers, users]) => {
+        if (cancelled) return;
+        // Every CSR role counts, primary or extra.
+        const csrIds = new Set(
+          users.filter((u) => [u.role, ...(u.extra_roles ?? [])].some((r) => CSR_ROLES.has(normalizeRole(r)))).map((u) => u.id)
+        );
+        const touched = new Set<string>();
+        for (const [ticketNo, actors] of touchers) {
+          for (const a of actors) if (csrIds.has(a)) { touched.add(ticketNo); break; }
+        }
+        setTouchedToday(touched);
+        setTickets(rows);
+      })
       .catch((err) => {
         console.error("CSR To Do List: failed to load tickets:", err);
         if (!cancelled) setTickets([]);
@@ -158,11 +202,17 @@ export function CSRToDoListContent() {
   const allRows = useMemo<Row[]>(() => {
     const out: Row[] = [];
     for (const t of tickets) {
+      if (touchedToday.has(t.ticketNo)) continue;
       const b = ALL_BUCKETS.find((def) => def.test(t));
       if (b) out.push({ ticket: t, bucket: b.key, aging: agingDays(t), spent: statusSpentDays(t) });
     }
     return out;
-  }, [tickets]);
+  }, [tickets, touchedToday]);
+
+  const doneToday = useMemo(
+    () => tickets.filter((t) => touchedToday.has(t.ticketNo) && ALL_BUCKETS.some((def) => def.test(t))).length,
+    [tickets, touchedToday]
+  );
 
   // Search + branch narrow everything, including the queue counts.
   const scopedRows = useMemo(() => {
@@ -317,6 +367,11 @@ export function CSRToDoListContent() {
       <div className="flex flex-wrap items-center justify-between gap-3 mb-2 text-sm">
         <span className="text-muted-foreground">
           Total Tickets: <span className="font-semibold text-foreground">{sortedRows.length}</span>
+          {doneToday > 0 && (
+            <span className="ml-3 text-xs" title="Tickets in these queues a CSR already worked on today — they come back tomorrow if still open">
+              · <span className="text-emerald-400 font-semibold">{doneToday}</span> already touched today
+            </span>
+          )}
         </span>
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <button type="button" onClick={() => setReloadKey((n) => n + 1)} className={pill(false)} title="Reload tickets">

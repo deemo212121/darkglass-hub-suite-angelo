@@ -15,11 +15,17 @@
  *     migration 0317's RLS enforces this at the row level too, not just in
  *     this component, since this page is opened directly by individual
  *     agents rather than gated behind a manager-only page.
+ *
+ * Duplicates (numbers compared digits-only — normalizeGhPhone) are flagged,
+ * never blocked or dropped — they still count toward GH. The agent sees a
+ * warning while typing a number already logged today and a "Duplicate" tag
+ * on repeats; the manager view flags a number one CSR logged more than once
+ * (red) and a number several CSRs logged the same day (amber).
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, ChevronRight, ChevronLeft as ChevronLeftNav, Loader2, Phone, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, ChevronLeft as ChevronLeftNav, Loader2, Phone, Plus, Trash2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { isCsrManagerRole } from "@/lib/roleLabels";
@@ -30,11 +36,14 @@ import {
   addGhTrackerEntry,
   updateGhTrackerEntry,
   deleteGhTrackerEntry,
+  normalizeGhPhone,
   type CsrGhTrackerEntry,
 } from "@/lib/supabase/csrGhTracker";
 import { todayIso } from "@/components/CSRTeamDailyReport";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
+
+const phoneKey = (phone: string) => normalizeGhPhone(phone) || phone.trim().toLowerCase();
 
 function addDaysISO(date: string, days: number): string {
   const d = new Date(date + "T00:00:00");
@@ -71,10 +80,19 @@ function AgentView({ mod, sub, profileId }: { mod: ModuleDef; sub: SubModuleDef;
 
   useEffect(() => { void load(); }, [load]);
 
+  // How many times each number appears in today's list (2+ = duplicate).
+  const keyCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const e of entries) m.set(phoneKey(e.phoneNumber), (m.get(phoneKey(e.phoneNumber)) ?? 0) + 1);
+    return m;
+  }, [entries]);
+  const typedIsDuplicate = phone.trim() !== "" && (keyCounts.get(phoneKey(phone)) ?? 0) > 0;
+
   const handleAdd = async () => {
     const trimmed = phone.trim();
     if (!trimmed) return;
     setAdding(true);
+    setError(null);
     try {
       const created = await addGhTrackerEntry(profileId, today, trimmed, note.trim() || null);
       setEntries((prev) => [...prev, created]);
@@ -97,6 +115,7 @@ function AgentView({ mod, sub, profileId }: { mod: ModuleDef; sub: SubModuleDef;
     const trimmed = editPhone.trim();
     if (!trimmed) return;
     setBusyId(id);
+    setError(null);
     try {
       await updateGhTrackerEntry(id, { phoneNumber: trimmed, note: editNote.trim() || null });
       setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, phoneNumber: trimmed, note: editNote.trim() || null } : e)));
@@ -122,11 +141,6 @@ function AgentView({ mod, sub, profileId }: { mod: ModuleDef; sub: SubModuleDef;
 
   return (
     <main className="max-w-160 mx-auto px-4 py-6">
-      <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
-        <Link to="/home" className="hover:text-foreground">🏠</Link><span>›</span>
-        <Link to="/m/$module" params={{ module: mod.slug }} className="hover:text-foreground">{mod.label}</Link><span>›</span>
-        <span className="text-foreground font-medium">{sub.title}</span>
-      </div>
       <div className="flex items-center gap-3 mb-1">
         <button type="button" onClick={goBack} className="btn"><ChevronLeft className="h-4 w-4" /></button>
         <h1 className="text-xl font-bold">GH Tracker</h1>
@@ -147,7 +161,7 @@ function AgentView({ mod, sub, profileId }: { mod: ModuleDef; sub: SubModuleDef;
             onChange={(e) => setPhone(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") void handleAdd(); }}
             placeholder="Phone number"
-            className="glass-input flex-1"
+            className={`glass-input flex-1 ${typedIsDuplicate ? "border-amber-500/60" : ""}`}
           />
           <input
             type="text"
@@ -166,12 +180,24 @@ function AgentView({ mod, sub, profileId }: { mod: ModuleDef; sub: SubModuleDef;
             {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Add
           </button>
         </div>
+        {typedIsDuplicate && (
+          <p className="mt-2 text-xs text-amber-400 inline-flex items-center gap-1">
+            <AlertTriangle className="h-3.5 w-3.5" /> Already logged today — it will be flagged as a duplicate.
+          </p>
+        )}
       </div>
 
       <div className="panel p-0 overflow-hidden">
         <div className="px-4 py-2.5 border-b border-white/10 bg-white/5 flex items-center justify-between">
           <h2 className="text-sm font-semibold">Today's Numbers</h2>
-          <span className="text-xs text-muted-foreground">{entries.length} logged</span>
+          <span className="text-xs text-muted-foreground">
+            {entries.length} logged
+            {entries.length > keyCounts.size && (
+              <span className="text-red-400 ml-1">
+                ({entries.length - keyCounts.size} duplicate{entries.length - keyCounts.size === 1 ? "" : "s"})
+              </span>
+            )}
+          </span>
         </div>
         {loading ? (
           <div className="px-4 py-10 text-center text-muted-foreground text-sm"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Loading…</div>
@@ -193,6 +219,9 @@ function AgentView({ mod, sub, profileId }: { mod: ModuleDef; sub: SubModuleDef;
                   <>
                     <span className="flex-1 text-sm">
                       {e.phoneNumber}
+                      {(keyCounts.get(phoneKey(e.phoneNumber)) ?? 0) > 1 && (
+                        <span className="ml-2 rounded bg-red-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-red-400">Duplicate</span>
+                      )}
                       {e.note && <span className="text-muted-foreground ml-2 text-xs">— {e.note}</span>}
                     </span>
                     <button type="button" onClick={() => startEdit(e)} className="text-xs text-blue-400 hover:text-blue-300">Edit</button>
@@ -260,13 +289,26 @@ function ManagerView({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
 
   const maxRows = columns.reduce((m, c) => Math.max(m, c.rows.length), 0);
 
+  // Duplicate detection for the day: per CSR (same number logged twice by
+  // one person) and across CSRs (same number logged by several people).
+  const dupes = useMemo(() => {
+    const perAgent = new Map<string, number>(); // `${profileId}|${key}` → count
+    const agentsByKey = new Map<string, Set<string>>();
+    for (const e of entries) {
+      const k = phoneKey(e.phoneNumber);
+      perAgent.set(`${e.profileId}|${k}`, (perAgent.get(`${e.profileId}|${k}`) ?? 0) + 1);
+      if (!agentsByKey.has(k)) agentsByKey.set(k, new Set());
+      agentsByKey.get(k)!.add(e.profileId);
+    }
+    let repeatEntries = 0;
+    for (const n of perAgent.values()) if (n > 1) repeatEntries += n - 1;
+    let sharedNumbers = 0;
+    for (const set of agentsByKey.values()) if (set.size > 1) sharedNumbers++;
+    return { perAgent, agentsByKey, repeatEntries, sharedNumbers };
+  }, [entries]);
+
   return (
-    <main className="max-w-[1600px] mx-auto px-4 py-6">
-      <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
-        <Link to="/home" className="hover:text-foreground">🏠</Link><span>›</span>
-        <Link to="/m/$module" params={{ module: mod.slug }} className="hover:text-foreground">{mod.label}</Link><span>›</span>
-        <span className="text-foreground font-medium">{sub.title}</span>
-      </div>
+    <main className="w-full px-6 py-4">
       <div className="flex flex-wrap items-center gap-3 mb-1">
         <button type="button" onClick={goBack} className="btn"><ChevronLeft className="h-4 w-4" /></button>
         <h1 className="text-xl font-bold">GH Tracker</h1>
@@ -281,7 +323,24 @@ function ManagerView({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
           <button type="button" onClick={() => setDate(todayIso())} className="btn text-sm">Today</button>
         </div>
       </div>
-      <p className="text-sm text-muted-foreground mb-5 ml-[52px]">Every CSR's logged numbers for {date}, read-only here.</p>
+      <div className="mb-3 ml-[52px] flex flex-wrap items-center gap-3 text-xs">
+        <span className="text-sm text-muted-foreground">Every CSR&apos;s logged numbers for {date}, read-only here.</span>
+      {!loading && (dupes.repeatEntries > 0 || dupes.sharedNumbers > 0) && (
+        <>
+          <AlertTriangle className="h-4 w-4 text-amber-400" />
+          {dupes.repeatEntries > 0 && (
+            <span className="rounded bg-red-500/15 px-2 py-0.5 font-semibold text-red-400">
+              {dupes.repeatEntries} repeated entr{dupes.repeatEntries === 1 ? "y" : "ies"} (same CSR, same number)
+            </span>
+          )}
+          {dupes.sharedNumbers > 0 && (
+            <span className="rounded bg-amber-500/15 px-2 py-0.5 font-semibold text-amber-400">
+              {dupes.sharedNumbers} number{dupes.sharedNumbers === 1 ? "" : "s"} logged by more than one CSR
+            </span>
+          )}
+        </>
+      )}
+      </div>
 
       {error && (
         <div className="panel mb-4 border-red-500/30 bg-red-500/5 text-sm text-red-300 px-4 py-3">{error}</div>
@@ -293,13 +352,21 @@ function ManagerView({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
         ) : columns.length === 0 ? (
           <div className="px-4 py-12 text-center text-muted-foreground text-sm">No numbers logged by anyone for this date yet.</div>
         ) : (
-          <div className="overflow-auto max-h-[75vh]">
-            <table className="text-sm border-collapse">
+          <div className="overflow-auto max-h-[calc(100vh-220px)]">
+            <table className="w-full text-sm border-collapse">
               <thead className="sticky top-0 z-10">
                 <tr className="divide-x divide-white/10">
                   {columns.map((c) => (
-                    <th key={c.profileId} className="px-3 py-2 bg-blue-500/20 text-blue-100 font-semibold text-left whitespace-nowrap sticky top-0">
-                      {c.name} <span className="font-normal text-blue-200/70">({c.rows.length})</span>
+                    <th key={c.profileId} className="px-3 py-2 bg-blue-950 text-blue-100 font-semibold text-left whitespace-nowrap sticky top-0 min-w-[200px] border-b border-blue-500/30">
+                      {c.name}{" "}
+                      <span className="font-normal text-blue-200/70">
+                        ({c.rows.length})
+                      </span>
+                      {c.rows.length > new Set(c.rows.map((r) => phoneKey(r.phoneNumber))).size && (
+                        <span className="ml-1.5 rounded bg-red-500/20 px-1.5 py-0.5 text-[11px] font-semibold text-red-300">
+                          {c.rows.length - new Set(c.rows.map((r) => phoneKey(r.phoneNumber))).size} dup
+                        </span>
+                      )}
                     </th>
                   ))}
                 </tr>
@@ -309,8 +376,16 @@ function ManagerView({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
                   <tr key={i} className="divide-x divide-white/10 odd:bg-blue-500/5">
                     {columns.map((c) => {
                       const row = c.rows[i];
+                      const k = row ? phoneKey(row.phoneNumber) : "";
+                      const repeated = row ? (dupes.perAgent.get(`${c.profileId}|${k}`) ?? 0) > 1 : false;
+                      const others = row ? Array.from(dupes.agentsByKey.get(k) ?? []).filter((id) => id !== c.profileId) : [];
+                      const otherNames = others.map((id) => profileById.get(id)?.display_name || profileById.get(id)?.email || "another CSR");
                       return (
-                        <td key={c.profileId} className="px-3 py-1.5 whitespace-nowrap">
+                        <td
+                          key={c.profileId}
+                          className={`px-3 py-1.5 whitespace-nowrap ${repeated ? "bg-red-500/15 text-red-300" : others.length ? "bg-amber-500/15 text-amber-200" : ""}`}
+                          title={repeated ? `Logged more than once by ${c.name}` : others.length ? `Also logged by ${otherNames.join(", ")}` : undefined}
+                        >
                           {row ? (
                             <>
                               {row.phoneNumber}

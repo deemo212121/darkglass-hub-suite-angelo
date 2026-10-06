@@ -75,7 +75,7 @@ import { BrandedLoader } from "@/components/BrandedLoader";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole } from "@/lib/roleLabels";
-import { getCompanyUsers, getMyProfileId, getEmployeeInfoByProfileIds, type ProfileRow, type EmployeeInfo } from "@/lib/supabase/users";
+import { getCompanyUsers, getMyProfileId, getEmployeeInfoByProfileIds, invalidateCompanyUsersCache, type ProfileRow, type EmployeeInfo } from "@/lib/supabase/users";
 import { getCsrTeamComposition, type CsrTeamRow, type CsrTeamMemberRow } from "@/lib/supabase/csrTeams";
 import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, sickYearWindow, sickDaysUsed, type PtoRequestRow } from "@/lib/supabase/pto";
 import { getCompanySalaryEntries, entryEffectiveOn, type SalaryEntryRow } from "@/lib/supabase/salary";
@@ -164,6 +164,14 @@ const MANAGER_TIER_ROLES = new Set(["ADMIN", "SUPERADMIN", "CSR_MANAGER", "BIZOP
 function isCsrRosterProfile(p: ProfileRow): boolean {
   const extras = p.extra_roles || [];
   return p.role === "CSR_AGENT" || p.role === "CSR_TEAM_LEADER" || extras.includes("CSR_AGENT") || extras.includes("CSR_TEAM_LEADER");
+}
+
+// A team row only stays on the report while that person still holds a CSR
+// role (primary or extra) — someone moved to another department drops off
+// even if nobody removed them from their csr_team_members team yet.
+const CSR_ROLES = new Set(["CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER"]);
+function holdsCsrRole(p: ProfileRow): boolean {
+  return [p.role, ...(p.extra_roles || [])].some((r) => CSR_ROLES.has(normalizeRole(r)));
 }
 
 // America/Chicago, not raw UTC — matches the rest of the app's day-boundary
@@ -497,6 +505,30 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { void load(); }, [reportDate, rangeEnd]);
 
+  // Pick up user changes made elsewhere (deactivations, role changes, team
+  // moves) when the tab comes back into focus — just the roster, not the
+  // whole report. Not a realtime subscription: profiles changes on every
+  // presence heartbeat, which would refetch constantly.
+  useEffect(() => {
+    const refreshRoster = () => {
+      if (document.visibilityState !== "visible") return;
+      invalidateCompanyUsersCache();
+      void Promise.all([getCsrTeamComposition(), getCompanyUsers()])
+        .then(([composition, allProfiles]) => {
+          setTeams(composition.teams);
+          setMembers(composition.members);
+          setProfiles(allProfiles);
+        })
+        .catch((err) => console.error("Daily Report: roster refresh failed:", err));
+    };
+    window.addEventListener("focus", refreshRoster);
+    document.addEventListener("visibilitychange", refreshRoster);
+    return () => {
+      window.removeEventListener("focus", refreshRoster);
+      document.removeEventListener("visibilitychange", refreshRoster);
+    };
+  }, []);
+
   const profileById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
 
   const ptoByProfile = useMemo(() => {
@@ -534,7 +566,7 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
     const map = new Map<string, Row[]>();
     for (const m of members) {
       const profile = profileById.get(m.profileId);
-      if (!profile || !profile.is_active) continue;
+      if (!profile || !profile.is_active || !holdsCsrRole(profile)) continue;
       const arr = map.get(m.teamId) ?? [];
       arr.push({ profile, isLeader: m.isLeader });
       map.set(m.teamId, arr);
@@ -994,9 +1026,10 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
               <thead>
                 <tr className="border-b border-white/10 bg-white/5">
                   <th className="px-1.5 py-0.5 text-left text-[9px] text-muted-foreground uppercase">Ext</th>
-                  <th className="px-1.5 py-0.5 text-left text-[9px] text-muted-foreground uppercase">AM</th>
-                  <th className="px-1.5 py-0.5 text-left text-[9px] text-muted-foreground uppercase">PM</th>
-                  <th className="px-1.5 py-0.5" />
+                  <th className="px-1 py-0.5 text-center text-[9px] text-muted-foreground uppercase">AM</th>
+                  <th className="px-1 py-0.5 text-center text-[9px] text-muted-foreground uppercase">PM</th>
+                  <th className="px-1 py-0.5 text-center text-[9px] text-muted-foreground uppercase">Total</th>
+                  <th className="px-1 py-0.5" />
                 </tr>
               </thead>
               <tbody>
@@ -1012,9 +1045,10 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
                           className="glass-input text-[10px] py-0.5 px-1 rounded-md w-16"
                         />
                       </td>
-                      <NumberCell value={c?.amCount ?? null} onSave={(v) => handleExtCountSave(ext.id, "amCount", v)} width="w-10" readOnly={!isSingleDay} />
-                      <NumberCell value={c?.pmCount ?? null} onSave={(v) => handleExtCountSave(ext.id, "pmCount", v)} width="w-10" readOnly={!isSingleDay} />
-                      <td className="px-1 py-0.5">
+                      <NumberCell value={c?.amCount ?? null} onSave={(v) => handleExtCountSave(ext.id, "amCount", v)} width="w-12" readOnly={!isSingleDay} boxed />
+                      <NumberCell value={c?.pmCount ?? null} onSave={(v) => handleExtCountSave(ext.id, "pmCount", v)} width="w-12" readOnly={!isSingleDay} boxed />
+                      <td className="px-1 py-0.5 text-center font-semibold tabular-nums">{(c?.amCount ?? 0) + (c?.pmCount ?? 0)}</td>
+                      <td className="px-1 py-0.5 text-center">
                         <button type="button" onClick={() => void handleDeleteExtension(ext.id, ext.code)} className="text-red-400 hover:text-red-300 p-0.5" title="Remove extension">
                           <Trash2 className="h-3 w-3" />
                         </button>
@@ -1024,8 +1058,9 @@ export function CSRTeamDailyReport({ mod }: { mod: ModuleDef; sub: SubModuleDef 
                 })}
                 <tr className="border-t border-white/10 bg-white/5 font-semibold">
                   <td className="px-1.5 py-1">TOTAL</td>
-                  <td className="px-1.5 py-1">{extTotals.am}</td>
-                  <td className="px-1.5 py-1">{extTotals.pm}</td>
+                  <td className="px-1 py-1 text-center tabular-nums">{extTotals.am}</td>
+                  <td className="px-1 py-1 text-center tabular-nums">{extTotals.pm}</td>
+                  <td className="px-1 py-1 text-center tabular-nums">{extTotals.am + extTotals.pm}</td>
                   <td />
                 </tr>
               </tbody>
@@ -1462,13 +1497,14 @@ function blankTotals(reportDate: string): CsrDailyReportTotals {
   return { reportDate, inboundCalls: null, outboundCalls: null, updateCsrCalls: null, mistakes: null, hu: null, mc: null };
 }
 
-function NumberCell({ value, onSave, width = "w-14", tier, readOnly }: { value: number | null; onSave: (v: number | null) => void; width?: string; tier?: PerfTier | null; readOnly?: boolean }) {
+/** `boxed`: draw a visible input box (Extension Number table) instead of the main grid's borderless cell. */
+function NumberCell({ value, onSave, width = "w-14", tier, readOnly, boxed }: { value: number | null; onSave: (v: number | null) => void; width?: string; tier?: PerfTier | null; readOnly?: boolean; boxed?: boolean }) {
   // Threshold coloring lives on the number's own text color now (title
   // still carries the tier name on hover) — no separate dot, per the
   // reference report's "just color the number" convention.
   const tierColor = tier ? PERF_TIER_COLOR[tier] : undefined;
   return (
-    <td className="px-2 py-1 text-center">
+    <td className={boxed ? "px-1 py-0.5 text-center" : "px-2 py-1 text-center"}>
       {readOnly ? (
         <span
           className={`text-[11px] font-medium text-muted-foreground text-center inline-block ${width}`}
@@ -1487,7 +1523,9 @@ function NumberCell({ value, onSave, width = "w-14", tier, readOnly }: { value: 
             if ((parsed ?? null) !== (value ?? null)) onSave(Number.isFinite(parsed as number) ? parsed : null);
           }}
           title={tier ? PERF_TIER_LABEL[tier] : undefined}
-          className={`bg-transparent border-0 text-[11px] text-center focus:outline-none focus:ring-1 focus:ring-white/20 rounded ${width}`}
+          className={boxed
+            ? `glass-input text-[10px] py-0.5 px-1 rounded-md text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none ${width}`
+            : `bg-transparent border-0 text-[11px] text-center focus:outline-none focus:ring-1 focus:ring-white/20 rounded ${width}`}
           style={tierColor ? { color: tierColor } : undefined}
         />
       )}
