@@ -9,7 +9,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { Hash, MessageCircle, MessageSquare } from "lucide-react";
+import { ArrowRight, CheckCheck, Hash, MessageCircle } from "lucide-react";
+import { Avatar, GroupLabel, MenuEmpty, MenuHeader, fullTime, groupByDay, previewText, shortTime } from "@/components/header/menuKit";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -328,77 +329,59 @@ export function MessagesMenu() {
           )}
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="end"
-        sideOffset={8}
-        className="z-[110] w-[24rem] rounded-xl border border-[var(--color-panel-border)] bg-[var(--color-card)] p-1.5 backdrop-blur-xl shadow-2xl"
-      >
-        <DropdownMenuLabel className="px-2 py-2">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-white">Messages</div>
-              <div className="text-[11px] text-muted-foreground">{unreadTotal} unread</div>
-            </div>
-            <div className="flex items-center gap-2">
-              {unreadTotal > 0 && (
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); void markAllRead(); }}
-                  className="rounded-full px-2 py-1 text-[10px] font-semibold text-blue-300 hover:bg-white/5 hover:text-blue-200 transition whitespace-nowrap"
-                >
-                  Mark all read
-                </button>
-              )}
-              <MessageSquare className="h-4 w-4 text-blue-200" />
-            </div>
-          </div>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator className="bg-[var(--color-panel-border)]" />
-        <DropdownMenuItem
-          onSelect={() =>
-            navigate({
-              to: "/m/$module/$submodule",
-              params: { module: "admin", submodule: "internal-message-support" },
-            })
+      <DropdownMenuContent align="end" sideOffset={10} className="hm-panel z-[110]">
+        <MenuHeader
+          icon={<MessageCircle />}
+          title="Messages"
+          unread={unreadTotal}
+          actions={
+            unreadTotal > 0 ? (
+              <button type="button" className="hm-action" onClick={(e) => { e.stopPropagation(); void markAllRead(); }}>
+                <CheckCheck /> Mark all read
+              </button>
+            ) : undefined
           }
-          className="gap-2 rounded-lg px-3 py-2 cursor-pointer text-foreground"
+        />
+        <div className="hm-scroll">
+          {recent.length === 0 ? (
+            <MenuEmpty icon={<MessageCircle />} text="No conversations yet." />
+          ) : (
+            groupByDay(recent, (p) => p.lastMessage?.created_at ?? "1970-01-01T00:00:00Z").map((g) => (
+              <div key={g.label}>
+                <GroupLabel>{g.label}</GroupLabel>
+                {g.items.map((p) => {
+                  const last = p.lastMessage;
+                  // DMs: drop the sender name when it's the other person (it's already the row's name); keep "You:" for your own.
+                  const fromMe = !!last && !!profileId && last.sender_id === profileId;
+                  const text = last
+                    ? p.kind === "dm"
+                      ? `${fromMe ? "You: " : ""}${previewText(last.body, last.sender_name)}`
+                      : `${last.sender_name ? `${fromMe ? "You" : last.sender_name.split(" ")[0]}: ` : ""}${previewText(last.body, last.sender_name)}`
+                    : "No messages yet";
+                  return (
+                    <DropdownMenuItem key={`${p.kind}-${p.id}`} onSelect={() => goTo(p)} className={`hm-row ${p.unread > 0 ? "hm-row--unread" : "hm-row--read"}`}>
+                      <Avatar name={p.title} icon={p.kind === "channel" ? <Hash /> : undefined} />
+                      <span className="hm-row-body">
+                        <span className="hm-row-top">
+                          <span className="hm-row-name">{p.title}</span>
+                          <span className="hm-row-time" title={fullTime(last?.created_at)}>{shortTime(last?.created_at)}</span>
+                        </span>
+                        <span className="hm-row-text hm-row-text--1">{text}</span>
+                      </span>
+                      {p.unread > 0 && <span className="hm-count">{p.unread > 99 ? "99+" : p.unread}</span>}
+                    </DropdownMenuItem>
+                  );
+                })}
+              </div>
+            ))
+          )}
+        </div>
+        <DropdownMenuItem
+          onSelect={() => navigate({ to: "/m/$module/$submodule", params: { module: "admin", submodule: "internal-message-support" } })}
+          className="hm-footer"
         >
-          <MessageCircle className="h-4 w-4 text-blue-200" /> Open Team Messenger
+          Open Team Messenger <ArrowRight />
         </DropdownMenuItem>
-        <DropdownMenuSeparator className="bg-[var(--color-panel-border)]" />
-        {recent.length === 0 ? (
-          <div className="px-3 py-4 text-sm text-slate-400">No conversations yet.</div>
-        ) : (
-          recent.map((p) => (
-            <DropdownMenuItem
-              key={`${p.kind}-${p.id}`}
-              onSelect={() => goTo(p)}
-              className="group flex cursor-pointer items-start gap-3 rounded-lg px-3 py-3"
-            >
-              <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/10 bg-blue-400/10 text-blue-200 text-[11px] font-bold">
-                {p.kind === "channel" ? <Hash className="h-4 w-4" /> : initials(p.title)}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center justify-between gap-3">
-                  <span className="truncate text-sm font-semibold text-white">{p.title}</span>
-                  <span className="shrink-0 text-[11px] text-slate-400">{formatTimestamp(p.lastMessage?.created_at)}</span>
-                </span>
-                <span className="mt-1 flex items-center justify-between gap-3">
-                  <span className={`line-clamp-1 block text-xs leading-5 ${p.unread > 0 ? "text-slate-100" : "text-slate-400"}`}>
-                    {p.lastMessage
-                      ? `${p.lastMessage.sender_name ? p.lastMessage.sender_name + ": " : ""}${p.lastMessage.body}`
-                      : "No messages yet"}
-                  </span>
-                  {p.unread > 0 && (
-                    <span className="shrink-0 rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-bold text-white">
-                      {p.unread > 99 ? "99+" : p.unread}
-                    </span>
-                  )}
-                </span>
-              </span>
-            </DropdownMenuItem>
-          ))
-        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

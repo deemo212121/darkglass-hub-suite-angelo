@@ -6,7 +6,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { Megaphone, CircleAlert } from "lucide-react";
+import { ArrowRight, CheckCheck, Megaphone } from "lucide-react";
+import { Avatar, GroupLabel, MenuEmpty, MenuHeader, fullTime, groupByDay, previewText, shortTime } from "@/components/header/menuKit";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,6 +28,7 @@ import {
   markThreadRead,
 } from "@/lib/supabase/messaging";
 import { getMyProfileId } from "@/lib/supabase/users";
+import { getAnnouncementTitles } from "@/lib/supabase/announcementMarquee";
 
 const HIGHER_UP_ROLES = new Set([
   "SUPERADMIN",
@@ -73,6 +75,7 @@ export function AnnouncementsMenu({ onViewAll }: AnnouncementsMenuProps = {}) {
   const [profileId, setProfileId] = useState<string | null>(null);
   const [channel, setChannel] = useState<ChannelRow | null>(null);
   const [messages, setMessages] = useState<MessageRow[]>([]);
+  const [titles, setTitles] = useState<Map<string, string>>(new Map());
   const [unreadCount, setUnreadCount] = useState(0);
 
   // Real, server-side unread count (same message_reads-backed query
@@ -102,9 +105,10 @@ export function AnnouncementsMenu({ onViewAll }: AnnouncementsMenuProps = {}) {
         if (cancelled) return;
         setProfileId(pid);
         setChannel(ch);
-        const rows = await getChannelMessages(ch.id, 50);
+        const [rows, t] = await Promise.all([getChannelMessages(ch.id, 50), getAnnouncementTitles()]);
         if (cancelled) return;
         setMessages(rows);
+        setTitles(t.titles);
         if (pid) await refreshUnread(pid, ch.id);
       } catch {
         // Silently ignore — the badge just shows 0 if Supabase isn't reachable.
@@ -179,60 +183,59 @@ export function AnnouncementsMenu({ onViewAll }: AnnouncementsMenuProps = {}) {
           )}
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="end"
-        sideOffset={8}
-        className="z-[110] w-[22rem] rounded-xl border border-[var(--color-panel-border)] bg-[var(--color-card)] p-1.5 backdrop-blur-xl shadow-2xl"
-      >
-        <DropdownMenuLabel className="px-2 py-2">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-white">Announcements</div>
-              <div className="text-[11px] text-muted-foreground">{unreadCount} unread</div>
-            </div>
-            <Megaphone className="h-4 w-4 text-amber-200" />
-          </div>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator className="bg-[var(--color-panel-border)]" />
-        {recentAnnouncements.length === 0 ? (
-          <div className="px-3 py-4 text-sm text-slate-400">No announcements available.</div>
-        ) : (
-          recentAnnouncements.map((m) => (
-            <DropdownMenuItem
-              key={m.id}
-              onSelect={async () => {
-                await markOneRead();
-                goToAnnouncements();
-              }}
-              className="group flex cursor-pointer items-start gap-3 rounded-lg px-3 py-3"
-            >
-              <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full border border-white/10 bg-amber-400/10 text-amber-200">
-                <CircleAlert className="h-4 w-4" />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center justify-between gap-3">
-                  <span className="truncate text-sm font-semibold text-white">{m.sender_name || "Unknown"}</span>
-                  <span className="shrink-0 text-[11px] text-slate-400">{formatTimestamp(m.created_at)}</span>
-                </span>
-                <span className="mt-1 line-clamp-2 block text-xs leading-5 text-slate-200">
-                  {m.body}
-                </span>
-              </span>
-            </DropdownMenuItem>
-          ))
-        )}
-        <DropdownMenuSeparator className="bg-[var(--color-panel-border)]" />
-        <DropdownMenuItem
-          onSelect={goToAnnouncements}
-          className="gap-2 rounded-lg px-3 py-2 cursor-pointer text-foreground"
-        >
-          <Megaphone className="h-4 w-4 text-amber-200" /> Open announcements center
+      <DropdownMenuContent align="end" sideOffset={10} className="hm-panel z-[110]" style={{ ["--hm-accent" as string]: "#f59e0b" }}>
+        <MenuHeader
+          icon={<Megaphone />}
+          title="Announcements"
+          unread={unreadCount}
+          actions={
+            unreadCount > 0 ? (
+              <button type="button" className="hm-action" onMouseDown={(e) => { e.preventDefault(); void markOneRead(); }}>
+                <CheckCheck /> Mark all read
+              </button>
+            ) : undefined
+          }
+        />
+        <div className="hm-scroll">
+          {recentAnnouncements.length === 0 ? (
+            <MenuEmpty icon={<Megaphone />} text="No announcements yet." />
+          ) : (
+            groupByDay(recentAnnouncements, (m) => m.created_at).map((g) => (
+              <div key={g.label}>
+                <GroupLabel>{g.label}</GroupLabel>
+                {g.items.map((m) => {
+                  // There's one read pointer for the whole channel, so the newest `unreadCount` posts are the unread ones.
+                  const unread = recentAnnouncements.indexOf(m) < unreadCount;
+                  const title = titles.get(m.id);
+                  return (
+                    <DropdownMenuItem
+                      key={m.id}
+                      onSelect={async () => {
+                        await markOneRead();
+                        goToAnnouncements();
+                      }}
+                      className={`hm-row ${unread ? "hm-row--unread" : "hm-row--read"}`}
+                    >
+                      <Avatar name={m.sender_name} />
+                      <span className="hm-row-body">
+                        <span className="hm-row-top">
+                          <span className="hm-row-name">{m.sender_name || "Unknown"}</span>
+                          <span className="hm-row-time" title={fullTime(m.created_at)}>{shortTime(m.created_at)}</span>
+                        </span>
+                        {title && <span className="hm-row-title block">{title}</span>}
+                        <span className="hm-row-text">{previewText(m.body)}</span>
+                      </span>
+                      {unread && <span className="hm-dot" aria-label="Unread" />}
+                    </DropdownMenuItem>
+                  );
+                })}
+              </div>
+            ))
+          )}
+        </div>
+        <DropdownMenuItem onSelect={goToAnnouncements} className="hm-footer">
+          Open announcements <ArrowRight />
         </DropdownMenuItem>
-        {canPost ? (
-          <div className="px-3 pb-1 pt-2 text-[11px] text-slate-400">You can post announcements from the announcements center.</div>
-        ) : (
-          <div className="px-3 pb-1 pt-2 text-[11px] text-slate-400">Read-only access for your role.</div>
-        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
