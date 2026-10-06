@@ -16,7 +16,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ReceiptMark } from "@/components/ReceiptMark";
 import { getDmReceipts, receiptFor, useDmReceipt, type DmReceiptState } from "@/lib/supabase/readReceipts";
 import { useNavigate } from "@tanstack/react-router";
-import { MessageCircle, X, Send, Search, ChevronLeft, ExternalLink } from "lucide-react";
+import { MessageCircle, X, Send, Search, ChevronLeft, ExternalLink, MoreHorizontal, CornerUpLeft, Forward, Copy } from "lucide-react";
+import { toast } from "sonner";
+import {
+  QUICK_REACTIONS,
+  getMessageLinks,
+  getReactions,
+  saveMessageLink,
+  subscribeReactions,
+  toggleReaction,
+  type MessageLink,
+  type ReactionGroup,
+} from "@/lib/supabase/messageExtras";
 import { useAuth } from "@/lib/auth";
 import {
   listMyDmInbox,
@@ -93,6 +104,13 @@ export function FloatingMessenger() {
   const [activeThread, setActiveThread] = useState<ActiveThread | null>(null);
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [composer, setComposer] = useState("");
+  // Reactions / replies / forwards (migration 0360) — same as the Team Messenger page.
+  const [reactions, setReactions] = useState<Map<string, ReactionGroup[]>>(new Map());
+  const [links, setLinks] = useState<Map<string, MessageLink>>(new Map());
+  const [replyTo, setReplyTo] = useState<MessageRow | null>(null);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [forwardMsg, setForwardMsg] = useState<MessageRow | null>(null);
+  const [forwardSearch, setForwardSearch] = useState("");
   const [sending, setSending] = useState(false);
   const [knock, setKnock] = useState<Knock | null>(null);
   // Channel unreads never show in this DM-only panel's list, but the badge
@@ -265,6 +283,12 @@ export function FloatingMessenger() {
     try {
       const row = await sendMessage({ dmThreadId: activeThread.id, senderId: profileId, senderName: currentUserName, body });
       setMessages((prev) => [...prev, row]);
+      if (replyTo) {
+        const replyToId = replyTo.id;
+        setReplyTo(null);
+        setLinks((prev) => new Map(prev).set(row.id, { replyToId, forwardedFromMessageId: null, forwardedFromName: null }));
+        saveMessageLink(row.id, { replyToId }).catch((err) => toast.error(err instanceof Error ? err.message : "Couldn't save the reply link."));
+      }
       applyIncomingMessage(row, { bumpUnread: false });
     } catch (err) {
       console.error("FloatingMessenger: failed to send:", err);
@@ -329,6 +353,83 @@ export function FloatingMessenger() {
     return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileId]);
+
+  // Reactions + reply/forward links for the open conversation (live on reactions).
+  const messageIdsKey = messages.map((m) => m.id).join(",");
+  useEffect(() => {
+    if (!messageIdsKey) {
+      setReactions(new Map());
+      setLinks(new Map());
+      return;
+    }
+    let alive = true;
+    const ids = messageIdsKey.split(",");
+    const load = () => {
+      getReactions(ids).then((r) => alive && setReactions(r));
+      getMessageLinks(ids).then((l) => alive && setLinks((prev) => new Map([...prev, ...l])));
+    };
+    load();
+    const again = window.setTimeout(load, 1500);
+    const unsub = subscribeReactions(() => getReactions(ids).then((r) => alive && setReactions(r)));
+    return () => {
+      alive = false;
+      window.clearTimeout(again);
+      unsub();
+    };
+  }, [messageIdsKey]);
+  useEffect(() => {
+    setReplyTo(null);
+    setMenuFor(null);
+  }, [activeThread?.id]);
+  useEffect(() => {
+    if (!menuFor) return;
+    const close = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest(".tm-menu, .tm-more")) setMenuFor(null);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [menuFor]);
+
+  const react = async (m: MessageRow, emoji: string) => {
+    if (!profileId) return;
+    setMenuFor(null);
+    const mine = (reactions.get(m.id) ?? []).find((g) => g.emoji === emoji)?.profileIds.includes(profileId) ?? false;
+    setReactions((prev) => {
+      const next = new Map(prev);
+      const list = (next.get(m.id) ?? []).map((g) => ({ ...g, profileIds: [...g.profileIds] }));
+      const g = list.find((x) => x.emoji === emoji);
+      if (mine && g) g.profileIds = g.profileIds.filter((id) => id !== profileId);
+      else if (g) g.profileIds.push(profileId);
+      else list.push({ emoji, profileIds: [profileId] });
+      next.set(m.id, list.filter((x) => x.profileIds.length > 0));
+      return next;
+    });
+    try {
+      await toggleReaction(m.id, emoji, profileId, mine);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't react — try again.");
+      getReactions(messageIdsKey.split(",")).then(setReactions);
+    }
+  };
+
+  const forwardTo = async (person: ProfileRow) => {
+    if (!forwardMsg || !profileId) return;
+    try {
+      const thread = await getOrCreateDmThread(profileId, person.id);
+      const row = await sendMessage({ dmThreadId: thread.id, senderId: profileId, senderName: currentUserName, body: forwardMsg.body });
+      const fromName = links.get(forwardMsg.id)?.forwardedFromName || forwardMsg.sender_name || "someone";
+      await saveMessageLink(row.id, { forwardedFromMessageId: forwardMsg.id, forwardedFromName: fromName }).catch(() => undefined);
+      if (activeThread && thread.id === activeThread.id) {
+        setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+        setLinks((prev) => new Map(prev).set(row.id, { replyToId: null, forwardedFromMessageId: forwardMsg.id, forwardedFromName: fromName }));
+      }
+      applyIncomingMessage(row, { bumpUnread: false });
+      toast.success(`Forwarded to ${person.display_name || person.email}`);
+      setForwardMsg(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't forward — try again.");
+    }
+  };
 
   // Sent / Delivered / Seen — the open conversation (live), and the inbox rows whose last message is mine.
   const threadReceipt = useDmReceipt(activeThread?.id ?? null, activeThread?.otherProfileId || null, messages.length);
@@ -509,10 +610,74 @@ export function FloatingMessenger() {
                     const mine = m.sender_id === profileId;
                     const isLastMine = mine && !messages.slice(i + 1).some((x) => x.sender_id === profileId);
                     return (
-                      <div key={m.id} className={`flex flex-col ${mine ? "items-end" : "items-start"}`}>
-                        <div className={`max-w-[75%] min-w-0 rounded-2xl px-3 py-1.5 text-sm ${mine ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-100"}`}>
+                      <div key={m.id} className={`fm-msg flex flex-col ${mine ? "fm-msg--mine items-end" : "items-start"}`}>
+                        {links.get(m.id)?.forwardedFromName && (
+                          <div className="tm-fwd">
+                            <Forward className="h-3 w-3" /> Forwarded from {links.get(m.id)!.forwardedFromName}
+                          </div>
+                        )}
+                        {(() => {
+                          const replyId = links.get(m.id)?.replyToId;
+                          if (!replyId) return null;
+                          const orig = messages.find((x) => x.id === replyId);
+                          return (
+                            <button type="button" className="tm-quote max-w-[75%]" onClick={() => document.getElementById(`fm-msg-${replyId}`)?.scrollIntoView({ behavior: "smooth", block: "center" })}>
+                              <span className="tm-quote-name">{orig ? (orig.sender_id === profileId ? "You" : orig.sender_name || "—") : "Original message"}</span>
+                              <span className="tm-quote-text">{orig ? orig.body : "Not loaded"}</span>
+                            </button>
+                          );
+                        })()}
+                        <div className={`flex w-full items-center gap-1 ${mine ? "flex-row-reverse" : ""}`}>
+                        <div id={`fm-msg-${m.id}`} className={`max-w-[75%] min-w-0 rounded-2xl px-3 py-1.5 text-sm ${mine ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-100"}`}>
                           <MessageBody text={m.body} className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]" />
                         </div>
+                          <div className="relative">
+                            <button type="button" className={`tm-more ${menuFor === m.id ? "tm-more--open" : ""}`} onClick={() => setMenuFor(menuFor === m.id ? null : m.id)} aria-label="Message actions">
+                              <MoreHorizontal />
+                            </button>
+                            {menuFor === m.id && (
+                              <div className={`tm-menu fm-menu ${mine ? "fm-menu--mine" : ""}`} role="menu">
+                                <div className="tm-menu-emojis">
+                                  {QUICK_REACTIONS.map((e) => (
+                                    <button key={e} type="button" onClick={() => void react(m, e)} className="tm-emoji" aria-label={`React ${e}`}>
+                                      {e}
+                                    </button>
+                                  ))}
+                                </div>
+                                <button type="button" role="menuitem" className="tm-menu-item" onClick={() => { setMenuFor(null); setReplyTo(m); }}>
+                                  <CornerUpLeft /> Reply
+                                </button>
+                                <button type="button" role="menuitem" className="tm-menu-item" onClick={() => { setMenuFor(null); setForwardSearch(""); setForwardMsg(m); }}>
+                                  <Forward /> Forward
+                                </button>
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="tm-menu-item"
+                                  onClick={() => {
+                                    setMenuFor(null);
+                                    navigator.clipboard.writeText(m.body).then(() => toast.success("Copied"), () => toast.error("Couldn't copy"));
+                                  }}
+                                >
+                                  <Copy /> Copy text
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        {(reactions.get(m.id) ?? []).length > 0 && (
+                          <div className="tm-reactions">
+                            {(reactions.get(m.id) ?? []).map((g) => {
+                              const mineR = g.profileIds.includes(profileId);
+                              return (
+                                <button key={g.emoji} type="button" onClick={() => void react(m, g.emoji)} className={`tm-react ${mineR ? "tm-react--mine" : ""}`} title={g.profileIds.map((id) => (id === profileId ? "You" : usersById.get(id)?.display_name || "Someone")).join(", ")}>
+                                  <span>{g.emoji}</span>
+                                  <span className="tabular-nums">{g.profileIds.length}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                         {isLastMine && <ReceiptMark status={receiptFor(m.created_at, threadReceipt)} state={threadReceipt} withText className="mt-0.5 mr-1" />}
                       </div>
                     );
@@ -520,6 +685,44 @@ export function FloatingMessenger() {
                 )}
                 <div ref={messagesEndRef} />
               </div>
+              {forwardMsg && (
+                <div className="fm-forward">
+                  <div className="flex items-center gap-2 px-3 pt-2.5">
+                    <Forward className="h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
+                    <span className="flex-1 truncate text-xs font-semibold">Forward to…</span>
+                    <button type="button" onClick={() => setForwardMsg(null)} className="btn btn-ghost btn-sm" aria-label="Cancel forward">
+                      <X />
+                    </button>
+                  </div>
+                  <label className="tm-search !mx-3 !my-2">
+                    <Search className="h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
+                    <input autoFocus value={forwardSearch} onChange={(e) => setForwardSearch(e.target.value)} placeholder="Search people" />
+                  </label>
+                  <div className="max-h-48 overflow-y-auto px-1.5 pb-2">
+                    {users
+                      .filter((u) => u.id !== profileId && (u.display_name || u.email || "").toLowerCase().includes(forwardSearch.trim().toLowerCase()))
+                      .slice(0, 40)
+                      .map((u) => (
+                        <button key={u.id} type="button" onClick={() => void forwardTo(u)} className="tm-item">
+                          <span className="truncate font-semibold">{u.display_name || u.email}</span>
+                          <Forward className="ml-auto h-3.5 w-3.5 opacity-50" />
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              )}
+              {replyTo && (
+                <div className="tm-replybar !mx-2.5 !mb-0 !mt-2">
+                  <CornerUpLeft className="h-3.5 w-3.5 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[11px] font-semibold">Replying to {replyTo.sender_id === profileId ? "yourself" : replyTo.sender_name || "—"}</div>
+                    <div className="truncate text-[12px] text-[var(--color-muted-foreground)]">{replyTo.body}</div>
+                  </div>
+                  <button type="button" onClick={() => setReplyTo(null)} className="btn btn-ghost btn-sm" aria-label="Cancel reply">
+                    <X />
+                  </button>
+                </div>
+              )}
               <div className="flex shrink-0 items-center gap-2 border-t border-white/10 p-2.5">
                 <input
                   type="text"
