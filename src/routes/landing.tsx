@@ -54,6 +54,8 @@ function Landing() {
   // Set once the confirmation code is emailed: where it went (masked). The code typed back.
   const [forgotCodeSentTo, setForgotCodeSentTo] = useState<string | null>(null);
   const [forgotCode, setForgotCode] = useState("");
+  // The server refused another code (hourly limit) — offer to type the one they already have.
+  const [forgotCodeLimit, setForgotCodeLimit] = useState(false);
 
   // The landing page always shows the light theme, regardless of whatever
   // dark/light preference the visitor has stored (lib/theme.tsx persists
@@ -343,8 +345,10 @@ function Landing() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.ok !== true) {
         setForgotMsg({ text: data.error || "Couldn't send the code right now — try again, or contact IT on Discord.", error: true });
+        setForgotCodeLimit(!!data.codeLimit);
         return;
       }
+      setForgotCodeLimit(false);
       if (data.queued) {
         setForgotMsg({ text: data.message || "IT has been notified and will reset your password for you." });
         return;
@@ -357,6 +361,14 @@ function Landing() {
     } finally {
       setForgotSubmitting(false);
     }
+  };
+
+  // "I already have a code" — skip sending and go straight to the code box.
+  const useExistingForgotCode = () => {
+    setForgotCodeSentTo(forgotLookup.maskedEmail || "your email");
+    setForgotCode("");
+    setForgotCodeLimit(false);
+    setForgotMsg(null);
   };
 
   // Restore the error message stashed right before the reload above, so it
@@ -611,7 +623,7 @@ function Landing() {
       {/* Forgot Password — username + Unique ID, a code emailed to the address
           on file, then the server resets to the default password and emails it
           from IT's Gmail (passwordResetRequestBridge.ts). */}
-      <Dialog open={forgotOpen} onOpenChange={(v) => { setForgotOpen(v); if (!v) { setForgotMsg(null); setForgotSentTo(null); setForgotCodeSentTo(null); setForgotCode(""); } }}>
+      <Dialog open={forgotOpen} onOpenChange={(v) => { setForgotOpen(v); if (!v) { setForgotMsg(null); setForgotSentTo(null); setForgotCodeSentTo(null); setForgotCode(""); setForgotCodeLimit(false); } }}>
         <DialogContent className="bg-card border-white/10">
           <DialogHeader>
             <DialogTitle className="font-display">Forgot Password</DialogTitle>
@@ -655,7 +667,7 @@ function Landing() {
                 type="text"
                 autoComplete="username"
                 value={forgotForm.username}
-                onChange={(e) => { setForgotForm({ ...forgotForm, username: e.target.value }); setForgotMsg(null); }}
+                onChange={(e) => { setForgotForm({ ...forgotForm, username: e.target.value }); setForgotMsg(null); setForgotCodeLimit(false); }}
                 placeholder="Your login username"
                 disabled={forgotSubmitting || !!forgotCodeSentTo}
                 aria-invalid={forgotLookup.status === "missing" && !forgotLookup.badCompany}
@@ -672,7 +684,7 @@ function Landing() {
                 className="glass-input mt-1 w-full"
                 type="text"
                 value={forgotForm.company}
-                onChange={(e) => { setForgotForm({ ...forgotForm, company: e.target.value }); setForgotMsg(null); }}
+                onChange={(e) => { setForgotForm({ ...forgotForm, company: e.target.value }); setForgotMsg(null); setForgotCodeLimit(false); }}
                 placeholder="Same Unique ID you sign in with"
                 disabled={forgotSubmitting || !!forgotCodeSentTo}
                 aria-invalid={!!forgotLookup.badCompany}
@@ -707,7 +719,7 @@ function Landing() {
                 />
                 <span className="mt-1 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                   <span>
-                    Look for <strong className="text-foreground">"Password Reset Code AHS"</strong>. It expires in 10 minutes.
+                    Look for <strong className="text-foreground">"Password Reset Code AHS"</strong>. It expires in 24 hours.
                   </span>
                   <span className="flex gap-3">
                     <button type="button" className="underline hover:text-foreground disabled:opacity-50" onClick={sendForgotCode} disabled={forgotSubmitting}>
@@ -734,6 +746,11 @@ function Landing() {
                 }`}
               >
                 {forgotMsg.text}
+                {forgotCodeLimit && !forgotCodeSentTo && (
+                  <button type="button" className="mt-2 block font-semibold underline" onClick={useExistingForgotCode}>
+                    Enter the code I already have
+                  </button>
+                )}
               </div>
             )}
             <button
@@ -743,6 +760,16 @@ function Landing() {
             >
               {forgotCodeSentTo ? (forgotSubmitting ? "Resetting…" : "Reset password") : forgotSubmitting ? "Sending code…" : "Send code"}
             </button>
+            {!forgotCodeSentTo && forgotLookup.status === "found" && (
+              <button
+                type="button"
+                className="block w-full text-center text-xs text-muted-foreground underline hover:text-foreground disabled:opacity-50"
+                onClick={useExistingForgotCode}
+                disabled={forgotSubmitting}
+              >
+                Already have a code? Enter it
+              </button>
+            )}
           </form>
           )}
         </DialogContent>

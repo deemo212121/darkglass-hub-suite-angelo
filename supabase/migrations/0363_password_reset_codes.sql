@@ -4,7 +4,7 @@
 -- "Forgot password?" now emails a 6-digit code to the address on file
 -- first; the password is only reset once that code is typed back. One row
 -- per code sent. Only the code's SHA-256 hash is stored, never the code.
--- A code is valid for 10 minutes, works once (used_at), and stops working
+-- A code is valid for 24 hours, works once (used_at), and stops working
 -- after 5 wrong tries (attempts).
 --
 -- Only the server (service-role key, passwordResetRequestBridge.ts) reads

@@ -7,8 +7,8 @@
  * pick the account, the same way sign-in does):
  *   - "lookup": as the username is typed, say whether it exists and show
  *     where the password will go — the email on file, MASKED (public page).
- *   - "send-code": email a 6-digit code to the email on file (valid 10
- *     minutes, one use, 5 tries — table password_reset_codes, migration 0363).
+ *   - "send-code": email a 6-digit code to the email on file (valid 24
+ *     hours, one use, 5 tries — table password_reset_codes, migration 0363).
  *     Nothing is reset yet, so someone who only knows a username can't
  *     lock its owner out.
  *   - reset (with the code): once the code checks out, the server:
@@ -67,7 +67,7 @@ const PREFERRED_IT_SENDER = "angelo.mendoza@usinhomeservices.com";
 const AUTO_SUBJECT = "Password Reset (automatic)";
 const MAX_RESETS_PER_HOUR = 3;
 const MAX_CODES_PER_HOUR = 3;
-const CODE_TTL_MS = 10 * 60 * 1000;
+const CODE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MAX_CODE_ATTEMPTS = 5;
 
 /** A random 6-digit code ("004219" style — leading zeros kept). */
@@ -90,7 +90,7 @@ function codeEmailBody(name: string, code: string): string {
     ``,
     `    ${code}`,
     ``,
-    `Type this code on the Forgot Password screen to reset your password. It expires in 10 minutes and works once.`,
+    `Type this code on the Forgot Password screen to reset your password. It expires in 24 hours and works once.`,
     ``,
     `If you didn't ask for this, ignore this email — your password hasn't changed. Please contact us directly on Discord or reply to this Email if you have any concerns.`,
     ``,
@@ -294,7 +294,10 @@ export async function handlePasswordResetRequest(request: Request, env?: Record<
         return json({ error: "Password reset isn't set up yet — contact IT on Discord." }, 500);
       }
       if (((await sentRes.json()) as unknown[]).length >= MAX_CODES_PER_HOUR) {
-        return json({ error: "Too many codes were sent in the last hour. Use the latest code in your email, or try again later." }, 429);
+        return json(
+          { error: "Too many codes were sent in the last hour. Enter the latest code from your email, or try again later.", codeLimit: true },
+          429
+        );
       }
       const code = newCode();
       // Only the newest code works — retire any earlier unused ones.
