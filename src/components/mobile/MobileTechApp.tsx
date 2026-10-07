@@ -31,6 +31,7 @@ import {
   Pencil,
   Trash2,
   Compass,
+  CalendarCheck,
 } from "lucide-react";
 // Mobile shell is an isolated surface — no navigation to desktop routes,
 // no device-override toggle. The desktop UI is available only from an
@@ -92,6 +93,7 @@ import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { isAttendanceFullAccessRole, isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { buildCorrectionSubmissionPdf } from "@/lib/timecardCorrectionPdf";
+import { buildPtoSubmissionPdf } from "@/lib/ptoExceptionReportPdf";
 import { EXCEPTION_TYPE_LABELS, CORRECTION_ISSUE_LABELS, type ExceptionType, type CorrectionIssueType } from "@/lib/exceptionVisitReportTemplate";
 import { buildTicketDisputeSubmissionPdf } from "@/lib/ticketDisputeReportPdf";
 import { TICKET_DISPUTE_EXCEPTION_TYPE_LABELS, type TicketDisputeExceptionType } from "@/lib/ticketDisputeReportTemplate";
@@ -1714,7 +1716,7 @@ export function MobileTechApp() {
         )}
 
         {effectiveView === "timeoff" && (
-          <MobileTimeOffView userName={headerName} profileId={profileId} />
+          <MobileTimeOffView userName={headerName} profileId={profileId} companyId={companyId} role={role} />
         )}
 
         {effectiveView === "tickettimedispute" && (
@@ -6009,7 +6011,17 @@ function HomeOnSiteCard({
 
   return (
     <div data-tour="m-onsite" className="mtech-home-onsite">
-      <div className="mtech-home-onsite-title">On-Site Check-In</div>
+      <div className="mh-onsite-head">
+        <span className="mh-icon-tile" aria-hidden>
+          <MapPin />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="mtech-home-onsite-title">On-Site Check-In</div>
+          <div className="mh-onsite-sub">
+            {visibleTickets.length === 0 ? "Nothing scheduled right now" : `${visibleTickets.length} ticket${visibleTickets.length === 1 ? "" : "s"} today`}
+          </div>
+        </div>
+      </div>
       {checkinsLoadError && (
         <div className="mtech-home-clockerror">
           <span>Couldn't load your check-in status — Work Start is held until it loads so an in-progress ticket isn't re-stamped.</span>
@@ -6037,6 +6049,9 @@ function HomeOnSiteCard({
       )}
       {focusTickets.length === 0 || !currentTicket ? (
         <div className="mtech-home-onsite-empty">
+          <span className="mh-empty-icon" aria-hidden>
+            <CalendarCheck />
+          </span>
           {visibleTickets.length === 0 ? "No active tickets to check into right now." : "Locating nearby tickets…"}
         </div>
       ) : (() => {
@@ -6575,20 +6590,9 @@ function MobileHomeView({
         onHold={onHoldTickets.length}
         onOpenTickets={onOpenTicketsTab}
         onOpenOnHold={onOpenOnHoldTab}
-      />
-
-      {/* Missed Time Out fix-it banner + the tech's own Technician Performance standing. */}
-      {!viewingReportName && scheduleProfileId && needsStanding && (
-        <>
-          <FixTimeOutBanner profileId={scheduleProfileId} today={todayKey} onFix={onFixTimeOut} />
-          <MyStandingCard profileId={scheduleProfileId} today={todayKey} />
-        </>
-      )}
-      {!viewingReportName && canSeeMeetings && <TodaysClockInCodeCard />}
-      {!viewingReportName && canSeeMeetings && (
-        <MeetingsRequiredCard onOpen={onOpenMeetings} />
-      )}
-
+        topRight={!viewingReportName && canSeeMeetings ? <TodaysClockInCodeCard compact /> : null}
+      >
+      {/* The punch buttons live inside the hero card, under a divider. */}
       {viewingReportName ? null : loadError ? (
         <div className="mtech-home-clockerror">
           <span>Couldn't load your timecard — your punches are safe, this is just the display.</span>
@@ -6642,6 +6646,7 @@ function MobileHomeView({
         />
       </div>
       )}
+      </HomeHero>
 
       {employmentType === "trainee" && traineeStatus && traineeStatus !== "approved" && (
         <div className="mtech-home-clockerror">
@@ -6651,6 +6656,11 @@ function MobileHomeView({
               : "Pending your manager's approval — this won't appear on your official timecard until then."}
           </span>
         </div>
+      )}
+
+      {/* Missed Time Out fix-it banner — urgent (fix before Time In), so right under the first card. */}
+      {!viewingReportName && scheduleProfileId && needsStanding && (
+        <FixTimeOutBanner profileId={scheduleProfileId} today={todayKey} onFix={onFixTimeOut} />
       )}
 
       {!viewingReportName && <SectionHead title="Today's ticket" />}
@@ -6668,6 +6678,14 @@ function MobileHomeView({
           checkinsLoadError={checkinsLoadError}
           onRetryCheckins={onRetryCheckins}
         />
+      )}
+
+      {/* The tech's own Technician Performance standing (collapsed to the rank by default), then meetings. */}
+      {!viewingReportName && scheduleProfileId && needsStanding && (
+        <MyStandingCard profileId={scheduleProfileId} today={todayKey} />
+      )}
+      {!viewingReportName && canSeeMeetings && (
+        <MeetingsRequiredCard onOpen={onOpenMeetings} />
       )}
 
       <SectionHead title="Shortcuts" />
@@ -8802,7 +8820,7 @@ const PTO_TYPE_LABELS: Record<PtoType, string> = {
 // of sync. The manager/HR/Accounting review stage is the real enforcement
 // point either way, so mobile submits directly and lets that catch
 // anything out of policy.
-function MobileTimeOffView({ userName, profileId }: { userName: string; profileId: string | null }) {
+function MobileTimeOffView({ userName, profileId, companyId, role }: { userName: string; profileId: string | null; companyId: string | null; role: string | null }) {
   const [requests, setRequests] = useState<PtoRequestRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [companyProfiles, setCompanyProfiles] = useState<ProfileRow[]>([]);
@@ -8814,6 +8832,15 @@ function MobileTimeOffView({ userName, profileId }: { userName: string; profileI
   const [branch, setBranch] = useState<string>(LOCATIONS[0] || "");
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState("");
+  // Personal / Sick / Unpaid need the Employee Attendance & Visit Exception
+  // Report — same fields, signature and PDF as desktop Employee
+  // Self-Service's Sick / Unpaid Leave forms (buildPtoSubmissionPdf).
+  // Vacation doesn't.
+  const [exceptionType, setExceptionType] = useState<ExceptionType>("missed_workday");
+  const [otherDescription, setOtherDescription] = useState("");
+  const [employeeIdOverride, setEmployeeIdOverride] = useState("");
+  const sigPad = useSignaturePad({ width: 400, height: 110, defaultName: userName || "" });
+  const needsReport = leaveType !== "Vacation";
 
   useEffect(() => {
     getCompanyUsers().then(setCompanyProfiles).catch((e) => console.error("time off: load users failed", e));
@@ -8854,8 +8881,23 @@ function MobileTimeOffView({ userName, profileId }: { userName: string; profileI
       return;
     }
     if (!details.trim()) {
-      setMsg("Add a reason for the request.");
+      setMsg(needsReport ? "Please describe the reason for this exception." : "Add a reason for the request.");
       return;
+    }
+    let signatureDataUrl: string | null = null;
+    if (needsReport) {
+      if (exceptionType === "other" && !otherDescription.trim()) {
+        setMsg("Describe the exception for \"Other\".");
+        return;
+      }
+      if (!sigPad.hasContent() || !(signatureDataUrl = sigPad.toDataURL())) {
+        setMsg("Please sign to acknowledge the information above is accurate before submitting.");
+        return;
+      }
+      if (!companyId) {
+        setMsg("Your company couldn't be resolved yet — try again in a moment.");
+        return;
+      }
     }
     setSubmitting(true);
     setMsg("");
@@ -8864,15 +8906,52 @@ function MobileTimeOffView({ userName, profileId }: { userName: string; profileI
       const ptoType = ptoTypeMap[leaveType] || "vacation";
       const myProfile = companyProfiles.find((p) => p.id === profileId) ?? null;
       const managerProfile = myProfile ? await resolveTeamLeadOrManager(myProfile, companyProfiles) : null;
-      await createPtoRequest({
-        profileId,
-        ptoType,
-        startDate,
-        endDate,
-        reason: `Branch: ${branch} | Position: ${ROLE_LABELS[position] || position || "N/A"} - ${details.trim()}`,
-        requestedBy: profileId,
-        managerId: managerProfile?.id ?? null,
-      });
+      const reason = `Branch: ${branch} | Position: ${ROLE_LABELS[position] || position || "N/A"} - ${details.trim()}`;
+      if (needsReport && signatureDataUrl && companyId) {
+        const requestId = crypto.randomUUID();
+        const { roleLabel: jobTitle } = getRoleDepartmentBreakdown(myProfile?.role ?? role);
+        const { pdfUrl, employeeSignatureUrl } = await buildPtoSubmissionPdf({
+          requestId,
+          companyId,
+          employeeInfo: {
+            employeeName: userName || "",
+            technicianId: myProfile?.technician_id || employeeIdOverride,
+            jobTitle,
+            department: myProfile?.assigned_branch || "",
+            directManagerName: managerProfile?.display_name || managerProfile?.email || "",
+          },
+          dateOfIncident: startDate,
+          exceptionType,
+          otherDescription,
+          detailedReason: details.trim(),
+          employeeSignatureDataUrl: signatureDataUrl,
+        });
+        await createPtoRequest({
+          id: requestId,
+          profileId,
+          ptoType,
+          startDate,
+          endDate,
+          reason,
+          requestedBy: profileId,
+          managerId: managerProfile?.id ?? null,
+          exceptionType,
+          otherDescription,
+          employeeSignatureUrl,
+          employeeSignatureName: userName || "",
+          pdfUrl,
+        });
+      } else {
+        await createPtoRequest({
+          profileId,
+          ptoType,
+          startDate,
+          endDate,
+          reason,
+          requestedBy: profileId,
+          managerId: managerProfile?.id ?? null,
+        });
+      }
       // Manager + every HR user (falling back to Admin/SuperAdmin if no
       // manager could be resolved) — same recipient rule the desktop PTO/
       // Sick submit flow uses, so nobody's request is stranded unseen.
@@ -8884,7 +8963,7 @@ function MobileTimeOffView({ userName, profileId }: { userName: string; profileI
         if (primary === "HR" || (!managerProfile && (primary === "ADMIN" || primary === "SUPERADMIN"))) recipients.set(p.id, p);
       }
       const emoji = ptoType === "sick" ? "🤒" : "🗓️";
-      const label = ptoType === "sick" ? "Sick Leave" : "PTO";
+      const label = ptoType === "sick" ? "Sick Leave" : ptoType === "unpaid" ? "Unpaid Leave" : ptoType === "personal" ? "Personal Leave" : "PTO";
       await Promise.all(
         Array.from(recipients.values()).map((r) =>
           createNotification({
@@ -8900,6 +8979,10 @@ function MobileTimeOffView({ userName, profileId }: { userName: string; profileI
       setEndDate("");
       setDetails("");
       setLeaveType(LEAVE_TYPES[0]);
+      setExceptionType("missed_workday");
+      setOtherDescription("");
+      setEmployeeIdOverride("");
+      sigPad.clear();
       setMsg("Request submitted.");
       await load();
     } catch (e) {
@@ -8951,8 +9034,48 @@ function MobileTimeOffView({ userName, profileId }: { userName: string; profileI
           rows={4}
           value={details}
           onChange={(e) => setDetails(e.target.value)}
-          placeholder="Why are you requesting time off?"
+          placeholder={needsReport ? "Please provide details…" : "Why are you requesting time off?"}
         />
+
+        {needsReport && (
+          <>
+            <p className="mtech-muted" style={{ padding: "0.5rem 0 0", color: "#cbd5e1" }}>
+              {leaveType} leave needs the Employee Attendance &amp; Visit Exception Report — fill in the details below and sign.
+            </p>
+
+            <div className="mtech-section-title">Technician ID</div>
+            {companyProfiles.find((p) => p.id === profileId)?.technician_id ? (
+              <input
+                className="mtech-bill-input full"
+                type="text"
+                value={companyProfiles.find((p) => p.id === profileId)?.technician_id || ""}
+                readOnly
+                disabled
+                title="Auto-filled from your profile"
+                style={{ opacity: 0.7 }}
+              />
+            ) : (
+              <input className="mtech-bill-input full" type="text" value={employeeIdOverride} onChange={(e) => setEmployeeIdOverride(e.target.value)} placeholder="Not on file — type it in" />
+            )}
+
+            <div className="mtech-section-title">Exception Type</div>
+            {(Object.keys(EXCEPTION_TYPE_LABELS) as ExceptionType[]).map((t) => (
+              <label key={t} style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.25rem 0", color: "#f1f5f9", fontSize: "0.85rem" }}>
+                <input type="radio" name="mobileTimeOffExceptionType" checked={exceptionType === t} onChange={() => setExceptionType(t)} />
+                {EXCEPTION_TYPE_LABELS[t]}
+              </label>
+            ))}
+            {exceptionType === "other" && (
+              <input className="mtech-bill-input full" type="text" value={otherDescription} onChange={(e) => setOtherDescription(e.target.value)} placeholder="Describe the exception…" />
+            )}
+
+            <div className="mtech-section-title">Employee Signature — I confirm the information above is accurate and truthful.</div>
+            <canvas {...sigPad.canvasProps} className={`bg-white rounded-md block mx-auto w-full ${sigPad.canvasProps.className}`} style={{ maxWidth: "340px" }} />
+            <div style={{ marginTop: "0.5rem" }}>
+              <SignaturePadControls pad={sigPad} />
+            </div>
+          </>
+        )}
 
         <button type="button" data-tour="m-submit" className="mtech-save-btn" onClick={submit} disabled={submitting}>
           {submitting ? "Submitting…" : "Submit Request"}

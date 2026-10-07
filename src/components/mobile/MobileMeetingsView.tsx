@@ -11,7 +11,7 @@ import { getPendingClockInMeetings } from "@/lib/supabase/clockInMeetings";
  * Mobile Home → today's company clock-in code, for whoever can see it
  * (same rule as the desktop Clock-In Codes page; the database decides).
  */
-export function TodaysClockInCodeCard() {
+export function TodaysClockInCodeCard({ compact = false }: { compact?: boolean } = {}) {
   const [code, setCode] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -23,30 +23,58 @@ export function TodaysClockInCodeCard() {
     return () => { cancelled = true; };
   }, []);
   if (failed) return null;
-  return (
-    <div
-      className="flex items-center gap-3 px-4 py-3"
-      style={{ background: "var(--mt-surface)", border: "1px solid var(--mt-surface-border)", borderRadius: 14 }}
-    >
-      <KeyRound className="h-5 w-5 shrink-0 text-blue-300" />
-      <div className="flex-1">
-        <div className="text-[11px] font-bold uppercase tracking-wide text-slate-300">Today's clock-in code</div>
-        {code ? (
-          <div className="font-mono text-3xl font-bold tracking-[0.3em] text-white tabular-nums">{code}</div>
-        ) : (
-          <Loader2 className="mt-1 h-5 w-5 animate-spin text-slate-400" />
-        )}
+  const copy = () => {
+    if (!code) return;
+    void navigator.clipboard?.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  if (compact) {
+    // Top-right of the Home hero card: small label, the digits, a round copy button.
+    return (
+      <div className="mh-code-mini">
+        <span className="mh-code-mini-label">Clock-in code</span>
+        <div className="flex items-center gap-1.5">
+          {code ? (
+            <div className="mh-code mh-code--mini" aria-label={`Today's clock-in code ${code}`}>
+              {code.split("").map((ch, i) => (
+                <span key={i} className="mh-code-digit">
+                  {ch}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <Loader2 className="h-4 w-4 animate-spin text-white/70" />
+          )}
+          <button type="button" disabled={!code} onClick={copy} className="mh-code-copy" aria-label={copied ? "Copied" : "Copy code"} title={copied ? "Copied" : "Copy code"}>
+            {copied ? <Check /> : <Copy />}
+          </button>
+        </div>
       </div>
+    );
+  }
+  return (
+    <div className="mh-card mh-card--row flex items-center gap-2.5">
+      <span className="mh-icon-tile mh-icon-tile--sm" aria-hidden>
+        <KeyRound />
+      </span>
+      <div className="mh-card-title min-w-0 flex-1 leading-tight">Today's clock-in code</div>
+      {code ? (
+        <div className="mh-code" aria-label={`Code ${code}`}>
+          {code.split("").map((ch, i) => (
+            <span key={i} className="mh-code-digit">
+              {ch}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+      )}
       <button
         type="button"
         disabled={!code}
-        onClick={() => {
-          if (!code) return;
-          void navigator.clipboard?.writeText(code);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        }}
-        className="flex items-center gap-1 rounded-lg bg-white/10 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40"
+        onClick={copy}
+        className="mh-pill-btn"
       >
         {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} {copied ? "Copied" : "Copy"}
       </button>
@@ -89,14 +117,11 @@ export function MeetingsRequiredCard({ onOpen }: { onOpen: () => void }) {
     <button
       type="button"
       onClick={onOpen}
-      className="flex w-full items-center gap-3 px-4 py-3 text-left"
-      style={{
-        background: waiting ? "rgba(239, 68, 68, 0.12)" : "var(--mt-surface)",
-        border: `1px solid ${waiting ? "rgba(248, 113, 113, 0.45)" : "var(--mt-surface-border)"}`,
-        borderRadius: 14,
-      }}
+      className={`mh-card flex w-full items-center gap-3 text-left ${waiting ? "mh-card--alert" : ""}`}
     >
-      <CalendarX2 className={`h-5 w-5 shrink-0 ${waiting ? "text-red-300" : "text-slate-300"}`} />
+      <span className={`mh-icon-tile ${waiting ? "mh-icon-tile--alert" : ""}`} aria-hidden>
+        <CalendarX2 />
+      </span>
       <div className="flex-1">
         <div className="text-sm font-semibold text-white">Meetings required</div>
         <div className="text-[11px] text-slate-300">Technicians who missed a clock-in or didn't fix a missed Time Out</div>

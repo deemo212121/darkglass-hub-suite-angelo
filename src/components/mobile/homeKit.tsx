@@ -39,7 +39,13 @@ export function HomeHero({
   onHold,
   onOpenTickets,
   onOpenOnHold,
+  children,
+  topRight,
 }: {
+  /** Small item in the card's top-right corner (today's clock-in code). */
+  topRight?: ReactNode;
+  /** The punch buttons — shown inside the card, under a divider. */
+  children?: ReactNode;
   name: string;
   greeting: string;
   /** Set when a lead is viewing a report's day. */
@@ -56,10 +62,11 @@ export function HomeHero({
         <span className="mh-avatar" aria-hidden>
           {initialsOf(name)}
         </span>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="mh-hi">{tracking ? `Tracking ${first}` : `Hi ${first}!`}</div>
           <div className="mh-sub">{tracking ? "Their day, as of now" : `👋 ${greeting}`}</div>
         </div>
+        {topRight}
       </div>
       <button type="button" className="mh-hero-main" onClick={onOpenTickets}>
         <span className="mh-pill">Assigned today</span>
@@ -74,6 +81,7 @@ export function HomeHero({
         </span>
         <ChevronRight className="h-4 w-4" />
       </button>
+      {children && <div className="mh-hero-punch">{children}</div>}
     </section>
   );
 }

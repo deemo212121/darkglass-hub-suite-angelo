@@ -14788,3 +14788,294 @@ button.home-attn:focus-visible { outline: 2px solid var(--tone); outline-offset:
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
 }
 @media (prefers-reduced-motion: reduce) { .mh-circle { transition: none; } }
+
+/* ── Mobile Home cards (My standing, clock-in code, meetings, fix Time Out) — same look as the hero (keep last) ── */
+.mh-card {
+  display: block;
+  margin-bottom: 0.85rem;
+  padding: 0.95rem 1rem;
+  border-radius: 22px;
+  color: #fff;
+  background:
+    linear-gradient(160deg, rgba(59, 130, 246, 0.10), transparent 55%),
+    var(--mt-surface);
+  border: 1px solid rgba(147, 197, 253, 0.14);
+  box-shadow: 0 14px 30px -20px rgba(15, 23, 42, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.mh-card.flex { display: flex; }
+.mh-card--alert { background: linear-gradient(160deg, rgba(239, 68, 68, 0.16), rgba(239, 68, 68, 0.06)), var(--mt-surface); border-color: rgba(248, 113, 113, 0.4); }
+.mh-card--warn { background: linear-gradient(160deg, rgba(249, 115, 22, 0.18), rgba(249, 115, 22, 0.06)), var(--mt-surface); border-color: rgba(251, 146, 60, 0.45); }
+.mh-card-title { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255, 255, 255, 0.7); }
+.mh-icon-tile {
+  display: grid; place-items: center; flex-shrink: 0;
+  width: 2.75rem; height: 2.75rem; border-radius: 999px;
+  color: #93c5fd; background: rgba(59, 130, 246, 0.16); border: 1px solid rgba(147, 197, 253, 0.22);
+}
+.mh-icon-tile svg { width: 1.2rem; height: 1.2rem; }
+.mh-icon-tile--alert { color: #fca5a5; background: rgba(239, 68, 68, 0.18); border-color: rgba(248, 113, 113, 0.35); }
+.mh-icon-tile--warn { color: #fdba74; background: rgba(249, 115, 22, 0.2); border-color: rgba(251, 146, 60, 0.4); }
+.mh-pill-btn {
+  display: inline-flex; align-items: center; gap: 0.35rem; flex-shrink: 0;
+  height: 2.25rem; padding: 0 0.95rem; border-radius: 999px;
+  font-size: 0.78rem; font-weight: 700; color: #fff;
+  background: #2563eb; box-shadow: 0 8px 18px -10px rgba(37, 99, 235, 0.9);
+}
+.mh-pill-btn svg { width: 0.95rem; height: 0.95rem; }
+.mh-pill-btn:disabled { opacity: 0.4; }
+.mh-pill-btn:active:not(:disabled) { transform: scale(0.96); }
+/* Home already spaces its items (gap: 1rem) — no extra outer margins inside it. */
+.mtech-home > .mh-hero, .mtech-home > .mh-card, .mtech-home > .mh-clockrow, .mtech-home > .mh-shortcuts { margin: 0; }
+.mtech-home > .mh-section-head { margin: 0.25rem 0.15rem -0.5rem; }
+
+/* ── Mobile cards, round 2: richer standing / code / on-site / ticket cards (keep last) ── */
+/* Clock-in code: one box per digit */
+.mh-code { display: flex; gap: 0.4rem; margin-top: 0.35rem; }
+.mh-code-digit {
+  display: grid; place-items: center;
+  width: 2.3rem; height: 2.7rem; border-radius: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 1.45rem; font-weight: 800; color: #fff;
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.28), rgba(37, 99, 235, 0.12));
+  border: 1px solid rgba(147, 197, 253, 0.35);
+  box-shadow: 0 6px 16px -10px rgba(37, 99, 235, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+/* My standing: grade-tinted panel + glowing medal */
+.mh-standing-hero {
+  --g: #94a3b8;
+  padding: 0.7rem 0.8rem; border-radius: 18px;
+  background: linear-gradient(135deg, color-mix(in oklab, var(--g) 26%, transparent), color-mix(in oklab, var(--g) 6%, transparent));
+  border: 1px solid color-mix(in oklab, var(--g) 40%, transparent);
+}
+.mh-medal { display: inline-grid; place-items: center; border-radius: 999px; transform: scale(1.18); box-shadow: 0 0 0 4px color-mix(in oklab, var(--g) 22%, transparent), 0 8px 22px -6px color-mix(in oklab, var(--g) 70%, transparent); }
+
+/* On-site check-in: same card family as the hero */
+.mtech-home > .mtech-home-onsite,
+.mtech-home-onsite {
+  gap: 0.6rem;
+  padding: 0.95rem 1rem;
+  border-radius: 22px;
+  background: linear-gradient(160deg, rgba(59, 130, 246, 0.10), transparent 55%), var(--mt-surface);
+  border: 1px solid rgba(147, 197, 253, 0.14);
+  box-shadow: 0 14px 30px -20px rgba(15, 23, 42, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.mh-onsite-head { display: flex; align-items: center; gap: 0.7rem; }
+.mh-onsite-head .mtech-home-onsite-title { font-size: 0.95rem; font-weight: 800; letter-spacing: -0.01em; text-transform: none; color: #fff; }
+.mh-onsite-sub { font-size: 0.75rem; color: rgba(255, 255, 255, 0.65); }
+.mtech-home-onsite-list { background: transparent; border-radius: 0; overflow: visible; }
+.mtech-home-onsite-row {
+  position: relative;
+  padding: 0.85rem 0.9rem 0.85rem 1.05rem;
+  border-radius: 18px;
+  border: 1px solid rgba(147, 197, 253, 0.16);
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.18), rgba(15, 23, 42, 0.35));
+  overflow: hidden;
+}
+.mtech-home-onsite-row::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 4px; border-radius: 0 4px 4px 0; background: #3b82f6; box-shadow: 0 0 12px rgba(59, 130, 246, 0.8); }
+.mtech-home-onsite-row--pending { opacity: 0.75; }
+.mtech-home-onsite-row--pending::before { background: #64748b; box-shadow: none; }
+.mtech-home-onsite-location { font-size: 0.95rem; font-weight: 800; color: #fff; }
+.mtech-home-onsite-ticket { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.75rem; color: #93c5fd; }
+.mtech-home-onsite-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+  padding: 1.1rem 1rem; border-radius: 18px;
+  background: rgba(15, 23, 42, 0.35); border: 1px dashed rgba(147, 197, 253, 0.2);
+  font-weight: 600; color: rgba(255, 255, 255, 0.8);
+}
+.mh-empty-icon { display: grid; place-items: center; width: 2.6rem; height: 2.6rem; border-radius: 999px; color: #93c5fd; background: rgba(59, 130, 246, 0.14); }
+.mh-empty-icon svg { width: 1.2rem; height: 1.2rem; }
+.mtech-home-onsite-hint { font-size: 0.72rem; line-height: 1.45; color: rgba(255, 255, 255, 0.6); }
+.mtech-home-onsite-status-row { gap: 0.45rem; flex-wrap: wrap; }
+.mtech-home-onsite-status { padding: 0.25rem 0.6rem; border-radius: 999px; font-size: 0.7rem; }
+.mtech-home-onsite-status.is-ok { background: rgba(34, 197, 94, 0.14); border: 1px solid rgba(74, 222, 128, 0.35); }
+.mtech-home-onsite-status.is-bad { background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(251, 191, 36, 0.35); }
+.mtech-home-onsite-pager { display: flex; align-items: center; justify-content: center; gap: 0.75rem; margin-bottom: 0.4rem; }
+.mtech-home-onsite-pager-btn { width: 2rem; height: 2rem; border-radius: 999px; background: rgba(255, 255, 255, 0.08); color: #fff; font-size: 1.1rem; }
+.mtech-home-onsite-pager-btn:disabled { opacity: 0.3; }
+
+/* Tickets tab: ticket cards in the same family */
+.mtech-ticket-card {
+  border-radius: 20px;
+  border: 1px solid rgba(147, 197, 253, 0.14);
+  background: linear-gradient(150deg, rgba(59, 130, 246, 0.10), transparent 50%), var(--mt-surface);
+  box-shadow: 0 12px 26px -20px rgba(15, 23, 42, 0.95), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  min-height: 0;
+}
+.mtech-ticket-accent { width: 5px; margin: 12px 0 12px 0; border-radius: 0 5px 5px 0; min-height: 0; }
+.mtech-ticket-accent.tone-blue { background: #3b82f6; box-shadow: 0 0 12px rgba(59, 130, 246, 0.7); }
+.mtech-ticket-accent.tone-green { box-shadow: 0 0 12px rgba(22, 163, 74, 0.7); }
+.mtech-ticket-accent.tone-amber { box-shadow: 0 0 12px rgba(217, 119, 6, 0.7); }
+.mtech-ticket-accent.tone-red { box-shadow: 0 0 12px rgba(220, 38, 38, 0.7); }
+.mtech-ticket-body { padding: 0.85rem 0.9rem; gap: 0.3rem; }
+.mtech-ticket-no { color: #93c5fd; font-size: 0.85rem; }
+.mtech-ticket-customer { font-size: 1rem; font-weight: 800; color: #fff; }
+.mtech-ticket-meta-chip { background: rgba(59, 130, 246, 0.14); border: 1px solid rgba(147, 197, 253, 0.18); color: #dbeafe; }
+.mtech-ticket-status-line { color: #fff; }
+.mtech-ticket-sched { color: rgba(255, 255, 255, 0.65); }
+.mtech-ticket-chev-icon { align-self: center; margin-right: 0.6rem; width: 1.9rem; height: 1.9rem; border-radius: 999px; background: rgba(255, 255, 255, 0.07); display: grid; place-items: center; color: rgba(255, 255, 255, 0.8); }
+.mtech-ticket-card-group { gap: 0; }
+.mtech-ticket-card-group:has(.mtech-ticket-card-checkin) .mtech-ticket-card { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.mtech-ticket-card-checkin {
+  margin-top: 0; padding: 0.65rem 0.75rem;
+  border-radius: 0 0 20px 20px;
+  background: rgba(15, 23, 42, 0.45);
+  border: 1px solid rgba(147, 197, 253, 0.14); border-top: 1px dashed rgba(147, 197, 253, 0.2);
+}
+
+/* Punch buttons inside the hero card (keep last) */
+.mh-hero-punch { margin-top: 0.95rem; padding-top: 0.95rem; border-top: 1px solid rgba(255, 255, 255, 0.18); }
+.mh-hero-punch .mh-clockrow { margin: 0; }
+.mh-hero-punch .mh-circle { width: 3.1rem; height: 3.1rem; color: #fff; background: rgba(255, 255, 255, 0.14); border-color: rgba(255, 255, 255, 0.24); }
+.mh-hero-punch .mh-clock--next .mh-circle { color: #1d4ed8; background: #fff; border-color: transparent; box-shadow: 0 8px 20px -8px rgba(15, 23, 42, 0.6), 0 0 0 4px rgba(255, 255, 255, 0.22); }
+.mh-hero-punch .mh-clock--in.mh-clock--next .mh-circle { color: #fff; background: #16a34a; box-shadow: 0 8px 20px -8px rgba(22, 163, 74, 0.9), 0 0 0 4px rgba(134, 239, 172, 0.3); }
+.mh-hero-punch .mh-clock--done .mh-circle { background: rgba(15, 23, 42, 0.28); border-color: rgba(255, 255, 255, 0.12); }
+.mh-hero-punch .mh-clock--done.mh-clock--in .mh-circle { color: #86efac; }
+.mh-hero-punch .mh-clock--done.mh-clock--meal .mh-circle { color: #fde68a; }
+.mh-hero-punch .mh-clock--done.mh-clock--out .mh-circle { color: #fca5a5; }
+.mh-hero-punch .mh-clock-label { color: #fff; }
+.mh-hero-punch .mh-clock-time { color: rgba(255, 255, 255, 0.6); }
+.mh-hero-punch .mh-clock--done .mh-clock-time { color: #fff; }
+.mh-hero-punch .mh-clock--next .mh-clock-time { color: #fff; }
+.mh-hero-punch .mtech-home-clockerror { margin: 0; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   Mobile dashboard refinement — one blue + midnight-navy system (keep last)
+   Bright blue = primary/current work · Deep blue = secondary · Navy = page/nav
+   Red / yellow / cyan = status only.
+   ════════════════════════════════════════════════════════════════════════ */
+.mtech {
+  --mt-blue: #3b78f6;
+  --mt-blue-dark: #2861d8;
+  --mt-surface: #182b4a;          /* secondary card (was a grey slate) */
+  --mt-surface-inset: #172946;    /* secondary darker surface */
+  --mt-surface-border: rgba(59, 120, 246, 0.16);
+  background: radial-gradient(120% 45% at 50% -8%, rgba(40, 97, 216, 0.22), transparent 70%), #091321;
+}
+.mtech-app-header { background: linear-gradient(135deg, #3b78f6, #2861d8); }
+
+/* Page rhythm: one continuous dashboard, not card → gap → card */
+.mtech-home { gap: 0.85rem; }
+.mtech-home > .mh-section-head { margin: 0.35rem 0.15rem -0.45rem; }
+
+/* 1 · Hero — the strongest element */
+.mh-hero {
+  padding: 1rem 1rem 0.9rem;
+  background: linear-gradient(155deg, #3b78f6 0%, #2861d8 55%, #214ca8 100%);
+  box-shadow: 0 16px 34px -22px rgba(40, 97, 216, 0.9);
+}
+.mh-hero-hold { background: rgba(9, 19, 33, 0.22); border-color: rgba(255, 255, 255, 0.1); }
+.mh-hero-hold--hot strong { color: #fde047; }
+
+/* 2 · Time / meal actions — part of the hero; available = white, the rest subdued */
+.mh-hero-punch { margin-top: 0.85rem; padding-top: 0.85rem; border-top-color: rgba(255, 255, 255, 0.14); }
+.mh-hero-punch .mh-clockrow { gap: 0.5rem; }
+.mh-hero-punch .mh-circle {
+  width: 3rem; height: 3rem;
+  color: rgba(255, 255, 255, 0.55);
+  background: rgba(23, 41, 70, 0.42);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: none;
+}
+.mh-hero-punch .mh-clock--next .mh-circle,
+.mh-hero-punch .mh-clock--in.mh-clock--next .mh-circle {
+  color: #2861d8;
+  background: #fff;
+  border-color: transparent;
+  box-shadow: 0 8px 18px -10px rgba(9, 19, 33, 0.8), 0 0 0 3px rgba(255, 255, 255, 0.2);
+}
+.mh-hero-punch .mh-clock--done .mh-circle,
+.mh-hero-punch .mh-clock--done.mh-clock--in .mh-circle,
+.mh-hero-punch .mh-clock--done.mh-clock--meal .mh-circle,
+.mh-hero-punch .mh-clock--done.mh-clock--out .mh-circle { color: #fff; background: rgba(23, 41, 70, 0.6); border-color: rgba(255, 255, 255, 0.16); }
+.mh-hero-punch .mh-clock-label { color: rgba(255, 255, 255, 0.92); }
+.mh-hero-punch .mh-clock-time { color: rgba(255, 255, 255, 0.55); }
+.mh-hero-punch .mh-clock--done .mh-clock-time,
+.mh-hero-punch .mh-clock--next .mh-clock-time { color: #fff; font-weight: 700; }
+
+/* 3 · Secondary cards — deep blue, flat, no glow */
+.mh-card,
+.mtech-home > .mtech-home-onsite,
+.mtech-home-onsite {
+  background: #182b4a;
+  border: 1px solid rgba(59, 120, 246, 0.16);
+  box-shadow: none;
+}
+.mh-card { padding: 0.9rem 0.95rem; border-radius: 20px; }
+.mh-card--alert { background: linear-gradient(0deg, rgba(239, 68, 68, 0.1), rgba(239, 68, 68, 0.1)), #182b4a; border-color: rgba(248, 113, 113, 0.35); }
+.mh-card--warn { background: linear-gradient(0deg, rgba(234, 179, 8, 0.1), rgba(234, 179, 8, 0.1)), #182b4a; border-color: rgba(250, 204, 21, 0.35); }
+.mh-icon-tile--warn { color: #fde047; background: rgba(234, 179, 8, 0.16); border-color: rgba(250, 204, 21, 0.3); }
+.mh-card-title { color: rgba(255, 255, 255, 0.62); }
+.mh-icon-tile { color: #8fb4ff; background: rgba(59, 120, 246, 0.14); border-color: rgba(59, 120, 246, 0.24); }
+
+/* My standing: grade panel and metrics quieter, colours kept for meaning */
+.mh-standing-hero {
+  background: linear-gradient(135deg, color-mix(in oklab, var(--g) 14%, #172946), #172946);
+  border-color: color-mix(in oklab, var(--g) 26%, transparent);
+}
+.mh-medal { transform: scale(1.1); box-shadow: 0 0 0 3px color-mix(in oklab, var(--g) 18%, transparent); }
+.mh-metric {
+  /* Darken the status tint so each tile reads as information, not a loud box. */
+  background-image: linear-gradient(rgba(23, 41, 70, 0.58), rgba(23, 41, 70, 0.58));
+  --tw-ring-color: color-mix(in oklab, currentColor 28%, transparent);
+}
+
+/* 5 · Clock-in code — a compact utility row */
+.mh-card--row { padding: 0.55rem 0.6rem 0.55rem 0.7rem; border-radius: 16px; background: #172946; }
+.mh-icon-tile--sm { width: 2.1rem; height: 2.1rem; }
+.mh-icon-tile--sm svg { width: 1rem; height: 1rem; }
+.mh-card--row .mh-code { margin-top: 0; gap: 0.25rem; }
+.mh-card--row .mh-code-digit {
+  width: 1.55rem; height: 1.95rem; border-radius: 8px;
+  font-size: 1.05rem; background: rgba(59, 120, 246, 0.16); border-color: rgba(59, 120, 246, 0.3); box-shadow: none;
+}
+.mh-card--row .mh-pill-btn { height: 2rem; padding: 0 0.75rem; font-size: 0.75rem; box-shadow: none; }
+
+/* On-site + tickets: same deep-blue family, accent stays bright blue */
+.mtech-home-onsite-row { background: #172946; border-color: rgba(59, 120, 246, 0.16); }
+.mtech-home-onsite-row::before { background: #3b78f6; box-shadow: none; }
+.mtech-home-onsite-empty { background: #172946; border-color: rgba(59, 120, 246, 0.2); }
+.mtech-home-onsite-status.is-ok { color: #67e8f9; background: rgba(34, 211, 238, 0.1); border-color: rgba(34, 211, 238, 0.3); }
+.mtech-home-onsite-status.is-bad { color: #fde047; background: rgba(234, 179, 8, 0.1); border-color: rgba(250, 204, 21, 0.3); }
+.mtech-ticket-card { background: #182b4a; border-color: rgba(59, 120, 246, 0.16); box-shadow: none; }
+.mtech-ticket-accent.tone-blue { background: #3b78f6; box-shadow: none; }
+.mtech-ticket-accent.tone-green, .mtech-ticket-accent.tone-amber, .mtech-ticket-accent.tone-red { box-shadow: none; }
+.mtech-ticket-meta-chip { background: rgba(59, 120, 246, 0.12); border-color: rgba(59, 120, 246, 0.2); color: #cfe0ff; }
+.mtech-ticket-card-checkin { background: #172946; border-color: rgba(59, 120, 246, 0.16); border-top-color: rgba(59, 120, 246, 0.2); }
+
+/* Shortcuts: deep-blue circles, bright-blue icons */
+.mh-circle--shortcut { color: #8fb4ff; background: #182b4a; border-color: rgba(59, 120, 246, 0.2); box-shadow: none; }
+.mh-shortcut:active .mh-circle--shortcut { background: #3b78f6; color: #fff; }
+
+/* 8 · Bottom navigation — dark navy, active = primary blue */
+.mtech-bottom-nav { background: #0c1a2d; border-top: 1px solid rgba(59, 120, 246, 0.14); box-shadow: none; }
+.mtech-bottom-tab { color: rgba(255, 255, 255, 0.6); }
+.mtech-bottom-tab-active { color: #3b78f6; }
+.mtech-bottom-tab-active::before { background: #3b78f6; }
+
+/* Clock-in code in the hero's top-right corner (keep last) */
+.mh-hero-top { align-items: center; }
+.mh-code-mini { display: flex; flex-direction: column; align-items: flex-end; gap: 0.25rem; flex-shrink: 0; }
+.mh-code-mini-label { font-size: 0.58rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255, 255, 255, 0.7); }
+.mh-code--mini { margin-top: 0; gap: 0.2rem; }
+.mh-code--mini .mh-code-digit {
+  width: 1.3rem; height: 1.6rem; border-radius: 6px;
+  font-size: 0.88rem; color: #fff;
+  background: rgba(9, 19, 33, 0.28); border: 1px solid rgba(255, 255, 255, 0.2); box-shadow: none;
+}
+.mh-code-copy {
+  display: grid; place-items: center; width: 1.75rem; height: 1.75rem; border-radius: 999px;
+  color: #2861d8; background: #fff; box-shadow: 0 4px 10px -6px rgba(9, 19, 33, 0.7);
+}
+.mh-code-copy svg { width: 0.85rem; height: 0.85rem; }
+.mh-code-copy:disabled { opacity: 0.5; }
+.mh-code-copy:active:not(:disabled) { transform: scale(0.92); }
+.mh-hero-top .mh-hi, .mh-hero-top .mh-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* My standing: collapsed rank + "Show full details" (keep last) */
+.mh-expand {
+  display: flex; align-items: center; justify-content: center; gap: 0.3rem; width: 100%;
+  margin-top: 0.7rem; padding: 0.5rem; border-radius: 12px;
+  font-size: 0.78rem; font-weight: 700; color: #8fb4ff;
+  background: rgba(59, 120, 246, 0.1); border: 1px solid rgba(59, 120, 246, 0.2);
+}
+.mh-expand:active { background: rgba(59, 120, 246, 0.2); }

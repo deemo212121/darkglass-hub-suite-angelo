@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Loader2 } from "lucide-react";
 import {
-  GRADERS, GRADE_META, GradeMedal, fmtPayDate, gradeName, letterGrade, payPeriodsThrough,
+  GRADERS, GRADE_META, GradeMedal, LETTER_META, fmtPayDate, gradeName, letterGrade, payPeriodsThrough,
   shortAvgHours, shortAvgMiles, shortDailyAvg, shortErrorCount, shortPoints, shortRedoPct, shortTotalTicket,
   type Grade,
 } from "@/components/techPerformanceGrading";
 import { getMyPerformance, getUncorrectedAutoClockOut, type MyPerformance } from "@/lib/supabase/myPerformance";
 
+const EXPANDED_KEY = "ahs:mobile-standing-expanded";
 const fmt1 = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 1 });
 const fmtDay = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 
@@ -24,6 +25,22 @@ export function MyStandingCard({ profileId, today }: { profileId: string; today:
   // 09/13–09/26 while 09/27–10/10 is still running.
   const completedIdx = periods.map((p) => p.end < today).lastIndexOf(true);
   const [idx, setIdx] = useState(completedIdx >= 0 ? completedIdx : lastIdx);
+  // Collapsed to just the rank by default; remembered on this phone.
+  const [expanded, setExpanded] = useState(() => {
+    try {
+      return localStorage.getItem(EXPANDED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggle = (open: boolean) => {
+    setExpanded(open);
+    try {
+      localStorage.setItem(EXPANDED_KEY, open ? "1" : "0");
+    } catch {
+      /* private mode — just don't remember */
+    }
+  };
   const period = periods[Math.min(idx, lastIdx)];
   const isCurrent = period.end >= today;
   const label = isCurrent ? "Current pay period" : idx === completedIdx ? "Last pay period" : "Pay period";
@@ -61,12 +78,10 @@ export function MyStandingCard({ profileId, today }: { profileId: string; today:
     else older();
   };
 
-  const card = { background: "var(--mt-surface)", border: "1px solid var(--mt-surface-border)", borderRadius: 14 } as const;
-
   if (error && !data) return null; // don't clutter Home if it can't load
   if (!data) {
     return (
-      <div style={card} className="flex items-center gap-2 px-4 py-3 text-xs text-slate-300">
+      <div className="mh-card flex items-center gap-2 text-xs text-slate-300">
         <Loader2 className="h-4 w-4 animate-spin" /> Loading my standing…
       </div>
     );
@@ -87,42 +102,74 @@ export function MyStandingCard({ profileId, today }: { profileId: string; today:
   const errors = shortErrorCount(data);
   const openMeetings = data.meetings.filter((m) => m.status === "required");
 
-  return (
-    <div style={card} className="px-4 py-3" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] font-bold uppercase tracking-wide text-slate-300">My standing</span>
-        <div className="flex items-center gap-1">
-          <button type="button" onClick={older} disabled={idx === 0} aria-label="Previous pay period" className="-m-2 rounded-md p-3 text-slate-300 disabled:opacity-30">
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <div className="text-right leading-tight">
-            <div className={`text-[10px] font-semibold ${isCurrent ? "text-sky-300" : "text-slate-300"}`}>{label}</div>
-            <div className="text-[10px] text-slate-400">{fmtPayDate(period.start)} – {fmtPayDate(period.end)}</div>
-          </div>
-          <button type="button" onClick={newer} disabled={idx >= lastIdx} aria-label="Next pay period" className="-m-2 rounded-md p-3 text-slate-300 disabled:opacity-30">
-            <ChevronRight className="h-4 w-4" />
-          </button>
-          {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />}
+  const rankRow = (
+    <div className="mh-standing-hero flex items-center gap-3" style={{ ["--g" as string]: LETTER_META[grade].rim }}>
+      <span className="mh-medal">
+        <GradeMedal grade={grade} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-base font-bold text-white">{gradeName(grade)}</div>
+        <div className="truncate text-xs text-slate-300">
+          {points} point{points === 1 ? "" : "s"}
         </div>
       </div>
+      <div className={`mh-metric rounded-2xl px-3 py-1.5 text-center ${errors > 0 ? "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30" : "bg-white/5 text-slate-300"}`}>
+        <div className="text-base font-bold tabular-nums leading-tight">{errors}</div>
+        <div className="text-[9px] uppercase tracking-wide">Errors</div>
+      </div>
+    </div>
+  );
+
+  // Title + pay period picker — the same in both states.
+  const header = (
+    <div className="flex items-center justify-between gap-2">
+      <span className="mh-card-title">My standing</span>
+      <div className="flex items-center gap-1">
+        <button type="button" onClick={older} disabled={idx === 0} aria-label="Previous pay period" className="-m-2 rounded-md p-3 text-slate-300 disabled:opacity-30">
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <div className="text-right leading-tight">
+          <div className={`text-[10px] font-semibold ${isCurrent ? "text-sky-300" : "text-slate-300"}`}>{label}</div>
+          <div className="text-[10px] text-slate-400">{fmtPayDate(period.start)} – {fmtPayDate(period.end)}</div>
+        </div>
+        <button type="button" onClick={newer} disabled={idx >= lastIdx} aria-label="Next pay period" className="-m-2 rounded-md p-3 text-slate-300 disabled:opacity-30">
+          <ChevronRight className="h-4 w-4" />
+        </button>
+        {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />}
+      </div>
+    </div>
+  );
+
+  // Collapsed (default): the pay period picker and the rank, plus a one-line meeting warning when there is one.
+  if (!expanded) {
+    return (
+      <div className="mh-card" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+        {header}
+        {error && <p className="mt-1 text-[10px] text-red-300">Couldn't load this pay period.</p>}
+        <div className={`mt-2.5 ${loading ? "opacity-50 transition-opacity" : "transition-opacity"}`}>{rankRow}</div>
+        {openMeetings.length > 0 && (
+          <div className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-red-300">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Meeting required with your Branch Manager
+          </div>
+        )}
+        <button type="button" className="mh-expand" onClick={() => toggle(true)} aria-expanded={false}>
+          Show full details <ChevronDown className="h-4 w-4" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mh-card" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+      {header}
       {error && <p className="mt-1 text-[10px] text-red-300">Couldn't load this pay period.</p>}
       <div className={loading ? "opacity-50 transition-opacity" : "transition-opacity"}>
 
-      <div className="mt-3 flex items-center gap-3">
-        <GradeMedal grade={grade} />
-        <div className="flex-1">
-          <div className="text-base font-bold text-white">{gradeName(grade)}</div>
-          <div className="text-xs text-slate-300">{points} point{points === 1 ? "" : "s"}</div>
-        </div>
-        <div className={`rounded-lg px-2.5 py-1 text-center ${errors > 0 ? "bg-red-500/15 text-red-300" : "bg-white/5 text-slate-300"}`}>
-          <div className="text-base font-bold tabular-nums leading-tight">{errors}</div>
-          <div className="text-[9px] uppercase tracking-wide">Errors</div>
-        </div>
-      </div>
+      <div className="mt-3">{rankRow}</div>
 
       <div className="mt-3 grid grid-cols-3 gap-2">
         {factors.map((f) => (
-          <div key={f.label} className={`rounded-lg px-2 py-1.5 text-center ring-1 ring-inset ${f.grade ? GRADE_META[f.grade].pill : "bg-white/5 text-slate-200 ring-white/10"}`}>
+          <div key={f.label} className={`mh-metric rounded-2xl px-2 py-2 text-center ring-1 ring-inset ${f.grade ? GRADE_META[f.grade].pill : "bg-white/5 text-slate-200 ring-white/10"}`}>
             <div className="text-sm font-bold tabular-nums">{f.value}</div>
             <div className="text-[9px] uppercase tracking-wide opacity-80">{f.label}</div>
           </div>
@@ -130,7 +177,7 @@ export function MyStandingCard({ profileId, today }: { profileId: string; today:
       </div>
 
       {openMeetings.length > 0 && (
-        <div className="mt-3 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+        <div className="mt-3 rounded-2xl border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
           <div className="flex items-center gap-1.5 font-semibold">
             <AlertTriangle className="h-3.5 w-3.5" /> Meeting required with your Branch Manager
           </div>
@@ -145,6 +192,9 @@ export function MyStandingCard({ profileId, today }: { profileId: string; today:
       )}
       </div>
       <p className="mt-2 text-[10px] text-slate-400">{isCurrent ? "This pay period is still running, so the numbers will change." : "From the numbers entered for this pay period."} Some data can be incomplete — ask your manager if something looks wrong.</p>
+      <button type="button" className="mh-expand" onClick={() => toggle(false)} aria-expanded>
+        Hide details <ChevronUp className="h-4 w-4" />
+      </button>
     </div>
   );
 }
@@ -166,9 +216,11 @@ export function FixTimeOutBanner({ profileId, today, onFix }: { profileId: strin
     <button
       type="button"
       onClick={() => onFix(date)}
-      className="flex w-full items-center gap-3 rounded-[14px] border border-orange-400/40 bg-orange-500/15 px-4 py-3 text-left"
+      className="mh-card mh-card--warn flex w-full items-center gap-3 text-left"
     >
-      <AlertTriangle className="h-5 w-5 shrink-0 text-orange-300" />
+      <span className="mh-icon-tile mh-icon-tile--warn" aria-hidden>
+        <AlertTriangle />
+      </span>
       <div className="flex-1">
         <div className="text-sm font-semibold text-orange-100">Fix your Time Out for {fmtDay(date)}</div>
         <div className="text-[11px] text-orange-200/90">
