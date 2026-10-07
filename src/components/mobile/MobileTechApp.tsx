@@ -153,6 +153,7 @@ import { FrozenAccountModal } from "@/components/FrozenAccountModal";
 import { TraineeAttendanceMobileModal } from "@/components/mobile/TraineeAttendanceMobileModal";
 import { MobileTicketAttendanceView } from "@/components/mobile/MobileTicketAttendanceView";
 import { AnnouncementsPage } from "@/components/AnnouncementsPage";
+import { ClockCircle, HomeHero, SectionHead, ShortcutCircle } from "@/components/mobile/homeKit";
 import { isTabVisible, onTabVisible } from "@/lib/pageVisibility";
 import {
   parseServicePerformed,
@@ -6542,16 +6543,15 @@ function MobileHomeView({
           <span className="mtech-home-reportbanner-back">‹ Back to my day</span>
         </button>
       ) : null}
-      <div className="mtech-home-greeting">
-        <div className="mtech-home-hi">{viewingReportName ? "Tracking" : `${greeting},`}</div>
-        <div className="mtech-home-name">{viewingReportName || userName}</div>
-        <HomeTicketStatsCard
-          todaysCount={todaysTickets.length}
-          onHoldCount={onHoldTickets.length}
-          onOpenTicketsTab={onOpenTicketsTab}
-          onOpenOnHoldTab={onOpenOnHoldTab}
-        />
-      </div>
+      <HomeHero
+        name={viewingReportName || userName}
+        greeting={greeting}
+        tracking={!!viewingReportName}
+        assignedToday={todaysTickets.length}
+        onHold={onHoldTickets.length}
+        onOpenTickets={onOpenTicketsTab}
+        onOpenOnHold={onOpenOnHoldTab}
+      />
 
       {viewingReportName ? null : loadError ? (
         <div className="mtech-home-clockerror">
@@ -6559,7 +6559,7 @@ function MobileHomeView({
           <button type="button" onClick={() => { setLoadError(false); setReloadNonce((n) => n + 1); }}>Retry</button>
         </div>
       ) : (
-      <div data-tour="m-clock" className="mtech-timecard-summary mtech-home-clockrow">
+      <div data-tour="m-clock" className="mh-clockrow">
         {codePromptOpen && scheduleProfileId && (
           <ClockInCodePrompt
             profileId={scheduleProfileId}
@@ -6572,32 +6572,32 @@ function MobileHomeView({
             onCancel={() => setCodePromptOpen(false)}
           />
         )}
-        <ClockCard
-          label="Time In" value={entry.checkIn ? entry.checkIn.slice(0, 5) : ""} valueClass="in"
+        <ClockCircle
+          label="Time In" value={entry.checkIn ? entry.checkIn.slice(0, 5) : ""} tone="in"
           canAct={canTimeIn}
           onTap={handleTimeIn}
           removable={!!entry.checkIn && canEditPunch(entry, "checkIn")}
           removeArmed={confirmRemoveCard === "checkIn"} removing={clearingField === "checkIn"}
           onRequestRemove={() => armRemove("checkIn")} onConfirmRemove={() => void handleClearPunch("checkIn")} onCancelRemove={cancelRemove}
         />
-        <ClockCard
-          label="Meal In" value={entry.mealStart ? entry.mealStart.slice(0, 5) : ""} valueClass="meal"
+        <ClockCircle
+          label="Meal In" value={entry.mealStart ? entry.mealStart.slice(0, 5) : ""} tone="meal"
           canAct={canMealIn}
           onTap={handleMealIn}
           removable={!!entry.mealStart && canEditPunch(entry, "mealStart")}
           removeArmed={confirmRemoveCard === "mealStart"} removing={clearingField === "mealStart"}
           onRequestRemove={() => armRemove("mealStart")} onConfirmRemove={() => void handleClearPunch("mealStart")} onCancelRemove={cancelRemove}
         />
-        <ClockCard
-          label="Meal Out" value={entry.mealEnd ? entry.mealEnd.slice(0, 5) : ""} valueClass="meal"
+        <ClockCircle
+          label="Meal Out" value={entry.mealEnd ? entry.mealEnd.slice(0, 5) : ""} tone="meal"
           canAct={canMealOut}
           onTap={handleMealOut}
           removable={!!entry.mealEnd && canEditPunch(entry, "mealEnd")}
           removeArmed={confirmRemoveCard === "mealEnd"} removing={clearingField === "mealEnd"}
           onRequestRemove={() => armRemove("mealEnd")} onConfirmRemove={() => void handleClearPunch("mealEnd")} onCancelRemove={cancelRemove}
         />
-        <ClockCard
-          label="Time Out" value={entry.checkOut ? entry.checkOut.slice(0, 5) : ""} valueClass="out"
+        <ClockCircle
+          label="Time Out" value={entry.checkOut ? entry.checkOut.slice(0, 5) : ""} tone="out"
           canAct={canTimeOut}
           onTap={handleTimeOut}
           removable={!!entry.checkOut && canEditPunch(entry, "checkOut")}
@@ -6617,6 +6617,7 @@ function MobileHomeView({
         </div>
       )}
 
+      {!viewingReportName && <SectionHead title="Today's ticket" />}
       {!viewingReportName && (
         <HomeOnSiteCard
           tickets={todaysTickets}
@@ -6633,14 +6634,10 @@ function MobileHomeView({
         />
       )}
 
-      <div className="mtech-home-divider" />
-
-      <div className="mtech-home-grid">
+      <SectionHead title="Shortcuts" />
+      <div className="mh-shortcuts">
         {menuTiles.map((t) => (
-          <button key={t.key} data-tour={`m-tile-${t.key}`} className="mtech-home-tile" type="button" onClick={t.onClick}>
-            <span className="mtech-home-tile-label">{t.label}</span>
-            <span className="mtech-home-tile-desc">{t.description}</span>
-          </button>
+          <ShortcutCircle key={t.key} id={t.key} label={t.label} onClick={t.onClick} tourId={`m-tile-${t.key}`} />
         ))}
       </div>
     </div>
