@@ -1755,6 +1755,7 @@ export function MobileTechApp() {
           <MobileHomeView
             userName={headerName}
             role={role}
+            extraRoles={extraRoles}
             uid={uid}
             profileId={profileId}
             todaysTickets={todaysTickets}
@@ -6135,6 +6136,7 @@ function HomeOnSiteCard({
 function MobileHomeView({
   userName,
   role,
+  extraRoles,
   uid,
   profileId,
   todaysTickets,
@@ -6170,6 +6172,7 @@ function MobileHomeView({
 }: {
   userName: string;
   role: string | null;
+  extraRoles?: string[];
   uid: string | null;
   profileId: string | null;
   todaysTickets: Ticket[];
@@ -6251,7 +6254,8 @@ function MobileHomeView({
   const todayKey = zonedDateKey(now, scheduleTimezone);
   // Technicians see their own standing + the missed Time Out banner;
   // whoever can see the clock-in code handles the meetings list.
-  const needsStanding = String(role ?? "").trim().toUpperCase() === "TECHNICIAN";
+  // Primary OR extra role — e.g. a Technical Assistant Director who is also a Technician.
+  const needsStanding = [role, ...(extraRoles ?? [])].some((r) => String(r ?? "").trim().toUpperCase() === "TECHNICIAN");
   const canSeeMeetings = useCanSeeClockInMeetings();
 
   useEffect(() => {
