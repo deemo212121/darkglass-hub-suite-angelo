@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarCheck2, CalendarClock, CalendarX2, Check, Loader2 } from "lucide-react";
+import { CalendarCheck2, CalendarClock, CalendarX2, Check, Loader2, Pencil } from "lucide-react";
+import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import type { ProfileRow } from "@/lib/supabase/users";
 import {
@@ -8,6 +9,7 @@ import {
   getForcedClockOutsAwaitingCorrection,
   getPendingClockInMeetings,
   markClockInMeetingDone,
+  updateClockInMeetingNote,
   type ClockInMeeting,
   type ForcedClockOut,
 } from "@/lib/supabase/clockInMeetings";
@@ -294,6 +296,29 @@ function DoneClockInMeetings({ profiles, reloadKey }: { profiles: ProfileRow[]; 
   const [branch, setBranch] = useState("all");
   const [rows, setRows] = useState<ClockInMeeting[]>([]);
   const [loading, setLoading] = useState(true);
+  // Editing a held meeting's note in place.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const startEdit = (m: ClockInMeeting) => {
+    setEditingId(m.id);
+    setDraft(m.note ?? "");
+  };
+  const saveNote = async () => {
+    if (!editingId) return;
+    setSaving(true);
+    try {
+      await updateClockInMeetingNote(editingId, draft);
+      const note = draft.trim() || null;
+      setRows((prev) => prev.map((r) => (r.id === editingId ? { ...r, note } : r)));
+      setEditingId(null);
+      toast.success("Note saved");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't save the note — try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -370,7 +395,46 @@ function DoneClockInMeetings({ profiles, reloadKey }: { profiles: ProfileRow[]; 
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap text-slate-100">{m.doneByName || "—"}</td>
                 <td className="px-3 py-2 whitespace-nowrap tabular-nums text-slate-300">{fmtWhen(m.doneAt)}</td>
-                <td className="px-3 py-2 min-w-[12rem] text-slate-300">{m.note || "—"}</td>
+                <td className="group px-3 py-2 min-w-[14rem] text-slate-300">
+                  {editingId === m.id ? (
+                    <div className="space-y-1.5">
+                      <textarea
+                        autoFocus
+                        rows={2}
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") setEditingId(null);
+                          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void saveNote();
+                        }}
+                        placeholder="Notes from the meeting"
+                        className="glass-input w-full rounded-md px-2 py-1.5 text-xs text-slate-100"
+                      />
+                      <div className="flex justify-end gap-1.5">
+                        <button type="button" onClick={() => setEditingId(null)} disabled={saving} className="btn btn-sm">
+                          Cancel
+                        </button>
+                        <button type="button" onClick={() => void saveNote()} disabled={saving} className="btn btn-primary btn-sm">
+                          {saving ? <Loader2 className="animate-spin" /> : <Check />} Save
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-start gap-1.5">
+                      <span className="flex-1 whitespace-pre-line">{m.note || "—"}</span>
+                      <button
+                        type="button"
+                        onClick={() => startEdit(m)}
+                        disabled={!!editingId}
+                        className="btn btn-ghost btn-sm shrink-0 opacity-50 group-hover:opacity-100 focus-visible:opacity-100"
+                        title={m.note ? "Edit note" : "Add note"}
+                        aria-label={m.note ? "Edit note" : "Add note"}
+                      >
+                        <Pencil />
+                      </button>
+                    </div>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

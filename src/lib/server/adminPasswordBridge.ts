@@ -2,7 +2,7 @@
  * Admin "reset to default password" bridge — lets an ADMIN/SUPERADMIN/HR
  * force-set a single LOCKED-OUT user's Firebase Auth password back to the
  * same default used at account creation (see AdminUserManagementPage.tsx's
- * createCompanyUser, "Welcome2024!"), no old password needed, no reset
+ * createCompanyUser), no old password needed, no reset
  * email required. HR is included because HR already has full access to the
  * User Management page (USER_MANAGEMENT_DEFAULT_ROLES in submoduleAccess.ts) and
  * account-recovery is squarely HR's job. The role is matched against the
@@ -41,6 +41,12 @@ interface EnvBag {
   firebaseProjectId: string;
   serviceAccountEmail: string;
   privateKey: string;
+  /** The default password, from the DEFAULT_RESET_PASSWORD secret — kept out of the code. */
+  defaultPassword: string;
+}
+
+export function readAdminPasswordEnv(env?: Record<string, string | undefined>): EnvBag | { error: string } {
+  return readEnv(env);
 }
 
 function readEnv(env?: Record<string, string | undefined>): EnvBag | { error: string } {
@@ -55,18 +61,19 @@ function readEnv(env?: Record<string, string | undefined>): EnvBag | { error: st
   if (!supabaseServiceKey) return { error: "Server missing SUPABASE_SERVICE_KEY" };
   if (!firebaseProjectId) return { error: "Server missing VITE_FIREBASE_PROJECT_ID" };
   if (!serviceAccountEmail) return { error: "Server missing FIREBASE_SERVICE_ACCOUNT_EMAIL" };
+  const defaultPassword = getEnv("DEFAULT_RESET_PASSWORD");
   if (!privateKey) return { error: "Server missing FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY" };
-  return { supabaseUrl, supabaseServiceKey, firebaseProjectId, serviceAccountEmail, privateKey };
+  if (!defaultPassword) return { error: "Server missing DEFAULT_RESET_PASSWORD" };
+  return { supabaseUrl, supabaseServiceKey, firebaseProjectId, serviceAccountEmail, privateKey, defaultPassword };
 }
 
 // Roles allowed to trigger a reset-to-default. Matched against the caller's
 // primary role AND their extra_roles (see holdsResetRole).
 const RESET_PASSWORD_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR"]);
 
-// Same value used at account creation — see AdminUserManagementPage.tsx's
-// createCompanyUser call. Never accepted from the client — this endpoint
-// only ever resets to this one known value, on purpose (see file header).
-const DEFAULT_PASSWORD = "Welcome2024!";
+// The default password comes from the DEFAULT_RESET_PASSWORD secret (.env /
+// Cloudflare), the same value used at account creation. Never accepted from
+// the client — this endpoint only ever resets to that one value, on purpose.
 
 // ---- base64url + JWT signing (duplicated per-bridge on purpose — see adminUpdateEmailBridge.ts) ----
 function bytesToB64url(bytes: Uint8Array): string {
@@ -88,7 +95,7 @@ function pemToPkcs8Bytes(pem: string): ArrayBuffer {
 
 let identityToolkitTokenCache: { token: string; expiresAt: number } | null = null;
 
-async function getIdentityToolkitAccessToken(serviceAccountEmail: string, privateKeyPem: string): Promise<string> {
+export async function getIdentityToolkitAccessToken(serviceAccountEmail: string, privateKeyPem: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   if (identityToolkitTokenCache && identityToolkitTokenCache.expiresAt > now + 30) return identityToolkitTokenCache.token;
 
@@ -141,7 +148,7 @@ async function fetchProfile(env: EnvBag, filter: { firebase_uid: string } | { id
   return rows[0] ?? null;
 }
 
-async function setUserPassword(accessToken: string, uid: string, newPassword: string): Promise<void> {
+export async function setUserPassword(accessToken: string, uid: string, newPassword: string): Promise<void> {
   const res = await fetch("https://identitytoolkit.googleapis.com/v1/accounts:update", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
@@ -188,7 +195,7 @@ export async function handleAdminPasswordRequest(request: Request, env?: Record<
 
     // 3. Reset the ACTUAL Firebase Auth credential to the known default.
     const accessToken = await getIdentityToolkitAccessToken(envBag.serviceAccountEmail, envBag.privateKey);
-    await setUserPassword(accessToken, targetProfile.firebase_uid, DEFAULT_PASSWORD);
+    await setUserPassword(accessToken, targetProfile.firebase_uid, envBag.defaultPassword);
 
     return json({ success: true });
   } catch (error) {

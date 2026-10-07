@@ -46,7 +46,11 @@ function Landing() {
   // this just queues a request for IT/HR to see and follow up on directly
   // (see LoginSecurityPage.tsx's "Password Reset Requests" tab).
   const [forgotOpen, setForgotOpen] = useState(false);
-  const [forgotForm, setForgotForm] = useState({ fullName: "", username: "", email: "" });
+  const [forgotForm, setForgotForm] = useState({ username: "" });
+  // The username is checked as it's typed: does it exist, and which (masked) email the password goes to.
+  const [forgotLookup, setForgotLookup] = useState<{ status: "idle" | "checking" | "missing" | "found" | "error"; maskedEmail?: string | null }>({ status: "idle" });
+  // After a reset request: the email it went to, for the "check your inbox" screen.
+  const [forgotSentTo, setForgotSentTo] = useState<string | null>(null);
   const [forgotSubmitting, setForgotSubmitting] = useState(false);
 
   // The landing page always shows the light theme, regardless of whatever
@@ -235,10 +239,44 @@ function Landing() {
     }
   };
 
+  // Check the username ~0.4s after typing stops.
+  useEffect(() => {
+    const u = forgotForm.username.trim();
+    if (!forgotOpen || !u) {
+      setForgotLookup({ status: "idle" });
+      return;
+    }
+    setForgotLookup({ status: "checking" });
+    let cancelled = false;
+    const t = window.setTimeout(async () => {
+      try {
+        const res = await fetch("/api/password-reset-request", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "lookup", username: u }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        if (!res.ok || typeof data.exists !== "boolean") setForgotLookup({ status: "error" });
+        else setForgotLookup(data.exists ? { status: "found", maskedEmail: data.maskedEmail ?? null } : { status: "missing" });
+      } catch {
+        if (!cancelled) setForgotLookup({ status: "error" });
+      }
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [forgotForm.username, forgotOpen]);
+
   const submitForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!forgotForm.fullName.trim() || !forgotForm.username.trim()) {
-      setForgotMsg({ text: "Full name and username are required.", error: true });
+    if (!forgotForm.username.trim()) {
+      setForgotMsg({ text: "Enter your username.", error: true });
+      return;
+    }
+    if (forgotLookup.status === "missing") {
+      setForgotMsg({ text: "Username doesn't exist.", error: true });
       return;
     }
     setForgotSubmitting(true);
@@ -247,15 +285,21 @@ function Landing() {
       const res = await fetch("/api/password-reset-request", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(forgotForm),
+        body: JSON.stringify({ username: forgotForm.username.trim() }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setForgotMsg({ text: data.error || "Failed to submit request.", error: true });
+      // Only show "check your email" when the server really handled it.
+      if (!res.ok || data.ok !== true) {
+        setForgotMsg({ text: data.error || "Couldn't reset your password right now — try again, or contact IT on Discord.", error: true });
         return;
       }
-      setForgotMsg({ text: "Request submitted — IT has been notified and will reach out to you shortly." });
-      setForgotForm({ fullName: "", username: "", email: "" });
+      if (data.queued) {
+        // No IT email connected — IT will handle it by hand.
+        setForgotMsg({ text: data.message || "IT has been notified and will reset your password for you." });
+        return;
+      }
+      setForgotSentTo(data.sentTo || "your email");
+      setForgotForm({ username: "" });
     } catch (error: any) {
       setForgotMsg({ text: error.message || "Failed to submit request.", error: true });
     } finally {
@@ -512,54 +556,70 @@ function Landing() {
 
       <LiveChatWidget />
 
-      {/* Forgot Password Modal — no self-service email reset in this app;
-          this just queues a request for IT/HR to see and follow up on
-          directly, see LoginSecurityPage.tsx's "Password Reset Requests" tab. */}
-      <Dialog open={forgotOpen} onOpenChange={(v) => { setForgotOpen(v); if (!v) setForgotMsg(null); }}>
+      {/* Forgot Password — username + email on file; the server resets to the
+          default password and emails it from IT's Gmail (passwordResetRequestBridge.ts). */}
+      <Dialog open={forgotOpen} onOpenChange={(v) => { setForgotOpen(v); if (!v) { setForgotMsg(null); setForgotSentTo(null); } }}>
         <DialogContent className="bg-card border-white/10">
           <DialogHeader>
             <DialogTitle className="font-display">Forgot Password</DialogTitle>
             <DialogDescription>
-              Submit your details and IT will reach out to help reset your password.
+              {forgotSentTo ? "Check your email for your new password." : "Enter your username. We'll reset your password and email it to the address on your account."}
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={submitForgotPassword} className="space-y-4">
-            <div className="text-xs text-blue-300 bg-blue-500/10 border border-blue-500/30 rounded p-3">
-              This creates an IT support ticket under your name — IT will be notified immediately and will contact you to reset your password.
+          {forgotSentTo ? (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-200">
+                Your password has been reset and sent to <strong className="text-white">{forgotSentTo}</strong>.
+              </div>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p className="font-semibold text-foreground">Where to find your new password</p>
+                <ol className="list-decimal space-y-1 pl-5">
+                  <li>
+                    Open the inbox for <strong className="text-foreground">{forgotSentTo}</strong>.
+                  </li>
+                  <li>
+                    Look for an email titled <strong className="text-foreground">"Password Reset AHS"</strong> from the IT Team. It can take a minute or two — check <strong className="text-foreground">Spam / Junk</strong> too.
+                  </li>
+                  <li>Log in with your username and the password in that email.</li>
+                  <li>You'll be asked to choose your own new password right away.</li>
+                </ol>
+                <p className="text-xs">No email after a few minutes? Contact IT on Discord.</p>
+              </div>
+              <button type="button" className="btn btn-primary w-full justify-center" onClick={() => { setForgotOpen(false); setForgotSentTo(null); }}>
+                Back to sign in
+              </button>
             </div>
-            <label className="block text-sm">
-              <span className="text-muted-foreground text-xs font-semibold uppercase">Full Name</span>
-              <input
-                className="glass-input mt-1 w-full"
-                type="text"
-                value={forgotForm.fullName}
-                onChange={(e) => setForgotForm({ ...forgotForm, fullName: e.target.value })}
-                placeholder="Your full name"
-                disabled={forgotSubmitting}
-              />
-            </label>
+          ) : (
+          <form onSubmit={submitForgotPassword} className="space-y-4">
             <label className="block text-sm">
               <span className="text-muted-foreground text-xs font-semibold uppercase">Account Username</span>
               <input
                 className="glass-input mt-1 w-full"
                 type="text"
+                autoComplete="username"
                 value={forgotForm.username}
-                onChange={(e) => setForgotForm({ ...forgotForm, username: e.target.value })}
+                onChange={(e) => { setForgotForm({ username: e.target.value }); setForgotMsg(null); }}
                 placeholder="Your login username"
                 disabled={forgotSubmitting}
+                aria-invalid={forgotLookup.status === "missing"}
               />
+              {forgotLookup.status === "checking" && <span className="mt-1 block text-xs text-muted-foreground">Checking…</span>}
+              {forgotLookup.status === "missing" && <span className="mt-1 block text-xs font-semibold text-red-400">Username doesn't exist.</span>}
+              {forgotLookup.status === "error" && (
+                <span className="mt-1 block text-xs font-semibold text-red-400">Couldn't check the username right now — try again in a moment, or contact IT on Discord.</span>
+              )}
             </label>
-            <label className="block text-sm">
+            <div className="block text-sm">
               <span className="text-muted-foreground text-xs font-semibold uppercase">Email</span>
-              <input
-                className="glass-input mt-1 w-full"
-                type="email"
-                value={forgotForm.email}
-                onChange={(e) => setForgotForm({ ...forgotForm, email: e.target.value })}
-                placeholder="you@example.com"
-                disabled={forgotSubmitting}
-              />
-            </label>
+              <div className="glass-input mt-1 w-full select-none opacity-80" aria-live="polite">
+                {forgotLookup.status === "found"
+                  ? forgotLookup.maskedEmail || "No email on your account — IT will help you"
+                  : forgotLookup.status === "checking"
+                    ? "Looking up your account…"
+                    : "Filled in from your account"}
+              </div>
+              <span className="mt-1 block text-xs text-muted-foreground">Your new password is sent to the email on your account.</span>
+            </div>
             {forgotMsg && (
               <div
                 className={`text-sm rounded p-3 border ${
@@ -574,11 +634,12 @@ function Landing() {
             <button
               type="submit"
               className="btn btn-primary w-full justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={forgotSubmitting}
+              disabled={forgotSubmitting || forgotLookup.status !== "found"}
             >
-              {forgotSubmitting ? "Submitting..." : "Submit Request"}
+              {forgotSubmitting ? "Resetting…" : "Reset password"}
             </button>
           </form>
+          )}
         </DialogContent>
       </Dialog>
 

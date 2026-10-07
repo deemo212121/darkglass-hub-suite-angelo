@@ -92,6 +92,17 @@ export async function markClockInMeetingDone(id: string, doneByName: string, not
   if (!data || data.length === 0) throw new Error("You don't have permission to mark this meeting done.");
 }
 
+/** Change the note on a meeting (e.g. one already marked done). Same people who can mark meetings done. */
+export async function updateClockInMeetingNote(id: string, note: string): Promise<void> {
+  const { data, error } = await supabase
+    .from("clock_in_meetings")
+    .update({ note: note.trim() || null })
+    .eq("id", id)
+    .select("id");
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) throw new Error("You don't have permission to edit this note.");
+}
+
 /** First Time In per "profileId|date" for the given technician-days — shows a late (after 10 AM) clock-in next to its meeting. */
 export async function getFirstTimeIns(pairs: { profileId: string; date: string }[]): Promise<Map<string, string>> {
   const out = new Map<string, string>();
