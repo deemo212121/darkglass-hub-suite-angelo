@@ -264,6 +264,14 @@ const csrMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    {
+      slug: "coaching-log",
+      title: "Coaching Log",
+      description: "CSR coaching sessions: the coach and the CSR each fill in their part, then both sign.",
+      custom: "csr-coaching-log" as any,
+      fields: [],
+      seed: () => ({}),
+    },
     // Same shortcut-copy pattern as Branch/Technician's own tiles below —
     // reuses HR's exact page (dispatch is by `custom` alone), just
     // reachable from here too. Own slug ("csr-candidate-reviews", not the
@@ -324,6 +332,17 @@ const accountingMod: ModuleDef = {
       title: "Accounting Dashboard",
       description: "Attendance monitoring, payroll calculation, and employee time tracking.",
       custom: "accounting-dashboard" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      // Same Flash Tech page as HR Dashboard → Flash Tech (and /m/hr/flash-tech) —
+      // Finance schedules trips and fills in the hotel/rental/receipt Tracker.
+      slug: "flash-tech",
+      title: "Flash Tech",
+      description: "Technician travel trips — schedule (Calendar) or fill in hotel/rental/receipt tracking detail (Tracker).",
+      custom: "flash-tech" as any,
       fields: [],
       count: 0,
       seed: () => ({}),
@@ -1141,14 +1160,6 @@ const ticketsMod: ModuleDef = {
       title: "Receiving Status",
       description: "Incoming tickets by Branch and 3rd-party Ticket Provider, with sync status.",
       custom: "receiving-status" as any,
-      fields: [],
-      seed: () => ({}),
-    },
-    {
-      slug: "operation",
-      title: "Operation",
-      description: "Live ticket counts per status, company-wide — includes backorder & cancel tracking.",
-      custom: "ticket-operation-report" as any,
       fields: [],
       seed: () => ({}),
     },
@@ -2109,6 +2120,14 @@ const bizOpsMod: ModuleDef = {
   accent: "#94a3b8",
   submodules: [
     {
+      slug: "operation",
+      title: "Operation",
+      description: "Live ticket counts per status, company-wide — includes backorder & cancel tracking.",
+      custom: "ticket-operation-report" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
       slug: "operations-dashboard",
       title: "Operations Dashboard",
       description: "Company-wide ticket overview — region breakdown, status funnel, and BizOps staff.",
@@ -2202,7 +2221,7 @@ const guidesMod: ModuleDef = {
   ],
 };
 
-export const MODULES: ModuleDef[] = [dashboardMod, guidesMod, csrMod, ticketsMod, partsMod, reportMod, claimsMod, accountingMod, hrMod, branchTechMod, triageMod, bizOpsMod, adminMod];
+export const MODULES: ModuleDef[] = [dashboardMod, csrMod, ticketsMod, partsMod, reportMod, claimsMod, accountingMod, hrMod, branchTechMod, triageMod, bizOpsMod, adminMod, guidesMod];
 
 export function getModule(slug: string) {
   return MODULES.find((m) => m.slug === slug);

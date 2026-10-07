@@ -1,6 +1,6 @@
 /**
  * Admin → Approval Chain → Philippines. PH staff are organized by
- * department, not branch/area (migration 0334):
+ * department, not branch/area (migration 0337):
  *
  *   PH staff ──► their department's manager(s) ──► top level
  *

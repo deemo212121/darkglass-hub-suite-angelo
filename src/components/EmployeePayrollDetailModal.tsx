@@ -2,6 +2,7 @@ import { getTrainingDates } from "@/lib/supabase/trainingDates";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2, StickyNote, Download } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { TimeInput24 } from "@/components/TimeInput24";
 import { useAuth } from "@/lib/auth";
 import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, hoursDiff, MEAL_ALWAYS_PAID_DEFAULT_HOURS, type AttendanceRow } from "@/lib/supabase/timecards";
 import { isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, hasAnyTechnicianPayRole } from "@/lib/roleLabels";
@@ -18,7 +19,6 @@ import { getTicketAttendanceForTechnician, slotSortKey, type TicketAttendanceRow
 import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
 import { getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
 import { getMileageEntries, setMileageEstimateTime, setMileageLegMileage, type MileageEntry } from "@/lib/supabase/mileage";
-import { updateCompanyUser } from "@/lib/supabase/users";
 import { STATE_MIN_WAGE_2026, normalizeStateName, highestRateAmong, FEDERAL_MIN_WAGE } from "@/lib/stateMinWage";
 import {
   getSalaryHistory,
@@ -43,15 +43,10 @@ interface Props {
   extraRoles?: string[] | null;
   /** profiles.tier_level (migration 0162) — same field Master List's "Current Technicians" tab and Staff List's "Tier Level" tab edit. Shown in the Current Rate tile; "Unassigned" when blank. */
   tierLevel?: string | null;
-  /** profiles.training_end_date (migration 0297) — the trainee daily $100
-   *  guarantee applies to every day from this employee's hireDate through
-   *  this date, inclusive. Editable here, next to Salary History. */
-  trainingEndDate?: string | null;
-  /** profiles.employee_info.hireDate — the trainee window's start (see
-   *  trainingEndDate above). Only used to badge Attendance rows; omitting it
-   *  just means the badge shows for every day up to trainingEndDate instead
-   *  of being bounded below by hire date. */
+  /** profiles.employee_info.hireDate — the trainee window's start when HR has no training start date. */
   hireDate?: string | null;
+  /** Master List employment status is Trainee — with no Field Start recorded, keeps the $100/day window open (see trainingWindow). */
+  isTrainee?: boolean;
   requiredCheckIn?: string;
   requiredCheckOut?: string;
   workingHours?: number | null;
@@ -197,8 +192,8 @@ export function EmployeePayrollDetailModal({
   role,
   extraRoles,
   tierLevel,
-  trainingEndDate,
   hireDate,
+  isTrainee = false,
   requiredCheckIn,
   requiredCheckOut,
   workingHours,
@@ -303,14 +298,9 @@ export function EmployeePayrollDetailModal({
   // behind a "Done"/"Save" button like Rate or the punch edits above.
   const [stateEdits, setStateEdits] = useState<Record<string, string>>({});
   const [savingStateFor, setSavingStateFor] = useState<string | null>(null);
-  // Trainee daily $100 guarantee window — see traineeDailyMatchFor in
-  // AccountingDashboard.tsx. Local input synced from the trainingEndDate
-  // prop; re-syncs whenever the caller re-fetches with a fresh value (e.g.
-  // after this same edit round-trips through onRateChanged).
-  const [trainingEndDateInput, setTrainingEndDateInput] = useState(trainingEndDate ?? "");
-  const [savingTrainingEndDate, setSavingTrainingEndDate] = useState(false);
+  // Trainee daily $100 guarantee window — see trainingWindow / traineeDailyMatchFor in AccountingDashboard.tsx.
   const [hrTraining, setHrTraining] = useState<{ start: string | null; fieldStart: string | null }>({ start: null, fieldStart: null });
-  const traineeWindow = trainingWindow(hrTraining.start, hrTraining.fieldStart, hireDate, trainingEndDateInput);
+  const traineeWindow = trainingWindow(hrTraining.start, hrTraining.fieldStart, hireDate, isTrainee);
   const [fieldStart, setFieldStart] = useState<{ date: string | null; loading: boolean; error: boolean }>({ date: null, loading: true, error: false });
   useEffect(() => {
     let cancelled = false;
@@ -323,17 +313,14 @@ export function EmployeePayrollDetailModal({
       const candidates = await getTrainingDates(profile.company_id);
       const record = resolveTrainingRecord(profile, candidates);
       const date = resolveFieldStartDate(profile, candidates);
-      if (!cancelled) setHrTraining({ start: record?.training_start_date ?? null, fieldStart: record?.training_end_date ?? null });
+      if (!cancelled) setHrTraining({ start: record?.training_start_date ?? null, fieldStart: date });
       if (!cancelled) setFieldStart({ date, loading: false, error: false });
     };
     void loadFieldStart().catch(() => {
       if (!cancelled) setFieldStart({ date: null, loading: false, error: true });
     });
     return () => { cancelled = true; };
-  }, [profileId, trainingEndDateInput]);
-  useEffect(() => {
-    setTrainingEndDateInput(trainingEndDate ?? "");
-  }, [trainingEndDate]);
+  }, [profileId]);
   // Calculated = company rate as-is. Compliant = the higher of company rate
   // vs. that day's assigned state's minimum wage — not an equally-valid
   // alternative view, but the legally required number whenever a day's
@@ -877,7 +864,6 @@ export function EmployeePayrollDetailModal({
       // pay is shown (Current Rate tile, Tech Activity Report's Hourly Pay
       // line). Using monthlySalary here inflated it to annual/12 (e.g. a
       // $72,000/yr salary showed $6,000.00 instead of the correct $2,769.23).
-      // PH's cutoff is semi-monthly (24/yr), not the US's bi-weekly (26/yr).
       const fixed = perCutoffSalary(currentEntry.annualSalary, isPhPayroll);
       return {
         calculated: { regularPay: fixed, overtimePay: 0, total: fixed },
@@ -1209,30 +1195,6 @@ export function EmployeePayrollDetailModal({
     }
   };
 
-  // Trainee daily $100 guarantee window (migration 0297) — saves immediately
-  // like State above, not staged behind a form. Same debounced onRateChanged
-  // as handleStateChange, sharing the same timer ref: whichever one fires
-  // last wins, so editing both in quick succession still only reloads the
-  // dashboard once.
-  const handleTrainingEndDateChange = async (value: string) => {
-    const prev = trainingEndDateInput;
-    setTrainingEndDateInput(value);
-    setSavingTrainingEndDate(true);
-    try {
-      await updateCompanyUser(profileId, { trainingEndDate: value || null });
-      if (rateChangedDebounceRef.current) clearTimeout(rateChangedDebounceRef.current);
-      rateChangedDebounceRef.current = setTimeout(() => {
-        rateChangedDebounceRef.current = null;
-        onRateChanged?.();
-      }, 800);
-    } catch (err) {
-      alert(`Failed to save Training End Date: ${err instanceof Error ? err.message : "Unknown error"}`);
-      setTrainingEndDateInput(prev);
-    } finally {
-      setSavingTrainingEndDate(false);
-    }
-  };
-
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div
@@ -1266,12 +1228,12 @@ export function EmployeePayrollDetailModal({
           </div>
         </div>
 
-        <div className="overflow-y-auto flex-1 p-5 space-y-5">
+        <div className="overflow-y-auto flex-1 p-3 space-y-3">
           {/* KPI row */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
               <p className="text-xs text-slate-400 uppercase">Total Hours</p>
-              <p className="text-xl font-bold text-white mt-1">{fmtDecimal(totalHours)}</p>
+              <p className="text-lg font-bold text-white mt-1">{fmtDecimal(totalHours)}</p>
               <p className="text-xs text-slate-400 mt-0.5">
                 {fmtDecimal(totalHoursSplit.regular)} regular + {fmtDecimal(totalHoursSplit.overtime)} overtime
               </p>
@@ -1281,27 +1243,32 @@ export function EmployeePayrollDetailModal({
                 <div>
                   <p className="text-xs text-slate-400 uppercase">Current Rate</p>
                   {isCurrentlyFixed && currentEntry?.annualSalary ? (
-                    <p className="text-xl font-bold text-white mt-1">
+                    <p className="text-lg font-bold text-white mt-1">
                       ${currentEntry.annualSalary.toLocaleString()}/yr <span className="text-xs font-normal text-slate-400">(${perCutoffSalary(currentEntry.annualSalary, isPhPayroll).toFixed(2)}/cutoff)</span>
                     </p>
                   ) : (
-                    <p className="text-xl font-bold text-white mt-1">${rateNow.toFixed(2)}/hr</p>
+                    <p className="text-lg font-bold text-white mt-1">${rateNow.toFixed(2)}/hr</p>
                   )}
                 </div>
                 <div className="border-l border-white/10 pl-3">
                   <p className="text-xs text-slate-400 uppercase">Tier Level</p>
-                  <p className="text-xl font-bold text-white mt-1">{tierLevel || "Unassigned"}</p>
+                  <p className="text-lg font-bold text-white mt-1">{tierLevel || "Unassigned"}</p>
                 </div>
               </div>
             </div>
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
-              <p className="text-xs text-slate-400 uppercase">Field Start Date</p>
-              <p className="text-xl font-bold text-white mt-1">
-                {fieldStart.loading ? "Loading..." : fieldStart.error ? "Unable to load" : fieldStart.date
-                  ? new Date(`${fieldStart.date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-                  : "Not recorded"}
-              </p>
-              <p className="text-xs text-slate-400 mt-0.5">Field start recorded in HR Training List</p>
+              <div className="grid grid-cols-2 divide-x divide-white/10">
+                {[{ label: "Work Start", date: hrTraining.start || hireDate }, { label: "Field Start", date: fieldStart.date }].map(({ label, date }, index) => (
+                  <div key={label} className={index ? "pl-3" : "pr-3"}>
+                    <p className="text-[10px] text-slate-400 uppercase">{label}</p>
+                    <p className="text-sm font-semibold text-white mt-1">
+                      {fieldStart.loading ? "Loading..." : fieldStart.error ? "Unable to load" : date
+                        ? new Date(`${date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                        : "Not recorded"}
+                    </p>
+                  </div>
+                ))}
+              </div>
             </div>
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
               <div className="flex items-center justify-between gap-2">
@@ -1327,7 +1294,7 @@ export function EmployeePayrollDetailModal({
                   </div>
                 )}
               </div>
-              <p className="text-xl font-bold text-green-300 mt-1">${displayedPayFlat.toFixed(2)}</p>
+              <p className="text-lg font-bold text-green-300 mt-1">${displayedPayFlat.toFixed(2)}</p>
               {!isCurrentlyFixed && (
                 <p className="text-xs text-slate-400 mt-0.5" title="Flat — every hour (regular and overtime alike) at the same rate, no 1.5× multiplier. The Tech Activity Report step computes the real Hourly + OT total, including the FLSA weighted-regular-rate overtime premium once this period's incentive/bonus pay is folded in — this tile is just the state-floor check, not that final figure.">
                   {(totalHoursSplit.regular + totalHoursSplit.overtime).toFixed(3)} hrs flat = ${displayedPayFlat.toFixed(2)}
@@ -1337,7 +1304,7 @@ export function EmployeePayrollDetailModal({
           </div>
 
           {/* Salary history + add change */}
-          <div className="bg-slate-800/30 border border-white/10 rounded-lg p-4">
+          <div className="bg-slate-800/30 border border-white/10 rounded-lg p-3">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-white">Salary History</h3>
               <button
@@ -1412,7 +1379,7 @@ export function EmployeePayrollDetailModal({
                 </div>
                 {rateForm.compensationType === "fixed" && Number(rateForm.annualSalary) > 0 && (
                   <p className="text-[11px] text-slate-400">
-                    = ${monthlySalary(Number(rateForm.annualSalary)).toFixed(2)}/month · ${perCutoffSalary(Number(rateForm.annualSalary), isPhPayroll).toFixed(2)}/cutoff {isPhPayroll ? "(semi-monthly)" : "(bi-weekly)"}
+                    = ${monthlySalary(Number(rateForm.annualSalary)).toFixed(2)}/month · ${perCutoffSalary(Number(rateForm.annualSalary), isPhPayroll).toFixed(2)}/cutoff (bi-weekly)
                   </p>
                 )}
                 <div className="flex justify-end">
@@ -1473,46 +1440,11 @@ export function EmployeePayrollDetailModal({
             )}
           </div>
 
-          {/* Trainee daily $100 guarantee window */}
-          <div className="bg-slate-800/30 border border-white/10 rounded-lg p-4">
-            <h3 className="text-sm font-semibold text-white mb-2">Trainee Status ? Manual Fallback</h3>
-            <div className="flex items-end gap-3 flex-wrap">
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase mb-1">Training End Date</label>
-                <input
-                  type="date"
-                  value={trainingEndDateInput}
-                  disabled={savingTrainingEndDate || fieldStart.loading || fieldStart.error || traineeWindow.source === "hr"}
-                  onChange={(e) => handleTrainingEndDateChange(e.target.value)}
-                  title="Used only when the HR Start Date and Field Start Date range is unavailable. The $100/day guarantee applies to worked days from this employee's hire date through this date, inclusive. A day already earning $100+ keeps its full pay — this only tops up days that fall short."
-                  className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-sm text-white disabled:opacity-50"
-                />
-              </div>
-              {trainingEndDateInput && (
-                <button
-                  onClick={() => handleTrainingEndDateChange("")}
-                  disabled={savingTrainingEndDate || fieldStart.loading || fieldStart.error || traineeWindow.source === "hr"}
-                  className="text-xs text-slate-400 hover:text-red-400 disabled:opacity-50"
-                >
-                  Clear
-                </button>
-              )}
-              {savingTrainingEndDate && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
-            </div>
-            <p className="text-xs text-slate-400 mt-2">
-              {fieldStart.loading ? "Loading HR training dates..." : fieldStart.error ? "Unable to load HR training dates." : traineeWindow.source === "hr"
-                ? `HR training: ${traineeWindow.start} through ${traineeWindow.end}. Eligible worked days are topped up to $100; Field Start day is excluded. The manual date is only a fallback.`
-                : trainingEndDateInput
-                ? `Days through ${trainingEndDateInput} are topped up to $100 if actual pay falls short that day; days after this date are paid normally.`
-                : "No trainee window set — the $100/day guarantee won't apply to any day this period."}
-            </p>
-          </div>
-
           {/* Weekly breakdown + unassigned-state flag (PH has no state concept, so it never shows there — Weekly Breakdown spans the full row instead of leaving an empty column beside it) */}
           {(weeklyBreakdown.length > 0 || (!isPhPayroll && unassignedStateDays.length > 0)) && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {weeklyBreakdown.length > 0 && (
-            <div className={`bg-slate-800/30 border border-white/10 rounded-lg p-4 ${isPhPayroll ? "md:col-span-2" : ""}`}>
+            <div className={`bg-slate-800/30 border border-white/10 rounded-lg p-3 ${isPhPayroll ? "md:col-span-2" : ""}`}>
               <h3 className="text-sm font-semibold text-white mb-2">Weekly Breakdown</h3>
               <ul className="space-y-1">
                 {weeklyBreakdown.map((w, i, arr) => {
@@ -1550,7 +1482,7 @@ export function EmployeePayrollDetailModal({
             </div>
           )}
           {!isPhPayroll && unassignedStateDays.length > 0 && (
-            <div className="bg-amber-950/20 border border-amber-500/30 rounded-lg p-4">
+            <div className="bg-amber-950/20 border border-amber-500/30 rounded-lg p-3">
               <h3 className="text-sm font-semibold text-amber-300 mb-2">
                 State Not Assigned — {unassignedStateDays.length} {unassignedStateDays.length === 1 ? "day" : "days"}
               </h3>
@@ -1570,7 +1502,7 @@ export function EmployeePayrollDetailModal({
           )}
 
           {/* Attendance table */}
-          <div className="bg-slate-800/30 border border-white/10 rounded-lg p-4">
+          <div className="bg-slate-800/30 border border-white/10 rounded-lg p-3">
             <div className="flex items-center justify-between mb-1">
               <h3 className="text-sm font-semibold text-white">Attendance — {rangeStart} to {rangeEnd}</h3>
               <div className="flex items-center gap-2">
@@ -1745,41 +1677,33 @@ export function EmployeePayrollDetailModal({
                         {attendanceEditing ? (
                           <>
                             <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
-                              <input
-                                type="time"
-                                step="1"
+                              <TimeInput24
                                 value={edit?.checkIn ?? row.clockIn}
-                                onChange={(e) => handleAttendanceEdit(row.date, "checkIn", e.target.value)}
-                                className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
+                                onChange={(v) => handleAttendanceEdit(row.date, "checkIn", v)}
+                                className="w-20 font-mono text-xs bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
                               />
                             </td>
                             <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
-                              <input
-                                type="time"
-                                step="1"
+                              <TimeInput24
                                 value={edit?.mealStart ?? row.mealStart}
-                                onChange={(e) => handleAttendanceEdit(row.date, "mealStart", e.target.value)}
-                                className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
+                                onChange={(v) => handleAttendanceEdit(row.date, "mealStart", v)}
+                                className="w-20 font-mono text-xs bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
                               />
                             </td>
                             <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
-                              <input
-                                type="time"
-                                step="1"
+                              <TimeInput24
                                 value={edit?.mealEnd ?? row.mealEnd}
-                                onChange={(e) => handleAttendanceEdit(row.date, "mealEnd", e.target.value)}
-                                className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
+                                onChange={(v) => handleAttendanceEdit(row.date, "mealEnd", v)}
+                                className="w-20 font-mono text-xs bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
                               />
                             </td>
                             <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center gap-1.5">
-                                <input
-                                  type="time"
-                                  step="1"
-                                  value={edit?.checkOut ?? row.clockOut}
-                                  onChange={(e) => handleAttendanceEdit(row.date, "checkOut", e.target.value)}
-                                  className="w-24 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
-                                />
+                                <TimeInput24
+                                value={edit?.checkOut ?? row.clockOut}
+                                onChange={(v) => handleAttendanceEdit(row.date, "checkOut", v)}
+                                className="w-20 font-mono text-xs bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-slate-100 focus:outline-none focus:border-blue-500"
+                              />
                                 <button
                                   type="button"
                                   onClick={() => clearAttendanceRow(row.date)}
@@ -1911,7 +1835,7 @@ export function EmployeePayrollDetailModal({
                             {savingStateFor === row.date && <Loader2 className="inline-block h-3 w-3 ml-1 animate-spin text-slate-400" />}
                             {!fieldStart.loading && !fieldStart.error && traineeWindow.end && row.date <= traineeWindow.end && (!traineeWindow.start || row.date >= traineeWindow.start) && (
                               <span
-                                title={`Trainee day — the $100/day guarantee applies (through ${traineeWindow.end}).`}
+                                title={traineeWindow.source === "trainee" ? "Trainee day — the $100/day guarantee applies (still in training)." : `Trainee day — the $100/day guarantee applies (through ${traineeWindow.end}).`}
                                 className="inline-flex items-center gap-0.5 ml-1 px-1 py-0.5 rounded bg-sky-500/20 text-sky-300 text-[10px] font-semibold align-middle"
                               >
                                 Trainee

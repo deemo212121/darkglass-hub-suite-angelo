@@ -4,7 +4,7 @@
  * brands at the distributor (Marcone "make", Encompass "mfgCode"), each with
  * its own stock; the brands load the first time the dropdown is opened,
  * in-stock first. The value is saved on the part as "<Distributor>|<code>"
- * (parts.dist_brand, migration 0348) and Submit POs / Place Order orders
+ * (parts.dist_brand, migration 0353) and Submit POs / Place Order orders
  * that brand. Empty = the distributor's first match, as before.
  */
 import { useState } from "react";

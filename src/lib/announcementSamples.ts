@@ -8,7 +8,8 @@
 import type { MessageRow } from "@/lib/supabase/messaging";
 import { MARQUEE_CHANGED_EVENT, type MarqueeItem } from "@/lib/supabase/announcementMarquee";
 
-const SHOW_SAMPLES = true;
+// Off: the sample ticker line looked like a real announcement on every page.
+const SHOW_SAMPLES = false;
 
 export const SAMPLES_ENABLED = import.meta.env.DEV && SHOW_SAMPLES;
 

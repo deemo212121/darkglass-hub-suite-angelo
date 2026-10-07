@@ -1,5 +1,5 @@
 /**
- * Time correction exemptions (migration 0354) — a correction marked Exempt
+ * Time correction exemptions (migration 0355) — a correction marked Exempt
  * doesn't count toward the person's monthly limit on Employee Monitoring →
  * Exceeded → Time Corrections. Rows are never deleted: removing an
  * exemption stamps removed_*, so every exempt/undo stays on record.
@@ -33,7 +33,7 @@ function mapRow(r: any): CorrectionExemption {
 
 const isMissingTable = (msg: string) => /timecard_correction_exemptions/.test(msg) && /does not exist|schema cache/i.test(msg);
 
-/** Every exemption record (active and removed), newest first. Empty if migration 0354 hasn't been run yet. */
+/** Every exemption record (active and removed), newest first. Empty if migration 0355 hasn't been run yet. */
 export async function getCorrectionExemptions(): Promise<CorrectionExemption[]> {
   const all: CorrectionExemption[] = [];
   for (let from = 0; ; from += 1000) {
@@ -64,7 +64,7 @@ export async function exemptCorrection(input: {
     .select("id, correction_id, reason, exempted_by_name, exempted_at, removed_at, removed_by_name, removed_reason")
     .single();
   if (error) {
-    if (isMissingTable(error.message)) throw new Error("Exemptions aren't set up yet — run migration 0354 in Supabase first.");
+    if (isMissingTable(error.message)) throw new Error("Exemptions aren't set up yet — run migration 0355 in Supabase first.");
     throw new Error(error.message);
   }
   void logActivity({

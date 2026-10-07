@@ -139,7 +139,7 @@ export function TeamMessenger({ mod, sub }: Props) {
   const [active, setActive] = useState<ActiveThread | null>(null);
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [draft, setDraft] = useState("");
-  // Reactions / replies / forwards (migration 0360).
+  // Reactions / replies / forwards (migration 0361).
   const [reactions, setReactions] = useState<Map<string, ReactionGroup[]>>(new Map());
   const [links, setLinks] = useState<Map<string, MessageLink>>(new Map());
   const [replyTo, setReplyTo] = useState<MessageRow | null>(null);

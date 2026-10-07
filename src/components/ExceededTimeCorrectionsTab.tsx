@@ -340,7 +340,7 @@ export function ExceededTimeCorrectionsTab({
   myProfileId,
 }: {
   profiles: ProfileRow[];
-  /** Admin / HR / Super Admin — matches migration 0354's write policy. */
+  /** Admin / HR / Super Admin — matches migration 0355's write policy. */
   canExempt: boolean;
   myName: string;
   myProfileId: string | null;

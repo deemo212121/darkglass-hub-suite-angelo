@@ -8,6 +8,8 @@ import { MOBILE_TOURS, MOBILE_TOUR_CATEGORIES, type MobileTour } from "@/lib/tou
 import { Fragment, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
+import { MyStandingCard, FixTimeOutBanner } from "@/components/mobile/MyStandingCard";
+import { MeetingsRequiredCard, MobileMeetingsView, TodaysClockInCodeCard, useCanSeeClockInMeetings } from "@/components/mobile/MobileMeetingsView";
 import { setDesktopOverride } from "@/lib/device";
 import { useLiveLocation } from "@/lib/liveLocationContext";
 import {
@@ -176,6 +178,7 @@ const openNativePicker = (e: React.MouseEvent<HTMLInputElement>) => {
 };
 
 type View =
+  | "meetings"
   | "roster"
   | "tickets"
   | "map"
@@ -1730,6 +1733,8 @@ export function MobileTechApp() {
           <MobileTimeCorrectionView userName={headerName} profileId={profileId} companyId={companyId} role={role} prefillDate={correctionPrefillDate} />
         )}
 
+        {effectiveView === "meetings" && <MobileMeetingsView />}
+
         {effectiveView === "notifications" && (
           <div className="mtech-scroll">
             <div className="mtech-payroll-heading">
@@ -1751,6 +1756,7 @@ export function MobileTechApp() {
           <MobileHomeView
             userName={headerName}
             role={role}
+            extraRoles={extraRoles}
             uid={uid}
             profileId={profileId}
             todaysTickets={todaysTickets}
@@ -1767,6 +1773,8 @@ export function MobileTechApp() {
             onOpenTimeOff={() => setView("timeoff")}
             onOpenTicketTimeDispute={() => setView("tickettimedispute")}
             onOpenCorrection={() => { setCorrectionPrefillDate(null); setView("correction"); }}
+            onFixTimeOut={(date) => { setCorrectionPrefillDate(date); setView("correction"); }}
+            onOpenMeetings={() => setView("meetings")}
             onOpenTimecard={() => setView("timecard")}
             onOpenTicketAttendance={() => setView("ticketattendance")}
             showBranchReport={isBranchReportRole}
@@ -1965,10 +1973,14 @@ function AppHeaderMobile({
     return () => { document.documentElement.style.removeProperty("--mt-header-h"); };
   }, [isOnline]);
 
-  const initials = userName
-    .split(/[\s.@]/)[0]
-    .slice(0, 2)
-    .toUpperCase() || "U";
+  // Same rule as the desktop header: "Justin Lee" -> "JL" (was "JU", the
+  // first two letters of the first name); an email uses its local part.
+  const initials = (() => {
+    const localPart = userName.includes("@") ? userName.split("@")[0] ?? userName : userName;
+    const parts = localPart.split(/[\s._-]/).filter(Boolean);
+    if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+    return localPart.slice(0, 2).toUpperCase() || "U";
+  })();
   return (
     <>
     {!isOnline && (
@@ -6125,6 +6137,7 @@ function HomeOnSiteCard({
 function MobileHomeView({
   userName,
   role,
+  extraRoles,
   uid,
   profileId,
   todaysTickets,
@@ -6141,6 +6154,8 @@ function MobileHomeView({
   onOpenTimeOff,
   onOpenTicketTimeDispute,
   onOpenCorrection,
+  onFixTimeOut,
+  onOpenMeetings,
   onOpenTimecard,
   onOpenTicketAttendance,
   showBranchReport,
@@ -6158,6 +6173,7 @@ function MobileHomeView({
 }: {
   userName: string;
   role: string | null;
+  extraRoles?: string[];
   uid: string | null;
   profileId: string | null;
   todaysTickets: Ticket[];
@@ -6175,6 +6191,9 @@ function MobileHomeView({
   onOpenTimeOff: () => void;
   onOpenTicketTimeDispute: () => void;
   onOpenCorrection: () => void;
+  /** Open Time Correction pre-filled with this date (missed Time Out banner). */
+  onFixTimeOut: (date: string) => void;
+  onOpenMeetings: () => void;
   onOpenTimecard: () => void;
   onOpenTicketAttendance: () => void;
   showBranchReport: boolean;
@@ -6234,6 +6253,11 @@ function MobileHomeView({
   // in the shift, block Meal/Check-Out with a false "it's a new day" error)
   // once the two dates diverged mid-shift.
   const todayKey = zonedDateKey(now, scheduleTimezone);
+  // Technicians see their own standing + the missed Time Out banner;
+  // whoever can see the clock-in code handles the meetings list.
+  // Primary OR extra role — e.g. a Technical Assistant Director who is also a Technician.
+  const needsStanding = [role, ...(extraRoles ?? [])].some((r) => String(r ?? "").trim().toUpperCase() === "TECHNICIAN");
+  const canSeeMeetings = useCanSeeClockInMeetings();
 
   useEffect(() => {
     if (!uid) return;
@@ -6552,6 +6576,18 @@ function MobileHomeView({
         onOpenTickets={onOpenTicketsTab}
         onOpenOnHold={onOpenOnHoldTab}
       />
+
+      {/* Missed Time Out fix-it banner + the tech's own Technician Performance standing. */}
+      {!viewingReportName && scheduleProfileId && needsStanding && (
+        <>
+          <FixTimeOutBanner profileId={scheduleProfileId} today={todayKey} onFix={onFixTimeOut} />
+          <MyStandingCard profileId={scheduleProfileId} today={todayKey} />
+        </>
+      )}
+      {!viewingReportName && canSeeMeetings && <TodaysClockInCodeCard />}
+      {!viewingReportName && canSeeMeetings && (
+        <MeetingsRequiredCard onOpen={onOpenMeetings} />
+      )}
 
       {viewingReportName ? null : loadError ? (
         <div className="mtech-home-clockerror">
@@ -7180,9 +7216,12 @@ function MobileClockInTeamView({ profileId, readOnly }: { profileId: string | nu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileId]);
 
+  // Clocking someone in needs today's clock-in code first (checked by the
+  // database for that technician, "entered by" this manager) — then the
+  // Time In below is stamped.
+  const [codeFor, setCodeFor] = useState<ClockInTechRow | null>(null);
   const handleClockIn = async (tech: ClockInTechRow) => {
     if (!profileId) return;
-    if (!window.confirm(`Clock in ${tech.name} now?`)) return;
     setClockingIn((prev) => new Set(prev).add(tech.id));
     try {
       const branchTz = timezoneForBranch(tech.branch);
@@ -7216,6 +7255,16 @@ function MobileClockInTeamView({ profileId, readOnly }: { profileId: string | nu
 
   return (
     <div data-tour="m-view-clockinteam" className="mtech-scroll mtech-clockin">
+      {codeFor && (
+        <ClockInCodePrompt
+          profileId={codeFor.id}
+          onVerified={async () => {
+            await handleClockIn(codeFor);
+            setCodeFor(null);
+          }}
+          onCancel={() => setCodeFor(null)}
+        />
+      )}
       <div className="mtech-clockin-heading">
         <div className="mtech-clockin-title">Clock In Team</div>
         <div className="mtech-clockin-sub">{allBranches ? "Technicians at every branch, today" : "Your direct-report technicians, today"}</div>
@@ -7254,7 +7303,7 @@ function MobileClockInTeamView({ profileId, readOnly }: { profileId: string | nu
                 type="button"
                 className="mtech-clockin-btn"
                 disabled={clockingIn.has(tech.id)}
-                onClick={() => handleClockIn(tech)}
+                onClick={() => setCodeFor(tech)}
               >
                 {clockingIn.has(tech.id) ? "…" : "Clock In"}
               </button>

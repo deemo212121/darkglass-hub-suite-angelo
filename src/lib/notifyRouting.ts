@@ -140,7 +140,7 @@ export function visibleAttendanceProfileIds(
   if (chain.byId.size > 0) {
     allProfiles.forEach((p) => {
       if (p.id === viewer.id) return;
-      // PH staff (department chain, migration 0334): a department manager sees the
+      // PH staff (department chain, migration 0337): a department manager sees the
       // department's requests — only ever added, never removed from anyone's view.
       if (isPhGoverned(p)) {
         if (chainCanApproveWith(chain, viewer.id, p.id) === true) ids.add(p.id);

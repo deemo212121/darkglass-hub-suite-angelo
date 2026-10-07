@@ -254,7 +254,7 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
     const signatureUrl = await uploadSignableDocumentSignature(doc.companyId, doc.id, "hr_staff", dataUrl);
     const signedAt = new Date().toISOString();
 
-    const merged: MasterW2AgreementFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt };
+    const merged: MasterW2AgreementFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt, employerName: displayName || "" };
 
     const logo = await loadAssetDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
     const pdfBlob = await captureHtmlToPdfBlob(buildMasterW2AgreementBodyMarkup(merged, logo), masterW2AgreementStyles);
@@ -277,7 +277,7 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
     const signatureUrl = await uploadSignableDocumentSignature(doc.companyId, doc.id, "hr_staff", dataUrl);
     const signedAt = new Date().toISOString();
 
-    const merged: MasterW2OfficeAgreementFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt };
+    const merged: MasterW2OfficeAgreementFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt, employerName: displayName || "" };
 
     const logo = await loadAssetDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
     const pdfBlob = await captureHtmlToPdfBlob(buildMasterW2OfficeAgreementBodyMarkup(merged, logo), masterW2OfficeAgreementStyles);
@@ -300,7 +300,7 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
     const signatureUrl = await uploadSignableDocumentSignature(doc.companyId, doc.id, "hr_staff", dataUrl);
     const signedAt = new Date().toISOString();
 
-    const merged: MasterPhContractorAgreementFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt };
+    const merged: MasterPhContractorAgreementFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt, employerName: displayName || "" };
 
     const logo = await loadAssetDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
     const pdfBlob = await captureHtmlToPdfBlob(buildMasterPhContractorAgreementBodyMarkup(merged, logo), masterPhContractorAgreementStyles);

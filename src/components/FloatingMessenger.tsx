@@ -104,7 +104,7 @@ export function FloatingMessenger() {
   const [activeThread, setActiveThread] = useState<ActiveThread | null>(null);
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [composer, setComposer] = useState("");
-  // Reactions / replies / forwards (migration 0360) — same as the Team Messenger page.
+  // Reactions / replies / forwards (migration 0361) — same as the Team Messenger page.
   const [reactions, setReactions] = useState<Map<string, ReactionGroup[]>>(new Map());
   const [links, setLinks] = useState<Map<string, MessageLink>>(new Map());
   const [replyTo, setReplyTo] = useState<MessageRow | null>(null);

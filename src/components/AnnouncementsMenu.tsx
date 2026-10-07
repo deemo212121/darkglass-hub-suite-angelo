@@ -167,7 +167,7 @@ export function AnnouncementsMenu({ onViewAll }: AnnouncementsMenuProps = {}) {
   if (!ready || !email) return null;
 
   return (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"

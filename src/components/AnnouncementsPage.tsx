@@ -5,7 +5,7 @@
  * higher-up roles post new ones, and tracks per-user read state via the
  * message_reads table (so "unread" counts persist across devices).
  *
- * Every new announcement has a title (announcement_titles, migration 0355 —
+ * Every new announcement has a title (announcement_titles, migration 0359 —
  * its own table so chat queries are untouched; older posts simply have
  * none). Posters can pin any announcement to the ticker — the scrolling line
  * under the app header (AnnouncementMarquee) — which shows its title, with
@@ -231,7 +231,7 @@ export function AnnouncementsPage(_: Props) {
     if (!title || !text) return;
     setSending(true);
     try {
-      // Without the titles table (migration 0355 not run yet), the title rides along as the first line so it isn't lost.
+      // Without the titles table (migration 0359 not run yet), the title rides along as the first line so it isn't lost.
       const body = titlesAvailable ? text : `${title}\n\n${text}`;
       const row = await sendMessageRow({
         channelId: channel.id,
@@ -540,7 +540,7 @@ export function AnnouncementsPage(_: Props) {
                 </label>
               )}
               {!titlesAvailable && (
-                <p className="mt-3 text-[11px] text-amber-300">Titles aren't set up yet (migration 0355) — the title will be added as the first line of the message for now.</p>
+                <p className="mt-3 text-[11px] text-amber-300">Titles aren't set up yet (migration 0359) — the title will be added as the first line of the message for now.</p>
               )}
               <button type="button" onClick={post} disabled={!draftTitle.trim() || !draft.trim() || sending} className="btn btn-primary mt-4 w-full">
                 <Send /> {sending ? "Posting…" : "Post announcement"}

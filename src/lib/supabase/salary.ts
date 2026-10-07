@@ -14,8 +14,8 @@ export type CompensationType = "hourly" | "fixed";
 
 /** Bi-weekly cutoffs — every 2 weeks, 26 per year. US fixed-salary pay per cutoff is always annual / 26, regardless of how many days a given payroll run actually covers — see migration 0118 (originally written assuming semi-monthly/24; the US company's actual fixed-salary cadence is bi-weekly). */
 export const CUTOFFS_PER_YEAR = 26;
-/** PH's own fixed-salary cadence is semi-monthly (1st-15th, 16th-end of month), not the US's bi-weekly — 24 cutoffs/year, not 26. See perCutoffSalary's isPH parameter. */
-export const PH_CUTOFFS_PER_YEAR = 24;
+/** PH fixed salaries are also paid bi-weekly — 26 cutoffs/year, same as the US (confirmed 2026-10-05; was briefly 24 on the mistaken assumption PH was semi-monthly). */
+export const PH_CUTOFFS_PER_YEAR = 26;
 export const MONTHS_PER_YEAR = 12;
 
 export interface SalaryEntryRow {

@@ -1,3 +1,4 @@
+import { TraineeMonitoringTab } from "@/components/TraineeMonitoringTab";
 import { resolveTrainingRecord, trainingWindow, isTrainingDay } from "@/lib/fieldStartDate";
 import { getTrainingDates } from "@/lib/supabase/trainingDates";
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
@@ -896,13 +897,14 @@ function parseGmailRegionParam(value: string | null): GmailRegion {
   return value === "PH" ? "PH" : "US";
 }
 
-type AccountingDashboardTabId = "overview" | "payroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech" | "ticketAttendance" | "ticketTimeDisputes" | "branchRates" | "carIq" | "branchCommission";
+type AccountingDashboardTabId = "traineeMonitoring" | "overview" | "payroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech" | "ticketAttendance" | "ticketTimeDisputes" | "branchRates" | "carIq" | "branchCommission";
 // Shared by the top tab row and the floating left quick-nav so the two
 // never drift out of sync.
 const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; Icon: typeof History }[] = [
   { id: "flashTech", label: "Flash Tech", Icon: RouteIcon },
   { id: "mileage", label: "Mileage", Icon: MapPin },
   { id: "payroll", label: "Payroll", Icon: DollarSign },
+  { id: "traineeMonitoring", label: "Trainee Monitoring", Icon: Users },
   { id: "payrollDisputes", label: "Payroll Disputes", Icon: AlertCircle },
   { id: "reports", label: "Reports", Icon: FileText },
   { id: "ticketAttendance", label: "Ticket Attendance", Icon: FileText },
@@ -910,10 +912,7 @@ const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; 
   { id: "carIq", label: "Car IQ", Icon: Car },
   { id: "branchCommission", label: "Branch Commission", Icon: TrendingUp },
   { id: "ticketTimeDisputes", label: "Ticket Time Disputes", Icon: Clock },
-  // Kept the label "Overview" (not "Report") since the Reports tab above
-  // already owns that name — this one moved last because its content now
-  // covers every other tab's headline numbers, not just payroll's.
-  { id: "overview", label: "Activity Logs", Icon: History },
+
 ];
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -947,7 +946,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   };
   const [activeTab, setActiveTab] = usePersistedTab<AccountingDashboardTabId>(
     "ahs:accounting-dashboard-active-tab",
-    ["overview", "payroll", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes", "branchRates", "branchCommission"],
+    ["overview", "payroll", "traineeMonitoring", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes", "branchRates", "branchCommission"],
     "overview",
   );
   // Deep link from a bell-icon notification straight into the Payroll
@@ -1126,6 +1125,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [regHoursFilter, setRegHoursFilter] = useState<Set<string>>(new Set());
   const [rateFilter, setRateFilter] = useState<Set<string>>(new Set());
   const [employeeSearch, setEmployeeSearch] = useState("");
+  const [traineeSearch, setTraineeSearch] = useState("");
+  const [traineeDepartments, setTraineeDepartments] = useState<Set<string>>(new Set());
   // Clicking the Name column header cycles asc -> desc -> back to
   // whatever order the data naturally came in (null).
   const [nameSort, setNameSort] = useState<"asc" | "desc" | null>(null);
@@ -1743,7 +1744,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         tierLevel: p.tier_level ?? null,
         trainingEndDate: p.training_end_date ?? null,
         hrTrainingStart: hrTraining?.training_start_date ?? null,
-        hrFieldStart: hrTraining?.training_end_date ?? null,
+        // HR's Field Start, else profiles.training_end_date — the same
+        // fallback the Training List page shows as Field Start.
+        hrFieldStart: hrTraining?.training_end_date ?? p.training_end_date ?? null,
         };
       }) as SupabaseEmployee[]);
       setSalaryEntries((salRes.data ?? []) as SalaryEntry[]);
@@ -2700,7 +2703,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const techWeightedRegularRate = techTotalHours > 0 ? (techStraightTimeAllHours + techIncludablePay) / techTotalHours : hourlyRate;
     const techHourlyPayStraight = includeTech && isTechRole(emp) ? techStraightTimeAllHours : 0;
     const traineeWindow = trainingWindow(emp.hrTrainingStart, emp.hrFieldStart,
-      employeeInfoByProfileId.get(emp.id)?.hireDate, emp.trainingEndDate);
+      employeeInfoByProfileId.get(emp.id)?.hireDate, emp.isTrainee);
     const premiumHours = (dailyHoursByEmployeeId.get(emp.id) ?? []).reduce((sum, day) => sum + (isTrainingDay(day.date, traineeWindow) ? 0 : day.overtime), 0);
     const techHourlyPayOtPremium = includeTech && isTechRole(emp) ? premiumHours * techWeightedRegularRate * 0.5 : 0;
     const techHourlyPayCompanyOnly = techHourlyPayStraight + techHourlyPayOtPremium;
@@ -4236,30 +4239,33 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         </Link>
       </nav>
 
-      <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
+      <main className="flex-1 min-w-0 max-w-[1600px] mx-auto w-full pl-16 pr-4 py-4">
 
         {/* Header */}
-        <div className="mb-8">
-          <div className="flex items-center gap-3 mb-6">
+        <div className="mb-3">
+          <div className="flex items-center gap-3">
             <button type="button" onClick={goBack} className="btn hover:bg-white/15">
               <ChevronLeft className="h-4 w-4" />
             </button>
             <div className="flex-1">
-              <h1 className="text-2xl font-bold">{sub.title}</h1>
+              <h1 className="text-xl font-bold">{sub.title}</h1>
               <p className="text-sm text-slate-400">{sub.description}</p>
             </div>
             <button
-              onClick={() => fetchData()}
-              className="p-2 rounded hover:bg-white/10 text-slate-400 hover:text-white transition"
-              title="Refresh"
+              type="button"
+              onClick={() => setActiveTab("overview")}
+              className={`p-2 rounded hover:bg-white/10 transition ${activeTab === "overview" ? "text-blue-300 bg-white/10" : "text-slate-400 hover:text-white"}`}
+              title="Activity Logs"
+              aria-label="Activity Logs"
+              aria-pressed={activeTab === "overview"}
             >
-              <RefreshCw className="h-4 w-4" />
+              <History className="h-4 w-4" />
             </button>
           </div>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-2 mb-8 border-b border-white/10 overflow-x-auto">
+        <div className="flex flex-wrap gap-x-1 gap-y-0 mb-4 border-b border-white/10">
           {ACCOUNTING_DASHBOARD_TABS.map((tab) => {
             const Icon = tab.Icon;
             const badgeCount = 0;
@@ -4267,7 +4273,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`px-4 py-2 border-b-2 transition whitespace-nowrap flex items-center gap-2 ${
+                className={`px-2.5 py-1.5 text-xs border-b-2 transition whitespace-nowrap flex items-center gap-1.5 ${
                   activeTab === tab.id
                     ? "border-blue-500 text-blue-300"
                     : "border-transparent text-slate-400 hover:text-slate-300"
@@ -4384,8 +4390,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         )}
 
         {/* ── Payroll Tab ──────────────────────────────────────────────────── */}
+        {activeTab === "traineeMonitoring" && <TraineeMonitoringTab
+          employees={employees}
+          hireDates={new Map([...employeeInfoByProfileId].map(([id, info]) => [id, info.hireDate || ""]))}
+          start={genStart} end={genEnd} setStart={setGenStart} setEnd={setGenEnd}
+          search={traineeSearch} setSearch={setTraineeSearch}
+          departments={traineeDepartments} setDepartments={setTraineeDepartments}
+        />}
         {activeTab === "payroll" && (
-          <div className="space-y-6">
+          <div className="space-y-3">
             {/* Actions bar */}
             <div className="flex flex-wrap gap-3 items-center">
               <div className="flex items-center gap-2">
@@ -4413,7 +4426,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               <button
                 type="button"
                 onClick={() => setShowAuditLog(!showAuditLog)}
-                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded font-semibold transition flex items-center gap-2"
+                className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-white rounded font-semibold transition flex items-center gap-2"
               >
                 <LogOut className="h-4 w-4" />
                 Audit Log ({auditLog.length})
@@ -4434,7 +4447,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         setRegHoursFilter(new Set());
                         setRateFilter(new Set());
                       }}
-                      className={`px-4 py-2 rounded text-sm font-semibold transition ${
+                      className={`px-3 py-1.5 text-xs rounded text-sm font-semibold transition ${
                         selectedCurrency === cur
                           ? "bg-blue-600 text-white"
                           : "bg-slate-700 text-slate-300 hover:bg-slate-600"
@@ -4496,25 +4509,25 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             {(() => {
               const displayTotal = effectiveCurrency === "USD" ? totalUSOfficePayroll : totalPHPayroll;
               return (
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                  <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                <div className="grid gap-2 grid-cols-2 lg:grid-cols-4">
+                  <div className="bg-slate-900/50 border border-white/10 rounded-lg p-3">
                     <p className="text-xs text-slate-400 mb-1">Total Payroll (Period)</p>
-                    <p className="text-2xl font-bold text-green-300">{fmt(displayTotal)}</p>
+                    <p className="text-xl font-bold text-green-300">{fmt(displayTotal)}</p>
                   </div>
-                  <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                  <div className="bg-slate-900/50 border border-white/10 rounded-lg p-3">
                     <p className="text-xs text-slate-400 mb-1">Employees</p>
-                    <p className="text-2xl font-bold text-blue-300">{displayRows.length}</p>
+                    <p className="text-xl font-bold text-blue-300">{displayRows.length}</p>
                     <p className="text-xs text-slate-500 mt-1">Active in {effectiveCurrency === "USD" ? "US" : "PH"}</p>
                   </div>
-                  <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                  <div className="bg-slate-900/50 border border-white/10 rounded-lg p-3">
                     <p className="text-xs text-slate-400 mb-1">Overtime Pay</p>
-                    <p className="text-2xl font-bold text-orange-300">
+                    <p className="text-xl font-bold text-orange-300">
                       {fmt(displayRows.reduce((s, r) => s + r.overtimeHours * r.hourlyRateUSD * 1.5, 0))}
                     </p>
                   </div>
-                  <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                  <div className="bg-slate-900/50 border border-white/10 rounded-lg p-3">
                     <p className="text-xs text-slate-400 mb-1">Avg per Employee</p>
-                    <p className="text-2xl font-bold text-purple-300">
+                    <p className="text-xl font-bold text-purple-300">
                       {fmt(displayRows.length > 0 ? displayTotal / displayRows.length : 0)}
                     </p>
                   </div>
@@ -4524,7 +4537,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
             {/* Audit Log */}
             {showAuditLog && (
-              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4 max-h-80 overflow-y-auto">
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-3 max-h-80 overflow-y-auto">
                 <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
                   <LogOut className="h-4 w-4" />
                   Payroll Audit Log
@@ -4564,13 +4577,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
             {/* Employee table */}
             <div className="bg-slate-900/50 border border-white/10 rounded-lg overflow-x-auto">
-              <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
+              <div className="px-3 py-2 border-b border-white/10 flex items-center justify-between">
                 <span className="text-sm font-semibold">
                   {effectiveCurrency === "USD" ? "Office" : "PH"} Employee Payroll — Current Period
                 </span>
                 <span className="text-xs text-slate-400">{visibleRows.length} employees</span>
               </div>
-              <div className="px-4 py-3 border-b border-white/10 flex items-end justify-between gap-3 flex-wrap">
+              <div className="px-3 py-2 border-b border-white/10 flex items-end justify-between gap-3 flex-wrap">
                 <div>
                   <label className="block text-[10px] text-slate-400 uppercase mb-1">Search</label>
                   <input
@@ -4578,7 +4591,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     value={employeeSearch}
                     onChange={(e) => setEmployeeSearch(e.target.value)}
                     placeholder="Search employee..."
-                    className="w-full max-w-sm bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                    className="w-full max-w-sm bg-slate-800/50 border border-white/10 rounded-lg px-2 py-1.5 text-white text-xs focus:border-blue-500 focus:outline-none"
                   />
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -4587,7 +4600,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     onClick={downloadFilteredAttendance}
                     disabled={loading || generating || attendanceExportProgress !== null || checkedVisibleRows.length === 0 || !genStart || !genEnd || genStart > genEnd}
                     title="Download checked employees matching the current filters, with one worksheet per employee"
-                    className="px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white rounded font-semibold transition flex items-center gap-2"
+                    className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white rounded font-semibold transition flex items-center gap-2"
                   >
                     {attendanceExportProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                     <span aria-live="polite">{attendanceExportProgress ? `Exporting ${attendanceExportProgress.done}/${attendanceExportProgress.total}` : "Download Excel"}</span>
@@ -4607,7 +4620,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                       ? "A payroll run already exists for these dates — this will recompute and replace it"
                       : undefined
                   }
-                  className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded font-semibold transition flex items-center gap-2 shrink-0"
+                  className="px-3 py-1.5 text-xs bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded font-semibold transition flex items-center gap-2 shrink-0"
                 >
                   {generating ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -4624,10 +4637,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 </button>
                 </div>
               </div>
-                <table className="w-full text-sm min-w-[700px]">
+                <table className="w-full text-xs min-w-[900px]">
                   <thead>
                     <tr className="border-b border-white/10 bg-white/5">
-                      <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase w-10">
+                      <th className="px-3 py-2 text-center text-xs text-slate-400 uppercase w-10">
                         <input
                           type="checkbox"
                           title="Include/exclude all visible employees from payroll generation"
@@ -4643,7 +4656,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           className="h-4 w-4 accent-blue-600 cursor-pointer"
                         />
                       </th>
-                      <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">
+                      <th className="px-3 py-2 text-left text-xs text-slate-400 uppercase">
                         <button
                           type="button"
                           onClick={toggleNameSort}
@@ -4655,9 +4668,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         </button>
                       </th>
                       {effectiveCurrency === "USD" && (
-                        <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">Branch</th>
+                        <th className="px-3 py-2 text-left text-xs text-slate-400 uppercase">Branch</th>
                       )}
-                      <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">
+                      <th className="px-3 py-2 text-left text-xs text-slate-400 uppercase">
                         <span className="inline-flex items-center">
                           Department
                           <TicketColumnFilter
@@ -4668,7 +4681,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           />
                         </span>
                       </th>
-                      <th className="px-4 py-3 text-left text-xs text-slate-400 uppercase">
+                      <th className="px-3 py-2 text-left text-xs text-slate-400 uppercase">
                         <span className="inline-flex items-center">
                           Role
                           <TicketColumnFilter
@@ -4679,7 +4692,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           />
                         </span>
                       </th>
-                      <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">
+                      <th className="px-3 py-2 text-center text-xs text-slate-400 uppercase">
                         <span className="inline-flex items-center justify-center">
                           Reg. Hours
                           <TicketColumnFilter
@@ -4690,10 +4703,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           />
                         </span>
                       </th>
-                      <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase" title="Reg. Hours + OT Hours">Total Hours</th>
-                      <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">OT Hours</th>
-                      <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase" title="Scheduled meal break — a fixed per-shift amount, not a period total">Meal Time</th>
-                      <th className="px-4 py-3 text-center text-xs text-slate-400 uppercase">
+                      <th className="px-3 py-2 text-center text-xs text-slate-400 uppercase" title="Reg. Hours + OT Hours">Total Hours</th>
+                      <th className="px-3 py-2 text-center text-xs text-slate-400 uppercase">OT Hours</th>
+                      <th className="px-3 py-2 text-center text-xs text-slate-400 uppercase" title="Scheduled meal break — a fixed per-shift amount, not a period total">Meal Time</th>
+                      <th className="px-3 py-2 text-center text-xs text-slate-400 uppercase">
                         <span className="inline-flex items-center justify-center">
                           Rate
                           <TicketColumnFilter
@@ -4704,8 +4717,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           />
                         </span>
                       </th>
-                      <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase">Gross Pay</th>
-                      <th className="px-4 py-3 text-right text-xs text-slate-400 uppercase">Payslip</th>
+                      <th className="px-3 py-2 text-right text-xs text-slate-400 uppercase">Gross Pay</th>
+                      <th className="px-3 py-2 text-right text-xs text-slate-400 uppercase">Payslip</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -4719,7 +4732,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                       visibleRowsByDepartment.map((group) => (
                         <Fragment key={group.department}>
                           <tr className="bg-white/[0.03]">
-                            <td colSpan={payrollColCount} className="px-4 py-2 text-xs font-bold text-blue-300 uppercase tracking-wide">
+                            <td colSpan={payrollColCount} className="px-3 py-1.5 text-xs text-xs font-bold text-blue-300 uppercase tracking-wide">
                               {group.department} <span className="text-slate-500 font-normal normal-case">({group.rows.length})</span>
                             </td>
                           </tr>
@@ -4728,7 +4741,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               key={row.employee.id}
                               className={`border-b border-white/5 hover:bg-white/5 ${row.employee.payrollExcluded ? "opacity-50" : ""}`}
                             >
-                              <td className="px-4 py-3 text-center">
+                              <td className="px-3 py-2 text-center">
                                 <input
                                   type="checkbox"
                                   title="Include in payroll generation"
@@ -4737,7 +4750,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                   className="h-4 w-4 accent-blue-600 cursor-pointer"
                                 />
                               </td>
-                              <td className="px-4 py-3 font-medium">
+                              <td className="px-3 py-2 font-medium">
                                 <button
                                   type="button"
                                   disabled={periodDataLoading > 0}
@@ -4807,14 +4820,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 })()}
                               </td>
                               {effectiveCurrency === "USD" && (
-                                <td className="px-4 py-3 text-slate-300">
+                                <td className="px-3 py-2 text-slate-300">
                                   {row.employee.assigned_branch || "—"}
                                 </td>
                               )}
-                              <td className="px-4 py-3 text-slate-300">
+                              <td className="px-3 py-2 text-slate-300">
                                 {row.employee.department || "—"}
                               </td>
-                              <td className="px-4 py-3 text-slate-300">
+                              <td className="px-3 py-2 text-slate-300">
                                 <span className="inline-flex items-center gap-1.5">
                                   {roleTypeLabel(row.employee)}
                                   <span className="inline-flex shrink-0 flex-col items-center gap-1">
@@ -4845,25 +4858,25 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                   </span>
                                 </span>
                               </td>
-                              <td className="px-4 py-3 text-center text-slate-300">
+                              <td className="px-3 py-2 text-center text-slate-300">
                                 {row.hoursWorked.toFixed(3)}
                               </td>
-                              <td className="px-4 py-3 text-center text-slate-300">
+                              <td className="px-3 py-2 text-center text-slate-300">
                                 {(row.hoursWorked + row.overtimeHours).toFixed(3)}
                               </td>
-                              <td className="px-4 py-3 text-center text-orange-300">
+                              <td className="px-3 py-2 text-center text-orange-300">
                                 {row.overtimeHours.toFixed(3)}
                               </td>
-                              <td className="px-4 py-3 text-center text-slate-400">
+                              <td className="px-3 py-2 text-center text-slate-400">
                                 {row.employee.mealMinutes ? `${row.employee.mealMinutes} min` : "—"}
                               </td>
-                              <td className="px-4 py-3 text-center text-slate-300" title={row.compensationType === "fixed" && row.annualSalary ? `$${perCutoffSalary(row.annualSalary, row.employee.country === "PH").toFixed(2)}/cutoff` : undefined}>
+                              <td className="px-3 py-2 text-center text-slate-300" title={row.compensationType === "fixed" && row.annualSalary ? `$${perCutoffSalary(row.annualSalary, row.employee.country === "PH").toFixed(2)}/cutoff` : undefined}>
                                 {rateLabel(row)}
                               </td>
-                              <td className="px-4 py-3 text-right font-semibold text-green-300">
+                              <td className="px-3 py-2 text-right font-semibold text-green-300">
                                 {fmt(row.grossPayUSD)}
                               </td>
-                              <td className="px-4 py-3 text-right">
+                              <td className="px-3 py-2 text-right">
                                 <button
                                   type="button"
                                   onClick={() => handleSendPayslip(row)}
@@ -4884,10 +4897,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   {visibleRows.length > 0 && (
                     <tfoot>
                       <tr className="border-t border-white/20 bg-white/5">
-                        <td colSpan={payrollColCount - 3} className="px-4 py-3 text-sm font-semibold text-slate-300">
+                        <td colSpan={payrollColCount - 3} className="px-3 py-2 text-sm font-semibold text-slate-300">
                           Total
                         </td>
-                        <td className="px-4 py-3 text-right font-bold text-green-300">
+                        <td className="px-3 py-2 text-right font-bold text-green-300">
                           {fmt(visibleTotalUSD)}
                         </td>
                         <td />
@@ -6136,8 +6149,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           role={detailEmployee.role}
           extraRoles={detailEmployee.extraRoles}
           tierLevel={detailEmployee.tierLevel}
-          trainingEndDate={detailEmployee.trainingEndDate}
           hireDate={employeeInfoByProfileId.get(detailEmployee.id)?.hireDate || null}
+          isTrainee={detailEmployee.isTrainee}
           requiredCheckIn={detailEmployee.requiredCheckIn}
           requiredCheckOut={detailEmployee.requiredCheckOut}
           workingHours={detailEmployee.workingHours}

@@ -82,7 +82,7 @@ export function ApprovalChainPage({ mod, sub }: Props) {
       try {
         setAreas(await getApprovalAreas());
         setTopIds(await getTopApproverIds());
-        // PH department managers (0334) — a failed read just means the migration isn't run yet.
+        // PH department managers (0337) — a failed read just means the migration isn't run yet.
         const phProbe = await supabase.from("ph_department_managers").select("department, profile_id");
         setPhMigrationMissing(!!phProbe.error);
         setPhDeptManagersState(await getPhDepartmentManagers());
@@ -131,7 +131,7 @@ export function ApprovalChainPage({ mod, sub }: Props) {
     [active, data]
   );
 
-  // ---- Top level editing (migration 0333) ----
+  // ---- Top level editing (migration 0336) ----
   const [editingTop, setEditingTop] = useState(false);
   const [topDraft, setTopDraft] = useState<Set<string>>(new Set());
   const [topSearch, setTopSearch] = useState("");

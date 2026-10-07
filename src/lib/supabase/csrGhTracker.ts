@@ -68,6 +68,17 @@ export async function getCompanyGhTrackerEntries(startDate: string, endDate: str
 }
 
 /** GH = count of entries per CSR for the range — what CSRTeamDailyReport.tsx's GH column reads. */
+/**
+ * Comparable form of a logged phone number: digits only, with a leading US
+ * country code "1" dropped from 11-digit numbers — so "(901) 555-0101",
+ * "901.555.0101" and "+1 901 555 0101" all match as the same number.
+ */
+export function normalizeGhPhone(phone: string): string {
+  const digits = String(phone ?? "").replace(/\D/g, "");
+  return digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+}
+
+/** GH per CSR = every number they logged in the range — duplicates included (they're only flagged on GH Tracker, not dropped). */
 export async function getGhCountsByProfileForRange(startDate: string, endDate: string): Promise<Map<string, number>> {
   const rows = await getCompanyGhTrackerEntries(startDate, endDate);
   const counts = new Map<string, number>();

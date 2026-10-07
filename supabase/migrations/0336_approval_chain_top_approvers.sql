@@ -1,17 +1,17 @@
 -- =====================================================================
 -- 0336 — Editable top level of the Approval Chain.
 --
--- 0332 decided the top level ("approves Senior Branch Managers and everyone
+-- 0332 (Approval Chain) decided the top level ("approves Senior Branch Managers and everyone
 -- below") from roles: anyone holding Admin / Technical Director / Technical
 -- Assistant Director — which also pulled in HR and Accounting staff who hold
 -- Admin as an extra role. This lets an Admin pick the top level explicitly
 -- on Admin → Approval Chain:
 --   - list has people  → only they (plus SuperAdmin) are top level
---   - list is empty    → the role-based rule from 0332, unchanged
+--   - list is empty    → the role-based rule from 0332 (Approval Chain), unchanged
 -- A Technical Director's or Asst. Director's own request goes to anyone else
 -- on the list (never themselves).
 --
--- Run once in the Supabase SQL Editor, after 0335 (needs 0332).
+-- Run once in the Supabase SQL Editor, after 0335 (needs 0332, the Approval Chain).
 -- =====================================================================
 
 create table if not exists approval_chain_top_approvers (
@@ -47,7 +47,7 @@ drop policy if exists approval_chain_top_approvers_delete on approval_chain_top_
 create policy approval_chain_top_approvers_delete on approval_chain_top_approvers
   for delete using ((company_id = auth_company_id() or is_superadmin()) and (is_admin() or is_company_superadmin() or is_superadmin()));
 
-/** Is p_viewer top level in p_company? The explicit list when it has anyone, else the 0332 role rule. */
+/** Is p_viewer top level in p_company? The explicit list when it has anyone, else the 0332 (Approval Chain) role rule. */
 create or replace function chain_is_top(p_viewer uuid, p_company uuid, p_roles text[])
 returns boolean language sql stable security definer set search_path = public as $$
   select case

@@ -287,6 +287,38 @@ export default {
       ),
     );
 
+    // Yesterday's missed technician clock-ins -> "meeting required" + notify
+    // their managers (migration 0348). Idempotent, so every hourly tick can
+    // run it; only the first one after midnight Central actually adds rows.
+    ctx.waitUntil(
+      import("./lib/server/missedClockInMeetings").then(
+        ({ runMissedClockInMeetings }) => runMissedClockInMeetings(merged),
+      ).then(
+        (result) => { if (result.newMeetings || result.errors.length) console.log("missedClockInMeetings:", JSON.stringify(result)); },
+        (error) => console.error("missedClockInMeetings failed:", error),
+      ),
+    );
+    // No Time In by 10 AM local time today -> "meeting required" right away
+    // (same table/kind as above, so the next-day check never doubles it).
+    ctx.waitUntil(
+      import("./lib/server/missedClockInMeetings").then(
+        ({ runNoClockInByTenMeetings }) => runNoClockInByTenMeetings(merged),
+      ).then(
+        (result) => { if (result.newMeetings || result.errors.length) console.log("noClockInByTenMeetings:", JSON.stringify(result)); },
+        (error) => console.error("noClockInByTenMeetings failed:", error),
+      ),
+    );
+    // Missed Time Out not corrected before the next Time In -> correction
+    // meeting (migration 0349). Also idempotent.
+    ctx.waitUntil(
+      import("./lib/server/missedClockInMeetings").then(
+        ({ runMissedTimeOutMeetings }) => runMissedTimeOutMeetings(merged),
+      ).then(
+        (result) => { if (result.newMeetings || result.errors.length) console.log("missedTimeOutMeetings:", JSON.stringify(result)); },
+        (error) => console.error("missedTimeOutMeetings failed:", error),
+      ),
+    );
+
     // No separate cron entry for this either — the hourly tick above lands on an
     // exact America/Chicago hour boundary too (see passwordResetSchedule.ts's
     // header comment), so this just checks "is it Monday 00:00 Chicago time

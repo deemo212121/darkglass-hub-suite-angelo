@@ -61,7 +61,7 @@ export interface MarconeOrderPayload {
 
 /**
  * The brand saved on a part (parts.dist_brand, "<Distributor>|<code>",
- * migration 0348) if it was picked for THIS distributor — otherwise null and
+ * migration 0353) if it was picked for THIS distributor — otherwise null and
  * the order falls back to the distributor's first match, as before.
  */
 async function savedBrandFor(partId: string, distributor: "Marcone" | "Encompass"): Promise<string | null> {
@@ -81,6 +81,9 @@ export interface StoredPartOrder {
   ticketNo: string;
   partNo: string;
   partDist: string;
+  /** Ordering account recorded on this PO, not the ticket warranty account. */
+  accountNo?: string;
+  progressStatus?: "Pending" | "In progress" | "Completed";
   partDesc: string;
   quantity: number;
   partPrice: number;
@@ -115,6 +118,7 @@ export function createPartOrderFromTicket(ticketNo: string, partDraft: any): Sto
     ticketNo,
     partNo: partDraft.partNo,
     partDist: partDraft.partDist,
+    accountNo: partDraft.accountNo,
     partDesc: partDraft.partDesc,
     quantity: parseInt(partDraft.quantity) || 1,
     partPrice: parseFloat(partDraft.partPrice) || 0,
@@ -144,6 +148,8 @@ function rowToOrder(row: any): StoredPartOrder {
     ticketNo: row.ticket_no ?? "",
     partNo: row.part_no ?? "",
     partDist: row.part_dist ?? "",
+    accountNo: row.account_no ?? undefined,
+    progressStatus: row.progress_status ?? undefined,
     partDesc: row.part_desc ?? "",
     quantity: row.quantity != null ? Number(row.quantity) : 1,
     partPrice: row.part_price != null ? Number(row.part_price) : 0,
@@ -168,6 +174,7 @@ function orderToColumns(o: StoredPartOrder) {
     ticket_no: o.ticketNo ?? null,
     part_no: o.partNo ?? null,
     part_dist: o.partDist ?? null,
+    ...(o.accountNo !== undefined ? { account_no: o.accountNo || null } : {}),
     part_desc: o.partDesc ?? null,
     quantity: Number.isFinite(o.quantity) ? o.quantity : 1,
     part_price: Number.isFinite(o.partPrice) ? o.partPrice : 0,
@@ -511,6 +518,7 @@ export async function placeMarconeOrder(payload: MarconeOrderPayload): Promise<M
     ticketNo: payload.ticketNo,
     partNo: partNoSummary || (payload.lineItems[0]?.partNumber ?? ""),
     partDist: "Marcone",
+    accountNo: String(custNo),
     partDesc: partDescSummary,
     quantity: totalQty || 1,
     partPrice: Number.isFinite(totalPrice) ? totalPrice : 0,

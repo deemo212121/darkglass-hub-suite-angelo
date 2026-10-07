@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0360 — Chat reactions, replies and forwards.
+-- 0361 — Chat reactions, replies and forwards.
 --
 -- message_reactions: one row per (message, person, emoji). Anyone in the
 --   company can read them; you can only add or remove your own.

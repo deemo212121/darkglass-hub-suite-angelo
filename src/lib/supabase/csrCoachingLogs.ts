@@ -1,0 +1,285 @@
+/**
+ * CSR Coaching Log (migration 0356) — one row per coaching session.
+ * Who may write which part, the signing order (person coached first, then
+ * the creator) and the lock once both have signed are all enforced by the
+ * table's triggers and RLS; this file just reads and writes.
+ */
+import { supabase } from "./client";
+import { getOrCreateDmThread, sendMessage } from "./messaging";
+import { createNotification } from "./notifications";
+import { getAppUrl } from "../appUrl";
+
+export interface CoachingLog {
+  id: string;
+  csrProfileId: string;
+  csrName: string;
+  teamLeaderProfileId: string | null;
+  teamLeaderName: string | null;
+  ticketNumber: string;
+  team: string;
+  coachingDate: string;
+  summary: string;
+  csrExplanation: string;
+  coachingDiscussion: string;
+  csrActionPlan: string;
+  tlActionPlan: string;
+  csrSignature: string | null;
+  csrSignedName: string | null;
+  csrSignedAt: string | null;
+  creatorSignature: string | null;
+  creatorSignedName: string | null;
+  creatorSignedAt: string | null;
+  createdBy: string | null;
+  createdByName: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  deletedByName: string | null;
+  /** Last time the coach sent it to the person coached (migration 0360; null before that's run). */
+  sentAt: string | null;
+  sentByName: string | null;
+}
+
+export interface CoachingLogEvent {
+  id: string;
+  logId: string;
+  action: "created" | "edited" | "sent" | "csr_signed" | "creator_signed" | "deleted" | "restored";
+  actorName: string | null;
+  createdAt: string;
+}
+
+const COLUMNS =
+  "id, csr_profile_id, csr_name, team_leader_profile_id, team_leader_name, ticket_number, team, coaching_date, summary, csr_explanation, coaching_discussion, csr_action_plan, tl_action_plan, csr_signature, csr_signed_name, csr_signed_at, creator_signature, creator_signed_name, creator_signed_at, created_by, created_by_name, created_at, updated_at, deleted_at, deleted_by_name";
+
+// sent_at / sent_by_name arrive with migration 0360 — read without them until it's run.
+let hasSentColumns = true;
+const cols = () => (hasSentColumns ? `${COLUMNS}, sent_at, sent_by_name` : COLUMNS);
+async function withSentFallback<T>(run: (columns: string) => PromiseLike<{ data: T; error: { message: string } | null }>) {
+  let res = await run(cols());
+  if (res.error && hasSentColumns && /sent_at|sent_by_name/.test(res.error.message)) {
+    hasSentColumns = false;
+    res = await run(cols());
+  }
+  return res;
+}
+
+const PAGE_SIZE = 1000;
+
+function mapRow(r: any): CoachingLog {
+  return {
+    id: r.id,
+    csrProfileId: r.csr_profile_id,
+    csrName: r.csr_name ?? "",
+    teamLeaderProfileId: r.team_leader_profile_id ?? null,
+    teamLeaderName: r.team_leader_name ?? null,
+    ticketNumber: r.ticket_number ?? "",
+    team: r.team ?? "",
+    coachingDate: r.coaching_date,
+    summary: r.summary ?? "",
+    csrExplanation: r.csr_explanation ?? "",
+    coachingDiscussion: r.coaching_discussion ?? "",
+    csrActionPlan: r.csr_action_plan ?? "",
+    tlActionPlan: r.tl_action_plan ?? "",
+    csrSignature: r.csr_signature ?? null,
+    csrSignedName: r.csr_signed_name ?? null,
+    csrSignedAt: r.csr_signed_at ?? null,
+    creatorSignature: r.creator_signature ?? null,
+    creatorSignedName: r.creator_signed_name ?? null,
+    creatorSignedAt: r.creator_signed_at ?? null,
+    createdBy: r.created_by ?? null,
+    createdByName: r.created_by_name ?? null,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    deletedAt: r.deleted_at ?? null,
+    deletedByName: r.deleted_by_name ?? null,
+    sentAt: r.sent_at ?? null,
+    sentByName: r.sent_by_name ?? null,
+  };
+}
+
+function friendly(message: string): string {
+  if (/csr_coaching_logs|relation .* does not exist|schema cache/i.test(message) && /does not exist|schema cache/i.test(message)) {
+    return "The Coaching Log isn't set up yet — run migration 0356 in Supabase first.";
+  }
+  return message;
+}
+
+/** Every coaching log the caller can see (RLS: all for TL/Manager/HR/Admin…, own for the person coached), deleted ones included. */
+export async function getCoachingLogs(): Promise<CoachingLog[]> {
+  const all: CoachingLog[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await withSentFallback<any[] | null>((c) =>
+      supabase
+        .from("csr_coaching_logs")
+        .select(c)
+        .order("coaching_date", { ascending: false })
+        .order("created_at", { ascending: false })
+        .range(from, from + PAGE_SIZE - 1)
+    );
+    if (error) throw new Error(friendly(error.message));
+    all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
+export interface NewCoachingLogInput {
+  csrProfileId: string;
+  csrName: string;
+  teamLeaderProfileId: string | null;
+  teamLeaderName: string | null;
+  ticketNumber: string;
+  team: string;
+  coachingDate: string;
+  summary: string;
+  coachingDiscussion: string;
+  tlActionPlan: string;
+}
+
+export async function createCoachingLog(input: NewCoachingLogInput): Promise<CoachingLog> {
+  const row = {
+    csr_profile_id: input.csrProfileId,
+    csr_name: input.csrName,
+    team_leader_profile_id: input.teamLeaderProfileId,
+    team_leader_name: input.teamLeaderName,
+    ticket_number: input.ticketNumber,
+    team: input.team,
+    coaching_date: input.coachingDate,
+    summary: input.summary,
+    coaching_discussion: input.coachingDiscussion,
+    tl_action_plan: input.tlActionPlan,
+  };
+  const { data, error } = await withSentFallback<any>((c) => supabase.from("csr_coaching_logs").insert(row).select(c).single());
+  if (error) throw new Error(friendly(error.message));
+  return mapRow(data);
+}
+
+/** Coach side: header + sections I, III, V. The coach (Team Leader line) is fixed to the log's creator. */
+export interface CoachFieldsInput {
+  ticketNumber: string;
+  team: string;
+  coachingDate: string;
+  summary: string;
+  coachingDiscussion: string;
+  tlActionPlan: string;
+}
+
+async function updateRow(id: string, patch: Record<string, unknown>): Promise<CoachingLog> {
+  const { data, error } = await withSentFallback<any>((c) => supabase.from("csr_coaching_logs").update(patch).eq("id", id).select(c).single());
+  if (error) throw new Error(friendly(error.message));
+  return mapRow(data);
+}
+
+export function saveCoachFields(id: string, f: CoachFieldsInput): Promise<CoachingLog> {
+  return updateRow(id, {
+    ticket_number: f.ticketNumber,
+    team: f.team,
+    coaching_date: f.coachingDate,
+    summary: f.summary,
+    coaching_discussion: f.coachingDiscussion,
+    tl_action_plan: f.tlActionPlan,
+  });
+}
+
+/** Person coached: sections II and IV. */
+export function saveCsrFields(id: string, csrExplanation: string, csrActionPlan: string): Promise<CoachingLog> {
+  return updateRow(id, { csr_explanation: csrExplanation, csr_action_plan: csrActionPlan });
+}
+
+/** The server stamps the signed-at time; the caller's role in the log decides which slot is allowed. */
+export function signAsCsr(id: string, signature: string, signedName: string): Promise<CoachingLog> {
+  return updateRow(id, { csr_signature: signature, csr_signed_name: signedName, csr_signed_at: new Date().toISOString() });
+}
+
+export function signAsCreator(id: string, signature: string, signedName: string): Promise<CoachingLog> {
+  return updateRow(id, { creator_signature: signature, creator_signed_name: signedName, creator_signed_at: new Date().toISOString() });
+}
+
+/** Coach side: stamp "sent" (the server sets the time and sender). */
+export function markCoachingLogSent(id: string): Promise<CoachingLog> {
+  if (!hasSentColumns) return Promise.reject(new Error("Sending isn't set up yet — run migration 0360 in Supabase first."));
+  return updateRow(id, { sent_at: new Date().toISOString() });
+}
+
+export function deleteCoachingLog(id: string): Promise<CoachingLog> {
+  return updateRow(id, { deleted_at: new Date().toISOString() });
+}
+
+export function restoreCoachingLog(id: string): Promise<CoachingLog> {
+  return updateRow(id, { deleted_at: null });
+}
+
+/** Create / edit / sign / delete / restore history — readable by TL, Manager, HR, Senior Manager, Admin. */
+export async function getCoachingLogEvents(): Promise<CoachingLogEvent[]> {
+  const all: CoachingLogEvent[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("csr_coaching_log_events")
+      .select("id, log_id, action, actor_name, created_at")
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(friendly(error.message));
+    all.push(...(data ?? []).map((r: any) => ({ id: r.id, logId: r.log_id, action: r.action, actorName: r.actor_name ?? null, createdAt: r.created_at })));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
+// ---------------------------------------------------------------------------
+// Status — shared by the page and the "waiting on you" badges.
+// ---------------------------------------------------------------------------
+
+export type CoachingStatus = "coach" | "csr" | "csr_sign" | "creator_sign" | "locked";
+
+type StatusFields = Pick<CoachingLog, "summary" | "csrExplanation" | "coachingDiscussion" | "csrActionPlan" | "tlActionPlan" | "csrSignedAt" | "creatorSignedAt">;
+
+export function coachingStatus(l: StatusFields): CoachingStatus {
+  if (l.csrSignedAt && l.creatorSignedAt) return "locked";
+  if (l.csrSignedAt) return "creator_sign";
+  if (!l.summary.trim() || !l.coachingDiscussion.trim() || !l.tlActionPlan.trim()) return "coach";
+  if (!l.csrExplanation.trim() || !l.csrActionPlan.trim()) return "csr";
+  return "csr_sign";
+}
+
+/** The person coached has to fill in / sign, or the creator has to sign. */
+export function isCoachingWaitingOn(l: StatusFields & Pick<CoachingLog, "csrProfileId" | "createdBy" | "deletedAt">, profileId: string | null): boolean {
+  if (!profileId || l.deletedAt) return false;
+  const s = coachingStatus(l);
+  if (l.csrProfileId === profileId) return s === "csr" || s === "csr_sign";
+  if (l.createdBy === profileId) return s === "creator_sign";
+  return false;
+}
+
+/** How many coaching logs are waiting on this person — for the Home / module badges. */
+export async function getCoachingWaitingCount(profileId: string): Promise<number> {
+  const { data, error } = await supabase
+    .from("csr_coaching_logs")
+    .select("csr_profile_id, created_by, summary, csr_explanation, coaching_discussion, csr_action_plan, tl_action_plan, csr_signed_at, creator_signed_at, deleted_at")
+    .or(`csr_profile_id.eq.${profileId},created_by.eq.${profileId}`)
+    .is("deleted_at", null)
+    .is("creator_signed_at", null);
+  if (error) return 0;
+  return (data ?? []).map(mapRow).filter((l) => isCoachingWaitingOn(l, profileId)).length;
+}
+
+// ---------------------------------------------------------------------------
+// Sending — like the other forms: a Team Messenger message from the sender
+// with a link to the log, plus a bell notification.
+// ---------------------------------------------------------------------------
+
+export function coachingLogPath(id: string): string {
+  return `/m/csr/coaching-log?log=${id}`;
+}
+
+export async function sendCoachingLogMessage(input: { fromId: string; fromName: string; toId: string; logId: string; body: string }): Promise<void> {
+  const link = `${getAppUrl()}${coachingLogPath(input.logId)}`;
+  const thread = await getOrCreateDmThread(input.fromId, input.toId);
+  await sendMessage({ dmThreadId: thread.id, senderId: input.fromId, senderName: input.fromName, body: `${input.body} Open it here: ${link}` });
+  await createNotification({
+    recipientId: input.toId,
+    senderId: input.fromId,
+    senderName: input.fromName,
+    body: input.body,
+    linkTo: coachingLogPath(input.logId),
+  }).catch(() => undefined);
+}

@@ -281,7 +281,7 @@ interface PartTransactionRow {
   id: string;
   partNo: string;
   partDist: string;
-  /** Marcone / Encompass brand to order, "<Distributor>|<code>" (DistBrandSelect, migration 0348). */
+  /** Marcone / Encompass brand to order, "<Distributor>|<code>" (DistBrandSelect, migration 0353). */
   distBrand?: string;
   partDesc: string;
   poNo: string;

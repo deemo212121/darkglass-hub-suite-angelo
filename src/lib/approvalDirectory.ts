@@ -69,13 +69,13 @@ export function chainLevelOf(p: Pick<ProfileRow, "role" | "extra_roles" | "assig
 export interface ChainData {
   byId: Map<string, ProfileRow>;
   sbmBranches: SbmBranchAssignment[];
-  /** Explicit top-level approvers (migration 0333) — empty means the role-based default. */
+  /** Explicit top-level approvers (migration 0336) — empty means the role-based default. */
   topApproverIds?: string[];
-  /** PH department manager lists (migration 0334) — a department with none uses the role default. */
+  /** PH department manager lists (migration 0337) — a department with none uses the role default. */
   phDeptManagers?: PhDepartmentManagerRow[];
 }
 
-// ---- Philippines (migration 0334): department managers, no branches ----------
+// ---- Philippines (migration 0337): department managers, no branches ----------
 const PH_DEPT_BY_ROLE: Record<string, string> = {
   CSR: "CSR", CSR_AGENT: "CSR", CSR_TEAM_LEADER: "CSR", CSR_MANAGER: "CSR",
   CLAIMS: "Claims", CLAIMS_TEAM_LEADER: "Claims", CLAIMS_MANAGER: "Claims",

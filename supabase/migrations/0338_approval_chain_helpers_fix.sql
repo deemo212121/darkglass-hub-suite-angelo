@@ -1,7 +1,7 @@
 -- =====================================================================
 -- 0338 — Approval Chain helper fix.
 --
--- 0332 was updated after it was first run (Parts / Parts Team Leader at
+-- 0332 (Approval Chain; Angelo's 0329) was updated after it was first run (Parts / Parts Team Leader at
 -- branch level, and levels taken from ALL held roles via
 -- chain_level_held). Databases that ran the ORIGINAL 0332 are missing
 -- chain_level_held — so 0336/0337's chain_can_approve fails with
@@ -11,7 +11,7 @@
 -- This re-creates the current versions of the helpers 0332 defines. Safe
 -- to run more than once and on a database that already has them.
 --
--- Run once in the Supabase SQL Editor, after 0337.
+-- Run once in the Supabase SQL Editor, after 0337. Not needed on the live database (checked 2026-10-01: chain_level_held already exists); safe to run anyway.
 -- =====================================================================
 
 create or replace function chain_level(p_role text)

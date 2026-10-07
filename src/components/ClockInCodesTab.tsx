@@ -12,6 +12,7 @@ import { ROLE_LABELS, ROLE_OPTIONS } from "@/lib/roleLabels";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
+import { MissedClockInMeetings } from "@/components/MissedClockInMeetings";
 import {
   ensureCompanyClockInCode,
   getClockInCodeEvents,
@@ -273,6 +274,8 @@ export function ClockInCodesTab({ standalone, backModule = "hr" }: { standalone?
           </div>
         </div>
       </div>
+
+      <MissedClockInMeetings profiles={profiles} />
     </div>
   );
 }

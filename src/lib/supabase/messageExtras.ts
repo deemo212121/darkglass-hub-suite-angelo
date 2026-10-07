@@ -1,5 +1,5 @@
 /**
- * Chat reactions, replies and forwards (migration 0360). Everything here
+ * Chat reactions, replies and forwards (migration 0361). Everything here
  * degrades quietly before the migration is run: no reactions / links are
  * shown, and adding one says the migration is needed.
  */
@@ -19,7 +19,7 @@ export interface MessageLink {
 }
 
 const isMissing = (msg: string, table: string) => msg.includes(table) && /does not exist|schema cache|could not find/i.test(msg);
-const SETUP_MSG = "Reactions, replies and forwards aren't set up yet — run migration 0360 in Supabase first.";
+const SETUP_MSG = "Reactions, replies and forwards aren't set up yet — run migration 0361 in Supabase first.";
 
 /** message id → reactions grouped by emoji (in first-used order). */
 export async function getReactions(messageIds: string[]): Promise<Map<string, ReactionGroup[]>> {

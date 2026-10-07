@@ -214,7 +214,7 @@ export function AppHeader() {
             {ready && email && <MessagesMenu />}
           </div>
           {ready && email && (
-            <DropdownMenu>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <button
                   className="group flex shrink-0 items-center gap-2.5 rounded-full pl-1 pr-3 py-1 border border-[var(--color-panel-border)] bg-[var(--color-panel)] hover:bg-[var(--color-secondary)] transition-colors cursor-pointer"

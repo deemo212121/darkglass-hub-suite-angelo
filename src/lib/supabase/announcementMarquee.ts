@@ -1,5 +1,5 @@
 /**
- * Announcement ticker + titles (migration 0355).
+ * Announcement ticker + titles (migration 0359).
  *
  * Ticker lines show announcement titles scrolling under the app header.
  * Each line can be deactivated (kept, just not shown) and activated again,
@@ -79,7 +79,7 @@ export async function addMarquee(input: { messageId: string | null; text: string
     .select("id, message_id, text, ends_at, created_by_name, created_at, removed_at")
     .single();
   if (error) {
-    if (isMissing(error.message, "announcement_marquees")) throw new Error("The ticker isn't set up yet — run migration 0355 in Supabase first.");
+    if (isMissing(error.message, "announcement_marquees")) throw new Error("The ticker isn't set up yet — run migration 0359 in Supabase first.");
     throw new Error(error.message);
   }
   changed();
@@ -90,7 +90,7 @@ export async function addMarquee(input: { messageId: string | null; text: string
 export async function setMarqueeActive(id: string, active: boolean): Promise<void> {
   const { error } = await supabase.from("announcement_marquees").update({ is_active: active }).eq("id", id);
   if (error) {
-    if (isMissing(error.message, "is_active")) throw new Error("Activate / Deactivate isn't set up yet — run migration 0355 in Supabase first.");
+    if (isMissing(error.message, "is_active")) throw new Error("Activate / Deactivate isn't set up yet — run migration 0359 in Supabase first.");
     throw new Error(error.message);
   }
   changed();
@@ -107,7 +107,7 @@ export async function removeMarquee(id: string, byName: string): Promise<void> {
 export async function setTickerEnabled(enabled: boolean, byName: string): Promise<void> {
   const { error } = await supabase.rpc("set_ticker_enabled", { p_enabled: enabled, p_by_name: byName });
   if (error) {
-    if (isMissing(error.message, "set_ticker_enabled")) throw new Error("The ticker switch isn't set up yet — run migration 0355 in Supabase first.");
+    if (isMissing(error.message, "set_ticker_enabled")) throw new Error("The ticker switch isn't set up yet — run migration 0359 in Supabase first.");
     throw new Error(error.message);
   }
   changed();
@@ -121,7 +121,7 @@ export function tickerTextFrom(body: string): string {
 
 // ── Announcement titles ────────────────────────────────────────────────────
 
-/** message id → title, for every titled announcement. `available` is false until migration 0355 has been run. */
+/** message id → title, for every titled announcement. `available` is false until migration 0359 has been run. */
 export async function getAnnouncementTitles(): Promise<{ titles: Map<string, string>; available: boolean }> {
   const titles = new Map<string, string>();
   for (let from = 0; ; from += 1000) {
@@ -141,7 +141,7 @@ export async function setAnnouncementTitle(messageId: string, title: string, byN
     .from("announcement_titles")
     .upsert({ message_id: messageId, title: title.trim(), updated_by_name: byName, updated_at: new Date().toISOString() }, { onConflict: "message_id" });
   if (error) {
-    if (isMissing(error.message, "announcement_titles")) throw new Error("Titles aren't set up yet — run migration 0355 in Supabase first.");
+    if (isMissing(error.message, "announcement_titles")) throw new Error("Titles aren't set up yet — run migration 0359 in Supabase first.");
     throw new Error(error.message);
   }
 }

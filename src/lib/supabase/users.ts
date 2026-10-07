@@ -510,6 +510,37 @@ export async function getCompanyUsers(): Promise<ProfileRow[]> {
   return rows;
 }
 
+/**
+ * A lean, independent company roster for reports: one query, no work_plan
+ * (the bulk of getCompanyUsers' ~2.4 MB), no follow-up queries, no approval
+ * directory, no shared in-flight promise — so a slow or stalled
+ * getCompanyUsers elsewhere in the app can't hold a report up. Fields not
+ * selected here are left empty on the returned rows.
+ */
+export async function getCompanyUsersLite(): Promise<ProfileRow[]> {
+  const base = "id, firebase_uid, company_id, email, username, display_name, role, extra_roles, department, manager_name, assigned_branch, branch_access, technician_id, off_days, is_active, created_at";
+  const run = async (cols: string) => {
+    const rows: ProfileRow[] = [];
+    for (let from = 0; ; from += PAGE_SIZE) {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select(cols)
+        .neq("role", "SUPERSUPERADMIN")
+        .order("display_name", { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
+      if (error) return { rows, error };
+      rows.push(...((data ?? []) as unknown as ProfileRow[]));
+      if (!data || data.length < PAGE_SIZE) break;
+    }
+    return { rows, error: null };
+  };
+  // tier_level is a newer column (migration 0162) — fall back without it.
+  let res = await run(`${base}, tier_level`);
+  if (res.error) res = await run(base);
+  if (res.error) throw new Error(res.error.message);
+  return res.rows;
+}
+
 async function fetchCompanyUsersUncached(): Promise<ProfileRow[]> {
   const rows: ProfileRow[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {

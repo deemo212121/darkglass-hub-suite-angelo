@@ -1,4 +1,4 @@
-import { createFileRoute, Link, Navigate, Outlet, notFound, useLocation } from "@tanstack/react-router";
+import { createFileRoute, Link, Navigate, Outlet, notFound, redirect, useLocation } from "@tanstack/react-router";
 import { PageTrail } from "@/components/PageTrail";
 import { useRedirectGuard } from "@/lib/useRedirectGuard";
 import { AppHeader } from "@/components/Header";
@@ -140,6 +140,7 @@ import { CSRTeamDailyReport } from "@/components/CSRTeamDailyReport";
 import { CsrRescheduleRequestsPage } from "@/components/CsrRescheduleRequestsPage";
 import { CsrGhTracker } from "@/components/CsrGhTracker";
 import { CsrLtpReport } from "@/components/CsrLtpReport";
+import { CsrCoachingLogPage } from "@/components/CsrCoachingLogPage";
 import { CSRCallTracker } from "@/components/CSRCallTracker";
 import { CSRStatusSummary } from "@/components/CSRStatusSummary";
 import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
@@ -149,6 +150,10 @@ import { OperationsDashboard } from "@/components/OperationsDashboard";
 import { ReceivingStatusPage } from "@/components/ReceivingStatusPage";
 import { TicketOperationReport } from "@/components/TicketOperationReport";
 
+const MOVED_SUBMODULES: Record<string, { module: string; submodule: string }> = {
+  "tickets/operation": { module: "bizops", submodule: "operation" },
+};
+
 export const Route = createFileRoute("/m/$module/$submodule")({
   ssr: false,
   head: ({ params }) => ({
@@ -157,6 +162,9 @@ export const Route = createFileRoute("/m/$module/$submodule")({
     }],
   }),
   loader: async ({ params }) => {
+    // Pages that moved to another module — old links/bookmarks land on the new spot.
+    const moved = MOVED_SUBMODULES[`${params.module}/${params.submodule}`];
+    if (moved) throw redirect({ to: "/m/$module/$submodule", params: moved, replace: true });
     const m = getModule(params.module);
     const s = getSubModule(params.module, params.submodule);
     if (!m || !s) throw notFound();
@@ -572,6 +580,8 @@ function SubModule() {
         ? <CsrGhTracker mod={mod} sub={sub} />
         : (sub as any).custom === "csr-ltp-report"
         ? <CsrLtpReport mod={mod} sub={sub} />
+        : (sub as any).custom === "csr-coaching-log"
+        ? <CsrCoachingLogPage mod={mod} sub={sub} />
         : (sub as any).custom === "csr-daily-report"
         ? <ReportCSRDaily mod={mod} sub={sub} />
         : (sub as any).custom === "call-tracker"

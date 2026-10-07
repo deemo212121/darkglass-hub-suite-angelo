@@ -30,6 +30,43 @@ let tokenExpiresAt = 0; // unix seconds
 // this device. See supabaseTokenBridge.ts's mintOrReadSessionId.
 let currentSessionId: string | null = null;
 
+const READ_TIMEOUT_MS = 60_000;
+const READ_RETRY_TIMEOUT_MS = 90_000;
+const READ_TIMEOUT_ERROR = "SupabaseReadTimeout";
+
+/** fetch that gives up after `ms`, still honouring the caller's own abort signal. */
+function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, ms: number): Promise<Response> {
+  const ctl = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; ctl.abort(); }, ms);
+  const callerSignal = init.signal;
+  const onCallerAbort = () => ctl.abort();
+  if (callerSignal) {
+    if (callerSignal.aborted) ctl.abort();
+    else callerSignal.addEventListener("abort", onCallerAbort, { once: true });
+  }
+  // The body is read inside the time limit too — a stall can just as well
+  // happen mid-download, after the headers have already arrived.
+  return fetch(input, { ...init, signal: ctl.signal })
+    .then(async (res) => {
+      const body = await res.arrayBuffer();
+      const nullBody = res.status === 204 || res.status === 205 || res.status === 304;
+      return new Response(nullBody ? null : body, { status: res.status, statusText: res.statusText, headers: res.headers });
+    })
+    .catch((err) => {
+      if (timedOut) {
+        const e = new Error(`Request timed out after ${ms / 1000}s`);
+        e.name = READ_TIMEOUT_ERROR;
+        throw e;
+      }
+      throw err;
+    })
+    .finally(() => {
+      clearTimeout(timer);
+      callerSignal?.removeEventListener("abort", onCallerAbort);
+    });
+}
+
 // Single shared client. We override the Authorization header per request via
 // the global fetch wrapper so we always send the freshest minted token.
 export const supabase: SupabaseClient = createClient(
@@ -46,6 +83,20 @@ export const supabase: SupabaseClient = createClient(
         const headers = new Headers(init.headers);
         if (supabaseAccessToken) {
           headers.set("Authorization", `Bearer ${supabaseAccessToken}`);
+        }
+        const method = (init.method || "GET").toUpperCase();
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        // Reads only (never writes or storage uploads): a request that
+        // stalls on a flaky connection never settles on its own, which
+        // left whole pages (Attendance Monitoring, Trainee Attendance)
+        // stuck on "Loading…" for good. Give each read a time limit and
+        // one retry instead.
+        if ((method === "GET" || method === "HEAD") && url.includes("/rest/v1/")) {
+          return fetchWithTimeout(input, { ...init, headers }, READ_TIMEOUT_MS).catch((err) => {
+            if (err?.name !== READ_TIMEOUT_ERROR) throw err;
+            console.warn("Supabase read timed out — retrying once:", url.split("?")[0]);
+            return fetchWithTimeout(input, { ...init, headers }, READ_RETRY_TIMEOUT_MS);
+          });
         }
         return fetch(input, { ...init, headers });
       },

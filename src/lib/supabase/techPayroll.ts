@@ -254,7 +254,28 @@ interface TechCompletedCandidate {
  * exclude both, the Redo/On Hold lists surface exactly the ones excluded for
  * that reason so the exclusion is never an invisible gap in the totals.
  */
-async function getTechCompletedCandidates(startDate: string, endDate: string): Promise<TechCompletedCandidate[]> {
+// Callers often ask for the same range at the same moment (the Technician
+// Performance Report loads repair counts, the daily breakdown and redos
+// together) — share one in-flight load per range instead of running the
+// ~10s ticket + visit lookup several times over. Kept briefly after it
+// settles so a Refresh shortly after still gets fresh data.
+const candidatesInFlight = new Map<string, Promise<TechCompletedCandidate[]>>();
+const CANDIDATES_SHARE_MS = 5_000;
+
+function getTechCompletedCandidates(startDate: string, endDate: string): Promise<TechCompletedCandidate[]> {
+  const key = `${startDate}|${endDate}`;
+  const existing = candidatesInFlight.get(key);
+  if (existing) return existing;
+  const promise = loadTechCompletedCandidates(startDate, endDate);
+  candidatesInFlight.set(key, promise);
+  const forget = () => setTimeout(() => {
+    if (candidatesInFlight.get(key) === promise) candidatesInFlight.delete(key);
+  }, CANDIDATES_SHARE_MS);
+  promise.then(forget, forget);
+  return promise;
+}
+
+async function loadTechCompletedCandidates(startDate: string, endDate: string): Promise<TechCompletedCandidate[]> {
   if (!startDate || !endDate) return [];
   const ticketRows: any[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {

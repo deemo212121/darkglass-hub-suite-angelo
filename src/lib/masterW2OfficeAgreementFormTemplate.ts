@@ -44,6 +44,8 @@ export interface MasterW2OfficeAgreementFormData {
   employeeSignatureDataUrl: string;
   employerDateSigned: string;
   employerSignatureDataUrl: string;
+  /** Name of the HR/manager who countersigned — set when the employer signature is added. Missing on documents countersigned before it was recorded. */
+  employerName?: string;
 }
 
 const escapeHtml = (s: string) =>
@@ -158,7 +160,7 @@ export function buildMasterW2OfficeAgreementBodyMarkup(data: MasterW2OfficeAgree
       <p style="font-style:italic;">By signing below, I certify that I have read, understood, and voluntarily agree to all the terms, policies, and conditions outlined in this Master W-2 Office &amp; Logistics Comprehensive Policy, Conduct &amp; Agreement.</p>
 
       ${signRow("Employee Signature", data.employeeName, data.employeeDateSigned, data.employeeSignatureDataUrl)}
-      ${signRow("Employer Representative Signature", "", data.employerDateSigned, data.employerSignatureDataUrl)}
+      ${signRow("Employer Representative Signature", data.employerName || "", data.employerDateSigned, data.employerSignatureDataUrl)}
     </div>
   `;
 }

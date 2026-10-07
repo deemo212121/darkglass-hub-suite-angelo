@@ -37,7 +37,7 @@ export async function updateApprovalArea(id: string, fields: { name?: string; se
 }
 
 /**
- * Top-level approvers (migration 0333). Empty = the role-based default
+ * Top-level approvers (migration 0336). Empty = the role-based default
  * (Admin / Technical Director / Asst. Director); otherwise only these people.
  * Returns [] when the migration hasn't been run yet.
  */
@@ -56,7 +56,7 @@ export async function setTopApproverIds(profileIds: string[]): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
-/** PH department managers (migration 0334) — explicit lists per department; a department with none uses the role default. */
+/** PH department managers (migration 0337) — explicit lists per department; a department with none uses the role default. */
 export interface PhDepartmentManagerRow {
   department: string;
   profileId: string;

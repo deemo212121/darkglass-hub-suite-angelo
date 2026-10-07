@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0355 — Announcement ticker (marquee).
+-- 0359 — Announcement ticker (marquee).
 --
 -- An announcement can be shown as a scrolling line under the app header for
 -- everyone in the company. Each ticker item points at the announcement it

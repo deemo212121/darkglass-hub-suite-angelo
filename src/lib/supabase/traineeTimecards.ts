@@ -420,7 +420,10 @@ export async function getTraineeReviewQueue(
     .filter((e) => e.status === "pending")
     .map((entry) => {
       const trainee = roster.find((p) => p.id === entry.profileId);
-      // Deactivated trainees drop out of the review queue (and so never hold up anyone's Check Out).
+      // The trainee's CURRENT manager (not the one stamped at punch time),
+      // plus — for the browsable Team Approvals list only — trainees this
+      // viewer covers through the Approval Chain. Deactivated trainees drop
+      // out (and so never hold up anyone's Check Out).
       return trainee &&
         trainee.is_active &&
         (isCurrentTraineeManager(trainee, entry, managerProfileId, manager?.display_name) ||

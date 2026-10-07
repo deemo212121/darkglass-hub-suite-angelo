@@ -229,6 +229,24 @@ export async function getSignableDocuments(documentType: SignableDocumentType = 
   return all;
 }
 
+/** Just who each document of a type was for and when — no form data or
+ * signatures (those make the full rows megabytes). For counts/reports. */
+export async function getSignableDocumentRecipients(documentType: SignableDocumentType): Promise<{ recipientId: string | null; createdAt: string }[]> {
+  const all: { recipientId: string | null; createdAt: string }[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("hr_signable_documents")
+      .select("recipient_id, created_at")
+      .eq("document_type", documentType)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    all.push(...(data ?? []).map((r: any) => ({ recipientId: r.recipient_id ?? null, createdAt: r.created_at })));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
 /**
  * Every signable document company-wide across a SPECIFIC set of types, most
  * recent first — TechnicianFormChecklistPage.tsx's per-tab load, so

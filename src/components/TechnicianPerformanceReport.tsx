@@ -68,22 +68,27 @@
  * getTechCancelledTicketCounts) — distinct from "CL-Need Cancel", which is
  * still a pending request, not yet cancelled.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ChevronDown, ChevronLeft, Download, Upload, RefreshCw, X, MapPin, UserSquare2, Star, CalendarClock, ChevronRight, PencilLine } from "lucide-react";
+import { ChevronDown, ChevronLeft, Download, Upload, RefreshCw, X, MapPin, UserSquare2, Star, CalendarClock, ChevronRight, PencilLine, Crown, AlertTriangle, Gauge, Ticket, RotateCcw, CalendarDays, Clock, Route } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { BrandedLoader } from "@/components/BrandedLoader";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
-import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsersLite, type ProfileRow } from "@/lib/supabase/users";
 import { getTechCompletedRepairCounts, getTechCompletedTicketsDaily, getTechRedoTickets, getTechCancelledTicketCounts, type TechCompletedTicketDaily } from "@/lib/supabase/techPayroll";
 import { getMileageEntries, mileageEffectiveTotal } from "@/lib/supabase/mileage";
 import { getCompanyTicketReschedules } from "@/lib/supabase/ticketReschedules";
-import { getSignableDocuments } from "@/lib/supabase/signableDocuments";
+import { getSignableDocumentRecipients } from "@/lib/supabase/signableDocuments";
 import { getCompanyTimecardEntries, calcWorkedHours, computeMealTimeCredit, startOfWeekSunday, addDaysISO } from "@/lib/supabase/timecards";
+import { getCorrectionsInRange } from "@/lib/supabase/timecardCorrections";
+import { getClockInMeetingsInRange } from "@/lib/supabase/clockInMeetings";
+import {
+  FIRST_PAY_PERIOD, payPeriodsThrough, fmtPayDate, shortTotalTicket, shortRedoPct, shortDailyAvg, shortAvgHours, shortAvgMiles, shortErrorCount, fmtRedoPct, Grade, GRADE_META, GRADE_ORDER, GRADE_HEX, gradeAtLeast, GRADERS, GRADE_POINTS, CAPPED_GRADE_POINTS, AVG_HOURS_POINTS, AVG_MILES_POINTS, ShortRowInput, shortPoints, LetterGrade, LETTER_GRADES, letterGrade, LETTER_META, gradeName, GradeMedal, fmtPoints, GRADE_SCALE, GradePill,
+} from "@/components/techPerformanceGrading";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { TECHNICIAN_PAY_ROLES, normalizeRole, isMealAlwaysPaidRole, isFinanceRole, isCompanySuperAdminRole } from "@/lib/roleLabels";
@@ -93,6 +98,7 @@ import {
   bulkUpsertTechnicianPerformanceOverrides,
   type DailyPerformanceOverride,
 } from "@/lib/supabase/technicianPerformanceOverrides";
+import { getSeniorBranchManagerAssignments, type SbmBranchAssignment } from "@/lib/supabase/seniorBranchManagerAssignments";
 
 const TOOLTIP_STYLE = {
   background: "#ffffff",
@@ -103,6 +109,20 @@ const TOOLTIP_STYLE = {
   fontWeight: 600,
   boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
 } as const;
+/**
+ * Per the user's call (2026-10-01): on THIS REPORT ONLY, Minor Comp, Major
+ * Comp, Redo Count, Mileage, Hours of Work, Working Days and Off Days count
+ * as 0 from this date to the present — live tickets / redos / punches /
+ * mileage / scheduled off days on or after it are ignored here, unless a
+ * value was entered for the day (import / correction). Earlier dates are
+ * unaffected, and nothing in the database is changed or deleted (payroll,
+ * Accounting, timecards all still use the real data). Set to "9999-12-31"
+ * to turn it off.
+ */
+const BLANK_LIVE_TIME_FROM = "2026-08-27";
+/** "Jackson,TN" and "Jackson, TN" are the same branch — compare with the comma spacing tidied. */
+const normBranchName = (b: string | null | undefined) => String(b ?? "").trim().toLowerCase().replace(/\s*,\s*/g, ", ");
+
 const CHART_BAR_FILL = "#3b82f6";
 const COMPARE_BAR_FILLS = ["#3b82f6", "#f59e0b", "#10b981", "#ec4899", "#8b5cf6", "#06b6d4"];
 
@@ -199,8 +219,19 @@ function MultiSelect({
   );
 }
 
-type PeriodMode = "weekly" | "monthly" | "custom";
-type SortKey = "techId" | "name" | "location" | "manager" | "tier" | "daysWorked" | "hoursWorked" | "totalTickets" | "minorTicketCount" | "majorTicketCount" | "redoCount" | "redoRatePct" | "miles" | "milesPerTicket" | "ticketsPerHour" | "rescheduleCount" | "cancelledCount" | "damageAssessmentCount";
+// "total" = every pay period combined (first period's start → today);
+// "custom" = one pay period picked from the dropdown.
+type PeriodMode = "total" | "custom";
+
+type SortKey = "techId" | "name" | "location" | "manager" | "tier" | "daysWorked" | "hoursWorked" | "totalTickets" | "minorTicketCount" | "majorTicketCount" | "redoCount" | "redoRatePct" | "miles" | "milesPerTicket" | "ticketsPerHour" | "rescheduleCount" | "cancelledCount" | "damageAssessmentCount" | "shortTotalTicket" | "shortRedoPct" | "shortDailyAvg" | "shortPoints" | "shortAvgHours" | "shortAvgMiles" | "shortErrorCount";
+// Hover text for the summary tiles in the short view.
+const KPI_HINTS: Record<string, string> = {
+  "Technicians": "Technicians in the table (after filters)",
+  "Total Tickets": "Sum of Total Ticket (Minor + Major − Redo)",
+  "Avg Redo %": "All Redo ÷ all (Minor + Major)",
+  "Avg Tickets/Hr": "Total Tickets ÷ total Hours of Work",
+  "Flagged": "Technicians with at least one red (Alert) main factor",
+};
 type GroupBy = "none" | "location" | "manager" | "tier";
 
 interface TechPerfRow {
@@ -245,6 +276,10 @@ interface TechPerfRow {
    *  report — see FillDamagePage.tsx) sent to this technician in the
    *  period. */
   damageAssessmentCount: number;
+  /** Timecard correction requests filed for work days in the period. */
+  timecardIssueCount: number;
+  /** Scheduled work days with no Time In (migration 0348 — "meeting required"). */
+  missedClockInCount: number;
   /** No live source at all (see this file's header comment) — purely
    *  whatever's been manually entered via a technician_daily_performance_
    *  overrides correction, 0 otherwise. */
@@ -319,10 +354,11 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { uid, displayName, role, extraRoles } = useAuth();
 
-  const [periodMode, setPeriodMode] = useState<PeriodMode>("weekly");
-  const [anchor, setAnchor] = useState(todayStr());
-  const [customStart, setCustomStart] = useState(() => startOfWeekSunday(todayStr()));
-  const [customEnd, setCustomEnd] = useState(() => addDaysISO(startOfWeekSunday(todayStr()), 6));
+  // Opens on the latest pay period.
+  const payPeriods = useMemo(() => payPeriodsThrough(todayStr()), []);
+  const [periodMode, setPeriodMode] = useState<PeriodMode>("custom");
+  const [customStart, setCustomStart] = useState(() => payPeriods[payPeriods.length - 1].start);
+  const [customEnd, setCustomEnd] = useState(() => payPeriods[payPeriods.length - 1].end);
   const [users, setUsers] = useState<ProfileRow[]>([]);
   const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);
   const [rows, setRows] = useState<TechPerfRow[]>([]);
@@ -369,43 +405,92 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     }
     return ref;
   };
-  const [sortKey, setSortKey] = useState<SortKey>("name");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  // Highest Points first by default.
+  const [sortKey, setSortKey] = useState<SortKey>("shortPoints");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [selectedTechId, setSelectedTechId] = useState<string | null>(null);
   // Per the user's call ("for now"), the table defaults to a short set of
   // columns: Name, Minor/Major Completion, Redo, Mileage, Hours Worked,
-  // Working Days, Off Days. "Show all columns" brings back the full layout.
+  // Working Days. "Show all columns" brings back the full layout.
   // CSV export / import template are unaffected.
   const [showAllColumns, setShowAllColumns] = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
 
-  const periodStart =
-    periodMode === "weekly" ? startOfWeekSunday(anchor)
-    : periodMode === "monthly" ? monthStart(anchor)
-    : customStart <= customEnd ? customStart : customEnd;
-  const periodEnd =
-    periodMode === "weekly" ? addDaysISO(periodStart, 6)
-    : periodMode === "monthly" ? monthEnd(anchor)
-    : customStart <= customEnd ? customEnd : customStart;
+  const periodStart = periodMode === "total" ? FIRST_PAY_PERIOD.start : customStart;
+  const periodEnd = periodMode === "total" ? todayStr() : customEnd;
   const periodWeeks = daysBetween(periodStart, periodEnd) / 7;
 
+  // One load at a time per period: React (dev mode) and period changes
+  // used to start several overlapping loads that each downloaded
+  // everything — tripling the traffic. A second call for the same period
+  // while one is running is ignored, and results from a load whose period
+  // has since changed are dropped instead of overwriting the newer one.
+  const loadSeqRef = useRef(0);
+  const loadInFlightKeyRef = useRef<string | null>(null);
+
   const load = async () => {
+    // Live tickets / mileage / timecards only matter for the full view or a
+    // period reaching before BLANK_LIVE_TIME_FROM — from then on the short
+    // view's figures come only from the per-day corrections, so those
+    // (slow, heavy) downloads are skipped.
+    const needLive = showAllColumns || periodStart < BLANK_LIVE_TIME_FROM;
+    const loadKey = `${periodStart}|${periodEnd}|${needLive ? "live" : "corrections"}`;
+    if (loadInFlightKeyRef.current === loadKey) return;
+    loadInFlightKeyRef.current = loadKey;
+    const seq = ++loadSeqRef.current;
+    const isStale = () => seq !== loadSeqRef.current;
     setLoading(true);
     setError(null);
+    // Load watchdog: names every request still unfinished after 25s and
+    // stops waiting, so a stuck request shows up as a clear error instead
+    // of an endless spinner.
+    const pending = new Map<string, number>();
+    const started = Date.now();
+    const track = <T,>(label: string, p: Promise<T>): Promise<T> => {
+      pending.set(label, Date.now());
+      return p.finally(() => {
+        pending.delete(label);
+        const secs = (Date.now() - started) / 1000;
+        if (secs > 5) console.info(`[tech-perf] ${label} finished after ${secs.toFixed(1)}s`);
+      });
+    };
+    // Doesn't give up — a slow connection still gets its data — but after
+    // 25s it says what it's still waiting on (cleared once the data lands).
+    const watchdog: ReturnType<typeof setTimeout> = setTimeout(() => {
+      if (isStale()) return;
+      const names = Array.from(pending.keys());
+      console.warn("[tech-perf] still waiting after 25s on:", names);
+      setError(`Still loading — this is taking longer than usual (waiting on: ${names.join(", ") || "calculations"}). It will finish on its own; if it never does, send this message to IT.`);
+    }, 25_000);
     try {
-      const [allUsers, composition, repairCounts, redoMap, mileageEntries, timecardEntries, dailyCompleted, overrides, reschedules, cancelledCounts, damageDocs] = await Promise.all([
-        getCompanyUsers(),
-        getCsrTeamComposition().catch(() => null),
-        getTechCompletedRepairCounts(periodStart, periodEnd),
-        getTechRedoTickets(periodStart, periodEnd),
-        getMileageEntries(),
-        getCompanyTimecardEntries(periodStart, periodEnd),
-        getTechCompletedTicketsDaily(periodStart, periodEnd),
-        getTechnicianPerformanceOverrides(periodStart, periodEnd),
-        getCompanyTicketReschedules(periodStart, periodEnd),
-        getTechCancelledTicketCounts(periodStart, periodEnd),
-        getSignableDocuments("damage").catch(() => []),
-      ]);
+      const [allUsers, composition, repairCounts, redoMap, mileageEntries, timecardEntries, dailyCompleted, overrides, reschedules, cancelledCounts, damageDocs, timecardCorrections, missedClockIns] = await Promise.race([Promise.all([
+        // Own lean roster, not the app-wide getCompanyUsers (which can stall
+        // behind other pages and once held this report up indefinitely).
+        track("users", getCompanyUsersLite()),
+        track("CSR teams", getCsrTeamComposition().catch(() => null)),
+        track("repair counts", needLive ? getTechCompletedRepairCounts(periodStart, periodEnd) : Promise.resolve([])),
+        // Redo tickets carry no date, so the blanked range (BLANK_LIVE_TIME_FROM
+        // onward) is cut off at the fetch: only redos completed before it count live.
+        track("redo tickets", periodStart < BLANK_LIVE_TIME_FROM
+          ? getTechRedoTickets(periodStart, periodEnd < BLANK_LIVE_TIME_FROM ? periodEnd : addDaysISO(BLANK_LIVE_TIME_FROM, -1))
+          : Promise.resolve(new Map())),
+        // Only the period's days — the full history took ~13s to load.
+        track("mileage", needLive ? getMileageEntries(undefined, { start: periodStart, end: periodEnd }, { summaryOnly: true }) : Promise.resolve([])),
+        track("timecards", needLive ? getCompanyTimecardEntries(periodStart, periodEnd) : Promise.resolve([])),
+        track("daily tickets", needLive ? getTechCompletedTicketsDaily(periodStart, periodEnd) : Promise.resolve([])),
+        track("corrections (overrides)", getTechnicianPerformanceOverrides(periodStart, periodEnd)),
+        track("reschedules", needLive ? getCompanyTicketReschedules(periodStart, periodEnd) : Promise.resolve([])),
+        track("cancelled tickets", needLive ? getTechCancelledTicketCounts(periodStart, periodEnd) : Promise.resolve([])),
+        track("damage documents", getSignableDocumentRecipients("damage").catch(() => [])),
+        track("timecard issues", getCorrectionsInRange(periodStart, periodEnd).catch(() => [])),
+        track("missed clock-ins", getClockInMeetingsInRange(periodStart, periodEnd).catch(() => [])),
+      ])]);
+      clearTimeout(watchdog);
+      console.info(`[tech-perf] data loaded in ${((Date.now() - started) / 1000).toFixed(1)}s`);
+      if (isStale()) return;
+      setError(null);
+      const timecardIssuesByProfileId = new Map<string, number>();
+      for (const c of timecardCorrections) timecardIssuesByProfileId.set(c.profileId, (timecardIssuesByProfileId.get(c.profileId) ?? 0) + 1);
       setUsers(allUsers);
       setCsrComposition(composition);
       setDailyTickets(dailyCompleted);
@@ -552,7 +637,9 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         const identity = e.profileId ?? nameKey;
         if (!byMap.has(identity)) byMap.set(identity, new Map());
         const days = byMap.get(identity)!;
-        if (techBranch && e.branch !== techBranch) {
+        // Compared with the comma spacing tidied — tickets/mileage often say
+        // "Jackson,TN" where the profile says "Jackson, TN" (same branch).
+        if (techBranch && normBranchName(e.branch) !== normBranchName(techBranch)) {
           // Doesn't count toward the total, but tracked so the breakdown
           // popup can show it was seen and excluded (which branch it was
           // tagged to), instead of just silently vanishing.
@@ -627,6 +714,22 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         return sum;
       };
 
+      // Same as sumWithDailyOverride, but live values dated on/after
+      // BLANK_LIVE_TIME_FROM count as 0 (an entered value still counts).
+      const blankedDailySum = (
+        liveByDay: Map<string, number> | undefined,
+        overrideByDay: Map<string, DailyPerformanceOverride> | undefined,
+        field: "miles" | "hoursWorked" | "minorTicket" | "majorTicket"
+      ): number => {
+        const dayKeys = new Set<string>([...(liveByDay?.keys() ?? []), ...(overrideByDay?.keys() ?? [])]);
+        let sum = 0;
+        for (const day of dayKeys) {
+          const overrideVal = overrideByDay?.get(day)?.[field];
+          sum += overrideVal != null ? overrideVal : day >= BLANK_LIVE_TIME_FROM ? 0 : (liveByDay?.get(day) ?? 0);
+        }
+        return sum;
+      };
+
       const computed: TechPerfRow[] = techs.map((t) => {
         const nameKey = (t.display_name || t.email).trim().toLowerCase();
         const techOverrides = overrides.get(t.id);
@@ -649,8 +752,12 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           : redoMap.get(nameKey)?.length ?? 0;
         const miles = sumWithDailyOverride(milesByDayForTech, techOverrides, "miles");
         const hoursWorked = sumWithDailyOverride(hoursByProfileByDay.get(t.id), techOverrides, "hoursWorked");
-        const minorTicketCount = sumWithDailyOverride(minorByNameByDay.get(nameKey), techOverrides, "minorTicket") + (unscheduledMinorByName.get(nameKey) ?? 0);
-        const majorTicketCount = sumWithDailyOverride(majorByNameByDay.get(nameKey), techOverrides, "majorTicket") + (unscheduledMajorByName.get(nameKey) ?? 0);
+        // Blanked from BLANK_LIVE_TIME_FROM (see blankedDailySum); undated
+        // "unscheduled" completions can't be placed before/after it, so they
+        // only count when the whole period is before it.
+        const periodBeforeBlank = periodEnd < BLANK_LIVE_TIME_FROM;
+        const minorTicketCount = blankedDailySum(minorByNameByDay.get(nameKey), techOverrides, "minorTicket") + (periodBeforeBlank ? unscheduledMinorByName.get(nameKey) ?? 0 : 0);
+        const majorTicketCount = blankedDailySum(majorByNameByDay.get(nameKey), techOverrides, "majorTicket") + (periodBeforeBlank ? unscheduledMajorByName.get(nameKey) ?? 0 : 0);
         const rescheduleCount = sumWithDailyOverride(rescheduleByProfileIdByDay.get(t.id), techOverrides, "reschedule");
         const damageAssessmentCount = sumWithDailyOverride(damageByProfileIdByDay.get(t.id), techOverrides, "damageAssessment");
         // NCNS has no live source at all (see this file's header comment) —
@@ -668,6 +775,17 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           .map(([date]) => date);
         const workedDates = Array.from(new Set([...(daysByProfile.get(t.id) ?? []), ...overrideWorkedDays])).sort();
         const daysWorked = workedDates.length;
+        // Mileage / Hours of Work / Working Days / Off Days are blanked from
+        // BLANK_LIVE_TIME_FROM onward (per the user's call): live data on
+        // those dates counts as 0 unless someone entered a value for the day.
+        // Earlier dates keep their live numbers. Ticket counts and the
+        // derived metrics above (Mi/Ticket, Tickets/Hr, alerts) still use
+        // live data. Nothing is deleted.
+        const shownMiles = blankedDailySum(milesByDayForTech, techOverrides, "miles");
+        const shownHours = blankedDailySum(hoursByProfileByDay.get(t.id), techOverrides, "hoursWorked");
+        const shownWorkedDates = workedDates.filter((d) => d < BLANK_LIVE_TIME_FROM || overrideWorkedDays.includes(d));
+        const offDaysUntil = periodEnd < BLANK_LIVE_TIME_FROM ? periodEnd : addDaysISO(BLANK_LIVE_TIME_FROM, -1);
+        const shownOffDays = periodStart <= offDaysUntil ? countOffDaysInRange(t.off_days, periodStart, offDaysUntil) : 0;
         const redoRatePct = totalTickets > 0 ? (redoCount / totalTickets) * 100 : null;
         const milesPerTicket = totalTickets > 0 ? miles / totalTickets : null;
         const ticketsPerHour = hoursWorked > 0 ? totalTickets / hoursWorked : null;
@@ -680,22 +798,24 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           manager: t.manager_name || "—",
           tier: t.tier_level || "—",
           isActive: t.is_active,
-          daysWorked,
-          workedDates,
-          hoursWorked,
+          daysWorked: shownWorkedDates.length,
+          workedDates: shownWorkedDates,
+          hoursWorked: shownHours,
           totalTickets,
           minorTicketCount,
           majorTicketCount,
           redoCount,
           redoRatePct,
-          miles,
+          miles: shownMiles,
           milesPerTicket,
           ticketsPerHour,
-          offDaysCount: countOffDaysInRange(t.off_days, periodStart, periodEnd),
+          offDaysCount: shownOffDays,
           offDays: t.off_days ?? [],
           rescheduleCount,
           cancelledCount: cancelledByName.get(nameKey) ?? 0,
           damageAssessmentCount,
+          timecardIssueCount: timecardIssuesByProfileId.get(t.id) ?? 0,
+          missedClockInCount: missedClockIns.filter((m) => m.profileId === t.id).length,
           ncnsCount,
           highRedoAlert: redoRatePct != null && redoRatePct > 5,
           routeMileageAlert: milesPerTicket != null && milesPerTicket > 30,
@@ -705,13 +825,15 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       });
       setRows(computed);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load technician performance data.");
+      if (!isStale()) setError(err instanceof Error ? err.message : "Failed to load technician performance data.");
     } finally {
-      setLoading(false);
+      clearTimeout(watchdog);
+      if (loadInFlightKeyRef.current === loadKey) loadInFlightKeyRef.current = null;
+      if (!isStale()) setLoading(false);
     }
   };
 
-  useEffect(() => { void load(); }, [periodStart, periodEnd]);
+  useEffect(() => { void load(); }, [periodStart, periodEnd, showAllColumns || periodStart < BLANK_LIVE_TIME_FROM]);
 
   const me = useMemo(() => users.find((u) => u.firebase_uid === uid) || null, [users, uid]);
   const scoped = useMemo(
@@ -819,6 +941,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     const nameKey = mileageListFor.name.trim().toLowerCase();
     return mileageDaily
       .filter((d) => (d.isProfileId ? d.techKey === mileageListFor.id : d.techKey === nameKey))
+      .filter((d) => d.date < BLANK_LIVE_TIME_FROM) // blanked from this date — see BLANK_LIVE_TIME_FROM
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [mileageListFor, mileageDaily]);
 
@@ -832,7 +955,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     const dayMap = hoursDaily.get(hoursListFor.id);
     if (!dayMap) return [];
     return Array.from(dayMap.entries())
-      .filter(([, hrs]) => hrs > 0)
+      .filter(([date, hrs]) => hrs > 0 && date < BLANK_LIVE_TIME_FROM)
       .map(([date, hours]) => ({ date, hours }))
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [hoursListFor, hoursDaily]);
@@ -847,7 +970,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     if (!row) return [];
     const offDaySet = new Set(row.offDays);
     const dates: string[] = [];
-    for (let d = periodStart; d <= periodEnd; d = addDaysISO(d, 1)) {
+    for (let d = periodStart; d <= periodEnd && d < BLANK_LIVE_TIME_FROM; d = addDaysISO(d, 1)) {
       if (offDaySet.has(new Date(`${d}T00:00:00`).getDay())) dates.push(d);
     }
     return dates;
@@ -862,7 +985,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     const dayHours = hoursDaily.get(workDaysListFor.id);
     return [...row.workedDates]
       .sort((a, b) => b.localeCompare(a))
-      .map((date) => ({ date, hours: dayHours?.get(date) ?? null }));
+      .map((date) => ({ date, hours: date < BLANK_LIVE_TIME_FROM ? dayHours?.get(date) ?? null : null }));
   }, [workDaysListFor, rows, hoursDaily]);
 
   const sortedRows = useMemo(() => {
@@ -887,12 +1010,24 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         case "miles": return r.miles;
         case "milesPerTicket": return r.milesPerTicket ?? -1;
         case "ticketsPerHour": return r.ticketsPerHour ?? -1;
+        case "shortTotalTicket": return shortTotalTicket(r);
+        case "shortRedoPct": return shortRedoPct(r) ?? -1;
+        case "shortDailyAvg": return shortDailyAvg(r);
+        case "shortPoints": return shortPoints(r);
+        case "shortAvgHours": return shortAvgHours(r);
+        case "shortAvgMiles": return shortAvgMiles(r);
+        case "shortErrorCount": return shortErrorCount(r);
       }
     };
     return [...filteredRows].sort((a, b) => {
       const av = val(a), bv = val(b);
       if (typeof av === "string" && typeof bv === "string") return av.localeCompare(bv) * dir;
-      return ((av as number) - (bv as number)) * dir;
+      const diff = ((av as number) - (bv as number)) * dir;
+      // Same Points: the higher Total Ticket ranks first, then by name.
+      if (diff === 0 && sortKey === "shortPoints") {
+        return (shortTotalTicket(b) - shortTotalTicket(a)) * (dir === -1 ? 1 : -1) || a.name.localeCompare(b.name);
+      }
+      return diff;
     });
   }, [filteredRows, sortKey, sortDir]);
 
@@ -915,19 +1050,128 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     else { setSortKey(key); setSortDir("asc"); }
   };
 
-  const top10Chart = useMemo(
-    () => [...filteredRows]
-      .sort((a, b) => b.totalTickets - a.totalTickets)
-      .slice(0, 10)
-      .map((r) => ({ name: r.name.split(" ")[0] || r.name, fullName: r.name, value: r.totalTickets })),
-    [filteredRows],
+  // Chart scope: every branch combined, one Senior Branch Manager's
+  // branches, or a single branch — drives the Top 10 and the trend chart.
+  const [chartScope, setChartScope] = useState<string>("all");
+  // Which chart the card shows — the trend or the Top 10 (one at a time).
+  const [chartView, setChartView] = useState<"trend" | "top10">("trend");
+  const [sbmAssignments, setSbmAssignments] = useState<SbmBranchAssignment[]>([]);
+  useEffect(() => {
+    getSeniorBranchManagerAssignments().then(setSbmAssignments).catch(() => setSbmAssignments([]));
+  }, []);
+  const sbmOptions = useMemo(() => {
+    const nameById = new Map(users.map((u) => [u.id, u.display_name || u.email]));
+    const byProfile = new Map<string, string[]>();
+    for (const a of sbmAssignments) {
+      if (!byProfile.has(a.profileId)) byProfile.set(a.profileId, []);
+      byProfile.get(a.profileId)!.push(a.branch);
+    }
+    return Array.from(byProfile.entries())
+      .map(([id, branches]) => ({ id, name: nameById.get(id) ?? "Senior Branch Manager", branches: branches.sort() }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [sbmAssignments, users]);
+  const branchOptions = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.location).filter((l) => l && l !== "—"))).sort(),
+    [rows],
   );
+  const scopeBranches = useMemo((): Set<string> | null => {
+    if (chartScope.startsWith("branch:")) return new Set([chartScope.slice(7)]);
+    if (chartScope.startsWith("sbm:")) return new Set(sbmOptions.find((s) => s.id === chartScope.slice(4))?.branches ?? []);
+    return null;
+  }, [chartScope, sbmOptions]);
+  const inChartScope = (r: TechPerfRow) => !scopeBranches || scopeBranches.has(r.location);
+
+  const top10Chart = useMemo(
+    () => filteredRows
+      .filter(inChartScope)
+      // Ranked by Points; ties go to the higher Total Ticket.
+      .sort((a, b) => shortPoints(b) - shortPoints(a) || shortTotalTicket(b) - shortTotalTicket(a))
+      .slice(0, 10)
+      .map((r) => ({ name: r.name.split(" ")[0] || r.name, fullName: r.name, value: shortPoints(r) })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filteredRows, scopeBranches],
+  );
+
+  // Trend by pay period: the median technician's Average Tickets, Total
+  // Ticket and Redo % for each pay period, within the chart scope. Every
+  // pay period is on/after BLANK_LIVE_TIME_FROM, where the report's figures
+  // come only from the per-day corrections — so one corrections read covers
+  // every period. Technicians with no work and no tickets in a period are
+  // left out of that period's median.
+  const [trendOverrides, setTrendOverrides] = useState<Map<string, Map<string, DailyPerformanceOverride>>>(new Map());
+  useEffect(() => {
+    const last = payPeriods[payPeriods.length - 1];
+    getTechnicianPerformanceOverrides(FIRST_PAY_PERIOD.start, last.end).then(setTrendOverrides).catch(() => setTrendOverrides(new Map()));
+  }, [rows, payPeriods]);
+  const trendChart = useMemo(() => {
+    const median = (vals: number[]) => {
+      if (vals.length === 0) return null;
+      const s = [...vals].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+    };
+    const today = todayStr();
+    const techs = filteredRows.filter(inChartScope);
+    return payPeriods
+      .filter((p) => p.start <= today)
+      .map((p) => {
+        const avg: number[] = [], total: number[] = [], redoPct: number[] = [];
+        for (const t of techs) {
+          let minor = 0, major = 0, redo = 0, days = 0;
+          for (const [date, o] of trendOverrides.get(t.id) ?? []) {
+            if (date < p.start || date > p.end) continue;
+            minor += o.minorTicket ?? 0;
+            major += o.majorTicket ?? 0;
+            redo += o.redoCount ?? 0;
+            if (o.hoursWorked != null && o.hoursWorked > 0) days += 1;
+          }
+          if (days === 0 && minor + major === 0) continue;
+          const tt = minor + major - redo;
+          total.push(tt);
+          avg.push(days > 0 ? tt / days : 0);
+          redoPct.push(minor + major > 0 ? (redo / (minor + major)) * 100 : 0);
+        }
+        const round1 = (v: number | null) => (v == null ? null : Math.round(v * 10) / 10);
+        return {
+          label: `${p.start.slice(5, 7)}/${p.start.slice(8, 10)}–${p.end.slice(5, 7)}/${p.end.slice(8, 10)}`,
+          average: round1(median(avg)),
+          totalTicket: round1(median(total)),
+          redoPct: round1(median(redoPct)),
+          techCount: total.length,
+        };
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trendOverrides, filteredRows, scopeBranches, payPeriods]);
 
   // Same stat-tile treatment as the Technician Details modal's Daily
   // Activity Log row — a page-level rollup of whatever's currently
   // filtered, so it moves with Location/Manager/Tier/Search like the table
   // below it does.
   const pageKpis = useMemo(() => {
+    // Short view: built from the same figures as its columns — Total
+    // Ticket (Minor + Major − Redo), Redo % over Minor + Major, the shown
+    // Hours of Work, and Flagged = any red (Alert) main factor.
+    if (!showAllColumns) {
+      const totalTickets = filteredRows.reduce((s, r) => s + shortTotalTicket(r), 0);
+      const completed = filteredRows.reduce((s, r) => s + r.minorTicketCount + r.majorTicketCount, 0);
+      const totalRedo = filteredRows.reduce((s, r) => s + r.redoCount, 0);
+      const totalHours = filteredRows.reduce((s, r) => s + r.hoursWorked, 0);
+      const flagged = filteredRows.filter((r) =>
+        [
+          GRADERS.dailyAvg(shortDailyAvg(r)),
+          GRADERS.totalTicket(shortTotalTicket(r)),
+          GRADERS.redoPct(shortRedoPct(r)),
+          GRADERS.workingDays(r.daysWorked),
+        ].includes("alert"),
+      ).length;
+      return {
+        techCount: filteredRows.length,
+        totalTickets,
+        avgRedoPct: completed > 0 ? (totalRedo / completed) * 100 : null,
+        avgTicketsPerHour: totalHours > 0 ? totalTickets / totalHours : null,
+        flagged,
+      };
+    }
     const totalTickets = filteredRows.reduce((s, r) => s + r.totalTickets, 0);
     const totalRedo = filteredRows.reduce((s, r) => s + r.redoCount, 0);
     const totalHours = filteredRows.reduce((s, r) => s + r.hoursWorked, 0);
@@ -938,6 +1182,41 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       avgRedoPct: totalTickets > 0 ? (totalRedo / totalTickets) * 100 : null,
       avgTicketsPerHour: totalHours > 0 ? totalTickets / totalHours : null,
       flagged,
+    };
+  }, [filteredRows, showAllColumns]);
+
+  // Short-view summary bubbles: the median technician on each main factor
+  // (except Points) for the selected period — technicians with no work and
+  // no tickets are left out, same as the trend chart.
+  const medianKpis = useMemo(() => {
+    const median = (vals: number[]): number | null => {
+      if (vals.length === 0) return null;
+      const s = [...vals].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+    };
+    const active = filteredRows.filter((r) => r.daysWorked > 0 || r.minorTicketCount + r.majorTicketCount > 0);
+    const m = (f: (r: TechPerfRow) => number) => median(active.map(f));
+    const avgTickets = m(shortDailyAvg);
+    const totalTicket = m(shortTotalTicket);
+    const redoPct = m((r) => shortRedoPct(r) ?? 0);
+    const workingDays = m((r) => r.daysWorked);
+    const avgHours = m(shortAvgHours);
+    const avgMiles = m(shortAvgMiles);
+    // Error Count is the company total (every technician in view), not a median.
+    const errors = filteredRows.reduce((s, r) => s + shortErrorCount(r), 0);
+    const show = (v: number | null, suffix = "") => (v == null ? "—" : `${fmt1(v)}${suffix}`);
+    return {
+      techCount: active.length,
+      items: [
+        { label: "Average Tickets", icon: Gauge, value: show(avgTickets), grade: avgTickets == null ? null : GRADERS.dailyAvg(avgTickets), hint: "Median Total Ticket ÷ Working Days" },
+        { label: "Total Ticket", icon: Ticket, value: show(totalTicket), grade: totalTicket == null ? null : GRADERS.totalTicket(totalTicket), hint: "Median Minor + Major − Redo" },
+        { label: "Redo %", icon: RotateCcw, value: show(redoPct, "%"), grade: redoPct == null ? null : GRADERS.redoPct(redoPct), hint: "Median Redo ÷ (Minor + Major)" },
+        { label: "Working Days", icon: CalendarDays, value: show(workingDays), grade: workingDays == null ? null : GRADERS.workingDays(workingDays), hint: "Median working days" },
+        { label: "Average Hours", icon: Clock, value: show(avgHours), grade: avgHours == null ? null : GRADERS.avgHours(avgHours), hint: "Median Hours of Work ÷ Working Days" },
+        { label: "Average Mileage", icon: Route, value: show(avgMiles), grade: avgMiles == null ? null : GRADERS.avgMiles(avgMiles), hint: "Median Mileage ÷ Working Days" },
+        { label: "Total Errors", icon: AlertTriangle, value: show(errors), grade: null as Grade | null, hint: "Total timecard issues + damages + missed clock-ins / Time Outs across every technician in view" },
+      ],
     };
   }, [filteredRows]);
 
@@ -956,6 +1235,24 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   }, [filteredRows]);
 
   const handleExportCsv = () => {
+    // Follows the columns on screen, same as the import template.
+    if (!showAllColumns) {
+      exportToCSV(
+        "technician_performance",
+        ["Name", "Grade", "Points", "Average Tickets", "Total Ticket", "Redo %", "Working Days", "Average Hours", "Average Mileage", "Error Count", "Minor Comp", "Major Comp", "Redo Count", "Mileage", "Hours of Work"],
+        sortedRows.map((r) => {
+          const p = shortRedoPct(r);
+          const a = shortDailyAvg(r);
+          const pts = shortPoints(r);
+          return [
+            r.name, gradeName(letterGrade(pts)), pts, fmt1(a), shortTotalTicket(r), fmtRedoPct(p), r.daysWorked,
+            fmt1(shortAvgHours(r)), fmt1(shortAvgMiles(r)), shortErrorCount(r),
+            r.minorTicketCount, r.majorTicketCount, r.redoCount, fmt1(r.miles), fmt1(r.hoursWorked),
+          ];
+        }),
+      );
+      return;
+    }
     exportToCSV(
       "technician_performance",
       [
@@ -999,6 +1296,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     try {
       const ExcelJS = await import("exceljs");
       const workbook = new ExcelJS.Workbook();
+      // Recalculate the formula columns as soon as Excel opens the file.
+      workbook.calcProperties = { fullCalcOnLoad: true };
       const sheet = workbook.addWorksheet("Import Template");
 
       // The template follows the columns on screen: the short view gets the
@@ -1007,14 +1306,29 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       // header names.
       sheet.columns = !showAllColumns ? [
         { header: "Name", key: "name", width: 26 },
+        // Grade/Points: reference block only, never read back.
+        { header: "Grade", key: "shortGrade", width: 18 },
+        { header: "Points", key: "shortPoints", width: 9 },
         { header: "Date", key: "date", width: 12 },
+        // Same order as the table: the main factors, then the
+        // breakdown. Average Tickets/Total Ticket/Redo % are formulas and
+        // Working Days is a period figure — handleImportFile never reads
+        // those four back. Average Tickets is reference-block only (a day
+        // row has no working-days figure to divide by).
+        { header: "Average Tickets", key: "shortDailyAvg", width: 14, style: { numFmt: "0.0" } },
+        { header: "Total Ticket", key: "shortTotalTicket", width: 13 },
+        { header: "Redo %", key: "shortRedoPct", width: 10, style: { numFmt: "0.0%" } },
+        { header: "Working Days", key: "daysWorked", width: 14 },
+        // Reference block only (formulas over Hours/Mileage ÷ Working Days).
+        { header: "Average Hours", key: "shortAvgHours", width: 15, style: { numFmt: "0.0" } },
+        { header: "Average Mileage", key: "shortAvgMiles", width: 16, style: { numFmt: "#,##0.0" } },
+        // Reference block only: timecard issues + damages; never read back.
+        { header: "Error Count", key: "shortErrorCount", width: 12 },
         { header: "Minor Comp", key: "minorTicket", width: 13 },
         { header: "Major Comp", key: "majorTicket", width: 13 },
         { header: "Redo Count", key: "redoCount", width: 12 },
         { header: "Mileage", key: "miles", width: 12 },
         { header: "Hours of Work", key: "hoursWorked", width: 15 },
-        { header: "Working Total Days", key: "daysWorked", width: 19 },
-        { header: "Off Days", key: "offDays", width: 10 },
       ] : [
         { header: "Name", key: "name", width: 26 },
         { header: "Variance", key: "variance", width: 12 },
@@ -1050,6 +1364,45 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         cell.alignment = { vertical: "middle" };
       });
       sheet.views = [{ state: "frozen", ySplit: 1 }];
+
+      // Short view: Total Ticket = Minor + Major − Redo, Redo % = Redo ÷
+      // (Minor + Major), Average Tickets = Total Ticket ÷ Working Total Days
+      // (reference rows only — a day row has no working-days figure). Real
+      // Excel formulas so they update as numbers are typed, each with its
+      // current result cached so it shows even before Excel recalculates
+      // (e.g. in Protected View).
+      const setShortFormulas = (row: import("exceljs").Row, withDailyAvg: boolean) => {
+        const n = row.number;
+        const col = (key: string) => `${sheet.getColumn(key).letter}${n}`;
+        const num = (key: string) => { const v = Number(row.getCell(key).value); return Number.isFinite(v) ? v : 0; };
+        const minor = `N(${col("minorTicket")})`, major = `N(${col("majorTicket")})`, redo = `N(${col("redoCount")})`;
+        const hasAny = ["minorTicket", "majorTicket", "redoCount"].some((k) => { const v = row.getCell(k).value; return v !== "" && v != null; });
+        const total = num("minorTicket") + num("majorTicket") - num("redoCount");
+        const completed = num("minorTicket") + num("majorTicket");
+        row.getCell("shortTotalTicket").value = {
+          formula: `IF(COUNT(${col("minorTicket")}:${col("redoCount")})=0,"",${minor}+${major}-${redo})`,
+          result: hasAny ? total : "",
+        } as import("exceljs").CellFormulaValue;
+        // Blank only while the row is untouched; otherwise 0 rather than a
+        // blank when there's nothing to divide by (same as on screen).
+        row.getCell("shortRedoPct").value = {
+          formula: `IF(COUNT(${col("minorTicket")}:${col("redoCount")})=0,"",IF(${minor}+${major}=0,0,${redo}/(${minor}+${major})))`,
+          result: !hasAny ? "" : completed > 0 ? num("redoCount") / completed : 0,
+        } as import("exceljs").CellFormulaValue;
+        if (withDailyAvg) {
+          const days = num("daysWorked");
+          row.getCell("shortDailyAvg").value = {
+            formula: `IF(N(${col("daysWorked")})=0,0,N(${col("shortTotalTicket")})/N(${col("daysWorked")}))`,
+            result: days > 0 ? total / days : 0,
+          } as import("exceljs").CellFormulaValue;
+          const perDay = (key: string) => ({
+            formula: `IF(N(${col("daysWorked")})=0,0,N(${col(key)})/N(${col("daysWorked")}))`,
+            result: days > 0 ? num(key) / days : 0,
+          }) as import("exceljs").CellFormulaValue;
+          row.getCell("shortAvgHours").value = perDay("hoursWorked");
+          row.getCell("shortAvgMiles").value = perDay("miles");
+        }
+      };
 
       // Green when a technician is above the team average Total
       // Completion, red when below, left unstyled at "—" (no team
@@ -1092,7 +1445,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         // place for HR to type a number by hand, not something this export
         // or the importer reads back.
         for (let date = periodStart; date <= periodEnd; date = addDaysISO(date, 1)) {
-          sheet.addRow({
+          const dayRow = sheet.addRow({
             name: r.name,
             variance: "",
             damageAssessment: "",
@@ -1114,6 +1467,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
             manager: r.manager,
             tier: r.tier,
           });
+          if (!showAllColumns) setShortFormulas(dayRow, false);
         }
       }
 
@@ -1130,7 +1484,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       const noteRow = sheet.addRow({
         name: showAllColumns
           ? "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. Damage Assessment/Minor Ticket/Major Ticket/Redo/Total Completion/Reschedule/NCNS/Mileage/Hours Worked below are the CURRENT totals, for reference."
-          : "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. The numbers below are the CURRENT totals, for reference. Working Total Days and Off Days aren't read back on import.",
+          : "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. The numbers below are the CURRENT totals, for reference. Grade, Points, Average Tickets, Total Ticket, Redo %, Working Days, Average Hours, Average Mileage and Error Count are calculated, not read back on import. Grade: Master 11, Expert 10, Advanced 9, Proficient 8, Competent 7, Developing 5–6, Needs Attention 4 or less. Points: Maximum 3, Great 2, Median 1, Effort 0, Alert −1 over Average Tickets/Total Ticket/Redo %/Working Days (Redo % and Working Days top out at 2); Average Hours over 12 a day is −1; Average Mileage 250+ a day is +1. Colors: blue Maximum, green Great, yellow Median, orange Effort, red Alert.",
       });
       noteRow.font = { italic: true, color: { argb: "FF64748B" } };
       for (const r of sortedRows) {
@@ -1147,15 +1501,44 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           reschedule: r.rescheduleCount,
           ncns: r.ncnsCount,
           cancelled: r.cancelledCount,
-          miles: fmt1(r.miles),
+          // Real numbers (not fmt1's "3,011" text) so Excel doesn't flag
+          // them as numbers-stored-as-text.
+          miles: Math.round(r.miles * 10) / 10,
           daysWorked: r.daysWorked,
           offDays: r.offDaysCount,
-          hoursWorked: fmt1(r.hoursWorked),
+          hoursWorked: Math.round(r.hoursWorked * 10) / 10,
           location: r.location,
           manager: r.manager,
           tier: r.tier,
         });
         if (showAllColumns) styleVarianceCell(row.getCell("variance"), variance);
+        else {
+          setShortFormulas(row, true);
+          // Same grade colors as the on-screen pills.
+          const paint = (key: string, grade: Grade | null) => {
+            if (!grade) return;
+            const cell = row.getCell(key);
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GRADE_META[grade].xlsxFill } };
+            cell.font = { bold: true, color: { argb: GRADE_META[grade].xlsxFont } };
+          };
+          paint("shortDailyAvg", GRADERS.dailyAvg(shortDailyAvg(r)));
+          paint("shortTotalTicket", GRADERS.totalTicket(shortTotalTicket(r)));
+          paint("shortRedoPct", GRADERS.redoPct(shortRedoPct(r)));
+          paint("daysWorked", GRADERS.workingDays(r.daysWorked));
+          paint("shortAvgHours", GRADERS.avgHours(shortAvgHours(r)));
+          paint("shortAvgMiles", GRADERS.avgMiles(shortAvgMiles(r)));
+          row.getCell("shortErrorCount").value = shortErrorCount(r);
+          if (shortErrorCount(r) > 0) row.getCell("shortErrorCount").font = { bold: true, color: { argb: "FFB91C1C" } };
+          const pts = shortPoints(r);
+          const letter = letterGrade(pts);
+          row.getCell("shortPoints").value = pts;
+          row.getCell("shortPoints").font = { bold: true };
+          const gradeCell = row.getCell("shortGrade");
+          gradeCell.value = LETTER_META[letter].medal;
+          gradeCell.alignment = { horizontal: "center" };
+          gradeCell.font = { bold: true, color: { argb: LETTER_META[letter].xlsxFont } };
+          gradeCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: LETTER_META[letter].xlsxFill } };
+        }
       }
 
       const buffer = await workbook.xlsx.writeBuffer();
@@ -1170,12 +1553,17 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       // "today's data" even when Weekly/Monthly/Custom was pointed at a
       // past range.
       const periodLabel =
-        periodMode === "weekly" ? `week_${periodStart}`
-        : periodMode === "monthly" ? `month_${periodStart.slice(0, 7)}`
-        : `${periodStart}_to_${periodEnd}`;
+        periodMode === "total" ? `total_${periodStart}_to_${periodEnd}` : `${periodStart}_to_${periodEnd}`;
       a.download = `technician_performance_import_template_${periodLabel}.xlsx`;
+      // Attached + revoked a moment later: some browsers ignore a click on a
+      // detached link, and revoking in the same tick can cancel the download.
+      a.style.display = "none";
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      setTimeout(() => {
+        a.remove();
+        URL.revokeObjectURL(url);
+      }, 1000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate the import template.");
     } finally {
@@ -1191,7 +1579,13 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       try {
         const XLSX = await import("xlsx");
         const buffer = await file.arrayBuffer();
-        const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+        // CSV cells are kept as plain text: SheetJS otherwise turns
+        // "2026-08-27" into UTC midnight, which reads back as 08-26 in US
+        // time zones and shifts every row a day early.
+        // Real Excel dates (someone retyped the Date cell) come through as
+        // serial numbers and are converted below without any time zone.
+        const isCsv = /\.csv$/i.test(file.name);
+        const workbook = XLSX.read(buffer, { type: "array", raw: isCsv });
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
         const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as any[][];
         if (aoa.length < 2) throw new Error("The file has no data rows.");
@@ -1207,20 +1601,32 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           }
           return -1;
         };
-        const nameIdx = idx("name");
+        // Also accepts the ER tracking sheet's own headers ("Technician",
+        // "Minor CompletedTicket", "Hours Worked with OT", ...). That sheet
+        // has both assigned ("Minor Ticket") and completed columns — the
+        // completed ones are preferred since that's what Minor/Major Comp
+        // mean on this report.
+        const nameIdx = idxAny("name", "technician");
         const dateIdx = idx("date");
-        const ticketsIdx = idxAny("total completion", "total tickets");
+        // The short view only imports the columns it shows, so a sheet's
+        // extra columns (Damage Assessment, Reschedule, NCNS, ...) don't
+        // silently write hidden corrections.
+        const fullOnly = (i: number) => (showAllColumns ? i : -1);
+        const ticketsIdx = fullOnly(idxAny("total completion", "total tickets", "total completion/ claimed"));
         const redoIdx = idxAny("redo", "redo count");
         const milesIdx = idxAny("mileage", "miles");
         // Short-view template headers (Minor Comp/Major Comp/Hours of Work)
         // are accepted alongside the full template's.
-        const hoursIdx = idxAny("hours worked", "hours of work");
-        const damageAssessmentIdx = idx("damage assessment");
-        const minorTicketIdx = idxAny("minor ticket", "minor comp");
-        const majorTicketIdx = idxAny("major ticket", "major comp");
-        const rescheduleIdx = idx("reschedule");
-        const ncnsIdx = idx("ncns");
+        const hoursIdx = idxAny("hours worked", "hours of work", "hours worked with ot");
+        const damageAssessmentIdx = fullOnly(idx("damage assessment"));
+        const minorTicketIdx = idxAny("minor completedticket", "minor completed ticket", "minor comp", "minor ticket");
+        const majorTicketIdx = idxAny("major completedticket", "major completed ticket", "major ompletedticket", "major comp", "major ticket");
+        const rescheduleIdx = fullOnly(idx("reschedule"));
+        const ncnsIdx = fullOnly(idx("ncns"));
         const locationIdx = idx("location");
+        if (nameIdx !== -1 && dateIdx === -1 && idxAny("points", "average tickets", "daily average", "variance") !== -1) {
+          throw new Error('This looks like an Export CSV file, which has one total per technician and no "Date" column. Use "Download Import Template" to get a per-day file to fill in and import.');
+        }
         if (nameIdx === -1 || dateIdx === -1) {
           throw new Error('This doesn\'t look like a Technician Performance import file — missing "Name"/"Date" columns.');
         }
@@ -1262,10 +1668,19 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         for (let i = 1; i < aoa.length; i++) {
           const cells = aoa[i];
           const name = cellToStr(cells[nameIdx]);
-          const date = cellToStr(cells[dateIdx]);
+          const rawDate = cells[dateIdx];
+          let date = cellToStr(rawDate);
+          if (typeof rawDate === "number" && rawDate > 20000 && rawDate < 80000) {
+            const d = XLSX.SSF.parse_date_code(rawDate);
+            if (d) date = `${d.y}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
+          }
+          // Spreadsheet apps often re-save dates as M/D/YYYY.
+          const mdy = date.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+          if (mdy) date = `${mdy[3]}-${mdy[1].padStart(2, "0")}-${mdy[2].padStart(2, "0")}`;
           if (!name || !date) continue;
           if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { skipped.push(`${name} (bad date "${date}")`); continue; }
-          let candidates = byName.get(name.trim().toLowerCase()) ?? [];
+          const nameKey = name.trim().toLowerCase();
+          let candidates = byName.get(nameKey) ?? byName.get(nameKey.replace(/\s*\(trainee\)\s*$/, "")) ?? [];
           if (candidates.length > 1 && locationIdx !== -1) {
             const loc = cellToStr(cells[locationIdx]).toLowerCase();
             const narrowed = candidates.filter((c) => c.location.trim().toLowerCase() === loc);
@@ -1292,7 +1707,12 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           ) continue;
           toWrite.push(entry);
         }
-        if (toWrite.length === 0) throw new Error("No usable rows found — every row was either unmatched or had no values to import.");
+        if (toWrite.length === 0) {
+          const why = skipped.length > 0
+            ? ` Skipped: ${skipped.slice(0, 5).join(", ")}${skipped.length > 5 ? `, +${skipped.length - 5} more` : ""}.`
+            : rows.length === 0 ? " The report has no technicians loaded yet — wait for it to finish loading and try again." : "";
+          throw new Error(`No usable rows found — every row was either unmatched or had no values to import.${why}`);
+        }
         await bulkUpsertTechnicianPerformanceOverrides(toWrite, displayName || "HR");
         setImportResult({ rowsApplied: toWrite.length, skipped });
         await load();
@@ -1306,13 +1726,6 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
 
   const canImport = role === "ADMIN" || role === "SUPERADMIN" || isFinanceRole(role, extraRoles) || isCompanySuperAdminRole(role, extraRoles);
 
-  const shiftPeriod = (dir: -1 | 1) => {
-    setAnchor((prev) => periodMode === "weekly" ? addDaysISO(prev, dir * 7) : (() => {
-      const [y, m] = prev.split("-").map(Number);
-      const d = new Date(y, m - 1 + dir, 1);
-      return d.toISOString().slice(0, 10);
-    })());
-  };
 
   const thClass = "px-3 py-2 text-left text-xs text-muted-foreground uppercase cursor-pointer select-none hover:text-foreground";
   const sortIndicator = (key: SortKey) => (sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "");
@@ -1343,15 +1756,15 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           columns fit without scrolling), while `w-full` + the responsive
           px-4/sm:px-6 padding still let it shrink correctly on a smaller
           screen — the floating horizontal scrollbar picks up the rest. */}
-      <main className="flex-1 max-w-[1900px] mx-auto w-full px-4 sm:px-6 py-8">
-        <div className="relative rounded-2xl border border-white/10 bg-gradient-to-br from-blue-600/20 via-indigo-600/10 to-transparent px-6 py-6 mb-5">
+      <main className="flex-1 max-w-[1900px] mx-auto w-full px-3 sm:px-6 py-4 sm:py-8">
+        <div className="relative rounded-2xl border border-white/10 bg-gradient-to-br from-blue-600/20 via-indigo-600/10 to-transparent px-4 py-4 sm:px-6 sm:py-6 mb-5">
           <div className="flex items-center gap-3 flex-wrap">
             <button onClick={goBack} className="btn hover:bg-white/15 shrink-0"><ChevronLeft className="h-4 w-4" /></button>
             <div className="min-w-0">
               <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-300/80 mb-0.5">Reports</p>
-              <h1 className="text-2xl font-bold">Technician Performance Report</h1>
+              <h1 className="text-xl sm:text-2xl font-bold">Technician Performance Report</h1>
             </div>
-            <div className="ml-auto flex items-center gap-2">
+            <div className="w-full sm:w-auto sm:ml-auto flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => setShowAllColumns((v) => !v)}
@@ -1411,16 +1824,176 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           )}
         </div>
 
+        {/* Charts first, at the top of the page (moved up from below the filters). */}
         {!loading && (
+          <div className="mb-5">
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="flex flex-wrap items-center gap-3 mb-4">
+                <div className="flex items-center gap-1.5">
+                  <Star className="h-4 w-4 text-emerald-400" />
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Top Technicians & Trend</p>
+                </div>
+                <div className="flex rounded-md overflow-hidden border border-white/15 text-xs ml-auto">
+                  {([["trend", "Trend"], ["top10", "Top 10 Technicians"]] as const).map(([v, label], i) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setChartView(v)}
+                      className={`px-3 py-1.5 ${i > 0 ? "border-l border-white/15" : ""} ${chartView === v ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <select
+                  value={chartScope}
+                  onChange={(e) => setChartScope(e.target.value)}
+                  className="glass-input text-xs py-1.5 px-3 rounded-md w-full sm:w-auto max-w-full"
+                  title="Which technicians the chart below covers"
+                >
+                  <option value="all">All branches (combined)</option>
+                  {sbmOptions.length > 0 && (
+                    <optgroup label="Senior Branch Manager">
+                      {sbmOptions.map((s) => (
+                        <option key={s.id} value={`sbm:${s.id}`}>{s.name} ({s.branches.join(", ")})</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  <optgroup label="Branch">
+                    {branchOptions.map((b) => (
+                      <option key={b} value={`branch:${b}`}>{b}</option>
+                    ))}
+                  </optgroup>
+                </select>
+              </div>
+              <div>
+                {chartView === "trend" && (
+                <div>
+                  <p className="text-[11px] font-semibold text-muted-foreground mb-1">Trend by pay period — median technician</p>
+                  {(() => {
+                    // Latest pay period that has data — its three medians as tiles.
+                    const latest = [...trendChart].reverse().find((p) => p.techCount > 0);
+                    if (!latest) return null;
+                    return (
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {[
+                          { label: "Median Average Tickets", value: latest.average != null ? String(latest.average) : "—", cls: "text-green-400 border-green-500/30 bg-green-500/10" },
+                          { label: "Median Total Ticket", value: latest.totalTicket != null ? String(latest.totalTicket) : "—", cls: "text-blue-400 border-blue-500/30 bg-blue-500/10" },
+                          { label: "Median Redo %", value: latest.redoPct != null ? `${latest.redoPct}%` : "—", cls: "text-red-400 border-red-500/30 bg-red-500/10" },
+                        ].map((m) => (
+                          <div key={m.label} className={`rounded-md border px-2.5 py-1 ${m.cls}`}>
+                            <span className="text-sm font-bold tabular-nums">{m.value}</span>
+                            <span className="ml-1.5 text-[10px] opacity-80">{m.label}</span>
+                          </div>
+                        ))}
+                        <span className="self-center text-[10px] text-muted-foreground">{latest.label} · {latest.techCount} technician{latest.techCount === 1 ? "" : "s"}</span>
+                      </div>
+                    );
+                  })()}
+                  <ResponsiveContainer width="100%" height={240} debounce={200}>
+                    <LineChart data={trendChart} margin={{ left: -10, right: 4, top: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" vertical={false} />
+                      <XAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 10 }} />
+                      <YAxis yAxisId="count" tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
+                      <YAxis yAxisId="avg" orientation="right" tick={{ fill: "#22c55e", fontSize: 11 }} />
+                      <Tooltip
+                        contentStyle={TOOLTIP_STYLE}
+                        formatter={(v: any, name: any) => [v == null ? "—" : name === "Median Redo %" ? `${v}%` : v, name]}
+                        labelFormatter={(label, payload) => {
+                          const n = payload?.[0]?.payload?.techCount;
+                          return n != null ? `${label} · ${n} technician${n === 1 ? "" : "s"}` : String(label);
+                        }}
+                      />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                      <Line yAxisId="avg" type="monotone" dataKey="average" name="Median Average Tickets" stroke="#22c55e" strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
+                      <Line yAxisId="count" type="monotone" dataKey="totalTicket" name="Median Total Ticket" stroke="#3b82f6" strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
+                      <Line yAxisId="count" type="monotone" dataKey="redoPct" name="Median Redo %" stroke="#ef4444" strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
+                    </LineChart>
+                  </ResponsiveContainer>
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Each point is the median technician in that pay period (technicians with no work that period are left out). Average Tickets uses the right-hand scale.
+                  </p>
+                </div>
+                )}
+                {chartView === "top10" && (
+                <div>
+                  <p className="text-[11px] font-semibold text-muted-foreground mb-1">Top 10 technicians — Points ({periodMode === "total" ? "all pay periods" : "selected pay period"})</p>
+                  {top10Chart.length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-16 text-center">No technicians in this scope.</p>
+                  ) : (
+                <ResponsiveContainer width="100%" height={240} debounce={200}>
+                  <BarChart data={top10Chart} margin={{ left: -10 }}>
+                    <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} />
+                    <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
+                    <Tooltip
+                      contentStyle={TOOLTIP_STYLE}
+                      cursor={{ fill: "rgba(148,163,184,0.1)" }}
+                      formatter={(v: any) => [v, "Points"]}
+                      labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName ?? ""}
+                    />
+                    <Bar dataKey="value" radius={[4, 4, 0, 0]} name="Points">
+                      {/* Bar color = that technician's medal */}
+                      {top10Chart.map((d, i) => <Cell key={i} fill={`#${LETTER_META[letterGrade(d.value)].xlsxFill.slice(2)}`} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+                  )}
+                </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        {!loading && !showAllColumns && (
+          // Short view: the median technician for the selected pay period on
+          // each main factor (not Points), colored by that factor's grade.
+          <div className="mb-5 rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.05] to-white/[0.01] px-3 sm:px-5 py-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-300/80">Company Standing</p>
+              <p className="text-[11px] text-muted-foreground">
+                {periodMode === "total" ? "All pay periods" : `${fmtPayDate(periodStart)} – ${fmtPayDate(periodEnd)}`} · {medianKpis.techCount} technician{medianKpis.techCount === 1 ? "" : "s"} with work
+              </p>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-4 justify-items-center">
+              {medianKpis.items.map((m) => {
+                const hex = m.grade ? GRADE_HEX[m.grade] : m.label === "Total Errors" && m.value !== "0" && m.value !== "—" ? "#f87171" : "#94a3b8";
+                const Icon = m.icon;
+                return (
+                  <div
+                    key={m.label}
+                    title={m.hint}
+                    className="relative flex h-32 w-32 flex-col items-center justify-center rounded-full text-center transition-transform hover:scale-105"
+                    style={{
+                      background: `radial-gradient(circle at 30% 25%, ${hex}38 0%, ${hex}14 45%, rgba(255,255,255,0.02) 75%)`,
+                      boxShadow: `0 0 0 1px ${hex}55 inset, 0 0 24px ${hex}26, 0 6px 16px rgba(0,0,0,0.35)`,
+                    }}
+                  >
+                    <Icon className="h-4 w-4 mb-1" style={{ color: hex }} aria-hidden />
+                    <span className="text-2xl font-extrabold tabular-nums leading-none" style={{ color: hex }}>{m.value}</span>
+                    <span className="mt-1.5 px-2 text-[10px] font-semibold uppercase tracking-wide text-foreground/80 leading-tight">{m.label}</span>
+                    {m.grade && (
+                      <span className="mt-1 text-[9px] font-medium" style={{ color: hex }}>{GRADE_META[m.grade].label}</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        {!loading && showAllColumns && (
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5">
             {[
               { label: "Technicians", icon: UserSquare2, accent: "blue", value: pageKpis.techCount },
               { label: "Total Tickets", icon: Star, accent: "emerald", value: pageKpis.totalTickets },
-              { label: "Avg Redo %", icon: MapPin, accent: "amber", value: pageKpis.avgRedoPct != null ? `${fmt1(pageKpis.avgRedoPct)}%` : "—" },
+              { label: "Avg Redo %", icon: MapPin, accent: "amber", value: fmtRedoPct(pageKpis.avgRedoPct) },
               { label: "Avg Tickets/Hr", icon: CalendarClock, accent: "violet", value: pageKpis.avgTicketsPerHour != null ? pageKpis.avgTicketsPerHour.toFixed(2) : "—" },
               { label: "Flagged", icon: UserSquare2, accent: "cyan", value: pageKpis.flagged },
             ].map(({ label, icon: Icon, accent, value }) => (
-              <div key={label} className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+              <div
+                key={label}
+                className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
+                title={showAllColumns ? undefined : KPI_HINTS[label]}
+              >
                 <div className={`inline-flex p-1.5 rounded-lg mb-2 ${ACCENT_CLASSES[accent].chip}`}>
                   <Icon className={`h-3.5 w-3.5 ${ACCENT_CLASSES[accent].text}`} />
                 </div>
@@ -1435,47 +2008,32 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           <div>
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide block mb-1">Period</label>
             <div className="flex rounded-md overflow-hidden border border-white/15 text-xs">
-              <button type="button" onClick={() => setPeriodMode("weekly")} className={`px-3 py-1.5 ${periodMode === "weekly" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}>Weekly</button>
-              <button type="button" onClick={() => setPeriodMode("monthly")} className={`px-3 py-1.5 border-l border-white/15 ${periodMode === "monthly" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}>Monthly</button>
-              <button
-                type="button"
-                onClick={() => {
-                  // Seed the custom range from whatever's currently showing,
-                  // so switching in doesn't reset the user back to "this week".
-                  setCustomStart(periodStart);
-                  setCustomEnd(periodEnd);
-                  setPeriodMode("custom");
-                }}
-                className={`px-3 py-1.5 border-l border-white/15 ${periodMode === "custom" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}
-              >
-                Custom
-              </button>
+              <button type="button" onClick={() => setPeriodMode("total")} className={`px-3 py-1.5 ${periodMode === "total" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}>Total</button>
+              <button type="button" onClick={() => setPeriodMode("custom")} className={`px-3 py-1.5 border-l border-white/15 ${periodMode === "custom" ? "bg-blue-600 text-white" : "bg-transparent text-muted-foreground hover:text-foreground"}`}>Custom</button>
             </div>
           </div>
           {periodMode === "custom" ? (
-            <div className="flex items-center gap-1.5">
-              <input
-                type="date"
-                value={customStart}
-                max={customEnd}
-                onChange={(e) => setCustomStart(e.target.value)}
-                className="glass-input text-xs py-1.5 px-2 rounded-md"
-              />
-              <span className="text-xs text-muted-foreground">to</span>
-              <input
-                type="date"
-                value={customEnd}
-                min={customStart}
-                onChange={(e) => setCustomEnd(e.target.value)}
-                className="glass-input text-xs py-1.5 px-2 rounded-md"
-              />
+            <div>
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide block mb-1">Pay Period</label>
+              <select
+                value={`${customStart}|${customEnd}`}
+                onChange={(e) => {
+                  const [start, end] = e.target.value.split("|");
+                  setCustomStart(start);
+                  setCustomEnd(end);
+                }}
+                className="glass-input text-xs py-1.5 px-3 rounded-md"
+              >
+                {[...payPeriods].reverse().map((p) => (
+                  <option key={p.start} value={`${p.start}|${p.end}`}>
+                    {fmtPayDate(p.start)} – {fmtPayDate(p.end)}{todayStr() >= p.start && todayStr() <= p.end ? " (current)" : ""}
+                  </option>
+                ))}
+              </select>
             </div>
           ) : (
-            <div className="flex items-center gap-1.5">
-              <button onClick={() => shiftPeriod(-1)} className="btn text-xs px-2 py-1.5">‹</button>
-              <div className="text-xs text-muted-foreground px-1 whitespace-nowrap">{periodStart} – {periodEnd}</div>
-              <button onClick={() => shiftPeriod(1)} className="btn text-xs px-2 py-1.5">›</button>
-              <button onClick={() => setAnchor(todayStr())} className="btn text-xs px-2 py-1.5">Today</button>
+            <div className="text-xs text-muted-foreground px-1 pb-1.5 whitespace-nowrap">
+              All pay periods · {fmtPayDate(periodStart)} – {fmtPayDate(periodEnd)}
             </div>
           )}
           <div className="flex-1 min-w-[160px]">
@@ -1581,28 +2139,72 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                 </div>
               </div>
             )}
-            {top10Chart.length > 0 && (
-              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-                <div className="flex items-center gap-1.5 mb-4">
-                  <Star className="h-4 w-4 text-emerald-400" />
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Top 10 Technicians (Total Tickets)</p>
+            {!showAllColumns && (
+              <details open className="group rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5">
+                <summary className="flex flex-wrap items-center gap-x-4 gap-y-1.5 cursor-pointer list-none select-none">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Grade</span>
+                  {GRADE_ORDER.map((g) => (
+                    <span key={g} className="inline-flex items-center gap-1.5 text-xs">
+                      <span className={`h-2.5 w-2.5 rounded-full ${GRADE_META[g].dot}`} />
+                      {GRADE_META[g].label}
+                    </span>
+                  ))}
+                  <span className="ml-auto text-[11px] text-blue-400 group-open:hidden">View scale</span>
+                  <span className="ml-auto text-[11px] text-blue-400 hidden group-open:inline">Hide scale</span>
+                </summary>
+                <div className="overflow-x-auto mt-3">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr>
+                        <th className="px-2 py-1.5 text-left text-muted-foreground font-medium" />
+                        {GRADE_ORDER.map((g) => (
+                          <th key={g} className="px-2 py-1.5 text-center">
+                            <span className={`inline-block rounded-md px-2 py-0.5 ring-1 ring-inset font-semibold ${GRADE_META[g].pill}`}>{GRADE_META[g].label}</span>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {GRADE_SCALE.map((s) => (
+                        <tr key={s.factor} className="border-t border-white/5">
+                          <td className="px-2 py-1.5 font-medium whitespace-nowrap">{s.factor}</td>
+                          {GRADE_ORDER.map((g) => (
+                            <td key={g} className="px-2 py-1.5 text-center text-muted-foreground whitespace-nowrap">
+                              {s.ranges[g] ? (
+                                <>
+                                  {s.ranges[g]}
+                                  <span className="block text-[10px] opacity-70">{fmtPoints((s.points ?? GRADE_POINTS)[g])}</span>
+                                </>
+                              ) : (
+                                <span className="opacity-40">—</span>
+                              )}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-white/5 pt-3">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Grade by Points</span>
+                    {LETTER_GRADES.map((g) => (
+                      <span key={g} className="inline-flex items-center gap-2 text-xs">
+                        <GradeMedal grade={g} size="sm" />
+                        <span>
+                          <span className="font-semibold">{LETTER_META[g].medal}</span>
+                          <span className="text-muted-foreground"> · {LETTER_META[g].range}</span>
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                  <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
+                    <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-400" aria-hidden />
+                    <p>
+                      <span className="font-semibold">Disclaimer:</span> Grades and points are calculated automatically from the data in this report (tickets, timecards, mileage and any imported corrections). Some of that data can be incomplete or wrong — for example a missed clock-in, a ticket not yet closed or synced, or mileage not yet logged — so a grade may not reflect a technician's actual performance. Please verify with the technician's manager before acting on it.
+                    </p>
+                  </div>
+                  <p className="mt-2 text-[10px] text-muted-foreground">Points = the sum over Average Tickets, Total Ticket, Redo %, Working Days, Average Hours and Average Mileage (−5 to 11). Total Ticket and Working Days are scaled for a 2-week pay period.</p>
                 </div>
-                <ResponsiveContainer width="100%" height={200} debounce={200}>
-                  <BarChart data={top10Chart} margin={{ left: -10 }}>
-                    <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} />
-                    <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
-                    <Tooltip
-                      contentStyle={TOOLTIP_STYLE}
-                      cursor={{ fill: "rgba(148,163,184,0.1)" }}
-                      formatter={(v: any) => [v, "Total Tickets"]}
-                      labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName ?? ""}
-                    />
-                    <Bar dataKey="value" radius={[4, 4, 0, 0]} name="Total Tickets">
-                      {top10Chart.map((_, i) => <Cell key={i} fill={CHART_BAR_FILL} />)}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
+              </details>
             )}
             {groupedRows.map(({ groupName, rows: groupRows }) => {
               const groupScrollRef = getGroupScrollRef(groupName ?? "__all__");
@@ -1620,19 +2222,33 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                   <table className="w-full text-sm">
                     <thead>
                       {!showAllColumns ? (
+                      <>
+                      <tr className="bg-white/[0.03]">
+                        <th />
+                        <th colSpan={9} className="px-3 pt-2 pb-0.5 text-center text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-300/80 border-x border-white/10">Main Factors</th>
+                        <th colSpan={5} className="px-3 pt-2 pb-0.5 text-center text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Breakdown</th>
+                      </tr>
                       <tr className="border-b border-white/10 bg-white/5">
-                        <th className={thClass} onClick={() => toggleSort("name")}>Name{sortIndicator("name")}</th>
+                        <th className={`${thClass} sticky left-0 z-20 bg-[var(--background)]`} onClick={() => toggleSort("name")}>Name{sortIndicator("name")}</th>
+                        <th className={`${thClass} border-l border-white/10`} onClick={() => toggleSort("shortPoints")} title="Master 11 · Expert 10 · Advanced 9 · Proficient 8 · Competent 7 · Developing 5–6 · Needs Attention 4 or less">Grade</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("shortPoints")} title="Maximum 3 · Great 2 · Median 1 · Effort 0 · Alert −1 (Redo % and Working Days max 2), summed over Average Tickets, Total Ticket, Redo % and Working Days; Average Hours over 12 a day −1; Average Mileage 250+ a day +1">Points{sortIndicator("shortPoints")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("shortDailyAvg")} title="Total Ticket ÷ Working Days">Average Tickets{sortIndicator("shortDailyAvg")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("shortTotalTicket")} title="Minor + Major − Redo">Total Ticket{sortIndicator("shortTotalTicket")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("shortRedoPct")} title="Redo ÷ (Minor + Major)">Redo %{sortIndicator("shortRedoPct")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("daysWorked")}>Working Days{sortIndicator("daysWorked")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("shortAvgHours")} title="Hours of Work ÷ Working Days">Average Hours{sortIndicator("shortAvgHours")}</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("shortAvgMiles")} title="Mileage ÷ Working Days">Average Mileage{sortIndicator("shortAvgMiles")}</th>
+                        <th className={`${thClass} text-right border-r border-white/10`} onClick={() => toggleSort("shortErrorCount")} title="Timecard issues (correction requests) + damages (damage documents) + missed clock-ins and uncorrected missed Time Outs">Error Count{sortIndicator("shortErrorCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("minorTicketCount")}>Minor Comp{sortIndicator("minorTicketCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("majorTicketCount")}>Major Comp{sortIndicator("majorTicketCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("redoCount")}>Redo Count{sortIndicator("redoCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("miles")}>Mileage{sortIndicator("miles")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("hoursWorked")}>Hours of Work{sortIndicator("hoursWorked")}</th>
-                        <th className={`${thClass} text-right`} onClick={() => toggleSort("daysWorked")}>Working Total Days{sortIndicator("daysWorked")}</th>
-                        <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Off Days</th>
                       </tr>
+                      </>
                       ) : (
                       <tr className="border-b border-white/10 bg-white/5">
-                        <th className={thClass} onClick={() => toggleSort("name")}>Name{sortIndicator("name")}</th>
+                        <th className={`${thClass} sticky left-0 z-20 bg-[var(--background)]`} onClick={() => toggleSort("name")}>Name{sortIndicator("name")}</th>
                         <th className="px-3 py-2 text-right text-xs text-muted-foreground uppercase">Variance</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("damageAssessmentCount")}>Damage Assessment{sortIndicator("damageAssessmentCount")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("minorTicketCount")}>Minor Ticket{sortIndicator("minorTicketCount")}</th>
@@ -1660,13 +2276,13 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                     </thead>
                     <tbody>
                       {groupRows.length === 0 ? (
-                        <tr><td colSpan={showAllColumns ? 23 : 8} className="px-4 py-8 text-center text-muted-foreground text-sm">No technicians match.</td></tr>
+                        <tr><td colSpan={showAllColumns ? 23 : 15} className="px-4 py-8 text-center text-muted-foreground text-sm">No technicians match.</td></tr>
                       ) : (
                         groupRows.map((r) => {
                           const variance = varianceByRowId.get(r.id) ?? null;
                           // Cells shared by the short and full layouts.
                           const nameCell = (
-                            <td className="px-3 py-2 font-medium">
+                            <td className="px-3 py-2 font-medium sticky left-0 z-10 bg-[var(--background)]">
                               <button
                                 type="button"
                                 onClick={() => { setSelectedTechId(r.id); setShowActivityLog(false); }}
@@ -1678,6 +2294,10 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                                   <PencilLine className="h-3 w-3 text-amber-400 shrink-0" aria-label="Has manual corrections this period" />
                                 )}
                               </button>
+                              {/* Short view has no Location column, so the branch rides under the name. */}
+                              {!showAllColumns && r.location && r.location !== "—" && (
+                                <span className="block text-[10px] font-normal text-muted-foreground leading-tight mt-0.5">{r.location}</span>
+                              )}
                             </td>
                           );
                           const milesCell = (
@@ -1745,16 +2365,52 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                             </td>
                           );
                           if (!showAllColumns) {
+                            const total = shortTotalTicket(r);
+                            const redoPct = shortRedoPct(r);
+                            const dailyAvg = shortDailyAvg(r);
+                            const points = shortPoints(r);
+                            // Clickable figures keep their breakdown popups;
+                            // the pill carries the grade color instead of blue.
+                            const linkish = (value: ReactNode, onClick: () => void, title: string, clickable: boolean) =>
+                              clickable ? (
+                                <button type="button" onClick={onClick} className="hover:underline underline-offset-2" title={title}>{value}</button>
+                              ) : value;
+                            const gradedTd = (grade: Grade | null, content: ReactNode, extra = "") => (
+                              <td className={`px-2 py-1.5 text-right ${extra}`}><GradePill grade={grade}>{content}</GradePill></td>
+                            );
                             return (
                               <tr key={r.id} className="border-b border-white/5 hover:bg-white/5">
                                 {nameCell}
-                                <td className="px-3 py-2 text-right">{r.minorTicketCount}</td>
-                                <td className="px-3 py-2 text-right">{r.majorTicketCount}</td>
-                                <td className="px-3 py-2 text-right">{r.redoCount}</td>
-                                {milesCell}
-                                {hoursCell}
-                                {workDaysCell}
-                                {offDaysCell}
+                                <td className="px-3 py-1 border-l border-white/10">
+                                  <span className="inline-flex items-center gap-2 whitespace-nowrap">
+                                    <GradeMedal grade={letterGrade(points)} />
+                                    <span className="text-xs font-semibold">{gradeName(letterGrade(points))}</span>
+                                  </span>
+                                </td>
+                                <td className="px-3 py-1.5 text-right">
+                                  <span className="inline-flex justify-end min-w-[2.5rem] rounded-md bg-white/10 px-2 py-0.5 tabular-nums font-bold">{points}</span>
+                                </td>
+                                {gradedTd(GRADERS.dailyAvg(dailyAvg), fmt1(dailyAvg))}
+                                {gradedTd(GRADERS.totalTicket(total), total)}
+                                {gradedTd(GRADERS.redoPct(redoPct), fmtRedoPct(redoPct))}
+                                {gradedTd(GRADERS.workingDays(r.daysWorked), linkish(r.daysWorked, () => setWorkDaysListFor({ id: r.id, name: r.name }), "View working dates", r.daysWorked > 0))}
+                                {gradedTd(GRADERS.avgHours(shortAvgHours(r)), fmt1(shortAvgHours(r)))}
+                                {gradedTd(GRADERS.avgMiles(shortAvgMiles(r)), fmt1(shortAvgMiles(r)))}
+                                <td
+                                  className={`px-3 py-2 text-right tabular-nums font-semibold border-r border-white/10 ${shortErrorCount(r) > 0 ? "text-red-300" : "text-muted-foreground"}`}
+                                  title={`Timecard issues: ${r.timecardIssueCount} · Damages: ${r.damageAssessmentCount} · Missed clock-in / Time Out: ${r.missedClockInCount}`}
+                                >
+                                  {shortErrorCount(r)}
+                                </td>
+                                <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">{r.minorTicketCount}</td>
+                                <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">{r.majorTicketCount}</td>
+                                <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">{r.redoCount}</td>
+                                <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">
+                                  {linkish(fmt1(r.miles), () => setMileageListFor({ id: r.id, name: r.name }), "View mileage breakdown", r.miles > 0)}
+                                </td>
+                                <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">
+                                  {linkish(fmt1(r.hoursWorked), () => setHoursListFor({ id: r.id, name: r.name }), "View hours breakdown", r.hoursWorked > 0)}
+                                </td>
                               </tr>
                             );
                           }
