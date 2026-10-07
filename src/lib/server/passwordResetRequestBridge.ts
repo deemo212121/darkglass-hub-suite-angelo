@@ -12,7 +12,7 @@
  *     Nothing is reset yet, so someone who only knows a username can't
  *     lock its owner out.
  *   - reset (with the code): once the code checks out, the server:
- *   1. resets their Firebase password to the default (the DEFAULT_RESET_PASSWORD secret, the
+ *   1. resets their Firebase password to the default (the company's, set in Login Security → Default Password — the
  *      same one Admin/HR's reset and new accounts use — adminPasswordBridge),
  *   2. turns on must_change_password, so that default works for one login
  *      before they must choose their own (__root.tsx's redirect gate),
@@ -27,6 +27,7 @@
  * the old behaviour: an IT ticket for IT to handle by hand.
  */
 import { readAdminPasswordEnv, getIdentityToolkitAccessToken, setUserPassword } from "./adminPasswordBridge";
+import { resolveDefaultPassword } from "./defaultPasswordBridge";
 import { readEnv as readGmailEnv, fetchGmailConnection, refreshAccessToken, sendGmailMessage, type Region } from "./gmailBridge";
 
 interface EnvBag {
@@ -250,8 +251,9 @@ export async function handlePasswordResetRequest(request: Request, env?: Record<
     // Find the IT email first — never send a code or reset without a way to email them.
     const gmailEnv = readGmailEnv(env);
     const pwEnv = readAdminPasswordEnv(env);
+    const defaultPassword = await resolveDefaultPassword(envBag, profile.company_id, env);
     let sender: { accessToken: string; fromEmail: string } | null = null;
-    if (!("error" in gmailEnv) && !("error" in pwEnv)) {
+    if (!("error" in gmailEnv) && !("error" in pwEnv) && defaultPassword) {
       // The preferred sender's slot first, then any other connected IT slot.
       const conns = (
         await Promise.all(IT_SLOTS.map(async (slot) => ({ slot, conn: await fetchGmailConnection(gmailEnv, profile.company_id, slot).catch(() => null) })))
@@ -269,14 +271,14 @@ export async function handlePasswordResetRequest(request: Request, env?: Record<
       }
     }
 
-    if (!sender || "error" in pwEnv) {
+    if (!sender || "error" in pwEnv || !defaultPassword) {
       // Fallback: no IT email to send from — leave it to IT, like before.
       await logTicket(
         envBag,
         profile,
         name,
         "Password Reset Request",
-        [`${name} is requesting a password reset.`, `Username: ${profile.username || u}`, `Email on file: ${e}`, `Not reset automatically: no IT Gmail account is connected on the IT Tickets page.`].join("\n"),
+        [`${name} is requesting a password reset.`, `Username: ${profile.username || u}`, `Email on file: ${e}`, !defaultPassword ? `Not reset automatically: no default password is set (Login Security → Default Password).` : `Not reset automatically: no IT Gmail account is connected on the IT Tickets page.`].join("\n"),
         false
       );
       await notifyIt(envBag, profile.company_id, name, `🔑 Password reset request from ${name} (${profile.username || u}) — needs IT (no IT email connected)`);
@@ -351,13 +353,13 @@ export async function handlePasswordResetRequest(request: Request, env?: Record<
 
     // 1. Reset to the default. 2. Must change it on next login.
     const idtToken = await getIdentityToolkitAccessToken(pwEnv.serviceAccountEmail, pwEnv.privateKey);
-    await setUserPassword(idtToken, profile.firebase_uid!, pwEnv.defaultPassword); // `usable` above guarantees it
+    await setUserPassword(idtToken, profile.firebase_uid!, defaultPassword); // `usable` above guarantees it
     await sbFetch(envBag, `profiles?id=eq.${profile.id}`, { method: "PATCH", body: JSON.stringify({ must_change_password: true }) });
 
     // 3. Email it to the address on file.
     let emailed = true;
     try {
-      await sendGmailMessage(sender.accessToken, sender.fromEmail, e, "Password Reset AHS", emailBody(name, pwEnv.defaultPassword));
+      await sendGmailMessage(sender.accessToken, sender.fromEmail, e, "Password Reset AHS", emailBody(name, defaultPassword));
     } catch (err) {
       emailed = false;
       console.error("[password-reset-request] email failed:", err);

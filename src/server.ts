@@ -21,6 +21,7 @@ import { handleGmailRequest } from "./lib/server/gmailBridge";
 import { handleRunAttendanceAlertsRequest } from "./lib/server/attendanceAlerts";
 import { handleRunFlashTechOpenAlertsRequest } from "./lib/server/flashTechOpenAlerts";
 import { handleAdminPasswordRequest } from "./lib/server/adminPasswordBridge";
+import { handleDefaultPasswordRequest } from "./lib/server/defaultPasswordBridge";
 import { handleLoginLockoutRequest } from "./lib/server/loginLockoutBridge";
 import { handlePasswordResetRequest } from "./lib/server/passwordResetRequestBridge";
 import { handleItBypassLoginRequest } from "./lib/server/itBypassLoginBridge";
@@ -219,6 +220,10 @@ export default {
     if (url.pathname === "/api/admin-reset-password") {
       const merged = await resolveServerEnv(env);
       return await handleAdminPasswordRequest(request, merged);
+    }
+    if (url.pathname === "/api/default-password") {
+      const merged = await resolveServerEnv(env);
+      return await handleDefaultPasswordRequest(request, merged);
     }
     if (url.pathname === "/api/it-bypass-login") {
       const merged = await resolveServerEnv(env);

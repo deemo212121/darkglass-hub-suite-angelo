@@ -791,6 +791,40 @@ function passwordResetRequestDevPlugin() {
   };
 }
 
+// Dev-only middleware: serve /api/default-password locally (Login Security →
+// Default Password) — same bridge as production.
+function defaultPasswordDevPlugin() {
+  return {
+    name: "default-password-dev",
+    configureServer(server: any) {
+      server.middlewares.use("/api/default-password", async (req: any, res: any) => {
+        try {
+          const chunks: Buffer[] = [];
+          for await (const c of req) chunks.push(c);
+          const body = Buffer.concat(chunks);
+
+          const { handleDefaultPasswordRequest } = await server.ssrLoadModule("/src/lib/server/defaultPasswordBridge.ts");
+          const webReq = new Request(`http://localhost${req.url}`, {
+            method: req.method,
+            headers: { "content-type": req.headers["content-type"] ?? "application/json" },
+            body: req.method === "POST" ? body : undefined,
+          });
+          const mergedEnv = { ...process.env, ...readDotEnv() } as Record<string, string | undefined>;
+          const webRes: Response = await handleDefaultPasswordRequest(webReq, mergedEnv);
+
+          res.statusCode = webRes.status;
+          webRes.headers.forEach((v: string, k: string) => res.setHeader(k, v));
+          res.end(await webRes.text());
+        } catch (err) {
+          res.statusCode = 500;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ error: err instanceof Error ? err.message : "Default password request failed" }));
+        }
+      });
+    },
+  };
+}
+
 // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
 // @cloudflare/vite-plugin builds from this — wrangler.jsonc main alone is insufficient.
 export default defineConfig({
@@ -832,7 +866,7 @@ export default defineConfig({
     // server for testing webhooks (e.g. Jotform) that need a public URL.
     server: { allowedHosts: [".trycloudflare.com"] },
     test: { globals: true, environment: "node" },
-    plugins: [supabaseTokenDevPlugin(), serverTimeDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), encompassDevPlugin(), nsaDevPlugin(), jotformDevPlugin(), customFormsDevPlugin(), imageProxyDevPlugin(), googleDriveDevPlugin(), gmailDevPlugin(), signableDocumentsDevPlugin(), liveChatDevPlugin(), liveChatStaffDevPlugin(), adminUpdateEmailDevPlugin(), adminResetPasswordDevPlugin(), loginLockoutDevPlugin(), passwordResetRequestDevPlugin()],
+    plugins: [supabaseTokenDevPlugin(), serverTimeDevPlugin(), servicePowerDevPlugin(), marconeDevPlugin(), encompassDevPlugin(), nsaDevPlugin(), jotformDevPlugin(), customFormsDevPlugin(), imageProxyDevPlugin(), googleDriveDevPlugin(), gmailDevPlugin(), signableDocumentsDevPlugin(), liveChatDevPlugin(), liveChatStaffDevPlugin(), adminUpdateEmailDevPlugin(), adminResetPasswordDevPlugin(), loginLockoutDevPlugin(), passwordResetRequestDevPlugin(), defaultPasswordDevPlugin()],
     build: {
       chunkSizeWarningLimit: 800,
       // See the rmSync call above — we clean dist/ ourselves once, up

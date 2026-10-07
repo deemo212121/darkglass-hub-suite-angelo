@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, RefreshCw, ArrowUp, ArrowDown, ArrowUpDown, Lock, Send, ShieldCheck, ShieldAlert, History } from "lucide-react";
+import { ChevronLeft, RefreshCw, ArrowUp, ArrowDown, ArrowUpDown, Lock, Send, ShieldCheck, ShieldAlert, History, KeyRound } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getCompanyUsers, updateCompanyUser, type ProfileRow } from "@/lib/supabase/users";
 import { getCompanyLoginEvents, type LoginEvent } from "@/lib/supabase/loginEvents";
@@ -13,6 +13,7 @@ import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { haversineMiles } from "@/lib/mapEngine";
 import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
+import { DefaultPasswordPanel } from "@/components/DefaultPasswordPanel";
 
 interface Props {
   mod: ModuleDef;
@@ -99,13 +100,15 @@ function computeUserStats(profile: ProfileRow, events: LoginEvent[]): UserLoginS
   return { profile, lastEvent, mostUsedIp, unusualLocation, usualLocationLabel };
 }
 
-const TAB_VALUES = ["security", "lockouts", "lockoutHistory"] as const;
+const TAB_VALUES = ["security", "lockouts", "lockoutHistory", "defaultPassword"] as const;
 
 export function LoginSecurityPage({ mod, sub }: Props) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [activeTab, setActiveTab] = usePersistedTab<(typeof TAB_VALUES)[number]>("loginSecurityPage:tab", TAB_VALUES, "security");
-  const { displayName, email: myEmail } = useAuth();
+  const { displayName, email: myEmail, role: myRole, extraRoles: myExtraRoles } = useAuth();
+  // Default Password tab: Admin / SuperAdmin only (the server checks this too).
+  const canSetDefaultPassword = [myRole, ...(myExtraRoles ?? [])].some((r) => ["ADMIN", "SUPERADMIN"].includes(String(r ?? "").trim().toUpperCase()));
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [events, setEvents] = useState<LoginEvent[]>([]);
   const [lockoutHistory, setLockoutHistory] = useState<LoginLockoutEventRow[]>([]);
@@ -324,6 +327,7 @@ export function LoginSecurityPage({ mod, sub }: Props) {
             { id: "security", label: "Login Security", icon: ShieldCheck },
             { id: "lockouts", label: "Login Lockouts", icon: ShieldAlert },
             { id: "lockoutHistory", label: "Lockout History", icon: History },
+            ...(canSetDefaultPassword ? [{ id: "defaultPassword" as const, label: "Default Password", icon: KeyRound }] : []),
           ] as const
         ).map((tab) => {
           const Icon = tab.icon;
@@ -721,6 +725,8 @@ export function LoginSecurityPage({ mod, sub }: Props) {
           </div>
         </>
       )}
+
+      {activeTab === "defaultPassword" && canSetDefaultPassword && <DefaultPasswordPanel />}
     </main>
   );
 }

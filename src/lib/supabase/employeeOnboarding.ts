@@ -61,7 +61,7 @@ export const ONBOARDING_TASK_DEFS: OnboardingTaskDef[] = [
   {
     key: "login_delivered",
     label: "Send login details to the employee",
-    detail: "Email their username and the temporary password (Welcome2024!). They're forced to set their own on first sign-in.",
+    detail: "Email their username and the default password. They're forced to set their own on first sign-in.",
     applies: () => true,
   },
   {

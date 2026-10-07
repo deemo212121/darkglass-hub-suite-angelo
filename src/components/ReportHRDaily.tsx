@@ -35210,7 +35210,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     <p>Here are your account details for AHS:</p>
                     <p>&nbsp;</p>
                     <p>Username: <span className="text-slate-200">{deriveLoginName(credentialsPreview.name || forwardCvDialog.name)}</span></p>
-                    <p>Default password: <span className="text-slate-200">Welcome2024!</span></p>
+                    <p>Password: <span className="text-slate-200">the default password</span></p>
                     <p>Unique ID: <span className="text-slate-200">USIHS</span></p>
                     <p>&nbsp;</p>
                     <p>Log in here: <span className="text-blue-300">{getAppUrl()}</span></p>

@@ -724,6 +724,12 @@ function ColumnFilter({
   );
 }
 
+/** A long random password for a brand-new account — immediately replaced by the company default. */
+function randomThrowawayPassword(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return "Tmp-" + Array.from(bytes, (b) => b.toString(36).padStart(2, "0")).join("") + "9a";
+}
+
 export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
@@ -1273,7 +1279,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         targetLabel: resetToDefaultTarget.userName,
       });
       alert(
-        `${resetToDefaultTarget.userName}'s password has been reset to "Welcome2024!". They can log in with that now, but will be required to set a new password immediately.`
+        `${resetToDefaultTarget.userName}'s password has been reset to the default password. They can log in with that now, but will be required to set a new password immediately.`
       );
       setResetToDefaultTarget(null);
     } catch (error) {
@@ -1307,7 +1313,10 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       // Create user: Firebase Auth credential + Supabase profile (company-scoped)
       const { uid: newUid, profileId: newProfileId } = await createCompanyUser({
         email: newUserForm.email,
-        password: "Welcome2024!", // Default password
+        // A random throwaway — replaced by the company's default password right
+        // below, server-side (Login Security → Default Password), so the
+        // default never has to live in this page's code.
+        password: randomThrowawayPassword(),
         displayName: newUserForm.userName,
         loginName: newUserForm.loginName,
         role: primaryRole as any,
@@ -1327,7 +1336,28 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         employmentType: newUserForm.isTrainee ? "trainee" : "regular",
       });
 
-      alert(`User ${newUserForm.userName} created successfully!\nDefault password: Welcome2024!`);
+      // Set the new account's password to the company default (same endpoint as "Reset to default").
+      let defaultApplied = false;
+      try {
+        const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
+        if (idToken) {
+          const res = await fetch("/api/admin-reset-password", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ idToken, targetProfileId: newProfileId }),
+          });
+          defaultApplied = res.ok;
+          if (!res.ok) console.error("Default password not applied:", (await res.json().catch(() => ({}))).error);
+        }
+      } catch (err) {
+        console.error("Default password not applied:", err);
+      }
+
+      alert(
+        defaultApplied
+          ? `User ${newUserForm.userName} created successfully!\nThey sign in with the default password and choose their own right away.`
+          : `User ${newUserForm.userName} was created, but the default password couldn't be applied. Set one in Login Security → Default Password, then use "Reset to default" on this user.`
+      );
 
       // Seed HR's post-creation setup checklist for this hire (login handoff,
       // profile detail, off-days, pay rate, onboarding docs, ...) — surfaced
@@ -1737,7 +1767,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
             <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-white/10 bg-slate-950/95 px-5 py-4 backdrop-blur-md">
               <div>
                 <h2 className="text-2xl font-bold tracking-tight">Add New User</h2>
-                <p className="mt-1 text-sm text-slate-300">Create a new user account (Default password: Welcome2024!)</p>
+                <p className="mt-1 text-sm text-slate-300">Create a new user account (starts with the default password)</p>
               </div>
               <div className="flex flex-wrap items-center justify-end gap-3">
                 <button type="button" onClick={() => setShowAddUserModal(false)} disabled={creatingUser} className="btn hover:bg-slate-800">Cancel</button>
@@ -1962,7 +1992,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
               <div className="text-xs text-slate-400 pt-4 border-t border-white/10">
                 <p className="mb-2"><span className="font-semibold">Note:</span> Fields marked with * are required.</p>
                 <p className="mb-2">• User will be created with company ID: <span className="text-blue-300 font-mono">{auth.companyLoginAlias || auth.companyId || "N/A"}</span></p>
-                <p className="mb-2">• Default password: <span className="text-blue-300 font-mono">Welcome2024!</span> (user should change on first login)</p>
+                <p className="mb-2">• Starts with the default password (set in Login Security → Default Password); they change it on first login</p>
                 <p>• Username (for username-based login) will match the User Name entered above</p>
               </div>
             </div>
@@ -2002,7 +2032,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
               <h2 className="text-xl font-bold tracking-tight">Reset to Default — {resetToDefaultTarget.userName}</h2>
               <p className="mt-1 text-sm text-slate-300">
                 Use this when {resetToDefaultTarget.userName} is locked out and can't log in at all (forgot their password). This
-                immediately sets their password to <span className="font-mono text-amber-300">Welcome2024!</span> — no old password
+                immediately sets their password to <span className="text-amber-300">the default password</span> — no old password
                 needed — so they can log back in right now. They'll then be required to set a new password of their own before
                 reaching any dashboard.
               </p>

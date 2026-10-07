@@ -38,6 +38,7 @@
  *    to a plain-text numbers summary.
  */
 
+import { resolveDefaultPassword } from "./defaultPasswordBridge";
 import { verifyFirebaseToken, strToB64url, b64urlToString } from "./supabaseTokenBridge";
 
 export interface EnvBag {
@@ -697,9 +698,9 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
   }
 
   // Hiring panel's "Send Credentials" — emails a just-created employee
-  // their derived login username, the app-wide default password
-  // ("Welcome2024!", same one AdminUserManagementPage.tsx shows when
-  // creating a user — they must change it on first login), and the fixed
+  // their derived login username, the company's default password
+  // (Login Security → Default Password — defaultPasswordBridge.ts; they must
+  // change it on first login), and the fixed
   // company Unique ID ("USIHS") — all 3 are fixed/derived, not read from
   // the profile's own stored fields (a saved username can be inconsistent
   // with the Firstname.Lastname login convention; Unique ID is a constant
@@ -742,6 +743,10 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
         }
         throw err;
       }
+      const defaultPassword = await resolveDefaultPassword(envBag, caller.companyId, env);
+      if (!defaultPassword) {
+        return json({ error: "No default password is set yet. An Admin can set one in Login Security → Default Password." }, 409);
+      }
       const fromEmail = connection.connectedEmail || "me";
       const subject = "Your AHS account details";
       const body = [
@@ -750,7 +755,7 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
         "Here are your account details for AHS:",
         "",
         `Username: ${deriveLoginName(target.name)}`,
-        `Default password: Welcome2024!`,
+        `Default password: ${defaultPassword}`,
         `Unique ID: USIHS`,
         "",
         `Log in here: ${envBag.appUrl}`,
