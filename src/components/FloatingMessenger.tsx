@@ -16,7 +16,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ReceiptMark } from "@/components/ReceiptMark";
 import { getDmReceipts, receiptFor, useDmReceipt, type DmReceiptState } from "@/lib/supabase/readReceipts";
 import { useNavigate } from "@tanstack/react-router";
-import { MessageCircle, X, Send, Search, ChevronLeft, ExternalLink, MoreHorizontal, CornerUpLeft, Forward, Copy } from "lucide-react";
+import { MessageCircle, X, Send, Search, ChevronLeft, ExternalLink, MoreHorizontal, CornerUpLeft, Forward, Copy, Mail, MailOpen } from "lucide-react";
 import { toast } from "sonner";
 import {
   QUICK_REACTIONS,
@@ -34,6 +34,7 @@ import {
   getDmMessages,
   sendMessage,
   markThreadRead,
+  markThreadUnread,
   getOrCreateDmThread,
   getUnreadCounts,
   subscribeToMessages,
@@ -256,6 +257,36 @@ export function FloatingMessenger() {
       ...unreadChannelIds.map((channelId) => markThreadRead({ profileId, channelId })),
     ]);
   };
+
+  // One conversation: "Mark as unread" (flag, keeps the other person's Seen) or "Mark as read".
+  const toggleThreadRead = async (threadId: string, unreadCount: number) => {
+    if (!profileId) return;
+    if (unreadCount > 0) {
+      setInbox((prev) => prev.map((e) => (e.threadId === threadId ? { ...e, unreadCount: 0 } : e)));
+      await markThreadRead({ profileId, dmThreadId: threadId });
+      window.dispatchEvent(new CustomEvent("ahs:unread-changed"));
+    } else {
+      setInbox((prev) => prev.map((e) => (e.threadId === threadId ? { ...e, unreadCount: 1 } : e)));
+      try {
+        await markThreadUnread({ profileId, dmThreadId: threadId });
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Couldn't mark it as unread.");
+        void refreshInbox(profileId);
+      }
+    }
+  };
+
+  // Marked read/unread from the header drop-down — pick it up here too.
+  useEffect(() => {
+    if (!profileId) return;
+    const onChanged = () => {
+      void refreshInbox(profileId);
+      void refreshChannelUnread(profileId);
+    };
+    window.addEventListener("ahs:unread-changed", onChanged);
+    return () => window.removeEventListener("ahs:unread-changed", onChanged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId]);
 
   const startConversation = async (other: ProfileRow) => {
     if (!profileId) return;
@@ -566,10 +597,10 @@ export function FloatingMessenger() {
                       const other = usersById.get(entry.otherProfileId);
                       const name = other?.display_name || other?.email || "Direct message";
                       return (
+                        <div key={entry.threadId} className="group relative">
                         <button
-                          key={entry.threadId}
                           onClick={() => void openThread(entry.threadId, entry.otherProfileId, name)}
-                          className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-white/5 transition-colors"
+                          className="flex w-full items-center gap-3 px-4 py-2.5 pr-11 text-left hover:bg-white/5 transition-colors"
                         >
                           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-blue-500/15 text-blue-200 text-[11px] font-bold">
                             {initials(name)}
@@ -595,6 +626,16 @@ export function FloatingMessenger() {
                             </span>
                           </span>
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => void toggleThreadRead(entry.threadId, entry.unreadCount)}
+                          title={entry.unreadCount > 0 ? "Mark as read" : "Mark as unread"}
+                          aria-label={entry.unreadCount > 0 ? `Mark ${name} as read` : `Mark ${name} as unread`}
+                          className="absolute right-2 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-full text-slate-400 opacity-0 transition hover:bg-white/10 hover:text-white focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+                        >
+                          {entry.unreadCount > 0 ? <MailOpen className="h-4 w-4" /> : <Mail className="h-4 w-4" />}
+                        </button>
+                        </div>
                       );
                     })
                 )}

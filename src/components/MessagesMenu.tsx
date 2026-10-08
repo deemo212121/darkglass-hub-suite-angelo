@@ -9,7 +9,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ArrowRight, CheckCheck, Hash, MessageCircle } from "lucide-react";
+import { ArrowRight, CheckCheck, Hash, Mail, MailOpen, MessageCircle } from "lucide-react";
+import { toast } from "sonner";
 import { Avatar, GroupLabel, MenuEmpty, MenuHeader, fullTime, groupByDay, previewText, shortTime } from "@/components/header/menuKit";
 import {
   DropdownMenu,
@@ -27,6 +28,7 @@ import {
   getUnreadCounts,
   listChannels,
   markThreadRead,
+  markThreadUnread,
 } from "@/lib/supabase/messaging";
 import { subscribeMessagesBus } from "@/lib/supabase/realtimeMessagesBus";
 import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
@@ -298,6 +300,27 @@ export function MessagesMenu() {
     );
   };
 
+  // One conversation: "Mark as unread" (flag, keeps the other person's Seen) or "Mark as read".
+  const toggleRead = async (p: ThreadPreview) => {
+    if (!profileId) return;
+    const target = p.kind === "channel" ? { profileId, channelId: p.id } : { profileId, dmThreadId: p.id };
+    if (p.unread > 0) {
+      setPreviews((prev) => prev.map((x) => (x.id === p.id ? { ...x, unread: 0 } : x)));
+      setUnreadTotal((t) => Math.max(0, t - p.unread));
+      await markThreadRead(target);
+      window.dispatchEvent(new CustomEvent("ahs:unread-changed"));
+    } else {
+      setPreviews((prev) => prev.map((x) => (x.id === p.id ? { ...x, unread: 1 } : x)));
+      setUnreadTotal((t) => t + 1);
+      try {
+        await markThreadUnread(target);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Couldn't mark it as unread.");
+        void refresh(profileId);
+      }
+    }
+  };
+
   const goTo = (p: ThreadPreview) => {
     // The team messenger reads channel/dm ids from the URL hash so the
     // dropdown can hand-off without needing per-thread routes. TanStack
@@ -369,6 +392,20 @@ export function MessagesMenu() {
                         <span className="hm-row-text hm-row-text--1">{text}</span>
                       </span>
                       {p.unread > 0 && <span className="hm-count">{p.unread > 99 ? "99+" : p.unread}</span>}
+                      <button
+                        type="button"
+                        className="hm-row-toggle"
+                        title={p.unread > 0 ? "Mark as read" : "Mark as unread"}
+                        aria-label={p.unread > 0 ? `Mark ${p.title} as read` : `Mark ${p.title} as unread`}
+                        onClick={(e) => {
+                          // Don't open the conversation — just flip its read state.
+                          e.preventDefault();
+                          e.stopPropagation();
+                          void toggleRead(p);
+                        }}
+                      >
+                        {p.unread > 0 ? <MailOpen /> : <Mail />}
+                      </button>
                     </DropdownMenuItem>
                   );
                 })}

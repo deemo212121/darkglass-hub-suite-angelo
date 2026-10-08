@@ -473,16 +473,73 @@ export async function markThreadRead(params: {
     channel_id: params.channelId ?? null,
     dm_thread_id: params.dmThreadId ?? null,
     last_read_at: now,
+    // Opening a conversation also clears "Mark as unread" (migration 0365).
+    marked_unread: false,
   };
   // onConflict columns mirror the unique indexes:
   //   (profile_id, channel_id)  and  (profile_id, dm_thread_id)
   const conflictTarget = params.channelId
     ? "profile_id,channel_id"
     : "profile_id,dm_thread_id";
-  const { error } = await supabase
+  let { error } = await supabase
     .from("message_reads")
     .upsert(payload, { onConflict: conflictTarget });
+  if (error && isMissingMarkedUnread(error)) {
+    // 0365 not run yet — mark read the old way.
+    delete payload.marked_unread;
+    ({ error } = await supabase.from("message_reads").upsert(payload, { onConflict: conflictTarget }));
+  }
   if (error) console.warn("markThreadRead:", error.message);
+}
+
+function isMissingMarkedUnread(error: { message?: string; code?: string } | null): boolean {
+  return !!error && (error.code === "42703" || error.code === "PGRST204" || /marked_unread/.test(error.message ?? ""));
+}
+
+/**
+ * "Mark as unread" — flags my read pointer for the thread so it shows as
+ * unread (at least 1) until I open it again. last_read_at is left alone, so
+ * the other person's "Seen" receipt doesn't change (migration 0365).
+ */
+export async function markThreadUnread(params: {
+  profileId: string;
+  channelId?: string | null;
+  dmThreadId?: string | null;
+}): Promise<void> {
+  if (!params.profileId) return;
+  if (!params.channelId && !params.dmThreadId) return;
+  let query = supabase.from("message_reads").update({ marked_unread: true }).eq("profile_id", params.profileId);
+  query = params.channelId ? query.eq("channel_id", params.channelId) : query.eq("dm_thread_id", params.dmThreadId as string);
+  const { data, error } = await query.select("profile_id");
+  if (error) {
+    if (isMissingMarkedUnread(error)) throw new Error("Run migration 0365 in Supabase to turn on Mark as unread.");
+    throw new Error(error.message);
+  }
+  if (!data || data.length === 0) {
+    // No read pointer yet (never opened) — create one that's flagged.
+    const { error: insErr } = await supabase.from("message_reads").insert({
+      profile_id: params.profileId,
+      channel_id: params.channelId ?? null,
+      dm_thread_id: params.dmThreadId ?? null,
+      last_read_at: new Date().toISOString(),
+      marked_unread: true,
+    });
+    if (insErr) throw new Error(insErr.message);
+  }
+  window.dispatchEvent(new CustomEvent("ahs:unread-changed"));
+}
+
+/** My read pointers, with the "marked unread" flag when 0365 has been run. */
+async function readMyPointers(profileId: string, dmThreadIds?: string[]) {
+  const build = (cols: string) => {
+    let q = supabase.from("message_reads").select(cols).eq("profile_id", profileId);
+    if (dmThreadIds) q = q.in("dm_thread_id", dmThreadIds);
+    return q;
+  };
+  let res = await build("channel_id, dm_thread_id, last_read_at, marked_unread");
+  if (res.error && isMissingMarkedUnread(res.error)) res = await build("channel_id, dm_thread_id, last_read_at");
+  if (res.error) throw new Error(res.error.message);
+  return (res.data ?? []) as unknown as { channel_id: string | null; dm_thread_id: string | null; last_read_at: string; marked_unread?: boolean }[];
 }
 
 /**
@@ -508,21 +565,26 @@ export async function getUnreadCounts(profileId: string): Promise<{
   if (!profileId) return empty;
 
   // 1. Read pointers + channel list + my DM threads — in parallel.
-  const [readsRes, channels, dmIds] = await Promise.all([
-    supabase
-      .from("message_reads")
-      .select("channel_id, dm_thread_id, last_read_at")
-      .eq("profile_id", profileId),
+  const [reads, channels, dmIds] = await Promise.all([
+    readMyPointers(profileId),
     listChannels(),
     listMyDmThreadIds(profileId),
   ]);
 
-  if (readsRes.error) throw new Error(readsRes.error.message);
   const channelReadAt = new Map<string, string>();
   const dmReadAt = new Map<string, string>();
-  for (const r of readsRes.data || []) {
-    if (r.channel_id) channelReadAt.set(r.channel_id as string, r.last_read_at as string);
-    if (r.dm_thread_id) dmReadAt.set(r.dm_thread_id as string, r.last_read_at as string);
+  // Threads I've "marked as unread" — they count at least 1 below.
+  const markedChannels = new Set<string>();
+  const markedDms = new Set<string>();
+  for (const r of reads) {
+    if (r.channel_id) {
+      channelReadAt.set(r.channel_id, r.last_read_at);
+      if (r.marked_unread) markedChannels.add(r.channel_id);
+    }
+    if (r.dm_thread_id) {
+      dmReadAt.set(r.dm_thread_id, r.last_read_at);
+      if (r.marked_unread) markedDms.add(r.dm_thread_id);
+    }
   }
 
   const channelIds = channels.map((c) => c.id);
@@ -570,6 +632,9 @@ export async function getUnreadCounts(profileId: string): Promise<{
     }
   }
 
+  for (const id of markedChannels) if (channelIds.includes(id)) perChannel[id] = Math.max(perChannel[id] ?? 0, 1);
+  for (const id of markedDms) if (dmIds.includes(id)) perDm[id] = Math.max(perDm[id] ?? 0, 1);
+
   const total =
     Object.values(perChannel).reduce((a, b) => a + b, 0) +
     Object.values(perDm).reduce((a, b) => a + b, 0);
@@ -608,12 +673,7 @@ export async function listMyDmInbox(profileId: string): Promise<DmInboxEntry[]> 
   if (threadRows.length === 0) return [];
   const threadIds = threadRows.map((t: any) => t.id as string);
 
-  const readsRes = await supabase
-    .from("message_reads")
-    .select("dm_thread_id, last_read_at")
-    .eq("profile_id", profileId)
-    .in("dm_thread_id", threadIds);
-  if (readsRes.error) throw new Error(readsRes.error.message);
+  const reads = await readMyPointers(profileId, threadIds);
 
   // Supabase caps an unbounded select at 1000 rows — a long-tenured user's
   // full DM history across every thread they're part of can exceed that.
@@ -634,8 +694,12 @@ export async function listMyDmInbox(profileId: string): Promise<DmInboxEntry[]> 
   }
 
   const readAt = new Map<string, string>();
-  for (const r of readsRes.data || []) {
-    if (r.dm_thread_id) readAt.set(r.dm_thread_id as string, r.last_read_at as string);
+  const marked = new Set<string>();
+  for (const r of reads) {
+    if (r.dm_thread_id) {
+      readAt.set(r.dm_thread_id, r.last_read_at);
+      if (r.marked_unread) marked.add(r.dm_thread_id);
+    }
   }
 
   // Messages arrive newest-first, so the first row seen per thread is its
@@ -660,7 +724,7 @@ export async function listMyDmInbox(profileId: string): Promise<DmInboxEntry[]> 
       lastMessageBody: last?.body ?? "",
       lastMessageAt: (last?.created_at ?? t.created_at) as string,
       lastMessageSenderId: (last?.sender_id ?? null) as string | null,
-      unreadCount: unreadByThread.get(t.id) ?? 0,
+      unreadCount: Math.max(unreadByThread.get(t.id) ?? 0, marked.has(t.id) ? 1 : 0),
     };
   });
 }

@@ -15079,3 +15079,24 @@ button.home-attn:focus-visible { outline: 2px solid var(--tone); outline-offset:
   background: rgba(59, 120, 246, 0.1); border: 1px solid rgba(59, 120, 246, 0.2);
 }
 .mh-expand:active { background: rgba(59, 120, 246, 0.2); }
+
+/* Header Messages drop-down: per-row "Mark as unread / read" — shows on hover (always on touch). */
+.hm-row-toggle {
+  flex-shrink: 0;
+  align-self: center;
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin-left: 0.15rem;
+  border-radius: 999px;
+  color: var(--color-muted-foreground);
+  opacity: 0;
+  transition: opacity 0.12s ease, background-color 0.12s ease, color 0.12s ease;
+}
+.hm-row-toggle svg { width: 0.95rem; height: 0.95rem; }
+.hm-row:hover .hm-row-toggle,
+.hm-row[data-highlighted] .hm-row-toggle,
+.hm-row-toggle:focus-visible { opacity: 1; }
+.hm-row-toggle:hover { color: var(--color-foreground); background: color-mix(in oklab, var(--color-foreground) 10%, transparent); }
+@media (hover: none) { .hm-row-toggle { opacity: 1; } }
