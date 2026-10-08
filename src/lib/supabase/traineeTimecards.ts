@@ -468,8 +468,62 @@ export async function getTraineeReviewQueue(
  * the manager's own sign-out completing.
  */
 export async function getPendingTraineeReviewCount(managerProfileId: string): Promise<number> {
-  const queue = await getTraineeReviewQueue(managerProfileId);
-  return queue.length;
+  // Runs on every Time Out click, before anything is saved. The full queue
+  // loads every trainee day in the company plus the whole roster (~2.5 MB) —
+  // on a slow connection that made Time Out look dead (nothing on screen,
+  // nothing saved; Martin Gales, Oct 2026). So: answer "do I have any
+  // trainees at all?" with two tiny queries first (the common case is no),
+  // and never let this check hold a clock-out for more than a few seconds.
+  const check = async (): Promise<number> => {
+    if (!(await mightHaveTraineesToReview(managerProfileId))) return 0;
+    return (await getTraineeReviewQueue(managerProfileId)).length;
+  };
+  const timeout = new Promise<number>((resolve) =>
+    setTimeout(() => {
+      console.warn("Trainee review check took too long — letting this Time Out through.");
+      resolve(0);
+    }, CHECKOUT_REVIEW_CHECK_TIMEOUT_MS)
+  );
+  return Promise.race([check(), timeout]);
+}
+
+const CHECKOUT_REVIEW_CHECK_TIMEOUT_MS = 8000;
+
+/**
+ * Cheap pre-check for getPendingTraineeReviewCount: could this person be
+ * anyone's trainee reviewer? True when an active trainee lists them as
+ * manager (profiles.manager_name — what isCurrentTraineeManager goes by) or a
+ * pending trainee day is stamped with them (manager_id — the fallback when a
+ * trainee's manager_name is blank). Errs on the side of "maybe" (true) so the
+ * full check still runs whenever this can't tell.
+ */
+async function mightHaveTraineesToReview(profileId: string): Promise<boolean> {
+  try {
+    const { data: me, error: meErr } = await supabase.from("profiles").select("display_name").eq("id", profileId).maybeSingle();
+    if (meErr) return true;
+    const name = ((me?.display_name as string | null) ?? "").trim();
+    const [trainees, stamped] = await Promise.all([
+      name
+        ? supabase
+            .from("profiles")
+            .select("id", { count: "exact", head: true })
+            .eq("employment_type", "trainee")
+            .eq("is_active", true)
+            // Case-insensitive "contains" (LIKE wildcards in the name escaped) —
+            // looser than the real match on purpose; a near-miss just runs the full check.
+            .ilike("manager_name", `%${name.replace(/[\\%_]/g, (c) => `\\${c}`)}%`)
+        : Promise.resolve({ count: 0, error: null }),
+      supabase
+        .from("trainee_timecard_entries")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "pending")
+        .eq("manager_id", profileId),
+    ]);
+    if (trainees.error || stamped.error) return true;
+    return (trainees.count ?? 0) > 0 || (stamped.count ?? 0) > 0;
+  } catch {
+    return true;
+  }
 }
 
 /**

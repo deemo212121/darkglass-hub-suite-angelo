@@ -31,6 +31,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { X, Clock3 } from "lucide-react";
+import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import { ClockInCodePrompt } from "@/components/ClockInCodePrompt";
 import { isClockInCodeRequired } from "@/lib/supabase/clockInCodes";
@@ -70,6 +71,7 @@ export function TimeClockButtons() {
   const [scheduleTimezone, setScheduleTimezone] = useState<ScheduleTimezone>("CST");
   const [entry, setEntry] = useState<UITimeEntry>(EMPTY_ENTRY);
   const [saving, setSaving] = useState(false);
+  const [savingField, setSavingField] = useState<PunchField | null>(null);
   // Time In/Meal In/Meal Out/Time Out sit right next to each other — `saving`
   // alone only disables the row for the duration of the network round-trip,
   // which on a fast connection can be well under a second, so two adjacent
@@ -251,8 +253,15 @@ export function TimeClockButtons() {
   // server-verified calendar date. If getServerNow() fails, the punch is
   // NOT saved with a fallback local time — that would just re-open the
   // hole this exists to close — the employee sees an error and can retry.
+  const PUNCH_LABEL: Record<PunchField, string> = { checkIn: "Time In", checkOut: "Time Out", mealStart: "Meal In", mealEnd: "Meal Out" };
+
   const persistPunch = async (field: keyof Pick<UITimeEntry, "checkIn" | "checkOut" | "mealStart" | "mealEnd">) => {
     if (!profileId) return;
+    // Show "Saving…" on the clicked button straight away — the trainee check
+    // below used to run with nothing on screen, so a slow one looked like a
+    // dead button.
+    setSaving(true);
+    setSavingField(field);
     // Reviewing a trainee now takes priority over this viewer's own sign-
     // out completing — if they still have a trainee day pending, Time Out
     // itself is held (not saved) until every one of those is Approved or
@@ -263,7 +272,9 @@ export function TimeClockButtons() {
         const pendingCount = await getPendingTraineeReviewCount(profileId);
         if (pendingCount > 0) {
           window.dispatchEvent(new CustomEvent(SELF_CHECKED_OUT_EVENT));
-          alert(`You have ${pendingCount} trainee day${pendingCount === 1 ? "" : "s"} awaiting your review — resolve ${pendingCount === 1 ? "it" : "them"} before you can time out.`);
+          toast.error(`You have ${pendingCount} trainee day${pendingCount === 1 ? "" : "s"} awaiting your review — resolve ${pendingCount === 1 ? "it" : "them"} before you can time out.`);
+          setSaving(false);
+          setSavingField(null);
           return;
         }
       } catch (err) {
@@ -272,7 +283,6 @@ export function TimeClockButtons() {
         console.error("Failed to check pending trainee review before checkout:", err);
       }
     }
-    setSaving(true);
     try {
       const serverNow = await getServerNow();
       const workDate = zonedDateKey(serverNow, scheduleTimezone);
@@ -282,7 +292,7 @@ export function TimeClockButtons() {
       // computed from a stale day's entry under the new day's work_date.
       if (workDate !== loadedDateKeyRef.current) {
         loadToday(profileId);
-        alert("It's now a new day — your punch state was refreshed. Please try again.");
+        toast.error("It's now a new day — your punch state was refreshed. Please try again.");
         return;
       }
       const next = { ...entry, [field]: time };
@@ -297,15 +307,18 @@ export function TimeClockButtons() {
       // saved — see TraineeAttendanceReviewModal.tsx, which listens for this
       // to surface any pending trainee day this viewer can approve.
       if (field === "checkOut") window.dispatchEvent(new CustomEvent(SELF_CHECKED_OUT_EVENT));
+      toast.success(`${PUNCH_LABEL[field]} saved — ${fmtTime(time)}`);
     } catch (err) {
       console.error("Failed to save time punch:", err);
-      alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
+      // Put the button back (the optimistic setEntry above showed it as saved).
+      setEntry((prev) => ({ ...prev, [field]: "" }));
+      toast.error(`${PUNCH_LABEL[field]} wasn't saved: ${err instanceof Error ? err.message : "Unknown error"}. Please try again.`, { duration: 10000 });
     } finally {
       setSaving(false);
+      setSavingField(null);
     }
   };
 
-  const PUNCH_LABEL: Record<PunchField, string> = { checkIn: "Time In", checkOut: "Time Out", mealStart: "Meal In", mealEnd: "Meal Out" };
 
   // Self-correct an accidental punch — only reachable when canEditPunch says
   // this is the most-recently-made one (see its doc comment for the chain
@@ -487,7 +500,7 @@ export function TimeClockButtons() {
           title={onApprovedPtoToday ? "You have an approved PTO for today" : "Time In"}
           className={`${btnClass} text-green-300 hover:bg-green-500/15 ${blockedDim}`}
         >
-          {onApprovedPtoToday ? "On PTO" : "Time In"}
+          {onApprovedPtoToday ? "On PTO" : savingField === "checkIn" ? "Saving…" : "Time In"}
         </button>
       )}
       {mealEligible && (
@@ -501,7 +514,7 @@ export function TimeClockButtons() {
             title={onApprovedPtoToday ? "You have an approved PTO for today" : "Meal In"}
             className={`${btnClass} text-orange-300 hover:bg-orange-500/15 ${blockedDim}`}
           >
-            Meal In
+            {savingField === "mealStart" ? "Saving…" : "Meal In"}
           </button>
         )
       )}
@@ -516,7 +529,7 @@ export function TimeClockButtons() {
             title={onApprovedPtoToday ? "You have an approved PTO for today" : "Meal Out"}
             className={`${btnClass} text-orange-300 hover:bg-orange-500/15 ${blockedDim}`}
           >
-            Meal Out
+            {savingField === "mealEnd" ? "Saving…" : "Meal Out"}
           </button>
         )
       )}
@@ -530,7 +543,7 @@ export function TimeClockButtons() {
           title={onApprovedPtoToday ? "You have an approved PTO for today" : "Time Out"}
           className={`${btnClass} text-red-300 hover:bg-red-500/15 ${blockedDim}`}
         >
-          Time Out
+          {savingField === "checkOut" ? "Saving…" : "Time Out"}
         </button>
       )}
       {employmentType === "trainee" && traineeStatus && traineeStatus !== "approved" && (
