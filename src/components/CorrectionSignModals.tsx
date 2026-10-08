@@ -57,6 +57,8 @@ export function employeeInfoFor(correction: TimecardCorrectionRow, profiles: Min
 }
 
 interface SignModalBaseProps {
+  /** HR "Finalize" — the second review after "Additional Review Required": final sign-off, Approved only. */
+  finalize?: boolean;
   correction: TimecardCorrectionRow;
   companyId: string | null;
   profiles: MinimalCorrectionProfile[];
@@ -140,7 +142,7 @@ export function CorrectionManagerSignModal({
   );
 }
 
-export function CorrectionHrSignModal({ correction, companyId, profiles, reviewerId, reviewerName, onClose, onSigned }: SignModalBaseProps) {
+export function CorrectionHrSignModal({ correction, companyId, profiles, reviewerId, reviewerName, onClose, onSigned, finalize }: SignModalBaseProps) {
   const [receivedDate, setReceivedDate] = useState(new Date().toISOString().slice(0, 10));
   const [actionStatus, setActionStatus] = useState<"approved" | "additional_review_required">("approved");
   const [submitting, setSubmitting] = useState(false);
@@ -181,7 +183,7 @@ export function CorrectionHrSignModal({ correction, companyId, profiles, reviewe
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-slate-900 border border-white/10 rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
         <div className="flex items-start justify-between mb-4">
-          <h3 className="text-lg font-bold text-white">HR Department Use Only</h3>
+          <h3 className="text-lg font-bold text-white">{finalize ? "Final HR Review" : "HR Department Use Only"}</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white transition p-1"><X className="h-4 w-4" /></button>
         </div>
         <div className="space-y-3 mb-4">
@@ -195,9 +197,13 @@ export function CorrectionHrSignModal({ correction, companyId, profiles, reviewe
               <label className="flex items-center gap-2 text-sm text-slate-200">
                 <input type="radio" name="hrCorrectionActionStatus" checked={actionStatus === "approved"} onChange={() => setActionStatus("approved")} /> Approved
               </label>
-              <label className="flex items-center gap-2 text-sm text-slate-200">
-                <input type="radio" name="hrCorrectionActionStatus" checked={actionStatus === "additional_review_required"} onChange={() => setActionStatus("additional_review_required")} /> Additional Review Required
-              </label>
+              {finalize ? (
+                <p className="text-[11px] text-amber-300/90">Final review — this was marked Additional Review Required. Signing finalizes HR's sign-off as Approved. To turn it down instead, close this and use Reject.</p>
+              ) : (
+                <label className="flex items-center gap-2 text-sm text-slate-200">
+                  <input type="radio" name="hrCorrectionActionStatus" checked={actionStatus === "additional_review_required"} onChange={() => setActionStatus("additional_review_required")} /> Additional Review Required
+                </label>
+              )}
             </div>
             {actionStatus === "approved" && correction.hrStatus === "pending" && (
               <p className="text-[11px] text-slate-500 mt-1.5">Signing as Approved also casts your HR approval on this request.</p>
@@ -213,7 +219,7 @@ export function CorrectionHrSignModal({ correction, companyId, profiles, reviewe
         <div className="flex gap-3">
           <button type="button" onClick={handleSubmit} disabled={submitting} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-1.5">
             {submitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            {submitting ? "Submitting…" : "Confirm & Sign"}
+            {submitting ? "Submitting…" : finalize ? "Finalize & Sign" : "Confirm & Sign"}
           </button>
           <button onClick={onClose} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition font-semibold text-sm">Cancel</button>
         </div>

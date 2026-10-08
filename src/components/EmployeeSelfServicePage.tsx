@@ -27,9 +27,11 @@ import {
   sickYearWindow,
   sickRequestsInYear,
   workingDayCount,
+  setPtoAttachmentUrl,
   type PtoRequestRow,
   type PtoType,
 } from "@/lib/supabase/pto";
+import { uploadPtoRequestAttachment } from "@/lib/firebase/storage";
 import {
   getCompanyTimecardCorrections,
   createTimecardCorrection,
@@ -37,7 +39,8 @@ import {
   correctionShiftMinutes,
   formatShift,
   CORRECTION_MEAL_REQUIRED_AFTER_MINUTES,
-  validateTimecardCorrectionDate,
+  validateSelfCorrectionDate,
+  selfCorrectionEarliestDate,
   type TimecardCorrectionRow,
 } from "@/lib/supabase/timecardCorrections";
 import { zonedDateKey } from "@/lib/serverTime";
@@ -238,6 +241,11 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const correctionSigPad =useSignaturePad({ width: 400, height: 110, defaultName: displayName || "" });
   // Reused for both Sick Leave and Unpaid Leave (mutually exclusive modal states).
   const leaveSigPad = useSignaturePad({ width: 400, height: 110, defaultName: displayName || "" });
+  // Sick / Unpaid Leave: a photo or PDF as proof (e.g. a doctor's note) is required.
+  const [leaveProof, setLeaveProof] = useState<File | null>(null);
+  useEffect(() => {
+    if (!showModal) setLeaveProof(null);
+  }, [showModal]);
 
   // Load the caller's real attendance for the last 30 days from Supabase, and
   // flag days where they're missing a clock-in or clock-out so we can surface
@@ -591,6 +599,11 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             setSubmitting(false);
             return;
           }
+          if (!leaveProof) {
+            alert("Please attach a proof photo or PDF (e.g. a doctor's note).");
+            setSubmitting(false);
+            return;
+          }
           const sickSignatureDataUrl = leaveSigPad.toDataURL();
           if (!sickSignatureDataUrl) {
             alert("Please sign to acknowledge the information above is accurate before submitting.");
@@ -605,6 +618,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           const myProfile = companyProfiles.find((p) => p.id === myProfileId) ?? null;
           const managerProfile = myProfile ? await resolveTeamLeadOrManager(myProfile, companyProfiles) : null;
           const sickRequestId = crypto.randomUUID();
+          // Upload the proof first — if it fails, nothing has been submitted yet.
+          const sickProofUrl = await uploadPtoRequestAttachment(companyId, sickRequestId, leaveProof);
           {
             const { roleLabel: jobTitle } = getRoleDepartmentBreakdown(myProfile?.role ?? role);
             const { pdfUrl, employeeSignatureUrl } = await buildPtoSubmissionPdf({
@@ -638,6 +653,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
               employeeSignatureName: displayName || "",
               pdfUrl,
             });
+            await setPtoAttachmentUrl(sickRequestId, sickProofUrl, myProfileId);
           }
           // Same manager + HR (or fallback Admin) notification pattern as
           // vacation PTO — Sick Leave goes through the same approval pipeline,
@@ -683,6 +699,11 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             setSubmitting(false);
             return;
           }
+          if (!leaveProof) {
+            alert("Please attach a proof photo or PDF.");
+            setSubmitting(false);
+            return;
+          }
           const unpaidSignatureDataUrl = leaveSigPad.toDataURL();
           if (!unpaidSignatureDataUrl) {
             alert("Please sign to acknowledge the information above is accurate before submitting.");
@@ -697,6 +718,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           const myProfile = companyProfiles.find((p) => p.id === myProfileId) ?? null;
           const managerProfile = myProfile ? await resolveTeamLeadOrManager(myProfile, companyProfiles) : null;
           const unpaidRequestId = crypto.randomUUID();
+          // Upload the proof first — if it fails, nothing has been submitted yet.
+          const unpaidProofUrl = await uploadPtoRequestAttachment(companyId, unpaidRequestId, leaveProof);
           {
             const { roleLabel: jobTitle } = getRoleDepartmentBreakdown(myProfile?.role ?? role);
             const { pdfUrl, employeeSignatureUrl } = await buildPtoSubmissionPdf({
@@ -730,6 +753,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
               employeeSignatureName: displayName || "",
               pdfUrl,
             });
+            await setPtoAttachmentUrl(unpaidRequestId, unpaidProofUrl, myProfileId);
           }
           {
             const recipients = new Map<string, ProfileRow>();
@@ -759,8 +783,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             setSubmitting(false);
             return;
           }
-          // No future dates (same check createTimecardCorrection runs, here so it fails before anything else).
-          await validateTimecardCorrectionDate(myProfileId, formData.correctionDate);
+          // No future dates, and only the same day or by the next weekday (Friday until Monday).
+          await validateSelfCorrectionDate(myProfileId, formData.correctionDate);
           // Re-read the day's real punches at submit time for the "original"
           // times saved with the request (the 30-day attendance list misses
           // older dates).
@@ -1760,10 +1784,12 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           type="date"
                           title="Date"
                           max={zonedDateKey(new Date(), companyProfiles.find((p) => p.id === myProfileId)?.schedule_timezone === "EST" ? "EST" : "CST")}
+                          min={selfCorrectionEarliestDate(zonedDateKey(new Date(), companyProfiles.find((p) => p.id === myProfileId)?.schedule_timezone === "EST" ? "EST" : "CST"))}
                           value={formData.correctionDate}
                           onChange={(e) => setFormData({ ...formData, correctionDate: e.target.value })}
                           className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
                         />
+                        <p className="text-[11px] text-slate-500 mt-1">You can correct today, or a day up to the next weekday (Friday until Monday). Older days: contact HR.</p>
                         {formData.correctionDate && (
                           <p className="text-xs text-slate-500 mt-1">
                             {(() => {
@@ -1912,6 +1938,41 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       <div data-tour="ess-form-sign" className="mt-2">
                         <SignaturePadControls pad={correctionSigPad} />
                       </div>
+                    </div>
+                  )}
+                  {(modalType === "sick" || modalType === "unpaidLeave") && (
+                    <div>
+                      <label className="text-xs font-semibold text-white block mb-1">
+                        Proof (photo or PDF) <span className="text-red-400">*</span>
+                      </label>
+                      <p className="text-[11px] text-slate-400 mb-2">
+                        {modalType === "sick" ? "e.g. a doctor's note or medical certificate." : "A photo or document supporting this leave."}
+                      </p>
+                      <label className="flex cursor-pointer items-center gap-3 rounded border border-dashed border-white/20 bg-slate-800 px-3 py-2.5 text-sm text-slate-300 hover:border-blue-500">
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          className="hidden"
+                          onChange={(e) => setLeaveProof(e.target.files?.[0] ?? null)}
+                          disabled={submitting}
+                        />
+                        {leaveProof && leaveProof.type.startsWith("image/") ? (
+                          <img src={URL.createObjectURL(leaveProof)} alt="" className="h-10 w-10 rounded object-cover" />
+                        ) : (
+                          <FileText className="h-5 w-5 text-slate-400" />
+                        )}
+                        <span className="min-w-0 flex-1 truncate">{leaveProof ? leaveProof.name : "Choose a photo or PDF…"}</span>
+                        {leaveProof && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.preventDefault(); setLeaveProof(null); }}
+                            className="rounded p-1 text-slate-400 hover:bg-white/10 hover:text-white"
+                            aria-label="Remove proof"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        )}
+                      </label>
                     </div>
                   )}
                   {(modalType === "sick" || modalType === "unpaidLeave") && (

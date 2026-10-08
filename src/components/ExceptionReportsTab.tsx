@@ -12,7 +12,7 @@
  */
 import { CorrectionOverallBadge } from "@/components/CorrectionStageBadges";
 import { useEffect, useMemo, useState } from "react";
-import { Download, Loader2, Paperclip, RefreshCw, XCircle } from "lucide-react";
+import { CheckCircle2, Download, Loader2, Paperclip, RefreshCw, XCircle } from "lucide-react";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import { useAuth } from "@/lib/auth";
@@ -106,6 +106,20 @@ function PaperworkStatus({ status, badges }: { status: string; badges: Paperwork
   );
 }
 
+/** "Finalize" — HR marked the paperwork "Additional Review Required"; this is the final HR sign-off (Approved), or use Reject. */
+function ReviewAgainButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="Additional review done — finalize HR's sign-off"
+      className="px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-xs font-semibold transition inline-flex items-center gap-1 whitespace-nowrap"
+    >
+      <CheckCircle2 className="h-3 w-3" /> Finalize
+    </button>
+  );
+}
+
 export function ExceptionReportsTab() {
   const { uid, role, extraRoles, displayName, companyId } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
@@ -170,6 +184,8 @@ export function ExceptionReportsTab() {
   const [signingCorrectionHr, setSigningCorrectionHr] = useState<TimecardCorrectionRow | null>(null);
   const [signingTicketHr, setSigningTicketHr] = useState<EmployeeRequestRow | null>(null);
   const [signingPtoHr, setSigningPtoHr] = useState<PtoRequestRow | null>(null);
+  // True when the open HR sign modal was opened from "Finalize" (second review).
+  const [finalizing, setFinalizing] = useState(false);
 
   const handleRegenerate = async (c: TimecardCorrectionRow) => {
     if (!companyId) return;
@@ -548,11 +564,14 @@ export function ExceptionReportsTab() {
                       {isFullRequestsAdmin && c.hrPaperworkStatus === "pending" && (
                         <button
                           type="button"
-                          onClick={() => setSigningCorrectionHr(c)}
+                          onClick={() => { setFinalizing(false); setSigningCorrectionHr(c); }}
                           className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs font-semibold transition"
                         >
                           Sign HR
                         </button>
+                      )}
+                      {isFullRequestsAdmin && c.hrPaperworkStatus === "additional_review_required" && c.status !== "rejected" && (
+                        <ReviewAgainButton onClick={() => { setFinalizing(true); setSigningCorrectionHr(c); }} />
                       )}
                       {isFullRequestsAdmin && c.status !== "rejected" && (
                         <button
@@ -681,11 +700,14 @@ export function ExceptionReportsTab() {
                       {isFullRequestsAdmin && r.hrPaperworkStatus === "pending" && (
                         <button
                           type="button"
-                          onClick={() => setSigningTicketHr(r)}
+                          onClick={() => { setFinalizing(false); setSigningTicketHr(r); }}
                           className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs font-semibold transition"
                         >
                           Sign HR
                         </button>
+                      )}
+                      {isFullRequestsAdmin && r.hrPaperworkStatus === "additional_review_required" && r.status !== "rejected" && (
+                        <ReviewAgainButton onClick={() => { setFinalizing(true); setSigningTicketHr(r); }} />
                       )}
                       {isFullRequestsAdmin && r.status !== "rejected" && (
                         <button
@@ -714,15 +736,16 @@ export function ExceptionReportsTab() {
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Type</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Dates</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Exception Type</th>
+              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Photos</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Paperwork Status</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">PDF</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400"><Loader2 className="h-4 w-4 animate-spin inline" /></td></tr>
+              <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400"><Loader2 className="h-4 w-4 animate-spin inline" /></td></tr>
             ) : slUlReports.length === 0 ? (
-              <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">No exception report PDFs yet.</td></tr>
+              <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">No exception report PDFs yet.</td></tr>
             ) : slUlReports.map((r) => {
               const mgrBadge = managerBadge(r);
               const hrStatusBadge = hrBadge(r, false);
@@ -743,6 +766,24 @@ export function ExceptionReportsTab() {
                   <td className="px-3 py-3 text-slate-300">{PTO_LEAVE_TYPE_LABELS[r.ptoType] || r.ptoType}</td>
                   <td className="px-3 py-3 text-slate-300">{r.startDate === r.endDate ? r.startDate : `${r.startDate} – ${r.endDate}`}</td>
                   <td className="px-3 py-3 text-slate-300">{r.exceptionType ? EXCEPTION_TYPE_LABELS[r.exceptionType] : "—"}</td>
+                  <td className="px-3 py-3">
+                    {r.attachmentPath ? (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewing({ url: r.attachmentPath!, title: `${profileName(r.profileId)} — proof (${r.startDate === r.endDate ? r.startDate : `${r.startDate} – ${r.endDate}`})` })}
+                        title="View proof"
+                        className="block h-10 w-10 overflow-hidden rounded border border-white/10 bg-slate-800 hover:border-blue-500 transition"
+                      >
+                        {/\.pdf(\?|$)/i.test(r.attachmentPath) ? (
+                          <span className="flex h-full w-full items-center justify-center text-slate-400"><Paperclip className="h-4 w-4" /></span>
+                        ) : (
+                          <img src={r.attachmentPath} alt="Proof" className="h-full w-full object-cover" />
+                        )}
+                      </button>
+                    ) : (
+                      <span className="text-slate-500">—</span>
+                    )}
+                  </td>
                   <td className="px-3 py-3">
                     <PaperworkStatus status={r.status} badges={[{ ...mgrBadge, stage: r.managerStatus }, { ...hrStatusBadge, stage: r.hrStatus }, accountingBadge(r.accountingStatus)]} />
                   </td>
@@ -767,11 +808,14 @@ export function ExceptionReportsTab() {
                       {isFullRequestsAdmin && r.hrPaperworkStatus === "pending" && (
                         <button
                           type="button"
-                          onClick={() => setSigningPtoHr(r)}
+                          onClick={() => { setFinalizing(false); setSigningPtoHr(r); }}
                           className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs font-semibold transition"
                         >
                           Sign HR
                         </button>
+                      )}
+                      {isFullRequestsAdmin && r.hrPaperworkStatus === "additional_review_required" && r.status !== "denied" && r.status !== "cancelled" && (
+                        <ReviewAgainButton onClick={() => { setFinalizing(true); setSigningPtoHr(r); }} />
                       )}
                       {isFullRequestsAdmin && r.status !== "denied" && r.status !== "cancelled" && (
                         <button
@@ -804,6 +848,7 @@ export function ExceptionReportsTab() {
 
       {signingCorrectionHr && (
         <CorrectionHrSignModal
+          finalize={finalizing}
           correction={signingCorrectionHr}
           companyId={companyId}
           profiles={profiles}
@@ -818,6 +863,7 @@ export function ExceptionReportsTab() {
       )}
       {signingTicketHr && (
         <TicketDisputeHrSignModal
+          finalize={finalizing}
           request={signingTicketHr}
           companyId={companyId}
           profiles={profiles}
@@ -832,6 +878,7 @@ export function ExceptionReportsTab() {
       )}
       {signingPtoHr && (
         <PtoHrSignModal
+          finalize={finalizing}
           request={signingPtoHr}
           companyId={companyId}
           profiles={profiles}

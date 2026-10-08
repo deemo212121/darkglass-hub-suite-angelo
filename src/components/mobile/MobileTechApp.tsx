@@ -113,7 +113,7 @@ import { TicketPhotos } from "@/components/TicketPhotos";
 import { MessageBody } from "@/components/MessageBody";
 import { LocationSharingBadge } from "@/components/LocationSharingBadge";
 import { OfflineQueueBadge } from "@/components/OfflineQueueBadge";
-import { uploadTicketSignature, uploadPayrollDisputeAttachment, uploadTicketTimeDisputeAttachment } from "@/lib/firebase/storage";
+import { uploadTicketSignature, uploadPayrollDisputeAttachment, uploadTicketTimeDisputeAttachment, uploadPtoRequestAttachment } from "@/lib/firebase/storage";
 import { getTechnicianTodayRoute, type TechnicianRouteStop } from "@/lib/supabase/technicianWhereabouts";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import {
@@ -134,13 +134,15 @@ import { getModelResources, saveModelResources, type ModelResources } from "@/li
 import { getUndismissedMobilePopupAlerts, dismissTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
 import { createItTicket, getItTickets, type ItTicketRow, type ItTicketPriority } from "@/lib/supabase/itTickets";
 import { createEmployeeRequest, getCompanyEmployeeRequests, updateEmployeeRequestStatus, canReviewTicketDispute, notifyRequestReviewers, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
-import { createPtoRequest, getCompanyPtoRequests, canReviewPtoStage, reviewPtoStage, type PtoType, type PtoRequestRow } from "@/lib/supabase/pto";
+import { createPtoRequest, getCompanyPtoRequests, canReviewPtoStage, reviewPtoStage, setPtoAttachmentUrl, type PtoType, type PtoRequestRow } from "@/lib/supabase/pto";
 import {
   createTimecardCorrection,
   getCompanyTimecardCorrections,
   canReviewCorrectionStage,
   reviewCorrectionStage,
   validateCorrectionTimes,
+  validateSelfCorrectionDate,
+  selfCorrectionEarliestDate,
   correctionShiftMinutes,
   formatShift,
   CORRECTION_MEAL_REQUIRED_AFTER_MINUTES,
@@ -8841,6 +8843,9 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
   const [employeeIdOverride, setEmployeeIdOverride] = useState("");
   const sigPad = useSignaturePad({ width: 400, height: 110, defaultName: userName || "" });
   const needsReport = leaveType !== "Vacation";
+  // Sick / Unpaid also need a proof photo or PDF (e.g. a doctor's note) — same as desktop.
+  const needsProof = leaveType === "Sick" || leaveType === "Unpaid";
+  const [proof, setProof] = useState<File | null>(null);
 
   useEffect(() => {
     getCompanyUsers().then(setCompanyProfiles).catch((e) => console.error("time off: load users failed", e));
@@ -8898,6 +8903,10 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
         setMsg("Your company couldn't be resolved yet — try again in a moment.");
         return;
       }
+      if (needsProof && !proof) {
+        setMsg(leaveType === "Sick" ? "Please attach a proof photo or PDF (e.g. a doctor's note)." : "Please attach a proof photo or PDF.");
+        return;
+      }
     }
     setSubmitting(true);
     setMsg("");
@@ -8909,6 +8918,8 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
       const reason = `Branch: ${branch} | Position: ${ROLE_LABELS[position] || position || "N/A"} - ${details.trim()}`;
       if (needsReport && signatureDataUrl && companyId) {
         const requestId = crypto.randomUUID();
+        // Upload the proof first — if it fails, nothing has been submitted yet.
+        const proofUrl = needsProof && proof ? await uploadPtoRequestAttachment(companyId, requestId, proof) : null;
         const { roleLabel: jobTitle } = getRoleDepartmentBreakdown(myProfile?.role ?? role);
         const { pdfUrl, employeeSignatureUrl } = await buildPtoSubmissionPdf({
           requestId,
@@ -8941,6 +8952,7 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
           employeeSignatureName: userName || "",
           pdfUrl,
         });
+        if (proofUrl) await setPtoAttachmentUrl(requestId, proofUrl, profileId);
       } else {
         await createPtoRequest({
           profileId,
@@ -8982,6 +8994,7 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
       setExceptionType("missed_workday");
       setOtherDescription("");
       setEmployeeIdOverride("");
+      setProof(null);
       sigPad.clear();
       setMsg("Request submitted.");
       await load();
@@ -9067,6 +9080,40 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
             ))}
             {exceptionType === "other" && (
               <input className="mtech-bill-input full" type="text" value={otherDescription} onChange={(e) => setOtherDescription(e.target.value)} placeholder="Describe the exception…" />
+            )}
+
+            {needsProof && (
+              <>
+                <div className="mtech-section-title">Proof (photo or PDF) *</div>
+                <p className="mtech-muted" style={{ padding: "0 0 0.4rem", color: "#94a3b8" }}>
+                  {leaveType === "Sick" ? "e.g. a doctor's note or medical certificate." : "A photo or document supporting this leave."}
+                </p>
+                <label
+                  className="mtech-bill-input full"
+                  style={{ display: "flex", alignItems: "center", gap: "0.6rem", cursor: "pointer", borderStyle: "dashed" }}
+                >
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    style={{ display: "none" }}
+                    onChange={(e) => setProof(e.target.files?.[0] ?? null)}
+                    disabled={submitting}
+                  />
+                  {proof && proof.type.startsWith("image/") ? (
+                    <img src={URL.createObjectURL(proof)} alt="" style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 6 }} />
+                  ) : (
+                    <span aria-hidden="true">📎</span>
+                  )}
+                  <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {proof ? proof.name : "Take a photo or choose a file…"}
+                  </span>
+                  {proof && (
+                    <button type="button" onClick={(e) => { e.preventDefault(); setProof(null); }} aria-label="Remove proof" style={{ padding: "0.2rem 0.4rem" }}>
+                      ✕
+                    </button>
+                  )}
+                </label>
+              </>
             )}
 
             <div className="mtech-section-title">Employee Signature — I confirm the information above is accurate and truthful.</div>
@@ -9746,6 +9793,14 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
       setMsg("Select the date you're correcting.");
       return;
     }
+    // Same day, or by the next weekday (Friday until Monday) — checked against the server clock.
+    try {
+      await validateSelfCorrectionDate(profileId, correctionDate);
+    } catch (err) {
+      setMsgIsError(true);
+      setMsg(err instanceof Error ? err.message : "That date can't be corrected.");
+      return;
+    }
     const timesError = validateCorrectionTimes({
       checkIn: correctedCheckIn,
       checkOut: correctedCheckOut,
@@ -9889,7 +9944,15 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
 
       <div className="mtech-panel" style={{ marginTop: 0 }}>
         <div className="mtech-section-title" style={{ marginTop: 0 }}>Date</div>
-        <input className="mtech-bill-input full" type="date" value={correctionDate} onChange={(e) => setCorrectionDate(e.target.value)} onClick={openNativePicker} />
+        <input
+          className="mtech-bill-input full"
+          type="date"
+          value={correctionDate}
+          max={zonedDateKey(new Date(), "CST")}
+          min={selfCorrectionEarliestDate(zonedDateKey(new Date(), "CST"))}
+          onChange={(e) => setCorrectionDate(e.target.value)}
+          onClick={openNativePicker}
+        />
 
         <div className="mtech-section-title">Corrected Check In <span style={{ color: "#f87171" }}>*</span></div>
         <input className="mtech-bill-input full" type="time" value={correctedCheckIn} onChange={(e) => setCorrectedCheckIn(e.target.value)} onClick={openNativePicker} />

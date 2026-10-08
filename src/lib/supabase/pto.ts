@@ -408,6 +408,26 @@ export async function uploadPtoAttachment(requestId: string, companyId: string, 
 }
 
 /**
+ * Records an already-uploaded proof (uploadPtoRequestAttachment) on a request
+ * — Sick / Unpaid Leave submissions upload the photo BEFORE creating the
+ * request (so a failed upload never leaves a request without its required
+ * proof), then stamp it here.
+ */
+export async function setPtoAttachmentUrl(requestId: string, url: string, addedBy?: string | null): Promise<void> {
+  const { error } = await supabase
+    .from("pto_requests")
+    .update({
+      attachment_path: url,
+      attachment_added_by: addedBy ?? null,
+      attachment_added_at: new Date().toISOString(),
+      attachment_removed_by: null,
+      attachment_removed_at: null,
+    })
+    .eq("id", requestId);
+  if (error) throw new Error(error.message);
+}
+
+/**
  * Removes a PTO request's attachment — deletes the Firebase Storage file and
  * clears attachment_path. `removedBy` (the remover's profile id) is stamped
  * as attachment_removed_by so "Removed by X" can still show even with no

@@ -432,6 +432,48 @@ export async function validateTimecardCorrectionDate(profileId: string, workDate
   }
 }
 
+/** YYYY-MM-DD plus `days`, calendar-only (no timezone drift). */
+function shiftIsoDay(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  return dt.toISOString().slice(0, 10);
+}
+/** The first Mon–Fri strictly after `iso`. */
+function nextWeekday(iso: string): string {
+  let d = shiftIsoDay(iso, 1);
+  while ([0, 6].includes(new Date(d + "T00:00:00Z").getUTCDay())) d = shiftIsoDay(d, 1);
+  return d;
+}
+
+/**
+ * Employee self-service window: a day can be corrected on the day itself or
+ * up to the end of the NEXT WEEKDAY — Friday until Monday (Sat/Sun count),
+ * Monday until Tuesday, a Saturday/Sunday until Monday. Returns the earliest
+ * work date that's still correctable when it's `today`.
+ * (HR/Admin filing on someone's behalf isn't limited by this.)
+ */
+export function selfCorrectionEarliestDate(today: string): string {
+  let earliest = today;
+  for (let d = shiftIsoDay(today, -1); nextWeekday(d) >= today; d = shiftIsoDay(d, -1)) earliest = d;
+  return earliest;
+}
+
+/** Self-service submit check (desktop Employee Self Service + mobile): no future dates, and within the window above. */
+export async function validateSelfCorrectionDate(profileId: string, workDate: string): Promise<void> {
+  const { data: profile, error } = await supabase.from("profiles").select("schedule_timezone").eq("id", profileId).single();
+  if (error) throw error;
+  const today = zonedDateKey(await getServerNow(), profile.schedule_timezone === "EST" ? "EST" : "CST");
+  if (workDate > today) {
+    throw new Error("Time correction requests cannot be submitted for future dates. Choose today or an earlier date.");
+  }
+  const earliest = selfCorrectionEarliestDate(today);
+  if (workDate < earliest) {
+    throw new Error(
+      `That day can no longer be corrected here. A day can be corrected on the same day or by the next weekday (Friday until Monday), so the earliest date you can pick today is ${earliest}. Contact HR for older days.`
+    );
+  }
+}
+
 export async function createTimecardCorrection(input: {
   id: string;
   profileId: string;
