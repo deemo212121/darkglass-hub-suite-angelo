@@ -13,10 +13,11 @@
  * Clicking a name opens that employee's last 14 days of punches.
  */
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, Loader2, Pencil, RefreshCw, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Loader2, Pencil, RefreshCw, RotateCcw, X } from "lucide-react";
+import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
-import { getProfileIdByFirebaseUid, getCompanyTimecardEntries, getEntryForDate, saveEntry, appendEntryNote, addDaysISO, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
+import { getProfileIdByFirebaseUid, getCompanyTimecardEntries, getEntryForDate, saveEntry, deleteEntry, appendEntryNote, addDaysISO, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getCompanyTimecardCorrections, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { getCompanyPtoRequests, type PtoRequestRow, type PtoType } from "@/lib/supabase/pto";
 import { getAttendanceNotes, upsertAttendanceNote, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
@@ -156,6 +157,9 @@ export function EmployeeAttendanceStatusTab() {
   const [draft, setDraft] = useState({ checkIn: "", mealStart: "", mealEnd: "", checkOut: "" });
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  // "Reset day": which day is asking "Reset? Yes / No", and which one is being cleared.
+  const [resetConfirmDay, setResetConfirmDay] = useState<string | null>(null);
+  const [resettingDay, setResettingDay] = useState<string | null>(null);
   const today = todayISO();
   // End of the range; the single-day view is startDate === date.
   const [date, setDate] = useState(today);
@@ -326,6 +330,32 @@ export function EmployeeAttendanceStatusTab() {
       setEditError(err instanceof Error ? err.message : "Failed to save.");
     } finally {
       setSavingEdit(false);
+    }
+  };
+
+  /**
+   * HR "Reset day": removes the day's timecard row entirely, so Time In, Meal
+   * and Time Out all go back to "—" as if nothing was ever punched (also
+   * clears "Clocked in by" / "Corrected by"). Notes in the Notes column live in
+   * attendance_notes and are kept.
+   */
+  const resetDay = async (profileId: string, day: string) => {
+    setResetConfirmDay(null);
+    setResettingDay(day);
+    try {
+      await deleteEntry(profileId, day);
+      const fresh = await getCompanyTimecardEntries(rangeStart, date);
+      setEntries(fresh);
+      // A delete that RLS refuses reports no error — check the row is really gone.
+      if (fresh.some((x) => x.profileId === profileId && x.workDate === day)) {
+        toast.error("Couldn't reset this day — you may not have permission.");
+      } else {
+        toast.success(`${fmtDay(day)} reset — no punches.`);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't reset this day.");
+    } finally {
+      setResettingDay(null);
     }
   };
 
@@ -720,12 +750,36 @@ export function EmployeeAttendanceStatusTab() {
                                 {reviewButton(p.id, dayStatus, day)}
                               </td><td className="px-3 py-2">{notesCell(p.id, day)}</td>
                               {canEditPunches && (
-                                <td className="px-2 py-2">
-                                  {day <= today && (
-                                    <button type="button" onClick={() => startEdit(day, e)} disabled={editingDay !== null} title="Edit times" className="p-1.5 rounded hover:bg-white/10 text-slate-400 hover:text-white disabled:opacity-30">
-                                      <Pencil className="h-3.5 w-3.5" />
-                                    </button>
-                                  )}
+                                <td className="px-2 py-2 whitespace-nowrap">
+                                  {day <= today && resetConfirmDay === day ? (
+                                    <span className="inline-flex items-center gap-1 rounded bg-rose-500/15 px-1.5 py-1 text-[11px] font-semibold text-rose-200">
+                                      Reset all punches?
+                                      <button type="button" onClick={() => void resetDay(p.id, day)} className="rounded bg-rose-600 px-1.5 py-0.5 text-white hover:bg-rose-700">
+                                        Yes
+                                      </button>
+                                      <button type="button" onClick={() => setResetConfirmDay(null)} className="rounded px-1.5 py-0.5 hover:bg-white/10">
+                                        No
+                                      </button>
+                                    </span>
+                                  ) : day <= today ? (
+                                    <>
+                                      <button type="button" onClick={() => startEdit(day, e)} disabled={editingDay !== null} title="Edit times" className="p-1.5 rounded hover:bg-white/10 text-slate-400 hover:text-white disabled:opacity-30">
+                                        <Pencil className="h-3.5 w-3.5" />
+                                      </button>
+                                      {e && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setResetConfirmDay(day)}
+                                          disabled={editingDay !== null || resettingDay !== null}
+                                          title="Reset day — clear Time In, Meal and Time Out"
+                                          aria-label={`Reset ${fmtDay(day)}`}
+                                          className="ml-0.5 p-1.5 rounded hover:bg-rose-500/15 text-slate-400 hover:text-rose-300 disabled:opacity-30"
+                                        >
+                                          {resettingDay === day ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                                        </button>
+                                      )}
+                                    </>
+                                  ) : null}
                                 </td>
                               )}
                             </tr>
