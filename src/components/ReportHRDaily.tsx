@@ -2358,6 +2358,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleSignAsHr = (type: SignableDocumentType, doc: SignableDocument) => {
     if (type === "w4") handleOpenW4EmployerDialog(doc);
     else if (type === "i9") handleOpenI9Section2(doc);
+    else if (type === "confidentiality_noncompete_agreement") handleOpenConfidentialityNonCompeteAgreementEmployerDialog(doc);
     else setManagerReviewDoc(doc);
   };
   // Which form types already have a real NEW-AUTOMATION document on file
@@ -2457,9 +2458,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
     const reviewStatus = getDocumentReviewStatus(type, doc);
     const statusText =
-      reviewStatus === "done" ? "Signed" : reviewStatus === "awaiting_hr" ? "Awaiting HR review" : reviewStatus === "awaiting_employee" ? "Awaiting employee signature" : "Not sent";
+      reviewStatus === "done" ? "Signed" : reviewStatus === "awaiting_hr" ? "Awaiting HR review" : reviewStatus === "awaiting_employee" ? "Awaiting employee signature" : reviewStatus === "outdated" ? "Needs new version" : "Not sent";
     const statusColor =
-      reviewStatus === "done" ? "text-emerald-400" : reviewStatus === "awaiting_hr" ? "text-sky-400" : reviewStatus === "awaiting_employee" ? "text-amber-400" : "text-slate-600";
+      reviewStatus === "done" ? "text-emerald-400" : reviewStatus === "awaiting_hr" ? "text-sky-400" : reviewStatus === "awaiting_employee" || reviewStatus === "outdated" ? "text-amber-400" : "text-slate-600";
     return { doc, profileId, reviewStatus, statusText, statusColor };
   };
   // "Awaiting employee signature" — nudge with a DM to the same fill link,

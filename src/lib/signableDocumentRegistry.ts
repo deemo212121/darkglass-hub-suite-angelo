@@ -197,7 +197,33 @@ export const DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE = new Set<SignableDocum
   "master_ph_contractor_agreement",
   "master_w2_executive_agreement",
   "visit_exception_report",
+  // Like the other Master Agreements: done once the employer countersigns.
+  "confidentiality_noncompete_agreement",
 ]);
+
+/**
+ * Master Confidentiality agreement wording now in use (see
+ * confidentialityNonCompeteAgreementFormTemplate.ts, which re-exports this
+ * as CNC_CURRENT_TEMPLATE_VERSION). Kept here, dependency-free, because the
+ * checklist status below needs it too.
+ */
+export const CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION = 2;
+
+/**
+ * Signed, but in an older wording than the one in use — a Master
+ * Confidentiality agreement signed before version 2 (the "…Non-Compete…"
+ * text, including the paper copies). Still on file, but the person needs to
+ * sign the new version, so the checklist shows "Needs new version" and lets
+ * HR send it.
+ */
+export function isOutdatedDocument(doc: { documentType?: string; status: SignableDocumentStatus; formData?: Record<string, any> } | undefined): boolean {
+  return (
+    !!doc &&
+    doc.documentType === "confidentiality_noncompete_agreement" &&
+    (doc.status === "signed" || doc.status === "confirmed") &&
+    !(Number(doc.formData?.templateVersion) >= CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION)
+  );
+}
 
 /**
  * Form W-4/I-9/Direct Deposit Authorization/W-8BEN each have exactly one
@@ -261,13 +287,15 @@ export const SHARED_OLD_NEW_AUTOMATION_TYPES = new Set<SignableDocumentType>(["w
  * view) and technicianFormStatus.ts (a frozen technician's own "what do I
  * still need to do" popup) so both agree on what counts as done.
  */
-export type DocumentReviewStatus = "not_sent" | "awaiting_employee" | "awaiting_hr" | "done";
+export type DocumentReviewStatus = "not_sent" | "awaiting_employee" | "awaiting_hr" | "done" | "outdated";
 
 export function getDocumentReviewStatus(
   type: SignableDocumentType,
-  doc: { status: SignableDocumentStatus; recipientSlot?: string } | undefined
+  doc: { documentType?: string; status: SignableDocumentStatus; recipientSlot?: string; formData?: Record<string, any> } | undefined
 ): DocumentReviewStatus {
   if (!doc || doc.status === "cancelled") return "not_sent";
+  // "outdated" = signed in an old wording; the new version hasn't been sent yet (see isOutdatedDocument).
+  if (isOutdatedDocument({ documentType: type, status: doc.status, formData: doc.formData })) return "outdated";
   if (doc.status === "confirmed") return "done";
   if (doc.status === "signed") {
     return DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE.has(type) ? "awaiting_hr" : "done";
@@ -305,12 +333,15 @@ const STATUS_RANK: Record<SignableDocumentStatus, number> = {
  * moment a second copy got sent). Best status wins outright; only when two
  * rows tie on status does the newer one win, purely for determinism.
  */
-export function pickAuthoritativeDocument<T extends { status: SignableDocumentStatus; createdAt: string }>(
+export function pickAuthoritativeDocument<T extends { status: SignableDocumentStatus; createdAt: string; documentType?: string; formData?: Record<string, any> }>(
   docs: T[]
 ): T | undefined {
   if (docs.length === 0) return undefined;
+  // An agreement signed in an old wording ranks just above cancelled, so the
+  // new version — even one still waiting for a signature — is what counts.
+  const rank = (d: T) => (isOutdatedDocument(d) ? 0.5 : STATUS_RANK[d.status]);
   return docs.reduce((best, d) => {
-    const rankDiff = STATUS_RANK[d.status] - STATUS_RANK[best.status];
+    const rankDiff = rank(d) - rank(best);
     if (rankDiff > 0) return d;
     if (rankDiff < 0) return best;
     return d.createdAt > best.createdAt ? d : best;

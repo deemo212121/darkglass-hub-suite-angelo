@@ -136,16 +136,16 @@ export async function getExistingActiveDocumentTypes(
 export async function getExistingActiveDocuments(
   recipientId: string,
   types: SignableDocumentType[]
-): Promise<{ documentType: SignableDocumentType; formData: Record<string, any> }[]> {
+): Promise<{ documentType: SignableDocumentType; status: SignableDocumentStatus; formData: Record<string, any> }[]> {
   if (types.length === 0) return [];
   const { data, error } = await supabase
     .from("hr_signable_documents")
-    .select("document_type, form_data")
+    .select("document_type, status, form_data")
     .eq("recipient_id", recipientId)
     .in("document_type", types)
     .neq("status", "cancelled");
   if (error) throw new Error(error.message);
-  return (data ?? []).map((r: any) => ({ documentType: r.document_type as SignableDocumentType, formData: r.form_data ?? {} }));
+  return (data ?? []).map((r: any) => ({ documentType: r.document_type as SignableDocumentType, status: r.status as SignableDocumentStatus, formData: r.form_data ?? {} }));
 }
 
 export async function getSignableDocument(id: string): Promise<SignableDocument | null> {

@@ -16,6 +16,7 @@
  */
 
 import { captureHtmlPagesToPdfBlob } from "./pdfCapture";
+import { CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION } from "./signableDocumentRegistry";
 
 export interface ConfidentialityNonCompeteAgreementFormData {
   /** The employee's profile id — not shown on the document, carried along for lookups. */
@@ -43,7 +44,7 @@ export interface ConfidentialityNonCompeteAgreementFormData {
 }
 
 /** Version 2 (2026-10-09): "Master Confidentiality, Non-Solicitation, and Affirmative Duty Agreement" — no non-compete, 1-year restrictions, no residence line. */
-export const CNC_CURRENT_TEMPLATE_VERSION = 2;
+export const CNC_CURRENT_TEMPLATE_VERSION = CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION;
 
 /** The full title for a document's wording version. */
 export function confidentialityAgreementTitle(version: number | undefined): string {
