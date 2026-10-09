@@ -11,8 +11,8 @@
  * CorrectionsTab.tsx right beside it in Absent List.
  */
 import { CorrectionOverallBadge } from "@/components/CorrectionStageBadges";
-import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Download, Loader2, Paperclip, RefreshCw, XCircle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CheckCircle2, Download, ImagePlus, Loader2, Paperclip, RefreshCw, XCircle } from "lucide-react";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import { useAuth } from "@/lib/auth";
@@ -22,7 +22,7 @@ import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/c
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCompanyTimecardCorrections, updateCorrectionPdfUrl, rejectCorrectionAsHr, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { getCompanyEmployeeRequests, updateEmployeeRequestPdfUrl, updateEmployeeRequestStatus, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
-import { getCompanyPtoRequests, updatePtoPdfUrl, reviewPtoStage, type PtoRequestRow } from "@/lib/supabase/pto";
+import { getCompanyPtoRequests, updatePtoPdfUrl, reviewPtoStage, uploadPtoAttachment, type PtoRequestRow } from "@/lib/supabase/pto";
 import { createNotification } from "@/lib/supabase/notifications";
 import { EXCEPTION_TYPE_LABELS, correctionIssueLabel, correctionIssueKey, correctionIssueOptions } from "@/lib/exceptionVisitReportTemplate";
 import { TICKET_DISPUTE_EXCEPTION_TYPE_LABELS } from "@/lib/ticketDisputeReportTemplate";
@@ -227,6 +227,39 @@ export function ExceptionReportsTab() {
       alert(err instanceof Error ? err.message : "Failed to reject the correction.");
     } finally {
       setRejectingId(null);
+    }
+  };
+
+  // HR "Add Photo" on an SL-UL row — one hidden file input, pointed at whichever row was clicked.
+  const proofInputRef = useRef<HTMLInputElement>(null);
+  const [proofTarget, setProofTarget] = useState<PtoRequestRow | null>(null);
+  const [uploadingProofId, setUploadingProofId] = useState<string | null>(null);
+  const pickProof = (r: PtoRequestRow) => {
+    setProofTarget(r);
+    proofInputRef.current?.click();
+  };
+  const handleProofChosen = async (file: File | undefined) => {
+    const r = proofTarget;
+    if (proofInputRef.current) proofInputRef.current.value = "";
+    if (!file || !r || !companyId) return;
+    setUploadingProofId(r.id);
+    try {
+      await uploadPtoAttachment(r.id, companyId, file, myProfileId);
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: displayName || "HR",
+        action: "pto_attachment_added",
+        targetType: "pto_request",
+        targetId: r.id,
+        targetLabel: `${profileName(r.profileId)} (${r.startDate === r.endDate ? r.startDate : `${r.startDate} – ${r.endDate}`})`,
+        details: { source: "exception-reports" },
+      });
+      await load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Couldn't upload the photo.");
+    } finally {
+      setUploadingProofId(null);
+      setProofTarget(null);
     }
   };
 
@@ -817,6 +850,18 @@ export function ExceptionReportsTab() {
                       {isFullRequestsAdmin && r.hrPaperworkStatus === "additional_review_required" && r.status !== "denied" && r.status !== "cancelled" && (
                         <ReviewAgainButton onClick={() => { setFinalizing(true); setSigningPtoHr(r); }} />
                       )}
+                      {isFullRequestsAdmin && !r.attachmentPath && (
+                        <button
+                          type="button"
+                          title="Add a proof photo or PDF"
+                          onClick={() => pickProof(r)}
+                          disabled={uploadingProofId === r.id}
+                          className="px-2 py-1 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white rounded text-xs font-semibold transition inline-flex items-center gap-1 whitespace-nowrap"
+                        >
+                          {uploadingProofId === r.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <ImagePlus className="h-3 w-3" />}
+                          Add Photo
+                        </button>
+                      )}
                       {isFullRequestsAdmin && r.status !== "denied" && r.status !== "cancelled" && (
                         <button
                           type="button"
@@ -837,6 +882,14 @@ export function ExceptionReportsTab() {
         </table>
         )}
       </div>
+
+      <input
+        ref={proofInputRef}
+        type="file"
+        accept="image/*,application/pdf"
+        className="hidden"
+        onChange={(e) => void handleProofChosen(e.target.files?.[0])}
+      />
 
       {previewing && (
         <AttachmentPreviewModal
