@@ -101,7 +101,7 @@ import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW
 import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
 import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
 import { masterW2ExecutiveAgreementStyles, buildMasterW2ExecutiveAgreementBodyMarkup, type MasterW2ExecutiveAgreementFormData } from "@/lib/masterW2ExecutiveAgreementFormTemplate";
-import { confidentialityNonCompeteAgreementStyles, buildConfidentialityNonCompeteAgreementBodyMarkup, captureConfidentialityNonCompeteAgreementPdf, CNC_CURRENT_TEMPLATE_VERSION, type ConfidentialityNonCompeteAgreementFormData } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
+import { confidentialityNonCompeteAgreementStyles, buildConfidentialityNonCompeteAgreementBodyMarkup, captureConfidentialityNonCompeteAgreementPdf, CNC_CURRENT_TEMPLATE_VERSION, confidentialityAgreementTitle, type ConfidentialityNonCompeteAgreementFormData } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
 import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments";
 import {
   createSignableDocument,
@@ -6150,6 +6150,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  /** Signed in version 1 (the "…Non-Compete…" wording) — HR resends these one by one to get the new version signed. */
+  const isOldConfidentialityWording = (doc: SignableDocument) =>
+    (doc.status === "signed" || doc.status === "confirmed") && !(Number((doc.formData as Partial<ConfidentialityNonCompeteAgreementFormData>).templateVersion) >= 2);
+
   const handleSendConfidentialityNonCompeteAgreement = async () => {
     if (!confidentialityNonCompeteAgreementRecipientId || !uid) return;
     setConfidentialityNonCompeteAgreementSending(true);
@@ -6159,7 +6163,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       if (!recipient) throw new Error("Select a recipient first.");
 
       const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["confidentiality_noncompete_agreement"]);
-      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Master Confidentiality & Non-Compete Agreement on file. Send another one anyway?`)) {
+      // Signed in the old wording (with the non-compete) — resending is how they get the new version.
+      const signedOldWording = sentConfidentialityNonCompeteAgreementForms.some((d) => d.recipientId === recipient.id && isOldConfidentialityWording(d));
+      const confirmText = signedOldWording
+        ? `${recipient.name} signed the OLD wording (with the non-compete). Send the new version for them to sign? Their old signed copy stays on file.`
+        : `${recipient.name} already has a Master Confidentiality agreement on file. Send another one anyway?`;
+      if (alreadySent.length > 0 && !window.confirm(confirmText)) {
         return;
       }
 
@@ -6179,7 +6188,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         dmThreadId: thread.id,
         senderId: myProfileId,
         senderName: displayName || "HR",
-        body: `📋 Please complete the Master Confidentiality, Non-Solicitation, Non-Compete, and Affirmative Duty Agreement: ${fillLink}`,
+        body: `📋 Please complete the ${confidentialityAgreementTitle(CNC_CURRENT_TEMPLATE_VERSION)}: ${fillLink}`,
       });
 
       void logActivity({ action: "confidentiality_noncompete_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
@@ -30020,6 +30029,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {confidentialityNonCompeteAgreementStatusLabel(doc)}
                         </span>
                         {paperCopy && <span className="ml-1.5 px-2 py-1 rounded text-xs font-semibold bg-sky-500/15 text-sky-300" title="Signed on paper and scanned in">Paper copy</span>}
+                        {isOldConfidentialityWording(doc) && <span className="ml-1.5 px-2 py-1 rounded text-xs font-semibold bg-amber-500/15 text-amber-300" title="Signed in the old wording (with the non-compete) — send this person the new version">Old wording</span>}
                       </td>
                       <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
                       <td className="px-4 py-3">
