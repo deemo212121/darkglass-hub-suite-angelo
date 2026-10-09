@@ -15,6 +15,7 @@ import { CustomFormRenderer, type CustomFormRendererValue } from "./CustomFormRe
 import { Switch } from "@/components/ui/switch";
 import { formatFieldValue, generateSubmissionDocumentPdf } from "@/lib/documentTemplates/generate";
 import { saveSubmissionDocument, submissionDocumentFileName } from "@/lib/documentTemplates/saveDocument";
+import { generateSubmissionDocx } from "@/lib/documentTemplates/docx";
 import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
 import { downloadStyledReport, type ReportSheet } from "@/lib/styledReportExport";
 import { uploadCustomFormFile } from "@/lib/firebase/storage";
@@ -360,6 +361,47 @@ export function CustomFormsPanel() {
     }
   };
 
+  const saveBlob = (blob: Blob, fileName: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  };
+
+  /** The submission as an editable Word document (same layout as the automatic PDF). */
+  const handleDownloadWord = async (submission: CustomFormSubmission) => {
+    const form = formsById.get(submission.formId);
+    if (!form) { setActionError("This submission's form was deleted, so its document can't be built."); return; }
+    setDownloadingId(`${submission.id}:word`);
+    setActionError(null);
+    try {
+      saveBlob(await generateSubmissionDocx(form, submission), submissionDocumentFileName(form, submission).replace(/\.pdf$/, ".docx"));
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't build the Word document.");
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  /** The form itself, unfilled (default answers only) — e.g. to print and sign on paper. */
+  const [exportingFormId, setExportingFormId] = useState<string | null>(null);
+  const handleExportBlank = async (form: CustomForm, kind: "pdf" | "word") => {
+    setExportingFormId(`${form.id}:${kind}`);
+    setActionError(null);
+    try {
+      const responses = Object.fromEntries(form.fields.filter((fd) => fd.defaultValue !== undefined && fd.defaultValue !== "").map((fd) => [fd.id, fd.defaultValue]));
+      const name = form.title.replace(/[\\/:*?"<>|]+/g, " ").trim() || "Form";
+      if (kind === "pdf") saveBlob(await generateSubmissionDocumentPdf(form, { responses, submittedAt: new Date().toISOString() }), `${name}.pdf`);
+      else saveBlob(await generateSubmissionDocx(form, { responses }), `${name}.docx`);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Export failed.");
+    } finally {
+      setExportingFormId(null);
+    }
+  };
+
   // ── Complete — HR fills the form's "Filled in by: Company" fields (e.g.
   // the Authorized Representative's signature) on a submission, then the
   // finished document is saved. ──
@@ -553,6 +595,12 @@ export function CustomFormsPanel() {
                             <Switch checked={f.driveUploadEnabled} onCheckedChange={(checked) => void handleToggleDriveUpload(f, checked)} />
                           </div>
                         )}
+                        <button type="button" onClick={() => void handleExportBlank(f, "pdf")} disabled={!!exportingFormId} title="Export this form (blank) as PDF" className="btn text-[10px] px-2 py-1 flex items-center gap-1 disabled:opacity-50">
+                          {exportingFormId === `${f.id}:pdf` ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileDown className="h-3 w-3" />} PDF
+                        </button>
+                        <button type="button" onClick={() => void handleExportBlank(f, "word")} disabled={!!exportingFormId} title="Export this form (blank) as a Word document" className="btn text-[10px] px-2 py-1 flex items-center gap-1 disabled:opacity-50">
+                          {exportingFormId === `${f.id}:word` ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />} Word
+                        </button>
                         <button type="button" onClick={() => { setEditingForm(f); setBuilderOpen(true); }} title="Edit" className="text-muted-foreground hover:text-foreground transition-colors">
                           <Pencil className="h-3.5 w-3.5" />
                         </button>
@@ -579,7 +627,7 @@ export function CustomFormsPanel() {
         <div className="px-4 py-4 border-b border-white/10 flex items-center justify-between gap-3">
           <div>
             <h2 className="font-semibold text-sm">Submissions</h2>
-            <p className="text-[10px] text-muted-foreground mt-0.5">Every finished submission's document is saved here — View PDF or Download any time. Export gives the filtered list as Excel, one sheet per form.</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Every finished submission's document is saved here — view it, or download it as PDF or Word any time. Export gives the filtered list as Excel, one sheet per form.</p>
           </div>
           <button type="button" onClick={() => void handleExport()} disabled={exporting || filteredSubmissions.length === 0} className="btn text-xs px-3 py-1.5 flex items-center gap-1.5 shrink-0 disabled:opacity-50">
             {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />} Export Excel
@@ -660,8 +708,11 @@ export function CustomFormsPanel() {
                         <button type="button" onClick={() => void openPreview(s)} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1">
                           <FileDown className="h-3 w-3" /> View PDF
                         </button>
-                        <button type="button" onClick={() => void handleDownload(s)} disabled={downloadingId === s.id} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 disabled:opacity-50">
-                          {downloadingId === s.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />} Download
+                        <button type="button" onClick={() => void handleDownload(s)} disabled={downloadingId === s.id} title="Download as PDF" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 disabled:opacity-50">
+                          {downloadingId === s.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />} PDF
+                        </button>
+                        <button type="button" onClick={() => void handleDownloadWord(s)} disabled={downloadingId === `${s.id}:word`} title="Download as a Word document" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 disabled:opacity-50">
+                          {downloadingId === `${s.id}:word` ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />} Word
                         </button>
                         {s.pdfUrl && <span title={`Saved${s.pdfGeneratedAt ? ` ${new Date(s.pdfGeneratedAt).toLocaleString()}` : ""}`}><CheckCircle2 className="h-3.5 w-3.5 text-green-400" /></span>}
                       </div>
@@ -746,7 +797,10 @@ export function CustomFormsPanel() {
                     </button>
                   )}
                   <button type="button" onClick={() => void handleDownload(live)} disabled={downloadingId === live.id} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 disabled:opacity-50">
-                    <Download className="h-3 w-3" /> Download
+                    <Download className="h-3 w-3" /> PDF
+                  </button>
+                  <button type="button" onClick={() => void handleDownloadWord(live)} disabled={downloadingId === `${live.id}:word`} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 disabled:opacity-50">
+                    <FileText className="h-3 w-3" /> Word
                   </button>
                   {previewPdfUrl && (
                     <a href={previewPdfUrl} target="_blank" rel="noreferrer noopener" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1">

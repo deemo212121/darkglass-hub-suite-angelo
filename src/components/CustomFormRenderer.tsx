@@ -171,7 +171,8 @@ function FieldRow({ field, value, disabled, onChange, valuesByName }: { field: C
 
   return (
     <div style={style} className={cls}>
-      <div className="flex flex-col gap-1.5">
+      {/* Gutter for side-by-side fields (e.g. Signature | Date) so they don't touch. */}
+      <div className={`flex flex-col gap-1.5 ${field.displayMode === "block" && field.width < 100 ? "pr-4" : ""}`}>
         <label className="text-sm font-medium flex items-center gap-1">
           {field.label}{field.required && <span className="text-red-400 ml-0.5">*</span>}
           {field.tooltip && <span title={field.tooltip} className="text-muted-foreground cursor-help">ⓘ</span>}

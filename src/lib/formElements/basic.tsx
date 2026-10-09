@@ -375,7 +375,9 @@ export const signatureElement: ElementDefinition = {
       onChange(null);
     };
     return (
-      <div className="flex flex-col gap-1.5 items-start">
+      <div className="flex flex-col gap-1.5 items-start w-full">
+        {/* Shrinks to its column (e.g. a 50%-width field beside a Date) instead of
+            overflowing it; pos() maps pointer coordinates back onto the full-size canvas. */}
         <canvas
           ref={canvasRef}
           width={width}
@@ -384,7 +386,7 @@ export const signatureElement: ElementDefinition = {
           onPointerMove={move}
           onPointerUp={end}
           onPointerLeave={end}
-          style={{ backgroundColor: field.config.backgroundColor || "#ffffff" }}
+          style={{ backgroundColor: field.config.backgroundColor || "#ffffff", width: "100%", maxWidth: `${width}px`, height: "auto", aspectRatio: `${width} / ${height}` }}
           className="touch-none cursor-crosshair rounded-md border border-white/20"
         />
         {field.config.allowClear !== false && <button type="button" onClick={clear} className="btn text-xs px-2.5 py-1">Clear</button>}

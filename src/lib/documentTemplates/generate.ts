@@ -12,7 +12,7 @@ import DOMPurify from "dompurify";
 import { formatDocumentDate, normalizeDocumentBlock, pinnedBlockStyle, PAGE_CONTENT_WIDTH, PAGE_HEIGHT, PAGE_PADDING, PAGE_WIDTH, type DocumentBlock, type DocumentTemplate } from "./types";
 import type { CustomForm, CustomFormResponseValue, CustomFormSubmission } from "@/lib/supabase/customForms";
 import { ELEMENT_REGISTRY, type CustomFormField } from "@/lib/formElements";
-import { captureHtmlPagesToPdfBlob, captureHtmlToPdfBlob } from "@/lib/pdfCapture";
+import { captureHtmlPagesToPdfBlob, captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
 import type { CSSProperties } from "react";
 
 function escapeHtml(s: string): string {
@@ -44,8 +44,19 @@ export function formatFieldValue(value: CustomFormResponseValue | undefined, fie
   return stringifyValue(value);
 }
 
-const DISPLAY_TYPES = new Set(["heading", "paragraph", "divider"]);
-const HEADING_SIZES: Record<number, number> = { 1: 24, 2: 20, 3: 16, 4: 14, 5: 13, 6: 12 };
+export const DISPLAY_TYPES = new Set(["heading", "paragraph", "divider"]);
+export const HEADING_SIZES: Record<number, number> = { 1: 24, 2: 20, 3: 16, 4: 14, 5: 13, 6: 12 };
+
+/** The company letterhead logo on automatic documents (PDF and Word) — the same US In Home Services seal the other HR forms use. */
+export function loadDocumentLogo(): Promise<string> {
+  return loadAssetDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
+}
+
+/** A Paragraph element's rich text with {{field_name}} tokens filled from the answers, sanitized. */
+export function fillDisplayHtml(html: string, valuesByName: Record<string, CustomFormResponseValue>, fieldsByName: Record<string, CustomFormField>): string {
+  const filled = String(html).replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_: string, name: string) => escapeHtml(formatFieldValue(valuesByName[name], fieldsByName[name])));
+  return DOMPurify.sanitize(filled);
+}
 
 /**
  * A display-only form element (Heading / Paragraph / Divider) as document
@@ -69,9 +80,8 @@ function renderDisplayFieldHtml(field: CustomFormField, valuesByName: Record<str
   const fontSize = c.fontSize ? `font-size:${c.fontSize}px;` : "";
   const wrapperStyle = `${align}${color}${fontSize}margin:0 0 8px;`;
   if (c.html) {
-    const filled = String(c.html).replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_: string, name: string) => escapeHtml(formatFieldValue(valuesByName[name], fieldsByName[name])));
     const holder = document.createElement("div");
-    holder.innerHTML = DOMPurify.sanitize(filled);
+    holder.innerHTML = fillDisplayHtml(c.html, valuesByName, fieldsByName);
     const parts: string[] = [];
     for (const node of Array.from(holder.childNodes)) {
       const html = node.nodeType === Node.ELEMENT_NODE ? (node as Element).outerHTML : escapeHtml(node.textContent ?? "");
@@ -107,7 +117,7 @@ function isFileValue(value: CustomFormResponseValue | undefined): value is { url
  * behavior) if the proxy call fails for any reason, so this can only make
  * image rendering more reliable, never less.
  */
-async function toDataUrl(url: string): Promise<string> {
+export async function toDataUrl(url: string): Promise<string> {
   if (url.startsWith("data:")) return url;
   try {
     const res = await fetch(`/api/image-proxy?url=${encodeURIComponent(url)}`);
@@ -269,18 +279,20 @@ export async function generateSubmissionPdf(template: DocumentTemplate, form: Pi
 // ---------- Automatic document (no Document Template designed) ----------
 
 /** Never part of the document: page/section markers, the submit button, and anti-bot checks. */
-const SKIPPED_IN_DOCUMENT = new Set(["pageBreak", "sectionCollapse", "submitButton", "captcha"]);
+export const SKIPPED_IN_DOCUMENT = new Set(["pageBreak", "sectionCollapse", "submitButton", "captcha"]);
 const FOOTER_SPACE = 30;
+/** Top/bottom page margin for automatic documents (0.625in) — left/right stay PAGE_PADDING so the content width is unchanged. */
+const AUTO_PAD_Y = 60;
 
 const AUTO_DOC_STYLES = `
-.doc-page { position: relative; width: ${PAGE_WIDTH}px; height: ${PAGE_HEIGHT}px; overflow: hidden; background: #fff; padding: ${PAGE_PADDING}px; box-sizing: border-box; font-family: Arial, Helvetica, sans-serif; color: #111827; line-height: 1.5; }
+.doc-page { position: relative; width: ${PAGE_WIDTH}px; height: ${PAGE_HEIGHT}px; overflow: hidden; background: #fff; padding: ${AUTO_PAD_Y}px ${PAGE_PADDING}px; box-sizing: border-box; font-family: Arial, Helvetica, sans-serif; color: #111827; line-height: 1.5; }
 .doc-flow { width: ${PAGE_CONTENT_WIDTH}px; font-size: 0; }
 .doc-blk { display: inline-block; vertical-align: bottom; box-sizing: border-box; font-size: 12px; padding-right: 18px; margin-bottom: 10px; }
 .doc-blk.full { padding-right: 0; }
 .doc-blk.text { margin-bottom: 2px; }
 .doc-rich p { margin: 0; }
 .doc-rich ul, .doc-rich ol { margin: 0; padding-left: 22px; }
-.doc-ans-value { min-height: 18px; padding: 0 2px; white-space: pre-wrap; }
+.doc-ans-value { min-height: 18px; padding: 0 2px 6px; white-space: pre-wrap; } /* html2canvas draws text a few px lower than the browser — keep it clear of the line */
 .doc-sig-img { height: 54px; position: relative; }
 .doc-sig-img img { position: absolute; left: 0; bottom: 0; max-height: 54px; max-width: 100%; }
 .doc-line { border-top: 1px solid #111827; margin-top: 2px; }
@@ -304,8 +316,9 @@ function renderAnswerHtml(field: CustomFormField, value: CustomFormResponseValue
 }
 
 /** The form itself laid out as a document, in field order: its own headings and paragraphs as written, every answer, signatures on signing lines. */
-function buildAutoDocumentBlocks(form: Pick<CustomForm, "title" | "fields">, valuesByName: Record<string, CustomFormResponseValue>, fieldsByName: Record<string, CustomFormField>): string[] {
+function buildAutoDocumentBlocks(form: Pick<CustomForm, "title" | "fields">, valuesByName: Record<string, CustomFormResponseValue>, fieldsByName: Record<string, CustomFormField>, logoDataUrl: string): string[] {
   const blocks: string[] = [];
+  if (logoDataUrl) blocks.push(`<div class="doc-blk full text" style="width:100%;text-align:center;"><img src="${logoDataUrl}" style="width:60px;height:60px;" /></div>`);
   const fields = form.fields.filter((f) => !f.hidden && !SKIPPED_IN_DOCUMENT.has(f.type));
   if (!fields.some((f) => f.type === "heading")) {
     blocks.push(`<div class="doc-blk full" style="width:100%;font-size:16px;font-weight:700;text-align:center;">${escapeHtml(form.title)}</div>`);
@@ -360,7 +373,11 @@ async function paginateBlocks(blocks: string[]): Promise<string[][]> {
         rows.push({ top, contentBottom, margin, items: [blocks[i]] });
       }
     });
-    const capacity = PAGE_HEIGHT - PAGE_PADDING * 2 - FOOTER_SPACE;
+    // A one-page document has no "Page 1 of 1" footer, so it may use that space too.
+    const fullPage = PAGE_HEIGHT - AUTO_PAD_Y * 2;
+    const total = rows.reduce((sum, r) => sum + r.contentBottom - r.top + r.margin, 0) - (rows[rows.length - 1]?.margin ?? 0);
+    if (total <= fullPage) return [rows.flatMap((r) => r.items)];
+    const capacity = fullPage - FOOTER_SPACE;
     const pages: string[][] = [[]];
     let used = 0;
     for (const row of rows) {
@@ -390,7 +407,7 @@ export async function generateAutoDocumentPdf(form: Pick<CustomForm, "title" | "
   for (const [name, value] of Object.entries(valuesByName)) {
     if (isFileValue(value)) valuesByName[name] = { ...value, url: await toDataUrl(value.url) };
   }
-  const pages = await paginateBlocks(buildAutoDocumentBlocks(form, valuesByName, fieldsByName));
+  const pages = await paginateBlocks(buildAutoDocumentBlocks(form, valuesByName, fieldsByName, await loadDocumentLogo()));
   const pageHtml = pages.map(
     (items, i) => `<div class="doc-page"><div class="doc-flow">${items.join("")}</div>${pages.length > 1 ? `<div class="doc-footer">Page ${i + 1} of ${pages.length}</div>` : ""}</div>`
   );
