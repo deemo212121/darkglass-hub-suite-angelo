@@ -8,10 +8,11 @@
  * or editing a template later applies retroactively to old submissions —
  * nothing needs to be pre-rendered or cached.
  */
-import { formatDocumentDate, normalizeDocumentBlock, pinnedBlockStyle, PAGE_HEIGHT, PAGE_PADDING, PAGE_WIDTH, type DocumentBlock, type DocumentTemplate } from "./types";
+import DOMPurify from "dompurify";
+import { formatDocumentDate, normalizeDocumentBlock, pinnedBlockStyle, PAGE_CONTENT_WIDTH, PAGE_HEIGHT, PAGE_PADDING, PAGE_WIDTH, type DocumentBlock, type DocumentTemplate } from "./types";
 import type { CustomForm, CustomFormResponseValue, CustomFormSubmission } from "@/lib/supabase/customForms";
 import { ELEMENT_REGISTRY, type CustomFormField } from "@/lib/formElements";
-import { captureHtmlToPdfBlob } from "@/lib/pdfCapture";
+import { captureHtmlPagesToPdfBlob, captureHtmlToPdfBlob } from "@/lib/pdfCapture";
 import type { CSSProperties } from "react";
 
 function escapeHtml(s: string): string {
@@ -37,10 +38,51 @@ function stringifyValue(value: CustomFormResponseValue | undefined): string {
 }
 
 /** Prefers the field's own ElementDefinition.formatValue (Full Name → "First Last", Address → one line, Product List → item names) over the generic fallback above. */
-function formatFieldValue(value: CustomFormResponseValue | undefined, field: CustomFormField | undefined): string {
+export function formatFieldValue(value: CustomFormResponseValue | undefined, field: CustomFormField | undefined): string {
   const def = field && ELEMENT_REGISTRY[field.type];
   if (def?.formatValue && field) return def.formatValue(value, field);
   return stringifyValue(value);
+}
+
+const DISPLAY_TYPES = new Set(["heading", "paragraph", "divider"]);
+const HEADING_SIZES: Record<number, number> = { 1: 24, 2: 20, 3: 16, 4: 14, 5: 13, 6: 12 };
+
+/**
+ * A display-only form element (Heading / Paragraph / Divider) as document
+ * HTML — the form's own wording (e.g. an agreement's body text), which a
+ * submission never stores since nobody "answers" it. {{field_name}} tokens
+ * are filled from this submission's answers. Returns one string per
+ * top-level paragraph/list so a long body can break across pages.
+ */
+function renderDisplayFieldHtml(field: CustomFormField, valuesByName: Record<string, CustomFormResponseValue>, fieldsByName: Record<string, CustomFormField>): string[] {
+  const c = field.config ?? {};
+  const align = c.alignment ? `text-align:${c.alignment};` : "";
+  const color = c.color ? `color:${c.color};` : "";
+  if (field.type === "divider") {
+    return [`<hr style="border:0;border-top:${c.thickness ?? 1}px ${c.lineStyle || "solid"} ${c.color || "#cbd5e1"};margin:${c.spacing ?? 8}px 0;" />`];
+  }
+  if (field.type === "heading") {
+    const size = c.fontSize || HEADING_SIZES[c.level || 3] || 16;
+    const deco = `${c.italic ? "font-style:italic;" : ""}${c.underline ? "text-decoration:underline;" : ""}`;
+    return [`<div style="font-size:${size}px;font-weight:${c.bold === false ? 400 : 700};${align}${color}${deco}margin:4px 0 10px;">${substituteTokens(c.text || "", valuesByName, fieldsByName)}</div>`];
+  }
+  const fontSize = c.fontSize ? `font-size:${c.fontSize}px;` : "";
+  const wrapperStyle = `${align}${color}${fontSize}margin:0 0 8px;`;
+  if (c.html) {
+    const filled = String(c.html).replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_: string, name: string) => escapeHtml(formatFieldValue(valuesByName[name], fieldsByName[name])));
+    const holder = document.createElement("div");
+    holder.innerHTML = DOMPurify.sanitize(filled);
+    const parts: string[] = [];
+    for (const node of Array.from(holder.childNodes)) {
+      const html = node.nodeType === Node.ELEMENT_NODE ? (node as Element).outerHTML : escapeHtml(node.textContent ?? "");
+      if (html.trim()) parts.push(`<div class="doc-rich" style="${wrapperStyle}">${html}</div>`);
+    }
+    return parts;
+  }
+  return String(c.text || "")
+    .split(/\n{2,}/)
+    .filter((p) => p.trim())
+    .map((p) => `<div style="${wrapperStyle}white-space:pre-wrap;">${substituteTokens(p, valuesByName, fieldsByName)}</div>`);
 }
 
 function isFileValue(value: CustomFormResponseValue | undefined): value is { url: string; fileName?: string } {
@@ -150,7 +192,11 @@ function renderBlockContent(block: DocumentBlock, valuesByName: Record<string, C
       const fieldName = block.fieldName ?? "";
       const value = valuesByName[fieldName];
       const field = fieldsByName[fieldName];
-      const label = field?.label || fieldName;
+      // Stale reference (the field was renamed or deleted) — leave it out
+      // instead of printing a bare "name:" label with nothing after it.
+      if (!field) return "";
+      if (DISPLAY_TYPES.has(field.type)) return renderDisplayFieldHtml(field, valuesByName, fieldsByName).join("");
+      const label = field.label || fieldName;
       const prefix = block.showLabel !== false && label ? `<strong>${escapeHtml(label)}:</strong> ` : "";
       if (isFileValue(value)) return `<div style="margin:0;">${prefix}<img src="${value.url}" style="max-width:300px;display:block;margin-top:4px;" /></div>`;
       return `<div style="margin:0;">${prefix}${escapeHtml(formatFieldValue(value, field))}</div>`;
@@ -218,4 +264,137 @@ export async function renderDocumentTemplateHtml(template: DocumentTemplate, for
 export async function generateSubmissionPdf(template: DocumentTemplate, form: Pick<CustomForm, "fields">, submission: Pick<CustomFormSubmission, "responses" | "submittedAt">): Promise<Blob> {
   const { html, styles } = await renderDocumentTemplateHtml(template, form, submission);
   return captureHtmlToPdfBlob(html, styles, { beforeCapture: reflowFlowContentBelowPinnedBlocks });
+}
+
+// ---------- Automatic document (no Document Template designed) ----------
+
+/** Never part of the document: page/section markers, the submit button, and anti-bot checks. */
+const SKIPPED_IN_DOCUMENT = new Set(["pageBreak", "sectionCollapse", "submitButton", "captcha"]);
+const FOOTER_SPACE = 30;
+
+const AUTO_DOC_STYLES = `
+.doc-page { position: relative; width: ${PAGE_WIDTH}px; height: ${PAGE_HEIGHT}px; overflow: hidden; background: #fff; padding: ${PAGE_PADDING}px; box-sizing: border-box; font-family: Arial, Helvetica, sans-serif; color: #111827; line-height: 1.5; }
+.doc-flow { width: ${PAGE_CONTENT_WIDTH}px; font-size: 0; }
+.doc-blk { display: inline-block; vertical-align: bottom; box-sizing: border-box; font-size: 12px; padding-right: 18px; margin-bottom: 10px; }
+.doc-blk.full { padding-right: 0; }
+.doc-rich p { margin: 0; }
+.doc-rich ul, .doc-rich ol { margin: 0; padding-left: 22px; }
+.doc-ans-value { min-height: 18px; padding: 0 2px; white-space: pre-wrap; }
+.doc-sig-img { height: 54px; position: relative; }
+.doc-sig-img img { position: absolute; left: 0; bottom: 0; max-height: 54px; max-width: 100%; }
+.doc-line { border-top: 1px solid #111827; margin-top: 2px; }
+.doc-under { font-size: 11px; color: #374151; margin-top: 3px; }
+.doc-footer { position: absolute; left: 0; right: 0; bottom: 34px; text-align: center; font-size: 10px; color: #6b7280; }
+`;
+
+/**
+ * One answer as document HTML, the way a signed paper form reads: the
+ * answer (or signature) sits on a line with its label underneath. Blocks
+ * are bottom-aligned, so a Date beside a Signature shares its line.
+ */
+function renderAnswerHtml(field: CustomFormField, value: CustomFormResponseValue | undefined): string {
+  const label = escapeHtml(field.label || field.name);
+  if (ELEMENT_REGISTRY[field.type]?.isFileField) {
+    const img = isFileValue(value) ? `<img src="${value.url}" />` : "";
+    return `<div class="doc-sig-img">${img}</div><div class="doc-line"></div><div class="doc-under">${label}</div>`;
+  }
+  const text = formatFieldValue(value, field);
+  return `<div class="doc-ans-value">${text ? escapeHtml(text) : "&nbsp;"}</div><div class="doc-line"></div><div class="doc-under">${label}</div>`;
+}
+
+/** The form itself laid out as a document, in field order: its own headings and paragraphs as written, every answer, signatures on signing lines. */
+function buildAutoDocumentBlocks(form: Pick<CustomForm, "title" | "fields">, valuesByName: Record<string, CustomFormResponseValue>, fieldsByName: Record<string, CustomFormField>): string[] {
+  const blocks: string[] = [];
+  const fields = form.fields.filter((f) => !f.hidden && !SKIPPED_IN_DOCUMENT.has(f.type));
+  if (!fields.some((f) => f.type === "heading")) {
+    blocks.push(`<div class="doc-blk full" style="width:100%;font-size:16px;font-weight:700;text-align:center;">${escapeHtml(form.title)}</div>`);
+  }
+  for (const field of fields) {
+    if (DISPLAY_TYPES.has(field.type)) {
+      for (const html of renderDisplayFieldHtml(field, valuesByName, fieldsByName)) blocks.push(`<div class="doc-blk full" style="width:100%;">${html}</div>`);
+      continue;
+    }
+    const width = field.width ?? 100;
+    blocks.push(`<div class="doc-blk${width >= 100 ? " full" : ""}" style="width:${width}%;">${renderAnswerHtml(field, valuesByName[field.name])}</div>`);
+  }
+  return blocks;
+}
+
+/**
+ * Splits blocks across Letter pages: lays them all out once in a hidden
+ * iframe at the real content width, groups blocks sharing a line (side-by-
+ * side fields) into rows, then fills each page with whole rows.
+ */
+async function paginateBlocks(blocks: string[]): Promise<string[][]> {
+  const iframe = document.createElement("iframe");
+  iframe.style.position = "fixed";
+  iframe.style.left = "-99999px";
+  iframe.style.top = "0";
+  iframe.style.width = `${PAGE_WIDTH}px`;
+  iframe.style.height = `${PAGE_HEIGHT}px`;
+  document.body.appendChild(iframe);
+  try {
+    await new Promise<void>((resolve) => {
+      iframe.onload = () => resolve();
+      iframe.srcdoc = `<!DOCTYPE html><html><head><style>body{margin:0;}${AUTO_DOC_STYLES}</style></head><body><div class="doc-flow">${blocks.join("")}</div></body></html>`;
+    });
+    const els = Array.from(iframe.contentDocument?.querySelectorAll<HTMLElement>(".doc-flow > .doc-blk") ?? []);
+    if (els.length !== blocks.length) return [blocks];
+    const rows: { top: number; bottom: number; items: string[] }[] = [];
+    els.forEach((el, i) => {
+      const top = el.offsetTop;
+      const bottom = top + el.offsetHeight + 10; // + .doc-blk margin-bottom
+      const row = rows[rows.length - 1];
+      // Bottom-aligned, so blocks on one line can start at different heights —
+      // same row = starts before the current row's blocks end.
+      if (row && top < row.bottom - 10) {
+        row.items.push(blocks[i]);
+        row.top = Math.min(row.top, top);
+        row.bottom = Math.max(row.bottom, bottom);
+      } else {
+        rows.push({ top, bottom, items: [blocks[i]] });
+      }
+    });
+    const capacity = PAGE_HEIGHT - PAGE_PADDING * 2 - FOOTER_SPACE;
+    const pages: string[][] = [[]];
+    let used = 0;
+    for (const row of rows) {
+      const h = row.bottom - row.top;
+      if (used > 0 && used + h > capacity) {
+        pages.push([]);
+        used = 0;
+      }
+      pages[pages.length - 1].push(...row.items);
+      used += h;
+    }
+    return pages;
+  } finally {
+    document.body.removeChild(iframe);
+  }
+}
+
+export async function generateAutoDocumentPdf(form: Pick<CustomForm, "title" | "fields">, submission: Pick<CustomFormSubmission, "responses">): Promise<Blob> {
+  const valuesByName: Record<string, CustomFormResponseValue> = {};
+  const fieldsByName: Record<string, CustomFormField> = {};
+  for (const f of form.fields) {
+    valuesByName[f.name] = submission.responses[f.id] ?? null;
+    fieldsByName[f.name] = f;
+  }
+  // Signatures/uploads inlined as data: URLs — see toDataUrl.
+  for (const [name, value] of Object.entries(valuesByName)) {
+    if (isFileValue(value)) valuesByName[name] = { ...value, url: await toDataUrl(value.url) };
+  }
+  const pages = await paginateBlocks(buildAutoDocumentBlocks(form, valuesByName, fieldsByName));
+  const pageHtml = pages.map(
+    (items, i) => `<div class="doc-page"><div class="doc-flow">${items.join("")}</div>${pages.length > 1 ? `<div class="doc-footer">Page ${i + 1} of ${pages.length}</div>` : ""}</div>`
+  );
+  return captureHtmlPagesToPdfBlob(pageHtml, AUTO_DOC_STYLES);
+}
+
+/** The submission's document: the form's own Document Template when one is designed, otherwise the automatic layout above — so every form can produce a PDF. */
+export async function generateSubmissionDocumentPdf(
+  form: Pick<CustomForm, "title" | "fields" | "documentTemplate">,
+  submission: Pick<CustomFormSubmission, "responses" | "submittedAt">
+): Promise<Blob> {
+  return form.documentTemplate ? generateSubmissionPdf(form.documentTemplate, form, submission) : generateAutoDocumentPdf(form, submission);
 }

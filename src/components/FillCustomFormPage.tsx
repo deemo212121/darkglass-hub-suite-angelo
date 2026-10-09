@@ -18,7 +18,8 @@ import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { FillFormSignInRequired } from "@/components/FillFormSignInRequired";
 import { randomId } from "@/lib/utils";
-import { getCustomForm, notifyInternalSubmission, submitCustomFormResponse, type CustomForm } from "@/lib/supabase/customForms";
+import { companyFields, getCustomForm, notifyInternalSubmission, submitCustomFormResponse, type CustomForm } from "@/lib/supabase/customForms";
+import { saveSubmissionDocument } from "@/lib/documentTemplates/saveDocument";
 import { uploadCustomFormFile } from "@/lib/firebase/storage";
 import { uploadSubmissionToDriveIfConfigured } from "@/lib/documentTemplates/driveUpload";
 import { ELEMENT_REGISTRY } from "@/lib/formElements";
@@ -84,6 +85,13 @@ export function FillCustomFormPage({ formId }: Props) {
     // over, so both are fire-and-forget.
     notifyInternalSubmission(submissionId).catch((err) => console.error("[fill-form] HR notify failed (submission was still saved):", err));
     void uploadSubmissionToDriveIfConfigured(form.documentTemplate, form, { id: submissionId, responses, submittedAt });
+    // One-party form: it's done now, so file its document. A form with
+    // "Filled in by: Company" fields is filed when HR completes it instead.
+    if (companyFields(form).length === 0) {
+      saveSubmissionDocument(form, { id: submissionId, responses, submittedAt, submitterName }).catch((err) =>
+        console.error("[fill-form] Saving the document failed (submission was still saved — HR can open it from Custom Forms):", err)
+      );
+    }
   };
 
   return (

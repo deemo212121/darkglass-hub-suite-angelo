@@ -33,6 +33,14 @@ export type CustomFormRendererValue = any;
 interface Props {
   fields: CustomFormField[];
   onSubmit: (values: Record<string, CustomFormRendererValue>, submitterName: string | null) => Promise<void>;
+  /**
+   * "submitter" (default) — the fill page: fields marked "Filled in by:
+   * Company" are left out. "company" — HR completing a submission: ONLY
+   * those fields are shown, with the submitter's answers (initialValues)
+   * still feeding merge tokens and conditional logic.
+   */
+  mode?: "submitter" | "company";
+  initialValues?: Record<string, CustomFormRendererValue>;
 }
 
 interface FieldGroup {
@@ -178,8 +186,12 @@ function FieldRow({ field, value, disabled, onChange, valuesByName }: { field: C
   );
 }
 
-export function CustomFormRenderer({ fields, onSubmit }: Props) {
-  const [values, setValues] = useState<Record<string, any>>(() => Object.fromEntries(fields.filter((f) => f.defaultValue !== undefined).map((f) => [f.id, f.defaultValue])));
+export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submitter", initialValues }: Props) {
+  const fields = useMemo(() => allFields.filter((f) => (mode === "company" ? f.fillBy === "company" : f.fillBy !== "company")), [allFields, mode]);
+  const [values, setValues] = useState<Record<string, any>>(() => ({
+    ...Object.fromEntries(fields.filter((f) => f.defaultValue !== undefined).map((f) => [f.id, f.defaultValue])),
+    ...(initialValues ?? {}),
+  }));
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -192,10 +204,10 @@ export function CustomFormRenderer({ fields, onSubmit }: Props) {
   // Only asked when the form itself has no way to identify who filled it out — a form
   // that already asks for a name (Full Name field, or a "Name"-labeled text/email field)
   // never shows this, so nobody types their name twice.
-  const needsAutoName = useMemo(() => !hasNameYieldingField(fields), [fields]);
+  const needsAutoName = useMemo(() => mode === "submitter" && !hasNameYieldingField(fields), [fields, mode]);
   const [autoName, setAutoName] = useState("");
 
-  const valuesByName = useMemo(() => Object.fromEntries(fields.map((f) => [f.name, values[f.id]])), [fields, values]);
+  const valuesByName = useMemo(() => Object.fromEntries(allFields.map((f) => [f.name, values[f.id]])), [allFields, values]);
 
   // Calculated fields recompute from every other field's live value and are never directly edited.
   useEffect(() => {
@@ -240,7 +252,10 @@ export function CustomFormRenderer({ fields, onSubmit }: Props) {
     setError(null);
     setSubmitting(true);
     try {
-      await onSubmit(values, needsAutoName ? autoName.trim() || null : deriveSubmitterName(fields, values));
+      await onSubmit(
+        Object.fromEntries(fields.filter((f) => values[f.id] !== undefined).map((f) => [f.id, values[f.id]])),
+        needsAutoName ? autoName.trim() || null : deriveSubmitterName(fields, values)
+      );
       setSubmitted(true);
       if (submitConfig.redirectUrl) window.location.href = submitConfig.redirectUrl;
     } catch (err) {
