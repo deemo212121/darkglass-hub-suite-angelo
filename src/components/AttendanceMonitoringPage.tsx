@@ -3818,8 +3818,13 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   </div>
                 )}
                 {selectedCorrection.hrStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "hr", myProfileId, role, extraRoles) && (
-                  <div className={`grid gap-3 ${selectedCorrection.exceptionType === null ? "md:grid-cols-2" : ""}`}>
-                    {selectedCorrection.exceptionType === null && (
+                  <div className={`grid gap-3 ${selectedCorrection.exceptionType === null || selectedCorrection.hrPaperworkStatus !== "pending" ? "md:grid-cols-2" : ""}`}>
+                    {/* Plain approve: no Exception Report, or its HR paperwork is
+                        already signed (e.g. "Additional Review Required", or the
+                        HR vote didn't save after signing) — signing again isn't
+                        possible, so this is the only way to cast HR's vote. Same
+                        rule as CorrectionsTab.tsx's list buttons. */}
+                    {(selectedCorrection.exceptionType === null || selectedCorrection.hrPaperworkStatus !== "pending") && (
                       <button onClick={() => handleCorrectionStageAction("hr", "approved")} disabled={correctionStageBusy} className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
                         {correctionStageBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
                         Approve as HR
