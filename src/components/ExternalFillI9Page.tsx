@@ -18,6 +18,7 @@
  * which uploads it and notifies HR — no DM step here since there's no
  * sender profile.
  */
+import { InlinePdfLink } from "@/components/InlinePdfViewer";
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
@@ -311,9 +312,7 @@ export function ExternalFillI9Page({ docId }: Props) {
             <p className="text-sm font-semibold mb-2">✅ Section 1 submitted{submitted ? " and sent back to HR" : ""}.</p>
             <p className="text-xs text-muted-foreground mb-2">HR will complete Section 2 (document review) separately.</p>
             {submittedPdfUrl && (
-              <a href={submittedPdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
-                View the completed PDF
-              </a>
+              <InlinePdfLink url={submittedPdfUrl} label="View the completed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
             )}
           </div>
         ) : (

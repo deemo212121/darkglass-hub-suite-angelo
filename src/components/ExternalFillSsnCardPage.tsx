@@ -3,6 +3,7 @@
  * See ExternalFillContractorDataPage.tsx's header comment for the shared
  * external-flow shape (server bridge, `attachment_*` files).
  */
+import { InlinePdfLink } from "@/components/InlinePdfViewer";
 import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
@@ -144,7 +145,7 @@ export function ExternalFillSsnCardPage({ docId }: Props) {
           <div className="panel p-6 text-center">
             <p className="text-sm font-semibold mb-2">✅ Submitted{submitted ? " and sent back to HR" : ""}.</p>
             {submittedPdfUrl ? (
-              <a href={submittedPdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">View the completed PDF</a>
+              <InlinePdfLink url={submittedPdfUrl} label="View the completed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
             ) : (
               <p className="text-xs text-muted-foreground">You can close this page now.</p>
             )}

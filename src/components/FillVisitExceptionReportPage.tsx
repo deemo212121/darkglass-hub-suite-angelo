@@ -14,6 +14,7 @@
  * signature is completed separately afterward by HR, in person with the
  * manager, from the same tab this was sent from.
  */
+import { InlinePdfLink } from "@/components/InlinePdfViewer";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Loader2 } from "lucide-react";
@@ -354,9 +355,7 @@ export function FillVisitExceptionReportPage({ docId }: Props) {
             {correctionFiled && <p className="text-xs text-emerald-300 mb-2">🕐 Your time correction request was also submitted for manager review.</p>}
             {correctionError && <p className="text-xs text-amber-300 mb-2">{correctionError}</p>}
             {doc.pdfUrl && (
-              <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
-                View the completed PDF
-              </a>
+              <InlinePdfLink url={doc.pdfUrl} label="View the completed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
             )}
           </div>
         ) : (

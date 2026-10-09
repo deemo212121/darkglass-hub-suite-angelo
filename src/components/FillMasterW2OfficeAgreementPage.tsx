@@ -16,6 +16,7 @@
  * FillMasterW2AgreementPage.tsx) moved out to their own standalone forms —
  * see ssnCardFormTemplate.ts/driversLicenseFormTemplate.ts.
  */
+import { InlinePdfLink } from "@/components/InlinePdfViewer";
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Loader2 } from "lucide-react";
@@ -213,9 +214,7 @@ export function FillMasterW2OfficeAgreementPage({ docId }: Props) {
             <p className="text-sm font-semibold mb-2">✓ Submitted{submitted ? " and sent to HR" : ""}.</p>
             <p className="text-xs text-muted-foreground mb-2">HR will add the employer signature separately.</p>
             {doc.pdfUrl && (
-              <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
-                View the completed PDF
-              </a>
+              <InlinePdfLink url={doc.pdfUrl} label="View the completed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
             )}
           </div>
         ) : (

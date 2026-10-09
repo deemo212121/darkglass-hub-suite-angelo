@@ -14,6 +14,7 @@
  * Signature" dialog, or ManagerReviewPage.tsx for a non-HR manager it's
  * been reassigned to).
  */
+import { InlinePdfLink } from "@/components/InlinePdfViewer";
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Loader2 } from "lucide-react";
@@ -208,9 +209,7 @@ export function FillMasterW2ExecutiveAgreementPage({ docId }: Props) {
             <p className="text-sm font-semibold mb-2">✓ Submitted{submitted ? " and sent to HR" : ""}.</p>
             <p className="text-xs text-muted-foreground mb-2">The Company will add its authorized signature separately.</p>
             {doc.pdfUrl && (
-              <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
-                View the completed PDF
-              </a>
+              <InlinePdfLink url={doc.pdfUrl} label="View the completed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
             )}
           </div>
         ) : (

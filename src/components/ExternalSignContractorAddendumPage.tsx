@@ -6,6 +6,7 @@
  * POSTed finished; HR finalizes the document from the dashboard once all
  * five signatures are in.
  */
+import { InlinePdfLink } from "@/components/InlinePdfViewer";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
@@ -182,9 +183,7 @@ export function ExternalSignContractorAddendumPage({ docId }: Props) {
           <div className="panel p-6 text-center">
             <p className="text-sm font-semibold mb-2">✅ Signed{submitted ? " and sent back to HR" : ""}.</p>
             {submittedPdfUrl ? (
-              <a href={submittedPdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
-                View the signed PDF
-              </a>
+              <InlinePdfLink url={submittedPdfUrl} label="View the signed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
             ) : (
               <p className="text-xs text-muted-foreground">You can close this page now.</p>
             )}

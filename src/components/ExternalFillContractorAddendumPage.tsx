@@ -5,6 +5,7 @@
  * serves documents with recipient_id IS NULL. The PDF is built entirely
  * client-side via contractorAddendumPdf.ts and POSTed already-finished.
  */
+import { InlinePdfLink } from "@/components/InlinePdfViewer";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
@@ -199,9 +200,7 @@ export function ExternalFillContractorAddendumPage({ docId }: Props) {
             <p className="text-sm font-semibold mb-2">✅ Submitted{submitted ? " and sent back to HR" : ""}.</p>
             <p className="text-xs text-muted-foreground mb-2">HR will route it to the Company HR Representative and the managerial witnesses.</p>
             {submittedPdfUrl ? (
-              <a href={submittedPdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
-                View the completed PDF
-              </a>
+              <InlinePdfLink url={submittedPdfUrl} label="View the completed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
             ) : (
               <p className="text-xs text-muted-foreground">You can close this page now.</p>
             )}
