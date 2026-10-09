@@ -277,6 +277,7 @@ const AUTO_DOC_STYLES = `
 .doc-flow { width: ${PAGE_CONTENT_WIDTH}px; font-size: 0; }
 .doc-blk { display: inline-block; vertical-align: bottom; box-sizing: border-box; font-size: 12px; padding-right: 18px; margin-bottom: 10px; }
 .doc-blk.full { padding-right: 0; }
+.doc-blk.text { margin-bottom: 2px; }
 .doc-rich p { margin: 0; }
 .doc-rich ul, .doc-rich ol { margin: 0; padding-left: 22px; }
 .doc-ans-value { min-height: 18px; padding: 0 2px; white-space: pre-wrap; }
@@ -311,7 +312,7 @@ function buildAutoDocumentBlocks(form: Pick<CustomForm, "title" | "fields">, val
   }
   for (const field of fields) {
     if (DISPLAY_TYPES.has(field.type)) {
-      for (const html of renderDisplayFieldHtml(field, valuesByName, fieldsByName)) blocks.push(`<div class="doc-blk full" style="width:100%;">${html}</div>`);
+      for (const html of renderDisplayFieldHtml(field, valuesByName, fieldsByName)) blocks.push(`<div class="doc-blk full text" style="width:100%;">${html}</div>`);
       continue;
     }
     const width = field.width ?? 100;
@@ -340,27 +341,32 @@ async function paginateBlocks(blocks: string[]): Promise<string[][]> {
     });
     const els = Array.from(iframe.contentDocument?.querySelectorAll<HTMLElement>(".doc-flow > .doc-blk") ?? []);
     if (els.length !== blocks.length) return [blocks];
-    const rows: { top: number; bottom: number; items: string[] }[] = [];
+    const win = iframe.contentWindow!;
+    // contentBottom = the blocks' own bottom edge; margin = the gap after them.
+    const rows: { top: number; contentBottom: number; margin: number; items: string[] }[] = [];
     els.forEach((el, i) => {
       const top = el.offsetTop;
-      const bottom = top + el.offsetHeight + 10; // + .doc-blk margin-bottom
+      const contentBottom = top + el.offsetHeight;
+      const margin = parseFloat(win.getComputedStyle(el).marginBottom) || 0;
       const row = rows[rows.length - 1];
       // Bottom-aligned, so blocks on one line can start at different heights —
       // same row = starts before the current row's blocks end.
-      if (row && top < row.bottom - 10) {
+      if (row && top < row.contentBottom) {
         row.items.push(blocks[i]);
         row.top = Math.min(row.top, top);
-        row.bottom = Math.max(row.bottom, bottom);
+        row.contentBottom = Math.max(row.contentBottom, contentBottom);
+        row.margin = Math.max(row.margin, margin);
       } else {
-        rows.push({ top, bottom, items: [blocks[i]] });
+        rows.push({ top, contentBottom, margin, items: [blocks[i]] });
       }
     });
     const capacity = PAGE_HEIGHT - PAGE_PADDING * 2 - FOOTER_SPACE;
     const pages: string[][] = [[]];
     let used = 0;
     for (const row of rows) {
-      const h = row.bottom - row.top;
-      if (used > 0 && used + h > capacity) {
+      const h = row.contentBottom - row.top + row.margin;
+      // A row's trailing gap doesn't need to fit — it's just space before the next row.
+      if (used > 0 && used + h - row.margin > capacity) {
         pages.push([]);
         used = 0;
       }
