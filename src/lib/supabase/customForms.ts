@@ -90,7 +90,10 @@ function formFromRow(r: any): CustomForm {
     status: r.status,
     publicSlug: r.public_slug,
     fields: (r.fields ?? []) as CustomFormField[],
-    documentTemplate: (r.document_template ?? null) as DocumentTemplate | null,
+    // An empty design ({ blocks: [] }, what the builder used to save for a
+    // form nobody designed) is no template — otherwise its PDF is a blank
+    // page instead of the automatic layout.
+    documentTemplate: r.document_template?.blocks?.length ? (r.document_template as DocumentTemplate) : null,
     driveUploadEnabled: r.drive_upload_enabled ?? true,
     notifyFirebaseUids: (r.notify_firebase_uids ?? []) as string[],
     discordWebhookUrl: r.discord_webhook_url ?? null,

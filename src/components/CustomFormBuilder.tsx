@@ -436,7 +436,7 @@ export function CustomFormBuilder({ initial, onSaved, onCancel }: Props) {
 
     setSaving(publish ? "publish" : "draft");
     try {
-      const input = { title: title.trim(), description: description.trim(), access, fields, documentTemplate: { blocks: documentBlocks }, notifyFirebaseUids, discordWebhookUrl: discordWebhookUrl.trim() || null };
+      const input = { title: title.trim(), description: description.trim(), access, fields, documentTemplate: documentBlocks.length > 0 ? { blocks: documentBlocks } : null, notifyFirebaseUids, discordWebhookUrl: discordWebhookUrl.trim() || null };
       let form: CustomForm;
       if (initial) {
         form = await updateCustomForm(initial.id, { ...input, currentPublicSlug: initial.publicSlug });
