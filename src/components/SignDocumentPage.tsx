@@ -6,6 +6,7 @@
  * composited into their line, then sends the finished PDF straight back to
  * whoever generated it â a single round-trip, no further routing.
  */
+import { InlinePdfLink } from "@/components/InlinePdfViewer";
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Loader2 } from "lucide-react";
@@ -179,9 +180,7 @@ export function SignDocumentPage({ docId }: Props) {
           <div className="panel p-6 text-center">
             <p className="text-sm font-semibold mb-2">â Signed{signed ? " and sent back to HR" : ""}.</p>
             {doc.pdfUrl && (
-              <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
-                View the signed PDF
-              </a>
+              <InlinePdfLink url={doc.pdfUrl} label="View the signed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
             )}
           </div>
         ) : (

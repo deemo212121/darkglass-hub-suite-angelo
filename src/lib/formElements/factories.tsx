@@ -190,19 +190,19 @@ export function makeOptionsElement(opts: {
  * blocks (so plain Enter presses become real line breaks), rather than
  * flattening everything into one run.
  */
-function renderParagraphBody(text: string, textStyle: React.CSSProperties): React.ReactNode[] {
+function renderParagraphBody(text: string, textStyle: React.CSSProperties, colorCls = "text-slate-500"): React.ReactNode[] {
   const blocks: React.ReactNode[] = [];
   let textLines: string[] = [];
   let bulletLines: string[] = [];
   const flushText = () => {
     if (textLines.length === 0) return;
-    blocks.push(<p key={`t${blocks.length}`} style={{ ...textStyle, whiteSpace: "pre-wrap", margin: 0 }} className="text-slate-500">{textLines.join("\n")}</p>);
+    blocks.push(<p key={`t${blocks.length}`} style={{ ...textStyle, whiteSpace: "pre-wrap", margin: 0 }} className={colorCls}>{textLines.join("\n")}</p>);
     textLines = [];
   };
   const flushBullets = () => {
     if (bulletLines.length === 0) return;
     blocks.push(
-      <ul key={`b${blocks.length}`} style={{ textAlign: textStyle.textAlign, color: textStyle.color, fontSize: textStyle.fontSize }} className="list-disc pl-5 text-slate-500">
+      <ul key={`b${blocks.length}`} style={{ textAlign: textStyle.textAlign, color: textStyle.color, fontSize: textStyle.fontSize }} className={`list-disc pl-5 ${colorCls}`}>
         {bulletLines.map((line, i) => <li key={i}>{line}</li>)}
       </ul>
     );
@@ -257,7 +257,9 @@ export function makeDisplayElement(opts: {
   variant: "heading" | "paragraph" | "divider";
   defaultText?: string;
 }): ElementDefinition {
-  const render = (config: Record<string, any>, valuesByName?: Record<string, any>) => {
+  // inForm: the real fill page (a dark panel) rather than the builder's white
+  // canvas — text follows the theme there instead of dark-on-dark slate.
+  const render = (config: Record<string, any>, valuesByName?: Record<string, any>, inForm = false) => {
     if (opts.variant === "divider") {
       return <hr style={{ borderTopStyle: config.lineStyle || "solid", borderTopWidth: `${config.thickness ?? 1}px`, borderTopColor: config.color || "#e2e8f0", margin: `${config.spacing ?? 8}px 0` }} />;
     }
@@ -267,7 +269,7 @@ export function makeDisplayElement(opts: {
       const boldCls = config.bold === false ? "font-normal" : "font-bold";
       const italicCls = config.italic ? "italic" : "";
       const underlineCls = config.underline ? "underline" : "";
-      return <Tag style={textStyle} className={`text-slate-900 ${boldCls} ${italicCls} ${underlineCls}`}>{config.text || "Heading"}</Tag>;
+      return <Tag style={textStyle} className={`${inForm ? "text-foreground" : "text-slate-900"} ${boldCls} ${italicCls} ${underlineCls}`}>{config.text || "Heading"}</Tag>;
     }
     // config.html (rich text, current) takes precedence; config.text-only
     // (plain text/"- " bullets, saved before rich text existed) falls back
@@ -281,7 +283,7 @@ export function makeDisplayElement(opts: {
           <RichTextStyleTag />
           <div
             style={{ ...textStyle, marginTop: config.spacing ? `${config.spacing}px` : undefined }}
-            className={`${RICH_TEXT_CLASS} text-slate-500`}
+            className={`${RICH_TEXT_CLASS} ${inForm ? "text-foreground/85" : "text-slate-500"}`}
             dangerouslySetInnerHTML={{ __html: clean || "Paragraph text" }}
           />
         </>
@@ -289,7 +291,7 @@ export function makeDisplayElement(opts: {
     }
     return (
       <div style={{ marginTop: config.spacing ? `${config.spacing}px` : undefined }} className="flex flex-col gap-1.5">
-        {renderParagraphBody(config.text || "Paragraph text", textStyle)}
+        {renderParagraphBody(config.text || "Paragraph text", textStyle, inForm ? "text-foreground/85" : "text-slate-500")}
       </div>
     );
   };
@@ -370,7 +372,7 @@ export function makeDisplayElement(opts: {
         </div>
       );
     },
-    FillInput: ({ field, valuesByName }) => render(field.config, valuesByName),
+    FillInput: ({ field, valuesByName }) => render(field.config, valuesByName, true),
     isEmptyValue: () => false,
   };
 }

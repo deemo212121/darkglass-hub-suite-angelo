@@ -101,7 +101,7 @@ import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW
 import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
 import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
 import { masterW2ExecutiveAgreementStyles, buildMasterW2ExecutiveAgreementBodyMarkup, type MasterW2ExecutiveAgreementFormData } from "@/lib/masterW2ExecutiveAgreementFormTemplate";
-import { confidentialityNonCompeteAgreementStyles, buildConfidentialityNonCompeteAgreementBodyMarkup, captureConfidentialityNonCompeteAgreementPdf, type ConfidentialityNonCompeteAgreementFormData } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
+import { confidentialityNonCompeteAgreementStyles, buildConfidentialityNonCompeteAgreementBodyMarkup, captureConfidentialityNonCompeteAgreementPdf, CNC_CURRENT_TEMPLATE_VERSION, confidentialityAgreementTitle, type ConfidentialityNonCompeteAgreementFormData } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
 import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments";
 import {
   createSignableDocument,
@@ -2358,6 +2358,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleSignAsHr = (type: SignableDocumentType, doc: SignableDocument) => {
     if (type === "w4") handleOpenW4EmployerDialog(doc);
     else if (type === "i9") handleOpenI9Section2(doc);
+    else if (type === "confidentiality_noncompete_agreement") handleOpenConfidentialityNonCompeteAgreementEmployerDialog(doc);
     else setManagerReviewDoc(doc);
   };
   // Which form types already have a real NEW-AUTOMATION document on file
@@ -2457,9 +2458,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
     const reviewStatus = getDocumentReviewStatus(type, doc);
     const statusText =
-      reviewStatus === "done" ? "Signed" : reviewStatus === "awaiting_hr" ? "Awaiting HR review" : reviewStatus === "awaiting_employee" ? "Awaiting employee signature" : "Not sent";
+      reviewStatus === "done" ? "Signed" : reviewStatus === "awaiting_hr" ? "Awaiting HR review" : reviewStatus === "awaiting_employee" ? "Awaiting employee signature" : reviewStatus === "outdated" ? "Needs new version" : "Not sent";
     const statusColor =
-      reviewStatus === "done" ? "text-emerald-400" : reviewStatus === "awaiting_hr" ? "text-sky-400" : reviewStatus === "awaiting_employee" ? "text-amber-400" : "text-slate-600";
+      reviewStatus === "done" ? "text-emerald-400" : reviewStatus === "awaiting_hr" ? "text-sky-400" : reviewStatus === "awaiting_employee" || reviewStatus === "outdated" ? "text-amber-400" : "text-slate-600";
     return { doc, profileId, reviewStatus, statusText, statusColor };
   };
   // "Awaiting employee signature" — nudge with a DM to the same fill link,
@@ -6123,6 +6124,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     employerDateSigned: "",
     employerSignatureDataUrl: "",
     employerPrintedNameTitle: "",
+    templateVersion: CNC_CURRENT_TEMPLATE_VERSION,
   });
 
   /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. HTML-captured (not a pdf-lib fill like the other types' own preview), same technique as the document itself. */
@@ -6149,6 +6151,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  /** Signed in version 1 (the "…Non-Compete…" wording) — HR resends these one by one to get the new version signed. */
+  const isOldConfidentialityWording = (doc: SignableDocument) =>
+    (doc.status === "signed" || doc.status === "confirmed") && !(Number((doc.formData as Partial<ConfidentialityNonCompeteAgreementFormData>).templateVersion) >= 2);
+
   const handleSendConfidentialityNonCompeteAgreement = async () => {
     if (!confidentialityNonCompeteAgreementRecipientId || !uid) return;
     setConfidentialityNonCompeteAgreementSending(true);
@@ -6158,13 +6164,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       if (!recipient) throw new Error("Select a recipient first.");
 
       const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["confidentiality_noncompete_agreement"]);
-      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Master Confidentiality & Non-Compete Agreement on file. Send another one anyway?`)) {
+      // Signed in the old wording (with the non-compete) — resending is how they get the new version.
+      const signedOldWording = sentConfidentialityNonCompeteAgreementForms.some((d) => d.recipientId === recipient.id && isOldConfidentialityWording(d));
+      const confirmText = signedOldWording
+        ? `${recipient.name} signed the OLD wording (with the non-compete). Send the new version for them to sign? Their old signed copy stays on file.`
+        : `${recipient.name} already has a Master Confidentiality agreement on file. Send another one anyway?`;
+      if (alreadySent.length > 0 && !window.confirm(confirmText)) {
         return;
       }
 
       const doc = await createSignableDocument({
         documentType: "confidentiality_noncompete_agreement",
-        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        formData: { employeeId: recipient.id, employeeName: recipient.name, templateVersion: CNC_CURRENT_TEMPLATE_VERSION } as unknown as Record<string, any>,
         recipientId: confidentialityNonCompeteAgreementRecipientId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -6178,7 +6189,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         dmThreadId: thread.id,
         senderId: myProfileId,
         senderName: displayName || "HR",
-        body: `📋 Please complete the Master Confidentiality, Non-Solicitation, Non-Compete, and Affirmative Duty Agreement: ${fillLink}`,
+        body: `📋 Please complete the ${confidentialityAgreementTitle(CNC_CURRENT_TEMPLATE_VERSION)}: ${fillLink}`,
       });
 
       void logActivity({ action: "confidentiality_noncompete_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
@@ -30019,6 +30030,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {confidentialityNonCompeteAgreementStatusLabel(doc)}
                         </span>
                         {paperCopy && <span className="ml-1.5 px-2 py-1 rounded text-xs font-semibold bg-sky-500/15 text-sky-300" title="Signed on paper and scanned in">Paper copy</span>}
+                        {isOldConfidentialityWording(doc) && <span className="ml-1.5 px-2 py-1 rounded text-xs font-semibold bg-amber-500/15 text-amber-300" title="Signed in the old wording (with the non-compete) — send this person the new version">Old wording</span>}
                       </td>
                       <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
                       <td className="px-4 py-3">

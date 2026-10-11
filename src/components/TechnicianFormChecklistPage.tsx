@@ -55,8 +55,10 @@ import {
   pickAuthoritativeDocument,
   isNewAutomationDoc,
   SHARED_OLD_NEW_AUTOMATION_TYPES,
+  isOutdatedDocument,
   type DocumentReviewStatus,
 } from "@/lib/signableDocumentRegistry";
+import { confidentialityAgreementTitle, CNC_CURRENT_TEMPLATE_VERSION } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments";
 import { getTechnicianFormExemptions, setTechnicianFormExemption } from "@/lib/supabase/technicianFormExemptions";
@@ -634,7 +636,7 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
     if (branchFilter) result = result.filter((r) => r.branch === branchFilter);
     if (statusFilter) {
       const checkTypes = formTypeFilter ? [formTypeFilter] : activeConfig.formTypes;
-      const targets: DocumentReviewStatus[] = statusFilter === "not_signed" ? ["not_sent", "awaiting_employee"] : [statusFilter];
+      const targets: DocumentReviewStatus[] = statusFilter === "not_signed" ? ["not_sent", "awaiting_employee", "outdated"] : [statusFilter];
       result = result.filter((r) => targets.some((t) => rowHasStatus(r, checkTypes, t)));
     }
     const q = search.trim().toLowerCase();
@@ -688,7 +690,10 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
       // already on file" would both be true at once for the same row.
       const alreadySentRaw = await getExistingActiveDocuments(personId, [type]);
       const alreadySent = alreadySentRaw.filter(
-        (d) => !SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) || isNewAutomationDoc(d) === (activeConfig.formSourceBucket === "new")
+        (d) =>
+          (!SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) || isNewAutomationDoc(d) === (activeConfig.formSourceBucket === "new")) &&
+          // Signed in an old wording: sending the new version is the point, not a duplicate.
+          !isOutdatedDocument(d)
       );
       if (alreadySent.length > 0) {
         setActionError(`${personName} already has a ${SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type} on file (most likely just sent from another session) — refreshing to show its current status.`);
@@ -712,9 +717,10 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
       const contractorAddendumFields = type === "contractor_addendum" && contractorAddendumInfo
         ? { positionLevel: contractorAddendumInfo.positionLevel, baselinePayout: contractorAddendumInfo.baselinePayout }
         : {};
+      const versionTag = type === "confidentiality_noncompete_agreement" ? { templateVersion: CNC_CURRENT_TEMPLATE_VERSION } : {};
       const doc = await createSignableDocument({
         documentType: type,
-        formData: { employeeId: personId, employeeName: personName, ...formSourceTag, ...contractorAddendumFields },
+        formData: { employeeId: personId, employeeName: personName, ...formSourceTag, ...contractorAddendumFields, ...versionTag },
         recipientId: personId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -726,7 +732,7 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "HR",
-          body: `📋 Please complete the ${SIGNABLE_DOCUMENT_REGISTRY[type].label}: ${fillLink}`,
+          body: `📋 Please complete the ${type === "confidentiality_noncompete_agreement" ? confidentialityAgreementTitle(CNC_CURRENT_TEMPLATE_VERSION) : SIGNABLE_DOCUMENT_REGISTRY[type].label}: ${fillLink}`,
         });
       }
       void logActivity({ action: `${type}_sent`, targetType: "employee", targetId: personId, targetLabel: personName });
@@ -1202,6 +1208,8 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
                         const effectivelyDone = done || doneViaLegacy;
                         const awaitingEmployee = reviewStatus === "awaiting_employee";
                         const awaitingHr = reviewStatus === "awaiting_hr";
+                        // Signed in an old wording (Master Confidentiality before the new version): needs the new one sent.
+                        const outdated = reviewStatus === "outdated";
                         const label = SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type;
                         const key = `${r.profileId}|${type}`;
                         const busy = actionKey === key;
@@ -1215,6 +1223,8 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
                           ? "Awaiting HR review"
                           : awaitingEmployee
                           ? "Awaiting employee signature"
+                          : outdated
+                          ? "Needs new version"
                           : "Not sent";
                         const statusColor = na
                           ? "text-slate-500"
@@ -1224,6 +1234,8 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
                           ? "text-sky-400"
                           : awaitingEmployee
                           ? "text-amber-400"
+                          : outdated
+                          ? "text-orange-400"
                           : "text-slate-600";
                         const markerClass = effectivelyDone
                           ? "border-emerald-500 bg-emerald-500 text-slate-950"
@@ -1231,6 +1243,8 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
                           ? "border-sky-500/60 bg-sky-500/20"
                           : awaitingEmployee
                           ? "border-amber-500/60 bg-transparent"
+                          : outdated
+                          ? "border-orange-500/70 bg-transparent"
                           : "border-white/20 bg-transparent";
                         return (
                           <Fragment key={type}>
@@ -1296,6 +1310,21 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
                                 >
                                   <PenLine className="h-3 w-3" /> Fill Info
                                 </button>
+                              ) : type === "confidentiality_noncompete_agreement" && doc ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    navigate({
+                                      to: "/m/$module/$submodule",
+                                      params: { module: "hr", submodule: "hr-paperworks" },
+                                      search: { tab: "confidentialityNonCompeteAgreement" },
+                                    } as any)
+                                  }
+                                  title="Add the employer signature in HR Paperworks"
+                                  className="inline-flex shrink-0 items-center gap-1 text-xs text-sky-300 hover:text-sky-200"
+                                >
+                                  <PenLine className="h-3 w-3" /> Add Employer Signature
+                                </button>
                               ) : doc && EMPLOYER_SIGN_SUPPORTED_TYPES.has(type) ? (
                                 <button
                                   type="button"
@@ -1334,7 +1363,7 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
                                 </span>
                               )
                             )}
-                            {!na && !doneViaLegacy && reviewStatus === "not_sent" && (
+                            {!na && !doneViaLegacy && (reviewStatus === "not_sent" || outdated) && (
                               <button
                                 type="button"
                                 disabled={busy}
@@ -1343,10 +1372,10 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
                                     ? setContractorAddendumSendDialog({ kind: "single", personId: r.profileId, personName: r.name })
                                     : void handleSendForm(r.profileId, r.name, type)
                                 }
-                                title="Create and send this form"
+                                title={outdated ? "Signed in the old wording: send the new version to sign" : "Create and send this form"}
                                 className="inline-flex shrink-0 items-center gap-1 text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40"
                               >
-                                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />} Send
+                                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />} {outdated ? "Send new version" : "Send"}
                               </button>
                             )}
                             <label

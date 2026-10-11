@@ -10,6 +10,7 @@
  * signature; the Effective Date is the day they sign). The employer
  * representative countersigns afterward from HR Paperworks.
  */
+import { InlinePdfLink } from "@/components/InlinePdfViewer";
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Loader2 } from "lucide-react";
@@ -24,6 +25,8 @@ import {
   confidentialityNonCompeteAgreementStyles,
   buildConfidentialityNonCompeteAgreementBodyMarkup,
   captureConfidentialityNonCompeteAgreementPdf,
+  confidentialityAgreementTitle,
+  CNC_CURRENT_TEMPLATE_VERSION,
   type ConfidentialityNonCompeteAgreementFormData,
 } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
@@ -37,7 +40,6 @@ interface Props {
   docId: string;
 }
 
-const AGREEMENT_TITLE = "Master Confidentiality, Non-Solicitation, Non-Compete, and Affirmative Duty Agreement";
 
 const todayIso = () => {
   const d = new Date();
@@ -90,7 +92,10 @@ export function FillConfidentialityNonCompeteAgreementPage({ docId }: Props) {
         } else {
           setDoc(document);
           const existing = document.formData as Partial<ConfidentialityNonCompeteAgreementFormData>;
-          setForm((prev) => ({ ...prev, ...existing }));
+          // Not signed yet: it's signed in the current wording. Already signed
+          // (or reopened for the employer): keep the wording it was signed in.
+          const unsigned = document.status === "pending_signature" && document.recipientSlot === "employee";
+          setForm((prev) => ({ ...prev, ...existing, ...(unsigned ? { templateVersion: CNC_CURRENT_TEMPLATE_VERSION } : {}) }));
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load document.");
@@ -101,12 +106,16 @@ export function FillConfidentialityNonCompeteAgreementPage({ docId }: Props) {
     return () => { cancelled = true; };
   }, [ready, uid, docId]);
 
+  // Version 2 has no "residing at" line, so it doesn't ask for an address.
+  const noResidenceLine = (form.templateVersion ?? 1) >= 2;
+  const agreementTitle = confidentialityAgreementTitle(form.templateVersion);
+
   const updateField = <K extends keyof ConfidentialityNonCompeteAgreementFormData>(key: K, value: ConfidentialityNonCompeteAgreementFormData[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
   const validate = (): string | null => {
     if (!form.employeeName.trim()) return "Enter your full legal name.";
-    if (!form.residingAddress.trim()) return "Enter the address where you live.";
+    if (!noResidenceLine && !form.residingAddress.trim()) return "Enter the address where you live.";
     if (!sigPad.hasContent()) return "Please add your signature.";
     return null;
   };
@@ -152,7 +161,7 @@ export function FillConfidentialityNonCompeteAgreementPage({ docId }: Props) {
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "Employee",
-          body: `📋 ${AGREEMENT_TITLE} for ${finalData.employeeName} has been signed, and is ready for the employer representative's signature: ${pdfUrl}`,
+          body: `📋 ${agreementTitle} for ${finalData.employeeName} has been signed, and is ready for the employer representative's signature: ${pdfUrl}`,
         });
       }
 
@@ -160,7 +169,7 @@ export function FillConfidentialityNonCompeteAgreementPage({ docId }: Props) {
         .then(({ taxForms }) => {
           if (!taxForms) return;
           const excludeIds = doc.createdBy ? [doc.createdBy] : [];
-          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📋 ${AGREEMENT_TITLE} for ${finalData.employeeName} has been signed — the employer signature is ready to be added.`);
+          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📋 ${agreementTitle} for ${finalData.employeeName} has been signed — the employer signature is ready to be added.`);
         })
         .catch((err) => console.error("[confidentiality-noncompete-agreement] hr notify check failed:", err));
 
@@ -201,14 +210,12 @@ export function FillConfidentialityNonCompeteAgreementPage({ docId }: Props) {
             <p className="text-sm font-semibold mb-2">✓ Submitted{submitted ? " and sent to HR" : ""}.</p>
             <p className="text-xs text-muted-foreground mb-2">The employer representative will add their signature separately.</p>
             {doc.pdfUrl && (
-              <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
-                View the completed PDF
-              </a>
+              <InlinePdfLink url={doc.pdfUrl} label="View the completed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
             )}
           </div>
         ) : (
           <div className="panel p-4">
-            <h1 className="text-lg font-bold mb-1">{AGREEMENT_TITLE}</h1>
+            <h1 className="text-lg font-bold mb-1">{agreementTitle}</h1>
             <p className="text-xs text-muted-foreground mb-4">
               Fill in your information below, read the whole agreement, then sign and submit.
             </p>
@@ -218,10 +225,12 @@ export function FillConfidentialityNonCompeteAgreementPage({ docId }: Props) {
                 <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">Printed Full Legal Name</label>
                 <input className="glass-input text-sm py-1.5 px-3 rounded-md w-full" value={form.employeeName} onChange={(e) => updateField("employeeName", e.target.value)} />
               </div>
-              <div>
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">Residing At (home address)</label>
-                <input className="glass-input text-sm py-1.5 px-3 rounded-md w-full" value={form.residingAddress} onChange={(e) => updateField("residingAddress", e.target.value)} placeholder="Street, City, State ZIP" />
-              </div>
+              {!noResidenceLine && (
+                <div>
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">Residing At (home address)</label>
+                  <input className="glass-input text-sm py-1.5 px-3 rounded-md w-full" value={form.residingAddress} onChange={(e) => updateField("residingAddress", e.target.value)} placeholder="Street, City, State ZIP" />
+                </div>
+              )}
             </div>
 
             <p className="text-xs text-muted-foreground mb-2">Read the agreement below, then sign at the bottom.</p>

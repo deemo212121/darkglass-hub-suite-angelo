@@ -419,21 +419,29 @@ export async function runNoClockInByTenMeetings(env: Record<string, string | und
 
   // Clocked in by 10:00 after all — drop a flag an earlier run made before
   // that Time In existed. Only still-'required' ones: a meeting already
-  // marked done stays on the record.
-  for (const { p, date } of onTime) {
-    try {
-      const res = await fetch(
-        `${supabaseUrl}/rest/v1/clock_in_meetings?profile_id=eq.${p.id}&missed_date=eq.${date}&kind=eq.missed_clock_in&status=eq.required`,
-        { method: "DELETE", headers: { ...headers, Prefer: "return=representation" } }
-      );
-      if (!res.ok) {
-        summary.errors.push(`Clear ${p.display_name}: HTTP ${res.status}`);
-        continue;
+  // marked done stays on the record. One request per day (in chunks of 100
+  // technicians), not one per technician — this runs every hour inside the
+  // scheduled Worker, which shares a per-run subrequest limit with the
+  // other jobs.
+  const onTimeByDate = new Map<string, string[]>();
+  for (const { p, date } of onTime) onTimeByDate.set(date, [...(onTimeByDate.get(date) ?? []), p.id]);
+  for (const [date, ids] of onTimeByDate) {
+    for (let i = 0; i < ids.length; i += 100) {
+      const chunk = ids.slice(i, i + 100);
+      try {
+        const res = await fetch(
+          `${supabaseUrl}/rest/v1/clock_in_meetings?profile_id=in.(${chunk.join(",")})&missed_date=eq.${date}&kind=eq.missed_clock_in&status=eq.required`,
+          { method: "DELETE", headers: { ...headers, Prefer: "return=representation" } }
+        );
+        if (!res.ok) {
+          summary.errors.push(`Clear ${date}: HTTP ${res.status}`);
+          continue;
+        }
+        const removed: unknown[] = await res.json();
+        summary.cleared += removed.length;
+      } catch (e) {
+        summary.errors.push(`Clear ${date}: ${e instanceof Error ? e.message : String(e)}`);
       }
-      const removed: unknown[] = await res.json();
-      summary.cleared += removed.length;
-    } catch (e) {
-      summary.errors.push(`Clear ${p.display_name}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

@@ -1,7 +1,10 @@
 /**
- * Master Confidentiality, Non-Solicitation, Non-Compete, and Affirmative
- * Duty Agreement — sent to every employee (every Staff Form Checklist tier).
- * Text transcribed verbatim from the source document HR supplied.
+ * Master Confidentiality agreement — sent to every employee (every Staff
+ * Form Checklist tier). Two wordings, both transcribed verbatim from the
+ * source documents HR supplied, picked per document by templateVersion:
+ * 1 = "…Non-Solicitation, Non-Compete, and Affirmative Duty Agreement"
+ * (everything signed before 2026-10-09), 2 = "…Non-Solicitation, and
+ * Affirmative Duty Agreement" (current).
  *
  * Same HTML/CSS → PDF technique and two-party flow as the Master W-2
  * agreements (see masterW2ExecutiveAgreementFormTemplate.ts): the employee
@@ -13,6 +16,7 @@
  */
 
 import { captureHtmlPagesToPdfBlob } from "./pdfCapture";
+import { CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION } from "./signableDocumentRegistry";
 
 export interface ConfidentialityNonCompeteAgreementFormData {
   /** The employee's profile id — not shown on the document, carried along for lookups. */
@@ -29,6 +33,24 @@ export interface ConfidentialityNonCompeteAgreementFormData {
   employerSignatureDataUrl: string;
   /** Employer representative's printed name / title — typed by HR when countersigning. */
   employerPrintedNameTitle: string;
+  /**
+   * Which wording this document carries. Missing = 1, the original
+   * "…Non-Compete…" agreement — every document signed before 2026-10-09 —
+   * so Regenerate PDF and the employer countersignature keep printing the
+   * text that person actually signed. New signings store
+   * CNC_CURRENT_TEMPLATE_VERSION (see FillConfidentialityNonCompeteAgreementPage.tsx).
+   */
+  templateVersion?: number;
+}
+
+/** Version 2 (2026-10-09): "Master Confidentiality, Non-Solicitation, and Affirmative Duty Agreement" — no non-compete, 1-year restrictions, no residence line. */
+export const CNC_CURRENT_TEMPLATE_VERSION = CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION;
+
+/** The full title for a document's wording version. */
+export function confidentialityAgreementTitle(version: number | undefined): string {
+  return (version ?? 1) >= 2
+    ? "Master Confidentiality, Non-Solicitation, and Affirmative Duty Agreement"
+    : "Master Confidentiality, Non-Solicitation, Non-Compete, and Affirmative Duty Agreement";
 }
 
 const escapeHtml = (s: string) =>
@@ -100,7 +122,87 @@ function signField(label: string, inner: string, minWidth = 150, isText = false)
   return `<div class="cnc-sign-field">${escapeHtml(label)}: <span class="cnc-val${isText ? " cnc-val-text" : ""}" style="min-width:${minWidth}px">${inner || "&nbsp;"}</span></div>`;
 }
 
+/** The document in the wording its data says it was signed with (see templateVersion). */
 export function buildConfidentialityNonCompeteAgreementBodyMarkup(data: ConfidentialityNonCompeteAgreementFormData, logoDataUrl: string): string {
+  return (data.templateVersion ?? 1) >= 2 ? buildVersion2Markup(data, logoDataUrl) : buildVersion1Markup(data, logoDataUrl);
+}
+
+/** Shared signature blocks (same fields in both versions). */
+function signatureBlocks(data: ConfidentialityNonCompeteAgreementFormData): string {
+  const empDate = dateParts(data.employeeDateSigned);
+  const erDate = dateParts(data.employerDateSigned);
+  const sig = (url: string) => (url ? `<img class="cnc-sig-img" src="${url}" alt="Signature" />` : "");
+  return `
+      <div class="cnc-sign-block">
+        <div class="cnc-sign-title">EMPLOYEE:</div>
+        <div class="cnc-sign-row">
+          ${signField("Signature", sig(data.employeeSignatureDataUrl), 190)}
+          ${signField("Date", empDate ? escapeHtml(empDate.full) : "", 120, true)}
+        </div>
+        <div class="cnc-sign-row">${signField("Printed Full Legal Name", data.employeeName ? escapeHtml(data.employeeName) : "", 300, true)}</div>
+      </div>
+
+      <div class="cnc-sign-block">
+        <div class="cnc-sign-title">EMPLOYER REPRESENTATIVE (US IN HOME SERVICES):</div>
+        <div class="cnc-sign-row">
+          ${signField("Authorized Representative Signature", sig(data.employerSignatureDataUrl), 170)}
+          ${signField("Date", erDate ? escapeHtml(erDate.full) : "", 120, true)}
+        </div>
+        <div class="cnc-sign-row">${signField("Name / Title", data.employerPrintedNameTitle ? escapeHtml(data.employerPrintedNameTitle) : "", 300, true)}</div>
+      </div>`;
+}
+
+/** Version 2 — text as supplied by HR on 2026-10-09. */
+function buildVersion2Markup(data: ConfidentialityNonCompeteAgreementFormData, logoDataUrl: string): string {
+  const eff = dateParts(data.effectiveDate);
+  return `
+    <div class="cnc-container">
+      <div class="cnc-header">
+        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="US In Home Services" style="width:56px;height:56px;object-fit:contain;" />` : ""}
+        <h1>MASTER CONFIDENTIALITY, NON-SOLICITATION, AND AFFIRMATIVE DUTY AGREEMENT</h1>
+      </div>
+
+      <p class="cnc-p cnc-p-fill">THIS MASTER AGREEMENT (the "Agreement") is made and entered into as of this ${blank(eff?.day ?? "", 50)} day of ${blank(eff?.month ?? "", 110)}, 20${blank(eff?.year ?? "", 24)} (the "Effective Date"), by and between:</p>
+      <p class="cnc-p"><b>EMPLOYER:</b> US In Home Services, its subsidiaries, affiliates, related entities (including Admin Hub Solutions), successors, and assigns (collectively, the "Company"), 3663 Cherry Rd. #101, Memphis, TN 38117, USA.</p>
+      <p class="cnc-p cnc-p-fill"><b>EMPLOYEE/INDIVIDUAL:</b> ${blank(data.employeeName, 260)} ("Employee").</p>
+
+      <p class="cnc-center">RECITALS</p>
+      <p class="cnc-p">WHEREAS, the Company is engaged in specialized appliance repair, home services, BPO operations, dispatch routing, and technical workforce management; and</p>
+      <p class="cnc-p">WHEREAS, Employee will be granted access to proprietary and confidential trade secrets, B2B client relationships, and operational systems;</p>
+      <p class="cnc-p">NOW, THEREFORE, Employee agrees as follows:</p>
+
+      <p class="cnc-section-title">SECTION 1. CONFIDENTIAL INFORMATION &amp; TRADE SECRETS</p>
+      <p class="cnc-p">1.1. Scope: Includes SOPs, BPO workflows, dispatch algorithms, B2B client data (GE, Assurant, Samsung, Hisense, SquareTrade), pricing, technician databases, and financial data.</p>
+      <p class="cnc-p">1.2. Exclusions: Publicly known information strictly through lawful means.</p>
+
+      <p class="cnc-section-title">SECTION 2. AFFIRMATIVE DUTY TO REPORT &amp; BAN ON COMPLICITY</p>
+      <p class="cnc-p">2.1. Duty to Disclose: Employee shall immediately report any unauthorized disclosure of trade secrets, poaching attempts by former employees/competitors (e.g., Apex, Sycamore), or dual employment.</p>
+      <p class="cnc-p">2.2. Ban on Concealment: Concealment or silence regarding competing activities constitutes a material breach and grounds for termination for cause.</p>
+
+      <p class="cnc-section-title">SECTION 3. RESTRICTIVE COVENANTS</p>
+      <p class="cnc-p">3.1. Non-Solicitation of Personnel: 1-year post-termination restriction on soliciting field technicians, managers, or BPO/remote staff.</p>
+      <p class="cnc-p">3.2. Non-Solicitation of Clients: 1-year post-termination restriction on soliciting Company clients, warranty providers, or manufacturers.</p>
+      <p class="cnc-p">3.3. Protection Against Target Entities: 1-year restriction on consulting or performing services for hostile entities formed via stolen trade secrets (specifically Apex Technical Service, Sycamore Appliance) using Company secrets.</p>
+
+      <p class="cnc-section-title">SECTION 4. DIGITAL SECURITY &amp; ASSET RETURN</p>
+      <p class="cnc-p">4.1. Authorized Communications: Employee is authorized to use designated messaging platforms (including Discord, Skype, WhatsApp) for legitimate business. However, Employee shall NOT use messaging channels to exfiltrate Confidential Information or secretly coordinate with competing entities or Apex/Sycamore personnel to harm the Company.</p>
+      <p class="cnc-p">4.2. Return of Property: Upon termination or request, Employee shall surrender all Company property, credentials, and customer files without retaining copies.</p>
+
+      <p class="cnc-section-title">SECTION 5. LEGAL REMEDIES &amp; GOVERNING LAW</p>
+      <p class="cnc-p">5.1. Injunctive Relief: Breach entitles the Company to seek immediate TRO, damages, and full recovery of attorney's fees.</p>
+      <p class="cnc-p">5.2. Governing Law: Governed by the laws of the State of Tennessee, USA (Shelby County jurisdiction).</p>
+      <p class="cnc-p">5.3. At-Will Status Preserved: Employment remains At-Will.</p>
+
+      ${PAGE_BREAK}
+      <p class="cnc-center">ACKNOWLEDGMENT OF VOLUNTARY EXECUTION</p>
+      <p class="cnc-p">BY SIGNING BELOW, EMPLOYEE ACKNOWLEDGES THAT THEY HAVE READ, UNDERSTOOD, AND VOLUNTARILY AGREE TO ALL TERMS.</p>
+${signatureBlocks(data)}
+    </div>
+  `;
+}
+
+/** Version 1 — the original wording (documents signed before 2026-10-09). Unchanged. */
+function buildVersion1Markup(data: ConfidentialityNonCompeteAgreementFormData, logoDataUrl: string): string {
   const eff = dateParts(data.effectiveDate);
   const empDate = dateParts(data.employeeDateSigned);
   const erDate = dateParts(data.employerDateSigned);
@@ -183,10 +285,11 @@ export function buildConfidentialityNonCompeteAgreementBodyMarkup(data: Confiden
 }
 
 /**
- * The same document as three separate US Letter pages (1: through Section
- * 2; 2: Sections 3–5; 3: Section 6 and the signatures), each with "Page X of 3" —
- * for the PDF. buildConfidentialityNonCompeteAgreementBodyMarkup stays one
- * continuous document for the on-screen preview.
+ * The same document as separate US Letter pages, each with "Page X of N" —
+ * for the PDF. Version 1: three (1: through Section 2; 2: Sections 3–5;
+ * 3: Section 6 and the signatures). Version 2: two (1: the agreement;
+ * 2: acknowledgment and signatures). buildConfidentialityNonCompeteAgreementBodyMarkup
+ * stays one continuous document for the on-screen preview.
  */
 export function buildConfidentialityNonCompeteAgreementPages(data: ConfidentialityNonCompeteAgreementFormData, logoDataUrl: string): string[] {
   const full = buildConfidentialityNonCompeteAgreementBodyMarkup(data, logoDataUrl);
@@ -198,7 +301,7 @@ export function buildConfidentialityNonCompeteAgreementPages(data: Confidentiali
   );
 }
 
-/** The finished PDF — real Letter pages (three). */
+/** The finished PDF — real Letter pages. */
 export function captureConfidentialityNonCompeteAgreementPdf(data: ConfidentialityNonCompeteAgreementFormData, logoDataUrl: string): Promise<Blob> {
   return captureHtmlPagesToPdfBlob(buildConfidentialityNonCompeteAgreementPages(data, logoDataUrl), confidentialityNonCompeteAgreementStyles);
 }

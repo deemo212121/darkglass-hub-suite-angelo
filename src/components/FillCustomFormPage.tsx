@@ -18,11 +18,13 @@ import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { FillFormSignInRequired } from "@/components/FillFormSignInRequired";
 import { randomId } from "@/lib/utils";
-import { getCustomForm, notifyInternalSubmission, submitCustomFormResponse, type CustomForm } from "@/lib/supabase/customForms";
+import { companyFields, getCustomForm, notifyInternalSubmission, submitCustomFormResponse, type CustomForm } from "@/lib/supabase/customForms";
+import { saveSubmissionDocument, submissionDocumentFileName } from "@/lib/documentTemplates/saveDocument";
 import { uploadCustomFormFile } from "@/lib/firebase/storage";
 import { uploadSubmissionToDriveIfConfigured } from "@/lib/documentTemplates/driveUpload";
 import { ELEMENT_REGISTRY } from "@/lib/formElements";
 import { CustomFormRenderer, type CustomFormRendererValue } from "@/components/CustomFormRenderer";
+import usihsLogo from "@/assets/us-in-home-services-logo.png";
 
 interface Props {
   formId: string;
@@ -34,6 +36,9 @@ export function FillCustomFormPage({ formId }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
+  // What was just submitted — for the "Download a copy" buttons on the thank-you screen.
+  const [copy, setCopy] = useState<{ responses: Record<string, any>; submittedAt: string; submitterName: string | null } | null>(null);
+  const [copyBusy, setCopyBusy] = useState<"pdf" | "word" | null>(null);
 
   useEffect(() => {
     if (!ready || !uid) return;
@@ -78,12 +83,41 @@ export function FillCustomFormPage({ formId }: Props) {
     }
     const submittedAt = new Date().toISOString();
     const { id: submissionId } = await submitCustomFormResponse({ formId: form.id, formTitle: form.title, submitterName, responses });
+    setCopy({ responses, submittedAt, submitterName });
     setSubmitted(true);
     // Both best-effort — HR not finding out immediately, or the PDF not
     // landing in Drive, isn't worth failing an already-saved submission
     // over, so both are fire-and-forget.
     notifyInternalSubmission(submissionId).catch((err) => console.error("[fill-form] HR notify failed (submission was still saved):", err));
     void uploadSubmissionToDriveIfConfigured(form.documentTemplate, form, { id: submissionId, responses, submittedAt });
+    // One-party form: it's done now, so file its document. A form with
+    // "Filled in by: Company" fields is filed when HR completes it instead.
+    if (companyFields(form).length === 0) {
+      saveSubmissionDocument(form, { id: submissionId, responses, submittedAt, submitterName }).catch((err) =>
+        console.error("[fill-form] Saving the document failed (submission was still saved — HR can open it from Custom Forms):", err)
+      );
+    }
+  };
+
+  const downloadCopy = async (kind: "pdf" | "word") => {
+    if (!form || !copy) return;
+    setCopyBusy(kind);
+    try {
+      const blob = kind === "pdf"
+        ? await (await import("@/lib/documentTemplates/generate")).generateSubmissionDocumentPdf(form, copy)
+        : await (await import("@/lib/documentTemplates/docx")).generateSubmissionDocx(form, copy);
+      const name = submissionDocumentFileName(form, copy);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = kind === "pdf" ? name : name.replace(/\.pdf$/, ".docx");
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (err) {
+      console.error("[fill-form] Couldn't build the copy:", err);
+    } finally {
+      setCopyBusy(null);
+    }
   };
 
   return (
@@ -105,9 +139,20 @@ export function FillCustomFormPage({ formId }: Props) {
         ) : !form ? null : submitted ? (
           <div className="panel p-6 text-center">
             <p className="text-sm font-semibold">✅ Submitted — thanks!</p>
+            {copy && (
+              <div className="mt-3 flex items-center justify-center gap-2">
+                <span className="text-xs text-muted-foreground">Download a copy:</span>
+                {(["pdf", "word"] as const).map((kind) => (
+                  <button key={kind} type="button" disabled={!!copyBusy} onClick={() => void downloadCopy(kind)} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 disabled:opacity-50">
+                    {copyBusy === kind && <Loader2 className="h-3 w-3 animate-spin" />} {kind === "pdf" ? "PDF" : "Word"}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ) : (
           <div className="panel p-5">
+            <img src={usihsLogo} alt="US In Home Services" className="h-16 w-16 mx-auto mb-3" />
             <h1 className="text-lg font-bold mb-1">{form.title}</h1>
             {form.description && <p className="text-sm text-muted-foreground mb-4">{form.description}</p>}
             <CustomFormRenderer fields={form.fields} onSubmit={handleSubmit} />

@@ -6,13 +6,19 @@
  * Documents (Jotform) tab, since this is the self-built equivalent of it.
  */
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Pencil, Trash2, Copy, Search, FileText, ExternalLink, X, FileDown, Loader2, HardDrive } from "lucide-react";
+import { Plus, Pencil, Trash2, Copy, Search, FileText, ExternalLink, X, FileDown, Loader2, HardDrive, Download, FileSpreadsheet, PenLine, CheckCircle2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { CustomFormBuilder } from "./CustomFormBuilder";
+import { CustomFormRenderer, type CustomFormRendererValue } from "./CustomFormRenderer";
 import { Switch } from "@/components/ui/switch";
-import { generateSubmissionPdf } from "@/lib/documentTemplates/generate";
+import { formatFieldValue, generateSubmissionDocumentPdf } from "@/lib/documentTemplates/generate";
+import { saveSubmissionDocument, submissionDocumentFileName } from "@/lib/documentTemplates/saveDocument";
+import { generateSubmissionDocx } from "@/lib/documentTemplates/docx";
+import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
+import { downloadStyledReport, type ReportSheet } from "@/lib/styledReportExport";
+import { uploadCustomFormFile } from "@/lib/firebase/storage";
 import { ELEMENT_REGISTRY, type CustomFormField } from "@/lib/formElements";
 import {
   getCustomForms,
@@ -27,10 +33,14 @@ import {
   deleteCustomForm,
   getGoogleDriveConnectionStatus,
   disconnectGoogleDrive,
+  companyFields,
+  isAwaitingCompany,
+  completeCustomFormSubmission,
   type CustomForm,
   type CustomFormSubmission,
   type CustomFormSubmissionStatus,
   type GoogleDriveConnectionStatus,
+  type CustomFormResponseValue,
 } from "@/lib/supabase/customForms";
 import { getAppUrl } from "@/lib/appUrl";
 
@@ -42,40 +52,21 @@ const STATUS_BADGE: Record<string, string> = {
   archived: "bg-slate-700 text-slate-400",
 };
 
-/** Renders one submission's stored value — prefers the field's own ElementDefinition.formatValue (Full Name → "First Last", Address → one line, Product List → item names) so composite values read naturally instead of a generic key: value dump; falls back to a generic renderer for types with no formatValue or when the field itself isn't known. */
-function renderResponseValue(value: unknown, field?: CustomFormField) {
-  const def = field && ELEMENT_REGISTRY[field.type];
-  if (def?.formatValue && field) {
-    const text = def.formatValue(value, field);
-    return <p>{text || "—"}</p>;
-  }
-  if (value == null || value === "") return <p className="text-muted-foreground">—</p>;
-  if (typeof value === "boolean") return <p>{value ? "Yes" : "No"}</p>;
-  if (typeof value === "string" || typeof value === "number") return <p>{String(value)}</p>;
-  if (value && typeof value === "object" && "url" in (value as any)) {
-    const f = value as { url: string; fileName?: string };
-    return <a href={f.url} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline">{f.fileName || "View file"}</a>;
-  }
-  if (Array.isArray(value)) {
-    if (value.length > 0 && Array.isArray(value[0])) {
-      // Input Table grid.
-      return (
-        <table className="text-xs border border-white/10">
-          <tbody>{(value as string[][]).map((row, r) => <tr key={r}>{row.map((cell, c) => <td key={c} className="border border-white/10 px-1.5 py-0.5">{cell || "—"}</td>)}</tr>)}</tbody>
-        </table>
-      );
-    }
-    return <p>{(value as unknown[]).filter((v) => v !== "" && v != null).join(", ") || "—"}</p>;
-  }
-  // Plain composite object with no formatValue of its own — Captcha, etc.
-  return (
-    <p className="text-xs">
-      {Object.entries(value as Record<string, unknown>)
-        .filter(([, v]) => v !== "" && v != null)
-        .map(([k, v]) => `${k}: ${v}`)
-        .join(" · ") || "—"}
-    </p>
-  );
+/** Fields that carry an answer (not headings/paragraphs/page markers) — the columns of an export. */
+const NON_ANSWER_TYPES = new Set(["heading", "paragraph", "divider", "pageBreak", "sectionCollapse", "submitButton", "captcha", "image"]);
+
+/** Excel sheet names: max 31 chars, none of []:*?/\, unique within the workbook. */
+function sheetNameFor(title: string, used: Set<string>): string {
+  const base = (title.replace(/[[\]:*?/\\]+/g, " ").trim() || "Form").slice(0, 28);
+  let name = base;
+  for (let i = 2; used.has(name.toLowerCase()); i++) name = `${base.slice(0, 26)} ${i}`;
+  used.add(name.toLowerCase());
+  return name;
+}
+
+function exportCellText(value: CustomFormResponseValue | undefined, field: CustomFormField): string {
+  if (value && typeof value === "object" && !Array.isArray(value) && "url" in value) return String((value as { url: string }).url);
+  return formatFieldValue(value ?? null, field);
 }
 
 export function CustomFormsPanel() {
@@ -298,35 +289,45 @@ export function CustomFormsPanel() {
   const [preview, setPreview] = useState<CustomFormSubmission | null>(null);
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string | null>(null);
   const [previewPdfLoading, setPreviewPdfLoading] = useState(false);
-  const [viewingId, setViewingId] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  /** Generates the submission's PDF on the fly from its form's document template and opens it in a new tab — "viewing" rather than forcing a download, same as the Applicant Documents tab's "View PDF". */
-  const handleViewPdf = async (submission: CustomFormSubmission) => {
+  const revokeIfBlob = (url: string | null) => { if (url?.startsWith("blob:")) URL.revokeObjectURL(url); };
+
+  /**
+   * The submission's document: the saved copy when there is one. Otherwise
+   * it's rendered now (from the form's Document Template, or the automatic
+   * layout when none is designed) — and if the submission is complete, that
+   * render is saved too, so it's on file from then on.
+   */
+  const getDocumentUrl = async (submission: CustomFormSubmission): Promise<string> => {
+    if (submission.pdfUrl) return submission.pdfUrl;
     const form = formsById.get(submission.formId);
-    if (!form?.documentTemplate) return;
-    setViewingId(submission.id);
-    try {
-      const blob = await generateSubmissionPdf(form.documentTemplate, form, submission);
-      window.open(URL.createObjectURL(blob), "_blank");
-    } catch (err) {
-      console.error("Failed to generate document PDF:", err);
-    } finally {
-      setViewingId(null);
+    if (!form) throw new Error("This submission's form was deleted, so its document can't be built.");
+    if (!isAwaitingCompany(form, submission)) {
+      try {
+        const { url, blob } = await saveSubmissionDocument(form, submission);
+        setSubmissions((prev) => prev.map((s) => (s.id === submission.id ? { ...s, pdfUrl: url, pdfGeneratedAt: new Date().toISOString() } : s)));
+        return URL.createObjectURL(blob);
+      } catch (err) {
+        console.error("Saving the document failed — showing it without saving:", err);
+      }
     }
+    return URL.createObjectURL(await generateSubmissionDocumentPdf(form, submission));
   };
 
-  /** Clicking a submission's name opens the detail modal — if its form has a document template, that modal shows the actual generated PDF (like the Applicant Documents tab's preview) instead of the raw response list. */
+  /** Clicking a submission (or View PDF) opens its document in the preview modal. */
   const openPreview = async (submission: CustomFormSubmission) => {
     setPreview(submission);
-    setPreviewPdfUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
-    const form = formsById.get(submission.formId);
-    if (!form?.documentTemplate) return;
+    setPreviewError(null);
+    setPreviewPdfUrl((prev) => { revokeIfBlob(prev); return null; });
     setPreviewPdfLoading(true);
     try {
-      const blob = await generateSubmissionPdf(form.documentTemplate, form, submission);
-      setPreviewPdfUrl(URL.createObjectURL(blob));
+      setPreviewPdfUrl(await getDocumentUrl(submission));
     } catch (err) {
-      console.error("Failed to generate document PDF:", err);
+      console.error("Failed to build the document:", err);
+      setPreviewError(err instanceof Error ? err.message : "Couldn't build this document.");
     } finally {
       setPreviewPdfLoading(false);
     }
@@ -334,7 +335,154 @@ export function CustomFormsPanel() {
 
   const closePreview = () => {
     setPreview(null);
-    setPreviewPdfUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
+    setPreviewPdfUrl((prev) => { revokeIfBlob(prev); return null; });
+  };
+
+  const handleDownload = async (submission: CustomFormSubmission) => {
+    const form = formsById.get(submission.formId);
+    const fileName = form ? submissionDocumentFileName(form, submission) : `${submission.formTitle || "Submission"} - ${submission.submitterName || "Submission"}.pdf`;
+    setDownloadingId(submission.id);
+    setActionError(null);
+    try {
+      const url = await getDocumentUrl(submission);
+      if (url.startsWith("blob:")) {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = fileName;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+      } else {
+        await downloadSignableDocumentPdf(url, fileName);
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't download this document.");
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  const saveBlob = (blob: Blob, fileName: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  };
+
+  /** The submission as an editable Word document (same layout as the automatic PDF). */
+  const handleDownloadWord = async (submission: CustomFormSubmission) => {
+    const form = formsById.get(submission.formId);
+    if (!form) { setActionError("This submission's form was deleted, so its document can't be built."); return; }
+    setDownloadingId(`${submission.id}:word`);
+    setActionError(null);
+    try {
+      saveBlob(await generateSubmissionDocx(form, submission), submissionDocumentFileName(form, submission).replace(/\.pdf$/, ".docx"));
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Couldn't build the Word document.");
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  /** The form itself, unfilled (default answers only) — e.g. to print and sign on paper. */
+  const [exportingFormId, setExportingFormId] = useState<string | null>(null);
+  const handleExportBlank = async (form: CustomForm, kind: "pdf" | "word") => {
+    setExportingFormId(`${form.id}:${kind}`);
+    setActionError(null);
+    try {
+      const responses = Object.fromEntries(form.fields.filter((fd) => fd.defaultValue !== undefined && fd.defaultValue !== "").map((fd) => [fd.id, fd.defaultValue]));
+      const name = form.title.replace(/[\\/:*?"<>|]+/g, " ").trim() || "Form";
+      if (kind === "pdf") saveBlob(await generateSubmissionDocumentPdf(form, { responses, submittedAt: new Date().toISOString() }), `${name}.pdf`);
+      else saveBlob(await generateSubmissionDocx(form, { responses }), `${name}.docx`);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Export failed.");
+    } finally {
+      setExportingFormId(null);
+    }
+  };
+
+  // ── Complete — HR fills the form's "Filled in by: Company" fields (e.g.
+  // the Authorized Representative's signature) on a submission, then the
+  // finished document is saved. ──
+  const [completing, setCompleting] = useState<CustomFormSubmission | null>(null);
+
+  const handleComplete = async (values: Record<string, CustomFormRendererValue>) => {
+    const submission = completing;
+    const form = submission ? formsById.get(submission.formId) : undefined;
+    if (!submission || !form || !uid) return;
+    const me = await getMyProfileId(uid);
+    if (!me) throw new Error("Couldn't identify your account — refresh and try again.");
+    const responses: Record<string, CustomFormResponseValue> = { ...submission.responses };
+    for (const field of companyFields(form)) {
+      const v = values[field.id];
+      if (ELEMENT_REGISTRY[field.type]?.isFileField) {
+        if (v instanceof File) {
+          const { url, fullPath } = await uploadCustomFormFile(form.companyId, form.id, submission.id, v);
+          responses[field.id] = { url, path: fullPath, fileName: v.name, mimeType: v.type, size: v.size };
+        }
+      } else if (v !== undefined) {
+        responses[field.id] = v;
+      }
+    }
+    await completeCustomFormSubmission(submission.id, responses, me);
+    const completed: CustomFormSubmission = { ...submission, responses, completedAt: new Date().toISOString(), pdfUrl: null };
+    setSubmissions((prev) => prev.map((s) => (s.id === submission.id ? completed : s)));
+    setCompleting(null);
+    try {
+      const { url } = await saveSubmissionDocument(form, completed);
+      setSubmissions((prev) => prev.map((s) => (s.id === submission.id ? { ...s, pdfUrl: url, pdfGeneratedAt: new Date().toISOString() } : s)));
+    } catch (err) {
+      console.error("Completed, but saving the document failed:", err);
+      setActionError("Completed — but the document couldn't be saved yet. Open it with View PDF to try again.");
+    }
+  };
+
+  // ── Export — the filtered submissions as a styled Excel workbook, one
+  // sheet per form, one column per question. ──
+  const [exporting, setExporting] = useState(false);
+  const handleExport = async () => {
+    setExporting(true);
+    setActionError(null);
+    try {
+      const byForm = new Map<string, CustomFormSubmission[]>();
+      for (const sub of filteredSubmissions) byForm.set(sub.formId, [...(byForm.get(sub.formId) ?? []), sub]);
+      const used = new Set<string>();
+      const sheets: ReportSheet[] = [];
+      for (const [formId, subs] of byForm) {
+        const form = formsById.get(formId);
+        const title = form?.title || subs[0].formTitle || "Form";
+        const answerFields = (form?.fields ?? []).filter((fd) => !NON_ANSWER_TYPES.has(fd.type) && !fd.hidden);
+        sheets.push({
+          name: sheetNameFor(title, used),
+          title,
+          subtitle: `${subs.length} submission${subs.length === 1 ? "" : "s"} · exported ${new Date().toLocaleString()}`,
+          columns: [
+            { header: "Submitter", width: 24 },
+            { header: "Submitted", width: 20 },
+            { header: "Status", width: 12, align: "center" },
+            ...(form && companyFields(form).length > 0 ? [{ header: "Completed by HR", width: 20 }] : []),
+            ...answerFields.map((fd) => ({ header: fd.label || fd.name, width: 24, wrap: true })),
+            { header: "Document", width: 40 },
+          ],
+          rows: subs.map((sub) => [
+            sub.submitterName || "Someone",
+            new Date(sub.submittedAt).toLocaleString(),
+            sub.status,
+            ...(form && companyFields(form).length > 0 ? [sub.completedAt ? `${new Date(sub.completedAt).toLocaleDateString()}${sub.completedByName ? ` · ${sub.completedByName}` : ""}` : "Awaiting"] : []),
+            ...answerFields.map((fd) => exportCellText(sub.responses[fd.id], fd)),
+            sub.pdfUrl || "",
+          ]),
+        });
+      }
+      if (sheets.length === 0) { setActionError("Nothing to export — no submissions match these filters."); return; }
+      const formPart = formFilter ? formsById.get(formFilter)?.title || "Custom Forms" : "Custom Forms";
+      await downloadStyledReport(`${formPart} - Submissions ${new Date().toISOString().slice(0, 10)}.xlsx`, sheets);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Export failed.");
+    } finally {
+      setExporting(false);
+    }
   };
 
   if (builderOpen) {
@@ -447,6 +595,12 @@ export function CustomFormsPanel() {
                             <Switch checked={f.driveUploadEnabled} onCheckedChange={(checked) => void handleToggleDriveUpload(f, checked)} />
                           </div>
                         )}
+                        <button type="button" onClick={() => void handleExportBlank(f, "pdf")} disabled={!!exportingFormId} title="Export this form (blank) as PDF" className="btn text-[10px] px-2 py-1 flex items-center gap-1 disabled:opacity-50">
+                          {exportingFormId === `${f.id}:pdf` ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileDown className="h-3 w-3" />} PDF
+                        </button>
+                        <button type="button" onClick={() => void handleExportBlank(f, "word")} disabled={!!exportingFormId} title="Export this form (blank) as a Word document" className="btn text-[10px] px-2 py-1 flex items-center gap-1 disabled:opacity-50">
+                          {exportingFormId === `${f.id}:word` ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />} Word
+                        </button>
                         <button type="button" onClick={() => { setEditingForm(f); setBuilderOpen(true); }} title="Edit" className="text-muted-foreground hover:text-foreground transition-colors">
                           <Pencil className="h-3.5 w-3.5" />
                         </button>
@@ -470,9 +624,16 @@ export function CustomFormsPanel() {
 
       {/* ── Submissions ── */}
       <div className="panel p-0 overflow-hidden">
-        <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Submissions</h2>
+        <div className="px-4 py-4 border-b border-white/10 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-sm">Submissions</h2>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Every finished submission's document is saved here — view it, or download it as PDF or Word any time. Export gives the filtered list as Excel, one sheet per form.</p>
+          </div>
+          <button type="button" onClick={() => void handleExport()} disabled={exporting || filteredSubmissions.length === 0} className="btn text-xs px-3 py-1.5 flex items-center gap-1.5 shrink-0 disabled:opacity-50">
+            {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />} Export Excel
+          </button>
         </div>
+        {actionError && <p className="px-4 py-2 text-xs text-red-300 bg-red-500/10 border-b border-red-500/20">{actionError}</p>}
         <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
@@ -533,15 +694,28 @@ export function CustomFormsPanel() {
                         <option value="reviewed">Reviewed</option>
                         <option value="archived">Archived</option>
                       </select>
+                      {isAwaitingCompany(formsById.get(s.formId), s) && (
+                        <span className="block mt-1 text-[10px] font-semibold text-orange-300" title="The company's part (e.g. Authorized Representative signature) isn't filled in yet — use Complete.">Awaiting company signature</span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
-                      {formsById.get(s.formId)?.documentTemplate ? (
-                        <button type="button" onClick={() => handleViewPdf(s)} disabled={viewingId === s.id} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 disabled:opacity-50">
-                          {viewingId === s.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileDown className="h-3 w-3" />} View PDF
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {isAwaitingCompany(formsById.get(s.formId), s) && (
+                          <button type="button" onClick={() => setCompleting(s)} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white" title="Fill in the company's part — e.g. the Authorized Representative signature">
+                            <PenLine className="h-3 w-3" /> Complete
+                          </button>
+                        )}
+                        <button type="button" onClick={() => void openPreview(s)} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1">
+                          <FileDown className="h-3 w-3" /> View PDF
                         </button>
-                      ) : (
-                        <span className="text-xs text-muted-foreground" title="This form has no document template yet — design one in Edit Form's Document Template tab.">Unavailable</span>
-                      )}
+                        <button type="button" onClick={() => void handleDownload(s)} disabled={downloadingId === s.id} title="Download as PDF" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 disabled:opacity-50">
+                          {downloadingId === s.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />} PDF
+                        </button>
+                        <button type="button" onClick={() => void handleDownloadWord(s)} disabled={downloadingId === `${s.id}:word`} title="Download as a Word document" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 disabled:opacity-50">
+                          {downloadingId === `${s.id}:word` ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />} Word
+                        </button>
+                        {s.pdfUrl && <span title={`Saved${s.pdfGeneratedAt ? ` ${new Date(s.pdfGeneratedAt).toLocaleString()}` : ""}`}><CheckCircle2 className="h-3.5 w-3.5 text-green-400" /></span>}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <button type="button" onClick={() => handleDelete(s)} title="Delete this submission" className="text-muted-foreground hover:text-red-400 transition-colors">
@@ -603,15 +777,32 @@ export function CustomFormsPanel() {
 
       {/* ── Submission detail modal — shows the actual generated PDF when the form has a document template (same "click the name" pattern as the Applicant Documents tab), otherwise the raw response list. ── */}
       {preview && (() => {
-        const previewForm = formsById.get(preview.formId);
-        const hasDocument = !!previewForm?.documentTemplate;
+        const live = submissions.find((s) => s.id === preview.id) ?? preview;
+        const awaiting = isAwaitingCompany(formsById.get(live.formId), live);
         return (
           <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={closePreview}>
-            <div className={`bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full flex flex-col ${hasDocument ? "max-w-6xl h-[92vh]" : "max-w-lg max-h-[85vh]"}`} onClick={(e) => e.stopPropagation()}>
+            <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full flex flex-col max-w-6xl h-[92vh]" onClick={(e) => e.stopPropagation()}>
               <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
-                <h3 className="font-semibold text-sm">{preview.submitterName || "Someone"} — {preview.formTitle || "Submission"}</h3>
+                <div>
+                  <h3 className="font-semibold text-sm">{live.submitterName || "Someone"} — {live.formTitle || "Submission"}</h3>
+                  <p className="text-[10px] text-muted-foreground">
+                    {awaiting ? "Awaiting company signature — not final yet" : live.pdfUrl ? "Saved document" : "Not saved yet"}
+                    {live.completedAt ? ` · Completed ${new Date(live.completedAt).toLocaleString()}${live.completedByName ? ` by ${live.completedByName}` : ""}` : ""}
+                  </p>
+                </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  {hasDocument && previewPdfUrl && (
+                  {awaiting && (
+                    <button type="button" onClick={() => { closePreview(); setCompleting(live); }} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white">
+                      <PenLine className="h-3 w-3" /> Complete
+                    </button>
+                  )}
+                  <button type="button" onClick={() => void handleDownload(live)} disabled={downloadingId === live.id} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 disabled:opacity-50">
+                    <Download className="h-3 w-3" /> PDF
+                  </button>
+                  <button type="button" onClick={() => void handleDownloadWord(live)} disabled={downloadingId === `${live.id}:word`} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 disabled:opacity-50">
+                    <FileText className="h-3 w-3" /> Word
+                  </button>
+                  {previewPdfUrl && (
                     <a href={previewPdfUrl} target="_blank" rel="noreferrer noopener" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1">
                       <FileDown className="h-3 w-3" /> Open in New Tab
                     </a>
@@ -619,33 +810,40 @@ export function CustomFormsPanel() {
                   <button onClick={closePreview} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
                 </div>
               </div>
+              <div className="flex-1 overflow-hidden bg-slate-950">
+                {previewPdfLoading ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Generating document…</div>
+                ) : previewPdfUrl ? (
+                  <iframe src={previewPdfUrl} title="Submission document" className="w-full h-full min-h-[70vh] border-0" />
+                ) : (
+                  <p className="p-8 text-center text-sm text-red-300">{previewError || "Couldn't generate this document."}</p>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
-              {hasDocument ? (
-                <div className="flex-1 overflow-hidden bg-slate-950">
-                  {previewPdfLoading ? (
-                    <div className="h-full flex items-center justify-center text-sm text-muted-foreground gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Generating document…</div>
-                  ) : previewPdfUrl ? (
-                    <iframe src={previewPdfUrl} title="Submission document" className="w-full h-full min-h-[70vh] border-0" />
-                  ) : (
-                    <p className="p-8 text-center text-sm text-muted-foreground">Couldn't generate this document.</p>
-                  )}
+      {/* ── Complete — the company's part of a two-party form ── */}
+      {completing && (() => {
+        const form = formsById.get(completing.formId);
+        return (
+          <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setCompleting(null)}>
+            <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+              <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold text-sm">Complete — {completing.formTitle || "Submission"}</h3>
+                  <p className="text-[10px] text-muted-foreground">Submitted by {completing.submitterName || "Someone"} on {new Date(completing.submittedAt).toLocaleString()}. Fill in the company's part; the finished document is then saved.</p>
                 </div>
-              ) : (
-                <div className="p-4 overflow-y-auto flex flex-col gap-3 text-sm">
-                  {(() => {
-                    const fieldById = (id: string) => previewForm?.fields.find((f) => f.id === id);
-                    return Object.entries(preview.responses).map(([fieldId, value]) => {
-                      const field = fieldById(fieldId);
-                      return (
-                        <div key={fieldId}>
-                          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{field?.label ?? fieldId}</p>
-                          {renderResponseValue(value, field)}
-                        </div>
-                      );
-                    });
-                  })()}
-                </div>
-              )}
+                <button onClick={() => setCompleting(null)} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
+              </div>
+              <div className="p-4 overflow-y-auto">
+                {form ? (
+                  <CustomFormRenderer key={completing.id} fields={form.fields} mode="company" initialValues={completing.responses} onSubmit={(values) => handleComplete(values)} />
+                ) : (
+                  <p className="text-sm text-red-300">This submission's form was deleted.</p>
+                )}
+              </div>
             </div>
           </div>
         );

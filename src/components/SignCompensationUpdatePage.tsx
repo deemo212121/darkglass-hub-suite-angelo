@@ -5,6 +5,7 @@
  * and that signer gets their own DM with the link. The employee signs last, which
  * finalizes it and sends the finished PDF back to whoever created it.
  */
+import { InlinePdfLink } from "@/components/InlinePdfViewer";
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Loader2 } from "lucide-react";
@@ -186,9 +187,7 @@ export function SignCompensationUpdatePage({ docId }: Props) {
                 : "✓ Signed. All signatures are in — the document is complete."}
             </p>
             {doc.pdfUrl && (
-              <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
-                View the signed PDF
-              </a>
+              <InlinePdfLink url={doc.pdfUrl} label="View the signed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
             )}
           </div>
         ) : !isRecipient && !isSuperadmin ? (
@@ -198,7 +197,7 @@ export function SignCompensationUpdatePage({ docId }: Props) {
         ) : alreadyDone ? (
           <div className="panel p-6 text-center text-sm">
             ✓ Already signed.{" "}
-            {doc.pdfUrl && <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 underline">View the PDF</a>}
+            {doc.pdfUrl && <InlinePdfLink url={doc.pdfUrl} label="View the PDF" className="text-blue-300 underline" />}
           </div>
         ) : (
           <div className="panel p-0 overflow-hidden">
