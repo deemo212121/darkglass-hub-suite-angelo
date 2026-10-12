@@ -12,6 +12,8 @@
  * shows "Corrected via Time Correction".
  * Clicking a name opens that employee's last 14 days of punches.
  */
+import { getRestDayHistory } from "@/lib/supabase/restDayHistory";
+import { offDaysOn, type RestDayHistory } from "@/lib/restDays";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, Loader2, Pencil, RefreshCw, RotateCcw, X } from "lucide-react";
 import { toast } from "sonner";
@@ -105,8 +107,10 @@ function computeStatus(args: {
   nameOf: (id: string) => string;
   /** "Attendance starts on" (src/lib/attendanceStart.ts) — days before it are never Missing. */
   attendanceStart?: string | null;
+  /** Rest days with an effective-from date (rest_day_history, 0371). */
+  restHistory?: RestDayHistory;
 }): DayStatus {
-  const { profile, date, today, entry, corrections, ptos, nameOf, attendanceStart } = args;
+  const { profile, date, today, entry, corrections, ptos, nameOf, attendanceStart, restHistory } = args;
   if (date > today) return { kind: "upcoming", detail: "" };
   // Before their start (new hire whose training/start date is still ahead) — not absent.
   // A punch on that day still shows normally below.
@@ -155,7 +159,9 @@ function computeStatus(args: {
   }
   if (entry?.checkOut) return { kind: "missing", detail: "Check-in missing", correctedBy };
 
-  const restDays = profile.off_days && profile.off_days.length > 0 ? profile.off_days : [0, 6];
+  // The rest days in force on THIS date (not just today's) — Sat/Sun when none are set.
+  const scheduled = offDaysOn(restHistory, profile.id, date, profile.off_days);
+  const restDays = scheduled.length > 0 ? scheduled : [0, 6];
   if (restDays.includes(weekdayOf(date))) return { kind: "rest", detail: "" };
   return { kind: "missing", detail: date === today ? "Not checked in yet" : "No check-in / check-out" };
 }
@@ -195,6 +201,7 @@ export function EmployeeAttendanceStatusTab() {
   const [openProfileId, setOpenProfileId] = useState<string | null>(null);
   // "Attendance starts on" per employee — Hire Date / HR Hiring training or start date.
   const [attendanceStartById, setAttendanceStartById] = useState<Map<string, string>>(new Map());
+  const [restHistory, setRestHistory] = useState<RestDayHistory>(new Map());
 
   // A range fetches exactly that range (the name popup shows it); a single
   // day also fetches the 13 days before it for the popup's history.
@@ -215,6 +222,7 @@ export function EmployeeAttendanceStatusTab() {
       setNotes(noteRows);
       setProfiles(profileRows);
       getAttendanceStartByProfile(profileRows).then(setAttendanceStartById).catch(() => {});
+      getRestDayHistory().then(setRestHistory).catch(() => {});
       setCsrComposition(composition);
       setEntries(entryRows);
       setCorrections(correctionRows);
@@ -257,6 +265,7 @@ export function EmployeeAttendanceStatusTab() {
       ptos: ptosFor(p.id, day),
       nameOf,
       attendanceStart: attendanceStartById.get(p.id) ?? null,
+      restHistory,
     });
 
   const visibleProfiles = useMemo(

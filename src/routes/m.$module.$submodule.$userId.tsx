@@ -17,6 +17,9 @@ import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
+import { RestDayHistoryBox } from "@/components/RestDayHistoryBox";
+import { setProfileRestDays } from "@/lib/supabase/restDayHistory";
+import { zonedDateKey } from "@/lib/serverTime";
 
 const TABS = [
   "General Information",
@@ -497,6 +500,12 @@ function UserDetailsPage() {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string>("");
+  const [profileCompanyId, setProfileCompanyId] = useState<string | null>(null);
+  // Rest days as loaded — a change to them is saved with an "Effective from"
+  // date (rest_day_history, migration 0371), so past days keep the old ones.
+  const [originalOffDays, setOriginalOffDays] = useState<number[]>([]);
+  const [restEffectiveFrom, setRestEffectiveFrom] = useState(() => zonedDateKey(new Date(), "CST"));
+  const [restHistoryKey, setRestHistoryKey] = useState(0);
   // The email as loaded from the server — compared against form.email in
   // handleSave to know whether the Firebase Auth update call is needed at all.
   const [originalEmail, setOriginalEmail] = useState<string>("");
@@ -551,6 +560,8 @@ function UserDetailsPage() {
           return;
         }
         setProfileId(p.id);
+        setProfileCompanyId((p as any).company_id ?? null);
+        setOriginalOffDays(Array.isArray(p.off_days) ? p.off_days : []);
         setOriginalEmail(p.email || "");
         try {
           const all = await getCompanyUsers();
@@ -697,6 +708,14 @@ function UserDetailsPage() {
         if (!res.ok) throw new Error(body.error || "Failed to update login email");
       }
 
+      // Rest days changed → saved with the chosen "Effective from" date first,
+      // so days before it keep the old rest days (not rewritten).
+      const sameDays = (a: number[], b: number[]) => [...a].sort().join(",") === [...b].sort().join(",");
+      const offDaysChanged = !sameDays(form.offDays, originalOffDays);
+      if (offDaysChanged) {
+        await setProfileRestDays(profileId, form.offDays, restEffectiveFrom);
+      }
+
       await updateCompanyUser(profileId, {
         username: newUsername,
         displayName: form.displayName,
@@ -711,7 +730,8 @@ function UserDetailsPage() {
         technicianId: form.technicianId,
         poInitials: form.poInitials,
         smsStatus: form.smsStatus,
-        offDays: form.offDays,
+        // Saved above (with its effective date) when it changed.
+        ...(offDaysChanged ? {} : { offDays: form.offDays }),
         workPlan: workPlan,
         isActive: form.isActive,
         requiredCheckIn: form.requiredCheckIn,
@@ -720,6 +740,10 @@ function UserDetailsPage() {
         mealMinutes: form.mealMinutes.trim() ? Number(form.mealMinutes) : null,
       });
       if (emailChanged) setOriginalEmail(form.email.trim());
+      if (offDaysChanged) {
+        setOriginalOffDays(form.offDays);
+        setRestHistoryKey((k) => k + 1);
+      }
       // Persist Employee Information (powers Work Map house pins).
       try {
         const { saveProfileEmployeeInfo } = await import("@/lib/supabase/users");
@@ -949,6 +973,19 @@ function UserDetailsPage() {
                           );
                         })}
                       </div>
+                      {[...form.offDays].sort().join(",") !== [...originalOffDays].sort().join(",") && (
+                        <label className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                          <span className="font-semibold">Effective from</span>
+                          <input
+                            type="date"
+                            value={restEffectiveFrom}
+                            onChange={(e) => setRestEffectiveFrom(e.target.value)}
+                            className="rounded border border-white/10 bg-slate-800 px-2 py-1 text-xs text-white [color-scheme:dark]"
+                          />
+                          <span className="text-amber-200/80">Days before this keep the old rest days. Saved when you press Save.</span>
+                        </label>
+                      )}
+                      {profileId && <RestDayHistoryBox profileId={profileId} companyId={profileCompanyId} reloadKey={restHistoryKey} />}
                     </div>
 
                     <div className="rounded-lg border border-white/10 bg-slate-900/40 p-4 text-xs text-slate-400">

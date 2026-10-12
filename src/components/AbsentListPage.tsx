@@ -25,6 +25,8 @@
  * buttons up top — both pages answer "who's out and why", so they live
  * together now instead of in two different modules.
  */
+import { getRestDayHistory } from "@/lib/supabase/restDayHistory";
+import { isRestDayOn, type RestDayHistory } from "@/lib/restDays";
 import { getAttendanceStartByProfile } from "@/lib/supabase/attendanceStart";
 import { isBeforeAttendanceStart } from "@/lib/attendanceStart";
 import { PasswordGateModal, isGateUnlocked } from "@/components/PasswordGateModal";
@@ -221,6 +223,11 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   const [hireDateByProfileId, setHireDateByProfileId] = useState<Map<string, string>>(new Map());
   // "Attendance starts on" — the later of Hire Date and the HR Hiring training/start date (src/lib/attendanceStart.ts).
   const [attendanceStartById, setAttendanceStartById] = useState<Map<string, string>>(new Map());
+  // Rest days in force on each date (rest_day_history, 0371) — not just today's.
+  const [restHistory, setRestHistory] = useState<RestDayHistory>(new Map());
+  useEffect(() => {
+    getRestDayHistory().then(setRestHistory).catch(() => {});
+  }, []);
   const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);
   useEffect(() => {
     getCompanyUsers()
@@ -400,7 +407,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     for (const d of rangeDates) {
       const dow = new Date(d + "T00:00:00").getDay();
       for (const p of activeFilteredProfiles) {
-        if ((p.off_days ?? []).includes(dow)) continue; // scheduled rest day
+        if (isRestDayOn(restHistory, p.id, d, p.off_days)) continue; // scheduled rest day (as of that date)
         if (isBeforeAttendanceStart(d, attendanceStartById.get(p.id))) continue; // hasn't started yet (hire / training / start date)
         if (isOnLeave(p.id, d)) continue; // approved PTO/leave
         if (isCompanyHoliday(d)) continue; // company holiday
@@ -428,17 +435,17 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       (a, b) => a.date.localeCompare(b.date) || (a.profile.display_name || a.profile.email).localeCompare(b.profile.display_name || b.profile.email)
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rangeDates, activeFilteredProfiles, checkedInSet, noteByKey, notesColFilter, hrStatusFilter, correctionFilter, ptoRequests, holidayDates, pendingCorrectionByKey, pendingPtoRequests, attendanceStartById]);
+  }, [rangeDates, activeFilteredProfiles, checkedInSet, noteByKey, notesColFilter, hrStatusFilter, correctionFilter, ptoRequests, holidayDates, pendingCorrectionByKey, pendingPtoRequests, attendanceStartById, restHistory]);
 
   const onLeaveCount = useMemo(() => {
     let count = 0;
     for (const d of rangeDates) {
       const dow = new Date(d + "T00:00:00").getDay();
-      count += visibleProfiles.filter((p) => p.is_active && !(p.off_days ?? []).includes(dow) && isOnLeave(p.id, d)).length;
+      count += visibleProfiles.filter((p) => p.is_active && !isRestDayOn(restHistory, p.id, d, p.off_days) && isOnLeave(p.id, d)).length;
     }
     return count;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleProfiles, rangeDates, ptoRequests]);
+  }, [visibleProfiles, rangeDates, ptoRequests, restHistory]);
 
   // Read-only breakdown of the HR Status already applied on the rows
   // currently shown (absentRows, i.e. whatever's left after the header
@@ -481,7 +488,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     for (const d of peRangeDates) {
       const dow = new Date(d + "T00:00:00").getDay();
       for (const p of peActiveFilteredProfiles) {
-        if ((p.off_days ?? []).includes(dow)) continue;
+        if (isRestDayOn(restHistory, p.id, d, p.off_days)) continue;
         if (isBeforeAttendanceStart(d, attendanceStartById.get(p.id))) continue;
         if (isOnLeave(p.id, d)) continue;
         if (isCompanyHoliday(d)) continue;
@@ -496,7 +503,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       (a, b) => a.date.localeCompare(b.date) || (a.profile.display_name || a.profile.email).localeCompare(b.profile.display_name || b.profile.email)
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [peRangeDates, peActiveFilteredProfiles, checkedInSet, noteByKey, ptoRequests, holidayDates, pendingCorrectionByKey, pendingPtoRequests, attendanceStartById]);
+  }, [peRangeDates, peActiveFilteredProfiles, checkedInSet, noteByKey, ptoRequests, holidayDates, pendingCorrectionByKey, pendingPtoRequests, attendanceStartById, restHistory]);
 
   const groupedPendingExplanationRows = useMemo(() => {
     const groups = new Map<string, AbsentRow[]>();
