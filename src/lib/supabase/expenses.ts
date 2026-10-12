@@ -206,7 +206,13 @@ export async function updateExpenseStatus(id: string, status: ExpenseStatus, rev
   const { error } = await supabase.from("expenses").update(update).eq("id", id);
   if (error) {
     console.error("updateExpenseStatus error:", error.message);
-    throw new Error(/review_note/.test(error.message) ? "Saving a rejection reason needs migration 0372 (expenses.review_note) — run it in the Supabase SQL Editor first." : error.message);
+    throw new Error(
+      /review_note/.test(error.message)
+        ? "Saving a rejection reason needs migration 0372 (expenses.review_note) — run it in the Supabase SQL Editor first."
+        : /expenses_status_check/.test(error.message)
+          ? "Rejecting expenses needs migration 0374 (allows the Rejected status) — run it in the Supabase SQL Editor first."
+          : error.message
+    );
   }
 }
 
