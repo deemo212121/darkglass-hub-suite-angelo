@@ -35,7 +35,7 @@ function Home() {
   // isModuleAllowed/canAccessSubmodule regardless of this page's own
   // overrides, so showing the gear to a lower role would let them open an
   // editor whose changes wouldn't even affect their own access to see it.
-  const canManageAccess = role === "ADMIN" || role === "SUPERADMIN";
+  const canManageAccess = [role, ...extraRoles].some((r) => r === "ADMIN" || r === "SUPERADMIN");
   const [accessModalFor, setAccessModalFor] = useState<{ mod: ModuleDef; submodule?: SubModuleDef } | null>(null);
   const pageCounts = useAttention()?.pageCounts ?? {};
 

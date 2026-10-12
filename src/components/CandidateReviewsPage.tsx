@@ -32,6 +32,7 @@ import {
   type Candidate,
   type CandidateStatus,
 } from "@/lib/supabase/hrCandidates";
+import { formatISODate } from "@/lib/localDate";
 
 // Same labels/colors as ReportHRDaily.tsx's own CANDIDATE_STATUS_LABEL/
 // CANDIDATE_STATUS_COLOR — duplicated locally rather than exported from
@@ -321,15 +322,15 @@ export function CandidateReviewsPage() {
                   label="Interview"
                   value={
                     candidate.interviewDate
-                      ? `${new Date(candidate.interviewDate).toLocaleDateString()}${candidate.interviewTime ? ` ${candidate.interviewTime}` : ""}${candidate.interviewTimezone ? ` ${candidate.interviewTimezone}` : ""}`
+                      ? `${formatISODate(candidate.interviewDate)}${candidate.interviewTime ? ` ${candidate.interviewTime}` : ""}${candidate.interviewTimezone ? ` ${candidate.interviewTimezone}` : ""}`
                       : null
                   }
                 />
-                <DetailItem label="Screening Date" value={candidate.screeningDate ? new Date(candidate.screeningDate).toLocaleDateString() : null} />
-                <DetailItem label="Training Start" value={candidate.trainingStartDate ? new Date(candidate.trainingStartDate).toLocaleDateString() : null} />
-                <DetailItem label="Training End" value={candidate.trainingEndDate ? new Date(candidate.trainingEndDate).toLocaleDateString() : null} />
-                <DetailItem label="Start Date" value={candidate.startDate ? new Date(candidate.startDate).toLocaleDateString() : null} />
-                <DetailItem label="Withdrawn Date" value={candidate.withdrawnDate ? new Date(candidate.withdrawnDate).toLocaleDateString() : null} />
+                <DetailItem label="Screening Date" value={candidate.screeningDate ? formatISODate(candidate.screeningDate) : null} />
+                <DetailItem label="Training Start" value={candidate.trainingStartDate ? formatISODate(candidate.trainingStartDate) : null} />
+                <DetailItem label="Training End" value={candidate.trainingEndDate ? formatISODate(candidate.trainingEndDate) : null} />
+                <DetailItem label="Start Date" value={candidate.startDate ? formatISODate(candidate.startDate) : null} />
+                <DetailItem label="Withdrawn Date" value={candidate.withdrawnDate ? formatISODate(candidate.withdrawnDate) : null} />
                 <DetailItem label="Document Verified" value={candidate.documentVerified ? "Yes" : null} />
                 <DetailItem label="Texted" value={[candidate.textedAm && "AM", candidate.textedPm && "PM"].filter(Boolean).join(" / ") || null} />
                 <DetailItem label="Called" value={[candidate.calledAm && "AM", candidate.calledPm && "PM"].filter(Boolean).join(" / ") || null} />

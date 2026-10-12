@@ -1045,7 +1045,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         details: { rate },
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : `Failed to save the rate for ${branch}.`);
+      toast.error(err instanceof Error ? err.message : `Failed to save the rate for ${branch}.`);
     } finally {
       setBranchRateSaving(null);
     }
@@ -1277,7 +1277,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       setCarIqRateWith(rateWith);
       setCarIqRateWithout(rateWithout);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save Car IQ mileage rates.");
+      toast.error(err instanceof Error ? err.message : "Failed to save Car IQ mileage rates.");
     } finally {
       setCarIqRatesSaving(false);
     }
@@ -1348,7 +1348,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       });
       setCarIqHistory((prev) => [...prev.filter((e) => !(e.profileId === profileId && e.effectiveDate === date)), savedEntry]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save Car IQ status.");
+      toast.error(err instanceof Error ? err.message : "Failed to save Car IQ status.");
     } finally {
       setCarIqSaving(null);
     }
@@ -1371,7 +1371,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       await updateCarIqHistoryEffectiveDate(entry.id, newDate);
       setCarIqHistory((prev) => prev.map((e) => (e.id === entry.id ? { ...e, effectiveDate: newDate } : e)));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update Car IQ start date.");
+      toast.error(err instanceof Error ? err.message : "Failed to update Car IQ start date.");
     } finally {
       setCarIqDateSaving(null);
     }
@@ -2377,7 +2377,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         details: { states: toFill },
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to prefill state minimum wage rates.");
+      toast.error(err instanceof Error ? err.message : "Failed to prefill state minimum wage rates.");
     } finally {
       setBranchRatePrefilling(false);
     }
@@ -3081,7 +3081,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const generatePayroll = async () => {
     if (nationIncludedPayrollRows.length === 0) return;
     if (!genStart || !genEnd || genStart > genEnd) {
-      setError("Pick a valid start and end date before generating payroll.");
+      toast.error("Pick a valid start and end date before generating payroll.");
       return;
     }
     setGenerating(true);
@@ -3225,7 +3225,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         },
       });
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to generate payroll");
+      toast.error(err instanceof Error ? err.message : "Failed to generate payroll");
     } finally {
       setGenerating(false);
     }
@@ -3273,7 +3273,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const result = params.get("gmailConnected");
     if (result === null) return;
     const region = parseGmailRegionParam(params.get("gmailRegion"));
-    setError(result === "1" ? null : `Couldn't connect ${region} Gmail — please try again.`);
+    if (result !== "1") toast.error(`Couldn't connect ${region} Gmail — please try again.`);
     if (result === "1") {
       void loadGmailStatus(region);
       void logModuleActivity({
@@ -3294,7 +3294,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     setConnectingGmailRegion(region);
     try {
       const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
-      if (!idToken) { setError("You need to be logged in to connect Gmail."); return; }
+      if (!idToken) { toast.error("You need to be logged in to connect Gmail."); return; }
       // A real navigation (not fetch) — Google's consent screen has to run in the top-level window.
       window.location.href = `/api/gmail?action=connect&region=${region}&idToken=${encodeURIComponent(idToken)}`;
     } finally {
@@ -3315,7 +3315,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         targetLabel: `${region} Payroll`,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : `Failed to disconnect ${region} Gmail.`);
+      toast.error(err instanceof Error ? err.message : `Failed to disconnect ${region} Gmail.`);
     } finally {
       setDisconnectingGmailRegion(null);
     }
@@ -3569,7 +3569,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       if (e) throw new Error(e.message);
       setRunLineItems((prev) => ({ ...prev, [runId]: (data ?? []) as PayrollLineItem[] }));
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to load line items");
+      toast.error(err instanceof Error ? err.message : "Failed to load line items");
     } finally {
       setLoadingRunId(null);
     }
@@ -3602,7 +3602,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         return next;
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save Extra/Notes");
+      toast.error(err instanceof Error ? err.message : "Failed to save Extra/Notes");
     } finally {
       setSavingLineItemKey(null);
     }
@@ -3630,7 +3630,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         ),
       }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update paid status");
+      toast.error(err instanceof Error ? err.message : "Failed to update paid status");
     } finally {
       setTogglingPaidKey(null);
     }
@@ -3713,7 +3713,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       await downloadPayrollAttendanceWorkbook(people, genStart, genEnd, effectiveCurrency === "USD" ? "US" : "PH",
         (done, total) => setAttendanceExportProgress({ done, total }));
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Attendance download failed.");
+      toast.error(error instanceof Error ? error.message : "Attendance download failed.");
     } finally {
       setAttendanceExportProgress(null);
     }
@@ -4806,7 +4806,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                           type="button"
                                           onClick={async () => {
                                             try { await clearPayrollReviewMark(row.employee.id, genStart, genEnd); await loadReviewMarks(); }
-                                            catch (err) { setError(err instanceof Error ? err.message : "Failed to clear the review mark."); }
+                                            catch (err) { toast.error(err instanceof Error ? err.message : "Failed to clear the review mark."); }
                                           }}
                                           title="Clear reviewed mark"
                                           className="text-slate-500 hover:text-red-300 leading-none"
@@ -6206,7 +6206,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     await loadHourlyOtOverrides();
                     setWizardStep("activity");
                   } catch (err) {
-                    setError(err instanceof Error ? err.message : "Failed to save the pay mode for this technician.");
+                    toast.error(err instanceof Error ? err.message : "Failed to save the pay mode for this technician.");
                   } finally {
                     setNextBusy(false);
                   }
@@ -6283,7 +6283,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                       }
                       await loadHourlyOtOverrides();
                     } catch (err) {
-                      setError(err instanceof Error ? err.message : "Failed to save the pay mode for this technician.");
+                      toast.error(err instanceof Error ? err.message : "Failed to save the pay mode for this technician.");
                     } finally {
                       setNextBusy(false);
                     }

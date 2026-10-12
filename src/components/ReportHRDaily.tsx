@@ -240,7 +240,7 @@ import { FLASH_TECH_TIER_LEVELS } from "@/lib/supabase/flashTechTrips";
 import { CustomFormsPanel } from "./CustomFormsPanel";
 import * as XLSX from "xlsx";
 import { exportToCSV } from "@/lib/csvExport";
-import { todayISO } from "@/lib/localDate";
+import { todayISO, formatISODate } from "@/lib/localDate";
 
 // Formats a <input type="date"> value ("YYYY-MM-DD") as a long-form date
 // ("July 17, 2026") via the multi-arg Date constructor (new Date(y, m-1, d),
@@ -22543,7 +22543,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       sectionRows.map((r) => {
                         const interview = r.scheduledInterviews[0];
                         const interviewText = r.scheduledInterviews.length > 0
-                          ? `${r.scheduledInterviews.length}${interview?.date ? ` on ${new Date(interview.date).toLocaleDateString()}` : ""}`
+                          ? `${r.scheduledInterviews.length}${interview?.date ? ` on ${formatISODate(interview.date)}` : ""}`
                           : null;
                         const savingPrefix = `${sectionKey}|${r.groupKey}|`;
                         return (
@@ -23456,7 +23456,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <ul className="text-xs space-y-1">
                 {warnPreviousWarnings.map((w, i) => (
                   <li key={i} className="text-muted-foreground">
-                    {i + 1}. {w.cause} — <span className="text-foreground">{new Date(w.date).toLocaleDateString()}</span>, issued by {w.issuedBy}
+                    {i + 1}. {w.cause} — <span className="text-foreground">{formatISODate(w.date)}</span>, issued by {w.issuedBy}
                   </li>
                 ))}
               </ul>
@@ -36484,7 +36484,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               {hiringDetailDialog.items.map((it, idx) => (
                 <li key={idx} className="flex items-center justify-between gap-3 text-sm border-b border-white/5 pb-2 last:border-0">
                   <span className="font-medium">{it.name}</span>
-                  <span className="text-muted-foreground text-xs">{it.date ? new Date(it.date).toLocaleDateString() : "—"}</span>
+                  <span className="text-muted-foreground text-xs">{it.date ? formatISODate(it.date) : "—"}</span>
                 </li>
               ))}
             </ul>
