@@ -14,6 +14,7 @@ import { REGIONS, REGION_LOCATIONS } from "@/lib/locations";
 import { ReportBranchBase } from "./ReportBranchBase";
 import { ReportCancellations } from "./ReportCancellations";
 import { usePersistedTab } from "@/lib/usePersistedTab";
+import { todayISO } from "@/lib/localDate";
 
 // Operations staff — BizOps Manager / Senior Manager roles, same live-staff
 // pattern used on Claims/Parts Dashboards (real profiles + real
@@ -44,7 +45,7 @@ function exportStaffToXlsx(rows: { name: string; role: string; branch: string; w
   const worksheet = XLSX.utils.json_to_sheet(data);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "BizOps Staff");
-  XLSX.writeFile(workbook, `operations-bizops-staff_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  XLSX.writeFile(workbook, `operations-bizops-staff_${todayISO()}.xlsx`);
 }
 
 export function ReportOperationsDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {

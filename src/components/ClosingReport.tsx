@@ -6,6 +6,7 @@ import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, pick, pad, offsetStr, todayStr } from "@/components/shared";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
+import { localISODate } from "@/lib/localDate";
 
 /** Shared portal-dropdown positioning — button ref + fixed-position coords, recalculated on scroll/resize. Used for Account/Location/Status here. */
 function useDropdownPortal(open: boolean) {
@@ -43,7 +44,7 @@ const ALL_ROWS = Array.from({length:50},(_,i)=>{
   const d=new Date(); d.setDate(d.getDate()-(i%30));
   return { id:i+1, ticketNo:"TK-2026-"+pad(1000+i), claimNo:"CLM-"+pad(90000+i),
     location:pick(LOCATIONS.slice(1),i), account:pick(ACCOUNTS,i),
-    paidDate:d.toISOString().slice(0,10), amount:200+(i*43)%1200, status:pick(CLAIM_STATUSES,i) };
+    paidDate:localISODate(d), amount:200+(i*43)%1200, status:pick(CLAIM_STATUSES,i) };
 });
 
 export function ClosingReport({ mod, sub }: Props) {

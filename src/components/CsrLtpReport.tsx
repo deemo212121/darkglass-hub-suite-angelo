@@ -30,6 +30,7 @@ import { normalizeRole } from "@/lib/roleLabels";
 import { REGIONS, REGION_LOCATIONS } from "@/lib/locations";
 import { computeLtpReportRows } from "@/lib/operationsBranchMetrics";
 import { getLtpReportNotesForDate, upsertLtpReportField, type CsrLtpReportNote } from "@/lib/supabase/csrLtpReportNotes";
+import { todayISO } from "@/lib/localDate";
 
 // Same three-tier CSR roster used elsewhere (see ReportOperationsDaily.tsx's
 // isBizOpsProfile) — checks primary role AND extra_roles for dual-role users.
@@ -117,7 +118,7 @@ export function CsrLtpReport({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }
   const [tickets, setTickets] = useState<Awaited<ReturnType<typeof getCompanyTickets>>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = todayISO();
   const [asOfDate, setAsOfDate] = useState(todayIso);
   const [notes, setNotes] = useState<Map<string, CsrLtpReportNote>>(new Map());
   const [csrProfiles, setCsrProfiles] = useState<ProfileRow[]>([]);

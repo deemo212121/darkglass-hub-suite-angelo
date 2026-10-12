@@ -18,6 +18,7 @@ import { supabase } from "./client";
 import { createNotification } from "./notifications";
 import { getCompanyUsers } from "./users";
 import { uploadPtoRequestAttachment, deleteAttachmentByUrl } from "@/lib/firebase/storage";
+import { localISODate, todayISO } from "@/lib/localDate";
 
 export type PtoType = "vacation" | "sick" | "personal" | "holiday" | "unpaid" | "bereavement";
 
@@ -60,14 +61,14 @@ export function ptoEligibleDate(hireDate: string | null | undefined, createdAt: 
   const d = new Date(base + "T00:00:00");
   if (Number.isNaN(d.getTime())) return null;
   d.setFullYear(d.getFullYear() + 1);
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 }
 
 /** True once the employee has reached 1 year of tenure (see ptoEligibleDate). */
 export function isEligibleForPto(hireDate: string | null | undefined, createdAt: string | null | undefined): boolean {
   const eligibleDate = ptoEligibleDate(hireDate, createdAt);
   if (!eligibleDate) return true;
-  return new Date().toISOString().slice(0, 10) >= eligibleDate;
+  return todayISO() >= eligibleDate;
 }
 
 /**
@@ -106,7 +107,7 @@ export interface PtoYearWindow {
 export function ptoYearWindow(
   hireDate: string | null | undefined,
   createdAt: string | null | undefined,
-  onDate: string = new Date().toISOString().slice(0, 10)
+  onDate: string = todayISO()
 ): PtoYearWindow | null {
   const base = (hireDate || createdAt || "").slice(0, 10);
   if (!base) return null;
@@ -180,7 +181,7 @@ export interface SickYearWindow {
 export function sickYearWindow(
   hireDate: string | null | undefined,
   createdAt: string | null | undefined,
-  onDate: string = new Date().toISOString().slice(0, 10)
+  onDate: string = todayISO()
 ): SickYearWindow | null {
   const base = (hireDate || createdAt || "").slice(0, 10);
   if (!base) return null;

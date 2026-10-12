@@ -20,6 +20,7 @@ import { SignaturePadControls } from "@/components/SignaturePad";
 import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { reviewPtoStage, signPtoHrPaperwork, type PtoRequestRow } from "@/lib/supabase/pto";
 import { buildPtoManagerSignaturePdf, buildPtoHrSignaturePdf } from "@/lib/ptoExceptionReportPdf";
+import { todayISO } from "@/lib/localDate";
 
 /** Same MinimalCorrectionProfile shape as CorrectionSignModals.tsx — some callers only have a minimal roster loaded, not every ProfileRow column. */
 export interface MinimalPtoProfile {
@@ -127,7 +128,7 @@ export function PtoManagerSignModal({ request, companyId, profiles, reviewerId, 
 }
 
 export function PtoHrSignModal({ request, companyId, profiles, reviewerId, reviewerName, onClose, onSigned, preview, finalize }: SignModalBaseProps) {
-  const [receivedDate, setReceivedDate] = useState(new Date().toISOString().slice(0, 10));
+  const [receivedDate, setReceivedDate] = useState(todayISO());
   const [actionStatus, setActionStatus] = useState<"approved" | "additional_review_required">("approved");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);

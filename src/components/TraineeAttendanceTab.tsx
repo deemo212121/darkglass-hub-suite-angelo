@@ -37,6 +37,7 @@ import {
   updateTraineeDayTimes,
   type TraineeTimecardEntry,
 } from "@/lib/supabase/traineeTimecards";
+import { todayISO } from "@/lib/localDate";
 
 /** Fixed rejection categories the user asked for — "Other" reveals a required free-text field. */
 const REJECT_REASON_OPTIONS = ["On Field", "Termination", "Absent", "Quit", "Other"] as const;
@@ -94,7 +95,7 @@ export function TraineeAttendanceTab({
   // server-verified CST business date, since a manager reviewing from a very
   // different timezone (e.g. the Philippines) could otherwise land on this
   // tab defaulted to a date that doesn't match the company's own "today".
-  const browserTodayGuess = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const browserTodayGuess = useMemo(() => todayISO(), []);
   const [dateFrom, setDateFrom] = useState(browserTodayGuess);
   const [dateTo, setDateTo] = useState(browserTodayGuess);
   useEffect(() => {

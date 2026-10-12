@@ -10,7 +10,7 @@
  *   OP Waiting          (OP-Waiting for Part)      — 3 or more status spent days
  *
  * Only tickets NO CSR has touched yet today (Central time): once a CSR
- * changes its status / technician / schedule, comments on it, or edits a
+ * changes its status / technician / schedule, edits its notes, comments on it, or edits a
  * visit, it drops off until tomorrow — and comes back then if it's still in
  * one of these queues. A ticket a technician or the system moved into a
  * queue today hasn't been touched by CSR, so it still shows.

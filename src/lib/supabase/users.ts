@@ -133,10 +133,11 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
   isTrainee: boolean;
   /** HR-initiated freeze (migration 0223) — drives the narrower "frozen sees only Messages" restriction, see roleLabels.ts's isSubmoduleAllowedForFrozen. Independent of isTrainee/role. */
   isFrozen: boolean;
+  scheduleTimezone: string | null;
 } | null> {
   let { data, error } = await supabase
     .from("profiles")
-    .select("email, role, extra_roles, display_name, is_active, work_plan, branch_access, must_change_password, employment_type, frozen, trainee_access_granted, companies:company_id (legacy_code, login_alias, is_active)")
+    .select("email, role, extra_roles, display_name, is_active, work_plan, branch_access, must_change_password, employment_type, frozen, trainee_access_granted, schedule_timezone, companies:company_id (legacy_code, login_alias, is_active)")
     .eq("firebase_uid", firebaseUid)
     .maybeSingle();
 
@@ -182,6 +183,8 @@ export async function getProfileForLogin(firebaseUid: string): Promise<{
     // as true once granted.
     isTrainee: (data as any).employment_type === "trainee" && (data as any).trainee_access_granted !== true,
     isFrozen: (data as any).frozen === true,
+    /** Master List time zone ("CST" / "EST") — drives todayISO() (src/lib/localDate.ts). */
+    scheduleTimezone: ((data as any).schedule_timezone as string | null) ?? null,
   };
 }
 
@@ -488,6 +491,16 @@ let companyUsersInFlight: Promise<ProfileRow[]> | null = null;
 
 export function invalidateCompanyUsersCache(): void {
   companyUsersCache = null;
+}
+
+/**
+ * Active people only — use this for anything that LISTS or PICKS staff
+ * (rosters, dropdowns, team lists). getCompanyUsers() deliberately returns
+ * deactivated accounts too, because it also backs name lookups for history
+ * ("approved by …" someone who has since left).
+ */
+export async function getActiveCompanyUsers(): Promise<ProfileRow[]> {
+  return (await getCompanyUsers()).filter((p) => p.is_active);
 }
 
 export async function getCompanyUsers(): Promise<ProfileRow[]> {

@@ -6,6 +6,7 @@
  */
 
 import { statusGroupOf, type Ticket } from "./ticketData";
+import { localISODate, todayISO } from "@/lib/localDate";
 
 // The fixed set of reasons offered when a ticket's status is set to
 // "CL-Cancelled" (src/routes/ticket.$ticketNo.tsx) — only a BizOps Manager
@@ -289,7 +290,7 @@ export function computeDailyLtpBreakdown(
 
   const [y, m] = monthYYYYMM.split("-").map(Number);
   const daysInMonth = new Date(y, m, 0).getDate();
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = todayISO();
   const lastDay = monthYYYYMM === todayIso.slice(0, 7) ? Number(todayIso.slice(8, 10)) : daysInMonth;
 
   let cumPending = 0;
@@ -402,7 +403,7 @@ function nextBusinessDay(dateStr: string): string {
   const day = date.getDay(); // 0=Sun, 5=Fri, 6=Sat
   const daysToAdd = day === 5 ? 3 : day === 6 ? 2 : 1;
   date.setDate(date.getDate() + daysToAdd);
-  return date.toISOString().slice(0, 10);
+  return localISODate(date);
 }
 
 /**

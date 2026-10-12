@@ -4,6 +4,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, pick, pad, offsetStr, todayStr } from "@/components/shared";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -20,7 +21,7 @@ function generateRows(count = 80) {
       id: i+1, partNo: "PT-"+pad(70000+i), description: pick(PARTS,i),
       location: pick(locs,i), tech: pick(TECHS,i),
       transType: pick(TRANS_TYPES,i), qty: 1+(i%5),
-      unitCost: 25+(i*17)%400, date: d.toISOString().slice(0,10),
+      unitCost: 25+(i*17)%400, date: localISODate(d),
       total: (1+(i%5))*(25+(i*17)%400),
     };
   });

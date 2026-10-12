@@ -1810,6 +1810,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       })
       .sort((a, b) => (dateRangeActive && a.date !== b.date ? (a.date! < b.date! ? -1 : 1) : a.name.localeCompare(b.name)));
 
+    // CSV-quote a value: a quote/comma/newline inside a name, note or ticket
+    // list must not split the cell (it used to shift every later column).
+    const q = (v: string | number | null | undefined) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     let csvContent = "Attendance Summary Report\n";
     csvContent += dateRangeActive ? `Date range: ${filterDateFrom} to ${filterDateTo}\n\n` : `Date: ${dailyDate}\n\n`;
     // Key Metrics stay anchored to the single-date picker (dailyDate) even
@@ -1833,9 +1836,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     filteredAndSortedData.forEach((record) => {
       const alerts = record.alerts.join("; ");
       const notes = notesData[record.profileId]?.content || "";
-      const dateCol = dateRangeActive ? `"${record.date}",` : "";
+      const dateCol = dateRangeActive ? `${q(record.date)},` : "";
       const ticketsCol = record.tickets.join("; ");
-      csvContent += `${dateCol}"${record.name}","${record.location}","${record.department}","${record.manager}","${record.checkIn}","${record.mealIn}","${record.mealOut}","${record.checkOut}",${record.tickets.length},"${ticketsCol}","${alerts}","${notes}"\n`;
+      csvContent += `${dateCol}${[record.name, record.location, record.department, record.manager, record.checkIn, record.mealIn, record.mealOut, record.checkOut].map(q).join(",")},${record.tickets.length},${q(ticketsCol)},${q(alerts)},${q(notes)}\n`;
     });
 
     if (absentRecords.length > 0) {
@@ -1844,9 +1847,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         ? "Date,Employee Name,Location,Department,Manager,Assigned Tickets,Tickets\n"
         : "Employee Name,Location,Department,Manager,Assigned Tickets,Tickets\n";
       absentRecords.forEach((record) => {
-        const dateCol = dateRangeActive ? `"${record.date}",` : "";
+        const dateCol = dateRangeActive ? `${q(record.date)},` : "";
         const ticketsCol = record.tickets.join("; ");
-        csvContent += `${dateCol}"${record.name}","${record.location}","${record.department}","${record.manager}",${record.tickets.length},"${ticketsCol}"\n`;
+        csvContent += `${dateCol}${[record.name, record.location, record.department, record.manager].map(q).join(",")},${record.tickets.length},${q(ticketsCol)}\n`;
       });
     }
 
@@ -3779,6 +3782,25 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold border ${selectedCorrection.accountingStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30" : selectedCorrection.accountingStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30" : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"}`}>
                       Accounting: {selectedCorrection.accountingStatus}
                     </span>
+                    {selectedCorrection.exceptionType !== null && (
+                      <span
+                        title="The Exception Report's HR sign-off (separate from the HR approval vote)"
+                        className={`inline-block px-2 py-0.5 rounded text-xs font-semibold border ${
+                          selectedCorrection.hrPaperworkStatus === "approved"
+                            ? "bg-green-500/20 text-green-300 border-green-500/30"
+                            : selectedCorrection.hrPaperworkStatus === "additional_review_required"
+                            ? "bg-orange-500/20 text-orange-300 border-orange-500/30"
+                            : "bg-slate-500/20 text-slate-300 border-slate-500/30"
+                        }`}
+                      >
+                        HR paperwork:{" "}
+                        {selectedCorrection.hrPaperworkStatus === "approved"
+                          ? "signed — approved"
+                          : selectedCorrection.hrPaperworkStatus === "additional_review_required"
+                          ? "signed — additional review required"
+                          : "not signed yet"}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>

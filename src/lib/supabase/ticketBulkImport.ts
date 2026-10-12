@@ -252,10 +252,13 @@ async function insertOne(rec: ReturnType<typeof toRecords>): Promise<ImportOutco
   if (custErr) return { kind: "failed", ticketNo, error: `Customer: ${custErr.message}` };
   const { error } = await supabase.from("tickets").insert({ ...rec.ticket, customer_id: cust.id });
   if (error) {
-    // Don't leave an orphan customer behind.
-    await supabase.from("customers").delete().eq("id", cust.id);
-    if (error.code === "23505") return { kind: "skipped", ticketNo, reason: "exists", line: 0 };
-    return { kind: "failed", ticketNo, error: error.message };
+    // Don't leave an orphan customer behind (company staff may delete their
+    // own company's customers — 0001's tenant policy). If that delete fails
+    // too, say so instead of leaving it silently.
+    const { error: delErr } = await supabase.from("customers").delete().eq("id", cust.id);
+    const orphanNote = delErr ? ` (its new customer record couldn't be removed: ${delErr.message})` : "";
+    if (error.code === "23505" && !delErr) return { kind: "skipped", ticketNo, reason: "exists", line: 0 };
+    return { kind: "failed", ticketNo, error: `${error.code === "23505" ? "Already in the system" : error.message}${orphanNote}` };
   }
   return { kind: "added", ticketNo };
 }

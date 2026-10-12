@@ -40,16 +40,13 @@ import {
   type CsrGhTrackerEntry,
 } from "@/lib/supabase/csrGhTracker";
 import { todayIso } from "@/components/CSRTeamDailyReport";
+import { addDaysISO } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
 const phoneKey = (phone: string) => normalizeGhPhone(phone) || phone.trim().toLowerCase();
 
-function addDaysISO(date: string, days: number): string {
-  const d = new Date(date + "T00:00:00");
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
+
 
 function AgentView({ mod, sub, profileId }: { mod: ModuleDef; sub: SubModuleDef; profileId: string }) {
   const navigate = useNavigate();

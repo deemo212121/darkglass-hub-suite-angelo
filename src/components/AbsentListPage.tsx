@@ -52,13 +52,11 @@ import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabas
 import { getPendingCorrectionsInRange, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { PendingItemDetailModal, type PendingItem } from "@/components/PendingItemDetailModal";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
+import { todayISO } from "@/lib/localDate";
 
 // Employee Monitoring → Attendance Status asks for the viewer's own login password (PasswordGateModal).
 const ATTENDANCE_STATUS_GATE = "employee-monitoring-attendance-status";
 
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function toDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;

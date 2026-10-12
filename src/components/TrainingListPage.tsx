@@ -63,6 +63,7 @@ import {
 import { getCompanyTraineeEntries } from "@/lib/supabase/traineeTimecards";
 import { getCompanyTimecardEntries } from "@/lib/supabase/timecards";
 import { getServerNow } from "@/lib/serverTime";
+import { todayISO } from "@/lib/localDate";
 
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
 
@@ -512,7 +513,7 @@ export function TrainingListPage({ embedded }: { embedded?: boolean } = {}) {
       // time, without anyone manually rolling it over. Falls back to the
       // most recent past month with data if nothing upcoming exists, so the
       // section still opens onto something instead of going blank.
-      const thisMonthKey = monthKey(new Date().toISOString().slice(0, 10));
+      const thisMonthKey = monthKey(todayISO());
       const allKeys = [...candidateRows.map((c) => monthKey(c.trainingEndDate!)), ...masterListRows.map((t) => monthKey(t.trainingEndDate!))];
       const keys = Array.from(new Set(allKeys)).sort();
       targetKey = keys.find((k) => k >= thisMonthKey) || keys[keys.length - 1] || thisMonthKey;
@@ -1260,7 +1261,7 @@ function QuitDialog({
   onClose: () => void;
   onConfirm: (dateLeft: string, reason: string) => Promise<void>;
 }) {
-  const [dateLeft, setDateLeft] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dateLeft, setDateLeft] = useState(() => todayISO());
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

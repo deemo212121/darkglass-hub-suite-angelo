@@ -42,6 +42,7 @@ import { getActivityLog, type HrActivityLogEntry } from "@/lib/supabase/hrActivi
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { normalizeRole } from "@/lib/roleLabels";
 import { getCompanyFlashTechTrips, FLASH_TECH_STATUSES, type FlashTechTrip } from "@/lib/supabase/flashTechTrips";
+import { localISODate } from "@/lib/localDate";
 
 const CANDIDATE_STATUS_LABEL: Record<CandidateStatus, string> = {
   applied: "Applied",
@@ -426,7 +427,7 @@ function last30Days(): { from: string; to: string } {
   const to = new Date();
   const from = new Date();
   from.setDate(from.getDate() - 29);
-  return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) };
+  return { from: localISODate(from), to: localISODate(to) };
 }
 
 // Scoped to this page (not the shared globals.css) so it can't affect any

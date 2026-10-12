@@ -104,6 +104,7 @@ import {
   deleteCsrMistakeLogEntry,
   type CsrMistakeLogEntry,
 } from "@/lib/supabase/csrMistakeLog";
+import { enumerateISODates } from "@/lib/localDate";
 
 // Exported so CSRMainDashboard.tsx's Team List tab can offer the exact
 // same Task options — its dropdown writes to this same csr_daily_report_
@@ -196,14 +197,9 @@ export function todayIso(now: Date = new Date()): string {
 
 /** Every ISO date from start to end, inclusive — used to fan out one query per day across a picked range. */
 function enumerateDatesISO(startIso: string, endIso: string): string[] {
-  const out: string[] = [];
-  let cur = new Date(startIso + "T00:00:00");
-  const end = new Date(endIso + "T00:00:00");
-  while (cur <= end) {
-    out.push(cur.toISOString().slice(0, 10));
-    cur = new Date(cur.getTime() + 24 * 60 * 60 * 1000);
-  }
-  return out;
+  // Pure calendar math — the old local-midnight + toISOString() version
+  // shifted every day back by one in the Philippines (UTC+8).
+  return enumerateISODates(startIso, endIso);
 }
 
 /** Joins distinct non-empty values with "; " — used to show a text field (Mistake/Warning/Abs-Em/Task) across a multi-day range without picking just one day's value arbitrarily. */

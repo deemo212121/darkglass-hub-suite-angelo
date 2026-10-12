@@ -3,6 +3,7 @@ import { ChevronLeft, RefreshCw, ChevronDown } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { PART_DISTRIBUTORS, pick, pad, offsetStr } from "./shared";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -12,7 +13,7 @@ function generateRows(count = 80) {
   return Array.from({ length: count }, (_, i) => {
     const d = new Date(); d.setDate(d.getDate() - (i % 365) - 30);
     return {
-      id: i + 1, invoiceDate: d.toISOString().slice(0,10),
+      id: i + 1, invoiceDate: localISODate(d),
       partNo: "PT-" + pad(70000 + i),
       description: pick(PARTS_LIST, i),
       distributor: pick(PART_DISTRIBUTORS.slice(1), i),

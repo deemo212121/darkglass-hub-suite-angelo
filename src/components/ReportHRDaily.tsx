@@ -237,6 +237,7 @@ import { FLASH_TECH_TIER_LEVELS } from "@/lib/supabase/flashTechTrips";
 import { CustomFormsPanel } from "./CustomFormsPanel";
 import * as XLSX from "xlsx";
 import { exportToCSV } from "@/lib/csvExport";
+import { todayISO } from "@/lib/localDate";
 
 // Formats a <input type="date"> value ("YYYY-MM-DD") as a long-form date
 // ("July 17, 2026") via the multi-arg Date constructor (new Date(y, m-1, d),
@@ -1131,7 +1132,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // sits empty forever for them regardless of how many submissions come in.
   const canViewJotformTab = isJotformHrRole(normalizedMyRole, normalizedMyExtraRoles);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
 
   const [error, setError] = useState<string | null>(null);
   const [showActivityLog, setShowActivityLog] = useState(false);
@@ -3081,7 +3082,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // a date range instead of all-time. Candidates are windowed by when they
   // applied (createdAt); terminated/resigned are windowed by terminationDate
   // — same fields the department trend chart below already uses this way. ──
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = todayISO();
   const [reportFrom, setReportFrom] = useState(todayStr);
   const [reportTo, setReportTo] = useState(todayStr);
   const setReportRangeToday = () => { setReportFrom(todayStr); setReportTo(todayStr); };
@@ -17436,7 +17437,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     sheet["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length, c: cols.length - 1 } }) };
     const book = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(book, sheet, tabName.slice(0, 31).replace(/[\\/?*[\]:]/g, "-") || "Master List");
-    XLSX.writeFile(book, `${base}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(book, `${base}_${todayISO()}.xlsx`);
   };
 
   const buildMasterListOptionsExcluding = (excludeKey: MasterListColumnFilterKey): string[] => {

@@ -31,6 +31,7 @@ import { signTicketDisputeManager, signTicketDisputeHrPaperwork, updateEmployeeR
 import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { resetMileageRouteConfirmation } from "@/lib/supabase/mileage";
 import { buildTicketDisputeManagerSignaturePdf, buildTicketDisputeHrSignaturePdf, type TicketDisputeEmployeeInfo } from "@/lib/ticketDisputeReportPdf";
+import { todayISO } from "@/lib/localDate";
 
 export async function resolveEmployeeInfo(request: EmployeeRequestRow, profiles: ProfileRow[]): Promise<TicketDisputeEmployeeInfo> {
   const p = profiles.find((x) => x.id === request.profileId) ?? null;
@@ -126,7 +127,7 @@ export function TicketDisputeManagerSignModal({ request, companyId, profiles, re
 }
 
 export function TicketDisputeHrSignModal({ request, companyId, profiles, reviewerId, reviewerName, onClose, onSigned, finalize }: SignModalBaseProps) {
-  const [receivedDate, setReceivedDate] = useState(new Date().toISOString().slice(0, 10));
+  const [receivedDate, setReceivedDate] = useState(todayISO());
   const [actionStatus, setActionStatus] = useState<"approved" | "additional_review_required">("approved");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -42,8 +42,9 @@ import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
+import { todayISO } from "@/lib/localDate";
 
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const todayStr = () => todayISO();
 const signLinkFor = (id: string) => `${getAppUrl()}/sign-compensation-update/${id}`;
 
 const emptyForm = () => ({

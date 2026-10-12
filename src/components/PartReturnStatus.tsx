@@ -13,6 +13,7 @@ import {
   type PartReturnRow,
 } from "@/lib/supabase/partReturnStatus";
 import { marconeLookupPart, type MarconePartInfo } from "@/lib/marconeApi";
+import { todayISO } from "@/lib/localDate";
 
 const TAB_KEY = "partReturnStatusTab";
 
@@ -61,7 +62,7 @@ function exportReturnsToXlsx(rows: PartReturnRow[], sheetName: string, filenameP
   const worksheet = XLSX.utils.json_to_sheet(data);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
-  XLSX.writeFile(workbook, `${filenamePrefix}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  XLSX.writeFile(workbook, `${filenamePrefix}_${todayISO()}.xlsx`);
 }
 
 export function PartReturnStatusPage() {

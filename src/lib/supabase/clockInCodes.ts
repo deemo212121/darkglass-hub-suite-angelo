@@ -8,6 +8,7 @@
  * database.
  */
 import { supabase } from "./client";
+import { selectAllPages } from "./selectAllPages";
 
 export interface CompanyClockInCode {
   code: string;
@@ -94,12 +95,14 @@ export interface ClockInCodeEvent {
 
 /** Every code entry for a day, newest first (HR / Admin / SuperAdmin only — RLS). */
 export async function getClockInCodeEvents(day: string): Promise<ClockInCodeEvent[]> {
-  const { data, error } = await supabase
-    .from("clock_in_code_events")
-    .select("id, profile_id, entered_by, success, created_at")
-    .eq("valid_date", day)
-    .order("created_at", { ascending: false })
-    .limit(2000);
+  const { data, error } = await selectAllPages<any>(() =>
+    supabase
+      .from("clock_in_code_events")
+      .select("id, profile_id, entered_by, success, created_at")
+      .eq("valid_date", day)
+      .order("created_at", { ascending: false })
+      .order("id")
+  );
   if (error) throw new Error(error.message);
   return (data ?? []).map((r: any) => ({ id: r.id, profileId: r.profile_id, enteredBy: r.entered_by, success: !!r.success, createdAt: r.created_at }));
 }

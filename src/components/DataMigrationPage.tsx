@@ -5,6 +5,7 @@ import { ChevronLeft } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { syncServicePowerToSupabase, syncServicePowerTicketsByCallNo } from "@/lib/servicePowerSync";
 import { syncNsaToSupabase } from "@/lib/nsaSync";
+import { localISODate } from "@/lib/localDate";
 
 interface SyncResult {
   success: boolean;
@@ -18,7 +19,7 @@ interface SyncResult {
 function isoDaysAgo(days: number): string {
   const d = new Date();
   d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 }
 
 /** Shared card chrome for a migration source: title/caption, a date-input

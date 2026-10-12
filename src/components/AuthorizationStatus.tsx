@@ -8,6 +8,7 @@ import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScro
 import { getRFAStatusLabel } from "@/lib/servicePowerApi";
 import type { RFARequest } from "@/types/servicePower";
 import { useAuth } from "@/lib/auth";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -19,7 +20,7 @@ function usePortal(open:boolean){ const ref=useRef<HTMLButtonElement>(null); con
 // getRFAStatusLabel in servicePowerApi.ts, the single source of truth for
 // these labels so the filter list can't drift from what the table shows.
 const AUTH_STATUSES = ["Open", "Approved", "Rejected", "Waiting for Information", "Closed"];
-const ds = (o: number) => { const d = new Date(); d.setDate(d.getDate() + o); return d.toISOString().slice(0, 10); };
+const ds = (o: number) => { const d = new Date(); d.setDate(d.getDate() + o); return localISODate(d); };
 
 /** "YYYY-MM-DD" (date input) -> ServicePower's CCYYMMDDHHMM, at day start/end. */
 function toChangedOnParam(dateStr: string, endOfDay: boolean): string {

@@ -43,6 +43,7 @@ import {
   type CustomFormResponseValue,
 } from "@/lib/supabase/customForms";
 import { getAppUrl } from "@/lib/appUrl";
+import { todayISO } from "@/lib/localDate";
 
 const PAGE_SIZE = 25;
 
@@ -477,7 +478,7 @@ export function CustomFormsPanel() {
       }
       if (sheets.length === 0) { setActionError("Nothing to export — no submissions match these filters."); return; }
       const formPart = formFilter ? formsById.get(formFilter)?.title || "Custom Forms" : "Custom Forms";
-      await downloadStyledReport(`${formPart} - Submissions ${new Date().toISOString().slice(0, 10)}.xlsx`, sheets);
+      await downloadStyledReport(`${formPart} - Submissions ${todayISO()}.xlsx`, sheets);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Export failed.");
     } finally {

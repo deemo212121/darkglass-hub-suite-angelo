@@ -1,3 +1,4 @@
+import { localISODate, todayISO } from "@/lib/localDate";
 export const LOCATIONS = [
   "","Asheville","Atlanta","Birmingham","Cape Girardeau","Chattanooga","Columbus",
   "Dallas","Destin","Huntsville","Jackson,MS","Jackson,TN","Jacksonville","Jonesboro",
@@ -33,8 +34,8 @@ export const REPAIR_STATUSES = [
 ];
 export const pick = <T,>(a: T[], i: number) => a[i % a.length];
 export const pad = (n: number) => String(n).padStart(4, "0");
-export const todayStr = () => new Date().toISOString().slice(0, 10);
+export const todayStr = () => todayISO();
 export const offsetStr = (days: number) => {
   const d = new Date(); d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 };

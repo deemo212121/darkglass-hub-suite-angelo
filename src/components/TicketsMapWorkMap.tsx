@@ -16,6 +16,7 @@ import { isTechnicianOnlyRole } from "@/lib/roleLabels";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
 import { loadGoogleMapsScript, getLeaflet, makeGeocoder, warmGeocodeCache, addRouteDirectionArrow, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
+import { todayISO } from "@/lib/localDate";
 
 type ColorMode = "status" | "tech";
 type SidebarTab = "tickets" | "status";
@@ -148,13 +149,13 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
     "tickets",
   );
   const [mapMode, setMapMode] = useState<"map" | "satellite">("map");
-  const [mapDate, setMapDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [mapDate, setMapDate] = useState(() => todayISO());
   // Work Map can either bucket per single day (mapDate === ticketDate) or
   // across a window starting at mapDate. Dispatch uses the week view to
   // sched ahead — a ticket scheduled later in the week should still surface
   // when the start of the week is selected.
   const [dateRangeMode, setDateRangeMode] = useState<"day" | "week" | "custom">("day");
-  const [mapDateEnd, setMapDateEnd] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [mapDateEnd, setMapDateEnd] = useState<string>(() => todayISO());
   // When true (default), show tickets scheduled for any day within the
   // selected window as faded "other day" pins. Mirrors the ER work map
   // "Tickets on Other Days" toggle. When false, only tickets scheduled

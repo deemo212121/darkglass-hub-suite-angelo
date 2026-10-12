@@ -6,6 +6,7 @@ import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, TECHS_FULL, pick, pad, offsetStr, todayStr } from "@/components/shared";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
+import { localISODate } from "@/lib/localDate";
 
 /** Shared portal-dropdown positioning — button ref + fixed-position coords, recalculated on scroll/resize. Used for both Location and Technician here. */
 function useDropdownPortal(open: boolean) {
@@ -45,7 +46,7 @@ const CHIP: Record<string,string> = {
 const ALL_ROWS = Array.from({length:60},(_,i)=>{
   const d=new Date(); d.setDate(d.getDate()-1-(i%30));
   return { id:i+1, ticketNo:"TK-2026-"+pad(1000+i), location:pick(LOCATIONS.slice(1),i),
-    tech:pick(TECHS_FULL,i), completeDate:d.toISOString().slice(0,10),
+    tech:pick(TECHS_FULL,i), completeDate:localISODate(d),
     laborAmount:80+(i*23)%400, techPaid:i%3===0, cancelled:i%7===0, payStatus:pick(PAY_STATUSES,i) };
 });
 
