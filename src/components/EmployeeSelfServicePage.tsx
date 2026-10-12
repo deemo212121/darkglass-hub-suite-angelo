@@ -1,4 +1,4 @@
-import { ChevronLeft, Compass, DollarSign, Clock, ListTodo, Download, Eye, EyeOff, TrendingUp, AlertCircle, CheckCircle2, XCircle, Plus, FileText, X, Paperclip } from "lucide-react";
+import { ChevronLeft, Compass, DollarSign, Clock, ListTodo, Download, Eye, EyeOff, TrendingUp, AlertCircle, CheckCircle2, XCircle, Plus, FileText, X, Paperclip, Receipt, Pencil, Trash2, Loader2 } from "lucide-react";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { runTour, takeQueuedTour } from "@/lib/tours/runTour";
 import { SELF_SERVICE_TOUR, SELF_SERVICE_TOUR_TARGET } from "@/lib/tours/selfServiceTour";
@@ -31,7 +31,7 @@ import {
   type PtoRequestRow,
   type PtoType,
 } from "@/lib/supabase/pto";
-import { uploadPtoRequestAttachment } from "@/lib/firebase/storage";
+import { uploadPtoRequestAttachment, deleteExpenseReceiptFile } from "@/lib/firebase/storage";
 import {
   getCompanyTimecardCorrections,
   createTimecardCorrection,
@@ -59,7 +59,7 @@ import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/
 import { createNotification } from "@/lib/supabase/notifications";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { getMyPayslips, type MyPayslipRow } from "@/lib/supabase/payslips";
-import { getProfileExpenses, type ExpenseRow } from "@/lib/supabase/expenses";
+import { getProfileExpenses, deleteExpense, type ExpenseRow } from "@/lib/supabase/expenses";
 import { ExpenseFormModal } from "@/components/ExpenseFormModal";
 import { ReceiptLightbox } from "@/components/ReceiptLightbox";
 import { fmtExpenseReviewedAt } from "@/components/ExpenseTrackingPage";
@@ -95,11 +95,22 @@ interface Request {
   details: string;
   /** Why it was rejected — "Rejected by <name> (<step>): <reason>" lines, shown in a red box. */
   rejectionReason?: string | null;
-  /** Expense Request: the attached receipt, viewable from the card. */
-  receiptUrl?: string | null;
 }
 
 const fmtMoney = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const EXPENSE_STATUS_STYLE: Record<ExpenseRow["status"], string> = {
+  Pending: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30",
+  Approved: "bg-sky-500/20 text-sky-300 border-sky-500/30",
+  Reimbursed: "bg-green-500/20 text-green-300 border-green-500/30",
+  Rejected: "bg-red-500/20 text-red-300 border-red-500/30",
+};
+const EXPENSE_STATUS_LABEL: Record<ExpenseRow["status"], string> = {
+  Pending: "In Review",
+  Approved: "Approved — to be paid",
+  Reimbursed: "Reimbursed",
+  Rejected: "Rejected",
+};
 
 const PTO_TYPE_LABEL: Record<PtoType, string> = {
   vacation: "Vacation",
@@ -132,9 +143,9 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const { email, uid, role, extraRoles, displayName, companyId } = useAuth();
   const search = (useSearch({ strict: false }) as { tab?: string }) ?? {};
 
-  const [activeTab, setActiveTab] = usePersistedTab<"dashboard" | "payroll" | "attendance" | "requests">(
+  const [activeTab, setActiveTab] = usePersistedTab<"dashboard" | "payroll" | "attendance" | "requests" | "expenses">(
     "ahs:employee-self-service-active-tab",
-    ["dashboard", "payroll", "attendance", "requests"],
+    ["dashboard", "payroll", "attendance", "requests", "expenses"],
     "dashboard",
   );
   const [expandedPayslip, setExpandedPayslip] = useState<string | null>(null);
@@ -190,11 +201,15 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [payslipDailyRows, setPayslipDailyRows] = useState<PayslipDailyRow[]>([]);
   const [payslipDailyLoading, setPayslipDailyLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [requestTypeFilter, setRequestTypeFilter] = useState<"all" | "PTO Request" | "Sick Leave Request" | "Time Correction" | "Attendance Dispute" | "Payroll Inquiry" | "Expense Request">("all");
-  // Expense Requests — the employee's own expenses (Accounting approves or
+  const [requestTypeFilter, setRequestTypeFilter] = useState<"all" | "PTO Request" | "Sick Leave Request" | "Time Correction" | "Attendance Dispute" | "Payroll Inquiry">("all");
+  // My Expenses tab — the employee's own expenses (Accounting approves or
   // rejects them under Accounting → Expenses → Employee Requests).
   const [myExpenses, setMyExpenses] = useState<ExpenseRow[]>([]);
-  const [showExpenseForm, setShowExpenseForm] = useState(false);
+  const [myExpensesLoading, setMyExpensesLoading] = useState(true);
+  const [expenseFilter, setExpenseFilter] = useState<"all" | ExpenseRow["status"]>("all");
+  // null = closed; { editing: null } = new request; { editing: row } = edit a pending one.
+  const [expenseForm, setExpenseForm] = useState<{ editing: ExpenseRow | null } | null>(null);
+  const [deletingExpenseId, setDeletingExpenseId] = useState<string | null>(null);
   const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null);
   const [summaryModal, setSummaryModal] = useState<"pending" | "approved" | "rejected" | "closed" | "pto" | "sick" | null>(null);
 
@@ -356,20 +371,48 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   }, [myProfileId]);
 
   // Separate from the load above so a failure here can't blank the other
-  // request types. Flash Tech trip expenses (company-booked hotel/travel)
-  // aren't the employee's to claim back, so they're left out.
+  // request types. Flash Tech trip expenses (company-booked hotel/travel —
+  // expense_subtype set, even once the trip itself is deleted) aren't the
+  // employee's to claim back, so they're left out.
   const refreshExpenses = async (profileId: string) => {
     const rows = await getProfileExpenses(profileId);
-    setMyExpenses(rows.filter((e) => !e.flashTechTripId));
+    setMyExpenses(rows.filter((e) => !e.flashTechTripId && !e.expenseSubtype));
   };
   useEffect(() => {
     if (!myProfileId) return;
-    refreshExpenses(myProfileId).catch((err) => console.error("Failed to load expense requests:", err));
+    setMyExpensesLoading(true);
+    refreshExpenses(myProfileId)
+      .catch((err) => console.error("Failed to load expenses:", err))
+      .finally(() => setMyExpensesLoading(false));
   }, [myProfileId]);
   const myReimbursement = useMemo(() => {
-    const total = (status: ExpenseRow["status"]) => myExpenses.filter((e) => e.status === status).reduce((s, e) => s + e.amount, 0);
-    return { pending: total("Pending"), approved: total("Approved"), reimbursed: total("Reimbursed") };
+    const of = (status: ExpenseRow["status"]) => myExpenses.filter((e) => e.status === status);
+    const total = (rows: ExpenseRow[]) => rows.reduce((s, e) => s + e.amount, 0);
+    const [pending, approved, reimbursed, rejected] = [of("Pending"), of("Approved"), of("Reimbursed"), of("Rejected")];
+    return {
+      pending: total(pending), pendingCount: pending.length,
+      approved: total(approved), approvedCount: approved.length,
+      reimbursed: total(reimbursed), reimbursedCount: reimbursed.length,
+      rejectedCount: rejected.length,
+    };
   }, [myExpenses]);
+  const visibleExpenses = useMemo(
+    () => (expenseFilter === "all" ? myExpenses : myExpenses.filter((e) => e.status === expenseFilter)),
+    [myExpenses, expenseFilter]
+  );
+  const handleDeleteExpense = async (row: ExpenseRow) => {
+    if (!myProfileId || !confirm("Delete this expense request? This cannot be undone.")) return;
+    setDeletingExpenseId(row.id);
+    try {
+      await deleteExpense(row.id);
+      if (row.receiptPath) deleteExpenseReceiptFile(row.receiptPath).catch((err) => console.error("Failed to delete receipt file:", err));
+      await refreshExpenses(myProfileId);
+    } catch (err) {
+      alert(`Failed to delete expense: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setDeletingExpenseId(null);
+    }
+  };
 
   const refreshRequests = async () => {
     const [ptoRows, correctionRows, employeeReqRows] = await Promise.all([
@@ -447,28 +490,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         rejectionReason: r.status === "rejected" ? r.reviewNote || null : null,
       });
     }
-    for (const e of myExpenses) {
-      const route = [e.fromLocation, e.toLocation].filter(Boolean).join(" → ");
-      const reviewed = e.status !== "Pending" && e.reviewedBy
-        ? ` by ${profileName(e.reviewedBy)}${e.reviewedAt ? ` · ${fmtExpenseReviewedAt(e.reviewedAt)}` : ""}`
-        : "";
-      const accountingLine = e.status === "Pending"
-        ? "Accounting: pending"
-        : `Accounting: ${e.status === "Rejected" ? "rejected" : "approved"}${reviewed}`;
-      items.push({
-        id: `exp-${e.id}`,
-        type: "Expense Request",
-        status: e.status === "Pending" ? "pending" : e.status === "Rejected" ? "rejected" : "approved",
-        submittedDate: e.createdAt.slice(0, 10),
-        details: `${e.category}: ${fmtMoney(e.amount)} on ${e.expenseDate}${e.description ? ` - ${e.description}` : ""}`
-          + (route || e.orNumber ? `\n${[route, e.orNumber ? `OR# ${e.orNumber}` : ""].filter(Boolean).join(" · ")}` : "")
-          + `\n${accountingLine}`
-          + (e.status === "Reimbursed" ? "\n✅ Reimbursed — this amount has been paid back to you." : e.status === "Approved" ? "\n⏳ Approved — waiting to be reimbursed." : ""),
-        receiptUrl: e.receiptUrl,
-      });
-    }
     return items.sort((a, b) => b.submittedDate.localeCompare(a.submittedDate));
-  }, [myPtoRequests, myCorrections, myEmployeeRequests, myExpenses, companyProfiles]);
+  }, [myPtoRequests, myCorrections, myEmployeeRequests, companyProfiles]);
 
   const filteredMyRequests = useMemo(
     () => (requestTypeFilter === "all" ? myRequests : myRequests.filter((r) => r.type === requestTypeFilter)),
@@ -522,7 +545,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   useEffect(() => {
     const tab = search.tab;
     if (!tab) return;
-    if (["dashboard", "payroll", "attendance", "requests"].includes(tab)) {
+    if (["dashboard", "payroll", "attendance", "requests", "expenses"].includes(tab)) {
       setActiveTab(tab as typeof activeTab);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -533,6 +556,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     { id: "payroll", label: "My Payroll", icon: DollarSign },
     { id: "attendance", label: "My Attendance", icon: Clock },
     { id: "requests", label: "My Requests", icon: ListTodo },
+    { id: "expenses", label: "My Expenses", icon: Receipt },
   ];
 
   const getStatusColor = (status: string) => {
@@ -1566,7 +1590,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         {activeTab === "requests" && (
           <div className="space-y-6">
             {/* Request Summary */}
-            <div data-tour="ess-req-summary" className="grid gap-4 md:grid-cols-4 lg:grid-cols-7">
+            <div data-tour="ess-req-summary" className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
               <button
                 type="button"
                 onClick={() => setSummaryModal("pto")}
@@ -1591,23 +1615,6 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 </p>
                 <p className="text-xs text-slate-500 mt-1">
                   {mySickYear ? `Year ${mySickYear.tenureYear} · resets ${mySickYear.end}` : "—"}
-                </p>
-              </button>
-              {/* Reimbursement — approved expenses Accounting still owes, plus what's been paid back / is in review. Opens the Expense Requests in Track Status. */}
-              <button
-                type="button"
-                onClick={() => {
-                  setRequestTypeFilter("Expense Request");
-                  document.querySelector('[data-tour="ess-track-status"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
-                }}
-                className="bg-slate-900/50 border border-white/10 rounded-lg p-4 text-left hover:border-sky-400/40 hover:bg-slate-900/80 transition"
-              >
-                <p className="text-xs text-slate-400 mb-1">Reimbursement Due</p>
-                <p className="text-2xl font-bold text-sky-300">{fmtMoney(myReimbursement.approved)}</p>
-                <p className="text-xs text-slate-500 mt-1 leading-snug">
-                  {fmtMoney(myReimbursement.reimbursed)} paid
-                  <br />
-                  {fmtMoney(myReimbursement.pending)} in review
                 </p>
               </button>
               <button
@@ -1713,15 +1720,6 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 <Plus className="h-4 w-4" />
                 Unpaid Leave Request
               </button>
-              <button data-tour="ess-req-expense"
-                type="button"
-                onClick={() => setShowExpenseForm(true)}
-                disabled={!myProfileId}
-                className="md:col-span-2 px-4 py-3 bg-sky-600 hover:bg-sky-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
-              >
-                <Plus className="h-4 w-4" />
-                Expense Request
-              </button>
             </div>
 
             {/* Requests List */}
@@ -1740,7 +1738,6 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   <option value="Time Correction">Time Correction</option>
                   <option value="Attendance Dispute">Attendance Dispute</option>
                   <option value="Payroll Inquiry">Payroll Inquiry</option>
-                  <option value="Expense Request">Expense Request</option>
                 </select>
               </div>
               {requestsLoading ? (
@@ -1756,15 +1753,6 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           <p className="text-sm font-semibold text-white">{request.type}</p>
                           <p className="text-xs text-slate-400 mt-1">Submitted: {request.submittedDate}</p>
                           <p className="text-sm text-slate-300 mt-2 whitespace-pre-line">{request.details}</p>
-                          {request.receiptUrl && (
-                            <button
-                              type="button"
-                              onClick={() => setPreviewReceiptUrl(request.receiptUrl ?? null)}
-                              className="mt-2 inline-flex items-center gap-1.5 text-xs text-blue-300 hover:text-blue-200"
-                            >
-                              <Paperclip className="h-3.5 w-3.5" /> View receipt
-                            </button>
-                          )}
                           {request.status === "rejected" && (
                             <div className="mt-2 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2">
                               <p className="text-[11px] font-semibold uppercase tracking-wide text-red-300">Reason rejected</p>
@@ -1778,6 +1766,142 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* My Expenses Tab — expenses to be reimbursed; Accounting approves /
+            rejects / marks them reimbursed under Accounting → Expenses →
+            Employee Requests. */}
+        {activeTab === "expenses" && (
+          <div className="space-y-6">
+            <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+              <button
+                type="button"
+                onClick={() => setExpenseFilter("Approved")}
+                className="bg-slate-900/50 border border-white/10 rounded-lg p-4 text-left hover:border-sky-400/40 hover:bg-slate-900/80 transition"
+              >
+                <p className="text-xs text-slate-400 mb-1">Reimbursement Due</p>
+                <p className="text-2xl font-bold text-sky-300">{fmtMoney(myReimbursement.approved)}</p>
+                <p className="text-xs text-slate-500 mt-1">{myReimbursement.approvedCount} approved, waiting to be paid</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setExpenseFilter("Pending")}
+                className="bg-slate-900/50 border border-white/10 rounded-lg p-4 text-left hover:border-yellow-400/40 hover:bg-slate-900/80 transition"
+              >
+                <p className="text-xs text-slate-400 mb-1">In Review</p>
+                <p className="text-2xl font-bold text-yellow-300">{fmtMoney(myReimbursement.pending)}</p>
+                <p className="text-xs text-slate-500 mt-1">{myReimbursement.pendingCount} waiting for Accounting</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setExpenseFilter("Reimbursed")}
+                className="bg-slate-900/50 border border-white/10 rounded-lg p-4 text-left hover:border-green-400/40 hover:bg-slate-900/80 transition"
+              >
+                <p className="text-xs text-slate-400 mb-1">Reimbursed</p>
+                <p className="text-2xl font-bold text-green-300">{fmtMoney(myReimbursement.reimbursed)}</p>
+                <p className="text-xs text-slate-500 mt-1">{myReimbursement.reimbursedCount} paid back to you</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setExpenseFilter("Rejected")}
+                className="bg-slate-900/50 border border-white/10 rounded-lg p-4 text-left hover:border-red-400/40 hover:bg-slate-900/80 transition"
+              >
+                <p className="text-xs text-slate-400 mb-1">Rejected</p>
+                <p className="text-2xl font-bold text-red-300">{myReimbursement.rejectedCount}</p>
+                <p className="text-xs text-slate-500 mt-1">see the reason on each one</p>
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setExpenseForm({ editing: null })}
+              disabled={!myProfileId}
+              className="w-full px-4 py-3 bg-sky-600 hover:bg-sky-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
+            >
+              <Plus className="h-4 w-4" />
+              Expense Request
+            </button>
+
+            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-4 gap-3">
+                <h3 className="text-sm font-bold text-white">My Expenses</h3>
+                <select
+                  title="Filter by status"
+                  value={expenseFilter}
+                  onChange={(e) => setExpenseFilter(e.target.value as typeof expenseFilter)}
+                  className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
+                >
+                  <option value="all">All</option>
+                  <option value="Pending">In Review</option>
+                  <option value="Approved">Approved — to be paid</option>
+                  <option value="Reimbursed">Reimbursed</option>
+                  <option value="Rejected">Rejected</option>
+                </select>
+              </div>
+              {myExpensesLoading ? (
+                <p className="text-sm text-slate-400">Loading…</p>
+              ) : visibleExpenses.length === 0 ? (
+                <p className="text-sm text-slate-400">
+                  {myExpenses.length === 0 ? "No expenses yet. Use Expense Request to send one to Accounting with its receipt." : "No expenses with this status."}
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {visibleExpenses.map((e) => {
+                    const route = [e.fromLocation, e.toLocation].filter(Boolean).join(" → ");
+                    const reviewer = e.reviewedBy ? profileName(e.reviewedBy) : "Accounting";
+                    const reviewedOn = e.reviewedAt ? ` · ${fmtExpenseReviewedAt(e.reviewedAt)}` : "";
+                    const canChange = e.status === "Pending" && e.createdBy === myProfileId;
+                    return (
+                      <div key={e.id} className="border border-white/10 rounded-lg p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-lg font-bold text-white font-mono">{fmtMoney(e.amount)}</p>
+                            <p className="text-sm text-slate-300">{e.category} · {e.expenseDate}</p>
+                            {e.description && <p className="text-sm text-slate-400 mt-1 break-words">{e.description}</p>}
+                            {(route || e.orNumber) && (
+                              <p className="text-xs text-slate-500 mt-1">{[route, e.orNumber ? `OR# ${e.orNumber}` : ""].filter(Boolean).join(" · ")}</p>
+                            )}
+                            <p className="text-xs mt-2">
+                              {e.status === "Pending" && <span className="text-slate-400">Sent {e.createdAt.slice(0, 10)} · waiting for Accounting to review</span>}
+                              {e.status === "Approved" && <span className="text-sky-300">Approved by {reviewer}{reviewedOn} · waiting to be reimbursed</span>}
+                              {e.status === "Reimbursed" && <span className="text-green-300">Approved by {reviewer}{reviewedOn} · reimbursed ✓</span>}
+                              {e.status === "Rejected" && <span className="text-red-300">Rejected by {reviewer}{reviewedOn}</span>}
+                            </p>
+                            {e.status === "Rejected" && (
+                              <div className="mt-2 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2">
+                                <p className="text-[11px] font-semibold uppercase tracking-wide text-red-300">Reason rejected</p>
+                                <p className="text-sm text-red-100 whitespace-pre-line">{e.reviewNote || "No reason was given."}</p>
+                              </div>
+                            )}
+                            <div className="flex flex-wrap items-center gap-3 mt-2">
+                              {e.receiptUrl && (
+                                <button type="button" onClick={() => setPreviewReceiptUrl(e.receiptUrl)} className="inline-flex items-center gap-1.5 text-xs text-blue-300 hover:text-blue-200">
+                                  <Paperclip className="h-3.5 w-3.5" /> View receipt
+                                </button>
+                              )}
+                              {canChange && (
+                                <>
+                                  <button type="button" onClick={() => setExpenseForm({ editing: e })} className="inline-flex items-center gap-1 text-xs text-slate-300 hover:text-white">
+                                    <Pencil className="h-3 w-3" /> Edit
+                                  </button>
+                                  <button type="button" onClick={() => handleDeleteExpense(e)} disabled={deletingExpenseId === e.id} className="inline-flex items-center gap-1 text-xs text-slate-300 hover:text-red-300 disabled:opacity-50">
+                                    {deletingExpenseId === e.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />} Delete
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          <span className={`px-2.5 py-1 rounded border text-xs font-semibold whitespace-nowrap ${EXPENSE_STATUS_STYLE[e.status]}`}>
+                            {EXPENSE_STATUS_LABEL[e.status]}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -2120,17 +2244,17 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
       )}
 
       {/* Expense Request — same form Accounting uses, filed for yourself, receipt required */}
-      {showExpenseForm && myProfileId && (
+      {expenseForm && myProfileId && (
         <ExpenseFormModal
-          editing={null}
+          editing={expenseForm.editing}
           fixedProfileId={myProfileId}
           requireReceipt
           createdBy={myProfileId}
           companyId={companyId}
-          onClose={() => setShowExpenseForm(false)}
+          onClose={() => setExpenseForm(null)}
           onSaved={async () => {
             await refreshExpenses(myProfileId);
-            setRequestTypeFilter("all");
+            if (!expenseForm.editing) setExpenseFilter("all");
           }}
         />
       )}
@@ -2174,15 +2298,6 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           <p className="text-sm font-semibold text-white">{request.type}</p>
                           <p className="text-xs text-slate-400 mt-1">Submitted: {request.submittedDate}</p>
                           <p className="text-sm text-slate-300 mt-2 whitespace-pre-line">{request.details}</p>
-                          {request.receiptUrl && (
-                            <button
-                              type="button"
-                              onClick={() => setPreviewReceiptUrl(request.receiptUrl ?? null)}
-                              className="mt-2 inline-flex items-center gap-1.5 text-xs text-blue-300 hover:text-blue-200"
-                            >
-                              <Paperclip className="h-3.5 w-3.5" /> View receipt
-                            </button>
-                          )}
                           {request.status === "rejected" && (
                             <div className="mt-2 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2">
                               <p className="text-[11px] font-semibold uppercase tracking-wide text-red-300">Reason rejected</p>

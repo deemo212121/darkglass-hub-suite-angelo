@@ -39,7 +39,7 @@ export function fmtExpenseReviewedAt(iso: string | null): string {
  * one auto-created from a Flash Tech trip.
  */
 function isSelfFiledExpense(e: ExpenseRow): boolean {
-  return !e.flashTechTripId && e.createdBy != null && e.createdBy === e.profileId;
+  return !e.flashTechTripId && !e.expenseSubtype && e.createdBy != null && e.createdBy === e.profileId;
 }
 
 export function ExpenseTrackingPage({
@@ -145,15 +145,29 @@ export function ExpenseTrackingPage({
   /** "Approved / Rejected By" — who approved or rejected it; blank while Pending. */
   const reviewerName = (e: ExpenseRow) => (e.status !== "Pending" && e.reviewedBy ? profileName(e.reviewedBy) : "");
 
-  const handleStatusChange = async (id: string, status: ExpenseStatus) => {
+  const handleStatusChange = async (id: string, status: ExpenseStatus, rejectionReason?: string): Promise<boolean> => {
     setStatusChangingId(id);
     try {
-      await updateExpenseStatus(id, status, myProfileId);
+      await updateExpenseStatus(id, status, myProfileId, rejectionReason);
       setExpenses(await getCompanyExpenses());
+      return true;
     } catch (error) {
       alert(`Failed to update expense: ${error instanceof Error ? error.message : "Unknown error"}`);
+      return false;
     } finally {
       setStatusChangingId(null);
+    }
+  };
+
+  // Reject asks for a reason first — the employee sees it on the request in
+  // Employee Self-Service → My Requests.
+  const [rejecting, setRejecting] = useState<ExpenseRow | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const confirmReject = async () => {
+    if (!rejecting || !rejectReason.trim()) return;
+    if (await handleStatusChange(rejecting.id, "Rejected", rejectReason)) {
+      setRejecting(null);
+      setRejectReason("");
     }
   };
 
@@ -175,7 +189,7 @@ export function ExpenseTrackingPage({
 
   const handleDownload = () => {
     const q = (s: string) => `"${s.replace(/"/g, '""')}"`;
-    let csv = "Employee,Category,Date,Amount,Description,Status,Sent By,Approved / Rejected By,Reviewed On\n";
+    let csv = "Employee,Category,Date,Amount,Description,Status,Sent By,Approved / Rejected By,Reviewed On,Rejection Reason\n";
     filtered.forEach((e) => {
       csv += [
         q(profileName(e.profileId)),
@@ -187,6 +201,7 @@ export function ExpenseTrackingPage({
         q(e.createdBy ? profileName(e.createdBy) : ""),
         q(reviewerName(e)),
         q(reviewerName(e) ? fmtExpenseReviewedAt(e.reviewedAt) : ""),
+        q(e.status === "Rejected" ? e.reviewNote ?? "" : ""),
       ].join(",") + "\n";
     });
     const el = document.createElement("a");
@@ -347,6 +362,9 @@ export function ExpenseTrackingPage({
                             {e.status === "Rejected" ? "Rejected" : "Approved"}
                             {e.reviewedAt ? ` · ${fmtExpenseReviewedAt(e.reviewedAt)}` : ""}
                           </div>
+                          {e.status === "Rejected" && e.reviewNote && (
+                            <div className="text-[11px] text-red-300 max-w-[220px] truncate" title={e.reviewNote}>Reason: {e.reviewNote}</div>
+                          )}
                         </>
                       ) : (
                         <span className="text-slate-600 text-xs">—</span>
@@ -379,7 +397,7 @@ export function ExpenseTrackingPage({
                             <button onClick={() => handleStatusChange(e.id, "Approved")} disabled={statusChangingId === e.id} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
                               {statusChangingId === e.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />} Approve
                             </button>
-                            <button onClick={() => handleStatusChange(e.id, "Rejected")} disabled={statusChangingId === e.id} className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
+                            <button onClick={() => { setRejecting(e); setRejectReason(""); }} disabled={statusChangingId === e.id} className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
                               {statusChangingId === e.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />} Reject
                             </button>
                           </>
@@ -407,6 +425,42 @@ export function ExpenseTrackingPage({
       </main>
 
       {previewReceiptUrl && <ReceiptLightbox url={previewReceiptUrl} onClose={() => setPreviewReceiptUrl(null)} />}
+
+      {rejecting && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => statusChangingId !== rejecting.id && setRejecting(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg p-6 max-w-md w-full mx-4" onClick={(ev) => ev.stopPropagation()}>
+            <div className="flex items-start justify-between mb-3">
+              <h3 className="text-lg font-bold text-white">Reject Expense</h3>
+              <button onClick={() => setRejecting(null)} className="text-slate-400 hover:text-white transition p-1">✕</button>
+            </div>
+            <p className="text-sm text-slate-300 mb-3">
+              {profileName(rejecting.profileId)} · {rejecting.category} · {fmtMoney(rejecting.amount)} on {rejecting.expenseDate}
+            </p>
+            <label className="block text-xs text-slate-400 uppercase mb-1">
+              Reason for rejection <span className="text-red-400 normal-case">* required</span>
+            </label>
+            <textarea
+              autoFocus
+              value={rejectReason}
+              onChange={(ev) => setRejectReason(ev.target.value)}
+              rows={4}
+              placeholder="e.g. Receipt is unreadable — please resend a clear photo."
+              className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none resize-none"
+            />
+            <p className="text-xs text-slate-500 mt-1">The employee sees this on their request in Employee Self-Service.</p>
+            <div className="flex gap-3 mt-5">
+              <button
+                onClick={confirmReject}
+                disabled={!rejectReason.trim() || statusChangingId === rejecting.id}
+                className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition font-semibold text-sm inline-flex items-center justify-center gap-2"
+              >
+                {statusChangingId === rejecting.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />} Reject
+              </button>
+              <button onClick={() => setRejecting(null)} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition font-semibold text-sm">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {formState && (
         <ExpenseFormModal

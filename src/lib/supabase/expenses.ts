@@ -30,6 +30,11 @@ export interface ExpenseRow {
   toLocation: string | null;
   /** Set when this expense was auto-created from a Flash Tech Calendar trip — see migration 0130. */
   flashTechTripId: string | null;
+  /** "hotel" | "transportation" on an expense auto-created from a Flash Tech trip — stays set even after
+   *  the trip itself is deleted (flash_tech_trip_id goes null then), so it's the reliable "company-booked" marker. */
+  expenseSubtype: string | null;
+  /** Why Accounting rejected it — required on Reject, shown to the employee in Self-Service (migration 0372). */
+  reviewNote: string | null;
   createdAt: string;
 }
 
@@ -51,6 +56,8 @@ function mapRow(row: any): ExpenseRow {
     fromLocation: row.from_location ?? null,
     toLocation: row.to_location ?? null,
     flashTechTripId: row.flash_tech_trip_id ?? null,
+    expenseSubtype: row.expense_subtype ?? null,
+    reviewNote: row.review_note ?? null,
     createdAt: row.created_at,
   };
 }
@@ -58,47 +65,50 @@ function mapRow(row: any): ExpenseRow {
 // Supabase caps an unbounded select at 1000 rows — a company's full expense
 // history can exceed that. Page through in chunks of 1000.
 const PAGE_SIZE = 1000;
-const EXPENSE_COLUMNS = "id, profile_id, category, expense_date, amount, description, status, created_by, reviewed_by, reviewed_at, receipt_url, receipt_path, or_number, from_location, to_location, flash_tech_trip_id, created_at";
+const EXPENSE_COLUMNS = "id, profile_id, category, expense_date, amount, description, status, created_by, reviewed_by, reviewed_at, receipt_url, receipt_path, or_number, from_location, to_location, flash_tech_trip_id, expense_subtype, created_at";
 
-/** All expenses for the caller's company (RLS-scoped), newest first. */
-export async function getCompanyExpenses(): Promise<ExpenseRow[]> {
+// review_note (migration 0372) is read best-effort: until that migration has
+// been run, the select retries without it instead of blanking every expense
+// list — reviewNote just comes back null.
+let reviewNoteColumnMissing = false;
+
+async function selectExpensePages(filter: (query: any) => any): Promise<ExpenseRow[]> {
   const all: ExpenseRow[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await supabase
-      .from("expenses")
-      .select(EXPENSE_COLUMNS)
-      .not("profile_id", "is", null)
-      .order("expense_date", { ascending: false })
-      .range(from, from + PAGE_SIZE - 1);
+    const columns = reviewNoteColumnMissing ? EXPENSE_COLUMNS : `${EXPENSE_COLUMNS}, review_note`;
+    const { data, error } = await filter(supabase.from("expenses").select(columns)).range(from, from + PAGE_SIZE - 1);
     if (error) {
-      console.error("getCompanyExpenses error:", error.message);
-      return [];
+      if (!reviewNoteColumnMissing && /review_note/.test(error.message)) {
+        reviewNoteColumnMissing = true;
+        from -= PAGE_SIZE;
+        continue;
+      }
+      throw new Error(error.message);
     }
-    all.push(...(data ?? []).map(mapRow));
+    all.push(...((data ?? []) as any[]).map(mapRow));
     if (!data || data.length < PAGE_SIZE) break;
   }
   return all;
 }
 
+/** All expenses for the caller's company (RLS-scoped), newest first. */
+export async function getCompanyExpenses(): Promise<ExpenseRow[]> {
+  try {
+    return await selectExpensePages((q) => q.not("profile_id", "is", null).order("expense_date", { ascending: false }));
+  } catch (error) {
+    console.error("getCompanyExpenses error:", error instanceof Error ? error.message : error);
+    return [];
+  }
+}
+
 /** One employee's expenses (Employee Self-Service → My Requests), newest first. */
 export async function getProfileExpenses(profileId: string): Promise<ExpenseRow[]> {
-  const all: ExpenseRow[] = [];
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await supabase
-      .from("expenses")
-      .select(EXPENSE_COLUMNS)
-      .eq("profile_id", profileId)
-      .order("expense_date", { ascending: false })
-      .order("created_at", { ascending: false })
-      .range(from, from + PAGE_SIZE - 1);
-    if (error) {
-      console.error("getProfileExpenses error:", error.message);
-      throw new Error(error.message);
-    }
-    all.push(...(data ?? []).map(mapRow));
-    if (!data || data.length < PAGE_SIZE) break;
+  try {
+    return await selectExpensePages((q) => q.eq("profile_id", profileId).order("expense_date", { ascending: false }).order("created_at", { ascending: false }));
+  } catch (error) {
+    console.error("getProfileExpenses error:", error instanceof Error ? error.message : error);
+    throw error;
   }
-  return all;
 }
 
 /** File a new expense on behalf of an employee (profileId). */
@@ -183,16 +193,20 @@ export async function updateExpense(
 /**
  * Approve, reimburse, or reject an expense. reviewed_by/reviewed_at record
  * who approved or rejected it (the "Approved / Rejected By" column), so
- * marking an approved expense Reimbursed leaves them alone.
+ * marking an approved expense Reimbursed leaves them alone. A rejection
+ * carries its reason in review_note (migration 0372).
  */
-export async function updateExpenseStatus(id: string, status: ExpenseStatus, reviewedBy: string | null): Promise<void> {
-  const { error } = await supabase
-    .from("expenses")
-    .update(status === "Reimbursed" ? { status } : { status, reviewed_by: reviewedBy, reviewed_at: new Date().toISOString() })
-    .eq("id", id);
+export async function updateExpenseStatus(id: string, status: ExpenseStatus, reviewedBy: string | null, rejectionReason?: string): Promise<void> {
+  const update =
+    status === "Reimbursed"
+      ? { status }
+      : status === "Rejected"
+        ? { status, reviewed_by: reviewedBy, reviewed_at: new Date().toISOString(), review_note: rejectionReason?.trim() || null }
+        : { status, reviewed_by: reviewedBy, reviewed_at: new Date().toISOString() };
+  const { error } = await supabase.from("expenses").update(update).eq("id", id);
   if (error) {
     console.error("updateExpenseStatus error:", error.message);
-    throw new Error(error.message);
+    throw new Error(/review_note/.test(error.message) ? "Saving a rejection reason needs migration 0372 (expenses.review_note) — run it in the Supabase SQL Editor first." : error.message);
   }
 }
 
