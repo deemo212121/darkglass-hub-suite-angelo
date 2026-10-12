@@ -3,9 +3,9 @@
  * (Staff Form Checklist, New Technician tier). Fills the REAL PDF HR
  * supplied (src/assets/Performance Bonus Policy & Acknowledgment Form.pdf —
  * US Letter, 2 pages, no AcroForm fields) the same way the Flash travel
- * agreement does, with the company logo stamped on every page
- * (addLogoHeader — every page's first line sits at y=695.5, same clearance
- * as the other forms that use it).
+ * agreement does, with the company logo stamped on page 1 only
+ * (addLogoHeader — the title sits at y=695.5, same clearance as the other
+ * forms that use it).
  *
  * Technician-only: the signature block on the last page (index 1) is
  *   Technician Name (Print): ____   (line x 196.8–411.9, y 276.2)
@@ -41,12 +41,12 @@ export const PERFORMANCE_BONUS_LAYOUT = {
   } satisfies Record<string, PerformanceBonusRect>,
 };
 
-/** The blank form with the company logo on every page — what the signing page shows. */
+/** The blank form with the company logo on page 1 — what the signing page shows. */
 export async function loadBlankPerformanceBonusPolicyBytes(): Promise<Uint8Array> {
   const mod = await import("@/assets/Performance Bonus Policy & Acknowledgment Form.pdf");
   const res = await fetch(mod.default);
   const pdfDoc = await PDFDocument.load(new Uint8Array(await res.arrayBuffer()));
-  await addLogoHeader(pdfDoc);
+  await addLogoHeader(pdfDoc, { firstPageOnly: true });
   return pdfDoc.save();
 }
 

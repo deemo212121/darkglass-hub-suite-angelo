@@ -81,10 +81,10 @@ export async function loadBlankFlashTechnicianTravelBytes(version: number = 1): 
   const res = await fetch(mod.default);
   const bytes = new Uint8Array(await res.arrayBuffer());
   const pdfDoc = await PDFDocument.load(bytes);
-  // Version 2 has no letterhead — stamp the company logo on every page
-  // (its pages start at y=695.5, same clearance as the other forms using
+  // Version 2 has no letterhead — stamp the company logo on page 1 only
+  // (its title starts at y=695.5, same clearance as the other forms using
   // addLogoHeader). Version 1 has its own "US IN HOME SERVICES" header.
-  if (version >= 2) await addLogoHeader(pdfDoc);
+  if (version >= 2) await addLogoHeader(pdfDoc, { firstPageOnly: true });
   return pdfDoc.save();
 }
 
