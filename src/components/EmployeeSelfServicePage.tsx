@@ -47,7 +47,7 @@ import { zonedDateKey } from "@/lib/serverTime";
 import { buildCorrectionSubmissionPdf } from "@/lib/timecardCorrectionPdf";
 import { buildPtoSubmissionPdf } from "@/lib/ptoExceptionReportPdf";
 import { EXCEPTION_TYPE_LABELS, CORRECTION_ISSUE_LABELS, isCorrectionIssueType, type ExceptionType, type CorrectionIssueType } from "@/lib/exceptionVisitReportTemplate";
-import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, normalizeRole } from "@/lib/roleLabels";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import {
@@ -271,6 +271,13 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const correctionSigPad =useSignaturePad({ width: 400, height: 110, defaultName: displayName || "" });
   // Reused for both Sick Leave and Unpaid Leave (mutually exclusive modal states).
   const leaveSigPad = useSignaturePad({ width: 400, height: 110, defaultName: displayName || "" });
+  useEffect(() => {
+    if (!showModal || formData.position) return;
+    const me = companyProfiles.find((p) => p.id === myProfileId);
+    if (!me?.role) return;
+    setFormData((prev) => (prev.position ? prev : { ...prev, position: me.role, branch: prev.branch || me.assigned_branch || prev.branch }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showModal, companyProfiles, myProfileId]);
   // Sick / Unpaid Leave: a photo or PDF as proof (e.g. a doctor's note) is required.
   const [leaveProof, setLeaveProof] = useState<File | null>(null);
   useEffect(() => {
@@ -1948,15 +1955,14 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       <div data-tour="ess-form-position" className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="text-xs font-semibold text-white block mb-1">Position</label>
-                          <select
-                            value={formData.position || ""}
-                            onChange={(e) => setFormData({ ...formData, position: e.target.value })}
-                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
-                          >
-                            {Object.entries(ROLE_LABELS).map(([code, label]) => (
-                              <option key={code} value={code}>{label}</option>
-                            ))}
-                          </select>
+                          {/* Always their primary position — not editable. */}
+                          <input
+                            type="text"
+                            readOnly
+                            value={formData.position ? ROLE_LABELS[formData.position] || ROLE_LABELS[normalizeRole(formData.position)] || formData.position : "Loading…"}
+                            title="Your primary position (from your profile)"
+                            className="w-full px-3 py-2 bg-slate-800/60 border border-white/10 rounded text-slate-300 text-sm cursor-not-allowed"
+                          />
                         </div>
                         <div>
                           <label className="text-xs font-semibold text-white block mb-1">Branch</label>

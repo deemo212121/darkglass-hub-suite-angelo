@@ -9040,11 +9040,15 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
         )}
 
         <div className="mtech-section-title">Position</div>
-        <select className="mtech-bill-input full" value={position} onChange={(e) => setPosition(e.target.value)}>
-          {Object.entries(ROLE_LABELS).map(([code, label]) => (
-            <option key={code} value={code}>{label}</option>
-          ))}
-        </select>
+        {/* Always their primary position — not editable. */}
+        <input
+          className="mtech-bill-input full"
+          type="text"
+          readOnly
+          value={position ? ROLE_LABELS[position] || position : "Loading…"}
+          title="Your primary position (from your profile)"
+          style={{ opacity: 0.75 }}
+        />
 
         <div className="mtech-section-title">Branch</div>
         <select className="mtech-bill-input full" value={branch} onChange={(e) => setBranch(e.target.value)}>
