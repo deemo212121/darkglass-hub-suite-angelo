@@ -40,7 +40,7 @@ export const SIGNABLE_DOCUMENT_REGISTRY: Record<SignableDocumentType, SignableDo
   contractor_data_us: { label: "Contractor Data (US)", internalPath: "/fill-contractor-data-us", externalPath: "/fill-contractor-data-us-external" },
   direct_deposit: { label: "Direct Deposit Authorization", internalPath: "/fill-direct-deposit", externalPath: "/fill-direct-deposit-external" },
   substance_screening: { label: "Substance Screening & Conduct Agreement", internalPath: "/fill-substance-screening", externalPath: "/fill-substance-screening-external" },
-  flash_technician_travel: { label: "Flash Technician Travel & Out-of-State Policy", internalPath: "/fill-flash-technician-travel", externalPath: "/fill-flash-technician-travel-external" },
+  flash_technician_travel: { label: "Flash Tech Travel & Expense Policy Agreement", internalPath: "/fill-flash-technician-travel", externalPath: "/fill-flash-technician-travel-external" },
   nda_form: { label: "Non-Disclosure Agreement", internalPath: "/sign-nda-form", externalPath: "/sign-nda-external" },
   vehicle_use_agreement: { label: "Vehicle Use Agreement", internalPath: "/fill-vehicle-use-agreement", externalPath: "/fill-vehicle-use-agreement-external" },
   contractor_addendum: { label: "Master Independent Contractor Subcontractor Agreement Addendum", internalPath: "/fill-contractor-addendum", externalPath: "/fill-contractor-addendum-external" },
@@ -210,18 +210,37 @@ export const DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE = new Set<SignableDocum
 export const CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION = 2;
 
 /**
+ * Flash travel form in use (see flashTechnicianTravelPdfFill.ts): version 2
+ * (2026-10-12) is the "Flash Tech Travel & Expense Policy Agreement", which
+ * replaced the "Flash Technician Travel & Out-of-State Policy" (version 1).
+ */
+export const FLASH_TRAVEL_CURRENT_VERSION = 2;
+
+/** Document types whose wording has been replaced, and the version now in use. A missing form_data.templateVersion means 1. */
+const CURRENT_TEMPLATE_VERSION: Partial<Record<SignableDocumentType, number>> = {
+  confidentiality_noncompete_agreement: CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION,
+  flash_technician_travel: FLASH_TRAVEL_CURRENT_VERSION,
+};
+
+/** The wording version a NEW document of this type is sent in, or undefined for a type that has only ever had one. */
+export function currentTemplateVersion(type: SignableDocumentType): number | undefined {
+  return CURRENT_TEMPLATE_VERSION[type];
+}
+
+/**
  * Signed, but in an older wording than the one in use — a Master
  * Confidentiality agreement signed before version 2 (the "…Non-Compete…"
- * text, including the paper copies). Still on file, but the person needs to
- * sign the new version, so the checklist shows "Needs new version" and lets
- * HR send it.
+ * text, including the paper copies), or the old Flash Technician Travel &
+ * Out-of-State Policy. Still on file, but the person needs to sign the new
+ * version, so the checklist shows "Needs new version" and lets HR send it.
  */
 export function isOutdatedDocument(doc: { documentType?: string; status: SignableDocumentStatus; formData?: Record<string, any> } | undefined): boolean {
+  const current = doc?.documentType ? CURRENT_TEMPLATE_VERSION[doc.documentType as SignableDocumentType] : undefined;
   return (
     !!doc &&
-    doc.documentType === "confidentiality_noncompete_agreement" &&
+    current != null &&
     (doc.status === "signed" || doc.status === "confirmed") &&
-    !(Number(doc.formData?.templateVersion) >= CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION)
+    !(Number(doc.formData?.templateVersion) >= current)
   );
 }
 

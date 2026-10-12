@@ -130,6 +130,7 @@ import {
   pickAuthoritativeDocument,
   DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE,
   SHARED_OLD_NEW_AUTOMATION_TYPES,
+  isOutdatedDocument,
 } from "@/lib/signableDocumentRegistry";
 import { ManagerReviewPage } from "@/components/ManagerReviewPage";
 import { getCandidateRequiredFormTypes, setCandidateRequiredFormTypes } from "@/lib/supabase/candidateRequiredForms";
@@ -172,7 +173,7 @@ import { fillPartsResponsibilityPdf } from "@/lib/partsResponsibilityPdfFill";
 import { MILEAGE_FUEL_BRANCHES, type MileageFuelFormData } from "@/lib/mileageFuelFormTemplate";
 import { fillMileageFuelPdf } from "@/lib/mileageFuelPdfFill";
 import type { FlashTechnicianTravelFormData } from "@/lib/flashTechnicianTravelFormTemplate";
-import { fillFlashTechnicianTravelPdf } from "@/lib/flashTechnicianTravelPdfFill";
+import { fillFlashTechnicianTravelPdf, FLASH_TRAVEL_CURRENT_VERSION } from "@/lib/flashTechnicianTravelPdfFill";
 import type { LocationConsentFormData } from "@/lib/locationConsentFormTemplate";
 import { fillLocationConsentPdf } from "@/lib/locationConsentPdfFill";
 import type { DamageFormData } from "@/lib/damageFormTemplate";
@@ -10267,6 +10268,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     employeeSignatureDataUrl: "",
     employerDateSigned: "",
     employerSignatureDataUrl: "",
+    templateVersion: FLASH_TRAVEL_CURRENT_VERSION,
   });
 
   /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. */
@@ -10301,13 +10303,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       if (!recipient) throw new Error("Select a recipient first.");
 
       const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["flash_technician_travel"]);
-      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Flash Technician Travel & Out-of-State Policy on file. Send another one anyway?`)) {
+      const signedOldFlashForm = sentFlashTechnicianTravelForms.some((d) => d.recipientId === recipient.id && isOutdatedDocument(d));
+      if (alreadySent.length > 0 && !window.confirm(signedOldFlashForm
+        ? `${recipient.name} signed the OLD Flash Technician Travel & Out-of-State Policy. Send the new Flash Tech Travel & Expense Policy Agreement for them to sign? The old one stays on file.`
+        : `${recipient.name} already has a Flash Tech Travel & Expense Policy Agreement on file. Send another one anyway?`)) {
         return;
       }
 
       const doc = await createSignableDocument({
         documentType: "flash_technician_travel",
-        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        formData: { employeeId: recipient.id, employeeName: recipient.name, templateVersion: FLASH_TRAVEL_CURRENT_VERSION } as unknown as Record<string, any>,
         recipientId: flashTechnicianTravelRecipientId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -10322,7 +10327,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         dmThreadId: thread.id,
         senderId: myProfileId,
         senderName: displayName || "HR",
-        body: `📋 Please complete the Flash Technician Travel & Out-of-State Policy: ${fillLink}`,
+        body: `📋 Please complete the Flash Tech Travel & Expense Policy Agreement: ${fillLink}`,
       });
 
       void logActivity({ action: "flash_technician_travel_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
@@ -10345,7 +10350,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const name = flashTechnicianTravelExternalName.trim() || "External Recipient";
       const doc = await createSignableDocument({
         documentType: "flash_technician_travel",
-        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        formData: { employeeId: "", employeeName: name, templateVersion: FLASH_TRAVEL_CURRENT_VERSION } as unknown as Record<string, any>,
         recipientName: name,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -10388,7 +10393,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadFlashTechnicianTravelPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<FlashTechnicianTravelFormData>).employeeName || doc.recipientName || "flash-technician-travel";
-    await downloadSignableDocumentPdf(doc.pdfUrl, `Flash Technician Travel & Out-of-State Policy - ${name}.pdf`);
+    const flashTitle = Number((doc.formData as Partial<FlashTechnicianTravelFormData>).templateVersion) >= 2 ? "Flash Tech Travel & Expense Policy Agreement" : "Flash Technician Travel & Out-of-State Policy";
+    await downloadSignableDocumentPdf(doc.pdfUrl, `${flashTitle} - ${name}.pdf`);
   };
 
   const handleReopenFlashTechnicianTravelEmployer = async (doc: SignableDocument) => {
@@ -10406,7 +10412,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const handleDeleteFlashTechnicianTravel = async (doc: SignableDocument) => {
-    if (!window.confirm("Permanently delete this Flash Technician Travel & Out-of-State Policy request?")) return;
+    if (!window.confirm("Permanently delete this Flash Tech Travel & Expense Policy Agreement request?")) return;
     setFlashTechnicianTravelActionBusyId(doc.id);
     setFlashTechnicianTravelActionError(null);
     try {
@@ -12851,7 +12857,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "damage", label: "Damage Agreement" },
     { type: "direct_deposit", label: "Direct Deposit Authorization" },
     { type: "employee_confidentiality", label: "Employee Confidentiality Agreement" },
-    { type: "flash_technician_travel", label: "Flash Technician Travel & Out-of-State Policy" },
+    { type: "flash_technician_travel", label: "Flash Tech Travel & Expense Policy Agreement" },
     { type: "location_consent", label: "Location Sharing Consent" },
     { type: "meal_rest_break", label: "Meal & Rest Break Policy" },
     { type: "mileage_fuel", label: "Mileage & Fuel Policy" },
@@ -15053,7 +15059,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     location_consent: "Location Sharing Consent",
     damage: "Damage Agreement",
     mileage_fuel: "Mileage & Fuel Policy",
-    flash_technician_travel: "Flash Technician Travel & Out-of-State Policy",
+    flash_technician_travel: "Flash Tech Travel & Expense Policy Agreement",
   };
   const EMPLOYER_QUEUE_CONFIRM_ONLY_TYPES = new Set(["warning_form", "promotion_form", "action_plan_form", "termination_form"]);
 
@@ -17787,7 +17793,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "driversLicense", label: "Driver's License", count: 0, icon: FileCheck },
     { key: "employeeConfidentiality", label: "Employee Confidentiality Agreement", count: 0, icon: FileCheck },
     { key: "contractorData", label: "Employee Data", count: 0, icon: FileCheck },
-    { key: "flashTechnicianTravel", label: "Flash Technician Travel & Out-of-State Policy", count: sentFlashTechnicianTravelAwaitingEmployerCount, icon: FileCheck },
+    { key: "flashTechnicianTravel", label: "Flash Tech Travel & Expense Policy Agreement", count: sentFlashTechnicianTravelAwaitingEmployerCount, icon: FileCheck },
     { key: "locationConsent", label: "Location Sharing Consent", count: sentLocationConsentAwaitingEmployerCount, icon: FileCheck },
     { key: "mealRestBreak", label: "Meal & Rest Break Policy", count: sentMealRestBreakAwaitingEmployerCount, icon: FileCheck },
     { key: "mileageFuel", label: "Mileage & Fuel Policy", count: sentMileageFuelAwaitingEmployerCount, icon: FileCheck },
@@ -30545,7 +30551,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Send Flash Technician Travel & Out-of-State Policy Request</h2>
+          <h2 className="font-semibold text-sm">Send Flash Tech Travel & Expense Policy Agreement Request</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to read the policy and sign it. Once they submit, it lands back here for HR to add the employer/representative signature.</p>
         </div>
         <div className="p-4 flex flex-col md:flex-row gap-6">
@@ -30648,7 +30654,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 {flashTechnicianTravelPreviewLoading || !flashTechnicianTravelPreviewPdfUrl ? (
                   <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
                 ) : (
-                  <iframe src={flashTechnicianTravelPreviewPdfUrl} title="Flash Technician Travel & Out-of-State Policy Preview" className="w-full border-0" style={{ height: 560 }} />
+                  <iframe src={flashTechnicianTravelPreviewPdfUrl} title="Flash Tech Travel & Expense Policy Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
                 )}
               </div>
             ) : (
@@ -30662,7 +30668,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Sent Flash Technician Travel & Out-of-State Policy Forms</h2>
+          <h2 className="font-semibold text-sm">Sent Flash Tech Travel & Expense Policy Agreement Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
         </div>
         <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
@@ -30743,6 +30749,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         }`}>
                           {doc.status === "confirmed" ? "Completed" : awaitingEmployer ? "Awaiting Employer Signature" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Employee"}
                         </span>
+                        {isOutdatedDocument(doc) && <span className="ml-1.5 px-2 py-1 rounded text-xs font-semibold bg-amber-500/15 text-amber-300" title="Signed the old Flash Technician Travel & Out-of-State Policy — send this person the new agreement">Old version</span>}
                       </td>
                       <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
                       <td className="px-4 py-3">
@@ -33310,7 +33317,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </div>
             </div>
             <div className="flex-1 overflow-hidden bg-slate-950">
-              {flashTechnicianTravelDocPreview.pdfUrl && <iframe src={flashTechnicianTravelDocPreview.pdfUrl} title="Flash Technician Travel & Out-of-State Policy" className="w-full h-full min-h-[70vh] border-0" />}
+              {flashTechnicianTravelDocPreview.pdfUrl && <iframe src={flashTechnicianTravelDocPreview.pdfUrl} title="Flash Tech Travel & Expense Policy Agreement" className="w-full h-full min-h-[70vh] border-0" />}
             </div>
           </div>
         </div>

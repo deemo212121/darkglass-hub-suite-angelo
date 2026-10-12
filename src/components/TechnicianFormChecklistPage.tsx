@@ -56,6 +56,7 @@ import {
   isNewAutomationDoc,
   SHARED_OLD_NEW_AUTOMATION_TYPES,
   isOutdatedDocument,
+  currentTemplateVersion,
   type DocumentReviewStatus,
 } from "@/lib/signableDocumentRegistry";
 import { confidentialityAgreementTitle, CNC_CURRENT_TEMPLATE_VERSION } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
@@ -717,7 +718,9 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
       const contractorAddendumFields = type === "contractor_addendum" && contractorAddendumInfo
         ? { positionLevel: contractorAddendumInfo.positionLevel, baselinePayout: contractorAddendumInfo.baselinePayout }
         : {};
-      const versionTag = type === "confidentiality_noncompete_agreement" ? { templateVersion: CNC_CURRENT_TEMPLATE_VERSION } : {};
+      // A form whose wording was replaced (Master Confidentiality, Flash travel) is sent in its current version.
+      const currentVersion = currentTemplateVersion(type);
+      const versionTag = currentVersion ? { templateVersion: currentVersion } : {};
       const doc = await createSignableDocument({
         documentType: type,
         formData: { employeeId: personId, employeeName: personName, ...formSourceTag, ...contractorAddendumFields, ...versionTag },
