@@ -117,7 +117,8 @@ function EmployeeDetailsPage() {
         const [y, m] = monthValue.split("-").map(Number);
         const monthStart = toIso(new Date(y, m - 1, 1));
         const monthEnd = toIso(new Date(y, m, 0));
-        const rows = await getCompanyTimecardEntries(monthStart, monthEnd);
+        // Just this employee's month — not the whole company's (~3,700 rows a month).
+        const rows = await getCompanyTimecardEntries(monthStart, monthEnd, employeeId);
         if (cancelled) return;
         setEntries(rows.filter((r) => r.profileId === employeeId));
       } catch (err) {

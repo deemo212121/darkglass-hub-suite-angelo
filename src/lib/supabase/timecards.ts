@@ -1071,20 +1071,31 @@ export interface CompanyTimecardEntry {
  */
 export async function getCompanyTimecardEntries(
   startDate: string,
-  endDate: string
+  endDate: string,
+  /** Only this employee's days — e.g. one person's calendar, instead of the whole company's. */
+  profileId?: string
 ): Promise<CompanyTimecardEntry[]> {
   const all: CompanyTimecardEntry[] = [];
   // corrected_by only exists after migration 0331 — drop it once if missing.
   let cols = "profile_id, work_date, check_in, check_out, meal_start, meal_end, clocked_in_by, notes, corrected_by";
   for (let from = 0; ; from += TIMECARD_ENTRIES_PAGE_SIZE) {
-    const run = () =>
-      supabase
+    const run = () => {
+      let q = supabase
         .from("timecard_entries")
         .select(cols)
         .gte("work_date", startDate)
-        .lte("work_date", endDate)
+        .lte("work_date", endDate);
+      if (profileId) q = q.eq("profile_id", profileId);
+      // A UNIQUE sort order is required when paging: ordering by work_date
+      // alone left same-day rows in no fixed order, so a row could fall
+      // between two pages and be skipped — a real clock-in then showed as
+      // Absent (Lamar Hudson, Sep 23 2026, with ~3,700 rows that month).
+      return q
         .order("work_date", { ascending: false })
+        .order("profile_id", { ascending: true })
+        .order("id", { ascending: true })
         .range(from, from + TIMECARD_ENTRIES_PAGE_SIZE - 1);
+    };
     let { data, error } = await run();
     if (error && /corrected_by/.test(error.message)) {
       cols = cols.replace(", corrected_by", "");
