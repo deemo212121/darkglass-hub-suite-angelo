@@ -1016,3 +1016,14 @@ export async function uploadTicketSignature(
   });
   return getDownloadURL(snapshot.ref);
 }
+
+export async function uploadPerformanceBonusPolicyForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/performance-bonus-policy-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "performance-bonus-policy")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
