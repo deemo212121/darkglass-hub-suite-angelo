@@ -15,7 +15,13 @@
  * POST /api/default-password
  *   body: { idToken, action: "status" }            → { isSet, source, updatedAt, updatedByName }
  *   body: { idToken, action: "set", password }     → { ok: true, updatedAt, updatedByName }
+ *   body: { idToken, action: "set-random", enabled } → { ok: true, randomOnReset }
  * The value is never sent back to the browser.
+ *
+ * "Random password on Forgot Password" (companies.settings.randomResetPassword):
+ * when on, Forgot Password emails a fresh random password — 4 letters + 4
+ * numbers, mixed — instead of the default. Admin "Reset to default" and new
+ * accounts still use the default password.
  */
 import { verifyFirebaseToken } from "./supabaseTokenBridge";
 
@@ -60,6 +66,31 @@ async function readRow(env: SupabaseEnv, companyId: string): Promise<StoredRow |
   return ((await res.json()) as StoredRow[])[0] ?? null;
 }
 
+/** Is "Random password on Forgot Password" on for this company? (companies.settings.randomResetPassword) */
+export async function getRandomResetEnabled(env: SupabaseEnv, companyId: string): Promise<boolean> {
+  const res = await sb(env, `companies?id=eq.${companyId}&select=settings&limit=1`);
+  if (!res.ok) return false;
+  const row = ((await res.json()) as { settings: Record<string, unknown> | null }[])[0];
+  return row?.settings?.randomResetPassword === true;
+}
+
+/**
+ * A random temporary password: 4 letters + 4 numbers, shuffled (e.g. "k7Rm2Q9x").
+ * Look-alike characters (I l O o 0 1) are left out so it's easy to type from an email.
+ */
+export function generateRandomPassword(): string {
+  const letters = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz";
+  const digits = "23456789";
+  const pick = (set: string) => set[crypto.getRandomValues(new Uint32Array(1))[0] % set.length];
+  const chars = [...Array.from({ length: 4 }, () => pick(letters)), ...Array.from({ length: 4 }, () => pick(digits))];
+  // Fisher–Yates shuffle with crypto randomness.
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = crypto.getRandomValues(new Uint32Array(1))[0] % (i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join("");
+}
+
 /** The default password for this company: what Admin set, else the DEFAULT_RESET_PASSWORD secret, else null. */
 export async function resolveDefaultPassword(
   env: SupabaseEnv,
@@ -97,9 +128,25 @@ export async function handleDefaultPasswordRequest(request: Request, rawEnv?: Re
 
     if (payload.action === "status") {
       const row = await readRow(env, me.company_id);
-      if (row) return json({ isSet: true, source: "company", updatedAt: row.updated_at, updatedByName: row.updated_by_name });
+      const randomOnReset = await getRandomResetEnabled(env, me.company_id);
+      if (row) return json({ isSet: true, source: "company", updatedAt: row.updated_at, updatedByName: row.updated_by_name, randomOnReset });
       const fromSecret = !!getEnvValue(rawEnv, "DEFAULT_RESET_PASSWORD");
-      return json({ isSet: fromSecret, source: fromSecret ? "server" : null, updatedAt: null, updatedByName: null });
+      return json({ isSet: fromSecret, source: fromSecret ? "server" : null, updatedAt: null, updatedByName: null, randomOnReset });
+    }
+
+    if (payload.action === "set-random") {
+      const enabled = (payload as { enabled?: unknown }).enabled === true;
+      // companies.settings is shared JSON — read it, change only this key, write it back.
+      const cur = await sb(env, `companies?id=eq.${me.company_id}&select=settings&limit=1`);
+      if (!cur.ok) return json({ error: "Couldn't read the company settings." }, 500);
+      const settings = (((await cur.json()) as { settings: Record<string, unknown> | null }[])[0]?.settings ?? {}) as Record<string, unknown>;
+      const res = await sb(env, `companies?id=eq.${me.company_id}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ settings: { ...settings, randomResetPassword: enabled } }),
+      });
+      if (!res.ok) return json({ error: "Couldn't save the setting." }, 500);
+      return json({ ok: true, randomOnReset: enabled });
     }
 
     if (payload.action === "set") {

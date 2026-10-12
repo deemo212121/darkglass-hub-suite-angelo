@@ -17,6 +17,8 @@ interface Status {
   source: "company" | "server" | null;
   updatedAt: string | null;
   updatedByName: string | null;
+  /** Forgot Password emails a random 4-letter + 4-number password instead of the default. */
+  randomOnReset?: boolean;
 }
 
 async function callDefaultPassword(body: Record<string, unknown>) {
@@ -49,6 +51,20 @@ export function DefaultPasswordPanel() {
   const [confirm, setConfirm] = useState("");
   const [show, setShow] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savingRandom, setSavingRandom] = useState(false);
+
+  const toggleRandom = async (enabled: boolean) => {
+    setSavingRandom(true);
+    try {
+      await callDefaultPassword({ action: "set-random", enabled });
+      setStatus((s) => (s ? { ...s, randomOnReset: enabled } : s));
+      toast.success(enabled ? "Forgot Password now sends a random password." : "Forgot Password now uses the default password.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't save the setting.");
+    } finally {
+      setSavingRandom(false);
+    }
+  };
 
   const load = async () => {
     setLoadError(null);
@@ -71,7 +87,7 @@ export function DefaultPasswordPanel() {
     setSaving(true);
     try {
       const data = await callDefaultPassword({ action: "set", password: pw });
-      setStatus({ isSet: true, source: "company", updatedAt: data.updatedAt, updatedByName: data.updatedByName });
+      setStatus((s) => ({ isSet: true, source: "company", updatedAt: data.updatedAt, updatedByName: data.updatedByName, randomOnReset: s?.randomOnReset }));
       setPw("");
       setConfirm("");
       setShow(false);
@@ -125,6 +141,22 @@ export function DefaultPasswordPanel() {
             </>
           )}
         </div>
+        <label className="flex items-start gap-3 rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4"
+            checked={!!status?.randomOnReset}
+            disabled={!status || savingRandom}
+            onChange={(e) => void toggleRandom(e.target.checked)}
+          />
+          <span>
+            <span className="font-semibold">Random password on Forgot Password</span>
+            <span className="block text-xs text-muted-foreground">
+              When on, Forgot Password emails a new random password (4 letters + 4 numbers, e.g. k7Rm2Q9x) instead of the default. It works for
+              one login, then they choose their own. Admin "Reset to default" and new accounts still use the default password.
+            </span>
+          </span>
+        </label>
         <p className="text-xs text-muted-foreground">
           For safety this page never shows the current password — only when it was changed. Setting a new one doesn't change anyone's existing
           password; it applies to the next account created or reset.

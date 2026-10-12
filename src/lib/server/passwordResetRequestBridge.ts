@@ -27,7 +27,7 @@
  * the old behaviour: an IT ticket for IT to handle by hand.
  */
 import { readAdminPasswordEnv, getIdentityToolkitAccessToken, setUserPassword } from "./adminPasswordBridge";
-import { resolveDefaultPassword } from "./defaultPasswordBridge";
+import { resolveDefaultPassword, getRandomResetEnabled, generateRandomPassword } from "./defaultPasswordBridge";
 import { readEnv as readGmailEnv, fetchGmailConnection, refreshAccessToken, sendGmailMessage, type Region } from "./gmailBridge";
 
 interface EnvBag {
@@ -126,11 +126,11 @@ interface Profile {
   is_active: boolean | null;
 }
 
-function emailBody(name: string, password: string): string {
+function emailBody(name: string, password: string, random = false): string {
   return [
     `Hi ${name},`,
     ``,
-    `Your password has been reset to default: "${password}"`,
+    random ? `Your password has been reset to a temporary password: "${password}"` : `Your password has been reset to default: "${password}"`,
     ``,
     `You'll be asked to choose a new password right after you log in.`,
     ``,
@@ -251,7 +251,10 @@ export async function handlePasswordResetRequest(request: Request, env?: Record<
     // Find the IT email first — never send a code or reset without a way to email them.
     const gmailEnv = readGmailEnv(env);
     const pwEnv = readAdminPasswordEnv(env);
-    const defaultPassword = await resolveDefaultPassword(envBag, profile.company_id, env);
+    // "Random password on Forgot Password" (Login Security → Default Password): a fresh
+    // 4-letter + 4-number password instead of the company default.
+    const randomMode = await getRandomResetEnabled(envBag, profile.company_id).catch(() => false);
+    const defaultPassword = randomMode ? generateRandomPassword() : await resolveDefaultPassword(envBag, profile.company_id, env);
     let sender: { accessToken: string; fromEmail: string } | null = null;
     if (!("error" in gmailEnv) && !("error" in pwEnv) && defaultPassword) {
       // The preferred sender's slot first, then any other connected IT slot.
@@ -362,7 +365,7 @@ export async function handlePasswordResetRequest(request: Request, env?: Record<
     // 3. Email it to the address on file.
     let emailed = true;
     try {
-      await sendGmailMessage(sender.accessToken, sender.fromEmail, e, "Password Reset AHS", emailBody(name, defaultPassword));
+      await sendGmailMessage(sender.accessToken, sender.fromEmail, e, "Password Reset AHS", emailBody(name, defaultPassword, randomMode));
     } catch (err) {
       emailed = false;
       console.error("[password-reset-request] email failed:", err);
