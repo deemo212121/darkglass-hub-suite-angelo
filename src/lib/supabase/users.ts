@@ -1453,11 +1453,3 @@ export async function getProfileCredentialsPreview(profileId: string): Promise<{
   }
   return { username: data.username ?? null, technicianId: data.technician_id ?? null, email: data.email ?? null, name: data.display_name ?? null };
 }
-
-/** A profile's technician ID (the Master List "Tech ID"), or "" when there isn't a real one ("-" placeholders included). */
-export async function getProfileTechnicianId(profileId: string): Promise<string> {
-  const { data, error } = await supabase.from("profiles").select("technician_id").eq("id", profileId).maybeSingle();
-  if (error) throw new Error(error.message);
-  const id = String(data?.technician_id ?? "").trim();
-  return id === "-" ? "" : id;
-}

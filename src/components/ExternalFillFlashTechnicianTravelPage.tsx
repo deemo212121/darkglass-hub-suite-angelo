@@ -158,7 +158,7 @@ export function ExternalFillFlashTechnicianTravelPage({ docId }: Props) {
       const employeeName = doc.recipientName || "Employee";
       const signatureBlob = await (await fetch(dataUrl)).blob();
       const signedAt = new Date().toISOString();
-      const finalData: FlashTechnicianTravelFormData = { ...form, employeeName, employeeIdNumber: (form.employeeIdNumber ?? "").trim(), employeeDateSigned: signedAt, employeeSignatureDataUrl: dataUrl };
+      const finalData: FlashTechnicianTravelFormData = { ...form, employeeName, employeeDateSigned: signedAt, employeeSignatureDataUrl: dataUrl };
 
       const sigBytes = new Uint8Array(await signatureBlob.arrayBuffer());
       const pdfBytes = await fillFlashTechnicianTravelPdf(finalData, sigBytes);
@@ -238,9 +238,6 @@ export function ExternalFillFlashTechnicianTravelPage({ docId }: Props) {
                       {isV2 && layout.rects.name && (
                         <div style={overlayStyle(layout.rects.name)} className="flex items-center font-bold text-[#00008B]">{doc.recipientName || ""}</div>
                       )}
-                      {isV2 && layout.rects.employeeIdNumber && (
-                        <div style={overlayStyle(layout.rects.employeeIdNumber)} className="flex items-center font-bold text-[#00008B]">{form.employeeIdNumber || ""}</div>
-                      )}
                       <div style={overlayStyle(layout.rects.dateSigned)} className="flex items-center font-bold text-[#00008B]">
                         {fmtDateSignedDisplay(new Date())}
                       </div>
@@ -253,18 +250,6 @@ export function ExternalFillFlashTechnicianTravelPage({ docId }: Props) {
             <div className="flex items-center justify-center mt-2">
               <SignaturePadControls pad={sigPad} />
             </div>
-
-            {isV2 && (
-              <div className="mt-3 max-w-md mx-auto">
-                <label className="block text-xs font-semibold text-muted-foreground mb-1">Employee ID</label>
-                <input
-                  value={form.employeeIdNumber ?? ""}
-                  onChange={(e) => setForm((f) => ({ ...f, employeeIdNumber: e.target.value }))}
-                  placeholder="Your employee / technician ID"
-                  className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
-                />
-              </div>
-            )}
 
             {error && (
               <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{error}</p>

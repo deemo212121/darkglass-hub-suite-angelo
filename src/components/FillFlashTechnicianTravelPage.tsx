@@ -23,7 +23,7 @@ import { ChevronLeft, Loader2 } from "lucide-react";
 import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { FillFormSignInRequired } from "@/components/FillFormSignInRequired";
-import { getMyProfileId, getProfileTechnicianId } from "@/lib/supabase/users";
+import { getMyProfileId } from "@/lib/supabase/users";
 import { confirmSignableDocument, getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
 import { uploadSignableDocumentSignature, uploadFlashTechnicianTravelForm } from "@/lib/firebase/storage";
 import { fillFlashTechnicianTravelPdf, flashTravelLayout, loadBlankFlashTechnicianTravelBytes, FLASH_TRAVEL_CURRENT_VERSION, FLASH_TRAVEL_TITLE } from "@/lib/flashTechnicianTravelPdfFill";
@@ -94,15 +94,10 @@ export function FillFlashTechnicianTravelPage({ docId }: Props) {
           // Not signed yet: signed in the current agreement. Already signed:
           // keep the version it was signed in.
           const unsigned = document.status === "pending_signature" && document.recipientSlot === "employee";
-          let employeeIdNumber = existing.employeeIdNumber;
-          if (unsigned && !employeeIdNumber && document.recipientId) {
-            employeeIdNumber = await getProfileTechnicianId(document.recipientId).catch(() => "");
-          }
-          if (cancelled) return;
           setForm((prev) => ({
             ...prev,
             ...existing,
-            ...(unsigned ? { templateVersion: FLASH_TRAVEL_CURRENT_VERSION, employeeIdNumber: employeeIdNumber ?? "" } : {}),
+            ...(unsigned ? { templateVersion: FLASH_TRAVEL_CURRENT_VERSION } : {}),
           }));
         }
       } catch (err) {
@@ -183,7 +178,6 @@ export function FillFlashTechnicianTravelPage({ docId }: Props) {
       const finalData: FlashTechnicianTravelFormData = {
         ...form,
         employeeName,
-        employeeIdNumber: (form.employeeIdNumber ?? "").trim(),
         employeeDateSigned: signedAt,
         employeeSignatureDataUrl: dataUrl,
       };
@@ -292,9 +286,6 @@ export function FillFlashTechnicianTravelPage({ docId }: Props) {
                       {isV2 && layout.rects.name && (
                         <div style={overlayStyle(layout.rects.name)} className="flex items-center font-bold text-[#00008B]">{displayName || doc.recipientName || ""}</div>
                       )}
-                      {isV2 && layout.rects.employeeIdNumber && (
-                        <div style={overlayStyle(layout.rects.employeeIdNumber)} className="flex items-center font-bold text-[#00008B]">{form.employeeIdNumber || ""}</div>
-                      )}
                       <div style={overlayStyle(layout.rects.dateSigned)} className="flex items-center font-bold text-[#00008B]">
                         {fmtDateSignedDisplay(new Date())}
                       </div>
@@ -303,18 +294,6 @@ export function FillFlashTechnicianTravelPage({ docId }: Props) {
                 </div>
               ))}
             </div>
-
-            {isV2 && (
-              <div className="mt-3 max-w-md mx-auto">
-                <label className="block text-xs font-semibold text-muted-foreground mb-1">Employee ID</label>
-                <input
-                  value={form.employeeIdNumber ?? ""}
-                  onChange={(e) => setForm((f) => ({ ...f, employeeIdNumber: e.target.value }))}
-                  placeholder="Your technician ID"
-                  className="glass-input text-sm py-1.5 px-3 rounded-md w-full"
-                />
-              </div>
-            )}
 
             {/* Signed at full size here (not squeezed into the printed
                 blank's small signature line) — fillFlashTechnicianTravelPdf
