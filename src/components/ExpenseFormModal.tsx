@@ -10,8 +10,8 @@ export const EXPENSE_CATEGORIES: ExpenseCategory[] = ["Travel", "Supplies", "Mea
 
 /**
  * Add / Edit Expense dialog, shared by Accounting → Expenses (files for any
- * employee — pass `profiles` for the Employee picker) and Branch/Technician
- * → Technician Expenses (a technician filing their own — pass
+ * employee — pass `profiles` for the Employee picker) and Employee
+ * Self-Service → My Requests (an employee sending their own — pass
  * `fixedProfileId` instead and the picker is hidden).
  */
 export function ExpenseFormModal({
@@ -27,7 +27,7 @@ export function ExpenseFormModal({
   editing: ExpenseRow | null;
   profiles?: ProfileRow[];
   fixedProfileId?: string;
-  /** Technician Expenses: a request can't be sent (or saved) without a receipt attached. */
+  /** Employee Self-Service: a request can't be sent (or saved) without a receipt attached. */
   requireReceipt?: boolean;
   createdBy: string | null;
   companyId: string | null;

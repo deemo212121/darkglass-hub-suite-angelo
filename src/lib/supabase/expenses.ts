@@ -80,7 +80,7 @@ export async function getCompanyExpenses(): Promise<ExpenseRow[]> {
   return all;
 }
 
-/** One employee's expenses (Branch/Technician → Technician Expenses), newest first. */
+/** One employee's expenses (Employee Self-Service → My Requests), newest first. */
 export async function getProfileExpenses(profileId: string): Promise<ExpenseRow[]> {
   const all: ExpenseRow[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
@@ -99,21 +99,6 @@ export async function getProfileExpenses(profileId: string): Promise<ExpenseRow[
     if (!data || data.length < PAGE_SIZE) break;
   }
   return all;
-}
-
-/** Display names for the people on a set of expenses (sent by / reviewed by), without loading the whole roster. */
-export async function getExpensePeopleNames(profileIds: string[]): Promise<Map<string, string>> {
-  const ids = Array.from(new Set(profileIds.filter(Boolean)));
-  const names = new Map<string, string>();
-  for (let i = 0; i < ids.length; i += 100) {
-    const { data, error } = await supabase.from("profiles").select("id, display_name, email").in("id", ids.slice(i, i + 100));
-    if (error) {
-      console.error("getExpensePeopleNames error:", error.message);
-      continue;
-    }
-    for (const p of data ?? []) names.set(p.id, p.display_name || p.email || "—");
-  }
-  return names;
 }
 
 /** File a new expense on behalf of an employee (profileId). */

@@ -1,4 +1,4 @@
-import { ChevronLeft, Compass, DollarSign, Clock, ListTodo, Download, Eye, EyeOff, TrendingUp, AlertCircle, CheckCircle2, XCircle, Plus, FileText, X } from "lucide-react";
+import { ChevronLeft, Compass, DollarSign, Clock, ListTodo, Download, Eye, EyeOff, TrendingUp, AlertCircle, CheckCircle2, XCircle, Plus, FileText, X, Paperclip } from "lucide-react";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { runTour, takeQueuedTour } from "@/lib/tours/runTour";
 import { SELF_SERVICE_TOUR, SELF_SERVICE_TOUR_TARGET } from "@/lib/tours/selfServiceTour";
@@ -59,6 +59,10 @@ import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/
 import { createNotification } from "@/lib/supabase/notifications";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { getMyPayslips, type MyPayslipRow } from "@/lib/supabase/payslips";
+import { getProfileExpenses, type ExpenseRow } from "@/lib/supabase/expenses";
+import { ExpenseFormModal } from "@/components/ExpenseFormModal";
+import { ReceiptLightbox } from "@/components/ReceiptLightbox";
+import { fmtExpenseReviewedAt } from "@/components/ExpenseTrackingPage";
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import {
   formatClockTime,
@@ -91,7 +95,11 @@ interface Request {
   details: string;
   /** Why it was rejected — "Rejected by <name> (<step>): <reason>" lines, shown in a red box. */
   rejectionReason?: string | null;
+  /** Expense Request: the attached receipt, viewable from the card. */
+  receiptUrl?: string | null;
 }
+
+const fmtMoney = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const PTO_TYPE_LABEL: Record<PtoType, string> = {
   vacation: "Vacation",
@@ -182,7 +190,12 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [payslipDailyRows, setPayslipDailyRows] = useState<PayslipDailyRow[]>([]);
   const [payslipDailyLoading, setPayslipDailyLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [requestTypeFilter, setRequestTypeFilter] = useState<"all" | "PTO Request" | "Sick Leave Request" | "Time Correction" | "Attendance Dispute" | "Payroll Inquiry">("all");
+  const [requestTypeFilter, setRequestTypeFilter] = useState<"all" | "PTO Request" | "Sick Leave Request" | "Time Correction" | "Attendance Dispute" | "Payroll Inquiry" | "Expense Request">("all");
+  // Expense Requests — the employee's own expenses (Accounting approves or
+  // rejects them under Accounting → Expenses → Employee Requests).
+  const [myExpenses, setMyExpenses] = useState<ExpenseRow[]>([]);
+  const [showExpenseForm, setShowExpenseForm] = useState(false);
+  const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null);
   const [summaryModal, setSummaryModal] = useState<"pending" | "approved" | "rejected" | "closed" | "pto" | "sick" | null>(null);
 
   const [formData, setFormData] = useState({
@@ -342,6 +355,22 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     return () => { cancelled = true; };
   }, [myProfileId]);
 
+  // Separate from the load above so a failure here can't blank the other
+  // request types. Flash Tech trip expenses (company-booked hotel/travel)
+  // aren't the employee's to claim back, so they're left out.
+  const refreshExpenses = async (profileId: string) => {
+    const rows = await getProfileExpenses(profileId);
+    setMyExpenses(rows.filter((e) => !e.flashTechTripId));
+  };
+  useEffect(() => {
+    if (!myProfileId) return;
+    refreshExpenses(myProfileId).catch((err) => console.error("Failed to load expense requests:", err));
+  }, [myProfileId]);
+  const myReimbursement = useMemo(() => {
+    const total = (status: ExpenseRow["status"]) => myExpenses.filter((e) => e.status === status).reduce((s, e) => s + e.amount, 0);
+    return { pending: total("Pending"), approved: total("Approved"), reimbursed: total("Reimbursed") };
+  }, [myExpenses]);
+
   const refreshRequests = async () => {
     const [ptoRows, correctionRows, employeeReqRows] = await Promise.all([
       getCompanyPtoRequests(),
@@ -418,8 +447,28 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         rejectionReason: r.status === "rejected" ? r.reviewNote || null : null,
       });
     }
+    for (const e of myExpenses) {
+      const route = [e.fromLocation, e.toLocation].filter(Boolean).join(" → ");
+      const reviewed = e.status !== "Pending" && e.reviewedBy
+        ? ` by ${profileName(e.reviewedBy)}${e.reviewedAt ? ` · ${fmtExpenseReviewedAt(e.reviewedAt)}` : ""}`
+        : "";
+      const accountingLine = e.status === "Pending"
+        ? "Accounting: pending"
+        : `Accounting: ${e.status === "Rejected" ? "rejected" : "approved"}${reviewed}`;
+      items.push({
+        id: `exp-${e.id}`,
+        type: "Expense Request",
+        status: e.status === "Pending" ? "pending" : e.status === "Rejected" ? "rejected" : "approved",
+        submittedDate: e.createdAt.slice(0, 10),
+        details: `${e.category}: ${fmtMoney(e.amount)} on ${e.expenseDate}${e.description ? ` - ${e.description}` : ""}`
+          + (route || e.orNumber ? `\n${[route, e.orNumber ? `OR# ${e.orNumber}` : ""].filter(Boolean).join(" · ")}` : "")
+          + `\n${accountingLine}`
+          + (e.status === "Reimbursed" ? "\n✅ Reimbursed — this amount has been paid back to you." : e.status === "Approved" ? "\n⏳ Approved — waiting to be reimbursed." : ""),
+        receiptUrl: e.receiptUrl,
+      });
+    }
     return items.sort((a, b) => b.submittedDate.localeCompare(a.submittedDate));
-  }, [myPtoRequests, myCorrections, myEmployeeRequests, companyProfiles]);
+  }, [myPtoRequests, myCorrections, myEmployeeRequests, myExpenses, companyProfiles]);
 
   const filteredMyRequests = useMemo(
     () => (requestTypeFilter === "all" ? myRequests : myRequests.filter((r) => r.type === requestTypeFilter)),
@@ -1517,7 +1566,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         {activeTab === "requests" && (
           <div className="space-y-6">
             {/* Request Summary */}
-            <div data-tour="ess-req-summary" className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
+            <div data-tour="ess-req-summary" className="grid gap-4 md:grid-cols-4 lg:grid-cols-7">
               <button
                 type="button"
                 onClick={() => setSummaryModal("pto")}
@@ -1542,6 +1591,23 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 </p>
                 <p className="text-xs text-slate-500 mt-1">
                   {mySickYear ? `Year ${mySickYear.tenureYear} · resets ${mySickYear.end}` : "—"}
+                </p>
+              </button>
+              {/* Reimbursement — approved expenses Accounting still owes, plus what's been paid back / is in review. Opens the Expense Requests in Track Status. */}
+              <button
+                type="button"
+                onClick={() => {
+                  setRequestTypeFilter("Expense Request");
+                  document.querySelector('[data-tour="ess-track-status"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+                className="bg-slate-900/50 border border-white/10 rounded-lg p-4 text-left hover:border-sky-400/40 hover:bg-slate-900/80 transition"
+              >
+                <p className="text-xs text-slate-400 mb-1">Reimbursement Due</p>
+                <p className="text-2xl font-bold text-sky-300">{fmtMoney(myReimbursement.approved)}</p>
+                <p className="text-xs text-slate-500 mt-1 leading-snug">
+                  {fmtMoney(myReimbursement.reimbursed)} paid
+                  <br />
+                  {fmtMoney(myReimbursement.pending)} in review
                 </p>
               </button>
               <button
@@ -1647,6 +1713,15 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 <Plus className="h-4 w-4" />
                 Unpaid Leave Request
               </button>
+              <button data-tour="ess-req-expense"
+                type="button"
+                onClick={() => setShowExpenseForm(true)}
+                disabled={!myProfileId}
+                className="md:col-span-2 px-4 py-3 bg-sky-600 hover:bg-sky-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
+              >
+                <Plus className="h-4 w-4" />
+                Expense Request
+              </button>
             </div>
 
             {/* Requests List */}
@@ -1665,6 +1740,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   <option value="Time Correction">Time Correction</option>
                   <option value="Attendance Dispute">Attendance Dispute</option>
                   <option value="Payroll Inquiry">Payroll Inquiry</option>
+                  <option value="Expense Request">Expense Request</option>
                 </select>
               </div>
               {requestsLoading ? (
@@ -1680,6 +1756,15 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           <p className="text-sm font-semibold text-white">{request.type}</p>
                           <p className="text-xs text-slate-400 mt-1">Submitted: {request.submittedDate}</p>
                           <p className="text-sm text-slate-300 mt-2 whitespace-pre-line">{request.details}</p>
+                          {request.receiptUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setPreviewReceiptUrl(request.receiptUrl ?? null)}
+                              className="mt-2 inline-flex items-center gap-1.5 text-xs text-blue-300 hover:text-blue-200"
+                            >
+                              <Paperclip className="h-3.5 w-3.5" /> View receipt
+                            </button>
+                          )}
                           {request.status === "rejected" && (
                             <div className="mt-2 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2">
                               <p className="text-[11px] font-semibold uppercase tracking-wide text-red-300">Reason rejected</p>
@@ -2034,6 +2119,22 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         </div>
       )}
 
+      {/* Expense Request — same form Accounting uses, filed for yourself, receipt required */}
+      {showExpenseForm && myProfileId && (
+        <ExpenseFormModal
+          editing={null}
+          fixedProfileId={myProfileId}
+          requireReceipt
+          createdBy={myProfileId}
+          companyId={companyId}
+          onClose={() => setShowExpenseForm(false)}
+          onSaved={async () => {
+            await refreshExpenses(myProfileId);
+            setRequestTypeFilter("all");
+          }}
+        />
+      )}
+
       {/* Request Summary Modal — drill into one of the Track Status counts */}
       {summaryModal && (() => {
         const titles: Record<typeof summaryModal & string, string> = {
@@ -2073,6 +2174,15 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           <p className="text-sm font-semibold text-white">{request.type}</p>
                           <p className="text-xs text-slate-400 mt-1">Submitted: {request.submittedDate}</p>
                           <p className="text-sm text-slate-300 mt-2 whitespace-pre-line">{request.details}</p>
+                          {request.receiptUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setPreviewReceiptUrl(request.receiptUrl ?? null)}
+                              className="mt-2 inline-flex items-center gap-1.5 text-xs text-blue-300 hover:text-blue-200"
+                            >
+                              <Paperclip className="h-3.5 w-3.5" /> View receipt
+                            </button>
+                          )}
                           {request.status === "rejected" && (
                             <div className="mt-2 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2">
                               <p className="text-[11px] font-semibold uppercase tracking-wide text-red-300">Reason rejected</p>
@@ -2157,6 +2267,9 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           </div>
         </div>
       )}
+
+      {/* Last, so it opens above the Request Summary modal too */}
+      {previewReceiptUrl && <ReceiptLightbox url={previewReceiptUrl} onClose={() => setPreviewReceiptUrl(null)} />}
     </div>
   );
 }

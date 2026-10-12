@@ -364,13 +364,13 @@ const accountingMod: ModuleDef = {
     },
     // Category-tabbed container (ExpensesModulePage) — Flash Tech (its own
     // Hotel/Transportation expense rows, scoped out of the full Expense
-    // Tracking list) and Technician Requests (expenses technicians file
-    // from Branch/Technician → Technician Expenses); more categories land
-    // here as their own tabs later.
+    // Tracking list) and Employee Requests (expenses employees send from
+    // Employee Self-Service → My Requests); more categories land here as
+    // their own tabs later.
     {
       slug: "expenses",
       title: "Expenses",
-      description: "Expense tracking by category — Flash Tech trips and technicians' own expense requests.",
+      description: "Expense tracking by category — Flash Tech trips and employees' own expense requests.",
       custom: "expenses" as any,
       fields: [],
       count: 0,
@@ -2025,17 +2025,6 @@ const branchTechMod: ModuleDef = {
       title: "Clock-In Codes",
       description: "Today's 4-digit company code that technicians and branch leaders enter to Time In.",
       custom: "clock-in-codes" as any,
-      fields: [],
-      count: 0,
-      seed: () => ({}),
-    },
-    // A technician's own expenses — filed here, reviewed by Accounting under
-    // Accounting → Expenses → Technician Requests.
-    {
-      slug: "technician-expenses",
-      title: "Technician Expenses",
-      description: "Send your expenses with receipts to Accounting and see which are pending, approved, or rejected.",
-      custom: "technician-expenses" as any,
       fields: [],
       count: 0,
       seed: () => ({}),

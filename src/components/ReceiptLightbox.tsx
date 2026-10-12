@@ -10,7 +10,7 @@ export function isPdfReceipt(url: string): boolean {
 
 /**
  * Full-screen receipt viewer shared by Accounting → Expenses and
- * Branch/Technician → Technician Expenses — shown in place instead of
+ * Employee Self-Service → My Requests — shown in place instead of
  * navigating away, so reviewing a receipt doesn't lose your place. Same
  * zoom/pan mechanics as TicketPhotos.tsx's lightbox (scroll/pinch/
  * double-click to zoom, drag to pan when zoomed).

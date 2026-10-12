@@ -108,9 +108,7 @@ import { TrainingListPage } from "@/components/TrainingListPage";
 import { AbsentListPage } from "@/components/AbsentListPage";
 import { RepairKnowledgeBase } from "@/components/RepairKnowledgeBase";
 import { TechGuidesPage } from "@/components/TechGuidesPage";
-import { ExpensesModulePage } from "@/components/ExpensesModulePage";
-import { TechnicianExpensesPage } from "@/components/TechnicianExpensesPage";
-import { StaffListPage } from "@/components/StaffListPage";
+import { ExpensesModulePage } from "@/components/ExpensesModulePage";import { StaffListPage } from "@/components/StaffListPage";
 import { ReportHR } from "@/components/ReportHR";
 import { ReportCSRDaily } from "@/components/ReportCSRDaily";
 import { ReportClaimsDaily } from "@/components/ReportClaimsDaily";
@@ -620,8 +618,6 @@ function SubModule() {
         ? <FlashTechCalendarPage mod={mod} sub={sub} />
         : (sub as any).custom === "expenses"
         ? <ExpensesModulePage mod={mod} sub={sub} />
-        : (sub as any).custom === "technician-expenses"
-        ? <TechnicianExpensesPage mod={mod} sub={sub} />
         : sub.custom === "staff-list"
         ? <StaffListPage mod={mod} sub={sub} />
         : sub.custom === "work-map"

@@ -17,7 +17,7 @@ import { localISODate, todayISO } from "@/lib/localDate";
 import { ExpenseFormModal, EXPENSE_CATEGORIES } from "@/components/ExpenseFormModal";
 import { ReceiptLightbox, isPdfReceipt } from "@/components/ReceiptLightbox";
 
-export function expenseStatusColor(status: ExpenseStatus): string {
+function expenseStatusColor(status: ExpenseStatus): string {
   switch (status) {
     case "Pending": return "bg-yellow-500/20 text-yellow-300 border-yellow-500/30";
     case "Approved": return "bg-blue-500/20 text-blue-300 border-blue-500/30";
@@ -34,11 +34,11 @@ export function fmtExpenseReviewedAt(iso: string | null): string {
 }
 
 /**
- * An expense the employee filed for themselves (Branch/Technician →
- * Technician Expenses) rather than one Accounting filed on their behalf or
+ * An expense the employee sent themselves (Employee Self-Service → My
+ * Requests → Expense Request) rather than one Accounting filed on their behalf or
  * one auto-created from a Flash Tech trip.
  */
-export function isSelfFiledExpense(e: ExpenseRow): boolean {
+function isSelfFiledExpense(e: ExpenseRow): boolean {
   return !e.flashTechTripId && e.createdBy != null && e.createdBy === e.profileId;
 }
 
@@ -60,8 +60,8 @@ export function ExpenseTrackingPage({
    *  creates via Schedule Trip's Hotel/Transportation checkboxes. */
   flashTechOnly?: boolean;
   /** Scopes the page to requests employees filed for themselves from
-   *  Branch/Technician → Technician Expenses (see isSelfFiledExpense) — the
-   *  Accounting "Expenses" module's Technician Requests tab. Add Expense is
+   *  Employee Self-Service → My Requests (see isSelfFiledExpense) — the
+   *  Accounting "Expenses" module's Employee Requests tab. Add Expense is
    *  hidden here: an expense Accounting files for someone isn't a request. */
   selfFiledOnly?: boolean;
 }) {
@@ -307,7 +307,7 @@ export function ExpenseTrackingPage({
 
           {/* Table */}
           <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
-            <h2 className="text-lg font-bold text-white mb-4">{selfFiledOnly ? "Technician Requests" : "Expense Records"}</h2>
+            <h2 className="text-lg font-bold text-white mb-4">{selfFiledOnly ? "Employee Requests" : "Expense Records"}</h2>
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-white/10">
@@ -327,7 +327,7 @@ export function ExpenseTrackingPage({
                 {loading ? (
                   <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-400">Loading expenses…</td></tr>
                 ) : filtered.length === 0 ? (
-                  <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-400">{selfFiledOnly && scopedExpenses.length === 0 ? "No technician has sent an expense request yet." : "No expense records match this filter."}</td></tr>
+                  <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-400">{selfFiledOnly && scopedExpenses.length === 0 ? "No employee has sent an expense request yet." : "No expense records match this filter."}</td></tr>
                 ) : filtered.map((e) => (
                   <tr key={e.id} className="border-b border-white/5 hover:bg-white/5 transition">
                     <td className="px-3 py-3 text-white font-medium">{profileName(e.profileId)}</td>
