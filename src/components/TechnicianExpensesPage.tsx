@@ -31,7 +31,8 @@ function fmtExpenseDate(iso: string): string {
 
 /**
  * Branch/Technician → Technician Expenses. A technician files their own
- * expenses (same form Accounting uses, minus the Employee picker) and sees
+ * expenses (same form Accounting uses, minus the Employee picker, with the
+ * receipt required) and sees
  * every expense on their name with its status and who approved or rejected
  * it. Accounting reviews these under Accounting → Expenses → Technician
  * Requests.
@@ -258,6 +259,7 @@ export function TechnicianExpensesPage({ mod, sub }: { mod: ModuleDef; sub: SubM
         <ExpenseFormModal
           editing={formState.editing}
           fixedProfileId={myProfileId}
+          requireReceipt
           createdBy={myProfileId}
           companyId={companyId}
           onClose={() => setFormState(null)}

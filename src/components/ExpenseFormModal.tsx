@@ -18,6 +18,7 @@ export function ExpenseFormModal({
   editing,
   profiles,
   fixedProfileId,
+  requireReceipt,
   createdBy,
   companyId,
   onClose,
@@ -26,6 +27,8 @@ export function ExpenseFormModal({
   editing: ExpenseRow | null;
   profiles?: ProfileRow[];
   fixedProfileId?: string;
+  /** Technician Expenses: a request can't be sent (or saved) without a receipt attached. */
+  requireReceipt?: boolean;
   createdBy: string | null;
   companyId: string | null;
   onClose: () => void;
@@ -69,6 +72,10 @@ export function ExpenseFormModal({
     const amount = Number(form.amount);
     if (!form.profileId || !form.expenseDate || !Number.isFinite(amount) || amount <= 0) {
       alert(profiles ? "Please select an employee, date, and a valid amount." : "Please enter a date and a valid amount.");
+      return;
+    }
+    if (requireReceipt && !form.receiptUrl) {
+      alert("Please attach a receipt (image or PDF).");
       return;
     }
     setSaving(true);
@@ -171,7 +178,9 @@ export function ExpenseFormModal({
             <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none resize-none" />
           </div>
           <div>
-            <label className="block text-xs text-slate-400 uppercase mb-1">Receipt</label>
+            <label className="block text-xs text-slate-400 uppercase mb-1">
+              Receipt{requireReceipt && <span className="text-red-400 normal-case"> * required</span>}
+            </label>
             {form.receiptUrl ? (
               <div className="flex items-center justify-between gap-2 bg-slate-800/50 border border-white/10 rounded-lg p-2">
                 <a href={form.receiptUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-sm text-blue-300 hover:text-blue-200 truncate">
