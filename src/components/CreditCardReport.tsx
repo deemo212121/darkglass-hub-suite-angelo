@@ -6,6 +6,7 @@ import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, pick, pad, offsetStr, todayStr } from "@/components/shared";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -20,7 +21,7 @@ const STATUS_CHIP: Record<string,string> = {
 };
 const ALL_ROWS = Array.from({length:50},(_,i)=>{
   const d=new Date(); d.setDate(d.getDate()-(i%30));
-  return { id:i+1, location:pick(LOCATIONS.slice(1),i), transDate:d.toISOString().slice(0,10),
+  return { id:i+1, location:pick(LOCATIONS.slice(1),i), transDate:localISODate(d),
     cardType:pick(CARD_TYPES,i), lastFour:String(1000+(i*137)%9000),
     transType:pick(TRANS_TYPES,i), amount:50+(i*27)%800,
     status:pick(STATUSES,i), ticketNo:i%3===0?"TK-2026-"+pad(1000+i):"" };

@@ -33,8 +33,7 @@ import { addTicketComment } from "@/lib/supabase/comments";
 import { setTicketOnsiteCheckIn, updateTicketVisit } from "@/lib/supabase/tickets";
 import type { UIVisit } from "@/lib/supabase/tickets";
 import { uploadTicketPhoto } from "@/lib/firebase/storage";
-import { saveEntry as saveTimecardEntry, type UITimeEntry } from "@/lib/supabase/timecards";
-import { saveTraineeEntry } from "@/lib/supabase/traineeTimecards";
+import { type UITimeEntry } from "@/lib/supabase/timecards";
 import { isManualOfflineModeActive } from "@/lib/isOnline";
 
 export type QueuedActionType =
@@ -263,12 +262,13 @@ async function replay(action: QueuedAction): Promise<void> {
     const p = action.payload as TicketCommentPayload;
     await addTicketComment(p.ticketNo, p.body, p.authorName, p.authorRole);
   } else {
+    // Offline time punches are blocked (MobileTechApp's persistPunch no
+    // longer queues them): a queued punch carries the PHONE's clock, which
+    // can be faked. Any left over in a queue from before that change are
+    // dropped here instead of synced — the employee files a Time
+    // Correction for that day if it was a real punch.
     const p = action.payload as TimecardPunchPayload;
-    if (p.employmentType === "trainee") {
-      await saveTraineeEntry(p.scheduleProfileId, p.dateKey, p.entry, p.managerId ?? null);
-    } else {
-      await saveTimecardEntry(p.scheduleProfileId, p.dateKey, p.entry);
-    }
+    console.warn("offlineQueue: dropping a queued offline time punch (device clock — not trusted)", p.scheduleProfileId, p.dateKey);
   }
 }
 

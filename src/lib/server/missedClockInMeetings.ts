@@ -362,6 +362,18 @@ export async function runNoClockInByTenMeetings(env: Record<string, string | und
     if (!res.ok) throw new Error(`${path.split("?")[0]}: HTTP ${res.status}`);
     return res.json();
   };
+  // PostgREST returns at most 1000 rows per request — a "&limit=5000" is
+  // silently cut to 1000. Pages with offset (the query must be ordered).
+  const getAll = async <T,>(path: string): Promise<T[]> => {
+    const all: T[] = [];
+    for (let offset = 0; ; offset += 1000) {
+      const res = await fetch(`${supabaseUrl}/rest/v1/${path}&offset=${offset}&limit=1000`, { headers });
+      if (!res.ok) throw new Error(`${path.split("?")[0]}: HTTP ${res.status}`);
+      const page: T[] = await res.json();
+      all.push(...page);
+      if (page.length < 1000) return all;
+    }
+  };
 
   type P = Profile & { schedule_timezone?: string | null };
   let profiles: P[];
@@ -386,7 +398,7 @@ export async function runNoClockInByTenMeetings(env: Record<string, string | und
   const inDates = `in.(${dates.join(",")})`;
 
   const [entries, ptos, holidays, branchRoles, sbmBranches] = await Promise.all([
-    get<{ profile_id: string; work_date: string; check_in: string | null }>(`timecard_entries?select=profile_id,work_date,check_in&work_date=${inDates}&limit=5000`),
+    getAll<{ profile_id: string; work_date: string; check_in: string | null }>(`timecard_entries?select=profile_id,work_date,check_in&work_date=${inDates}&order=work_date,profile_id`),
     get<{ profile_id: string; start_date: string; end_date: string }>(`pto_requests?select=profile_id,start_date,end_date&status=eq.approved&start_date=lte.${dates[dates.length - 1]}&end_date=gte.${dates[0]}`).catch(() => []),
     get<{ date: string; country: string | null }>(`company_holidays?select=date,country&date=${inDates}`).catch(() => []),
     get<{ branch: string; branch_manager: string | null; parts_manager: string | null }>("general_info_branch_roles?select=branch,branch_manager,parts_manager").catch(() => []),
@@ -443,6 +455,52 @@ export async function runNoClockInByTenMeetings(env: Record<string, string | und
         summary.errors.push(`Clear ${date}: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
+  }
+
+  // Earlier days too (last 14): a still-'required' missed clock-in whose day
+  // now has a Time In at or before 10:00 — e.g. the punch reached the server
+  // after that day's checks were over — is removed. Three requests per run
+  // (meetings, their days' timecards, one delete per day with any), not one
+  // per technician.
+  try {
+    const sinceDay = addDays(dates[0], -14);
+    const stale = await getAll<{ profile_id: string; missed_date: string }>(
+      `clock_in_meetings?select=profile_id,missed_date&kind=eq.missed_clock_in&status=eq.required&missed_date=gte.${sinceDay}&missed_date=lt.${dates[0]}&order=missed_date,profile_id`
+    );
+    if (stale.length > 0) {
+      const staleDays = Array.from(new Set(stale.map((m) => m.missed_date))).sort();
+      const dayEntries = await getAll<{ profile_id: string; work_date: string; check_in: string | null }>(
+        `timecard_entries?select=profile_id,work_date,check_in&work_date=in.(${staleDays.join(",")})&check_in=not.is.null&order=work_date,profile_id`
+      );
+      const earliest = new Map<string, string>();
+      for (const e of dayEntries) {
+        if (!e.check_in) continue;
+        const k = `${e.profile_id}|${e.work_date}`;
+        const prev = earliest.get(k);
+        if (!prev || e.check_in < prev) earliest.set(k, e.check_in);
+      }
+      const clearByDay = new Map<string, string[]>();
+      for (const m of stale) {
+        const first = earliest.get(`${m.profile_id}|${m.missed_date}`);
+        if (first && first.slice(0, 5) <= CLOCK_IN_CUTOFF) clearByDay.set(m.missed_date, [...(clearByDay.get(m.missed_date) ?? []), m.profile_id]);
+      }
+      for (const [day, ids] of clearByDay) {
+        for (let i = 0; i < ids.length; i += 100) {
+          const res = await fetch(
+            `${supabaseUrl}/rest/v1/clock_in_meetings?profile_id=in.(${ids.slice(i, i + 100).join(",")})&missed_date=eq.${day}&kind=eq.missed_clock_in&status=eq.required`,
+            { method: "DELETE", headers: { ...headers, Prefer: "return=representation" } }
+          );
+          if (!res.ok) {
+            summary.errors.push(`Clear earlier ${day}: HTTP ${res.status}`);
+            continue;
+          }
+          const removed: unknown[] = await res.json();
+          summary.cleared += removed.length;
+        }
+      }
+    }
+  } catch (e) {
+    summary.errors.push(`Clear earlier days: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   const byName = (companyId: string, name: string | null | undefined) => {

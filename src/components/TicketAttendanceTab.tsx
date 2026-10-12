@@ -24,6 +24,7 @@ import { getCompanyTicketReschedules, type TicketRescheduleRow } from "@/lib/sup
 import { getAttendanceNotes, upsertAttendanceNote, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
 import { ATTENDANCE_GRACE_MINUTES, toSeconds } from "@/lib/attendanceGrace";
 import { useAuth } from "@/lib/auth";
+import { todayISO as userTodayISO } from "@/lib/localDate";
 
 /**
  * Time Out vs the employee's own scheduled check-out (profiles.
@@ -90,7 +91,7 @@ const TIME_OUT_STATUS_CLASS: Record<TimeOutStatus, string> = {
 };
 
 export function TicketAttendanceTab() {
-  const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const todayISO = useMemo(() => userTodayISO(), []);
   const [dateFrom, setDateFrom] = useState(todayISO);
   const [dateTo, setDateTo] = useState(todayISO);
   // Matches technician name OR location/branch — a location like "Columbus"

@@ -107,7 +107,7 @@ import { LOCATIONS, ACTIVE_LOCATIONS } from "@/lib/locations";
 import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
 import { getServerNow, zonedDateKey, zonedTimeString, zonedWallClockToUtcIso, TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
-import { enqueueOnsiteCheckin, enqueueVisitSave, enqueueTicketComment, enqueueTimecardPunch, cacheTicketGeocode, getCachedTicketGeocode, cacheRead, getCachedRead } from "@/lib/offlineQueue";
+import { enqueueOnsiteCheckin, enqueueVisitSave, enqueueTicketComment, cacheTicketGeocode, getCachedTicketGeocode, cacheRead, getCachedRead } from "@/lib/offlineQueue";
 import { useIsOnline, useManualOfflineMode, setManualOfflineMode, isManualOfflineModeActive } from "@/lib/isOnline";
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { MessageBody } from "@/components/MessageBody";
@@ -6343,10 +6343,6 @@ function MobileHomeView({
   // sync — with no network, getServerNow() itself is unreachable, so there
   // is no better time source available at the moment the tech actually
   // tapped the button.
-  const getNowTime = (): string => {
-    const t = new Date();
-    return `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}:${String(t.getSeconds()).padStart(2, "0")}`;
-  };
 
   const persistPunch = async (field: keyof Pick<UITimeEntry, "checkIn" | "checkOut" | "mealStart" | "mealEnd">) => {
     if (!scheduleProfileId) {
@@ -6398,27 +6394,16 @@ function MobileHomeView({
       setEntry((prev) => ({ ...prev, [field]: time }));
       persisted = true;
     } catch (e) {
-      console.warn("MobileHomeView: save failed, queuing for later sync", e);
-      const next = { ...entry, [field]: getNowTime() };
-      setEntry(next);
-      try {
-        // Queued for later sync — offlineQueue.ts's replay() reads
-        // employmentType/managerId back off this payload so a trainee's
-        // punch still lands in trainee_timecard_entries (not the real
-        // timecard_entries) once connectivity returns, same as the online
-        // path above.
-        await enqueueTimecardPunch({
-          scheduleProfileId,
-          dateKey: todayKey,
-          entry: next,
-          employmentType,
-          managerId: directManagerId,
-        });
-        persisted = true;
-      } catch (qErr) {
-        console.error("MobileHomeView: failed to queue punch", qErr);
-        alert(`Failed to save: ${e instanceof Error ? e.message : "Unknown error"}`);
-      }
+      // Offline punches are BLOCKED: a punch is only ever stamped with the
+      // server's clock. The old fallback queued it with the phone's own
+      // clock, which anyone could fake (airplane mode + change the time).
+      console.warn("MobileHomeView: punch not saved (no server time / offline)", e);
+      const offline = (typeof navigator !== "undefined" && navigator.onLine === false) || isManualOfflineModeActive();
+      alert(
+        offline
+          ? "You're offline. Time In / Meal In / Meal Out / Time Out need an internet connection — connect to Wi-Fi or mobile data and tap again."
+          : `Couldn't save your punch — please check your connection and tap again. (${e instanceof Error ? e.message : "Unknown error"})`
+      );
     } finally {
       setSaving(false);
     }

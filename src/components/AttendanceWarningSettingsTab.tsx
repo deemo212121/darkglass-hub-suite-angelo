@@ -34,12 +34,10 @@ import {
 import { getGmailConnectionStatus, disconnectGmail, type GmailConnectionStatus } from "@/lib/supabase/gmailConnection";
 import { TECHNICIAN_PAY_ROLES, normalizeRole } from "@/lib/roleLabels";
 import { addMinutesToHHMM, payGraceMinutesFor, nowInTimezone, timezoneForBranch } from "@/lib/attendanceGrace";
+import { todayISO } from "@/lib/localDate";
 
 const REGION = "ATTENDANCE" as const;
 
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 /** "BRANCH_MANAGER" -> "Branch Manager" — same free-text role field every
  *  other roster table in this app already stores, just made readable here. */

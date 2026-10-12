@@ -42,6 +42,7 @@ import {
 } from "@/lib/supabase/partDailyReportEbay";
 import { LOCATIONS } from "@/lib/locations";
 import { EbayImportModal } from "@/components/EbayImportModal";
+import { localISODate, todayISO } from "@/lib/localDate";
 
 // Color coding per order status, reused for status chips/dropdown-adjacent
 // badges wherever a status shows up on this page.
@@ -101,7 +102,7 @@ function dateRangeList(start: string, end: string, max = 31): string[] {
   const endD = new Date(end + "T00:00:00");
   if (Number.isNaN(d.getTime()) || Number.isNaN(endD.getTime()) || d > endD) return out;
   while (d <= endD && out.length < max) {
-    out.push(d.toISOString().slice(0, 10));
+    out.push(localISODate(d));
     d.setDate(d.getDate() + 1);
   }
   return out;
@@ -134,12 +135,12 @@ function formatDateAdded(iso: string): string {
 }
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  return todayISO();
 }
 function daysAgoIso(n: number) {
   const d = new Date();
   d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 }
 
 type Tab = "orders" | "listings" | "summary" | "assignments";

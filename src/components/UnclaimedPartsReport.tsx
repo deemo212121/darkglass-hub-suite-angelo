@@ -6,11 +6,12 @@ import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, pick, pad, offsetStr, todayStr } from "@/components/shared";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 const PARTS=["Motor Assembly","Pump Assembly","Control Board","Door Latch","Thermostat","Heating Element","Belt","Drain Hose","Water Valve","Timer"];
 const CHIP:Record<string,string>={Unclaimed:"bg-yellow-500/20 text-yellow-300 border border-yellow-500/30","In Review":"bg-blue-500/20 text-blue-300 border border-blue-500/30",Rejected:"bg-red-500/20 text-red-300 border border-red-500/30"};
-const ALL_ROWS=Array.from({length:60},(_,i)=>{const d=new Date();d.setDate(d.getDate()-(i*2)%60);return{id:i+1,ticketNo:"TK-2026-"+pad(1000+i),partNo:"PT-"+pad(70000+i),description:pick(PARTS,i),location:pick(LOCATIONS.slice(1),i),claimDate:d.toISOString().slice(0,10),amount:40+(i*23)%400,claimStatus:pick(["Unclaimed","In Review","Rejected"],i)};});
+const ALL_ROWS=Array.from({length:60},(_,i)=>{const d=new Date();d.setDate(d.getDate()-(i*2)%60);return{id:i+1,ticketNo:"TK-2026-"+pad(1000+i),partNo:"PT-"+pad(70000+i),description:pick(PARTS,i),location:pick(LOCATIONS.slice(1),i),claimDate:localISODate(d),amount:40+(i*23)%400,claimStatus:pick(["Unclaimed","In Review","Rejected"],i)};});
 
 export function UnclaimedPartsReport({ mod, sub }: Props) {
   const navigate = useNavigate();

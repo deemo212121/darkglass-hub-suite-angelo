@@ -61,6 +61,7 @@ import {
   markTruckStockTransferReceived,
   type TruckStockTransferRow,
 } from "@/lib/supabase/truckStockTransfers";
+import { todayISO } from "@/lib/localDate";
 
 type Bucket = "pending" | "in_transit" | "completed" | "rejected";
 
@@ -243,7 +244,7 @@ export function TruckStockRequestsPanel({ highlightRequestId }: { highlightReque
         const req = row.pull;
         const part = await getPartById(req.partId);
         if (!part) throw new Error("That Part Transaction line no longer exists on the ticket.");
-        const today = new Date().toISOString().slice(0, 10);
+        const today = todayISO();
         const autoPo = part.poNo || `INH-${req.branch.replace(/\s+/g, "").slice(0, 4).toUpperCase()}-${Date.now().toString().slice(-6)}`;
         const noteAdd = `Truck Stock pull approved by Parts Manager on ${today}.`;
         await updateTicketPart(req.partId, {
@@ -372,7 +373,7 @@ export function TruckStockRequestsPanel({ highlightRequestId }: { highlightReque
         // (Used, Cancelled, etc.), and that manual call shouldn't be clobbered.
         const part = await getPartById(req.partId);
         if (part && part.status === "PO Made") {
-          const today = new Date().toISOString().slice(0, 10);
+          const today = todayISO();
           const noteAdd = `Received at ${req.ticketBranch || "destination branch"} on ${today}.`;
           await updateTicketPart(req.partId, {
             ...part,

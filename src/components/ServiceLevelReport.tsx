@@ -4,6 +4,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, TECHS_FULL, pick, pad, offsetStr, todayStr } from "@/components/shared";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 const COMPLETE_MODES = ["Completed","Cancelled","All"];
@@ -16,7 +17,7 @@ function generateRows(count = 60) {
     return {
       id: i+1, ticketNo: "TK-2026-"+pad(9000+i),
       location: pick(locs,i), tech: pick(TECHS_FULL,i),
-      completedDate: comp.toISOString().slice(0,10),
+      completedDate: localISODate(comp),
       ftf, tat, slaTarget: 7,
       slaMet: tat<=7, jobType: pick(["In-Warranty","OOW","Exchange"],i),
     };

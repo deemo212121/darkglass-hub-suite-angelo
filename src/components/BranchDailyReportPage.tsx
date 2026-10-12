@@ -79,6 +79,7 @@ import {
   type BranchExtraEditor,
   type BranchFallbackTech,
 } from "@/lib/supabase/seniorBranchManagerAssignments";
+import { todayISO } from "@/lib/localDate";
 
 const URGENCY_LABEL: Record<BranchReportUrgency, string> = { low: "Low", moderate: "Moderate", high: "High" };
 const URGENCY_CLASS: Record<BranchReportUrgency, string> = {
@@ -87,7 +88,7 @@ const URGENCY_CLASS: Record<BranchReportUrgency, string> = {
   high: "bg-red-500/20 text-red-300 border-red-500/40",
 };
 
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const todayStr = () => todayISO();
 const fmtHours = (n: number) => (Math.round(n * 10) / 10).toString();
 
 // This page's "full access, every branch, everything" tier — historically

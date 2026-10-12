@@ -6,6 +6,7 @@ import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, pick, pad, offsetStr, todayStr } from "@/components/shared";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 const COMPANIES = ["Samsung","LG","Whirlpool","GE Appliances","Bosch","Electrolux"];
@@ -21,7 +22,7 @@ const ALL_ROWS = Array.from({length:60},(_,i)=>{
   const c=100+(i*43)%900; const r=i%5===0?c+(i*7)%100:c;
   return { id:i+1, ticketNo:"TK-2026-"+pad(1000+i), claimNo:"CLM-"+pad(90000+i),
     location:pick(LOCATIONS.slice(1),i), company:pick(COMPANIES,i),
-    date:d.toISOString().slice(0,10), claimed:c, correct:r, diff:r-c, status:pick(STATUSES,i) };
+    date:localISODate(d), claimed:c, correct:r, diff:r-c, status:pick(STATUSES,i) };
 });
 
 export function EncompassClaimAuditReport({ mod, sub }: Props) {

@@ -4,6 +4,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, TECHS_FULL, pick, pad, offsetStr, todayStr } from "@/components/shared";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -27,7 +28,7 @@ function generateRows(count = 60) {
       account: pick(ACCOUNTS,i), location: pick(locs,i),
       tech: pick(TECHS_FULL,i), overallStatus: pick(OVERALL_STATUSES,i),
       repairStatus: pick(REPAIR_STATUSES,i),
-      completedDate: comp.toISOString().slice(0,10),
+      completedDate: localISODate(comp),
     };
   });
 }

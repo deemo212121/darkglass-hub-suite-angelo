@@ -20,6 +20,7 @@ import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { getCandidates, type Candidate, type CandidateStatus } from "@/lib/supabase/hrCandidates";
 import { getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
+import { localISODate, todayISO } from "@/lib/localDate";
 
 const TOOLTIP_STYLE = { background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" } as const;
 const LEGEND_STYLE = { fontSize: 11, color: "#94a3b8" } as const;
@@ -38,8 +39,8 @@ const STATUS_LABEL: Record<CandidateStatus, string> = {
   cancelled: "Cancelled",
 };
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
-const daysAgoIso = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
+const todayIso = () => todayISO();
+const daysAgoIso = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return localISODate(d); };
 function dateOnly(v: string | undefined | null): string { return (v || "").slice(0, 10); }
 
 export function ReportHR({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {

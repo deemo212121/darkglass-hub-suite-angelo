@@ -23,6 +23,7 @@ import { PART_STATUS_OPTIONS } from "@/lib/partStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { BranchBarChart } from "@/components/BranchBarChart";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { todayISO } from "@/lib/localDate";
 
 const PART_RECEIVE_ACTIVITY_TARGET_TYPE = "part_receive";
 // Label used both for this page's own activity log entries and for the
@@ -112,7 +113,7 @@ function businessDaysBetween(fromISO: string, toISO: string): number {
 // no delivered date yet means it hasn't arrived, so there's no aging.
 function agingDays(item: PartReceiveRow): number | null {
   if (!item.deliveredDate) return null;
-  const asOf = item.qtyReceived > 0 && item.receivedDate ? item.receivedDate : new Date().toISOString().slice(0, 10);
+  const asOf = item.qtyReceived > 0 && item.receivedDate ? item.receivedDate : todayISO();
   return businessDaysBetween(item.deliveredDate.slice(0, 10), asOf);
 }
 
@@ -389,7 +390,7 @@ export function PartReceive({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef })
       : confirm(`Undo received status for ${item.partNo || "this part"}? This clears its Quantity Received and Receive Date, and Aging will start counting again.`);
     if (!confirmed) return;
     const nextQty = checked ? item.quantity : 0;
-    const nextReceivedDate = checked ? item.receivedDate || new Date().toISOString().slice(0, 10) : "";
+    const nextReceivedDate = checked ? item.receivedDate || todayISO() : "";
     setReceiveItems((current) =>
       current.map((r) => (r.id === id ? { ...r, qtyReceived: nextQty, receivedDate: nextReceivedDate } : r))
     );

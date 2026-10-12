@@ -70,6 +70,7 @@ import { getModelResources, saveModelResources } from "@/lib/supabase/modelResou
 import { parseServicePerformed, composeServicePerformed, emptyServicePerformed } from "@/lib/servicePerformedNotes";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { canManageMisdiagnosed } from "@/lib/roleLabels";
+import { todayISO } from "@/lib/localDate";
 
 // Product category options for the ticket Product Information dropdown.
 const PRODUCT_CATEGORY_OPTIONS = [
@@ -3823,7 +3824,7 @@ function TicketDetailsPage() {
     const { decrementTruckStock } = await import("@/lib/supabase/truckStock");
     const { createTruckStockPullRequest } = await import("@/lib/supabase/truckStockRequests");
     const { notifyPartsManagerOfPullRequest } = await import("@/lib/truckStockNotify");
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayISO();
     const updates: Array<{ partId: string; nextRow: PartTransactionRow; branch: string; pulled: number; storage: string; requestId?: string }> = [];
 
     // Step 1: reserve stock for each selection. If any one fails we stop
@@ -4522,7 +4523,7 @@ function TicketDetailsPage() {
       // Also check if photos were uploaded (if we have a photo count and
       // the visit was today, photos being present means same-day upload is
       // satisfied)
-      const visitWasToday = schedDate === new Date().toISOString().slice(0, 10);
+      const visitWasToday = schedDate === todayISO();
       const photosSatisfied = ticketPhotoCount !== null && ticketPhotoCount > 0 && visitWasToday;
       return onTime || photosSatisfied;
     })();
@@ -5516,7 +5517,7 @@ function TicketDetailsPage() {
         claimTo: "",
         visitLogId: "",
         claimNo: "",
-        claimDate: new Date().toISOString().slice(0, 10),
+        claimDate: todayISO(),
         claimStatus: "",
         laborFee: "",
         partFee: "",

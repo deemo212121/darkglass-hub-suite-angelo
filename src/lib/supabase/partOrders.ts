@@ -5,6 +5,7 @@
  */
 
 import { supabase } from "./client";
+import { todayISO } from "@/lib/localDate";
 
 /**
  * Return true if a Part Distributor value refers to Marcone in any of its
@@ -350,7 +351,7 @@ function pick<T>(obj: Record<string, any>, ...keys: string[]): T | undefined {
 
 export async function placeMarconeOrder(payload: MarconeOrderPayload): Promise<MarconeOrderResult> {
   const poNo = (payload.purchaseOrderNumber || "").trim() || generatePoNumber();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
 
   // ── 1. Build the Marcone PurchaseOrderRequest body ──────────────────
   //
@@ -609,7 +610,7 @@ export interface EncompassOrderResult {
 
 export async function placeEncompassOrder(payload: MarconeOrderPayload): Promise<EncompassOrderResult> {
   const poNo = (payload.purchaseOrderNumber || "").trim() || generatePoNumber();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
 
   // ── 1. Resolve mfgCode per line (createOrder requires it) ──────────
   const { encompassLookupPart, encompassCreateOrder, encompassOrderStatus } = await import("@/lib/encompassApi");

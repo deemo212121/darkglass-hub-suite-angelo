@@ -9,6 +9,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { exportToCSV } from "@/lib/csvExport";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
+import { todayISO } from "@/lib/localDate";
 
 /**
  * Part Order — every ticket that needs a part ordered: Repair Status
@@ -23,7 +24,7 @@ import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScro
  * tickets were missing from this page because of it.
  */
 
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const todayStr = () => todayISO();
 
 const COLUMNS = [
   { key: "ticketNo", label: "Ticket #", value: (o: PartOrderRow) => o.ticketNo },

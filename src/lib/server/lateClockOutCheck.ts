@@ -131,16 +131,29 @@ export async function runLateClockOutCheck(env: Record<string, string | undefine
     return res.json();
   };
 
+  // PostgREST returns at most 1000 rows per request — a "&limit=5000" is
+  // silently cut to 1000. Pages with offset (the query must be ordered).
+  const getAll = async <T,>(path: string): Promise<T[]> => {
+    const all: T[] = [];
+    for (let offset = 0; ; offset += 1000) {
+      const res = await fetch(`${supabaseUrl}/rest/v1/${path}&offset=${offset}&limit=1000`, { headers });
+      if (!res.ok) throw new Error(`${path.split("?")[0]}: HTTP ${res.status}`);
+      const page: T[] = await res.json();
+      all.push(...page);
+      if (page.length < 1000) return all;
+    }
+  };
+
   const today = nowInTimezone(DEFAULT_ATTENDANCE_TIMEZONE).dateISO;
   const from = [LATE_CLOCK_OUT_FROM, addDays(today, -LOOKBACK_DAYS)].sort()[1];
   if (from > today) return summary;
 
   const [profiles, entries, done] = await Promise.all([
     get<Profile>("profiles?select=id,company_id,display_name,role,extra_roles,assigned_branch,schedule_timezone,employee_info,is_active"),
-    get<{ profile_id: string; work_date: string; check_in: string | null; check_out: string | null; notes: string | null }>(
-      `timecard_entries?select=profile_id,work_date,check_in,check_out,notes&work_date=gte.${from}&check_out=not.is.null&limit=5000`,
+    getAll<{ profile_id: string; work_date: string; check_in: string | null; check_out: string | null; notes: string | null }>(
+      `timecard_entries?select=profile_id,work_date,check_in,check_out,notes&work_date=gte.${from}&check_out=not.is.null&order=work_date,profile_id`,
     ),
-    get<{ profile_id: string; work_date: string }>(`technician_clock_out_checks?select=profile_id,work_date&work_date=gte.${from}&limit=5000`),
+    getAll<{ profile_id: string; work_date: string }>(`technician_clock_out_checks?select=profile_id,work_date&work_date=gte.${from}&order=work_date,profile_id`),
   ]);
   const byId = new Map(profiles.map((p) => [p.id, p]));
   const already = new Set(done.map((d) => `${d.profile_id}|${d.work_date}`));

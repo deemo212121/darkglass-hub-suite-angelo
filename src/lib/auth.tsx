@@ -7,6 +7,7 @@ import { getUserAccount, updateLastLogin } from "./firebase/users";
 import { signIn as firebaseSignIn, signOut as firebaseSignOut } from "./firebase/auth";
 import { refreshSupabaseSession, clearSupabaseSession, getCurrentSessionId } from "./supabase/client";
 import { getProfileForLogin, touchLastLogin, touchPresenceSeen, touchPresenceActive } from "./supabase/users";
+import { setUserScheduleTimezone } from "./localDate";
 import { getSupabaseCompanyLoginAlias } from "./supabase/companies";
 import { subscribeTableChanges } from "./supabase/realtime";
 
@@ -491,6 +492,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               // Firestore for legacy users not yet migrated.
               const sbProfile = await getProfileForLogin(firebaseUser.uid);
               if (isStale()) return;
+              setUserScheduleTimezone(sbProfile?.scheduleTimezone);
 
               if (sbProfile) {
                 devLog("✅ User profile loaded (Supabase):", {

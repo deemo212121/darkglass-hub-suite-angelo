@@ -35,7 +35,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import { ClockInCodePrompt } from "@/components/ClockInCodePrompt";
 import { isClockInCodeRequired } from "@/lib/supabase/clockInCodes";
-import { getMyProfileSchedule, getEntryForDate, saveEntry, clearPunch as sbClearPunch, canEditPunch, resolveScheduledShiftHours, type UITimeEntry, type PunchField } from "@/lib/supabase/timecards";
+import { getMyProfileSchedule, getEntryForDate, savePunch, clearPunch as sbClearPunch, canEditPunch, resolveScheduledShiftHours, type UITimeEntry, type PunchField } from "@/lib/supabase/timecards";
 import { getTraineeEntryForDate, saveTraineePunch, clearTraineePunch, getPendingTraineeReviewCount, SELF_CHECKED_OUT_EVENT, type TraineeTimecardStatus } from "@/lib/supabase/traineeTimecards";
 import { getCompanyUsers } from "@/lib/supabase/users";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
@@ -301,7 +301,11 @@ export function TimeClockButtons() {
         await saveTraineePunch(profileId, workDate, field, time, directManagerId);
         setTraineeStatus((prev) => (prev === "rejected" ? "pending" : prev ?? "pending"));
       } else {
-        await saveEntry(profileId, workDate, next);
+        // Only the tapped punch (like the mobile app), then re-read the day: the
+        // database stamps its own clock (migration 0370), so the stored time can be
+        // a second off the one sent, and the next save must not re-send a stale copy.
+        await savePunch(profileId, workDate, field, time);
+        void loadToday(profileId);
       }
       // Tied specifically to THIS viewer's own Time Out, once it actually
       // saved — see TraineeAttendanceReviewModal.tsx, which listens for this

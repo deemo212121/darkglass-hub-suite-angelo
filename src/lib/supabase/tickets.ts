@@ -2580,7 +2580,8 @@ export async function logTicketAuditEntry(entry: {
  * Who worked on which ticket since `sinceIso`: ticket number → profile ids.
  * Sources that record the person: ticket_audit_log (status / technician /
  * schedule changes, changed_by — written by the trg_ticket_audit trigger),
- * ticket_comments (created_by) and visits (updated_by). Used by the CSR To
+ * ticket_comments (created_by), visits (updated_by) and note edits
+ * (tickets.notes_touched_by, migration 0370). Used by the CSR To
  * Do List to drop tickets a CSR already touched today. Rows with no person
  * (system / sync writes) are skipped. These tables reference tickets by a
  * composite FK that embedded selects don't resolve reliably, so ticket ids
@@ -2588,19 +2589,19 @@ export async function logTicketAuditEntry(entry: {
  */
 export async function getTicketTouchersSince(sinceIso: string): Promise<Map<string, Set<string>>> {
   // PostgREST caps each response (~1000 rows), so page through.
-  const pageAll = async (table: string, actorColumn: string, tsColumn: string): Promise<{ ticketId: string; actor: string }[]> => {
+  const pageAll = async (table: string, actorColumn: string, tsColumn: string, idColumn = "ticket_id"): Promise<{ ticketId: string; actor: string }[]> => {
     const rows: { ticketId: string; actor: string }[] = [];
     for (let from = 0; ; from += 1000) {
       const { data, error } = await supabase
         .from(table)
-        .select(`ticket_id, ${actorColumn}`)
+        .select(`${idColumn}, ${actorColumn}`)
         .gte(tsColumn, sinceIso)
         .not(actorColumn, "is", null)
         .order(tsColumn)
         .range(from, from + 999);
       if (error) throw error;
       for (const r of (data ?? []) as unknown as Record<string, string | null>[]) {
-        if (r.ticket_id && r[actorColumn]) rows.push({ ticketId: r.ticket_id, actor: r[actorColumn] as string });
+        if (r[idColumn] && r[actorColumn]) rows.push({ ticketId: r[idColumn] as string, actor: r[actorColumn] as string });
       }
       if (!data || data.length < 1000) break;
     }
@@ -2615,6 +2616,9 @@ export async function getTicketTouchersSince(sinceIso: string): Promise<Map<stri
     pageAll("ticket_audit_log", "changed_by", "created_at"),
     soft(pageAll("ticket_comments", "created_by", "created_at"), "comments"),
     soft(pageAll("visits", "updated_by", "updated_at"), "visits"),
+    // Internal note / problem description edits (migration 0370) — empty
+    // until that migration is run.
+    soft(pageAll("tickets", "notes_touched_by", "notes_touched_at", "id"), "note edits"),
   ]);
   const actorsById = new Map<string, Set<string>>();
   for (const r of parts.flat()) {

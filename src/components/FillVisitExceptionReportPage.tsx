@@ -38,6 +38,7 @@ import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { useResponsivePdfScale } from "@/hooks/useResponsivePdfScale";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
+import { todayISO } from "@/lib/localDate";
 
 interface Props {
   docId: string;
@@ -410,7 +411,7 @@ export function FillVisitExceptionReportPage({ docId }: Props) {
                           height: 16 * scale,
                         }}
                       />
-                      <div style={overlayStyle(415, 535.5, 100, 12)}>{fmtDateDisplay(new Date().toISOString().slice(0, 10))}</div>
+                      <div style={overlayStyle(415, 535.5, 100, 12)}>{fmtDateDisplay(todayISO())}</div>
                     </>
                   )}
                 </div>

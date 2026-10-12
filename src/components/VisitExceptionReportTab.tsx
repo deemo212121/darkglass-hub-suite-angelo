@@ -45,12 +45,13 @@ import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
+import { localISODate, todayISO } from "@/lib/localDate";
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => todayISO();
 const yesterdayIso = () => {
   const d = new Date();
   d.setDate(d.getDate() - 1);
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 };
 
 const REASON_LABELS: Record<VisitExceptionReason, string> = {

@@ -13,6 +13,7 @@
 import { getPartsToReceive } from "@/lib/supabase/partReceive";
 import { getPartsForDailyPickup } from "@/lib/supabase/partDailyPickup";
 import { getPartsForDailyCollection } from "@/lib/supabase/partDailyCollection";
+import { todayISO } from "@/lib/localDate";
 
 export interface BranchProgress {
   branch: string;
@@ -24,7 +25,6 @@ export interface BranchProgress {
   collectionsTotal: number;
 }
 
-const TODAY = new Date().toISOString().slice(0, 10);
 
 export async function getBranchProgress(branches: string[]): Promise<BranchProgress[]> {
   const [allReceive, allCollection, ...pickupResults] = await Promise.all([
@@ -36,7 +36,7 @@ export async function getBranchProgress(branches: string[]): Promise<BranchProgr
       notCollected: true,
       collected: true,
     }).catch(() => []),
-    ...branches.map((b) => getPartsForDailyPickup({ location: b, pickupDate: TODAY }).catch(() => [])),
+    ...branches.map((b) => getPartsForDailyPickup({ location: b, pickupDate: todayISO() }).catch(() => [])),
   ]);
 
   return branches.map((branch, i) => {

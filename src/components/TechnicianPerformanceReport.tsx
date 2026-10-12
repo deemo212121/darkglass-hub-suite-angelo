@@ -99,6 +99,7 @@ import {
   type DailyPerformanceOverride,
 } from "@/lib/supabase/technicianPerformanceOverrides";
 import { getSeniorBranchManagerAssignments, type SbmBranchAssignment } from "@/lib/supabase/seniorBranchManagerAssignments";
+import { todayISO } from "@/lib/localDate";
 
 const TOOLTIP_STYLE = {
   background: "#ffffff",
@@ -312,7 +313,7 @@ function initialsFor(name: string): string {
   return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
 }
 
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const todayStr = () => todayISO();
 const monthStart = (d: string) => `${d.slice(0, 7)}-01`;
 const monthEnd = (d: string) => {
   const [y, m] = d.split("-").map(Number);

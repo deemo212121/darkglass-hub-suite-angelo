@@ -28,6 +28,7 @@ import { ChevronLeft, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { statusGroupOf, type Ticket } from "@/lib/ticketData";
 import { getCompanyTickets, getVisitsByTicketIds, getPartsByTicketIds } from "@/lib/supabase/tickets";
+import { localISODate } from "@/lib/localDate";
 
 // Same lookback/"load full history" pattern TicketList.tsx uses — this
 // page can otherwise pull years of closed tickets on first load.
@@ -35,7 +36,7 @@ const LOOKBACK_DAYS = 180;
 function lookbackSinceIso(): string {
   const d = new Date();
   d.setDate(d.getDate() - LOOKBACK_DAYS);
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 }
 
 // Same helper as TicketList.tsx's own productLabel — kept as its own copy,

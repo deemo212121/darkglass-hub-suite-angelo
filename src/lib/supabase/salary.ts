@@ -8,6 +8,7 @@
  */
 
 import { supabase } from "./client";
+import { todayISO } from "@/lib/localDate";
 
 export type SalaryChangeReason = "promotion" | "demotion" | "adjustment" | "initial" | "training_rate";
 export type CompensationType = "hourly" | "fixed";
@@ -169,7 +170,7 @@ export function rateEffectiveOn(history: SalaryEntryRow[], date: string): number
 
 /** The rate in effect today. */
 export function currentRate(history: SalaryEntryRow[]): number {
-  return rateEffectiveOn(history, new Date().toISOString().slice(0, 10));
+  return rateEffectiveOn(history, todayISO());
 }
 
 /** Per-cutoff pay for a fixed annual salary — always annual / 26, regardless of the exact period a payroll run covers (see migration 0118's header comment). */

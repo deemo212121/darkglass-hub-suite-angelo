@@ -15,6 +15,7 @@ import {
   lookupZipCityState,
   type ZipLookupResult,
 } from "@/lib/zipLookup";
+import { todayISO } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -102,7 +103,7 @@ const DEFAULT_FORM = {
   purchaseDate: "",
   warrantyType: "",
   cxPreferredDate: "",
-  callTakenDate: new Date().toISOString().slice(0, 10),
+  callTakenDate: todayISO(),
   problemDescription: "",
 };
 
@@ -212,7 +213,7 @@ export function NewTicketPage({ mod, sub }: Props) {
           purchaseDate: payload.purchaseDate || "",
           warrantyType: payload.warrantyType || "",
           cxPreferredDate: payload.cxPreferredDate || "",
-          callTakenDate: new Date().toISOString().slice(0, 10),
+          callTakenDate: todayISO(),
           problemDescription: payload.problemDescription || "",
         };
         setForm(newForm);

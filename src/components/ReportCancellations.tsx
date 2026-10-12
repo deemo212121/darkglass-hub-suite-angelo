@@ -14,6 +14,7 @@ import { Download } from "lucide-react";
 import { isCancelled, isNeedCancel } from "@/lib/operationsBranchMetrics";
 import { REGIONS, REGION_LOCATIONS, locationRegion } from "@/lib/locations";
 import type { Ticket } from "@/lib/ticketData";
+import { todayISO } from "@/lib/localDate";
 
 const CHART_COLORS = ["#3b82f6", "#34d399", "#a78bfa", "#fb923c", "#f472b6", "#facc15", "#60a5fa", "#f87171", "#22d3ee", "#c084fc"];
 const TOOLTIP_STYLE = { background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" } as const;
@@ -133,7 +134,7 @@ export function ReportCancellations({ tickets }: { tickets: Ticket[] }) {
     const worksheet = XLSX.utils.json_to_sheet(data);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Need Cancel-Cancelled");
-    XLSX.writeFile(workbook, `operations-cancellations_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(workbook, `operations-cancellations_${todayISO()}.xlsx`);
   };
 
   return (

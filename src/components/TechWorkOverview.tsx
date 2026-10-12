@@ -4,6 +4,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, TECHS_FULL, pick, pad, todayStr } from "@/components/shared";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -16,7 +17,7 @@ function generateRows(count = 60) {
     return {
       id: i+1, ticketNo: "TK-2026-"+pad(7000+i),
       location: pick(locs,i), tech: pick(TECHS_FULL,i),
-      schedDate: sched.toISOString().slice(0,10),
+      schedDate: localISODate(sched),
       repairStatus: pick(REPAIR_STATUSES,i),
       customer: pick(["John Doe","Jane Smith","Acme LLC","Beth Larsen","Carlos Mora"],i),
       appliance: pick(["Washer","Dryer","Refrigerator","Range/Oven","Dishwasher"],i),

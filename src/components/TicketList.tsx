@@ -25,6 +25,7 @@ import { syncApprovedPortalRequests } from "@/lib/supabase/portalRequests";
 import { canManageMisdiagnosed, canFilterDataClosedTickets } from "@/lib/roleLabels";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
+import { localISODate, todayISO } from "@/lib/localDate";
 
 // Use the centralized Ticket interface
 interface TicketItem extends Ticket {}
@@ -374,7 +375,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const ticketLookbackSinceIso = () => {
     const d = new Date();
     d.setDate(d.getDate() - TICKET_LOOKBACK_DAYS);
-    return d.toISOString().slice(0, 10);
+    return localISODate(d);
   };
   const [fullHistoryLoaded, setFullHistoryLoaded] = useState(false);
 
@@ -1199,7 +1200,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
         XLSX.utils.json_to_sheet(partRows.length > 0 ? partRows : [{ ticketNo: "" }]),
         "Parts",
       );
-      XLSX.writeFile(workbook, `tickets-export_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      XLSX.writeFile(workbook, `tickets-export_${todayISO()}.xlsx`);
     } catch (err) {
       console.error("Ticket export failed:", err);
       alert(`Export failed: ${err instanceof Error ? err.message : "Unknown error"}`);

@@ -3,6 +3,7 @@ import { ChevronLeft, RefreshCw, ChevronDown } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, USER_TYPES, SERVICE_TYPES_SS, pick, pad, todayStr, offsetStr } from "./shared";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -16,7 +17,7 @@ function generateRows(count = 80) {
     return {
       id: i + 1, ticketNo: i % 5 === 0 ? "" : "TK-2026-" + pad(3000 + i),
       location: pick(LOCATIONS.slice(1), i), userType: pick(TARGET_USERS, i),
-      workDate: d.toISOString().slice(0, 10), time: pick(TIMES.slice(3), i),
+      workDate: localISODate(d), time: pick(TIMES.slice(3), i),
       action: pick(ACTIONS, i), user: pick(["J. Lucas","A. Simmons","E. Guzman","D. Ottley","C. Forrest"], i),
       ticketsTodo: 5 + (i % 12),
     };

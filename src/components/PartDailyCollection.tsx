@@ -22,6 +22,7 @@ import { getEffectiveNotificationRoles } from "@/lib/supabase/notificationRoleGa
 import { notifyPartsManagers } from "@/lib/partsNotify";
 import { getPartsForDailyCollection, updatePartCollectionRow, suggestCollectType, type PartCollectionRow } from "@/lib/supabase/partDailyCollection";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
+import { localISODate, todayISO } from "@/lib/localDate";
 
 const PARTS_DONE_QUEUE_SOURCE = "Part Daily Collection";
 const PART_DAILY_COLLECTION_ACTIVITY_TARGET_TYPE = "part_daily_collection";
@@ -42,13 +43,12 @@ const DONUT_COLLECTED_COLOR = "#22c55e";
 const NO_LOCATION = "(No location)";
 const DATE_TYPES=["Pickup Date","Collect Date"] as const;
 const COLLECT_TYPES=["Defective","Hold by Technician","In Review","Restock","Used","Used (Core)","Used (Panel)"];
-const TODAY=new Date().toISOString().slice(0,10);
 function getDefaultCollectionDate() {
   const d = new Date();
   // If Monday, roll back to Friday
   if (d.getDay() === 1) d.setDate(d.getDate() - 3);
   else d.setDate(d.getDate() - 1);
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 }
 // Collect first (pinned while scrolling sideways), then what identifies the part, then the fields you edit.
 const COLS=["Collect","Technician","Part","Ticket","Dates","Qty","Collect Type","Used Qty","Restock Qty","Lot #","Comment","Part Status","Core Value"];
@@ -242,7 +242,7 @@ export function PartDailyCollection({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
       const next = {
         ...r,
         collected: true,
-        collectedDate: TODAY,
+        collectedDate: todayISO(),
         collectType,
         ...qtyForType(r, collectType),
       };

@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { ChevronLeft, Edit2, Trash2, Send, Plus } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { todayISO } from "@/lib/localDate";
 
 interface PartTransaction {
   id: string;
@@ -139,7 +140,7 @@ export function PartTransactionManager({ mod, sub }: Props) {
       partDist: "",
       partDescription: "",
       poNo: "",
-      poDate: new Date().toISOString().split("T")[0],
+      poDate: todayISO(),
       invoiceNo: "",
       invoiceDate: "",
       qty: "1",
