@@ -58,6 +58,7 @@ function mapRow(row: any): ExpenseRow {
 // Supabase caps an unbounded select at 1000 rows — a company's full expense
 // history can exceed that. Page through in chunks of 1000.
 const PAGE_SIZE = 1000;
+const EXPENSE_COLUMNS = "id, profile_id, category, expense_date, amount, description, status, created_by, reviewed_by, reviewed_at, receipt_url, receipt_path, or_number, from_location, to_location, flash_tech_trip_id, created_at";
 
 /** All expenses for the caller's company (RLS-scoped), newest first. */
 export async function getCompanyExpenses(): Promise<ExpenseRow[]> {
@@ -65,7 +66,7 @@ export async function getCompanyExpenses(): Promise<ExpenseRow[]> {
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await supabase
       .from("expenses")
-      .select("id, profile_id, category, expense_date, amount, description, status, created_by, reviewed_by, reviewed_at, receipt_url, receipt_path, or_number, from_location, to_location, flash_tech_trip_id, created_at")
+      .select(EXPENSE_COLUMNS)
       .not("profile_id", "is", null)
       .order("expense_date", { ascending: false })
       .range(from, from + PAGE_SIZE - 1);
@@ -77,6 +78,42 @@ export async function getCompanyExpenses(): Promise<ExpenseRow[]> {
     if (!data || data.length < PAGE_SIZE) break;
   }
   return all;
+}
+
+/** One employee's expenses (Branch/Technician → Technician Expenses), newest first. */
+export async function getProfileExpenses(profileId: string): Promise<ExpenseRow[]> {
+  const all: ExpenseRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("expenses")
+      .select(EXPENSE_COLUMNS)
+      .eq("profile_id", profileId)
+      .order("expense_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getProfileExpenses error:", error.message);
+      throw new Error(error.message);
+    }
+    all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
+/** Display names for the people on a set of expenses (sent by / reviewed by), without loading the whole roster. */
+export async function getExpensePeopleNames(profileIds: string[]): Promise<Map<string, string>> {
+  const ids = Array.from(new Set(profileIds.filter(Boolean)));
+  const names = new Map<string, string>();
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await supabase.from("profiles").select("id, display_name, email").in("id", ids.slice(i, i + 100));
+    if (error) {
+      console.error("getExpensePeopleNames error:", error.message);
+      continue;
+    }
+    for (const p of data ?? []) names.set(p.id, p.display_name || p.email || "—");
+  }
+  return names;
 }
 
 /** File a new expense on behalf of an employee (profileId). */
@@ -158,11 +195,15 @@ export async function updateExpense(
   }
 }
 
-/** Approve, reimburse, or reject an expense. */
+/**
+ * Approve, reimburse, or reject an expense. reviewed_by/reviewed_at record
+ * who approved or rejected it (the "Approved / Rejected By" column), so
+ * marking an approved expense Reimbursed leaves them alone.
+ */
 export async function updateExpenseStatus(id: string, status: ExpenseStatus, reviewedBy: string | null): Promise<void> {
   const { error } = await supabase
     .from("expenses")
-    .update({ status, reviewed_by: reviewedBy, reviewed_at: new Date().toISOString() })
+    .update(status === "Reimbursed" ? { status } : { status, reviewed_by: reviewedBy, reviewed_at: new Date().toISOString() })
     .eq("id", id);
   if (error) {
     console.error("updateExpenseStatus error:", error.message);
