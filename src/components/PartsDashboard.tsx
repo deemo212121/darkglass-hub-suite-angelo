@@ -28,6 +28,7 @@ import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import { normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
 import { ReportAttendanceMonitoring } from "@/components/ReportAttendanceMonitoring";
+import { formatISODate } from "@/lib/localDate";
 
 const PARTS_ROLES = new Set(["PARTS", "PARTS_MANAGER"]);
 // Module-level (not defined inside the component) so ReportAttendanceMonitoring's
@@ -219,7 +220,7 @@ export function PartsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       .sort((a, b) => a[0].localeCompare(b[0]))
       .slice(-14)
       .map(([date, v]) => ({
-        date: new Date(date).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+        date: formatISODate(date, { month: "short", day: "numeric" }),
         count: v.count,
         spend: Math.round(v.spend * 100) / 100,
         poCount: v.poNos.size,

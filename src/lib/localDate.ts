@@ -46,3 +46,15 @@ export function setUserScheduleTimezone(tz: string | null | undefined): void {
 export function todayISO(now: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: userTimeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
 }
+
+/**
+ * Format a stored date for display. A plain "YYYY-MM-DD" (a date column) is
+ * read as that LOCAL calendar day — `new Date("2026-10-12")` would be UTC
+ * midnight, which shows as Oct 11 anywhere in the US. Full timestamps are
+ * formatted normally.
+ */
+export function formatISODate(value: string, options?: Intl.DateTimeFormatOptions, locale?: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? "").trim());
+  const d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(value);
+  return Number.isNaN(d.getTime()) ? String(value ?? "") : d.toLocaleDateString(locale, options);
+}
