@@ -8,7 +8,7 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { type UserManagementRecord } from "@/lib/user-management";
 import { useAuth } from "@/lib/auth";
-import { createCompanyUser, getCompanyUsers, updateCompanyUser, setMustChangePassword, getUserStatusChangeDates, type ProfileRow } from "@/lib/supabase/users";
+import { createCompanyUser, getCompanyUsers, updateCompanyUser, setMustChangePassword, getUserStatusChangeDates, saveProfileEmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { useAllRoleOptions } from "@/lib/customRoles";
@@ -87,6 +87,8 @@ interface NewUserFormData {
   selectedOffDays: number[];
   /** Master List's "Trainee" tab is cross-cutting (employment_type, not department) — see MASTER_LIST_TRAINEE_TAB in ReportHRDaily.tsx. Their department (role-inferred, or set later in Master List) stays whatever it is regardless of this flag. */
   isTrainee: boolean;
+  /** Start / training start date (YYYY-MM-DD) → saved as the Master List Hire Date. Attendance isn't counted before it. */
+  startDate: string;
 }
 
 // Display order only (a work week reads naturally Monday-first). The actual
@@ -835,6 +837,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     mealMinutes: "",
     selectedOffDays: [0, 6], // Sunday and Saturday by default
     isTrainee: false,
+    /** Start / training start date → Master List Hire Date. Attendance isn't counted before it. */
+    startDate: "",
   });
 
   // Deep-link from the Hiring table's Account Status "Not Created" badge —
@@ -852,6 +856,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       prefillManager?: string;
       prefillLoginName?: string;
       prefillUserType?: string;
+      /** From the Hiring table's "Not Created" start-date step. */
+      prefillStartDate?: string;
       /** Deep-link from the Time Off Calendar's employee-name links
        *  (HrCalendarTab.tsx) — arrives with ?q=<name> to pre-search this
        *  page for that person so HR can jump straight to editing their
@@ -885,6 +891,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       // onto User Type instead of being left for HR to re-pick.
       userType: params.prefillUserType || prev.userType,
       userTypes: params.prefillUserType ? [params.prefillUserType] : prev.userTypes,
+      startDate: params.prefillStartDate || prev.startDate,
     }));
     setShowAddUserModal(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1299,6 +1306,11 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       return;
     }
 
+    if (!newUserForm.startDate) {
+      alert("Please set the Start Date (use the training start date if they have training) — attendance isn't counted before it.");
+      return;
+    }
+
     if (!auth.companyId || !auth.uid) {
       alert("Error: User not authenticated properly.");
       return;
@@ -1336,6 +1348,15 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         employmentType: newUserForm.isTrainee ? "trainee" : "regular",
       });
 
+      // Start date → Master List Hire Date (attendance isn't counted before it — src/lib/attendanceStart.ts).
+      let startDateSaved = true;
+      try {
+        await saveProfileEmployeeInfo(newProfileId, { hireDate: newUserForm.startDate });
+      } catch (err) {
+        startDateSaved = false;
+        console.error("Start date not saved:", err);
+      }
+
       // Set the new account's password to the company default (same endpoint as "Reset to default").
       let defaultApplied = false;
       try {
@@ -1353,6 +1374,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         console.error("Default password not applied:", err);
       }
 
+      if (!startDateSaved) alert(`The account was created, but the Start Date couldn't be saved. Set ${newUserForm.userName}'s Hire Date on the Master List.`);
       alert(
         defaultApplied
           ? `User ${newUserForm.userName} created successfully!\nThey sign in with the default password and choose their own right away.`
@@ -1417,6 +1439,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         mealMinutes: "",
         selectedOffDays: [0, 6],
         isTrainee: false,
+        startDate: "",
       });
       setShowAddUserModal(false);
     } catch (error: any) {
@@ -1882,6 +1905,16 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       value={newUserForm.technicianId}
                       onChange={(e) => handleAddUserFormChange("technicianId", e.target.value)}
                     />
+                  </label>
+                  <label className="space-y-2 text-sm text-slate-200">
+                    <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Start Date *</span>
+                    <input
+                      type="date"
+                      className="glass-input w-full text-[11px] px-2 py-1 [color-scheme:dark]"
+                      value={newUserForm.startDate}
+                      onChange={(e) => handleAddUserFormChange("startDate", e.target.value)}
+                    />
+                    <span className="block text-[10px] normal-case text-slate-500">Training start if they have training. Attendance isn't counted before this day.</span>
                   </label>
                   <label className="space-y-2 text-sm text-slate-200">
                     <span className="block text-xs uppercase tracking-[0.08em] text-slate-400">Assigned Branch *</span>

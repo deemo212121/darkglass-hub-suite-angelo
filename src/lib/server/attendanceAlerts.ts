@@ -55,6 +55,7 @@
  * ask was specifically about not clocking OUT.
  */
 
+import { attendanceStartDate, hiringStartDate, isBeforeAttendanceStart, type AttendanceStartCandidate } from "../attendanceStart";
 import {
   addMinutesToHHMM,
   nowInTimezone,
@@ -225,7 +226,7 @@ export async function runAttendanceAlertCheck(
 
   const [profilesRes, entriesRes, alertsRes, historyRes, membersRes, branchRolesRes, warningSubsRes] = await Promise.all([
     fetch(
-      `${supabaseUrl}/rest/v1/profiles?select=id,company_id,display_name,email,role,extra_roles,manager_name,assigned_branch,required_check_in,required_check_out,off_days&is_active=eq.true`,
+      `${supabaseUrl}/rest/v1/profiles?select=id,company_id,display_name,email,phone_number,employee_info,role,extra_roles,manager_name,assigned_branch,required_check_in,required_check_out,off_days&is_active=eq.true`,
       { headers: sbHeaders }
     ),
     fetch(`${supabaseUrl}/rest/v1/timecard_entries?select=profile_id,check_in,check_out&work_date=eq.${dateISO}`, {
@@ -251,6 +252,22 @@ export async function runAttendanceAlertCheck(
     return summary;
   }
   const profiles: ServerProfile[] = await profilesRes.json();
+
+  // "Attendance starts on" (src/lib/attendanceStart.ts) — no alerts for a new
+  // hire whose Hire Date / HR Hiring training or start date is still ahead.
+  let hiringCandidates: AttendanceStartCandidate[] = [];
+  try {
+    let res = await fetch(`${supabaseUrl}/rest/v1/hr_candidates?select=email,phone,status,training_start_date,start_date`, { headers: sbHeaders });
+    if (!res.ok) res = await fetch(`${supabaseUrl}/rest/v1/hr_candidates?select=email,phone,status,training_start_date`, { headers: sbHeaders });
+    if (res.ok) hiringCandidates = await res.json();
+  } catch {
+    // Best-effort — without it, only the Master List Hire Date is used.
+  }
+  const notStartedYet = (p: ServerProfile) =>
+    isBeforeAttendanceStart(
+      dateISO,
+      attendanceStartDate((p as any).employee_info?.hireDate ?? null, hiringStartDate({ email: p.email ?? null, phone_number: (p as any).phone_number ?? null }, hiringCandidates))
+    );
 
   // Grace-period MINUTE comparison is per-branch-timezone — compute once per
   // distinct zone actually in use rather than once per profile.
@@ -363,6 +380,7 @@ export async function runAttendanceAlertCheck(
 
   for (const p of profiles) {
     if (!p.required_check_in && !p.required_check_out) continue;
+    if (notStartedYet(p)) continue; // hasn't started yet — nothing to be late for
     const offDays = new Set(p.off_days ?? []);
     if (offDays.has(dow)) continue;
     summary.profilesChecked++;
