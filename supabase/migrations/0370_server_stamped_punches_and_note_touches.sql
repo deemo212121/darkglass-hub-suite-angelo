@@ -13,7 +13,9 @@
 --         else -> America/Chicago — PH staff follow Central), and must be
 --         for TODAY in that zone;
 --       - changing an existing punch to a different time is refused — that
---         is what a Time Correction request is for;
+--         is what a Time Correction request is for (a re-send within 2
+--         minutes of the stored time — the app's copy of the punch, or a
+--         network retry — just keeps the stored time);
 --       - clearing the most recent punch (self-undo) still works.
 --     Untouched: punches made for someone else (a manager clock-in), HR /
 --     Admin / Accounting / Super Admin editing timecards (incl. their own),
@@ -76,6 +78,12 @@ begin
           using errcode = 'P0001';
       end if;
       new := jsonb_populate_record(new, jsonb_build_object(c, v_time));
+    elsif abs(extract(epoch from (v_new::time - v_old::time))) <= 120 then
+      -- The same punch re-sent: the app's own copy of an earlier punch is a
+      -- second or two off the database-stamped value (it keeps the time it
+      -- sent, not the one stored), or a network retry of a save that went
+      -- through. Keep the stored time instead of refusing the whole save.
+      new := jsonb_populate_record(new, jsonb_build_object(c, v_old));
     else
       raise exception 'A punch can''t be changed here — send a Time Correction request.'
         using errcode = 'P0001';

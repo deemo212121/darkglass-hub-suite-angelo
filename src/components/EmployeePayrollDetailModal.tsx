@@ -8,7 +8,7 @@ import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeSch
 import { isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, hasAnyTechnicianPayRole } from "@/lib/roleLabels";
 import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
 import { getPendingCorrectionsInRange, getApprovedCorrectionsForProfile, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
-import { attendanceCodeFor, correctionApproverId, autoClockOutInfo, ATTENDANCE_CODE_CLASS, ATTENDANCE_CODE_LABEL } from "@/lib/attendanceStatusCode";
+import { attendanceCodeFor, correctionApproverId, autoClockOutInfo, ATTENDANCE_CODE_CLASS, ATTENDANCE_CODE_LABEL, editStampsCorrection } from "@/lib/attendanceStatusCode";
 import { supabase } from "@/lib/supabase/client";
 import { resolveFieldStartDate, resolveTrainingRecord, trainingWindow, isTrainingDay } from "@/lib/fieldStartDate";
 import { PendingItemDetailModal, type PendingItem } from "@/components/PendingItemDetailModal";
@@ -223,7 +223,7 @@ export function EmployeePayrollDetailModal({
   // already taken by this component's own props above, which describe the
   // EMPLOYEE BEING VIEWED (used for the CSR overtime check below), not the
   // currently logged-in viewer these describe.
-  const { uid, displayName, email, role: myRole, extraRoles: myExtraRoles } = useAuth();
+  const { uid, displayName, email, role: myRole, extraRoles: myExtraRoles, realRole: myRealRole } = useAuth();
   const actorName = displayName || email || "Unknown";
   const todayISO = useMemo(() => userTodayISO(), []);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
@@ -1142,7 +1142,8 @@ export function EmployeePayrollDetailModal({
           profileId,
           row.date,
           { checkIn: e.checkIn, checkOut: e.checkOut, mealStart: e.mealStart, mealEnd: e.mealEnd, notes: "" },
-          myProfileId ? { correctedBy: myProfileId } : undefined
+          // SuperAdmin edits stay CP (not stamped as a correction) — see editStampsCorrection.
+          myProfileId && editStampsCorrection(myRealRole ?? myRole, myExtraRoles) ? { correctedBy: myProfileId } : undefined
         );
       }
       setAttendanceEditing(false);
