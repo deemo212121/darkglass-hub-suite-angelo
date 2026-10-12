@@ -48,3 +48,31 @@ export function CorrectionStageBadges({ row }: { row: StageRow }) {
     </div>
   );
 }
+
+/**
+ * Comments column: the manager's comment from their approval signature,
+ * plus each rejection reason (review_note holds one "Rejected by <name>
+ * (<step>): <reason>" line per rejection). "—" when there are none.
+ */
+export function CorrectionComments({ row }: { row: { managerComments: string; managerSignatureName: string | null; reviewNote: string | null } }) {
+  const managerComment = (row.managerComments ?? "").trim();
+  const rejections = (row.reviewNote ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+  if (!managerComment && rejections.length === 0) return <span className="text-slate-600">—</span>;
+  return (
+    <div className="space-y-1.5 text-xs">
+      {managerComment && (
+        <p className="text-slate-300 whitespace-pre-line break-words">
+          <span className="font-semibold text-green-300">Manager{row.managerSignatureName ? ` (${row.managerSignatureName})` : ""}:</span> {managerComment}
+        </p>
+      )}
+      {rejections.map((line, i) => {
+        const m = /^Rejected by (.+?) \(([^)]+)\): ([\s\S]*)$/.exec(line);
+        return (
+          <p key={i} className="text-red-100 whitespace-pre-line break-words">
+            {m ? <><span className="font-semibold text-red-300">{m[2]} rejected ({m[1]}):</span> {m[3]}</> : line}
+          </p>
+        );
+      })}
+    </div>
+  );
+}

@@ -45,7 +45,7 @@ import { resolveTeamLeadOrManager, visibleAttendanceProfileIds } from "@/lib/not
 import { correctionIssueLabel, correctionIssueKey, correctionIssueOptions } from "@/lib/exceptionVisitReportTemplate";
 import { chainCanClockIn } from "@/lib/approvalDirectory";
 import { ClockInCodePrompt } from "@/components/ClockInCodePrompt";
-import { CorrectionStageBadges, CorrectionOverallBadge } from "@/components/CorrectionStageBadges";
+import { CorrectionStageBadges, CorrectionOverallBadge, CorrectionComments } from "@/components/CorrectionStageBadges";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { ATTENDANCE_GRACE_MINUTES, addMinutesToHHMM, nowInTimezone, timezoneForBranch, DEFAULT_ATTENDANCE_TIMEZONE, payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule, toSeconds, ON_TIME_BUFFER_SECONDS } from "@/lib/attendanceGrace";
 import { getServerNow } from "@/lib/serverTime";
@@ -3514,15 +3514,16 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Original Time</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Requested Time</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Reason</th>
+                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Comments</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {loading ? (
-                      <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
+                      <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
                     ) : filteredCorrections.length === 0 ? (
-                      <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" || correctionIssueFilter !== "all" || correctionDepartmentFilter !== "all" || correctionBranchFilter !== "all" || correctionWorkDateFrom || correctionWorkDateTo ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
+                      <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" || correctionIssueFilter !== "all" || correctionDepartmentFilter !== "all" || correctionBranchFilter !== "all" || correctionWorkDateFrom || correctionWorkDateTo ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
                     ) : sortedCorrections.map((correction) => (
                       <tr key={correction.id} className="border-b border-white/5 hover:bg-white/5 transition">
                         <td className="px-3 py-3 text-white font-medium">
@@ -3537,6 +3538,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           <RequestedTime c={correction} />
                         </td>
                         <td className="px-3 py-3 text-slate-300">{correction.reason || "—"}</td>
+                        <td className="px-3 py-3 max-w-xs">
+                          <CorrectionComments row={correction} />
+                        </td>
                         <td className="px-3 py-3">
                           <CorrectionStageBadges row={correction} />
                         </td>
