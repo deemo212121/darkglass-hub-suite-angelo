@@ -11,6 +11,8 @@
  * present/late/absent rule Attendance Monitoring's own tabs use, so the
  * numbers here always agree with the company-wide report.
  */
+import { getRestDayHistory } from "@/lib/supabase/restDayHistory";
+import { isRestDayOn, type RestDayHistory } from "@/lib/restDays";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, Loader2, CalendarOff } from "lucide-react";
@@ -92,6 +94,10 @@ function EmployeeDetailsPage() {
   const [employee, setEmployee] = useState<ProfileRow | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [entries, setEntries] = useState<CompanyTimecardEntry[]>([]);
+  const [restHistory, setRestHistory] = useState<RestDayHistory>(new Map());
+  useEffect(() => {
+    getRestDayHistory().then(setRestHistory).catch(() => {});
+  }, []);
   const [monthValue, setMonthValue] = useState(todayMonthValue());
 
   // This route is always opened via target="_blank" (every link into it
@@ -138,7 +144,8 @@ function EmployeeDetailsPage() {
   const dayInfo = (iso: string): { status: "present" | "late" | "absent" | "day-off" | "future" | "no-data"; st: DayStatus | null } => {
     if (!employee) return { status: "no-data", st: null };
     if (iso > todayIso) return { status: "future", st: null };
-    const off = isOffDay(iso, employee.off_days);
+    // Rest days in force on this date (rest_day_history, 0373), not just today's.
+    const off = isRestDayOn(restHistory, employee.id, iso, employee.off_days);
     const entry = entryByDate.get(iso);
     const st = dayStatus(entry, employee.required_check_in, off, graceMinutes);
     if (off && !st.present) return { status: "day-off", st };

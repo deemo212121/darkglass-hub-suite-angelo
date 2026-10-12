@@ -1,4 +1,6 @@
 import { getAttendanceStartByProfile } from "@/lib/supabase/attendanceStart";
+import { getRestDayHistory } from "@/lib/supabase/restDayHistory";
+import { isRestDayOn, type RestDayHistory } from "@/lib/restDays";
 import { AlertCircle, AlertTriangle, Compass, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, ChevronRight, ChevronDown, Download, Calendar, FileText, CheckCircle, XCircle, Loader2, Settings } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
 import { toast } from "sonner";
@@ -1242,6 +1244,18 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // A date before this profile's own hireDate (employee_info.hireDate) —
   // no hire date on file falls back to "always counts" (false), same as
   // before this existed, rather than guessing.
+  // Rest days with an effective-from date (rest_day_history, 0373) — each
+  // date checked against the rest days in force THAT day, so a change in
+  // October doesn't turn September's rest days into absences.
+  const [restHistory, setRestHistory] = useState<RestDayHistory>(new Map());
+  useEffect(() => {
+    getRestDayHistory().then(setRestHistory).catch(() => {});
+  }, []);
+  const isRestDayFor = useCallback(
+    (p: ProfileRow, dateISO: string): boolean => isRestDayOn(restHistory, p.id, dateISO, p.off_days),
+    [restHistory]
+  );
+
   const isBeforeHireFor = useCallback(
     (profileId: string, dateISO: string): boolean => {
       const hireDate = hireDateByProfileId.get(profileId);
@@ -1289,10 +1303,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const buildDailyRecord = useCallback(
     (p: ProfileRow, dateISO: string, entry: CompanyTimecardEntry | undefined, isToday: boolean): DailyRecord => {
       const dow = new Date(dateISO + "T00:00:00").getDay();
-      const offDays = new Set<number>(p.off_days ?? []);
       // A company holiday suppresses "missing clock-in"/etc. alerts exactly
       // like a scheduled rest day — see isCompanyHolidayFor above.
-      const isOffDay = offDays.has(dow) || isCompanyHolidayFor(dateISO) || isBeforeHireFor(p.id, dateISO) || isOnLeaveFor(p.id, dateISO);
+      const isOffDay = isRestDayFor(p, dateISO) || isCompanyHolidayFor(dateISO) || isBeforeHireFor(p.id, dateISO) || isOnLeaveFor(p.id, dateISO);
       const checkIn = entry?.checkIn || "";
       const checkOut = entry?.checkOut || "";
       const mealIn = entry?.mealStart || "";
@@ -1331,7 +1344,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         tickets: ticketsByNameAndDate.get(`${(p.display_name || p.email || "").trim().toLowerCase()}|${dateISO}`) ?? [],
       };
     },
-    [nowByTimezone, allProfileById, checkoutProposalsByKey, lastTicketUpdateByProfile, ticketsByNameAndDate, isCompanyHolidayFor, hasPendingCorrectionFor, isBeforeHireFor, isOnLeaveFor]
+    [nowByTimezone, allProfileById, checkoutProposalsByKey, lastTicketUpdateByProfile, ticketsByNameAndDate, isCompanyHolidayFor, hasPendingCorrectionFor, isBeforeHireFor, isOnLeaveFor, isRestDayFor]
   );
 
   const dailyRecords: DailyRecord[] = useMemo(
@@ -1473,12 +1486,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
   const weeklySummary = useMemo(() => {
     return summaryProfiles.map((p) => {
-      const offDays = new Set<number>(p.off_days ?? []);
       let presentCount = 0;
       let workingDays = 0;
       const cells = weekDates.map((iso) => {
         const dow = new Date(iso + "T00:00:00").getDay();
-        if (offDays.has(dow)) return "off" as const;
+        if (isRestDayFor(p, iso)) return "off" as const;
         // Not hired yet as of this date — treated like "future" (a plain
         // "—", not counted toward workingDays/pct) rather than "off" (which
         // would read as a scheduled rest day for someone already employed).
@@ -1494,7 +1506,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const pct = workingDays > 0 ? Math.round((presentCount / workingDays) * 100) : 100;
       return { profileId: p.id, name: p.display_name || p.email, cells, presentCount, workingDays, pct };
     });
-  }, [summaryProfiles, weekDates, entriesByKey, traineePendingByKey, todayISO, isBeforeHireFor]);
+  }, [summaryProfiles, weekDates, entriesByKey, traineePendingByKey, todayISO, isBeforeHireFor, isRestDayFor]);
 
   // Narrows weeklySummary to rows matching the selected day + status (e.g.
   // "who was absent on Wednesday") — "all" for either just shows everyone,
@@ -1509,14 +1521,13 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     const today = new Date();
     const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
     return summaryProfiles.map((p) => {
-      const offDays = new Set<number>(p.off_days ?? []);
       let workingDays = 0;
       let present = 0;
       let late = 0;
       for (let d = new Date(monthStart); d <= today; d.setDate(d.getDate() + 1)) {
         const iso = toISODate(d);
         const dow = d.getDay();
-        if (offDays.has(dow) || isBeforeHireFor(p.id, iso)) continue;
+        if (isRestDayFor(p, iso) || isBeforeHireFor(p.id, iso)) continue;
         workingDays++;
         const entry = entriesByKey.get(`${p.id}|${iso}`);
         const checkIn = entry?.checkIn || "";
@@ -1532,7 +1543,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const status = pct >= 90 ? "Good" : pct >= 70 ? "Warning" : "Poor";
       return { profileId: p.id, name: p.display_name || p.email, workingDays, present, absent, late, pct, status };
     });
-  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor]);
+  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor, isRestDayFor]);
 
   // ---- Custom-range summary — same shape as monthlySummary above, just
   // over whatever [customRangeStart, customRangeEnd] the user picked instead
@@ -1542,7 +1553,6 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     const start = new Date(customRangeStart + "T00:00:00");
     const end = new Date(customRangeEnd + "T00:00:00");
     return summaryProfiles.map((p) => {
-      const offDays = new Set<number>(p.off_days ?? []);
       let workingDays = 0;
       let present = 0;
       let late = 0;
@@ -1550,7 +1560,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         const iso = toISODate(d);
         if (iso > todayISO) break; // don't count days that haven't happened yet as absences
         const dow = d.getDay();
-        if (offDays.has(dow) || isBeforeHireFor(p.id, iso)) continue;
+        if (isRestDayFor(p, iso) || isBeforeHireFor(p.id, iso)) continue;
         workingDays++;
         const entry = customEntriesByKey.get(`${p.id}|${iso}`);
         const checkIn = entry?.checkIn || "";
@@ -1564,7 +1574,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const status = pct >= 90 ? "Good" : pct >= 70 ? "Warning" : "Poor";
       return { profileId: p.id, name: p.display_name || p.email, workingDays, present, absent, late, pct, status };
     });
-  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor]);
+  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor, isRestDayFor]);
 
   // Day-by-day breakdown behind the Custom Attendance Summary's Present/
   // Absent/Late numbers — same day-iteration/off-day rules as customSummary
@@ -1582,14 +1592,13 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const buildCustomDayDetails = (profileId: string): CustomDayDetail[] => {
     const p = summaryProfiles.find((pr) => pr.id === profileId);
     if (!p || !customRangeStart || !customRangeEnd || customRangeStart > customRangeEnd) return [];
-    const offDays = new Set<number>(p.off_days ?? []);
     const start = new Date(customRangeStart + "T00:00:00");
     const end = new Date(customRangeEnd + "T00:00:00");
     const days: CustomDayDetail[] = [];
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       const iso = toISODate(d);
       if (iso > todayISO) break;
-      if (offDays.has(d.getDay()) || isBeforeHireFor(p.id, iso)) continue;
+      if (isRestDayFor(p, iso) || isBeforeHireFor(p.id, iso)) continue;
       const entry = customEntriesByKey.get(`${p.id}|${iso}`);
       const checkIn = entry?.checkIn || "";
       const checkOut = entry?.checkOut || "";

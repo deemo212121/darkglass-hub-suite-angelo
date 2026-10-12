@@ -55,6 +55,7 @@
  * ask was specifically about not clocking OUT.
  */
 
+import { buildRestDayHistory, offDaysOn, type RestDayHistory } from "../restDays";
 import { attendanceStartDate, hiringStartDate, isBeforeAttendanceStart, type AttendanceStartCandidate } from "../attendanceStart";
 import {
   addMinutesToHHMM,
@@ -264,6 +265,16 @@ export async function runAttendanceAlertCheck(
   } catch {
     // Best-effort — without it, only the Master List Hire Date is used.
   }
+  // Rest days in force today (rest_day_history, 0373) — a change saved with a
+  // future "Effective from" doesn't apply early.
+  let restHistory: RestDayHistory = new Map();
+  try {
+    const res = await fetch(`${supabaseUrl}/rest/v1/rest_day_history?select=profile_id,off_days,effective_from`, { headers: sbHeaders });
+    if (res.ok) restHistory = buildRestDayHistory(await res.json());
+  } catch {
+    // Best-effort — falls back to profiles.off_days.
+  }
+
   const notStartedYet = (p: ServerProfile) =>
     isBeforeAttendanceStart(
       dateISO,
@@ -382,7 +393,7 @@ export async function runAttendanceAlertCheck(
   for (const p of profiles) {
     if (!p.required_check_in && !p.required_check_out) continue;
     if (notStartedYet(p)) continue; // hasn't started yet — nothing to be late for
-    const offDays = new Set(p.off_days ?? []);
+    const offDays = new Set(offDaysOn(restHistory, p.id, dateISO, p.off_days));
     if (offDays.has(dow)) continue;
     summary.profilesChecked++;
 

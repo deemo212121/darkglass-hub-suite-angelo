@@ -2824,10 +2824,53 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     return out;
   };
 
-  const visibleCandidates = useMemo(() => {
+  // Branch-manager scope first (before the staff-group filter, so the group
+  // buttons can count each group).
+  const scopedCandidates = useMemo(() => {
     if (!isBranchManager) return candidates;
     return candidates.filter((c) => c.branch && myLocations.includes(c.branch));
   }, [candidates, isBranchManager, myLocations]);
+
+  // Staff group — one filter for the whole Hiring view (pipeline tiles, table,
+  // column filters): PH Staff = branch Philippines; Technician = a
+  // technical position (Technician department or a Technician tier);
+  // US Staff = everyone else (Parts). Remembered per browser.
+  type HiringStaffGroup = "all" | "tech" | "us" | "ph";
+  const [hiringStaffGroup, setHiringStaffGroupState] = useState<HiringStaffGroup>(() => {
+    try {
+      const v = localStorage.getItem("hrHiring:staffGroup");
+      return v === "tech" || v === "us" || v === "ph" ? v : "all";
+    } catch {
+      return "all";
+    }
+  });
+  const setHiringStaffGroup = (g: HiringStaffGroup) => {
+    setHiringStaffGroupState(g);
+    try {
+      localStorage.setItem("hrHiring:staffGroup", g);
+    } catch {
+      /* private mode — just not remembered */
+    }
+  };
+  const candidateStaffGroup = (c: (typeof candidates)[number]): Exclude<HiringStaffGroup, "all"> => {
+    if ((c.branch || "").trim().toLowerCase() === "philippines") return "ph";
+    const code = candidatePositionOptions.find((r) => r.label === c.position)?.value || c.position || "";
+    const role = normalizeRole(code);
+    if (getRoleDepartmentBreakdown(code).department === "Technician" || role.startsWith("TECHNICIAN") || /technic/i.test(c.position || "")) return "tech";
+    return "us";
+  };
+  const hiringStaffGroupCounts = useMemo(() => {
+    const counts = { all: scopedCandidates.length, tech: 0, us: 0, ph: 0 };
+    for (const c of scopedCandidates) counts[candidateStaffGroup(c)]++;
+    return counts;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopedCandidates, candidatePositionOptions]);
+
+  const visibleCandidates = useMemo(
+    () => (hiringStaffGroup === "all" ? scopedCandidates : scopedCandidates.filter((c) => candidateStaffGroup(c) === hiringStaffGroup)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [scopedCandidates, hiringStaffGroup, candidatePositionOptions]
+  );
 
   // Column-filter option lists — sourced from the full visible roster (not
   // just what's currently filtered) so the checklists stay stable.
@@ -18426,7 +18469,34 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           sitting above every tab regardless of relevance. ── */}
       {activeTab === "hiring" && (
         <>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Candidate Pipeline</p>
+          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Candidate Pipeline</p>
+            {/* One staff-group filter for the whole Hiring view — the tiles below and the Hiring table both follow it. */}
+            <div className="inline-flex rounded-lg border border-white/10 bg-white/5 p-0.5" role="group" aria-label="Staff group">
+              {([
+                ["all", "All"],
+                ["tech", "Technician"],
+                ["us", "US Staff"],
+                ["ph", "PH Staff"],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={hiringStaffGroup === key}
+                  onClick={() => setHiringStaffGroup(key)}
+                  title={
+                    key === "tech" ? "Technical positions" : key === "us" ? "Parts and other US staff" : key === "ph" ? "Branch: Philippines" : "Every candidate"
+                  }
+                  className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-semibold transition ${
+                    hiringStaffGroup === key ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                  <span className="rounded-full bg-black/20 px-1.5 text-[10px] tabular-nums">{hiringStaffGroupCounts[key]}</span>
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 mb-4">
             {[
               { label: "Candidates", value: kpi.candidates, color: "text-blue-300", icon: <Users className="h-4 w-4" />, onClick: () => setHiringStatusFilter(new Set()) },
