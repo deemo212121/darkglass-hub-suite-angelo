@@ -8,6 +8,7 @@ import { RepairForecastPage } from "@/components/RepairForecastPage";
 import { DailyActivityPage } from "@/components/DailyActivityPage";
 import { TriageDashboardPage } from "@/components/TriageDashboardPage";
 import { UniversalActivityLogPage } from "@/components/UniversalActivityLogPage";
+import { ReportsLibraryPage } from "@/components/ReportsLibraryPage";
 import { useAuth } from "@/lib/auth";
 import { getModule, getSubModule, type ModuleDef, type SubModuleDef } from "@/lib/modules";
 import { GenericModulePage } from "@/components/GenericModulePage";
@@ -694,6 +695,8 @@ function SubModule() {
         ? <TechnicianWhereaboutsPage mod={mod} sub={sub} />
         : (sub as any).custom === "universal-activity-log"
         ? <UniversalActivityLogPage mod={mod} sub={sub} />
+        : (sub as any).custom === "reports-library"
+        ? <ReportsLibraryPage mod={mod} sub={sub} />
         : (sub as any).custom === "add-branch"
         ? <AddBranchPage mod={mod} sub={sub} />
         : <GenericModulePage mod={mod} sub={sub} />}

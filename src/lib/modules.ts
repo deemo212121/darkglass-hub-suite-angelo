@@ -1940,6 +1940,15 @@ const adminMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    {
+      slug: "reports-library",
+      title: "Reports Library",
+      description: "Imported reports for leadership (attendance and leave reports, dashboards), kept separate from live data. Admin and SuperAdmin only.",
+      custom: "reports-library" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
   ],
 };
 
