@@ -25,6 +25,8 @@
  * buttons up top — both pages answer "who's out and why", so they live
  * together now instead of in two different modules.
  */
+import { getAttendanceStartByProfile } from "@/lib/supabase/attendanceStart";
+import { isBeforeAttendanceStart } from "@/lib/attendanceStart";
 import { PasswordGateModal, isGateUnlocked } from "@/components/PasswordGateModal";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
@@ -217,11 +219,14 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   // Employee roster + PTO requests don't depend on the selected date —
   // loaded once, separately from the per-date timecard/notes fetch below.
   const [hireDateByProfileId, setHireDateByProfileId] = useState<Map<string, string>>(new Map());
+  // "Attendance starts on" — the later of Hire Date and the HR Hiring training/start date (src/lib/attendanceStart.ts).
+  const [attendanceStartById, setAttendanceStartById] = useState<Map<string, string>>(new Map());
   const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);
   useEffect(() => {
     getCompanyUsers()
       .then((rows) => {
         setProfiles(rows);
+        getAttendanceStartByProfile(rows).then(setAttendanceStartById).catch(() => {});
         // Hire dates power the Time Off Calendar's Sick Leave/Vacation PTO
         // badges (same tenure math Master List uses) — a separate fetch
         // since it isn't part of getCompanyUsers' own select.
@@ -396,8 +401,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       const dow = new Date(d + "T00:00:00").getDay();
       for (const p of activeFilteredProfiles) {
         if ((p.off_days ?? []).includes(dow)) continue; // scheduled rest day
-        const hireDate = hireDateByProfileId.get(p.id);
-        if (hireDate && d < hireDate) continue; // not hired yet as of this date
+        if (isBeforeAttendanceStart(d, attendanceStartById.get(p.id))) continue; // hasn't started yet (hire / training / start date)
         if (isOnLeave(p.id, d)) continue; // approved PTO/leave
         if (isCompanyHoliday(d)) continue; // company holiday
         if (checkedInSet.has(`${p.id}|${d}`)) continue; // checked in that day
@@ -424,7 +428,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       (a, b) => a.date.localeCompare(b.date) || (a.profile.display_name || a.profile.email).localeCompare(b.profile.display_name || b.profile.email)
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rangeDates, activeFilteredProfiles, checkedInSet, noteByKey, notesColFilter, hrStatusFilter, correctionFilter, ptoRequests, holidayDates, pendingCorrectionByKey, pendingPtoRequests, hireDateByProfileId]);
+  }, [rangeDates, activeFilteredProfiles, checkedInSet, noteByKey, notesColFilter, hrStatusFilter, correctionFilter, ptoRequests, holidayDates, pendingCorrectionByKey, pendingPtoRequests, attendanceStartById]);
 
   const onLeaveCount = useMemo(() => {
     let count = 0;
@@ -478,8 +482,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       const dow = new Date(d + "T00:00:00").getDay();
       for (const p of peActiveFilteredProfiles) {
         if ((p.off_days ?? []).includes(dow)) continue;
-        const hireDate = hireDateByProfileId.get(p.id);
-        if (hireDate && d < hireDate) continue;
+        if (isBeforeAttendanceStart(d, attendanceStartById.get(p.id))) continue;
         if (isOnLeave(p.id, d)) continue;
         if (isCompanyHoliday(d)) continue;
         if (checkedInSet.has(`${p.id}|${d}`)) continue;
@@ -493,7 +496,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       (a, b) => a.date.localeCompare(b.date) || (a.profile.display_name || a.profile.email).localeCompare(b.profile.display_name || b.profile.email)
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [peRangeDates, peActiveFilteredProfiles, checkedInSet, noteByKey, ptoRequests, holidayDates, pendingCorrectionByKey, pendingPtoRequests, hireDateByProfileId]);
+  }, [peRangeDates, peActiveFilteredProfiles, checkedInSet, noteByKey, ptoRequests, holidayDates, pendingCorrectionByKey, pendingPtoRequests, attendanceStartById]);
 
   const groupedPendingExplanationRows = useMemo(() => {
     const groups = new Map<string, AbsentRow[]>();

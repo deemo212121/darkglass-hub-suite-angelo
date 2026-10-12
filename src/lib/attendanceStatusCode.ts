@@ -17,6 +17,15 @@ import type { TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 
 export type AttendanceCode = "CP" | "CR" | "PD" | "PR";
 
+/**
+ * A SuperAdmin's direct time edit isn't stamped as a correction — the day
+ * keeps showing CP (Completed), not CR. HR / Admin edits still stamp it.
+ * Checks the REAL role (never a "view as" preview) plus extra roles.
+ */
+export function editStampsCorrection(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return ![role, ...(extraRoles ?? [])].some((r) => ["SUPERADMIN", "SUPERSUPERADMIN"].includes(String(r ?? "").trim().toUpperCase().replace(/\s+/g, "")));
+}
+
 export const ATTENDANCE_CODE_LABEL: Record<AttendanceCode, string> = {
   CP: "Completed",
   CR: "Corrected",

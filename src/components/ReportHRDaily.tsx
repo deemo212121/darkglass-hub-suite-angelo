@@ -1161,6 +1161,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // (initialHrSearchRef) — after that, this component's own state is the
   // source of truth and pushes into the URL, not the other way around. ──
   const navigate = useNavigate();
+  // "Not Created" → confirm the start date first, then open Add User with it
+  // (saved as the Master List Hire Date — attendance isn't counted before it).
+  const [startDateFor, setStartDateFor] = useState<{ id: string; date: string } | null>(null);
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string; viewCvCandidateId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
   const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList", "clockInCodes"] as const;
@@ -19046,23 +19049,71 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           })()}
                         </>
                       ) : (
-                        <Link
-                          to="/m/$module/$submodule"
-                          params={{ module: "hr", submodule: "user-management" }}
-                          search={{
-                            openAddUser: "1",
-                            prefillName: c.name || undefined,
-                            prefillEmail: c.email || undefined,
-                            prefillBranch: c.branch || undefined,
-                            prefillManager: branchManagerNameForCandidate(c) || undefined,
-                            prefillLoginName: deriveLoginName(c.name) || undefined,
-                            prefillUserType: candidatePositionOptions.find((r) => r.label === c.position)?.value || undefined,
-                          } as any}
+                        <>
+                        <button
+                          type="button"
+                          onClick={() => setStartDateFor({ id: c.id, date: c.trainingStartDate || c.startDate || "" })}
                           title="Add this person's user account, pre-filled from their candidate record"
                           className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 hover:text-red-200 whitespace-nowrap"
                         >
                           Not Created
-                        </Link>
+                        </button>
+                        {startDateFor?.id === c.id && (
+                          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={() => setStartDateFor(null)}>
+                            <div className="w-full max-w-sm rounded-lg border border-white/10 bg-slate-900 p-5 text-left" onClick={(e) => e.stopPropagation()}>
+                              <h3 className="text-base font-bold text-white">Start date for {c.name}</h3>
+                              <p className="mt-1 text-xs text-slate-400">
+                                Saved as their Master List Hire Date. Attendance isn't counted before this day — use the training start date if they have training.
+                              </p>
+                              <label className="mt-4 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                                Start date *
+                                <input
+                                  type="date"
+                                  value={startDateFor.date}
+                                  onChange={(e) => setStartDateFor({ id: c.id, date: e.target.value })}
+                                  className="mt-1 w-full rounded-lg border border-white/10 bg-slate-800/60 p-2 text-sm font-normal normal-case text-white focus:border-blue-500 focus:outline-none [color-scheme:dark]"
+                                  autoFocus
+                                />
+                              </label>
+                              {(c.trainingStartDate || c.startDate) && (
+                                <p className="mt-1 text-[11px] text-slate-500">
+                                  From HR Hiring: {c.trainingStartDate ? `training starts ${c.trainingStartDate}` : `start date ${c.startDate}`}
+                                </p>
+                              )}
+                              <div className="mt-5 flex gap-2">
+                                <button type="button" onClick={() => setStartDateFor(null)} className="flex-1 rounded-lg bg-slate-700 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-600">
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={!startDateFor.date}
+                                  onClick={() => {
+                                    const date = startDateFor.date;
+                                    setStartDateFor(null);
+                                    navigate({
+                                      to: "/m/$module/$submodule",
+                                      params: { module: "hr", submodule: "user-management" },
+                                      search: {
+                                        openAddUser: "1",
+                                        prefillName: c.name || undefined,
+                                        prefillEmail: c.email || undefined,
+                                        prefillBranch: c.branch || undefined,
+                                        prefillManager: branchManagerNameForCandidate(c) || undefined,
+                                        prefillLoginName: deriveLoginName(c.name) || undefined,
+                                        prefillUserType: candidatePositionOptions.find((r) => r.label === c.position)?.value || undefined,
+                                        prefillStartDate: date,
+                                      } as any,
+                                    });
+                                  }}
+                                  className="flex-1 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  Continue to Add User
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        </>
                       )}
                     </td>
                     )}

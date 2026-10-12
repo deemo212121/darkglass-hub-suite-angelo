@@ -24,11 +24,13 @@ import { getAttendanceNotes, upsertAttendanceNote, type AttendanceNoteRow } from
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { ROLE_LABELS, normalizeRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
-import { correctionApproverId, autoClockOutInfo, AUTO_CLOCKOUT_REVIEWED_PREFIX } from "@/lib/attendanceStatusCode";
+import { correctionApproverId, autoClockOutInfo, AUTO_CLOCKOUT_REVIEWED_PREFIX, editStampsCorrection } from "@/lib/attendanceStatusCode";
 import { getTicketAttendanceForTechnician, type TicketAttendanceRow } from "@/lib/supabase/technicianWhereabouts";
 import { getCompanyEmployeeRequests, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
+import { getAttendanceStartByProfile } from "@/lib/supabase/attendanceStart";
+import { isBeforeAttendanceStart } from "@/lib/attendanceStart";
 
-type StatusKind = "completed" | "corrected" | "review" | "missing" | "pending" | "leave" | "rest" | "working" | "upcoming";
+type StatusKind = "completed" | "corrected" | "review" | "missing" | "pending" | "leave" | "rest" | "working" | "upcoming" | "notstarted";
 
 interface DayStatus {
   kind: StatusKind;
@@ -59,6 +61,7 @@ const STATUS_LABEL: Record<StatusKind, string> = {
   rest: "Rest Day",
   working: "Clocked In",
   upcoming: "—",
+  notstarted: "Not Started",
 };
 
 const STATUS_CLASS: Record<StatusKind, string> = {
@@ -71,6 +74,7 @@ const STATUS_CLASS: Record<StatusKind, string> = {
   rest: "bg-slate-500/20 text-slate-300 border-slate-500/40",
   working: "bg-blue-500/20 text-blue-300 border-blue-500/40",
   upcoming: "bg-slate-500/10 text-slate-500 border-slate-500/20",
+  notstarted: "bg-slate-500/15 text-slate-300 border-slate-500/30",
 };
 
 const todayISO = () => {
@@ -99,9 +103,16 @@ function computeStatus(args: {
   corrections: TimecardCorrectionRow[];
   ptos: PtoRequestRow[];
   nameOf: (id: string) => string;
+  /** "Attendance starts on" (src/lib/attendanceStart.ts) — days before it are never Missing. */
+  attendanceStart?: string | null;
 }): DayStatus {
-  const { profile, date, today, entry, corrections, ptos, nameOf } = args;
+  const { profile, date, today, entry, corrections, ptos, nameOf, attendanceStart } = args;
   if (date > today) return { kind: "upcoming", detail: "" };
+  // Before their start (new hire whose training/start date is still ahead) — not absent.
+  // A punch on that day still shows normally below.
+  if (isBeforeAttendanceStart(date, attendanceStart) && !entry?.checkIn && !entry?.checkOut) {
+    return { kind: "notstarted", detail: `Starts ${fmtDay(attendanceStart!)}` };
+  }
 
   const pendingCorrection = corrections.find((c) => c.status === "pending");
   if (pendingCorrection) return { kind: "pending", detail: "Time Correction awaiting approval" };
@@ -150,7 +161,7 @@ function computeStatus(args: {
 }
 
 export function EmployeeAttendanceStatusTab() {
-  const { uid, role, extraRoles } = useAuth();
+  const { uid, role, extraRoles, realRole } = useAuth();
   // HR (and Admin/SuperAdmin) can fix punches straight from the name popup.
   const canEditPunches = [role, ...(extraRoles ?? [])].some((r) => ["HR", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(normalizeRole(r)));
   const [editingDay, setEditingDay] = useState<string | null>(null);
@@ -182,6 +193,8 @@ export function EmployeeAttendanceStatusTab() {
   const [statusFilter, setStatusFilter] = useState<StatusKind | "">("");
   const [search, setSearch] = useState("");
   const [openProfileId, setOpenProfileId] = useState<string | null>(null);
+  // "Attendance starts on" per employee — Hire Date / HR Hiring training or start date.
+  const [attendanceStartById, setAttendanceStartById] = useState<Map<string, string>>(new Map());
 
   // A range fetches exactly that range (the name popup shows it); a single
   // day also fetches the 13 days before it for the popup's history.
@@ -201,6 +214,7 @@ export function EmployeeAttendanceStatusTab() {
       ]);
       setNotes(noteRows);
       setProfiles(profileRows);
+      getAttendanceStartByProfile(profileRows).then(setAttendanceStartById).catch(() => {});
       setCsrComposition(composition);
       setEntries(entryRows);
       setCorrections(correctionRows);
@@ -242,6 +256,7 @@ export function EmployeeAttendanceStatusTab() {
       corrections: correctionsFor(p.id, day),
       ptos: ptosFor(p.id, day),
       nameOf,
+      attendanceStart: attendanceStartById.get(p.id) ?? null,
     });
 
   const visibleProfiles = useMemo(
@@ -323,7 +338,8 @@ export function EmployeeAttendanceStatusTab() {
     setEditError(null);
     try {
       const existing = await getEntryForDate(profileId, day);
-      await saveEntry(profileId, day, { ...draft, notes: existing?.notes ?? "" }, { correctedBy: myProfileId });
+      // SuperAdmin edits stay Completed (not "Corrected by") — see editStampsCorrection.
+      await saveEntry(profileId, day, { ...draft, notes: existing?.notes ?? "" }, editStampsCorrection(realRole ?? role, extraRoles) ? { correctedBy: myProfileId } : undefined);
       setEditingDay(null);
       setEntries(await getCompanyTimecardEntries(rangeStart, date));
     } catch (err) {

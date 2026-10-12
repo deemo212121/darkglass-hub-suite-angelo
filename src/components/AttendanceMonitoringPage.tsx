@@ -1,3 +1,4 @@
+import { getAttendanceStartByProfile } from "@/lib/supabase/attendanceStart";
 import { AlertCircle, AlertTriangle, Compass, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, ChevronRight, ChevronDown, Download, Calendar, FileText, CheckCircle, XCircle, Loader2, Settings } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
 import { toast } from "sonner";
@@ -548,12 +549,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       ]);
       setMyProfileId(profileId);
       setProfiles(profileRows);
-      getEmployeeInfoByProfileIds(profileRows.map((p) => p.id))
-        .then((infoMap) => {
-          const hireDates = new Map<string, string | null>();
-          for (const [pid, info] of infoMap) hireDates.set(pid, info.hireDate || null);
-          setHireDateByProfileId(hireDates);
-        })
+      // "Attendance starts on" — the later of Hire Date and the HR Hiring
+      // training/start date (src/lib/attendanceStart.ts), so a new hire whose
+      // start is still ahead isn't shown absent in the meantime.
+      getAttendanceStartByProfile(profileRows)
+        .then((starts) => setHireDateByProfileId(new Map(starts)))
         .catch(() => { /* best-effort — a technician just shows as usual (no hire-date suppression) if this fails */ });
       setCsrComposition(csrCompositionResult);
       setEntries(entryRows);
