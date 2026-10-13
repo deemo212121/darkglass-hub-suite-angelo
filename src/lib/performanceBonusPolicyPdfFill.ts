@@ -3,19 +3,21 @@
  * (Staff Form Checklist, New Technician tier). Fills the REAL PDF HR
  * supplied (src/assets/Performance Bonus Policy & Acknowledgment Form.pdf —
  * US Letter, 2 pages, no AcroForm fields) the same way the Flash travel
- * agreement does, with the company logo stamped on page 1 only
- * (addLogoHeader — the title sits at y=695.5, same clearance as the other
- * forms that use it).
+ * agreement does, on the company letterhead (logo top-left, ribbon
+ * top-right, contact footer — addLetterhead) with a faint logo watermark;
+ * see loadBlankPerformanceBonusPolicyBytes.
  *
  * Technician-only: the signature block on the last page (index 1) is
- *   Technician Name (Print): ____   (line x 196.8–411.9, y 276.2)
- *   Technician Signature: ____      (line x 180.3–419.3, y 251.2)
- *   Date: ____                      (line x 101.4–245.0, y 226.1)
+ *   Technician Name (Print): ____   (line x 196.8–412.0, y 251.0)
+ *   Technician Signature: ____      (line x 180.2–419.3, y 226.0)
+ *   Date: ____                      (line x 101.5–244.9, y 201.0)
+ * (Oct 13 2026 version — "Full Disqualification" moved to page 2, which
+ * pushed the signature block down one line; re-measure if the PDF changes.)
  * measured off the source PDF's text items (pdfjs-dist). No employer line,
  * so the document is done once the technician signs.
  */
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import { addLogoHeader } from "./pdfLogoHeader";
+import { addLetterhead, addLogoWatermark } from "./pdfLogoHeader";
 import { sanitizeForFont } from "./pdfFillSanitize";
 
 export const PERFORMANCE_BONUS_POLICY_TITLE = "Performance Bonus Policy & Acknowledgment Form";
@@ -29,24 +31,60 @@ export interface PerformanceBonusPolicyFormData {
 
 export interface PerformanceBonusRect { x: number; y: number; w: number; h: number }
 
-/** Page size and the signing page's field boxes (PDF units, origin bottom-left). */
+/**
+ * The form's own content is shrunk to 92% and re-centered so it sits
+ * between the full-size letterhead header and footer (addLetterhead) with
+ * room to breathe: the title's top (y≈705 in the source) lands at y≈688,
+ * ~28pt under the logo, and the lowest text stays well above the footer.
+ * A point (x, y) of the source PDF ends up at (S·x + DX, S·y + DY).
+ */
+const CONTENT_SCALE = 0.92;
+const CONTENT_DX = (612 * (1 - CONTENT_SCALE)) / 2;
+const CONTENT_DY = 688 - CONTENT_SCALE * 705;
+const place = (r: PerformanceBonusRect): PerformanceBonusRect => ({
+  x: CONTENT_SCALE * r.x + CONTENT_DX,
+  y: CONTENT_SCALE * r.y + CONTENT_DY,
+  w: CONTENT_SCALE * r.w,
+  h: CONTENT_SCALE * r.h,
+});
+
+/** Page size and the signing page's field boxes (PDF units, origin bottom-left) — already moved with the shrunk content. */
 export const PERFORMANCE_BONUS_LAYOUT = {
   pageWidth: 612,
   pageHeight: 792,
   rects: {
-    name: { x: 200, y: 278, w: 210, h: 14 },
+    // Measured on the source PDF (Oct 13 2026 version: lines at y 251.0 / 226.0 / 201.0), then placed like its content.
+    name: place({ x: 200, y: 253.1, w: 210, h: 14 }),
     // Right of the "Technician Signature:" label (x 72–177.5); up to the name line above.
-    signature: { x: 185, y: 252.5, w: 230, h: 22 },
-    dateSigned: { x: 105, y: 228, w: 140, h: 14 },
+    signature: place({ x: 185, y: 227.6, w: 230, h: 22 }),
+    dateSigned: place({ x: 105, y: 203.1, w: 140, h: 14 }),
   } satisfies Record<string, PerformanceBonusRect>,
 };
 
-/** The blank form with the company logo on page 1 — what the signing page shows. */
+/**
+ * The blank form with the company letterhead on every page (logo top-left,
+ * ribbon top-right, contact footer) and a faint logo watermark — what the
+ * signing page shows, and what the signed PDF is built on.
+ */
 export async function loadBlankPerformanceBonusPolicyBytes(): Promise<Uint8Array> {
   const mod = await import("@/assets/Performance Bonus Policy & Acknowledgment Form.pdf");
   const res = await fetch(mod.default);
-  const pdfDoc = await PDFDocument.load(new Uint8Array(await res.arrayBuffer()));
-  await addLogoHeader(pdfDoc, { firstPageOnly: true });
+  const source = await PDFDocument.load(new Uint8Array(await res.arrayBuffer()));
+  // Fresh pages, built bottom-up: the original page shrunk to CONTENT_SCALE
+  // and re-centered, then the faint watermark, then the full-size letterhead.
+  // The watermark goes ON TOP of the content: HR's PDFs (Word / Google Docs
+  // exports) can paint a solid white page background, which would hide a
+  // watermark drawn underneath. Drawing the source as an embedded page
+  // (instead of scaleContent/translateContent) keeps later drawing — the
+  // letterhead, and the name/signature/date at fill time — in plain page coordinates.
+  const pdfDoc = await PDFDocument.create();
+  const embedded = await pdfDoc.embedPages(source.getPages());
+  for (const ep of embedded) pdfDoc.addPage([ep.width, ep.height]);
+  embedded.forEach((ep, i) => {
+    pdfDoc.getPage(i).drawPage(ep, { x: CONTENT_DX, y: CONTENT_DY, xScale: CONTENT_SCALE, yScale: CONTENT_SCALE });
+  });
+  await addLogoWatermark(pdfDoc);
+  await addLetterhead(pdfDoc);
   return pdfDoc.save();
 }
 
