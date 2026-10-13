@@ -2165,7 +2165,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     allProfileById,
     myProfileId,
   ]);
+  // Pending first (they still need someone to act), then everything already
+  // decided; each group by work date in the chosen direction.
   const sortedCorrections = useMemo(() => [...filteredCorrections].sort((a, b) => {
+      const pendingFirst = Number(b.status === "pending") - Number(a.status === "pending");
+      if (pendingFirst !== 0) return pendingFirst;
       const d = a.workDate.localeCompare(b.workDate) || (a.createdAt ?? "").localeCompare(b.createdAt ?? "");
       return workDateSort === "desc" ? -d : d;
     }), [filteredCorrections, workDateSort]);
@@ -3506,7 +3510,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 <button
                   type="button"
                   onClick={() => setWorkDateSort((d) => (d === "desc" ? "asc" : "desc"))}
-                  title={workDateSort === "desc" ? "Newest first — click for oldest first" : "Oldest first — click for newest first"}
+                  title={workDateSort === "desc" ? "Pending first, then newest first — click for oldest first" : "Pending first, then oldest first — click for newest first"}
                   className="inline-flex items-center gap-1 uppercase hover:text-white"
                 >
                   Work Date <span className="text-[10px]">{workDateSort === "desc" ? "▼" : "▲"}</span>
