@@ -1,6 +1,6 @@
 import { getAttendanceStartByProfile } from "@/lib/supabase/attendanceStart";
 import { getRestDayHistory } from "@/lib/supabase/restDayHistory";
-import { isRestDayOn, type RestDayHistory } from "@/lib/restDays";
+import { isRestDayOn, requiredTimesOn, type RestDayHistory } from "@/lib/restDays";
 import { AlertCircle, AlertTriangle, Compass, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, ChevronRight, ChevronDown, Download, Calendar, FileText, CheckCircle, XCircle, Loader2, Settings } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
 import { toast } from "sonner";
@@ -76,6 +76,7 @@ import {
   type CorrectionStatus,
 } from "@/lib/supabase/timecardCorrections";
 import { CorrectionManagerSignModal, CorrectionHrSignModal } from "@/components/CorrectionSignModals";
+import { StageNote } from "@/components/StageNote";
 import { useAttention, badgeText } from "@/lib/attention";
 
 /** A pending trainee punch shown as a regular timecard entry (approved days are already copied to timecard_entries). */
@@ -495,6 +496,7 @@ const TOUR_SAMPLE_PTO: PtoRequestRow = {
   exceptionType: "missed_workday", otherDescription: "", employeeSignatureUrl: null, employeeSignatureName: "Sample Employee", employeeSignedAt: null,
   managerComments: "", managerSignatureUrl: null, managerSignatureName: null, managerSignedAt: null, hrPaperworkStatus: "pending",
   hrSignatureUrl: null, hrSignatureName: null, hrSignedAt: null, hrReceivedDate: null, hrReviewerName: null, pdfUrl: null,
+  managerNote: null, hrNote: null, accountingNote: null, accountingSignatureUrl: null, accountingSignatureName: null, accountingSignedAt: null,
 };
 
 export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
@@ -1256,6 +1258,15 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     (p: ProfileRow, dateISO: string): boolean => isRestDayOn(restHistory, p.id, dateISO, p.off_days),
     [restHistory]
   );
+  // Time In / Time Out Required in force on that day (migration 0375) — a
+  // later change to someone's times doesn't re-judge earlier days as late.
+  const requiredFor = useCallback(
+    (p: ProfileRow, dateISO: string): [string, string] => {
+      const t = requiredTimesOn(restHistory, p.id, dateISO, { checkIn: p.required_check_in, checkOut: p.required_check_out });
+      return [t.checkIn, t.checkOut];
+    },
+    [restHistory]
+  );
 
   const isBeforeHireFor = useCallback(
     (profileId: string, dateISO: string): boolean => {
@@ -1319,7 +1330,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const country = p.assigned_branch === "Philippines" ? "PH" : "US";
       const graceMinutes = payGraceMinutesFor(country);
       const hasPendingCorrection = hasPendingCorrectionFor(p.id, dateISO);
-      const alerts = computeAlerts(checkIn, checkOut, mealIn, mealOut, p.required_check_in || "", p.required_check_out || "", isOffDay, rowNowHHMM, graceMinutes, p.working_hours, hasPendingCorrection);
+      const alerts = computeAlerts(checkIn, checkOut, mealIn, mealOut, ...requiredFor(p, dateISO), isOffDay, rowNowHHMM, graceMinutes, p.working_hours, hasPendingCorrection);
       const clockedInByName = entry?.clockedInBy ? allProfileById.get(entry.clockedInBy)?.display_name || null : null;
       return {
         profileId: p.id,
@@ -1338,14 +1349,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         alerts,
         isOffDay,
         clockedInBy: clockedInByName,
-        requiredCheckIn: p.required_check_in || "",
-        requiredCheckOut: p.required_check_out || "",
+        requiredCheckIn: requiredFor(p, dateISO)[0],
+        requiredCheckOut: requiredFor(p, dateISO)[1],
         checkoutProposal: checkOut ? null : checkoutProposalsByKey.get(`${p.id}|${dateISO}`) ?? null,
         lastTicketUpdate: lastTicketUpdateByProfile.get(p.id) ?? null,
         tickets: ticketsByNameAndDate.get(`${(p.display_name || p.email || "").trim().toLowerCase()}|${dateISO}`) ?? [],
       };
     },
-    [nowByTimezone, allProfileById, checkoutProposalsByKey, lastTicketUpdateByProfile, ticketsByNameAndDate, isCompanyHolidayFor, hasPendingCorrectionFor, isBeforeHireFor, isOnLeaveFor, isRestDayFor]
+    [nowByTimezone, allProfileById, checkoutProposalsByKey, lastTicketUpdateByProfile, ticketsByNameAndDate, isCompanyHolidayFor, hasPendingCorrectionFor, isBeforeHireFor, isOnLeaveFor, isRestDayFor, requiredFor]
   );
 
   const dailyRecords: DailyRecord[] = useMemo(
@@ -1507,7 +1518,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const pct = workingDays > 0 ? Math.round((presentCount / workingDays) * 100) : 100;
       return { profileId: p.id, name: p.display_name || p.email, cells, presentCount, workingDays, pct };
     });
-  }, [summaryProfiles, weekDates, entriesByKey, traineePendingByKey, todayISO, isBeforeHireFor, isRestDayFor]);
+  }, [summaryProfiles, weekDates, entriesByKey, traineePendingByKey, todayISO, isBeforeHireFor, isRestDayFor, requiredFor]);
 
   // Narrows weeklySummary to rows matching the selected day + status (e.g.
   // "who was absent on Wednesday") — "all" for either just shows everyone,
@@ -1536,7 +1547,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         if (checkIn) present++;
         const monthlyCountry = p.assigned_branch === "Philippines" ? "PH" : "US";
         const monthlyGraceMinutes = payGraceMinutesFor(monthlyCountry);
-        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", p.required_check_in || "", p.required_check_out || "", false, null, monthlyGraceMinutes, p.working_hours);
+        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", ...requiredFor(p, iso), false, null, monthlyGraceMinutes, p.working_hours);
         if (alerts.some(isPenalizedLateAlert)) late++;
       }
       const absent = Math.max(0, workingDays - present);
@@ -1544,7 +1555,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const status = pct >= 90 ? "Good" : pct >= 70 ? "Warning" : "Poor";
       return { profileId: p.id, name: p.display_name || p.email, workingDays, present, absent, late, pct, status };
     });
-  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor, isRestDayFor]);
+  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor, isRestDayFor, requiredFor]);
 
   // ---- Custom-range summary — same shape as monthlySummary above, just
   // over whatever [customRangeStart, customRangeEnd] the user picked instead
@@ -1567,7 +1578,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         const checkIn = entry?.checkIn || "";
         const checkOut = entry?.checkOut || "";
         if (checkIn) present++;
-        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", p.required_check_in || "", p.required_check_out || "", false, null, ATTENDANCE_GRACE_MINUTES, p.working_hours);
+        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", ...requiredFor(p, iso), false, null, ATTENDANCE_GRACE_MINUTES, p.working_hours);
         if (alerts.some((a) => a.includes("Late"))) late++;
       }
       const absent = Math.max(0, workingDays - present);
@@ -1575,7 +1586,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const status = pct >= 90 ? "Good" : pct >= 70 ? "Warning" : "Poor";
       return { profileId: p.id, name: p.display_name || p.email, workingDays, present, absent, late, pct, status };
     });
-  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor, isRestDayFor]);
+  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor, isRestDayFor, requiredFor]);
 
   // Day-by-day breakdown behind the Custom Attendance Summary's Present/
   // Absent/Late numbers — same day-iteration/off-day rules as customSummary
@@ -1605,7 +1616,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const checkOut = entry?.checkOut || "";
       const mealStart = entry?.mealStart || "";
       const mealEnd = entry?.mealEnd || "";
-      const alerts = computeAlerts(checkIn, checkOut, mealStart, mealEnd, p.required_check_in || "", p.required_check_out || "", false, null, ATTENDANCE_GRACE_MINUTES, p.working_hours);
+      const alerts = computeAlerts(checkIn, checkOut, mealStart, mealEnd, ...requiredFor(p, iso), false, null, ATTENDANCE_GRACE_MINUTES, p.working_hours);
       days.push({ date: iso, checkIn, mealStart, mealEnd, checkOut, isLate: alerts.some((a) => a.includes("Late")) });
     }
     return days;
@@ -3212,6 +3223,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               Manager: {request.managerStatus.charAt(0).toUpperCase() + request.managerStatus.slice(1)}
                               {request.managerReviewedBy ? ` — ${profileName(request.managerReviewedBy)}` : ""}
                             </span>
+                            <StageNote note={request.managerNote} status={request.managerStatus} />
                             <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
                               request.hrStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
                               : request.hrStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
@@ -3220,6 +3232,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               HR: {request.hrStatus.charAt(0).toUpperCase() + request.hrStatus.slice(1)}
                               {request.hrReviewedBy ? ` — ${profileName(request.hrReviewedBy)}` : ""}
                             </span>
+                            <StageNote note={request.hrNote} status={request.hrStatus === "pending" && request.hrNote ? "signed" : request.hrStatus} />
                             <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
                               request.accountingStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
                               : request.accountingStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
@@ -3228,6 +3241,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               Accounting: {request.accountingStatus.charAt(0).toUpperCase() + request.accountingStatus.slice(1)}
                               {request.accountingReviewedBy ? ` — ${profileName(request.accountingReviewedBy)}` : ""}
                             </span>
+                            <StageNote note={request.accountingNote} status={request.accountingStatus} />
                           </div>
                         </td>
                         <td className="px-3 py-3">
@@ -3352,12 +3366,15 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           <p className="text-xs text-slate-500 mt-1">
                             Manager: {request.managerStatus}{request.managerReviewedBy ? ` by ${profileName(request.managerReviewedBy)}` : ""}{request.managerReviewedAt ? ` on ${request.managerReviewedAt.slice(0, 10)}` : ""}
                           </p>
+                          <StageNote note={request.managerNote} status={request.managerStatus} />
                           <p className="text-xs text-slate-500">
                             HR: {request.hrStatus}{request.hrReviewedBy ? ` by ${profileName(request.hrReviewedBy)}` : ""}{request.hrReviewedAt ? ` on ${request.hrReviewedAt.slice(0, 10)}` : ""}
                           </p>
+                          <StageNote note={request.hrNote} status={request.hrStatus === "pending" && request.hrNote ? "signed" : request.hrStatus} />
                           <p className="text-xs text-slate-500">
                             Accounting: {request.accountingStatus}{request.accountingReviewedBy ? ` by ${profileName(request.accountingReviewedBy)}` : ""}{request.accountingReviewedAt ? ` on ${request.accountingReviewedAt.slice(0, 10)}` : ""}
                           </p>
+                          <StageNote note={request.accountingNote} status={request.accountingStatus} />
                         </div>
                       </div>
                     </div>
@@ -3547,7 +3564,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                         </td>
                         <td className="px-3 py-3 text-slate-300">{correction.reason || "—"}</td>
                         <td className="px-3 py-3 max-w-xs">
-                          <CorrectionComments row={correction} />
+                          <CorrectionComments row={correction} nameOf={profileName} />
                         </td>
                         <td className="px-3 py-3">
                           <CorrectionStageBadges row={correction} />
@@ -3823,6 +3840,22 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       </span>
                     )}
                   </div>
+                  {(selectedCorrection.managerNote || selectedCorrection.hrNote || selectedCorrection.accountingNote) && (
+                    <div className="mt-2 space-y-1.5">
+                      {([
+                        ["Manager", selectedCorrection.managerNote],
+                        ["HR", selectedCorrection.hrNote],
+                        ["Accounting", selectedCorrection.accountingNote],
+                      ] as const).map(([label, note]) =>
+                        note ? (
+                          <div key={label}>
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label} notes</p>
+                            <StageNote note={note} />
+                          </div>
+                        ) : null
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 

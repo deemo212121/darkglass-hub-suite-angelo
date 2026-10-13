@@ -1,4 +1,5 @@
 import { RejectReasonHost } from "@/components/RejectReasonHost";
+import { AccountingSignHost } from "@/components/AccountingSignHost";
 import { AppToaster } from "@/components/ui-kit/AppToaster";
 import "@/lib/promiseTryPolyfill";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -177,6 +178,7 @@ function RootComponent() {
             <Outlet />
             {/* "Reason for rejecting" popup for every Reject action — mobile too. */}
             <RejectReasonHost />
+            <AccountingSignHost />
             <AppToaster mobile={isMobilePage} />
             {!hideChrome && <TicketSearchFab />}
             {!hideChrome && <FloatingMessenger />}

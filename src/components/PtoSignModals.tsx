@@ -71,6 +71,7 @@ export function PtoManagerSignModal({ request, companyId, profiles, reviewerId, 
   const handleSubmit = async () => {
     if (preview) { setError("This is a sample for the guided tour — nothing is signed."); return; }
     if (!reviewerId || !companyId) { setError("Missing your profile/company — try again in a moment."); return; }
+    if (!comments.trim()) { setError("Please add your manager comments first."); return; }
     if (!sigPad.hasContent()) { setError("Please add your signature first."); return; }
     const dataUrl = sigPad.toDataURL();
     if (!dataUrl) { setError("Please add your signature first."); return; }
@@ -102,7 +103,9 @@ export function PtoManagerSignModal({ request, companyId, profiles, reviewerId, 
         <p className="text-xs text-slate-400 mb-3">Signing approves this request as the manager stage.</p>
         <div className="space-y-3 mb-4">
           <div>
-            <label className="block text-xs text-slate-400 uppercase mb-1">Manager Comments</label>
+            <label className="block text-xs text-slate-400 uppercase mb-1">
+              Manager Comments <span className="text-red-400 normal-case">* required</span>
+            </label>
             <textarea value={comments} onChange={(e) => setComments(e.target.value)} rows={3} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none resize-none" />
           </div>
           <div>
@@ -130,6 +133,7 @@ export function PtoManagerSignModal({ request, companyId, profiles, reviewerId, 
 export function PtoHrSignModal({ request, companyId, profiles, reviewerId, reviewerName, onClose, onSigned, preview, finalize }: SignModalBaseProps) {
   const [receivedDate, setReceivedDate] = useState(todayISO());
   const [actionStatus, setActionStatus] = useState<"approved" | "additional_review_required">("approved");
+  const [hrNotes, setHrNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sigPad = useSignaturePad({ width: 400, height: 110, defaultName: reviewerName });
@@ -137,6 +141,7 @@ export function PtoHrSignModal({ request, companyId, profiles, reviewerId, revie
   const handleSubmit = async () => {
     if (preview) { setError("This is a sample for the guided tour — nothing is signed."); return; }
     if (!reviewerId || !companyId) { setError("Missing your profile/company — try again in a moment."); return; }
+    if (!hrNotes.trim()) { setError("Please add your HR notes first."); return; }
     if (!sigPad.hasContent()) { setError("Please add your signature first."); return; }
     const dataUrl = sigPad.toDataURL();
     if (!dataUrl) { setError("Please add your signature first."); return; }
@@ -147,7 +152,7 @@ export function PtoHrSignModal({ request, companyId, profiles, reviewerId, revie
       const { pdfUrl, hrSignatureUrl } = await buildPtoHrSignaturePdf({
         request, companyId, employeeInfo, hrReviewerName: reviewerName, hrReceivedDate: receivedDate, hrActionStatus: actionStatus, hrSignatureDataUrl: dataUrl,
       });
-      await signPtoHrPaperwork(request.id, reviewerName, { url: hrSignatureUrl, name: reviewerName }, receivedDate, actionStatus, pdfUrl);
+      await signPtoHrPaperwork(request.id, reviewerName, { url: hrSignatureUrl, name: reviewerName }, receivedDate, actionStatus, pdfUrl, hrNotes.trim());
       // Signing the paperwork as "Approved" also casts the HR quorum vote
       // (if nobody already has) — this is now the ONLY way to approve as HR
       // on an exception-report row; the plain one-click "Approve (HR)"
@@ -155,7 +160,7 @@ export function PtoHrSignModal({ request, companyId, profiles, reviewerId, revie
       // without this signature. "Additional Review Required" intentionally
       // does NOT vote — the request stays exactly as undecided as it was.
       if (actionStatus === "approved" && request.hrStatus === "pending" && reviewerId) {
-        await reviewPtoStage(request, "hr", "approved", reviewerId, reviewerName);
+        await reviewPtoStage(request, "hr", "approved", reviewerId, reviewerName, undefined, hrNotes.trim());
       }
       onSigned();
     } catch (err) {
@@ -194,6 +199,12 @@ export function PtoHrSignModal({ request, companyId, profiles, reviewerId, revie
             {actionStatus === "approved" && request.hrStatus === "pending" && (
               <p className="text-[11px] text-slate-500 mt-1.5">Signing as Approved also casts your HR approval on this request.</p>
             )}
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 uppercase mb-1">
+              HR Notes <span className="text-red-400 normal-case">* required</span>
+            </label>
+            <textarea value={hrNotes} onChange={(e) => { setHrNotes(e.target.value); if (error && e.target.value.trim()) setError(null); }} rows={3} placeholder="e.g. Proof received and verified." className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none resize-none" />
           </div>
           <div>
             <label className="block text-xs text-slate-400 uppercase mb-2">Your Signature</label>

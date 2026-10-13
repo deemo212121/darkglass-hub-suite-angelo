@@ -15,7 +15,8 @@
  * working unchanged.
  */
 
-import { requireRejectReason } from "@/lib/rejectReason";
+import { requireRejectReason, requireApproveNote, RejectCancelledError, APPROVE_CANCELLED_MESSAGE } from "@/lib/rejectReason";
+import { askAccountingSignature } from "@/lib/accountingSignature";
 import { chainCanApproveCorrection } from "@/lib/approvalDirectory";
 import { supabase } from "./client";
 import { getServerNow, zonedDateKey } from "@/lib/serverTime";
@@ -82,6 +83,14 @@ export interface TimecardCorrectionRow {
   pdfUrl: string | null;
   /** Why it was rejected — "Rejected by <name> (<step>): <reason>" lines (migration 0334). */
   reviewNote: string | null;
+  /** Each stage's required note on its decision (migration 0376) — shown under that stage's status. */
+  managerNote: string | null;
+  hrNote: string | null;
+  accountingNote: string | null;
+  /** Accounting's signature on an exception-report approval (migration 0376). */
+  accountingSignatureUrl: string | null;
+  accountingSignatureName: string | null;
+  accountingSignedAt: string | null;
 }
 
 export interface TimecardCorrectionHistoryRow {
@@ -101,7 +110,16 @@ const SELECT_COLUMNS = SELECT_COLUMNS_NO_NOTE + ", review_note";
 // review_note only exists after migration 0334 — if a read fails on it,
 // drop it for the rest of the session instead of breaking every list.
 let noteColumnMissing = false;
+// Same for the stage notes (migration 0376).
+const STAGE_NOTE_COLUMNS = ", manager_note, hr_note, accounting_note, accounting_signature_url, accounting_signature_name, accounting_signed_at";
+let stageNotesMissing = false;
+const isStageNoteError = (error: { message: string } | null) => !!error && /manager_note|hr_note|accounting_note|accounting_sign/.test(error.message);
 async function selectWithNoteFallback(run: (cols: string) => PromiseLike<{ data: any; error: { message: string } | null }>): Promise<{ data: any; error: { message: string } | null }> {
+  if (!stageNotesMissing && !noteColumnMissing) {
+    const withNotes = await run(SELECT_COLUMNS + STAGE_NOTE_COLUMNS);
+    if (!isStageNoteError(withNotes.error)) return withNotes;
+    stageNotesMissing = true;
+  }
   let res = await run(noteColumnMissing ? SELECT_COLUMNS_NO_NOTE : SELECT_COLUMNS);
   if (res.error && !noteColumnMissing && /review_note/.test(res.error.message)) {
     noteColumnMissing = true;
@@ -156,6 +174,12 @@ function mapRow(row: any): TimecardCorrectionRow {
     hrReviewerName: row.hr_reviewer_name ?? null,
     pdfUrl: row.pdf_url ?? null,
     reviewNote: row.review_note ?? null,
+    managerNote: row.manager_note ?? (row.manager_comments || null),
+    hrNote: row.hr_note ?? null,
+    accountingNote: row.accounting_note ?? null,
+    accountingSignatureUrl: row.accounting_signature_url ?? null,
+    accountingSignatureName: row.accounting_signature_name ?? null,
+    accountingSignedAt: row.accounting_signed_at ?? null,
   };
 }
 
@@ -565,18 +589,39 @@ export async function reviewCorrectionStage(
    * the caller, persist the URL here).
    */
   signature?: { url: string; name: string; comments: string; pdfUrl: string },
-  /** Why it's rejected — asked for with the shared popup when not given (throws RejectCancelledError if the reviewer cancels). */
-  rejectReason?: string
+  /**
+   * This stage's note (migration 0376) — the rejection reason, or the
+   * approval note. Required either way: asked for with the shared popup
+   * when not given (throws RejectCancelledError if the reviewer cancels).
+   * A manager's signed approval uses its comments when this is empty.
+   */
+  stageNote?: string
 ): Promise<void> {
   const nowIso = new Date().toISOString();
   const stageLabelFor = stage === "manager" ? "Manager" : stage === "hr" ? "HR" : "Accounting";
-  const reason = decision === "rejected" ? await requireRejectReason(rejectReason, `Reject this time correction (${stageLabelFor})`) : "";
+  const reason = decision === "rejected" ? await requireRejectReason(stageNote, `Reject this time correction (${stageLabelFor})`) : "";
+  // Accounting approving an exception-report correction signs like the
+  // Manager does — comments + signature stamped in the PDF (migration 0376).
+  const accountingSigned = stage === "accounting" && decision === "approved" && !signature ? await signCorrectionAsAccounting(correction.id, reviewerName) : null;
+  const note =
+    decision === "rejected"
+      ? reason
+      : accountingSigned
+        ? accountingSigned.comments
+        : await requireApproveNote(stageNote || signature?.comments, `Approve this time correction (${stageLabelFor}) — notes`);
   const stagePayload: Record<string, unknown> =
     stage === "manager"
       ? { manager_status: decision, manager_reviewed_by: reviewerId, manager_reviewed_at: nowIso }
       : stage === "hr"
         ? { hr_status: decision, hr_reviewed_by: reviewerId, hr_reviewed_at: nowIso }
         : { accounting_status: decision, accounting_reviewed_by: reviewerId, accounting_reviewed_at: nowIso };
+  if (!stageNotesMissing) stagePayload[`${stage}_note`] = note;
+  if (accountingSigned) {
+    stagePayload.accounting_signature_url = accountingSigned.url;
+    stagePayload.accounting_signature_name = reviewerName;
+    stagePayload.accounting_signed_at = nowIso;
+    stagePayload.pdf_url = accountingSigned.pdfUrl;
+  }
 
   if (stage === "manager" && decision === "approved" && signature) {
     stagePayload.manager_signature_url = signature.url;
@@ -602,6 +647,15 @@ export async function reviewCorrectionStage(
     .eq("id", correction.id)
     .select(noteColumnMissing ? SELECT_COLUMNS_NO_NOTE : SELECT_COLUMNS)
     .single();
+  if (isStageNoteError(error)) {
+    // 0376 not run yet — save the decision without the note column.
+    stageNotesMissing = true;
+    delete stagePayload[`${stage}_note`];
+    delete stagePayload.accounting_signature_url;
+    delete stagePayload.accounting_signature_name;
+    delete stagePayload.accounting_signed_at;
+    ({ data, error } = await supabase.from("timecard_corrections").update(stagePayload).eq("id", correction.id).select(noteColumnMissing ? SELECT_COLUMNS_NO_NOTE : SELECT_COLUMNS).single());
+  }
   // Before migration 0334 there's no review_note column — save the decision without it.
   if (error && /review_note/.test(error.message)) {
     delete stagePayload.review_note;
@@ -616,7 +670,7 @@ export async function reviewCorrectionStage(
   // Accounting approves with a click, not a signature — rebuild the Exception
   // Report PDF so its "7. Accounting Approval" section shows who and when.
   // Best-effort and in the background: the approval itself is already saved.
-  if (stage === "accounting" && decision === "approved" && updated.exceptionType !== null) {
+  if (stage === "accounting" && decision === "approved" && updated.exceptionType !== null && !accountingSigned) {
     void (async () => {
       const [{ regenerateCorrectionPdf }, { employeeInfoFor }] = await Promise.all([
         import("@/lib/timecardCorrectionPdf"),
@@ -718,6 +772,36 @@ export async function reviewCorrectionStage(
 }
 
 /**
+ * Accounting's sign popup for an exception-report correction — returns null
+ * for a correction with no Exception Report (those just take the notes
+ * popup). Cancelling throws RejectCancelledError (nothing saved). Renders
+ * and uploads the PDF with the new signature before the approval is saved.
+ */
+async function signCorrectionAsAccounting(correctionId: string, reviewerName: string): Promise<{ url: string; pdfUrl: string; comments: string } | null> {
+  const { data } = await selectWithNoteFallback((cols) => supabase.from("timecard_corrections").select(cols).eq("id", correctionId).maybeSingle());
+  if (!data || data.exception_type == null) return null;
+  const full = mapRow(data);
+  const signed = await askAccountingSignature(`Signing approves this correction as the Accounting stage (${full.workDate}).`, reviewerName);
+  if (!signed) throw new RejectCancelledError(APPROVE_CANCELLED_MESSAGE);
+  const [{ buildCorrectionAccountingSignaturePdf }, { employeeInfoFor }] = await Promise.all([
+    import("@/lib/timecardCorrectionPdf"),
+    import("@/components/CorrectionSignModals"),
+  ]);
+  const profiles = await getCompanyUsers();
+  const companyId = profiles.find((p) => p.id === full.profileId)?.company_id;
+  if (!companyId) throw new Error("Couldn't find this employee's company — try again in a moment.");
+  const { pdfUrl, accountingSignatureUrl } = await buildCorrectionAccountingSignaturePdf({
+    correction: full,
+    companyId,
+    employeeInfo: employeeInfoFor(full, profiles),
+    accountingName: reviewerName,
+    accountingComments: signed.comments,
+    accountingSignatureDataUrl: signed.dataUrl,
+  });
+  return { url: accountingSignatureUrl, pdfUrl, comments: signed.comments };
+}
+
+/**
  * HR rejects a correction from Exception Reports — including one that was
  * already fully approved. Any single stage rejecting makes the overall
  * status "rejected" (DB trigger, migration 0270). If it HAD been approved,
@@ -731,10 +815,11 @@ export async function rejectCorrectionAsHr(
     "id" | "profileId" | "workDate" | "managerId" | "status" | "originalCheckIn" | "originalCheckOut" | "originalMealStart" | "originalMealEnd" | "correctedMealStart" | "correctedMealEnd"
   >,
   reviewerId: string,
-  reviewerName: string
+  reviewerName: string,
+  reason?: string
 ): Promise<void> {
   const wasApproved = c.status === "approved";
-  await reviewCorrectionStage(c, "hr", "rejected", reviewerId, reviewerName);
+  await reviewCorrectionStage(c, "hr", "rejected", reviewerId, reviewerName, undefined, undefined, reason);
   if (!wasApproved) return;
 
   const { data: existing } = await supabase
@@ -787,21 +872,27 @@ export async function signCorrectionHrPaperwork(
   signature: { url: string; name: string },
   hrReceivedDate: string,
   hrActionStatus: Exclude<HrPaperworkStatus, "pending">,
-  pdfUrl: string
+  pdfUrl: string,
+  /** HR's note (migration 0376), shown under the HR status. */
+  hrNote?: string
 ): Promise<void> {
   const nowIso = new Date().toISOString();
-  const { error } = await supabase
-    .from("timecard_corrections")
-    .update({
-      hr_paperwork_status: hrActionStatus,
-      hr_signature_url: signature.url,
-      hr_signature_name: signature.name,
-      hr_signed_at: nowIso,
-      hr_received_date: hrReceivedDate || null,
-      hr_reviewer_name: reviewerName,
-      pdf_url: pdfUrl,
-    })
-    .eq("id", correctionId);
+  const payload: Record<string, unknown> = {
+    hr_paperwork_status: hrActionStatus,
+    hr_signature_url: signature.url,
+    hr_signature_name: signature.name,
+    hr_signed_at: nowIso,
+    hr_received_date: hrReceivedDate || null,
+    hr_reviewer_name: reviewerName,
+    pdf_url: pdfUrl,
+  };
+  if (hrNote?.trim() && !stageNotesMissing) payload.hr_note = hrNote.trim();
+  let { error } = await supabase.from("timecard_corrections").update(payload).eq("id", correctionId);
+  if (isStageNoteError(error)) {
+    stageNotesMissing = true;
+    delete payload.hr_note;
+    ({ error } = await supabase.from("timecard_corrections").update(payload).eq("id", correctionId));
+  }
   if (error) {
     console.error("signCorrectionHrPaperwork error:", error.message);
     throw new Error(error.message);
