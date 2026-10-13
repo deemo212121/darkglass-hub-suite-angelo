@@ -4,6 +4,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, pick, pad, offsetStr, todayStr } from "@/components/shared";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -14,7 +15,7 @@ function generateRows(count = 80) {
     const taxable = 100+(i*23)%600; const rate = 6+(i%4)/10;
     return {
       id: i+1, ticketNo: "TK-2026-"+pad(5000+i),
-      location: pick(locs,i), claimDate: d.toISOString().slice(0,10),
+      location: pick(locs,i), claimDate: localISODate(d),
       taxableAmount: taxable, taxRate: rate,
       taxCollected: +(taxable*rate/100).toFixed(2),
       taxProcessed: i%5===0,

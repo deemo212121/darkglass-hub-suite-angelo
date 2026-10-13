@@ -21,12 +21,13 @@ import {
   type UniversalActivityEntry,
 } from "@/lib/supabase/universalActivityLog";
 import { usePersistedTab } from "@/lib/usePersistedTab";
+import { localISODate, todayISO } from "@/lib/localDate";
 
 type TabKey = "all" | ActivityDepartment;
 const TABS: TabKey[] = ["all", ...DEPARTMENT_ORDER];
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
-const daysAgoIso = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
+const todayIso = () => todayISO();
+const daysAgoIso = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return localISODate(d); };
 
 function downloadXlsx(rows: UniversalActivityEntry[], dateFrom: string, dateTo: string) {
   const data = rows.map((r) => ({

@@ -110,6 +110,8 @@ import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, blobToBase64 } from "@
 import { renderPayslipBodyHtml, renderTechActivitySummaryPageHtml, PAYSLIP_STYLES, formatClockTime, offDaysInRange, ptoDaysInRange, type PayslipDailyRow, type EmployeePayslipData } from "@/lib/payslipTemplate";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity, getModuleActivityLog, getModuleActivityLogByAction, moduleActivityActionLabel, type ModuleActivityLogEntry } from "@/lib/supabase/moduleActivityLog";
+import { todayISO } from "@/lib/localDate";
+import { toast } from "sonner";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 // PH employees are paid in PHP; this converts their PHP-denominated rate into
@@ -1329,7 +1331,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   async function handleToggleCarIq(profileId: string, nextValue: boolean, effectiveDate?: string) {
     setCarIqSaving(profileId);
     try {
-      const date = effectiveDate || new Date().toISOString().slice(0, 10);
+      const date = effectiveDate || todayISO();
       const changedByName = displayName || email || null;
       await setEmployeeHasCarIq(profileId, nextValue);
       // Logs this change to car_iq_history (migration 0323) too, so a
@@ -2977,11 +2979,20 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // Persisted on the profile (not just this session) since it's a standing
   // fact about the person (e.g. the owner never draws a salary here), not a
   // one-off pick for a single run.
+  // Nobody can change payroll_excluded on their OWN profile (0225's
+  // self-edit guard), so the viewer's own row is skipped/disabled here. A
+  // failure only shows a toast and reverts that row — it used to go through
+  // setError, which replaced the whole dashboard with "Error loading data".
   const handleTogglePayrollExcluded = async (employeeId: string, excluded: boolean) => {
+    if (employeeId === myProfileId) {
+      toast.error("You can't change your own payroll inclusion — ask HR or an Admin.");
+      return;
+    }
     setEmployees((prev) => prev.map((e) => (e.id === employeeId ? { ...e, payrollExcluded: excluded } : e)));
     const { error } = await supabase.from("profiles").update({ payroll_excluded: excluded }).eq("id", employeeId);
     if (error) {
-      setError(`Failed to update payroll inclusion: ${error.message}`);
+      const name = employees.find((e) => e.id === employeeId)?.full_name || "this employee";
+      toast.error(`Couldn't update payroll inclusion for ${name}: ${error.message}`);
       setEmployees((prev) => prev.map((e) => (e.id === employeeId ? { ...e, payrollExcluded: !excluded } : e)));
     }
   };
@@ -4647,11 +4658,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           checked={visibleRows.length > 0 && visibleRows.every((r) => !r.employee.payrollExcluded)}
                           onChange={() => {
                             const nextIncluded = !(visibleRows.length > 0 && visibleRows.every((r) => !r.employee.payrollExcluded));
+                            let skippedSelf = false;
                             visibleRows.forEach((r) => {
-                              if (r.employee.payrollExcluded === nextIncluded) {
-                                handleTogglePayrollExcluded(r.employee.id, !nextIncluded);
+                              if (r.employee.payrollExcluded !== nextIncluded) return;
+                              if (r.employee.id === myProfileId) {
+                                skippedSelf = true; // can't change your own (see handleTogglePayrollExcluded)
+                                return;
                               }
+                              void handleTogglePayrollExcluded(r.employee.id, !nextIncluded);
                             });
+                            if (skippedSelf) toast.info("Your own row was left as is — only HR or an Admin can change your payroll inclusion.");
                           }}
                           className="h-4 w-4 accent-blue-600 cursor-pointer"
                         />
@@ -4744,8 +4760,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               <td className="px-3 py-2 text-center">
                                 <input
                                   type="checkbox"
-                                  title="Include in payroll generation"
+                                  title={row.employee.id === myProfileId ? "You can't change your own payroll inclusion — ask HR or an Admin" : "Include in payroll generation"}
                                   checked={!row.employee.payrollExcluded}
+                                  disabled={row.employee.id === myProfileId}
                                   onChange={(e) => handleTogglePayrollExcluded(row.employee.id, !e.target.checked)}
                                   className="h-4 w-4 accent-blue-600 cursor-pointer"
                                 />
@@ -6065,7 +6082,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                       // exactly like a locked one.
                       const rawHasCarIq = employeeInfoByProfileId.get(emp.id)?.hasCarIq;
                       const saving = carIqSaving === emp.id;
-                      const latestCarIqEntry = carIqEntryEffectiveOn(carIqHistory, emp.id, new Date().toISOString().slice(0, 10));
+                      const latestCarIqEntry = carIqEntryEffectiveOn(carIqHistory, emp.id, todayISO());
                       const dateSaving = carIqDateSaving === emp.id;
                       return (
                         <tr key={emp.id} className="border-b border-white/5 hover:bg-white/5">

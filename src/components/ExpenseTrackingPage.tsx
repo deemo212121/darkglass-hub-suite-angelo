@@ -17,13 +17,14 @@ import {
   type ExpenseCategory,
   type ExpenseStatus,
 } from "@/lib/supabase/expenses";
+import { localISODate, todayISO } from "@/lib/localDate";
 
 const CATEGORIES: ExpenseCategory[] = ["Travel", "Supplies", "Meals", "Other"];
 
 const emptyForm = {
   profileId: "",
   category: "Travel" as ExpenseCategory,
-  expenseDate: new Date().toISOString().slice(0, 10),
+  expenseDate: todayISO(),
   amount: "",
   description: "",
   receiptUrl: null as string | null,
@@ -160,7 +161,7 @@ export function ExpenseTrackingPage({
   const sum = (rows: ExpenseRow[]) => rows.reduce((s, r) => s + r.amount, 0);
   const monthStart = new Date();
   monthStart.setDate(1);
-  const monthStartISO = monthStart.toISOString().slice(0, 10);
+  const monthStartISO = localISODate(monthStart);
   const thisMonthTotal = sum(scopedExpenses.filter((e) => e.expenseDate >= monthStartISO));
 
   const fmtMoney = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -295,7 +296,7 @@ export function ExpenseTrackingPage({
     // Leading BOM — without it Excel mis-decodes any non-ASCII character as
     // Windows-1252 instead of the UTF-8 the charset=utf-8 above declares.
     el.setAttribute("href", "data:text/csv;charset=utf-8," + encodeURIComponent(String.fromCharCode(0xfeff) + csv));
-    el.setAttribute("download", `expenses-${new Date().toISOString().slice(0, 10)}.csv`);
+    el.setAttribute("download", `expenses-${todayISO()}.csv`);
     el.style.display = "none";
     document.body.appendChild(el);
     el.click();

@@ -4,6 +4,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { CSR_NAMES, pick, pad, todayStr, offsetStr } from "@/components/shared";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -16,7 +17,7 @@ function generateRows(count = 80) {
       id: i + 1,
       ticketNo: "TK-2026-" + pad(2000 + i),
       csr: pick(CSR_NAMES, i),
-      actionDate: d.toISOString().slice(0, 10),
+      actionDate: localISODate(d),
       actionTime: `${String(8 + (i % 9)).padStart(2,"0")}:${String((i * 7) % 60).padStart(2,"0")}`,
       action: pick(ACTION_TYPES, i),
       note: pick(["Customer called back","Scheduled for next week","Part backordered","Tech unavailable","Confirmed appt","Left voicemail"], i),

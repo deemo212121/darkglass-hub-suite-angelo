@@ -16,7 +16,7 @@
  */
 
 import { requireRejectReason } from "@/lib/rejectReason";
-import { chainCanApprove } from "@/lib/approvalDirectory";
+import { chainCanApproveCorrection } from "@/lib/approvalDirectory";
 import { supabase } from "./client";
 import { getServerNow, zonedDateKey } from "@/lib/serverTime";
 import { createNotification } from "./notifications";
@@ -320,7 +320,8 @@ export function canReviewCorrectionStage(
     // Manager → Admin / Directors): the Approval Chain decides, by role +
     // branch + area — migration 0332 enforces the same rule in the database.
     // Checked first so the buttons match what the database allows.
-    const chain = chainCanApprove(viewerProfileId, request.profileId);
+    // Correction-specific rule (0366): Logistics and the tech side approve only their own people.
+    const chain = chainCanApproveCorrection(viewerProfileId, request.profileId);
     if (chain !== null) return chain;
     // Everyone else: team leaders (CSR/Claims/Parts _TEAM_LEADER) can't approve the manager
     // stage — per the user's explicit call, a team member's time correction

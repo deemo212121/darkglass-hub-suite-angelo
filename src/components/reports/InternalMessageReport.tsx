@@ -3,6 +3,7 @@ import { ChevronLeft, RefreshCw, ChevronDown } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { CSR_NAMES, pick, pad, todayStr, offsetStr } from "./shared";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -12,7 +13,7 @@ function generateRows(count = 60) {
   return Array.from({ length: count }, (_, i) => {
     const d = new Date(); d.setDate(d.getDate() - (i % 14));
     return {
-      id: i + 1, sentDate: d.toISOString().slice(0, 10),
+      id: i + 1, sentDate: localISODate(d),
       sender: pick(CSR_NAMES, i), receiver: pick(CSR_NAMES, i + 3),
       subject: pick(SUBJECTS, i),
       message: pick(["Please check on ticket status","Parts should arrive Thursday","Customer requested earlier time","Need supervisor approval","Tech is available tomorrow"], i),

@@ -13,6 +13,7 @@
 import { supabase } from "./client";
 import { getCompanyMapProvider } from "./companySettings";
 import { computeDailyRouteMiles, getOfficeCoordinates, getElectroluxHuntsvilleMileageOrigin, type MileageTicketInput, type DailyRouteMilesResult } from "@/lib/mapEngine";
+import { todayISO as userTodayISO } from "@/lib/localDate";
 
 export interface MileageEntry {
   id: string;
@@ -887,7 +888,7 @@ async function syncMileageFromTicketsInner(
   // contributing its own leg distance (or, worse, absorbing the day's
   // drive-home leg if it happened to land last) even though nobody ever
   // drove there. Confirmed live: A'Dejaun Tyson's 2026-09-09 route.
-  const todayISO = new Date().toISOString().slice(0, 10);
+  const todayISO = userTodayISO();
   const isPermanentlyMissed = (t: any): boolean => !t.onsite_arrived_at && t.schedule_date && t.schedule_date < todayISO;
 
   // Every ticket with a technician assigned and an actual date to log the
@@ -1224,7 +1225,7 @@ export async function syncMileageForTicketDay(rawTechnicianName: string, schedul
     // waypoint here either. The ticket that actually triggered this call
     // always has a fresh onsite_arrived_at (it just got checked into), so
     // it's never excluded by this.
-    const todayISO = new Date().toISOString().slice(0, 10);
+    const todayISO = userTodayISO();
     const isPermanentlyMissed = (t: any): boolean => !t.onsite_arrived_at && t.schedule_date && t.schedule_date < todayISO;
     const groupTickets = (dayTickets ?? []).filter(
       (t: any) =>

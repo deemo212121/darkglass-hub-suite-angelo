@@ -3,6 +3,7 @@ import { ChevronLeft } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { localISODate, todayISO } from "@/lib/localDate";
 
 interface Props {
   mod: ModuleDef;
@@ -29,7 +30,7 @@ function generateRows(count = 60) {
   return Array.from({ length: count }, (_, i) => {
     const d = new Date();
     d.setDate(d.getDate() - (i % 90));
-    const dateStr = d.toISOString().slice(0, 10);
+    const dateStr = localISODate(d);
     const jobs = 10 + (i * 7) % 12;
     const ftf = 6 + (i * 5) % (jobs - 2);
     const location = pick(BRANCHES, i);
@@ -54,11 +55,11 @@ function generateRows(count = 60) {
 const ALL_ROWS = generateRows(60);
 
 // Date helpers
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const todayStr = () => todayISO();
 const offsetStr = (days: number) => {
   const d = new Date();
   d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 };
 const monthStr = (d: Date) => d.toISOString().slice(0, 7);
 const currentMonth = () => monthStr(new Date());

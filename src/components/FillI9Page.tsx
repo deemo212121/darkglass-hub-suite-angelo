@@ -15,6 +15,7 @@
  * (Supplement A/B â preparer/translator certification, reverification and
  * rehire) aren't relevant to a new hire's own submission and aren't shown.
  */
+import { InlinePdfLink } from "@/components/InlinePdfViewer";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Loader2 } from "lucide-react";
@@ -365,9 +366,7 @@ export function FillI9Page({ docId }: Props) {
             <p className="text-sm font-semibold mb-2">â Section 1 submitted{submitted ? " and sent back to HR" : ""}.</p>
             <p className="text-xs text-muted-foreground mb-2">HR will complete Section 2 (document review) separately.</p>
             {doc.pdfUrl && (
-              <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
-                View the completed PDF
-              </a>
+              <InlinePdfLink url={doc.pdfUrl} label="View the completed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
             )}
           </div>
         ) : (

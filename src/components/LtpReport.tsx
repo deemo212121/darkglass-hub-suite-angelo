@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronDown } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -35,7 +36,7 @@ const pad = (n: number) => String(n).padStart(4,"0");
 
 function dateStr(offset = 0) {
   const d = new Date(); d.setDate(d.getDate() + offset);
-  return d.toISOString().slice(0,10);
+  return localISODate(d);
 }
 
 function generateRows(count = 80) {

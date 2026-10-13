@@ -5,6 +5,7 @@
 
 import { supabase } from "./client";
 import type { PtoType } from "./pto";
+import { localISODate, todayISO } from "@/lib/localDate";
 
 // The flat UI time-entry shape used by the timecard page.
 export interface UITimeEntry {
@@ -854,7 +855,7 @@ export async function getAttendanceForRange(
       // data, or a missed shift. Same for an approved paid-leave day, which
       // also gets paid its scheduled net hours instead of reading as a
       // missed shift (0 hours) — see AttendanceRow.status's "paid-leave" doc.
-      const isFuture = key > new Date().toISOString().slice(0, 10);
+      const isFuture = key > todayISO();
       if (!isFuture) {
         const isUnpaidLeave = !isOffDay && !isHoliday && unpaidType != null;
         const isPaidLeave = !isUnpaidLeave && !isOffDay && !isHoliday && leaveType != null && scheduledNetHours > 0;
@@ -954,7 +955,7 @@ export async function getCompanyTimecardWarnings(
   const startDate = `${year}-${mm}-01`;
   const lastDay = new Date(year, month + 1, 0).getDate();
   const endDate = `${year}-${mm}-${String(lastDay).padStart(2, "0")}`;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
 
   // 1. Fetch every profile for the company (we need display_name + off_days).
   const { data: profiles, error: pErr } = await supabase
@@ -1001,9 +1002,9 @@ export async function getCompanyTimecardWarnings(
   const workingDays: string[] = [];
   const d = new Date(startDate + "T00:00:00");
   const end = new Date(endDate + "T00:00:00");
-  while (d <= end && d.toISOString().slice(0, 10) <= today) {
+  while (d <= end && localISODate(d) <= today) {
     const dow = d.getDay(); // 0=Sun, 6=Sat
-    if (dow !== 0 && dow !== 6) workingDays.push(d.toISOString().slice(0, 10));
+    if (dow !== 0 && dow !== 6) workingDays.push(localISODate(d));
     d.setDate(d.getDate() + 1);
   }
 

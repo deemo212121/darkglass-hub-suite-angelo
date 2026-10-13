@@ -30,6 +30,7 @@
  * which document types show the working flow vs. the "not available here
  * yet" fallback.
  */
+import { InlinePdfLink } from "@/components/InlinePdfViewer";
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Loader2 } from "lucide-react";
@@ -400,9 +401,7 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
           <div className="panel p-6 text-center">
             <p className="text-sm font-semibold mb-2">✓ Signed{submitted ? " and sent back to HR" : ""}.</p>
             {doc.pdfUrl && (
-              <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm block mb-3">
-                View the completed PDF
-              </a>
+              <InlinePdfLink url={doc.pdfUrl} label="View the completed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm block mb-3" />
             )}
             {error && (
               <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-2 mb-2">{error}</p>

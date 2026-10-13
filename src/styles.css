@@ -15080,6 +15080,42 @@ button.home-attn:focus-visible { outline: 2px solid var(--tone); outline-offset:
 }
 .mh-expand:active { background: rgba(59, 120, 246, 0.2); }
 
+/* ── Create New Ticket form: light mode (keep last) ─────────────────────
+   The form's own colors are dark-mode only (white text, translucent slate
+   panels), which turned into grey panels with washed-out blue headings on a
+   light background. */
+:root[data-theme="light"] .ticket-form-container {
+  background: var(--color-card);
+  border-color: var(--color-panel-border);
+  color: var(--color-foreground);
+}
+:root[data-theme="light"] .ticket-form-header { border-bottom-color: rgba(37, 99, 235, 0.25); }
+:root[data-theme="light"] .ticket-form-header h2 { color: #1d4ed8; }
+:root[data-theme="light"] .ticket-form-kicker { color: #2563eb; }
+:root[data-theme="light"] .ticket-form-section {
+  background: color-mix(in oklab, var(--color-foreground) 3%, var(--color-card));
+  border-color: var(--color-panel-border);
+}
+:root[data-theme="light"] .ticket-form-section-title { color: #1d4ed8; border-bottom-color: rgba(37, 99, 235, 0.2); }
+:root[data-theme="light"] .ticket-form .form-label,
+:root[data-theme="light"] .ticket-form label { color: #334155; }
+:root[data-theme="light"] .ticket-form .form-input,
+:root[data-theme="light"] .ticket-form .form-select,
+:root[data-theme="light"] .ticket-form .form-textarea {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+:root[data-theme="light"] .ticket-form .form-select option { background: #ffffff; color: #0f172a; }
+:root[data-theme="light"] .ticket-form input[type="date"],
+:root[data-theme="light"] .ticket-form input[type="time"] { color-scheme: light; }
+:root[data-theme="light"] .ticket-form input[type="date"]::-webkit-calendar-picker-indicator { filter: none; }
+:root[data-theme="light"] .ticket-form-status { color: #1d4ed8; }
+:root[data-theme="light"] .ticket-form-status.is-error { color: #b91c1c; }
+:root[data-theme="light"] .ticket-form-alert { color: #b91c1c; }
+:root[data-theme="light"] .ticket-form .form-label.field-invalid { color: #b91c1c; }
+:root[data-theme="light"] .ticket-form-actions { border-top-color: var(--color-panel-border); }
+
 /* Header Messages drop-down: per-row "Mark as unread / read" — shows on hover (always on touch). */
 .hm-row-toggle {
   flex-shrink: 0;

@@ -13,6 +13,7 @@ import {
   type DailyLtpRow,
 } from "@/lib/operationsBranchMetrics";
 import type { Ticket } from "@/lib/ticketData";
+import { localISODate, todayISO } from "@/lib/localDate";
 
 interface RegionGroup {
   /** Display label — "CENTRAL" / "WEST" / "EAST", or a single region's own tab. */
@@ -57,11 +58,11 @@ const TOOLTIP_STYLE = {
 const LEGEND_STYLE = { fontSize: 11, color: "#94a3b8" } as const;
 
 const ltpColor = (v: number | null) => (v === null ? "" : v >= 50 ? "#34d399" : v >= 40 ? "#facc15" : "#f87171");
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => todayISO();
 const daysAgoIso = (n: number) => {
   const d = new Date();
   d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 };
 const fmtShort = (iso: string) => {
   const [, m, d] = iso.split("-");
@@ -97,7 +98,7 @@ function exportBranchRowsToXlsx(rows: BranchRowWithRegion[], multiRegion: boolea
   const worksheet = XLSX.utils.json_to_sheet(data);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Location Detail");
-  XLSX.writeFile(workbook, `${filePrefix}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  XLSX.writeFile(workbook, `${filePrefix}_${todayISO()}.xlsx`);
 }
 
 // January 2026 through the current month — future months would just be

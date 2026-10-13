@@ -5,6 +5,7 @@ import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, TECHS_FULL, CSR_NAMES, pick, pad, offsetStr, todayStr } from "@/components/shared";
 import { usePersistedTab } from "@/lib/usePersistedTab";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -24,7 +25,7 @@ function generateRows(count = 60, mode: "employee"|"tech") {
     const stayed = 6+(i%3); const down = i%4===0?0.5:0; const total = stayed-down;
     return {
       id: i+1, name: pick(names,i), location: pick(locs,i),
-      date: d.toISOString().slice(0,10), week: isoWeek(d),
+      date: localISODate(d), week: isoWeek(d),
       clockIn, downTime: down, stayedTime: stayed, totalWorkTime: total,
     };
   });

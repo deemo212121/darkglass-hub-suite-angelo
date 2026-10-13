@@ -92,6 +92,7 @@ type CellColor = "approved" | "pending" | "hrPlotted";
 // Defined in src/lib/supabase/pto.ts (so src/lib code can use it without
 // importing this component); re-exported for existing importers.
 import { HR_STATUS_TO_PTO_TYPE } from "@/lib/supabase/pto";
+import { localISODate, todayISO } from "@/lib/localDate";
 export { HR_STATUS_TO_PTO_TYPE };
 
 // hrPlottedByProfile's cells can be a real PtoType (a leave type HR set via
@@ -170,7 +171,7 @@ function daysBetween(a: string, b: string): number {
 function nextDate(iso: string): string {
   const d = new Date(`${iso}T00:00:00`);
   d.setDate(d.getDate() + 1);
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 }
 
 function colorForRequest(r: PtoRequestRow): CellColor {
@@ -514,7 +515,7 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName, readOnly 
       .map(([branch, emps]) => [branch, [...emps].sort((a, b) => a.name.localeCompare(b.name))] as const);
   }, [employees, roleFilter, search]);
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = todayISO();
 
   const openCell = (employee: CalendarEmployee, date: string) => {
     const request = cellsByProfile.get(employee.id)?.get(date);

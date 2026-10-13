@@ -256,6 +256,16 @@ export default {
           (error) => console.error("attendanceAlerts failed:", error),
         ),
       );
+      // Late clock-out check: Time Out later than last Work Done + drive
+      // home/branch + 10 min -> HR is notified (lateClockOutCheck.ts, 0362).
+      ctx.waitUntil(
+        import("./lib/server/lateClockOutCheck").then(
+          ({ runLateClockOutCheck }) => runLateClockOutCheck(merged),
+        ).then(
+          (result) => { if (result.checked || result.errors.length) console.log("lateClockOutCheck:", JSON.stringify(result)); },
+          (error) => console.error("lateClockOutCheck failed:", error),
+        ),
+      );
       // Force-clock-out technicians who never clocked out — resolved per
       // technician in their own timezone, so this fires within ~5 min of
       // their local midnight (see technicianForcedCheckout.ts).

@@ -12,6 +12,13 @@ import { payGraceMinutesFor } from "./attendanceGrace";
 import { normalizeStateName, highestRateAmong, STATE_MIN_WAGE_2026 } from "./stateMinWage";
 
 export const attendanceExportHeaders = ["Date", "States Worked", "Check In", "Check Out", "Regular Hr", "Meal Time", "Over Time", "Total Hours", "Rate", "State Floor Min", "State OT Floor Min"];
+/**
+ * PH sheets use the same layout, but there's no US state minimum: J is just
+ * regular hours × the company rate and K is overtime hours × the company rate
+ * (straight time — S2 = 1). Labelled for what they are so nobody reads K as a
+ * "state OT minimum".
+ */
+export const attendanceExportHeadersPh = ["Date", "States Worked", "Check In", "Check Out", "Regular Hr", "Meal Time", "Over Time", "Total Hours", "Rate", "Regular Pay", "Overtime Pay (straight time)"];
 
 export function attendanceExportRows(
   attendance: AttendanceRow[],
@@ -376,7 +383,7 @@ export function populateAttendanceSheet(
   states: Parameters<typeof attendanceExportRows>[3],
   isPh: boolean,
 ) {
-      sheet.addRow(attendanceExportHeaders);
+      sheet.addRow(isPh ? attendanceExportHeadersPh : attendanceExportHeaders);
       sheet.addRows(attendanceExportRows(attendance, hours, pay, states, isPh ? 1 : 1.5, employeeName));
       sheet.views = [{ state: "frozen", ySplit: 1 }];
       sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: attendance.length + 1, column: 11 } };

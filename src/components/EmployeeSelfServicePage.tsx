@@ -171,6 +171,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   // Disputes & Inquiries tabs) instead of here.
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const [myHireDate, setMyHireDate] = useState<string | null>(null);
+  // Until the hire date has loaded, PTO eligibility is unknown — not "eligible".
+  const [myHireDateLoaded, setMyHireDateLoaded] = useState(false);
   const [allPtoRequests, setAllPtoRequests] = useState<PtoRequestRow[]>([]);
   const [allCorrections, setAllCorrections] = useState<TimecardCorrectionRow[]>([]);
   const [allEmployeeRequests, setAllEmployeeRequests] = useState<EmployeeRequestRow[]>([]);
@@ -304,9 +306,14 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   useEffect(() => {
     if (!myProfileId) return;
     let cancelled = false;
-    getProfileEmployeeInfo(myProfileId).then((info) => {
-      if (!cancelled) setMyHireDate(info?.hireDate || null);
-    });
+    getProfileEmployeeInfo(myProfileId)
+      .then((info) => {
+        if (!cancelled) setMyHireDate(info?.hireDate || null);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setMyHireDateLoaded(true);
+      });
     return () => { cancelled = true; };
   }, [myProfileId]);
 
@@ -429,7 +436,10 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   // PTO eligibility: 1 year of tenure from hire date (falls back to account
   // creation date if HR hasn't set a hire date yet).
   const myCreatedAt = companyProfiles.find((p) => p.id === myProfileId)?.created_at ?? null;
-  const ptoEligible = isEligibleForPto(myHireDate, myCreatedAt);
+  // Locked while the dates are still loading, so a newer employee can't slip
+  // a request in before the 1-year check has anything to go on.
+  const ptoEligibilityKnown = myHireDateLoaded && !!(myHireDate || myCreatedAt);
+  const ptoEligible = ptoEligibilityKnown && isEligibleForPto(myHireDate, myCreatedAt);
   const ptoEligibleOn = ptoEligibleDate(myHireDate, myCreatedAt);
 
   // Annual PTO allowance: 5 days in the employee's first eligible year, +1
@@ -1595,7 +1605,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   setShowModal(true);
                 }}
                 disabled={!ptoEligible}
-                title={!ptoEligible ? `Not eligible until ${ptoEligibleOn}` : undefined}
+                title={!ptoEligibilityKnown ? "Checking PTO eligibility…" : !ptoEligible ? `Not eligible until ${ptoEligibleOn} — PTO needs 1 year with the company` : undefined}
                 className="px-4 py-3 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-green-600 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
               >
                 <Plus className="h-4 w-4" />

@@ -58,6 +58,9 @@ export const SIGNABLE_DOCUMENT_REGISTRY: Record<SignableDocumentType, SignableDo
   // Same reasoning as master_w2_agreement above — BM/SBS/Director recipients
   // are all existing AHS employees, not outside candidates.
   master_w2_executive_agreement: { label: "W-2 Executive Exempt Management Agreement", internalPath: "/fill-master-w2-executive-agreement", externalPath: "/fill-master-w2-executive-agreement" },
+  // Sent to everyone (every checklist tier). Login-only like the Master
+  // agreements — recipients are existing AHS staff.
+  confidentiality_noncompete_agreement: { label: "Master Confidentiality & Non-Compete Agreement", internalPath: "/fill-confidentiality-noncompete-agreement", externalPath: "/fill-confidentiality-noncompete-agreement" },
   // Signer is always an AHS teammate (a manager/HR staffer countersigning a
   // company-generated certificate) — same "internal recipients only"
   // reasoning as master_w2_agreement above, no external/no-login variant.
@@ -110,6 +113,7 @@ export const TECHNICIAN_FORM_TYPES: SignableDocumentType[] = [
   "substance_screening",
   "w4",
   "i9",
+  "confidentiality_noncompete_agreement",
 ];
 
 /**
@@ -121,10 +125,10 @@ export const TECHNICIAN_FORM_TYPES: SignableDocumentType[] = [
  * below) to let HR quick-select a candidate's forms by role/tier instead of
  * checking each one by hand.
  */
-export const NEW_TECHNICIAN_FORM_TYPES: SignableDocumentType[] = ["master_w2_agreement", "w4", "i9", "direct_deposit", "ssn_card_form", "drivers_license_form"];
-export const OFFICE_STAFF_US_FORM_TYPES: SignableDocumentType[] = ["master_w2_office_agreement", "w4", "i9", "direct_deposit", "ssn_card_form", "drivers_license_form"];
-export const PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "w8ben", "direct_deposit", "valid_id_form"];
-export const BM_AND_UP_FORM_TYPES: SignableDocumentType[] = ["master_w2_executive_agreement", "direct_deposit"];
+export const NEW_TECHNICIAN_FORM_TYPES: SignableDocumentType[] = ["master_w2_agreement", "w4", "i9", "direct_deposit", "ssn_card_form", "drivers_license_form", "confidentiality_noncompete_agreement"];
+export const OFFICE_STAFF_US_FORM_TYPES: SignableDocumentType[] = ["master_w2_office_agreement", "w4", "i9", "direct_deposit", "ssn_card_form", "drivers_license_form", "confidentiality_noncompete_agreement"];
+export const PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "w8ben", "direct_deposit", "valid_id_form", "confidentiality_noncompete_agreement"];
+export const BM_AND_UP_FORM_TYPES: SignableDocumentType[] = ["master_w2_executive_agreement", "direct_deposit", "confidentiality_noncompete_agreement"];
 
 export type StaffFormTier = "newTechnician" | "officeStaffUs" | "phStaff" | "bmAndUp";
 
@@ -193,7 +197,33 @@ export const DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE = new Set<SignableDocum
   "master_ph_contractor_agreement",
   "master_w2_executive_agreement",
   "visit_exception_report",
+  // Like the other Master Agreements: done once the employer countersigns.
+  "confidentiality_noncompete_agreement",
 ]);
+
+/**
+ * Master Confidentiality agreement wording now in use (see
+ * confidentialityNonCompeteAgreementFormTemplate.ts, which re-exports this
+ * as CNC_CURRENT_TEMPLATE_VERSION). Kept here, dependency-free, because the
+ * checklist status below needs it too.
+ */
+export const CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION = 2;
+
+/**
+ * Signed, but in an older wording than the one in use — a Master
+ * Confidentiality agreement signed before version 2 (the "…Non-Compete…"
+ * text, including the paper copies). Still on file, but the person needs to
+ * sign the new version, so the checklist shows "Needs new version" and lets
+ * HR send it.
+ */
+export function isOutdatedDocument(doc: { documentType?: string; status: SignableDocumentStatus; formData?: Record<string, any> } | undefined): boolean {
+  return (
+    !!doc &&
+    doc.documentType === "confidentiality_noncompete_agreement" &&
+    (doc.status === "signed" || doc.status === "confirmed") &&
+    !(Number(doc.formData?.templateVersion) >= CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION)
+  );
+}
 
 /**
  * Form W-4/I-9/Direct Deposit Authorization/W-8BEN each have exactly one
@@ -257,13 +287,15 @@ export const SHARED_OLD_NEW_AUTOMATION_TYPES = new Set<SignableDocumentType>(["w
  * view) and technicianFormStatus.ts (a frozen technician's own "what do I
  * still need to do" popup) so both agree on what counts as done.
  */
-export type DocumentReviewStatus = "not_sent" | "awaiting_employee" | "awaiting_hr" | "done";
+export type DocumentReviewStatus = "not_sent" | "awaiting_employee" | "awaiting_hr" | "done" | "outdated";
 
 export function getDocumentReviewStatus(
   type: SignableDocumentType,
-  doc: { status: SignableDocumentStatus; recipientSlot?: string } | undefined
+  doc: { documentType?: string; status: SignableDocumentStatus; recipientSlot?: string; formData?: Record<string, any> } | undefined
 ): DocumentReviewStatus {
   if (!doc || doc.status === "cancelled") return "not_sent";
+  // "outdated" = signed in an old wording; the new version hasn't been sent yet (see isOutdatedDocument).
+  if (isOutdatedDocument({ documentType: type, status: doc.status, formData: doc.formData })) return "outdated";
   if (doc.status === "confirmed") return "done";
   if (doc.status === "signed") {
     return DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE.has(type) ? "awaiting_hr" : "done";
@@ -301,12 +333,15 @@ const STATUS_RANK: Record<SignableDocumentStatus, number> = {
  * moment a second copy got sent). Best status wins outright; only when two
  * rows tie on status does the newer one win, purely for determinism.
  */
-export function pickAuthoritativeDocument<T extends { status: SignableDocumentStatus; createdAt: string }>(
+export function pickAuthoritativeDocument<T extends { status: SignableDocumentStatus; createdAt: string; documentType?: string; formData?: Record<string, any> }>(
   docs: T[]
 ): T | undefined {
   if (docs.length === 0) return undefined;
+  // An agreement signed in an old wording ranks just above cancelled, so the
+  // new version — even one still waiting for a signature — is what counts.
+  const rank = (d: T) => (isOutdatedDocument(d) ? 0.5 : STATUS_RANK[d.status]);
   return docs.reduce((best, d) => {
-    const rankDiff = STATUS_RANK[d.status] - STATUS_RANK[best.status];
+    const rankDiff = rank(d) - rank(best);
     if (rankDiff > 0) return d;
     if (rankDiff < 0) return best;
     return d.createdAt > best.createdAt ? d : best;

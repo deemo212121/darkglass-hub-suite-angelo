@@ -42,6 +42,7 @@ import {
   getClaimsStaffEntries, upsertClaimsStaffEntry, type ClaimsStaffEntry,
   getClaimsTaskEntries, addClaimsTaskEntry, updateClaimsTaskEntry, deleteClaimsTaskEntry, type ClaimsTaskEntry, type ClaimsTask,
 } from "@/lib/supabase/claimsDailyReport";
+import { localISODate, todayISO } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -54,12 +55,12 @@ function isClaimsProfile(p: ProfileRow): boolean {
 }
 
 function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayISO();
 }
 function addDaysISO(date: string, days: number): string {
   const d = new Date(date + "T00:00:00");
   d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 }
 
 type ClaimsPerformanceFlag = "warning" | "low_performance" | "good" | "great";

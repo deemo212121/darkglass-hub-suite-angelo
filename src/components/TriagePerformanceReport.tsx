@@ -4,6 +4,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, TECHS_FULL, pick, pad, offsetStr, todayStr } from "@/components/shared";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -15,7 +16,7 @@ function generateRows(count = 60) {
     return {
       id: i+1, ticketNo: "TK-2026-"+pad(3000+i),
       location: pick(locs,i), tech: pick(TECHS_FULL,i),
-      completeDate: d.toISOString().slice(0,10),
+      completeDate: localISODate(d),
       triageCalls: calls, resolved, escalated,
       resolutionRate: Math.round(resolved/calls*100),
       outcome: escalated>0?"Escalated":resolved>=calls-1?"Resolved":"Partial",

@@ -54,6 +54,7 @@ import { getPartReturns as getRaCreatedRows, type PartReturnRow as RaCreatedRow 
 import { getPartReturns as getReturnPendingRows, type PartReturnRow as ReturnPendingRow } from "@/lib/supabase/partReturn";
 import { getPartsForDailyCollection, type PartCollectionRow } from "@/lib/supabase/partDailyCollection";
 import { getPartsToReceive, type PartReceiveRow } from "@/lib/supabase/partReceive";
+import { localISODate, todayISO } from "@/lib/localDate";
 
 // The "Parts Order" clerical role (roleLabels.ts's PARTS_ORDER) — PO Team
 // members specifically, distinct from branch-floor PARTS/PARTS_MANAGER
@@ -220,8 +221,8 @@ function inRange(v: string | undefined | null, from: string, to: string): boolea
   const d = dateOnly(v);
   return !!d && d >= from && d <= to;
 }
-const todayIso = () => new Date().toISOString().slice(0, 10);
-const daysAgoIso = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
+const todayIso = () => todayISO();
+const daysAgoIso = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return localISODate(d); };
 // Same day-by-day expansion as the eBay report's Daily Branch Report —
 // capped so a wide date range doesn't render hundreds of blocks.
 function dateRangeList(start: string, end: string, max = 31): string[] {
@@ -230,7 +231,7 @@ function dateRangeList(start: string, end: string, max = 31): string[] {
   const endD = new Date(end + "T00:00:00");
   if (Number.isNaN(d.getTime()) || Number.isNaN(endD.getTime()) || d > endD) return out;
   while (d <= endD && out.length < max) {
-    out.push(d.toISOString().slice(0, 10));
+    out.push(localISODate(d));
     d.setDate(d.getDate() + 1);
   }
   return out;

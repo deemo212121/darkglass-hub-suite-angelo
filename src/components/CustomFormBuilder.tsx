@@ -135,6 +135,7 @@ function CanvasField({
         </div>
         <div className="absolute right-2 top-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
           {field.hidden && <span title="Hidden"><EyeOff className="h-3.5 w-3.5 text-slate-400" /></span>}
+          {field.fillBy === "company" && <span title="Filled in by the company (HR) after submission" className="text-[9px] font-semibold uppercase tracking-wide text-sky-600">Company</span>}
           {field.conditionalLogic && <span title="Has conditional logic"><Zap className="h-3.5 w-3.5 text-amber-500" /></span>}
           {field.calculation && <span title="Calculated field"><Sigma className="h-3.5 w-3.5 text-purple-500" /></span>}
           <button type="button" onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Delete" className="text-slate-400 hover:text-red-500">
@@ -218,6 +219,12 @@ function PropertiesPanel({ field, allFields, onChange, onDelete }: { field: Cust
                 <label className="flex items-center gap-1.5"><input type="checkbox" checked={field.hidden} onChange={(e) => onChange({ ...field, hidden: e.target.checked })} /> Hidden</label>
                 <label className="flex items-center gap-1.5"><input type="checkbox" checked={field.readonly} onChange={(e) => onChange({ ...field, readonly: e.target.checked })} /> Read Only</label>
               </div>
+              <Field label="Filled in by">
+                <select value={field.fillBy ?? "submitter"} onChange={(e) => onChange({ ...field, fillBy: e.target.value === "company" ? "company" : undefined })} className="glass-input text-sm py-1.5 px-2 rounded-md">
+                  <option value="submitter">Person filling out the form</option>
+                  <option value="company">Company — HR completes it after submission (e.g. Authorized Representative signature)</option>
+                </select>
+              </Field>
               <div className="border-t border-white/10 pt-3" />
             </>
           )}
@@ -429,7 +436,7 @@ export function CustomFormBuilder({ initial, onSaved, onCancel }: Props) {
 
     setSaving(publish ? "publish" : "draft");
     try {
-      const input = { title: title.trim(), description: description.trim(), access, fields, documentTemplate: { blocks: documentBlocks }, notifyFirebaseUids, discordWebhookUrl: discordWebhookUrl.trim() || null };
+      const input = { title: title.trim(), description: description.trim(), access, fields, documentTemplate: documentBlocks.length > 0 ? { blocks: documentBlocks } : null, notifyFirebaseUids, discordWebhookUrl: discordWebhookUrl.trim() || null };
       let form: CustomForm;
       if (initial) {
         form = await updateCustomForm(initial.id, { ...input, currentPublicSlug: initial.publicSlug });

@@ -1,3 +1,4 @@
+import { localISODate } from "@/lib/localDate";
 ﻿import { ALL_TECHNICIANS, PARTS_FROM_OPTIONS, WORK_MAP_LOCATIONS } from "@/lib/locations";
 
 // Module + sub-module registry. Drives the generic CRUD page.
@@ -61,7 +62,7 @@ const pad = (n: number, len = 4) => String(n).padStart(len, "0");
 const dateStr = (offset: number) => {
   const d = new Date();
   d.setDate(d.getDate() + offset);
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 };
 
 // --- Dashboard ---

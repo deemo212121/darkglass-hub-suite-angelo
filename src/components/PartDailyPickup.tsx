@@ -16,6 +16,7 @@ import { getPartsForDailyPickup, updatePartPickupRow, type PartPickupRow } from 
 import { addPendingDoneItem, removePendingDoneItem } from "@/lib/partsDoneQueue";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { todayISO } from "@/lib/localDate";
 
 const PARTS_DONE_QUEUE_SOURCE = "Part Daily Pickup";
 const PART_DAILY_PICKUP_ACTIVITY_TARGET_TYPE = "part_daily_pickup";
@@ -36,7 +37,6 @@ function repairStatusClass(status: string): string {
   return "bg-blue-500/20 text-blue-300";
 }
 
-const TODAY=new Date().toISOString().slice(0,10);
 
 
 export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
@@ -53,7 +53,7 @@ export function PartDailyPickup({mod,sub}:{mod:ModuleDef;sub:SubModuleDef}){
   const [tech,setTech]=useState("");const [techOpen,setTechOpen]=useState(false);
   // Picking a technician offers "Clock in with HR's code" when they aren't clocked in yet (ClockInCodeModal decides).
   const [codeTech,setCodeTech]=useState<string|null>(null);
-  const [pickupDate,setPickupDate]=useState(TODAY);
+  const [pickupDate,setPickupDate]=useState(() => todayISO());
   const [rows,setRows]=useState<PartPickupRow[]>([]);
   const [technicianRoster,setTechnicianRoster]=useState<string[]>([]);
   const [loading,setLoading]=useState(false);

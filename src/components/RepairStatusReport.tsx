@@ -6,10 +6,11 @@ import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, TECHS_FULL, pick, pad, offsetStr, todayStr } from "@/components/shared";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 const STATUSES=["TR-Need Triage","TR-Need PO","OP-Waiting for Part","OP-Ready for Service","OP-Reschedule Follow up","CL-Completed","CL-Cancelled","CL-Ready to Complete"];
-const ALL_ROWS=Array.from({length:60},(_,i)=>{const d=new Date();d.setDate(d.getDate()-(i%30));return{id:i+1,ticketNo:"TK-2026-"+pad(1000+i),location:pick(LOCATIONS.slice(1),i),tech:pick(TECHS_FULL,i),repairStatus:pick(STATUSES,i),date:d.toISOString().slice(0,10),count:1+(i%5)};});
+const ALL_ROWS=Array.from({length:60},(_,i)=>{const d=new Date();d.setDate(d.getDate()-(i%30));return{id:i+1,ticketNo:"TK-2026-"+pad(1000+i),location:pick(LOCATIONS.slice(1),i),tech:pick(TECHS_FULL,i),repairStatus:pick(STATUSES,i),date:localISODate(d),count:1+(i%5)};});
 
 export function RepairStatusReport({ mod, sub }: Props) {
   const navigate = useNavigate();

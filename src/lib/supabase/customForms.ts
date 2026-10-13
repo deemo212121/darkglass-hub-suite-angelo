@@ -70,6 +70,12 @@ export interface CustomFormSubmission {
   reviewedByName: string | null;
   reviewedAt: string | null;
   deletedAt: string | null;
+  /** The finished document, saved to Storage once the submission is complete (migration 0368) — null until then, or for submissions from before it. */
+  pdfUrl: string | null;
+  pdfGeneratedAt: string | null;
+  /** When HR filled in the form's "Filled in by: Company" fields (e.g. the Authorized Representative's signature). */
+  completedAt: string | null;
+  completedByName: string | null;
 }
 
 const FORM_SELECT = "id, company_id, title, description, access, status, public_slug, fields, document_template, drive_upload_enabled, notify_firebase_uids, discord_webhook_url, created_by, created_at, updated_at";
@@ -84,7 +90,10 @@ function formFromRow(r: any): CustomForm {
     status: r.status,
     publicSlug: r.public_slug,
     fields: (r.fields ?? []) as CustomFormField[],
-    documentTemplate: (r.document_template ?? null) as DocumentTemplate | null,
+    // An empty design ({ blocks: [] }, what the builder used to save for a
+    // form nobody designed) is no template — otherwise its PDF is a blank
+    // page instead of the automatic layout.
+    documentTemplate: r.document_template?.blocks?.length ? (r.document_template as DocumentTemplate) : null,
     driveUploadEnabled: r.drive_upload_enabled ?? true,
     notifyFirebaseUids: (r.notify_firebase_uids ?? []) as string[],
     discordWebhookUrl: r.discord_webhook_url ?? null,
@@ -182,8 +191,14 @@ export async function deleteCustomForm(id: string): Promise<void> {
 
 // ---------- Submissions ----------
 
-const SUBMISSION_SELECT =
+const SUBMISSION_SELECT_BASE =
   "id, company_id, form_id, form_title, submitter_name, responses, status, submitted_at, created_at, reviewed_by, reviewed_at, deleted_at, reviewer:reviewed_by (display_name, username)";
+const SUBMISSION_SELECT = `${SUBMISSION_SELECT_BASE}, pdf_url, pdf_generated_at, completed_at, completer:completed_by (display_name, username)`;
+
+/** Postgres 42703 / PostgREST PGRST204 — migration 0368's columns aren't there yet; fall back to the base columns so the tab still loads. */
+function isMissingColumnError(error: { code?: string } | null): boolean {
+  return error?.code === "42703" || error?.code === "PGRST204";
+}
 
 function submissionFromRow(r: any): CustomFormSubmission {
   return {
@@ -200,7 +215,21 @@ function submissionFromRow(r: any): CustomFormSubmission {
     reviewedByName: r.reviewer?.display_name || r.reviewer?.username || null,
     reviewedAt: r.reviewed_at,
     deletedAt: r.deleted_at ?? null,
+    pdfUrl: r.pdf_url ?? null,
+    pdfGeneratedAt: r.pdf_generated_at ?? null,
+    completedAt: r.completed_at ?? null,
+    completedByName: r.completer?.display_name || r.completer?.username || null,
   };
+}
+
+/** The form's "Filled in by: Company" fields — HR completes these after the person submits. */
+export function companyFields(form: Pick<CustomForm, "fields">): CustomFormField[] {
+  return form.fields.filter((f) => f.fillBy === "company" && !f.hidden);
+}
+
+/** Submitted, but the company's own part (e.g. Authorized Representative signature) isn't filled in yet. */
+export function isAwaitingCompany(form: Pick<CustomForm, "fields"> | undefined, submission: Pick<CustomFormSubmission, "completedAt">): boolean {
+  return !!form && companyFields(form).length > 0 && !submission.completedAt;
 }
 
 const RESTORE_WINDOW_DAYS = 30;
@@ -210,12 +239,15 @@ const PAGE_SIZE = 1000;
 export async function getCustomFormSubmissions(): Promise<CustomFormSubmission[]> {
   const all: CustomFormSubmission[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await supabase
-      .from("hr_custom_form_submissions")
-      .select(SUBMISSION_SELECT)
-      .is("deleted_at", null)
-      .order("submitted_at", { ascending: false })
-      .range(from, from + PAGE_SIZE - 1);
+    const query = (cols: string) =>
+      supabase
+        .from("hr_custom_form_submissions")
+        .select(cols)
+        .is("deleted_at", null)
+        .order("submitted_at", { ascending: false })
+        .range(from, from + PAGE_SIZE - 1);
+    let { data, error } = await query(SUBMISSION_SELECT);
+    if (isMissingColumnError(error)) ({ data, error } = await query(SUBMISSION_SELECT_BASE));
     if (error) throw error;
     all.push(...(data ?? []).map(submissionFromRow));
     if (!data || data.length < PAGE_SIZE) break;
@@ -226,12 +258,10 @@ export async function getCustomFormSubmissions(): Promise<CustomFormSubmission[]
 /** Soft-deleted submissions still within the 30-day restore window, most recently deleted first. */
 export async function getDeletedCustomFormSubmissions(): Promise<CustomFormSubmission[]> {
   const cutoff = new Date(Date.now() - RESTORE_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  const { data, error } = await supabase
-    .from("hr_custom_form_submissions")
-    .select(SUBMISSION_SELECT)
-    .not("deleted_at", "is", null)
-    .gte("deleted_at", cutoff)
-    .order("deleted_at", { ascending: false });
+  const query = (cols: string) =>
+    supabase.from("hr_custom_form_submissions").select(cols).not("deleted_at", "is", null).gte("deleted_at", cutoff).order("deleted_at", { ascending: false });
+  let { data, error } = await query(SUBMISSION_SELECT);
+  if (isMissingColumnError(error)) ({ data, error } = await query(SUBMISSION_SELECT_BASE));
   if (error) throw error;
   return (data ?? []).map(submissionFromRow);
 }
@@ -333,5 +363,25 @@ export async function softDeleteCustomFormSubmission(id: string): Promise<void> 
 
 export async function restoreCustomFormSubmission(id: string): Promise<void> {
   const { error } = await supabase.from("hr_custom_form_submissions").update({ deleted_at: null }).eq("id", id);
+  if (error) throw error;
+}
+
+/** Records the finished document's Storage URL on the submission. */
+export async function saveCustomFormSubmissionPdf(id: string, pdfUrl: string): Promise<void> {
+  const { error } = await supabase
+    .from("hr_custom_form_submissions")
+    .update({ pdf_url: pdfUrl, pdf_generated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (isMissingColumnError(error)) throw new Error("Saving documents needs migration 0368 in Supabase — run it, then try again.");
+  if (error) throw error;
+}
+
+/** HR's half of a two-party form: merges the company fields' answers into the submission and stamps who completed it. */
+export async function completeCustomFormSubmission(id: string, responses: Record<string, CustomFormResponseValue>, completedBy: string): Promise<void> {
+  const { error } = await supabase
+    .from("hr_custom_form_submissions")
+    .update({ responses, completed_at: new Date().toISOString(), completed_by: completedBy })
+    .eq("id", id);
+  if (isMissingColumnError(error)) throw new Error("Completing submissions needs migration 0368 in Supabase — run it, then try again.");
   if (error) throw error;
 }

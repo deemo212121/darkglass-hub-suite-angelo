@@ -24,6 +24,7 @@ import { getCompanyTechnicians } from "./users";
 import { getCompanyLocationPings } from "./technicianLocationPings";
 import { statusGroupOf } from "@/lib/ticketData";
 import { normalizeTimePeriod, FRAME_START_TIME } from "@/lib/timeframes";
+import { todayISO } from "@/lib/localDate";
 
 export type WhereaboutsStatus = "current" | "scheduled" | "last" | "none";
 
@@ -83,7 +84,7 @@ export async function getTechnicianWhereabouts(): Promise<TechnicianWhereabouts[
   const technicians = await getCompanyTechnicians();
   if (technicians.length === 0) return [];
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
   const [{ data, error }, pings] = await Promise.all([
     supabase
       .from("tickets")
@@ -172,7 +173,7 @@ export interface TechnicianRouteStop {
 
 /** Every ticket scheduled today for one technician, in time-slot order — feeds the "today's route" map view opened by clicking their dot. */
 export async function getTechnicianTodayRoute(technicianName: string): Promise<TechnicianRouteStop[]> {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
   const { data, error } = await supabase
     .from("tickets")
     .select("ticket_no, technician, status, time_slot, onsite_arrived_at, onsite_done_at, customer:customers ( address, address2, city, state, zip )")

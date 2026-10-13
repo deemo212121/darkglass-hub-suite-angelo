@@ -7,6 +7,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS } from "@/lib/locations";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 import { loadOpenedTickets, markTicketOpened } from "@/lib/openedTickets";
+import { localISODate } from "@/lib/localDate";
 
 const DAY_OPTIONS = ["7 days", "30 days", "60 days", "90 days", "120 days", "180 days", "365 days"];
 
@@ -25,7 +26,7 @@ const STATES = ["NC","GA","AL","TN","FL","MS","AR","TX","LA","VA","KY","MO"];
 const TECHS = ["Brye'shawn Butler","Lashamus Dowell","Kevin Khaiphanliane","Josh Malloch","Matt Simmons","Percy Smith","Jonathon Allen","Seven Grinis","Brandon Phillips","Alexxis Henry"];
 const pick = <T,>(a:T[],i:number) => a[i%a.length];
 const pad = (n:number,l=6) => String(n).padStart(l,"0");
-const ds = (o:number) => { const d=new Date(); d.setDate(d.getDate()+o); return d.toISOString().slice(0,10); };
+const ds = (o:number) => { const d=new Date(); d.setDate(d.getDate()+o); return localISODate(d); };
 
 function makeRows(count=80) {
   const locs = LOCATIONS.slice(1);

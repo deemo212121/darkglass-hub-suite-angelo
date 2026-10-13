@@ -10,7 +10,7 @@ import {
   pickAuthoritativeDocument,
 } from "@/lib/signableDocumentRegistry";
 
-export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "contractor_data_us" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening" | "flash_technician_travel" | "nda_form" | "vehicle_use_agreement" | "contractor_addendum" | "master_w2_agreement" | "master_w2_office_agreement" | "master_ph_contractor_agreement" | "master_w2_executive_agreement" | "certificate_of_employment" | "ssn_card_form" | "drivers_license_form" | "valid_id_form" | "visit_exception_report" | "compensation_update";
+export type SignableDocumentType = "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "contractor_data_us" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening" | "flash_technician_travel" | "nda_form" | "vehicle_use_agreement" | "contractor_addendum" | "master_w2_agreement" | "master_w2_office_agreement" | "master_ph_contractor_agreement" | "master_w2_executive_agreement" | "confidentiality_noncompete_agreement" | "certificate_of_employment" | "ssn_card_form" | "drivers_license_form" | "valid_id_form" | "visit_exception_report" | "compensation_update";
 /** "executive" only applies to promotion_form documents (see migration 0166) — every other document type just never uses that slot. */
 export type SignatureSlot = "employee" | "manager" | "senior_manager" | "hr_staff" | "executive";
 export type SignableDocumentStatus = "pending_signature" | "signed" | "confirmed" | "cancelled";
@@ -136,16 +136,16 @@ export async function getExistingActiveDocumentTypes(
 export async function getExistingActiveDocuments(
   recipientId: string,
   types: SignableDocumentType[]
-): Promise<{ documentType: SignableDocumentType; formData: Record<string, any> }[]> {
+): Promise<{ documentType: SignableDocumentType; status: SignableDocumentStatus; formData: Record<string, any> }[]> {
   if (types.length === 0) return [];
   const { data, error } = await supabase
     .from("hr_signable_documents")
-    .select("document_type, form_data")
+    .select("document_type, status, form_data")
     .eq("recipient_id", recipientId)
     .in("document_type", types)
     .neq("status", "cancelled");
   if (error) throw new Error(error.message);
-  return (data ?? []).map((r: any) => ({ documentType: r.document_type as SignableDocumentType, formData: r.form_data ?? {} }));
+  return (data ?? []).map((r: any) => ({ documentType: r.document_type as SignableDocumentType, status: r.status as SignableDocumentStatus, formData: r.form_data ?? {} }));
 }
 
 export async function getSignableDocument(id: string): Promise<SignableDocument | null> {

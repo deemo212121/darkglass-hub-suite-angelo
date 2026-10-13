@@ -17,6 +17,7 @@
  * line on page 2 is intentionally left blank â filled by hand later,
  * outside this app.
  */
+import { InlinePdfLink } from "@/components/InlinePdfViewer";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Loader2 } from "lucide-react";
@@ -269,9 +270,7 @@ export function FillSubstanceScreeningPage({ docId }: Props) {
           <div className="panel p-6 text-center">
             <p className="text-sm font-semibold mb-2">â Submitted{submitted ? " and sent back to HR" : ""}.</p>
             {doc.pdfUrl && (
-              <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
-                View the completed PDF
-              </a>
+              <InlinePdfLink url={doc.pdfUrl} label="View the completed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
             )}
           </div>
         ) : (

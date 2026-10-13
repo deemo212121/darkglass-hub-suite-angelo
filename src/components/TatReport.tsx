@@ -3,6 +3,7 @@ import { ChevronLeft } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { localISODate, todayISO } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -24,10 +25,10 @@ function isoWeek(date: Date) {
   const wn = 1 + Math.round(((d.getTime()-w1.getTime())/86400000 - 3 + ((w1.getDay()+6)%7))/7);
   return `${d.getFullYear()}-W${String(wn).padStart(2,"0")}`;
 }
-function todayStr() { return new Date().toISOString().slice(0,10); }
+function todayStr() { return todayISO(); }
 function offsetStr(days: number) {
   const d = new Date(); d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0,10);
+  return localISODate(d);
 }
 function monthStr(offset = 0) {
   const d = new Date(); d.setMonth(d.getMonth() + offset);

@@ -30,6 +30,8 @@ import {
   type CompanyTimecardEntry,
 } from "@/lib/supabase/timecards";
 import { getAttendanceNotes, upsertAttendanceNote } from "@/lib/supabase/attendanceNotes";
+import { exportToCSV } from "@/lib/csvExport";
+import { downloadStyledReport } from "@/lib/styledReportExport";
 import { getCompanyTraineeEntries, type TraineeTimecardEntry } from "@/lib/supabase/traineeTimecards";
 import { traineeFlagFor, traineeFlagLabel, type TrainingCandidate } from "@/lib/traineeFlag";
 import { getTrainingDates } from "@/lib/supabase/trainingDates";
@@ -50,6 +52,8 @@ import { getServerNow } from "@/lib/serverTime";
 import { formatClockTime } from "@/lib/payslipTemplate";
 import {
   getCompanyPtoRequests,
+  HR_STATUS_TO_PTO_TYPE,
+  isPaidPtoType,
   createPtoRequest,
   reviewPtoStage,
   canReviewPtoStage,
@@ -107,6 +111,165 @@ interface DailyRecord {
   lastTicketUpdate: LatestVisitUpdate | null;
   /** Ticket numbers scheduled to this person on this date — see ticketsByNameAndDate. Matched by name (tickets.technician is free text, not a profile FK), same convention Work Planner/mobile use. */
   tickets: string[];
+}
+
+/**
+ * Styled PTO summary workbook (Attendance Monitoring → PTO History → Excel):
+ * "PTO Summary" (per-employee day totals + a totals row) and "Requests"
+ * (one row per request). Navy title banner, coloured header row, striped
+ * rows, colour-coded paid/unpaid/status, frozen header, filters on.
+ */
+async function writeStyledPtoWorkbook(opts: {
+  fileName: string;
+  rangeText: string;
+  deptText: string;
+  summaryHeaders: string[];
+  summaryRows: (string | number)[][];
+  detailHeaders: string[];
+  detailRows: (string | number)[][];
+}) {
+  const ExcelJS = await import("exceljs");
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Admin Hub Solutions";
+  const FONT = "Arial";
+  const NAVY = "FF1F3864";
+  const HEADER = "FF2F5597";
+  const STRIPE = "FFF3F6FB";
+  const BORDER = { style: "thin" as const, color: { argb: "FFD9DEE7" } };
+  const borders = { top: BORDER, left: BORDER, bottom: BORDER, right: BORDER };
+  const generated = new Date().toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+
+  const banner = (ws: import("exceljs").Worksheet, cols: number, title: string, sub: string, note?: string) => {
+    ws.mergeCells(1, 1, 1, cols);
+    const t = ws.getCell(1, 1);
+    t.value = title;
+    t.font = { name: FONT, size: 16, bold: true, color: { argb: "FFFFFFFF" } };
+    t.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
+    t.alignment = { vertical: "middle", indent: 1 };
+    ws.getRow(1).height = 30;
+    ws.mergeCells(2, 1, 2, cols);
+    const st = ws.getCell(2, 1);
+    st.value = sub;
+    st.font = { name: FONT, size: 10, color: { argb: "FF1F3864" }, bold: true };
+    st.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFDCE6F4" } };
+    st.alignment = { vertical: "middle", indent: 1 };
+    ws.getRow(2).height = 20;
+    ws.mergeCells(3, 1, 3, cols);
+    const n = ws.getCell(3, 1);
+    n.value = note ?? "";
+    n.font = { name: FONT, size: 9, italic: true, color: { argb: "FF6B7280" } };
+    n.alignment = { vertical: "middle", indent: 1, wrapText: true };
+    ws.getRow(3).height = note ? 18 : 6;
+  };
+
+  const headerRow = (ws: import("exceljs").Worksheet, rowNo: number, headers: string[], fillFor?: (i: number) => string) => {
+    const row = ws.getRow(rowNo);
+    headers.forEach((h, i) => {
+      const c = row.getCell(i + 1);
+      c.value = h;
+      c.font = { name: FONT, size: 10, bold: true, color: { argb: "FFFFFFFF" } };
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fillFor?.(i) ?? HEADER } };
+      c.alignment = { vertical: "middle", horizontal: i === 0 ? "left" : "center", wrapText: true };
+      c.border = borders;
+    });
+    row.height = 32;
+  };
+
+  // ---- Sheet 1: PTO Summary ----
+  const sum = wb.addWorksheet("PTO Summary", { views: [{ state: "frozen", xSplit: 1, ySplit: 5 }] });
+  const sh = opts.summaryHeaders;
+  const textCols = 4; // Employee, Department, Branch, Manager
+  const paidIdx = sh.indexOf("Total Paid Days");
+  const unpaidIdx = sh.indexOf("Total Unpaid Days");
+  const approvedIdx = sh.indexOf("Total Approved Days");
+  banner(
+    sum,
+    sh.length,
+    "PTO Summary",
+    `${opts.rangeText}   •   ${opts.deptText}   •   ${opts.summaryRows.length} employee${opts.summaryRows.length === 1 ? "" : "s"}   •   Generated ${generated}`,
+    "Approved days only count days inside the range, excluding each employee's rest days. Sick and Unpaid leave are unpaid; every other type is paid."
+  );
+  headerRow(sum, 5, sh, (i) => (i === paidIdx ? "FF2E7D32" : i === unpaidIdx ? "FFC2410C" : i === approvedIdx ? NAVY : HEADER));
+  opts.summaryRows.forEach((vals, r) => {
+    const row = sum.getRow(6 + r);
+    vals.forEach((v, i) => {
+      const c = row.getCell(i + 1);
+      c.value = v;
+      c.font = { name: FONT, size: 10, bold: i === 0 || i === approvedIdx, color: { argb: i === paidIdx ? "FF2E7D32" : i === unpaidIdx ? "FFC2410C" : "FF1F2937" } };
+      c.alignment = { vertical: "middle", horizontal: i < textCols ? "left" : "center" };
+      if (i >= textCols) c.numFmt = '0;-0;"–"';
+      c.border = borders;
+      if (r % 2 === 1) c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: STRIPE } };
+    });
+    row.height = 18;
+  });
+  if (opts.summaryRows.length > 0) {
+    const totalRowNo = 6 + opts.summaryRows.length;
+    const tr = sum.getRow(totalRowNo);
+    sh.forEach((_, i) => {
+      const c = tr.getCell(i + 1);
+      if (i === 0) c.value = "TOTAL";
+      else if (i >= textCols) {
+        const col = sum.getColumn(i + 1).letter;
+        c.value = { formula: `SUM(${col}6:${col}${totalRowNo - 1})` };
+        c.numFmt = '0;-0;"–"';
+      }
+      c.font = { name: FONT, size: 10, bold: true, color: { argb: NAVY } };
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFDCE6F4" } };
+      c.alignment = { vertical: "middle", horizontal: i < textCols ? "left" : "center" };
+      c.border = { ...borders, top: { style: "medium", color: { argb: NAVY } } };
+    });
+    tr.height = 20;
+  }
+  sum.autoFilter = { from: { row: 5, column: 1 }, to: { row: 5 + opts.summaryRows.length, column: sh.length } };
+  sh.forEach((h, i) => {
+    sum.getColumn(i + 1).width = i === 0 ? 28 : i < textCols ? 20 : Math.max(11, Math.min(16, h.length + 2));
+  });
+
+  // ---- Sheet 2: Requests ----
+  const det = wb.addWorksheet("Requests", { views: [{ state: "frozen", xSplit: 1, ySplit: 5 }] });
+  const dh = opts.detailHeaders;
+  banner(det, dh.length, "PTO Requests", `${opts.rangeText}   •   ${opts.deptText}   •   ${opts.detailRows.length} request${opts.detailRows.length === 1 ? "" : "s"}   •   Generated ${generated}`);
+  headerRow(det, 5, dh);
+  const statusIdx = dh.indexOf("Status");
+  const paidUnpaidIdx = dh.indexOf("Paid / Unpaid");
+  const STATUS_STYLE: Record<string, { fill: string; font: string }> = {
+    Approved: { fill: "FFDCFCE7", font: "FF166534" },
+    Denied: { fill: "FFFEE2E2", font: "FF991B1B" },
+    Pending: { fill: "FFFEF3C7", font: "FF92400E" },
+  };
+  const wideFrom = dh.indexOf("Manager");
+  opts.detailRows.forEach((vals, r) => {
+    const row = det.getRow(6 + r);
+    vals.forEach((v, i) => {
+      const c = row.getCell(i + 1);
+      c.value = v;
+      c.font = { name: FONT, size: 10, bold: i === 0, color: { argb: "FF1F2937" } };
+      c.alignment = { vertical: "top", horizontal: i === 0 || i >= wideFrom ? "left" : "center", wrapText: i >= wideFrom };
+      c.border = borders;
+      if (r % 2 === 1) c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: STRIPE } };
+      if (i === statusIdx && STATUS_STYLE[String(v)]) {
+        const st = STATUS_STYLE[String(v)];
+        c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: st.fill } };
+        c.font = { name: FONT, size: 10, bold: true, color: { argb: st.font } };
+      }
+      if (i === paidUnpaidIdx) c.font = { name: FONT, size: 10, bold: true, color: { argb: v === "Paid" ? "FF2E7D32" : "FFC2410C" } };
+    });
+  });
+  det.autoFilter = { from: { row: 5, column: 1 }, to: { row: 5 + opts.detailRows.length, column: dh.length } };
+  dh.forEach((h, i) => {
+    det.getColumn(i + 1).width = i === 0 ? 26 : i >= wideFrom ? 34 : Math.max(12, h.length + 3);
+  });
+
+  const buffer = await wb.xlsx.writeBuffer();
+  const url = URL.createObjectURL(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = opts.fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 const PTO_TYPE_LABELS: Record<PtoType, string> = {
@@ -487,6 +650,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // reasoning (this page mirrors that same split).
   const [correctionEraFilter, setCorrectionEraFilter] = useState<"new" | "old">("new");
   const [correctionTimecardData, setCorrectionTimecardData] = useState<{ checkIn: string; checkOut: string; mealStart: string; mealEnd: string }>({ checkIn: "", checkOut: "", mealStart: "", mealEnd: "" });
+  // "profileId|YYYY-MM-DD" days HR plotted as leave (attendance_notes.hr_note = Vacation/Sick/Unpaid/…) — see isOnLeaveFor.
+  const [hrLeaveKeys, setHrLeaveKeys] = useState<Set<string>>(new Set());
   const [notesData, setNotesData] = useState<Record<string, { content: string; notifyIndividual: boolean; notifyTeamLead: boolean; createdBy: string | null }>>({});
   const [branchRoles, setBranchRoles] = useState<BranchRoles[]>([]);
   const [newNote, setNewNote] = useState("");
@@ -568,6 +733,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         noteMap[n.profileId] = { content: n.content, notifyIndividual: n.notifyIndividual, notifyTeamLead: n.notifyTeamLead, createdBy: n.createdBy };
       });
       setNotesData(noteMap);
+      setHrLeaveKeys(new Set(noteRows.filter((n) => HR_STATUS_TO_PTO_TYPE[n.hrNote]).map((n) => `${n.profileId}|${n.noteDate}`)));
       setPtoRequests(ptoRows);
       setCorrections(correctionRows);
       setCorrectionHistory(historyRows);
@@ -851,6 +1017,166 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     return ptoRequests.filter((r) => teamScopedIds.has(r.profileId));
   }, [ptoRequests, teamScopedIds]);
 
+  // ---- PTO History: date range + department filter, and the per-employee
+  // leave summary download (Excel / CSV). The range keeps a request when it
+  // overlaps [from, to]; summary day counts only count days inside the
+  // range, skipping the employee's own rest days (same as payroll).
+  const [ptoHistFrom, setPtoHistFrom] = useState("");
+  const [ptoHistTo, setPtoHistTo] = useState("");
+  const [ptoHistDept, setPtoHistDept] = useState("all");
+  const ptoDeptOf = (profileId: string) => {
+    const prof = profiles.find((x) => x.id === profileId);
+    return prof ? getRoleDepartmentBreakdown(prof.role).department || "Unassigned" : "Unassigned";
+  };
+  const ptoInHistFilter = (r: PtoRequestRow) =>
+    (!ptoHistFrom || r.endDate >= ptoHistFrom) &&
+    (!ptoHistTo || r.startDate <= ptoHistTo) &&
+    (ptoHistDept === "all" || ptoDeptOf(r.profileId) === ptoHistDept);
+  const ptoDeptOptions = useMemo(
+    () => Array.from(new Set(visiblePtoRequests.map((r) => ptoDeptOf(r.profileId)))).sort((a, b) => a.localeCompare(b)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [visiblePtoRequests, profiles]
+  );
+  /** Days of `r` inside the filter range, minus this employee's rest days. */
+  const ptoDaysInHistRange = (r: PtoRequestRow) => {
+    const from = ptoHistFrom && ptoHistFrom > r.startDate ? ptoHistFrom : r.startDate;
+    const to = ptoHistTo && ptoHistTo < r.endDate ? ptoHistTo : r.endDate;
+    const offDays = new Set<number>(profiles.find((x) => x.id === r.profileId)?.off_days ?? []);
+    let n = 0;
+    for (let d = new Date(`${from}T00:00:00`); d <= new Date(`${to}T00:00:00`); d.setDate(d.getDate() + 1)) {
+      if (!offDays.has(d.getDay())) n++;
+    }
+    return n;
+  };
+  const PTO_SUMMARY_TYPES: PtoType[] = ["vacation", "personal", "sick", "unpaid", "bereavement", "holiday"];
+  const downloadPtoSummary = (format: "xlsx" | "csv") => {
+    type Acc = { name: string; dept: string; branch: string; manager: string; byType: Record<string, number>; paid: number; unpaid: number; pendingDays: number; denied: number; requests: number };
+    const byEmp = new Map<string, Acc>();
+    const detail: PtoRequestRow[] = [];
+    for (const r of visiblePtoRequests) {
+      if (!ptoInHistFilter(r) || r.status === "cancelled") continue;
+      detail.push(r);
+      const prof = profiles.find((x) => x.id === r.profileId);
+      const acc =
+        byEmp.get(r.profileId) ??
+        ({
+          name: profileName(r.profileId),
+          dept: ptoDeptOf(r.profileId),
+          branch: prof?.assigned_branch || "",
+          manager: prof?.manager_name || "",
+          byType: {},
+          paid: 0,
+          unpaid: 0,
+          pendingDays: 0,
+          denied: 0,
+          requests: 0,
+        } as Acc);
+      acc.requests++;
+      const days = ptoDaysInHistRange(r);
+      if (r.status === "approved") {
+        acc.byType[r.ptoType] = (acc.byType[r.ptoType] ?? 0) + days;
+        if (isPaidPtoType(r.ptoType)) acc.paid += days;
+        else acc.unpaid += days;
+      } else if (r.status === "pending") acc.pendingDays += days;
+      else if (r.status === "denied") acc.denied++;
+      byEmp.set(r.profileId, acc);
+    }
+    const headers = [
+      "Employee",
+      "Department",
+      "Branch",
+      "Manager",
+      ...PTO_SUMMARY_TYPES.map((t) => `${PTO_TYPE_LABELS[t]} (days)`),
+      "Total Paid Days",
+      "Total Unpaid Days",
+      "Total Approved Days",
+      "Pending (days)",
+      "Denied Requests",
+      "Total Requests",
+    ];
+    const rows = Array.from(byEmp.values())
+      .sort((a, b) => a.dept.localeCompare(b.dept) || a.name.localeCompare(b.name))
+      .map((a) => [
+        a.name,
+        a.dept,
+        a.branch,
+        a.manager,
+        ...PTO_SUMMARY_TYPES.map((t) => a.byType[t] ?? 0),
+        a.paid,
+        a.unpaid,
+        a.paid + a.unpaid,
+        a.pendingDays,
+        a.denied,
+        a.requests,
+      ]);
+    // One line per request — which dates were asked for, how many of them
+    // fall in the range, and where it stands at each approval stage.
+    const stage = (status: string, by: string | null, at: string | null) =>
+      `${status}${by ? ` by ${profileName(by)}` : ""}${at ? ` on ${at.slice(0, 10)}` : ""}`;
+    const detailHeaders = [
+      "Employee",
+      "Department",
+      "Branch",
+      "Leave Type",
+      "Paid / Unpaid",
+      "Start Date",
+      "End Date",
+      "Days in Range",
+      "Status",
+      "Submitted On",
+      "Manager",
+      "HR",
+      "Accounting",
+      "Reason",
+      "Review Note",
+    ];
+    const detailRows = detail
+      .map((r) => ({ r, name: profileName(r.profileId), dept: ptoDeptOf(r.profileId) }))
+      .sort((a, b) => a.dept.localeCompare(b.dept) || a.name.localeCompare(b.name) || a.r.startDate.localeCompare(b.r.startDate))
+      .map(({ r, name, dept }) => [
+        name,
+        dept,
+        profiles.find((x) => x.id === r.profileId)?.assigned_branch || "",
+        PTO_TYPE_LABELS[r.ptoType],
+        isPaidPtoType(r.ptoType) ? "Paid" : "Unpaid",
+        r.startDate,
+        r.endDate,
+        ptoDaysInHistRange(r),
+        r.status === "denied" ? "Denied" : r.status.charAt(0).toUpperCase() + r.status.slice(1),
+        ptoSubmittedDay(r.createdAt),
+        stage(r.managerStatus, r.managerReviewedBy, r.managerReviewedAt),
+        stage(r.hrStatus, r.hrReviewedBy, r.hrReviewedAt),
+        stage(r.accountingStatus, r.accountingReviewedBy, r.accountingReviewedAt),
+        r.reason || "",
+        r.reviewNote || "",
+      ]);
+
+    const rangeLabel = `${ptoHistFrom || "all"}_to_${ptoHistTo || "all"}`;
+    const deptLabel = ptoHistDept === "all" ? "all-departments" : ptoHistDept.replace(/[^\w]+/g, "-");
+    const base = `pto-summary_${rangeLabel}_${deptLabel}`;
+    if (format === "csv") {
+      // One file: the summary table, a blank line, then every request.
+      exportToCSV(base, headers, [...rows, [], ["REQUESTS"], detailHeaders, ...detailRows]);
+      return;
+    }
+    void (async () => {
+      try {
+        await writeStyledPtoWorkbook({
+          fileName: `${base}.xlsx`,
+          rangeText: `${ptoHistFrom || "Start"} to ${ptoHistTo || "Today"}`,
+          deptText: ptoHistDept === "all" ? "All departments" : ptoHistDept,
+          summaryHeaders: headers,
+          summaryRows: rows,
+          detailHeaders,
+          detailRows,
+        });
+      } catch (err) {
+        console.error("PTO summary export failed:", err);
+        window.alert("Couldn't create the Excel file — try again, or use CSV.");
+      }
+    })();
+  };
+
   // Time-Off Management tab's Paid Leave / Unpaid Leave split — only the
   // two request lists inside that tab use this; ptoPendingApproval (KPI
   // tile) and anything else keeps reading visiblePtoRequests directly.
@@ -938,6 +1264,23 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     [hireDateByProfileId]
   );
 
+  // Approved leave (any PTO type, paid or unpaid) or HR-plotted leave on the
+  // calendar — the day is excused, so it never shows as Missing Clock In /
+  // absent. Same sources payroll uses to read a no-punch day as Paid/Unpaid
+  // Leave instead of Absent (EmployeePayrollDetailModal.tsx).
+  const approvedLeaveKeys = useMemo(() => {
+    const keys = new Set<string>(hrLeaveKeys);
+    for (const pto of ptoRequests) {
+      if (pto.status !== "approved" || !pto.startDate) continue;
+      const end = new Date(`${pto.endDate || pto.startDate}T00:00:00`);
+      for (let d = new Date(`${pto.startDate}T00:00:00`); d <= end; d.setDate(d.getDate() + 1)) {
+        keys.add(`${pto.profileId}|${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+      }
+    }
+    return keys;
+  }, [ptoRequests, hrLeaveKeys]);
+  const isOnLeaveFor = useCallback((profileId: string, dateISO: string): boolean => approvedLeaveKeys.has(`${profileId}|${dateISO}`), [approvedLeaveKeys]);
+
   // Pending Timecard Corrections — `corrections` (above) is already the full
   // company list for the Corrections tab, so just filter it down instead of
   // firing a second query. A "pending" correction hasn't cleared every
@@ -962,7 +1305,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const dow = new Date(dateISO + "T00:00:00").getDay();
       // A company holiday suppresses "missing clock-in"/etc. alerts exactly
       // like a scheduled rest day — see isCompanyHolidayFor above.
-      const isOffDay = isRestDayFor(p, dateISO) || isCompanyHolidayFor(dateISO) || isBeforeHireFor(p.id, dateISO);
+      const isOffDay = isRestDayFor(p, dateISO) || isCompanyHolidayFor(dateISO) || isBeforeHireFor(p.id, dateISO) || isOnLeaveFor(p.id, dateISO);
       const checkIn = entry?.checkIn || "";
       const checkOut = entry?.checkOut || "";
       const mealIn = entry?.mealStart || "";
@@ -1001,7 +1344,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         tickets: ticketsByNameAndDate.get(`${(p.display_name || p.email || "").trim().toLowerCase()}|${dateISO}`) ?? [],
       };
     },
-    [nowByTimezone, allProfileById, checkoutProposalsByKey, lastTicketUpdateByProfile, ticketsByNameAndDate, isCompanyHolidayFor, hasPendingCorrectionFor, isBeforeHireFor, isRestDayFor]
+    [nowByTimezone, allProfileById, checkoutProposalsByKey, lastTicketUpdateByProfile, ticketsByNameAndDate, isCompanyHolidayFor, hasPendingCorrectionFor, isBeforeHireFor, isRestDayFor, isOnLeaveFor]
   );
 
   const dailyRecords: DailyRecord[] = useMemo(
@@ -1268,6 +1611,198 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   };
 
 
+  // ---- Date Range Attendance Report (styled Excel) ----------------------
+  // Per employee over [reportFrom, reportTo] (future days left out): Time In,
+  // Time Out, working hours, Time Correction requests and days absent. Same
+  // employees and search/department/location filters as the table below;
+  // rest days, company holidays, approved leave and days before hire are
+  // never counted as absent (buildDailyRecord's isOffDay).
+  const [reportFrom, setReportFrom] = useState("");
+  const [reportTo, setReportTo] = useState("");
+  const [rangeReportBusy, setRangeReportBusy] = useState(false);
+  const handleDownloadRangeReport = async () => {
+    if (!reportFrom || !reportTo) {
+      window.alert("Pick a From and To date first.");
+      return;
+    }
+    if (reportFrom > reportTo) {
+      window.alert("The From date is after the To date.");
+      return;
+    }
+    const lastDay = reportTo > todayISO ? todayISO : reportTo;
+    if (reportFrom > lastDay) {
+      window.alert("That range is entirely in the future.");
+      return;
+    }
+    setRangeReportBusy(true);
+    try {
+      const [entryRows, holidayRows] = await Promise.all([
+        getCompanyTimecardEntries(reportFrom, lastDay),
+        getCompanyHolidaysInRange(reportFrom, lastDay).catch(() => [] as CompanyHolidayRow[]),
+      ]);
+      const entryByKey = new Map(entryRows.map((e) => [`${e.profileId}|${e.workDate}`, e]));
+      const holidaySet = new Set(holidayRows.map((h) => h.date));
+      const dates: string[] = [];
+      for (let d = new Date(`${reportFrom}T00:00:00`); d <= new Date(`${lastDay}T00:00:00`); d.setDate(d.getDate() + 1)) {
+        dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+      }
+      const people = visibleProfiles
+        .filter((p) => {
+          const name = (p.display_name || p.email || "").toLowerCase();
+          if (searchEmployee && !name.includes(searchEmployee.toLowerCase())) return false;
+          if (filterDepartments.length > 0 && !filterDepartments.includes(getRoleDepartmentBreakdown(p.role).department)) return false;
+          if (filterLocations.length > 0 && !filterLocations.includes(normBranchLabel(p.assigned_branch))) return false;
+          return true;
+        })
+        .sort((a, b) => (a.display_name || a.email).localeCompare(b.display_name || b.email));
+      const corrByKey = new Map(corrections.map((c) => [`${c.profileId}|${c.workDate}`, c]));
+      const corrLabel = (st: string) => (st === "approved" ? "Approved" : st === "rejected" ? "Rejected" : "Pending");
+
+      const summaryRows: (string | number)[][] = [];
+      const dailyRows: (string | number)[][] = [];
+      for (const p of people) {
+        let worked = 0;
+        let hours = 0;
+        let absent = 0;
+        let missingOut = 0;
+        let leave = 0;
+        const corr = { total: 0, approved: 0, pending: 0, rejected: 0 };
+        for (const date of dates) {
+          const entry = entryByKey.get(`${p.id}|${date}`);
+          const rec = buildDailyRecord(p, date, entry, date === todayISO);
+          const c = corrByKey.get(`${p.id}|${date}`);
+          if (c) {
+            corr.total++;
+            if (c.status === "approved") corr.approved++;
+            else if (c.status === "rejected") corr.rejected++;
+            else corr.pending++;
+          }
+          const hasIn = !!entry?.checkIn;
+          const hasOut = !!entry?.checkOut;
+          const dayHours = hasIn && hasOut ? calcWorkedHours({ checkIn: entry!.checkIn, checkOut: entry!.checkOut, mealStart: entry!.mealStart, mealEnd: entry!.mealEnd, notes: "" }) : 0;
+          let status: string;
+          if (hasIn) {
+            worked++;
+            hours += dayHours;
+            status = hasOut ? "Present" : "Missing Time Out";
+            if (!hasOut && date !== todayISO) missingOut++;
+          } else if (holidaySet.has(date)) status = "Holiday";
+          else if (isOnLeaveFor(p.id, date)) {
+            status = "Leave";
+            leave++;
+          } else if (isBeforeHireFor(p.id, date)) status = "Not yet hired";
+          else if (rec.isOffDay) status = "Day Off";
+          else if (rec.hasPendingCorrection) status = "Pending Correction";
+          else if (date === todayISO) status = "Not clocked in yet";
+          else {
+            status = "Absent";
+            absent++;
+          }
+          dailyRows.push([
+            date,
+            rec.name,
+            rec.department,
+            rec.location,
+            hasIn ? formatClockTime(entry!.checkIn) : "—",
+            hasOut ? formatClockTime(entry!.checkOut) : "—",
+            hasIn && hasOut ? Math.round(dayHours * 100) / 100 : 0,
+            status,
+            c ? corrLabel(c.status) : "",
+          ]);
+        }
+        summaryRows.push([
+          p.display_name || p.email,
+          getRoleDepartmentBreakdown(p.role).department,
+          p.assigned_branch || "",
+          p.manager_name || "",
+          worked,
+          Math.round(hours * 100) / 100,
+          worked ? Math.round((hours / worked) * 100) / 100 : 0,
+          absent,
+          missingOut,
+          leave,
+          corr.total,
+          corr.approved,
+          corr.pending,
+          corr.rejected,
+        ]);
+      }
+      dailyRows.sort((a, b) => String(a[0]).localeCompare(String(b[0])) || String(a[1]).localeCompare(String(b[1])));
+
+      const filtersText = [
+        filterDepartments.length ? filterDepartments.join(", ") : "All departments",
+        filterLocations.length ? filterLocations.join(", ") : "All locations",
+        searchEmployee ? `"${searchEmployee}"` : "",
+      ]
+        .filter(Boolean)
+        .join("   •   ");
+      const generated = new Date().toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+      const subtitle = `${reportFrom} to ${lastDay}   •   ${filtersText}   •   ${people.length} employee${people.length === 1 ? "" : "s"}   •   Generated ${generated}`;
+      const DASH = '0;-0;"–"';
+      const HOURS = '0.00;-0.00;"–"';
+      await downloadStyledReport(`attendance-report_${reportFrom}_to_${lastDay}.xlsx`, [
+        {
+          name: "Summary",
+          title: "Date Range Attendance Report",
+          subtitle,
+          note: "Absent = a scheduled work day with no Time In (rest days, company holidays, approved leave, days before hire and days with a pending correction are never absent). Working hours = Time In to Time Out minus the punched meal break.",
+          columns: [
+            { header: "Employee", width: 28, align: "left" },
+            { header: "Department", width: 22, align: "left" },
+            { header: "Branch", width: 18, align: "left" },
+            { header: "Manager", width: 22, align: "left" },
+            { header: "Days Worked", numFmt: DASH, total: true },
+            { header: "Working Hours", numFmt: HOURS, total: true, headerFill: "FF2E7D32" },
+            { header: "Avg Hours / Day", numFmt: HOURS },
+            { header: "Days Absent", numFmt: DASH, total: true, headerFill: "FFB91C1C" },
+            { header: "Missing Time Out", numFmt: DASH, total: true, headerFill: "FFC2410C" },
+            { header: "Leave Days", numFmt: DASH, total: true },
+            { header: "Correction Requests", numFmt: DASH, total: true, headerFill: "FF6D28D9" },
+            { header: "Approved", numFmt: DASH, total: true },
+            { header: "Pending", numFmt: DASH, total: true },
+            { header: "Rejected", numFmt: DASH, total: true },
+          ],
+          rows: summaryRows,
+          totalsRow: true,
+        },
+        {
+          name: "Daily Detail",
+          title: "Daily Detail",
+          subtitle,
+          columns: [
+            { header: "Date", width: 13, align: "left" },
+            { header: "Employee", width: 28, align: "left" },
+            { header: "Department", width: 22, align: "left" },
+            { header: "Branch", width: 18, align: "left" },
+            { header: "Time In", width: 14 },
+            { header: "Time Out", width: 14 },
+            { header: "Working Hours", width: 14, numFmt: HOURS },
+            { header: "Status", width: 20 },
+            { header: "Time Correction", width: 16 },
+          ],
+          rows: dailyRows,
+          statusColumn: 7,
+          statusStyles: {
+            Present: { fill: "FFDCFCE7", font: "FF166534" },
+            Absent: { fill: "FFFEE2E2", font: "FF991B1B" },
+            "Missing Time Out": { fill: "FFFFEDD5", font: "FF9A3412" },
+            "Pending Correction": { fill: "FFEDE9FE", font: "FF5B21B6" },
+            Leave: { fill: "FFE0F2FE", font: "FF075985" },
+            Holiday: { fill: "FFE0F2FE", font: "FF075985" },
+            "Day Off": { fill: "FFF1F5F9", font: "FF64748B" },
+            "Not yet hired": { fill: "FFF1F5F9", font: "FF64748B" },
+            "Not clocked in yet": { fill: "FFFEF3C7", font: "FF92400E" },
+          },
+        },
+      ]);
+    } catch (err) {
+      console.error("Date range attendance report failed:", err);
+      window.alert("Couldn't create the report — try again.");
+    } finally {
+      setRangeReportBusy(false);
+    }
+  };
+
   const handleDownloadSummary = () => {
     // Absent — never clocked in at all, so excluded from the main table
     // (see filteredAndSortedData's own filter comment: it's the day's
@@ -1284,6 +1819,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       })
       .sort((a, b) => (dateRangeActive && a.date !== b.date ? (a.date! < b.date! ? -1 : 1) : a.name.localeCompare(b.name)));
 
+    // CSV-quote a value: a quote/comma/newline inside a name, note or ticket
+    // list must not split the cell (it used to shift every later column).
+    const q = (v: string | number | null | undefined) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     let csvContent = "Attendance Summary Report\n";
     csvContent += dateRangeActive ? `Date range: ${filterDateFrom} to ${filterDateTo}\n\n` : `Date: ${dailyDate}\n\n`;
     // Key Metrics stay anchored to the single-date picker (dailyDate) even
@@ -1307,9 +1845,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     filteredAndSortedData.forEach((record) => {
       const alerts = record.alerts.join("; ");
       const notes = notesData[record.profileId]?.content || "";
-      const dateCol = dateRangeActive ? `"${record.date}",` : "";
+      const dateCol = dateRangeActive ? `${q(record.date)},` : "";
       const ticketsCol = record.tickets.join("; ");
-      csvContent += `${dateCol}"${record.name}","${record.location}","${record.department}","${record.manager}","${record.checkIn}","${record.mealIn}","${record.mealOut}","${record.checkOut}",${record.tickets.length},"${ticketsCol}","${alerts}","${notes}"\n`;
+      csvContent += `${dateCol}${[record.name, record.location, record.department, record.manager, record.checkIn, record.mealIn, record.mealOut, record.checkOut].map(q).join(",")},${record.tickets.length},${q(ticketsCol)},${q(alerts)},${q(notes)}\n`;
     });
 
     if (absentRecords.length > 0) {
@@ -1318,9 +1856,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         ? "Date,Employee Name,Location,Department,Manager,Assigned Tickets,Tickets\n"
         : "Employee Name,Location,Department,Manager,Assigned Tickets,Tickets\n";
       absentRecords.forEach((record) => {
-        const dateCol = dateRangeActive ? `"${record.date}",` : "";
+        const dateCol = dateRangeActive ? `${q(record.date)},` : "";
         const ticketsCol = record.tickets.join("; ");
-        csvContent += `${dateCol}"${record.name}","${record.location}","${record.department}","${record.manager}",${record.tickets.length},"${ticketsCol}"\n`;
+        csvContent += `${dateCol}${[record.name, record.location, record.department, record.manager].map(q).join(",")},${record.tickets.length},${q(ticketsCol)}\n`;
       });
     }
 
@@ -1777,6 +2315,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
             {/* Drives every "daily" scoped view on this page — the KPI
                 cards above and the Daily Attendance Tracker table below —
                 so HR/managers can review any earlier date from one control. */}
+            <div className="flex flex-col-reverse items-end gap-2">
             <div className="flex items-center gap-2">
               {!isDailyDateToday && (
                 <button
@@ -1801,9 +2340,41 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   className="group flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-br from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white rounded-lg transition shadow-lg hover:shadow-blue-500/50 text-sm font-semibold"
                 >
                   <Download className="h-4 w-4 group-hover:scale-110 transition transform" />
-                  Download
+                  Download Daily Attendance Report
                 </button>
               )}
+            </div>
+            {activeTab === "daily-attendance" && (
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <input
+                  type="date"
+                  value={reportFrom}
+                  max={todayISO}
+                  onChange={(e) => setReportFrom(e.target.value)}
+                  aria-label="Report from"
+                  className="bg-slate-800/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
+                />
+                <span className="text-xs text-slate-400">to</span>
+                <input
+                  type="date"
+                  value={reportTo}
+                  max={todayISO}
+                  onChange={(e) => setReportTo(e.target.value)}
+                  aria-label="Report to"
+                  className="bg-slate-800/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleDownloadRangeReport()}
+                  disabled={rangeReportBusy || !reportFrom || !reportTo}
+                  title="Excel report for the picked dates: Time In, Time Out, working hours, Time Correction requests and days absent, per employee"
+                  className="group flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-br from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition shadow-lg hover:shadow-blue-500/50 text-sm font-semibold"
+                >
+                  {rangeReportBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4 group-hover:scale-110 transition transform" />}
+                  Download Date Range Attendance Report
+                </button>
+              </div>
+            )}
             </div>
           </div>
         </div>
@@ -2729,13 +3300,42 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
               {/* PTO History */}
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6">
-                <h2 className="text-lg font-bold text-white mb-4">PTO History</h2>
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  <h2 className="text-lg font-bold text-white">PTO History</h2>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <label className="flex items-center gap-1.5 text-slate-400">
+                      From
+                      <input type="date" value={ptoHistFrom} onChange={(e) => setPtoHistFrom(e.target.value)} className="glass-input !w-auto text-xs py-1.5 px-2 rounded-md" />
+                    </label>
+                    <label className="flex items-center gap-1.5 text-slate-400">
+                      To
+                      <input type="date" value={ptoHistTo} onChange={(e) => setPtoHistTo(e.target.value)} className="glass-input !w-auto text-xs py-1.5 px-2 rounded-md" />
+                    </label>
+                    <select value={ptoHistDept} onChange={(e) => setPtoHistDept(e.target.value)} className="glass-input !w-auto min-w-40 text-xs py-1.5 px-2 rounded-md" aria-label="Department">
+                      <option value="all">All departments</option>
+                      {ptoDeptOptions.map((d) => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </select>
+                    {(ptoHistFrom || ptoHistTo || ptoHistDept !== "all") && (
+                      <button type="button" onClick={() => { setPtoHistFrom(""); setPtoHistTo(""); setPtoHistDept("all"); }} className="btn btn-ghost btn-sm">
+                        Clear
+                      </button>
+                    )}
+                    <button type="button" onClick={() => downloadPtoSummary("xlsx")} className="btn btn-sm" title="Per-employee leave summary for this range and department — every leave type (paid and unpaid)">
+                      <Download className="h-3.5 w-3.5" /> Excel
+                    </button>
+                    <button type="button" onClick={() => downloadPtoSummary("csv")} className="btn btn-sm" title="Same summary as a CSV file">
+                      <Download className="h-3.5 w-3.5" /> CSV
+                    </button>
+                  </div>
+                </div>
                 <div className="space-y-3">
-                  {leaveTabPtoRequests.filter(r => r.status !== "pending").length === 0 ? (
+                  {leaveTabPtoRequests.filter(r => r.status !== "pending" && ptoInHistFilter(r)).length === 0 ? (
                     <div className="text-center py-8">
-                      <p className="text-slate-400 text-sm">No PTO history yet</p>
+                      <p className="text-slate-400 text-sm">{ptoHistFrom || ptoHistTo || ptoHistDept !== "all" ? "No PTO history for these filters" : "No PTO history yet"}</p>
                     </div>
-                  ) : leaveTabPtoRequests.filter(r => r.status !== "pending").map((request) => (
+                  ) : leaveTabPtoRequests.filter(r => r.status !== "pending" && ptoInHistFilter(r)).map((request) => (
                     <div key={request.id} className="bg-slate-800/50 border border-white/10 rounded-lg p-4">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -3191,6 +3791,25 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold border ${selectedCorrection.accountingStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30" : selectedCorrection.accountingStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30" : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"}`}>
                       Accounting: {selectedCorrection.accountingStatus}
                     </span>
+                    {selectedCorrection.exceptionType !== null && (
+                      <span
+                        title="The Exception Report's HR sign-off (separate from the HR approval vote)"
+                        className={`inline-block px-2 py-0.5 rounded text-xs font-semibold border ${
+                          selectedCorrection.hrPaperworkStatus === "approved"
+                            ? "bg-green-500/20 text-green-300 border-green-500/30"
+                            : selectedCorrection.hrPaperworkStatus === "additional_review_required"
+                            ? "bg-orange-500/20 text-orange-300 border-orange-500/30"
+                            : "bg-slate-500/20 text-slate-300 border-slate-500/30"
+                        }`}
+                      >
+                        HR paperwork:{" "}
+                        {selectedCorrection.hrPaperworkStatus === "approved"
+                          ? "signed — approved"
+                          : selectedCorrection.hrPaperworkStatus === "additional_review_required"
+                          ? "signed — additional review required"
+                          : "not signed yet"}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -3230,8 +3849,13 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   </div>
                 )}
                 {selectedCorrection.hrStatus === "pending" && canReviewCorrectionStage(selectedCorrection, "hr", myProfileId, role, extraRoles) && (
-                  <div className={`grid gap-3 ${selectedCorrection.exceptionType === null ? "md:grid-cols-2" : ""}`}>
-                    {selectedCorrection.exceptionType === null && (
+                  <div className={`grid gap-3 ${selectedCorrection.exceptionType === null || selectedCorrection.hrPaperworkStatus !== "pending" ? "md:grid-cols-2" : ""}`}>
+                    {/* Plain approve: no Exception Report, or its HR paperwork is
+                        already signed (e.g. "Additional Review Required", or the
+                        HR vote didn't save after signing) — signing again isn't
+                        possible, so this is the only way to cast HR's vote. Same
+                        rule as CorrectionsTab.tsx's list buttons. */}
+                    {(selectedCorrection.exceptionType === null || selectedCorrection.hrPaperworkStatus !== "pending") && (
                       <button onClick={() => handleCorrectionStageAction("hr", "approved")} disabled={correctionStageBusy} className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg transition font-semibold text-sm flex items-center justify-center gap-2">
                         {correctionStageBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
                         Approve as HR

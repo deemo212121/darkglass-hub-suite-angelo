@@ -6,6 +6,7 @@ import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, pick, pad, todayStr } from "@/components/shared";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -18,7 +19,7 @@ const ALL_ROWS = Array.from({length:40},(_,i)=>{
     id:i+1, claimNo:"CLM-"+pad(90000+i), ticketNo:"TK-2026-"+pad(1000+i),
     location:pick(LOCATIONS.slice(1),i), tech:pick(TECHS,i),
     claimCompany:pick(CLAIM_COMPANIES,i),
-    plannedDate:d.toISOString().slice(0,10),
+    plannedDate:localISODate(d),
     status:pick(["Completed","Open","Pending"],i),
     amount:100+(i*43)%900,
   };

@@ -32,6 +32,7 @@ import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 import { branchDonutHex } from "@/lib/branchDisplay";
 import { LOCATIONS } from "@/lib/locations";
+import { localISODate, todayISO } from "@/lib/localDate";
 
 // CheckboxDropdown — a select-styled button that opens a portal-positioned
 // checkbox list below it. The whole button is the trigger (unlike a plain
@@ -418,7 +419,7 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       const cur = new Date(`${scopeFrom}T00:00:00`);
       const end = new Date(`${scopeTo}T00:00:00`);
       while (cur <= end) {
-        dates.push(cur.toISOString().slice(0, 10));
+        dates.push(localISODate(cur));
         cur.setDate(cur.getDate() + 1);
       }
       return dates;
@@ -901,7 +902,7 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               type="button"
               onClick={() => branchDetailFilter.size > 0
                 ? downloadSheetXlsx(
-                    `parts-order-branch-detail_${new Date().toISOString().slice(0, 10)}.xlsx`,
+                    `parts-order-branch-detail_${todayISO()}.xlsx`,
                     "Branch Detail",
                     [
                       ["PO Date", "Vendor", "Location", "PO #", "Part#", "Description", "Qty", "Unit Price", "Total Amount", "Warranty Company"],
@@ -909,7 +910,7 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     ]
                   )
                 : downloadSheetXlsx(
-                    `parts-order-branch-overview_${new Date().toISOString().slice(0, 10)}.xlsx`,
+                    `parts-order-branch-overview_${todayISO()}.xlsx`,
                     "Per-Branch Overview",
                     [["Branch", "PO Lines", "Total Spend", "Distinct POs", "Distinct Distributors", "Pending PO"], ...branchSummary.map((b) => [b.branch, b.lines, b.spend.toFixed(2), b.poCount, b.distributorCount, b.pending])]
                   )
@@ -1039,7 +1040,7 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               <button
                 type="button"
                 onClick={() => downloadSheetXlsx(
-                  `distributor-breakdown_${new Date().toISOString().slice(0, 10)}.xlsx`,
+                  `distributor-breakdown_${todayISO()}.xlsx`,
                   "Distributor Breakdown",
                   [["Distributor", "Lines", "Spend", "Share"], ...distTable.map((d) => [d.name, d.lines, d.spend.toFixed(2), `${d.share}%`])]
                 )}
@@ -1080,7 +1081,7 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               <button
                 type="button"
                 onClick={() => downloadSheetXlsx(
-                  `most-ordered-parts_${new Date().toISOString().slice(0, 10)}.xlsx`,
+                  `most-ordered-parts_${todayISO()}.xlsx`,
                   "Most Ordered Parts",
                   [["Branch", "Part No", "Description", "Times Ordered", "Total Spend"], ...topParts.map((p) => [p.branch, p.partNo, p.desc, p.count, p.spend.toFixed(2)])]
                 )}
@@ -1138,7 +1139,7 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             <button
               type="button"
               onClick={() => downloadSheetXlsx(
-                `daily-po-balances_${new Date().toISOString().slice(0, 10)}.xlsx`,
+                `daily-po-balances_${todayISO()}.xlsx`,
                 "Daily PO Balances",
                 [
                   ["Branch", ...dailyByBranchDates, "Total"],
@@ -1275,7 +1276,7 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 onClick={() => {
                   const cell = (v: number) => (wtyIsQty ? v : v.toFixed(2));
                   downloadSheetXlsx(
-                    `${wtyIsQty ? "wty-vendor-qty" : "wty-vendor"}_${new Date().toISOString().slice(0, 10)}.xlsx`,
+                    `${wtyIsQty ? "wty-vendor-qty" : "wty-vendor"}_${todayISO()}.xlsx`,
                     wtyIsQty ? "Wty-Vendor Qty" : "Wty-Vendor",
                     [
                       ["Warranty Company", ...wtyVendorCrosstab.distributors, "Total"],
@@ -1390,7 +1391,7 @@ export function PartsOrderDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             <button
               type="button"
               onClick={() => downloadSheetXlsx(
-                `part-lines_${new Date().toISOString().slice(0, 10)}.xlsx`,
+                `part-lines_${todayISO()}.xlsx`,
                 "Part Lines",
                 [
                   ["Ticket", "Branch/Location", "Technician", "Status", "Warranty", "Part No", "Description", "Distributor", "Qty", "Price", "In Truck Stock", "Aging (days)"],

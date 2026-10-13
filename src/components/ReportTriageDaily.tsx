@@ -68,6 +68,7 @@ import {
 import { isTriageRole, normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
 import { classify, BUCKET_LABEL, BUCKET_COLOR, BUCKET_ORDER, type ActionBucket } from "@/components/DailyActivityPage";
 import { dayStatus, isOffDay, graceMinutesFor } from "@/components/ReportAttendanceMonitoring";
+import { localISODate, todayISO } from "@/lib/localDate";
 
 const TOOLTIP_STYLE = { background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" } as const;
 
@@ -83,8 +84,8 @@ function isTriageStatus(status: string | undefined | null): boolean {
 function dateOnly(v: string | undefined | null): string {
   return (v || "").slice(0, 10);
 }
-const todayIso = () => new Date().toISOString().slice(0, 10);
-const daysAgoIso = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
+const todayIso = () => todayISO();
+const daysAgoIso = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return localISODate(d); };
 /** Add (or subtract, with a negative n) n days to an ISO date string. */
 const addDaysToIso = (iso: string, n: number) => { const d = new Date(iso); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 const fmtShort = (iso: string) => { const [, m, d] = iso.split("-"); return `${Number(m)}/${Number(d)}`; };
@@ -351,7 +352,7 @@ export function ReportTriageDaily({ mod, sub }: { mod: ModuleDef; sub: SubModule
     const dates: string[] = [];
     let d = new Date(dateFrom + "T00:00:00");
     const end = new Date(dateTo + "T00:00:00");
-    while (d <= end) { dates.push(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); }
+    while (d <= end) { dates.push(localISODate(d)); d.setDate(d.getDate() + 1); }
     return dates;
   }, [dateFrom, dateTo]);
 

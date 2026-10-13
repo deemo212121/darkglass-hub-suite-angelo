@@ -17,6 +17,7 @@ import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { supabase } from "@/lib/supabase/client";
 import { calcWorkedHours } from "@/lib/supabase/timecards";
+import { todayISO } from "@/lib/localDate";
 
 const EXCHANGE_RATE = 57; // 1 USD = 57 PHP — same convention as AccountingDashboard.tsx
 const REGULAR_HOURS_PER_DAY = 8;
@@ -294,7 +295,7 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
     const worksheet = XLSX.utils.aoa_to_sheet(sheet);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Accounting Report");
-    XLSX.writeFile(workbook, `accounting-report_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(workbook, `accounting-report_${todayISO()}.xlsx`);
   };
 
   return (

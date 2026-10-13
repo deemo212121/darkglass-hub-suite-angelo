@@ -17,6 +17,7 @@ import { CustomFormRenderer, type CustomFormRendererValue } from "@/components/C
 import { uploadSubmissionToDriveIfConfigured } from "@/lib/documentTemplates/driveUpload";
 import type { DocumentTemplate } from "@/lib/documentTemplates/types";
 import type { CustomFormResponseValue } from "@/lib/supabase/customForms";
+import usihsLogo from "@/assets/us-in-home-services-logo.png";
 
 interface Props {
   slug: string;
@@ -106,6 +107,7 @@ export function ApplyFormPage({ slug }: Props) {
           </div>
         ) : (
           <div className="panel p-5">
+            <img src={usihsLogo} alt="US In Home Services" className="h-16 w-16 mx-auto mb-3" />
             <h1 className="text-lg font-bold mb-1">{form.title}</h1>
             {form.description && <p className="text-sm text-muted-foreground mb-4">{form.description}</p>}
             <CustomFormRenderer fields={form.fields} onSubmit={handleSubmit} />

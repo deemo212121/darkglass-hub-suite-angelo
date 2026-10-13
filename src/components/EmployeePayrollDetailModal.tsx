@@ -33,6 +33,7 @@ import {
   type SalaryChangeReason,
   type CompensationType,
 } from "@/lib/supabase/salary";
+import { todayISO as userTodayISO } from "@/lib/localDate";
 
 interface Props {
   profileId: string;
@@ -224,7 +225,7 @@ export function EmployeePayrollDetailModal({
   // currently logged-in viewer these describe.
   const { uid, displayName, email, role: myRole, extraRoles: myExtraRoles, realRole: myRealRole } = useAuth();
   const actorName = displayName || email || "Unknown";
-  const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const todayISO = useMemo(() => userTodayISO(), []);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const fallbackMonth = currentMonthBounds();
   const [rangeStart, setRangeStart] = useState(initialStart || fallbackMonth.start);
@@ -274,7 +275,7 @@ export function EmployeePayrollDetailModal({
   const [disputedTicketNosApproved, setDisputedTicketNosApproved] = useState<Set<string>>(new Set());
   const [showRateForm, setShowRateForm] = useState(false);
   const [rateForm, setRateForm] = useState({
-    effectiveDate: new Date().toISOString().slice(0, 10),
+    effectiveDate: userTodayISO(),
     compensationType: "hourly" as CompensationType,
     hourlyRate: "",
     annualSalary: "",
@@ -1022,7 +1023,7 @@ export function EmployeePayrollDetailModal({
       });
       setHistory(await getSalaryHistory(profileId));
       setShowRateForm(false);
-      setRateForm({ effectiveDate: new Date().toISOString().slice(0, 10), compensationType: "hourly", hourlyRate: "", annualSalary: "", reason: "adjustment", notes: "" });
+      setRateForm({ effectiveDate: userTodayISO(), compensationType: "hourly", hourlyRate: "", annualSalary: "", reason: "adjustment", notes: "" });
       onRateChanged?.();
     } catch (err) {
       alert(`Failed to save rate change: ${err instanceof Error ? err.message : "Unknown error"}`);

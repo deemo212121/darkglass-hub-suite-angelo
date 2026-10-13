@@ -30,6 +30,7 @@ import {
   OSM_ATTRIBUTION,
   type LatLng,
 } from "@/lib/mapEngine";
+import { todayISO } from "@/lib/localDate";
 
 function formatStopTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -80,7 +81,7 @@ export function TechnicianDayRouteModal({ technicianName, branch, profileId, liv
     getCompanyFlashTechTrips()
       .then((trips) => {
         if (cancelled) return;
-        const today = new Date().toISOString().slice(0, 10);
+        const today = todayISO();
         const active = trips.find((t) => t.technicianProfileId === profileId && t.startDate <= today && today <= t.endDate);
         setFlashTechDestination(active?.destinationLocation ?? null);
       })

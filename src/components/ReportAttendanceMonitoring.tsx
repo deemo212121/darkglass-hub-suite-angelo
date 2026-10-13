@@ -31,12 +31,13 @@ function roleLabel(role: string | null | undefined): string {
 import { getCompanyPtoRequests, type PtoRequestRow } from "@/lib/supabase/pto";
 import { getCompanyTimecardCorrections, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
+import { localISODate, todayISO } from "@/lib/localDate";
 
 const TOOLTIP_STYLE = { background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" } as const;
 const LEGEND_STYLE = { fontSize: 11, color: "#94a3b8" } as const;
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
-const daysAgoIso = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
+const todayIso = () => todayISO();
+const daysAgoIso = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return localISODate(d); };
 
 /**
  * Off-day indices follow the same convention timecards.ts uses company-wide
@@ -241,7 +242,7 @@ export function ReportAttendanceMonitoring({
     const dates: string[] = [];
     let d = new Date(dateFrom + "T00:00:00");
     const end = new Date(dateTo + "T00:00:00");
-    while (d <= end) { dates.push(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); }
+    while (d <= end) { dates.push(localISODate(d)); d.setDate(d.getDate() + 1); }
     return dates;
   }, [dateFrom, dateTo]);
 

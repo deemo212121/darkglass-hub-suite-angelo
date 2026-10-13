@@ -190,6 +190,14 @@ export const datePickerElement: ElementDefinition = {
   category: "basic",
   kind: "field",
   defaultConfig: () => ({ minDate: "", maxDate: "", disableWeekends: false, dateFormat: "MM/DD/YYYY", timeZone: "" }),
+  // Stored as YYYY-MM-DD (the date input's value); shown in the field's own Date Format.
+  formatValue: (value, field) => {
+    const m = typeof value === "string" ? value.match(/^(\d{4})-(\d{2})-(\d{2})$/) : null;
+    if (!m) return value == null ? "" : String(value);
+    const [, y, mo, d] = m;
+    const fmt = field.config?.dateFormat ?? "MM/DD/YYYY";
+    return fmt === "YYYY-MM-DD" ? `${y}-${mo}-${d}` : fmt === "DD/MM/YYYY" ? `${d}/${mo}/${y}` : `${mo}/${d}/${y}`;
+  },
   CanvasPreview: ({ field }) => <input type="date" disabled placeholder={field.placeholder} className="w-fit text-sm border border-slate-300 rounded-md px-3 py-1.5 text-slate-400" />,
   PropertiesPanel: ({ field, onChange }) => {
     const set = (patch: Record<string, any>) => onChange({ ...field, config: { ...field.config, ...patch } });
@@ -367,7 +375,9 @@ export const signatureElement: ElementDefinition = {
       onChange(null);
     };
     return (
-      <div className="flex flex-col gap-1.5 items-start">
+      <div className="flex flex-col gap-1.5 items-start w-full">
+        {/* Shrinks to its column (e.g. a 50%-width field beside a Date) instead of
+            overflowing it; pos() maps pointer coordinates back onto the full-size canvas. */}
         <canvas
           ref={canvasRef}
           width={width}
@@ -376,7 +386,7 @@ export const signatureElement: ElementDefinition = {
           onPointerMove={move}
           onPointerUp={end}
           onPointerLeave={end}
-          style={{ backgroundColor: field.config.backgroundColor || "#ffffff" }}
+          style={{ backgroundColor: field.config.backgroundColor || "#ffffff", width: "100%", maxWidth: `${width}px`, height: "auto", aspectRatio: `${width} / ${height}` }}
           className="touch-none cursor-crosshair rounded-md border border-white/20"
         />
         {field.config.allowClear !== false && <button type="button" onClick={clear} className="btn text-xs px-2.5 py-1">Clear</button>}

@@ -72,6 +72,8 @@ export interface CustomFormField {
   required: boolean;
   /** Permanently hidden (never rendered) — distinct from conditionalLogic's runtime "hide". */
   hidden: boolean;
+  /** "company" = left out of the fill page; HR fills it in afterwards from the Submissions list (Complete), e.g. an Authorized Representative's signature. Unset = the person filling out the form. */
+  fillBy?: "company";
   readonly: boolean;
   defaultValue?: any;
   width: FieldWidth;

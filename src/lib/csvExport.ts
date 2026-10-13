@@ -1,3 +1,4 @@
+import { todayISO } from "@/lib/localDate";
 // Shared CSV export utility
 
 export function exportToCSV(filename: string, headers: string[], rows: (string|number|null|undefined)[][]) {
@@ -16,7 +17,7 @@ export function exportToCSV(filename: string, headers: string[], rows: (string|n
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${filename}_${new Date().toISOString().slice(0,10)}.csv`;
+  a.download = `${filename}_${todayISO()}.csv`;
   // Some browsers ignore clicks on a detached link, and revoking the URL
   // in the same tick can cancel the download before it starts.
   a.style.display = "none";

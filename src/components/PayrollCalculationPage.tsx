@@ -12,6 +12,7 @@ import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import { getRoleDepartmentBreakdown, isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold } from "@/lib/roleLabels";
 import { payGraceMinutesFor } from "@/lib/attendanceGrace";
+import { todayISO } from "@/lib/localDate";
 
 const REGULAR_HOURS_PER_DAY = 8;
 const OT_MULTIPLIER = 1.5;
@@ -71,7 +72,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
     const today = new Date();
     return new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
   });
-  const [endDate, setEndDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [endDate, setEndDate] = useState(() => todayISO());
 
   const load = useCallback(async () => {
     setLoading(true);

@@ -15,6 +15,7 @@ import { marconeLookupPart, marconeRequestReturn, marconeGetReaQrCode, marconeFi
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { usePersistedTab } from "@/lib/usePersistedTab";
+import { todayISO } from "@/lib/localDate";
 
 const STATUS_COLOR: Record<string, React.CSSProperties> = {
   Claimed: { background: "#d1fae5", color: "#065f46" },
@@ -345,7 +346,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
               throw new Error(res.error || "Marcone returned no RA number");
             }
             const raNo = String(res.data.returnAuthorizationNumber);
-            await updatePartReturnEntryRow(r.id, { raNo, raDate: new Date().toISOString().slice(0, 10) });
+            await updatePartReturnEntryRow(r.id, { raNo, raDate: todayISO() });
             return { id: r.id, raNo };
           })
         );
@@ -353,7 +354,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
         const failed = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
         if (succeeded.length > 0) {
           const raById = new Map(succeeded.map((r) => [r.value.id, r.value.raNo]));
-          const today = new Date().toISOString().slice(0, 10);
+          const today = todayISO();
           setAllRows((current) => current.map((row) =>
             raById.has(row.id) ? { ...row, raNo: raById.get(row.id)!, raDate: today } : row
           ));
@@ -372,7 +373,7 @@ export function PartReturn({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
         // No documented/wired return API for this distributor - record the
         // return locally only (stamps ra_date, doesn't fabricate an RA #).
         await submitPartReturnBatch(Array.from(selectedForReturn));
-        const today = new Date().toISOString().slice(0, 10);
+        const today = todayISO();
         setAllRows((current) => current.map((row) =>
           selectedForReturn.has(row.id) && !row.raDate ? { ...row, raDate: today } : row
         ));

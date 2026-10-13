@@ -3,6 +3,7 @@ import { ChevronLeft, RefreshCw, ChevronDown } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, TECHS_FULL, pick, pad, offsetStr, todayStr } from "./shared";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -24,7 +25,7 @@ function generateRows(count = 80) {
     return {
       id: i + 1, ticketNo: "TK-2026-" + pad(6000 + i),
       location: pick(locs, i), tech: pick(TECHS_FULL, i),
-      scheduleDate: sched.toISOString().slice(0,10),
+      scheduleDate: localISODate(sched),
       completeDate: comp ? comp.toISOString().slice(0,10) : "",
       customer: pick(CUSTOMERS, i), appliance: pick(APPLIANCES, i),
       includeIw: i % 4 === 0,

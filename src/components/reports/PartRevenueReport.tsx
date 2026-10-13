@@ -3,6 +3,7 @@ import { ChevronLeft, RefreshCw, ChevronDown } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, pick, pad, offsetStr, todayStr } from "./shared";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -16,7 +17,7 @@ function generateRows(count = 80) {
     const cost = 20 + (i * 13) % 200;
     const revenue = cost * (1.4 + (i % 5) * 0.1);
     return {
-      id: i + 1, poDate: d.toISOString().slice(0,10),
+      id: i + 1, poDate: localISODate(d),
       partNo: "PT-" + pad(80000 + i),
       description: pick(PARTS_LIST, i),
       location: pick(locs, i),

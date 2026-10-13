@@ -21,6 +21,7 @@ import { getCompanyTickets } from "@/lib/supabase/tickets";
 import { statusGroupOf, type Ticket } from "@/lib/ticketData";
 import { getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import { normalizeRole } from "@/lib/roleLabels";
+import { todayISO } from "@/lib/localDate";
 
 const CLAIMS_ROLES = new Set(["CLAIMS", "CLAIMS_MANAGER"]);
 // Checks both primary role AND extra_roles — same convention as
@@ -56,7 +57,7 @@ function isClaimTicket(t: Ticket): boolean {
 function dateOnly(v: string | undefined | null): string {
   return (v || "").slice(0, 10);
 }
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => todayISO();
 /** Add (or subtract, with a negative n) n days to an ISO date string. */
 const addDaysToIso = (iso: string, n: number) => { const d = new Date(iso); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 const fmtShort = (iso: string) => { const [, m, d] = iso.split("-"); return `${Number(m)}/${Number(d)}`; };

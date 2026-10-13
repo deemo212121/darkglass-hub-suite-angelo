@@ -67,6 +67,7 @@ import {
 import { TECHNICIAN_PAY_ROLES } from "../roleLabels";
 import { readEnv, fetchGmailConnection, refreshAccessToken, sendGmailMessage, fetchProfileByFirebaseUid } from "./gmailBridge";
 import { verifyFirebaseToken } from "./supabaseTokenBridge";
+import { localISODate } from "@/lib/localDate";
 
 type AlertType = "missing_clock_in" | "missing_clock_out";
 type NotificationKind = AlertType | "pattern_missing_clock_in" | "pattern_missing_clock_out";
@@ -127,7 +128,7 @@ function scheduledDatesBefore(dateISO: string, offDays: Set<number>, count: numb
   const dates: string[] = [];
   const cursor = new Date(`${dateISO}T00:00:00`);
   for (let i = 0; i < 60 && dates.length < count; i++) {
-    if (!offDays.has(cursor.getDay())) dates.push(cursor.toISOString().slice(0, 10));
+    if (!offDays.has(cursor.getDay())) dates.push(localISODate(cursor));
     cursor.setDate(cursor.getDate() - 1);
   }
   return dates;
@@ -222,7 +223,7 @@ export async function runAttendanceAlertCheck(
   const historyStart = (() => {
     const d = new Date(`${dateISO}T00:00:00`);
     d.setDate(d.getDate() - 21);
-    return d.toISOString().slice(0, 10);
+    return localISODate(d);
   })();
 
   const [profilesRes, entriesRes, alertsRes, historyRes, membersRes, branchRolesRes, warningSubsRes] = await Promise.all([

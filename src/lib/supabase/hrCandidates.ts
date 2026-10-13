@@ -10,6 +10,7 @@ import { supabase } from "./client";
 import { createNotification } from "./notifications";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import { INACTIVE_BRANCHES, normalizeLocationForRegionMatch } from "@/lib/locations";
+import { localISODate } from "@/lib/localDate";
 
 // "training" and "on_hold" added for EOD/EOM hiring reports (0048); "phone_screening",
 // "withdrawn", and "cancelled" added (and "on_hold" removed) by 0221_hr_candidates_status_update.sql.
@@ -1043,7 +1044,7 @@ export async function getEodHiringReport(dateStr: string): Promise<EodHiringRow[
   const dayStart = `${dateStr}T00:00:00`;
   const nextDay = new Date(`${dateStr}T00:00:00`);
   nextDay.setDate(nextDay.getDate() + 1);
-  const dayEnd = `${nextDay.toISOString().slice(0, 10)}T00:00:00`;
+  const dayEnd = `${localISODate(nextDay)}T00:00:00`;
 
   let [{ data: cands, error: candErr }, targets, forwards] = await Promise.all([
     supabase.from("hr_candidates").select("full_name, position, branch, status, interview_date, training_start_date"),
@@ -1406,7 +1407,7 @@ function hiringReportPeriodBounds(periodType: HiringReportPeriodType, periodKey:
     const start = `${periodKey}T00:00:00`;
     const next = new Date(`${periodKey}T00:00:00`);
     next.setDate(next.getDate() + 1);
-    return { start, end: `${next.toISOString().slice(0, 10)}T00:00:00` };
+    return { start, end: `${localISODate(next)}T00:00:00` };
   }
   const [y, m] = periodKey.split("-").map(Number);
   const start = `${periodKey}-01T00:00:00`;

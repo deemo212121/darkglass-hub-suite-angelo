@@ -5,6 +5,7 @@
  * 1 error on the Technician Performance Report, done or not.
  */
 import { supabase } from "./client";
+import { selectAllPages } from "./selectAllPages";
 
 export interface ClockInMeeting {
   id: string;
@@ -35,13 +36,15 @@ function mapRow(r: any): ClockInMeeting {
 
 /** Missed clock-ins (done or not) in a date range. Empty if migration 0348 isn't run yet. */
 export async function getClockInMeetingsInRange(startDate: string, endDate: string): Promise<ClockInMeeting[]> {
-  const { data, error } = await supabase
-    .from("clock_in_meetings")
-    .select(COLUMNS)
-    .gte("missed_date", startDate)
-    .lte("missed_date", endDate)
-    .order("missed_date", { ascending: false })
-    .limit(5000);
+  const { data, error } = await selectAllPages<any>(() =>
+    supabase
+      .from("clock_in_meetings")
+      .select(COLUMNS)
+      .gte("missed_date", startDate)
+      .lte("missed_date", endDate)
+      .order("missed_date", { ascending: false })
+      .order("id")
+  );
   if (error) {
     console.warn("getClockInMeetingsInRange:", error.message);
     return [];
@@ -66,15 +69,17 @@ export async function getPendingClockInMeetings(): Promise<ClockInMeeting[]> {
 
 /** Meetings already held, for missed days between startDate and endDate, most recent first. */
 export async function getDoneClockInMeetings(startDate: string, endDate: string): Promise<ClockInMeeting[]> {
-  const { data, error } = await supabase
-    .from("clock_in_meetings")
-    .select(COLUMNS)
-    .eq("status", "done")
-    .gte("missed_date", startDate)
-    .lte("missed_date", endDate)
-    .order("missed_date", { ascending: false })
-    .order("done_at", { ascending: false })
-    .limit(2000);
+  const { data, error } = await selectAllPages<any>(() =>
+    supabase
+      .from("clock_in_meetings")
+      .select(COLUMNS)
+      .eq("status", "done")
+      .gte("missed_date", startDate)
+      .lte("missed_date", endDate)
+      .order("missed_date", { ascending: false })
+      .order("done_at", { ascending: false })
+      .order("id")
+  );
   if (error) {
     console.warn("getDoneClockInMeetings:", error.message);
     return [];
@@ -109,13 +114,16 @@ export async function getFirstTimeIns(pairs: { profileId: string; date: string }
   if (pairs.length === 0) return out;
   const ids = Array.from(new Set(pairs.map((p) => p.profileId)));
   const dates = Array.from(new Set(pairs.map((p) => p.date)));
-  const { data, error } = await supabase
-    .from("timecard_entries")
-    .select("profile_id, work_date, check_in")
-    .in("profile_id", ids)
-    .in("work_date", dates)
-    .not("check_in", "is", null)
-    .limit(5000);
+  const { data, error } = await selectAllPages<any>(() =>
+    supabase
+      .from("timecard_entries")
+      .select("profile_id, work_date, check_in")
+      .in("profile_id", ids)
+      .in("work_date", dates)
+      .not("check_in", "is", null)
+      .order("work_date")
+      .order("profile_id")
+  );
   if (error) {
     console.warn("getFirstTimeIns:", error.message);
     return out;
@@ -143,15 +151,21 @@ export interface ForcedClockOut {
  */
 export async function getForcedClockOutsAwaitingCorrection(fromDate: string): Promise<ForcedClockOut[]> {
   const [entriesRes, meetingsRes, correctionsRes] = await Promise.all([
-    supabase
-      .from("timecard_entries")
-      .select("profile_id, work_date, check_out")
-      .gte("work_date", fromDate)
-      .like("notes", "%[Auto clock-out%")
-      .order("work_date", { ascending: false })
-      .limit(2000),
-    supabase.from("clock_in_meetings").select("profile_id, missed_date").eq("kind", "missed_time_out").gte("missed_date", fromDate).limit(5000),
-    supabase.from("timecard_corrections").select("profile_id, work_date").gte("work_date", fromDate).limit(5000),
+    selectAllPages<any>(() =>
+      supabase
+        .from("timecard_entries")
+        .select("profile_id, work_date, check_out")
+        .gte("work_date", fromDate)
+        .like("notes", "%[Auto clock-out%")
+        .order("work_date", { ascending: false })
+        .order("profile_id")
+    ),
+    selectAllPages<any>(() =>
+      supabase.from("clock_in_meetings").select("profile_id, missed_date").eq("kind", "missed_time_out").gte("missed_date", fromDate).order("missed_date").order("profile_id")
+    ),
+    selectAllPages<any>(() =>
+      supabase.from("timecard_corrections").select("profile_id, work_date").gte("work_date", fromDate).order("work_date").order("profile_id")
+    ),
   ]);
   if (entriesRes.error) {
     console.warn("getForcedClockOutsAwaitingCorrection:", entriesRes.error.message);

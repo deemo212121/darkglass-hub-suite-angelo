@@ -107,7 +107,7 @@ import { LOCATIONS, ACTIVE_LOCATIONS } from "@/lib/locations";
 import { timezoneForBranch, nowInTimezone } from "@/lib/attendanceGrace";
 import { getServerNow, zonedDateKey, zonedTimeString, zonedWallClockToUtcIso, TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { getTicketComments, addTicketComment, type TicketComment } from "@/lib/supabase/comments";
-import { enqueueOnsiteCheckin, enqueueVisitSave, enqueueTicketComment, enqueueTimecardPunch, cacheTicketGeocode, getCachedTicketGeocode, cacheRead, getCachedRead } from "@/lib/offlineQueue";
+import { enqueueOnsiteCheckin, enqueueVisitSave, enqueueTicketComment, cacheTicketGeocode, getCachedTicketGeocode, cacheRead, getCachedRead } from "@/lib/offlineQueue";
 import { useIsOnline, useManualOfflineMode, setManualOfflineMode, isManualOfflineModeActive } from "@/lib/isOnline";
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { MessageBody } from "@/components/MessageBody";
@@ -115,7 +115,7 @@ import { LocationSharingBadge } from "@/components/LocationSharingBadge";
 import { OfflineQueueBadge } from "@/components/OfflineQueueBadge";
 import { uploadTicketSignature, uploadPayrollDisputeAttachment, uploadTicketTimeDisputeAttachment, uploadPtoRequestAttachment } from "@/lib/firebase/storage";
 import { getTechnicianTodayRoute, type TechnicianRouteStop } from "@/lib/supabase/technicianWhereabouts";
-import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
 import {
   getBranchDailyReports,
   getBranchDailyReportNotes,
@@ -134,7 +134,7 @@ import { getModelResources, saveModelResources, type ModelResources } from "@/li
 import { getUndismissedMobilePopupAlerts, dismissTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
 import { createItTicket, getItTickets, type ItTicketRow, type ItTicketPriority } from "@/lib/supabase/itTickets";
 import { createEmployeeRequest, getCompanyEmployeeRequests, updateEmployeeRequestStatus, canReviewTicketDispute, notifyRequestReviewers, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
-import { createPtoRequest, getCompanyPtoRequests, canReviewPtoStage, reviewPtoStage, setPtoAttachmentUrl, type PtoType, type PtoRequestRow } from "@/lib/supabase/pto";
+import { createPtoRequest, getCompanyPtoRequests, canReviewPtoStage, reviewPtoStage, isEligibleForPto, ptoEligibleDate, setPtoAttachmentUrl, type PtoType, type PtoRequestRow } from "@/lib/supabase/pto";
 import {
   createTimecardCorrection,
   getCompanyTimecardCorrections,
@@ -6343,10 +6343,6 @@ function MobileHomeView({
   // sync — with no network, getServerNow() itself is unreachable, so there
   // is no better time source available at the moment the tech actually
   // tapped the button.
-  const getNowTime = (): string => {
-    const t = new Date();
-    return `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}:${String(t.getSeconds()).padStart(2, "0")}`;
-  };
 
   const persistPunch = async (field: keyof Pick<UITimeEntry, "checkIn" | "checkOut" | "mealStart" | "mealEnd">) => {
     if (!scheduleProfileId) {
@@ -6398,27 +6394,16 @@ function MobileHomeView({
       setEntry((prev) => ({ ...prev, [field]: time }));
       persisted = true;
     } catch (e) {
-      console.warn("MobileHomeView: save failed, queuing for later sync", e);
-      const next = { ...entry, [field]: getNowTime() };
-      setEntry(next);
-      try {
-        // Queued for later sync — offlineQueue.ts's replay() reads
-        // employmentType/managerId back off this payload so a trainee's
-        // punch still lands in trainee_timecard_entries (not the real
-        // timecard_entries) once connectivity returns, same as the online
-        // path above.
-        await enqueueTimecardPunch({
-          scheduleProfileId,
-          dateKey: todayKey,
-          entry: next,
-          employmentType,
-          managerId: directManagerId,
-        });
-        persisted = true;
-      } catch (qErr) {
-        console.error("MobileHomeView: failed to queue punch", qErr);
-        alert(`Failed to save: ${e instanceof Error ? e.message : "Unknown error"}`);
-      }
+      // Offline punches are BLOCKED: a punch is only ever stamped with the
+      // server's clock. The old fallback queued it with the phone's own
+      // clock, which anyone could fake (airplane mode + change the time).
+      console.warn("MobileHomeView: punch not saved (no server time / offline)", e);
+      const offline = (typeof navigator !== "undefined" && navigator.onLine === false) || isManualOfflineModeActive();
+      alert(
+        offline
+          ? "You're offline. Time In / Meal In / Meal Out / Time Out need an internet connection — connect to Wi-Fi or mobile data and tap again."
+          : `Couldn't save your punch — please check your connection and tap again. (${e instanceof Error ? e.message : "Unknown error"})`
+      );
     } finally {
       setSaving(false);
     }
@@ -8814,8 +8799,10 @@ const PTO_TYPE_LABELS: Record<PtoType, string> = {
 // Submit a PTO/Sick/Personal/Unpaid request and track your own — same
 // "submit form + My Requests list" shape as Payroll Dispute above, backed
 // by pto.ts's two-stage manager-then-(HR OR Accounting) approval instead of
-// employee_requests. Unlike EmployeeSelfServicePage.tsx's desktop version,
-// this deliberately skips the tenure-eligibility gate and remaining-balance
+// employee_requests. Paid leave (Vacation / Personal) follows the same
+// 1-year PTO eligibility rule as desktop (isEligibleForPto in pto.ts — the
+// shared function, so the two can't drift). Unlike EmployeeSelfServicePage.tsx's
+// desktop version, this still skips the remaining-balance
 // math (ptoYearWindow/ptoAllowanceForTenureYear, sickYearWindow) — that
 // logic lives only in the desktop page today, and duplicating the
 // anniversary-anchored tenure-year calculation here risks it drifting out
@@ -8846,6 +8833,26 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
   // Sick / Unpaid also need a proof photo or PDF (e.g. a doctor's note) — same as desktop.
   const needsProof = leaveType === "Sick" || leaveType === "Unpaid";
   const [proof, setProof] = useState<File | null>(null);
+
+  // 1 year with the company before paid leave (Vacation / Personal) — same
+  // rule and dates as desktop. Sick and Unpaid stay available from day one.
+  const [hireDate, setHireDate] = useState<string | null>(null);
+  const [hireDateLoaded, setHireDateLoaded] = useState(false);
+  useEffect(() => {
+    if (!profileId) return;
+    let cancelled = false;
+    getProfileEmployeeInfo(profileId)
+      .then((info) => { if (!cancelled) setHireDate(info?.hireDate || null); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setHireDateLoaded(true); });
+    return () => { cancelled = true; };
+  }, [profileId]);
+  const myCreatedAt = companyProfiles.find((p) => p.id === profileId)?.created_at ?? null;
+  const ptoEligibilityKnown = hireDateLoaded && !!(hireDate || myCreatedAt);
+  const ptoEligible = ptoEligibilityKnown && isEligibleForPto(hireDate, myCreatedAt);
+  const ptoEligibleOn = ptoEligibleDate(hireDate, myCreatedAt);
+  const isPaidLeave = leaveType === "Vacation" || leaveType === "Personal";
+  const paidLeaveBlocked = isPaidLeave && !ptoEligible;
 
   useEffect(() => {
     getCompanyUsers().then(setCompanyProfiles).catch((e) => console.error("time off: load users failed", e));
@@ -8879,6 +8886,12 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
   const submit = async () => {
     if (!profileId) {
       setMsg("Your profile hasn't loaded yet — try again in a moment.");
+      return;
+    }
+    if (paidLeaveBlocked) {
+      setMsg(ptoEligibilityKnown
+        ? `${leaveType} leave needs 1 year with the company — you'll be eligible starting ${ptoEligibleOn}. Sick and Unpaid leave are available now.`
+        : "Checking your PTO eligibility — try again in a moment.");
       return;
     }
     if (!startDate || !endDate) {
@@ -9017,9 +9030,14 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
         <div className="mtech-section-title" style={{ marginTop: 0 }}>Leave Type</div>
         <select className="mtech-bill-input full" value={leaveType} onChange={(e) => setLeaveType(e.target.value)}>
           {LEAVE_TYPES.map((t) => (
-            <option key={t} value={t}>{t}</option>
+            <option key={t} value={t}>{t}{(t === "Vacation" || t === "Personal") && ptoEligibilityKnown && !ptoEligible ? " (after 1 year)" : ""}</option>
           ))}
         </select>
+        {paidLeaveBlocked && ptoEligibilityKnown && (
+          <p style={{ marginTop: 6, fontSize: 12, color: "#fbbf24" }}>
+            {leaveType} leave needs 1 year with the company — you'll be eligible starting {ptoEligibleOn}. Sick and Unpaid leave are available now.
+          </p>
+        )}
 
         <div className="mtech-section-title">Position</div>
         {/* Always their primary position — not editable. */}

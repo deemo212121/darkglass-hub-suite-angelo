@@ -99,6 +99,7 @@ import { Route as FillContractorDataUsExternalDocIdRouteImport } from './routes/
 import { Route as FillContractorDataExternalDocIdRouteImport } from './routes/fill-contractor-data-external.$docId'
 import { Route as FillContractorAddendumDocIdRouteImport } from './routes/fill-contractor-addendum.$docId'
 import { Route as FillContractorAddendumExternalDocIdRouteImport } from './routes/fill-contractor-addendum-external.$docId'
+import { Route as FillConfidentialityNoncompeteAgreementDocIdRouteImport } from './routes/fill-confidentiality-noncompete-agreement.$docId'
 import { Route as FillCarIqAgreementDocIdRouteImport } from './routes/fill-car-iq-agreement.$docId'
 import { Route as FillCarIqAgreementExternalDocIdRouteImport } from './routes/fill-car-iq-agreement-external.$docId'
 import { Route as EmployeeEmployeeIdRouteImport } from './routes/employee.$employeeId'
@@ -597,6 +598,12 @@ const FillContractorAddendumExternalDocIdRoute =
     path: '/fill-contractor-addendum-external/$docId',
     getParentRoute: () => rootRouteImport,
   } as any)
+const FillConfidentialityNoncompeteAgreementDocIdRoute =
+  FillConfidentialityNoncompeteAgreementDocIdRouteImport.update({
+    id: '/fill-confidentiality-noncompete-agreement/$docId',
+    path: '/fill-confidentiality-noncompete-agreement/$docId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const FillCarIqAgreementDocIdRoute = FillCarIqAgreementDocIdRouteImport.update({
   id: '/fill-car-iq-agreement/$docId',
   path: '/fill-car-iq-agreement/$docId',
@@ -670,6 +677,7 @@ export interface FileRoutesByFullPath {
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/fill-car-iq-agreement-external/$docId': typeof FillCarIqAgreementExternalDocIdRoute
   '/fill-car-iq-agreement/$docId': typeof FillCarIqAgreementDocIdRoute
+  '/fill-confidentiality-noncompete-agreement/$docId': typeof FillConfidentialityNoncompeteAgreementDocIdRoute
   '/fill-contractor-addendum-external/$docId': typeof FillContractorAddendumExternalDocIdRoute
   '/fill-contractor-addendum/$docId': typeof FillContractorAddendumDocIdRoute
   '/fill-contractor-data-external/$docId': typeof FillContractorDataExternalDocIdRoute
@@ -771,6 +779,7 @@ export interface FileRoutesByTo {
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/fill-car-iq-agreement-external/$docId': typeof FillCarIqAgreementExternalDocIdRoute
   '/fill-car-iq-agreement/$docId': typeof FillCarIqAgreementDocIdRoute
+  '/fill-confidentiality-noncompete-agreement/$docId': typeof FillConfidentialityNoncompeteAgreementDocIdRoute
   '/fill-contractor-addendum-external/$docId': typeof FillContractorAddendumExternalDocIdRoute
   '/fill-contractor-addendum/$docId': typeof FillContractorAddendumDocIdRoute
   '/fill-contractor-data-external/$docId': typeof FillContractorDataExternalDocIdRoute
@@ -873,6 +882,7 @@ export interface FileRoutesById {
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/fill-car-iq-agreement-external/$docId': typeof FillCarIqAgreementExternalDocIdRoute
   '/fill-car-iq-agreement/$docId': typeof FillCarIqAgreementDocIdRoute
+  '/fill-confidentiality-noncompete-agreement/$docId': typeof FillConfidentialityNoncompeteAgreementDocIdRoute
   '/fill-contractor-addendum-external/$docId': typeof FillContractorAddendumExternalDocIdRoute
   '/fill-contractor-addendum/$docId': typeof FillContractorAddendumDocIdRoute
   '/fill-contractor-data-external/$docId': typeof FillContractorDataExternalDocIdRoute
@@ -976,6 +986,7 @@ export interface FileRouteTypes {
     | '/employee/$employeeId'
     | '/fill-car-iq-agreement-external/$docId'
     | '/fill-car-iq-agreement/$docId'
+    | '/fill-confidentiality-noncompete-agreement/$docId'
     | '/fill-contractor-addendum-external/$docId'
     | '/fill-contractor-addendum/$docId'
     | '/fill-contractor-data-external/$docId'
@@ -1077,6 +1088,7 @@ export interface FileRouteTypes {
     | '/employee/$employeeId'
     | '/fill-car-iq-agreement-external/$docId'
     | '/fill-car-iq-agreement/$docId'
+    | '/fill-confidentiality-noncompete-agreement/$docId'
     | '/fill-contractor-addendum-external/$docId'
     | '/fill-contractor-addendum/$docId'
     | '/fill-contractor-data-external/$docId'
@@ -1178,6 +1190,7 @@ export interface FileRouteTypes {
     | '/employee/$employeeId'
     | '/fill-car-iq-agreement-external/$docId'
     | '/fill-car-iq-agreement/$docId'
+    | '/fill-confidentiality-noncompete-agreement/$docId'
     | '/fill-contractor-addendum-external/$docId'
     | '/fill-contractor-addendum/$docId'
     | '/fill-contractor-data-external/$docId'
@@ -1280,6 +1293,7 @@ export interface RootRouteChildren {
   EmployeeEmployeeIdRoute: typeof EmployeeEmployeeIdRoute
   FillCarIqAgreementExternalDocIdRoute: typeof FillCarIqAgreementExternalDocIdRoute
   FillCarIqAgreementDocIdRoute: typeof FillCarIqAgreementDocIdRoute
+  FillConfidentialityNoncompeteAgreementDocIdRoute: typeof FillConfidentialityNoncompeteAgreementDocIdRoute
   FillContractorAddendumExternalDocIdRoute: typeof FillContractorAddendumExternalDocIdRoute
   FillContractorAddendumDocIdRoute: typeof FillContractorAddendumDocIdRoute
   FillContractorDataExternalDocIdRoute: typeof FillContractorDataExternalDocIdRoute
@@ -1986,6 +2000,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FillContractorAddendumExternalDocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/fill-confidentiality-noncompete-agreement/$docId': {
+      id: '/fill-confidentiality-noncompete-agreement/$docId'
+      path: '/fill-confidentiality-noncompete-agreement/$docId'
+      fullPath: '/fill-confidentiality-noncompete-agreement/$docId'
+      preLoaderRoute: typeof FillConfidentialityNoncompeteAgreementDocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/fill-car-iq-agreement/$docId': {
       id: '/fill-car-iq-agreement/$docId'
       path: '/fill-car-iq-agreement/$docId'
@@ -2111,6 +2132,8 @@ const rootRouteChildren: RootRouteChildren = {
   EmployeeEmployeeIdRoute: EmployeeEmployeeIdRoute,
   FillCarIqAgreementExternalDocIdRoute: FillCarIqAgreementExternalDocIdRoute,
   FillCarIqAgreementDocIdRoute: FillCarIqAgreementDocIdRoute,
+  FillConfidentialityNoncompeteAgreementDocIdRoute:
+    FillConfidentialityNoncompeteAgreementDocIdRoute,
   FillContractorAddendumExternalDocIdRoute:
     FillContractorAddendumExternalDocIdRoute,
   FillContractorAddendumDocIdRoute: FillContractorAddendumDocIdRoute,

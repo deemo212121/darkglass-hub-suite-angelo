@@ -21,6 +21,7 @@ import {
   type PartManagementRow,
 } from "@/lib/supabase/partManagement";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
+import { todayISO } from "@/lib/localDate";
 
 // The canonical part-status vocabulary (matches the dropdown on the ticket
 // detail page's own Parts tab) - real distinct values currently in the data
@@ -299,7 +300,7 @@ export function PartManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModul
     }
     setSubmitting(true);
     setActionError(null);
-    const poDate = new Date().toISOString().split("T")[0];
+    const poDate = todayISO();
     try {
       await Promise.all(selectedData.map((row) => updatePartManagementStatus(row.id, { status: "PO Made", poDate })));
       setRows((current) => current.map((row) =>

@@ -60,6 +60,7 @@
  */
 
 import { supabase } from "./client";
+import { todayISO } from "@/lib/localDate";
 
 const NOT_YET_RECEIVED_STATUSES = ["Need PO", "PO Made"];
 
@@ -178,7 +179,7 @@ export async function updatePartReturnEntryRow(
  */
 export async function submitPartReturnBatch(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
   const { data: existing, error: fetchError } = await supabase
     .from("parts")
     .select("id, ra_date")

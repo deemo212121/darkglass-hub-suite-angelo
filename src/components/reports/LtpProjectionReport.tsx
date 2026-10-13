@@ -3,6 +3,7 @@ import { ChevronLeft, RefreshCw, ChevronDown } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, REPAIR_STATUSES, pick, pad, offsetStr, todayStr } from "./shared";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -31,7 +32,7 @@ function generateRows(count = 100) {
     const alertLevel = ltp >= 30 ? 4 : ltp >= 20 ? 3 : ltp >= 10 ? 2 : 1;
     return {
       id: i + 1, ticketNo: genTicketNo(i),
-      postingDate: post.toISOString().slice(0,10),
+      postingDate: localISODate(post),
       importedDate: imp.toISOString().slice(0,10),
       repairStatus: pick(REPAIR_STATUSES, i),
       scheduleDate: i % 8 === 0 ? "" : sched.toISOString().slice(0,10),

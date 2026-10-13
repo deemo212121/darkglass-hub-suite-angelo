@@ -15,6 +15,7 @@
  * — HR fills it in later via ReportHRDaily.tsx's "Fill Employer Info"
  * dialog, same as the teammate flow.
  */
+import { InlinePdfLink } from "@/components/InlinePdfViewer";
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
@@ -322,9 +323,7 @@ export function ExternalFillW4Page({ docId }: Props) {
           <div className="panel p-6 text-center">
             <p className="text-sm font-semibold mb-2">✅ Submitted{submitted ? " and sent back to HR" : ""}.</p>
             {submittedPdfUrl && (
-              <a href={submittedPdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 underline text-sm">
-                View the completed PDF
-              </a>
+              <InlinePdfLink url={submittedPdfUrl} label="View the completed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
             )}
             {!submittedPdfUrl && <p className="text-xs text-muted-foreground">You can close this page now.</p>}
           </div>

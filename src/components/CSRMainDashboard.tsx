@@ -190,7 +190,8 @@ function TeamListTab({ isManagerTier, myProfileId, navigate }: { isManagerTier: 
     const map = new Map<string, TeamRow[]>();
     for (const m of members) {
       const profile = profileById.get(m.profileId);
-      if (!profile) continue;
+      // Deactivated accounts drop off the Team List even while still on a team.
+      if (!profile || !profile.is_active) continue;
       const arr = map.get(m.teamId) ?? [];
       arr.push({ profile, isLeader: m.isLeader });
       map.set(m.teamId, arr);

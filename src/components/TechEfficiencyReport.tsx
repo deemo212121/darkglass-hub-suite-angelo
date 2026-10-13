@@ -4,6 +4,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, TECHS_FULL, pick, pad, offsetStr, todayStr } from "@/components/shared";
+import { localISODate } from "@/lib/localDate";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -13,7 +14,7 @@ function generateRows(count = 60) {
     const d = new Date(); d.setDate(d.getDate()-(i%14));
     const assigned = 8+(i%8); const completed = 5+(i%8); const eff = Math.round(completed/assigned*100);
     return {
-      id: i+1, schedDate: d.toISOString().slice(0,10),
+      id: i+1, schedDate: localISODate(d),
       location: pick(locs,i), tech: pick(TECHS_FULL,i),
       assigned, rescheduled: i%4, cancelled: i%3===0?1:0, completed,
       efficiency: eff, avgJobTime: 45+(i*7)%90,

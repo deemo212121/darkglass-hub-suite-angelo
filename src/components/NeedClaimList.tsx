@@ -25,6 +25,7 @@ import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { loadOpenedTickets, markTicketOpened } from "@/lib/openedTickets";
 import { resolveTierCode } from "@/lib/tierCodes";
 import { Check } from "lucide-react";
+import { localISODate, todayISO } from "@/lib/localDate";
 
 interface Props {
   mod: ModuleDef;
@@ -97,11 +98,11 @@ const NEED_CLAIM_STATUSES = new Set([
 ]);
 
 // ─── Helpers ───
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayISO();
 const daysAgo = (n: number) => {
   const d = new Date();
   d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 };
 
 /** Parse a date that might come in MM/DD/YY or YYYY-MM-DD or "" form. */

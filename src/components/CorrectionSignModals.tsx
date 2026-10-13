@@ -23,6 +23,7 @@ import { SignaturePadControls } from "@/components/SignaturePad";
 import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { reviewCorrectionStage, signCorrectionHrPaperwork, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { buildCorrectionManagerSignaturePdf, buildCorrectionHrSignaturePdf } from "@/lib/timecardCorrectionPdf";
+import { todayISO } from "@/lib/localDate";
 
 /**
  * Deliberately narrower than the full ProfileRow — some callers (e.g.
@@ -143,7 +144,7 @@ export function CorrectionManagerSignModal({
 }
 
 export function CorrectionHrSignModal({ correction, companyId, profiles, reviewerId, reviewerName, onClose, onSigned, finalize }: SignModalBaseProps) {
-  const [receivedDate, setReceivedDate] = useState(new Date().toISOString().slice(0, 10));
+  const [receivedDate, setReceivedDate] = useState(todayISO());
   const [actionStatus, setActionStatus] = useState<"approved" | "additional_review_required">("approved");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);

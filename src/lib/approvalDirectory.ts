@@ -218,6 +218,49 @@ export function chainCanApprove(viewerId: string | null | undefined, requesterId
   return chainCanApproveWith(registry, viewerId, requesterId);
 }
 
+const PARTS_ROLES = ["PARTS", "PARTS_TEAM_LEADER", "PARTS_MANAGER", "PARTS_ORDER"];
+const TECH_SIDE_ROLES = ["TECHNICIAN", "TECHNICIAN_MANAGER", "BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER", "TECHNICAL_ASSISTANT_DIRECTOR", "TECHNICAL_DIRECTOR"];
+
+/** Logistics (Parts) staff for the correction rule: holds a Parts role and the main role isn't tech-side or Admin. Mirrors 0366. */
+function isLogisticsStaff(p: Pick<ProfileRow, "role" | "extra_roles">): boolean {
+  const main = String(p.role || "").toUpperCase();
+  if (["ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(main)) return false;
+  return heldRoles(p).some((r) => PARTS_ROLES.includes(r)) && !TECH_SIDE_ROLES.includes(main);
+}
+
+/**
+ * Manager step of a Time In / Time Out CORRECTION (PTO keeps chainCanApproveWith).
+ * Mirrors SQL chain_can_approve_correction (migration 0366):
+ *  - a Parts Manager's correction: HR, Admin, SuperAdmin only;
+ *  - Parts / Parts Team Leader / Parts Order: their branch's Parts Manager, or HR / Admin / SuperAdmin;
+ *  - a technician's: as chainCanApproveWith, but Parts roles no longer approve them;
+ *  - everyone else (incl. the Philippines chain): unchanged.
+ */
+export function chainCanApproveCorrectionWith(data: ChainData, viewerId: string | null | undefined, requesterId: string | null | undefined): boolean | null {
+  const r = requesterId ? data.byId.get(requesterId) : undefined;
+  if (!r) return null;
+  if (normBranch(r.assigned_branch) === "philippines") return chainCanApproveWith(data, viewerId, requesterId);
+  const v = viewerId ? data.byId.get(viewerId) : undefined;
+  if (!isLogisticsStaff(r)) {
+    if (chainLevelOf(r) !== "tech") return chainCanApproveWith(data, viewerId, requesterId);
+    if (!v || v.id === r.id) return false;
+    const roles = heldRoles(v);
+    if (roles.some((x) => x === "SUPERADMIN" || x === "SUPERSUPERADMIN")) return true;
+    const sameBranch = !!normBranch(v.assigned_branch) && normBranch(v.assigned_branch) === normBranch(r.assigned_branch);
+    return isTopApprover(data, v) || (roles.includes("BRANCH_MANAGER") && sameBranch) || ownsBranch(data, v.id, r.assigned_branch);
+  }
+  if (!v || v.id === r.id) return false;
+  const roles = heldRoles(v);
+  if (roles.some((x) => ["SUPERADMIN", "SUPERSUPERADMIN", "ADMIN", "HR"].includes(x))) return true;
+  if (heldRoles(r).includes("PARTS_MANAGER")) return false;
+  const sameBranch = !!normBranch(v.assigned_branch) && normBranch(v.assigned_branch) === normBranch(r.assigned_branch);
+  return roles.includes("PARTS_MANAGER") && sameBranch;
+}
+
+export function chainCanApproveCorrection(viewerId: string | null | undefined, requesterId: string | null | undefined): boolean | null {
+  return chainCanApproveCorrectionWith(registry, viewerId, requesterId);
+}
+
 export function chainCanClockIn(viewerId: string | null | undefined, targetId: string | null | undefined): boolean | null {
   return chainCanClockInWith(registry, viewerId, targetId);
 }

@@ -4,12 +4,13 @@ import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Save } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
+import { localISODate } from "@/lib/localDate";
 
 const DS:React.CSSProperties={background:"rgb(22,28,52)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:6,boxShadow:"0 8px 32px rgba(0,0,0,0.5)",zIndex:999999,position:"fixed",maxHeight:260,overflowY:"auto"};
 const Chev=({o}:{o:boolean})=><svg className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${o?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>;
 function useP(open:boolean){const ref=useRef<HTMLButtonElement>(null);const [pos,setPos]=useState<any>(null);const r=useCallback(()=>{if(!ref.current)return;const b=ref.current.getBoundingClientRect();setPos({top:b.bottom+2,left:b.left,width:b.width});},[]);useLayoutEffect(()=>{if(open)r();},[open,r]);useEffect(()=>{if(!open)return;window.addEventListener("scroll",r,true);window.addEventListener("resize",r);return()=>{window.removeEventListener("scroll",r,true);window.removeEventListener("resize",r);};},[open,r]);return{ref,pos};}
 
-const ds=(o:number)=>{const d=new Date();d.setDate(d.getDate()+o);return d.toISOString().slice(0,10);};
+const ds=(o:number)=>{const d=new Date();d.setDate(d.getDate()+o);return localISODate(d);};
 const TECHS=["Bryeshawn Butler","Seven Grinis","Josh Malloch","Memphis Admin","Percy Smith","Troy Willis","Christian Newson","A. Reyes"];
 const PART_DISTS=["Encompass","Marcone-162468","GE","LG","Samsung"];
 const REPAIR_STATUSES_SAMPLE=["CL-Ready to Complete","OP-Reschedule Follow up"];
