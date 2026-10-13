@@ -18,7 +18,7 @@ import { usePersistedTab } from "@/lib/usePersistedTab";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import { RestDayHistoryBox } from "@/components/RestDayHistoryBox";
-import { setProfileRestDays } from "@/lib/supabase/restDayHistory";
+import { setProfileSchedule } from "@/lib/supabase/restDayHistory";
 import { zonedDateKey } from "@/lib/serverTime";
 
 const TABS = [
@@ -501,9 +501,11 @@ function UserDetailsPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string>("");
   const [profileCompanyId, setProfileCompanyId] = useState<string | null>(null);
-  // Rest days as loaded — a change to them is saved with an "Effective from"
-  // date (rest_day_history, migration 0373), so past days keep the old ones.
+  // Rest days + Time In / Time Out Required as loaded — a change to them is
+  // saved with an "Effective from" date (rest_day_history, migrations 0373 +
+  // 0375), so past days keep the old schedule.
   const [originalOffDays, setOriginalOffDays] = useState<number[]>([]);
+  const [originalTimes, setOriginalTimes] = useState({ checkIn: "", checkOut: "" });
   const [restEffectiveFrom, setRestEffectiveFrom] = useState(() => zonedDateKey(new Date(), "CST"));
   const [restHistoryKey, setRestHistoryKey] = useState(0);
   // The email as loaded from the server — compared against form.email in
@@ -562,6 +564,7 @@ function UserDetailsPage() {
         setProfileId(p.id);
         setProfileCompanyId((p as any).company_id ?? null);
         setOriginalOffDays(Array.isArray(p.off_days) ? p.off_days : []);
+        setOriginalTimes({ checkIn: p.required_check_in || "", checkOut: p.required_check_out || "" });
         setOriginalEmail(p.email || "");
         try {
           const all = await getCompanyUsers();
@@ -639,6 +642,11 @@ function UserDetailsPage() {
     return () => { cancelled = true; };
   }, [ready, userId]);
 
+  const scheduleDirty =
+    [...form.offDays].sort().join(",") !== [...originalOffDays].sort().join(",") ||
+    form.requiredCheckIn !== originalTimes.checkIn ||
+    form.requiredCheckOut !== originalTimes.checkOut;
+
   const update = (field: keyof typeof form, value: any) =>
     setForm((prev) => ({ ...prev, [field]: value }));
 
@@ -708,12 +716,12 @@ function UserDetailsPage() {
         if (!res.ok) throw new Error(body.error || "Failed to update login email");
       }
 
-      // Rest days changed → saved with the chosen "Effective from" date first,
-      // so days before it keep the old rest days (not rewritten).
-      const sameDays = (a: number[], b: number[]) => [...a].sort().join(",") === [...b].sort().join(",");
-      const offDaysChanged = !sameDays(form.offDays, originalOffDays);
-      if (offDaysChanged) {
-        await setProfileRestDays(profileId, form.offDays, restEffectiveFrom);
+      // Rest days / required times changed → saved with the chosen "Effective
+      // from" date first, so days before it keep the old schedule (not
+      // re-judged against the new times).
+      const scheduleChanged = scheduleDirty;
+      if (scheduleChanged) {
+        await setProfileSchedule(profileId, form.offDays, form.requiredCheckIn, form.requiredCheckOut, restEffectiveFrom);
       }
 
       await updateCompanyUser(profileId, {
@@ -730,18 +738,17 @@ function UserDetailsPage() {
         technicianId: form.technicianId,
         poInitials: form.poInitials,
         smsStatus: form.smsStatus,
-        // Saved above (with its effective date) when it changed.
-        ...(offDaysChanged ? {} : { offDays: form.offDays }),
+        // Saved above (with its effective date) when the schedule changed.
+        ...(scheduleChanged ? {} : { offDays: form.offDays, requiredCheckIn: form.requiredCheckIn, requiredCheckOut: form.requiredCheckOut }),
         workPlan: workPlan,
         isActive: form.isActive,
-        requiredCheckIn: form.requiredCheckIn,
-        requiredCheckOut: form.requiredCheckOut,
         workingHours: form.workingHours.trim() ? Number(form.workingHours) : null,
         mealMinutes: form.mealMinutes.trim() ? Number(form.mealMinutes) : null,
       });
       if (emailChanged) setOriginalEmail(form.email.trim());
-      if (offDaysChanged) {
+      if (scheduleChanged) {
         setOriginalOffDays(form.offDays);
+        setOriginalTimes({ checkIn: form.requiredCheckIn, checkOut: form.requiredCheckOut });
         setRestHistoryKey((k) => k + 1);
       }
       // Persist Employee Information (powers Work Map house pins).
@@ -973,7 +980,7 @@ function UserDetailsPage() {
                           );
                         })}
                       </div>
-                      {[...form.offDays].sort().join(",") !== [...originalOffDays].sort().join(",") && (
+                      {scheduleDirty && (
                         <label className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
                           <span className="font-semibold">Effective from</span>
                           <input
@@ -982,10 +989,10 @@ function UserDetailsPage() {
                             onChange={(e) => setRestEffectiveFrom(e.target.value)}
                             className="rounded border border-white/10 bg-slate-800 px-2 py-1 text-xs text-white [color-scheme:dark]"
                           />
-                          <span className="text-amber-200/80">Days before this keep the old rest days. Saved when you press Save.</span>
+                          <span className="text-amber-200/80">Days before this keep the old rest days and Time In / Time Out Required (no new lates for past days). Saved when you press Save.</span>
                         </label>
                       )}
-                      {profileId && <RestDayHistoryBox profileId={profileId} companyId={profileCompanyId} reloadKey={restHistoryKey} />}
+                      {profileId && <RestDayHistoryBox profileId={profileId} companyId={profileCompanyId} reloadKey={restHistoryKey} currentCheckIn={originalTimes.checkIn} currentCheckOut={originalTimes.checkOut} />}
                     </div>
 
                     <div className="rounded-lg border border-white/10 bg-slate-900/40 p-4 text-xs text-slate-400">

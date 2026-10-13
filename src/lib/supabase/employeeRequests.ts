@@ -12,7 +12,7 @@
 import { supabase } from "./client";
 import { getCompanyUsers } from "./users";
 import { createNotification } from "./notifications";
-import { requireRejectReason } from "@/lib/rejectReason";
+import { requireRejectReason, requireApproveNote } from "@/lib/rejectReason";
 import { isAttendanceManagerTierRole } from "@/lib/roleLabels";
 
 /** "payroll_dispute" (0182) is reviewed the same way attendance_dispute is
@@ -100,6 +100,8 @@ export interface EmployeeRequestRow {
   hrReceivedDate: string | null;
   hrReviewerName: string | null;
   pdfUrl: string | null;
+  /** HR's note on its sign-off (migration 0376). The decision's own note is reviewNote. */
+  hrNote: string | null;
 }
 
 function mapRow(row: any): EmployeeRequestRow {
@@ -148,6 +150,7 @@ function mapRow(row: any): EmployeeRequestRow {
     hrReceivedDate: row.hr_received_date ?? null,
     hrReviewerName: row.hr_reviewer_name ?? null,
     pdfUrl: row.pdf_url ?? null,
+    hrNote: row.hr_note ?? null,
   };
 }
 
@@ -157,16 +160,24 @@ const SELECT_COLUMNS =
 // Supabase caps an unbounded select at 1000 rows — a company's full request
 // history can exceed that. Page through in chunks of 1000.
 const PAGE_SIZE = 1000;
+let hrNoteMissing = false;
 
 /** All attendance-dispute/payroll-inquiry requests for the caller's company (RLS-scoped), newest first. */
 export async function getCompanyEmployeeRequests(): Promise<EmployeeRequestRow[]> {
   const all: EmployeeRequestRow[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await supabase
-      .from("employee_requests")
-      .select(SELECT_COLUMNS)
-      .order("created_at", { ascending: false })
-      .range(from, from + PAGE_SIZE - 1);
+    const runQuery = (cols: string) =>
+      supabase
+        .from("employee_requests")
+        .select(cols)
+        .order("created_at", { ascending: false })
+        .range(from, from + PAGE_SIZE - 1);
+    // hr_note only exists after migration 0376.
+    let { data, error } = await runQuery(hrNoteMissing ? SELECT_COLUMNS : SELECT_COLUMNS + ", hr_note");
+    if (error && !hrNoteMissing && /hr_note/.test(error.message)) {
+      hrNoteMissing = true;
+      ({ data, error } = await runQuery(SELECT_COLUMNS));
+    }
     if (error) {
       console.error("getCompanyEmployeeRequests error:", error.message);
       return [];
@@ -264,7 +275,12 @@ export async function updateEmployeeRequestStatus(
 ): Promise<void> {
   // A rejection always carries a reason (shared popup when none was typed) —
   // the employee sees it in Self-Service → My Requests and in the notification.
-  const note = status === "rejected" ? await requireRejectReason(reviewNote, "Reason for rejecting this request") : reviewNote;
+  let note = status === "rejected" ? await requireRejectReason(reviewNote, "Reason for rejecting this request") : reviewNote;
+  // Approving a Ticket Time Dispute needs a note too (migration 0376) — shown under its status.
+  if (status === "approved" && !(reviewNote ?? "").trim()) {
+    const { data: req } = await supabase.from("employee_requests").select("request_type").eq("id", id).maybeSingle();
+    if (req?.request_type === "ticket_time_dispute") note = await requireApproveNote(reviewNote, "Approve this ticket time dispute — notes");
+  }
   const { data, error } = await supabase
     .from("employee_requests")
     .update({
@@ -321,7 +337,7 @@ export async function signTicketDisputeManager(
       status: "approved",
       reviewed_by: reviewerId,
       reviewed_at: new Date().toISOString(),
-      review_note: reviewNote || null,
+      review_note: reviewNote || signature.comments || null,
       manager_comments: signature.comments || null,
       manager_signature_url: signature.url,
       manager_signature_name: signature.name,
@@ -347,20 +363,26 @@ export async function signTicketDisputeHrPaperwork(
   signature: { url: string; name: string },
   hrReceivedDate: string,
   hrActionStatus: Exclude<HrPaperworkStatus, "pending">,
-  pdfUrl: string
+  pdfUrl: string,
+  /** HR's note (migration 0376), shown under the HR status. */
+  hrNote?: string
 ): Promise<void> {
-  const { error } = await supabase
-    .from("employee_requests")
-    .update({
-      hr_paperwork_status: hrActionStatus,
-      hr_signature_url: signature.url,
-      hr_signature_name: signature.name,
-      hr_signed_at: new Date().toISOString(),
-      hr_received_date: hrReceivedDate || null,
-      hr_reviewer_name: reviewerName,
-      pdf_url: pdfUrl,
-    })
-    .eq("id", id);
+  const payload: Record<string, unknown> = {
+    hr_paperwork_status: hrActionStatus,
+    hr_signature_url: signature.url,
+    hr_signature_name: signature.name,
+    hr_signed_at: new Date().toISOString(),
+    hr_received_date: hrReceivedDate || null,
+    hr_reviewer_name: reviewerName,
+    pdf_url: pdfUrl,
+  };
+  if (hrNote?.trim() && !hrNoteMissing) payload.hr_note = hrNote.trim();
+  let { error } = await supabase.from("employee_requests").update(payload).eq("id", id);
+  if (error && /hr_note/.test(error.message)) {
+    hrNoteMissing = true;
+    delete payload.hr_note;
+    ({ error } = await supabase.from("employee_requests").update(payload).eq("id", id));
+  }
   if (error) {
     console.error("signTicketDisputeHrPaperwork error:", error.message);
     throw new Error(error.message);

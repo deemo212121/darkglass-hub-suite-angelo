@@ -6,6 +6,8 @@
 import { supabase } from "./client";
 import type { PtoType } from "./pto";
 import { localISODate, todayISO } from "@/lib/localDate";
+import { getRestDayHistoryFor } from "./restDayHistory";
+import { offDaysOn, requiredTimesOn, type RestDayHistory } from "@/lib/restDays";
 
 // The flat UI time-entry shape used by the timecard page.
 export interface UITimeEntry {
@@ -817,6 +819,23 @@ export async function getAttendanceForRange(
   const byDate = new Map<string, any>();
   for (const row of data ?? []) byDate.set(row.work_date as string, row);
 
+  // Rest days and Time In / Time Out Required in force on each day
+  // (rest_day_history, migrations 0373 + 0375), so a schedule change doesn't
+  // re-judge earlier days. Only for what the caller passed (daysOff /
+  // required times); no history (or migrations not run) → the passed values
+  // for every day, as before.
+  let history: RestDayHistory | null = null;
+  if (scheduled.daysOff !== undefined || scheduled.requiredCheckIn !== undefined) {
+    try {
+      const hist = await getRestDayHistoryFor(profileId);
+      if (hist.length > 0) {
+        history = new Map([[profileId, hist.map((h) => ({ from: h.effectiveFrom.slice(0, 10), offDays: h.offDays, checkIn: h.checkIn, checkOut: h.checkOut }))]]);
+      }
+    } catch {
+      /* fall back to the passed schedule */
+    }
+  }
+
   // Iterate every day in the inclusive range.
   const rows: AttendanceRow[] = [];
   const start = new Date(startDate + "T00:00:00");
@@ -833,14 +852,20 @@ export async function getAttendanceForRange(
   // span, not this employee's generic scheduled shift length — a short day
   // (left early, came in late) isn't meal-eligible just because most of
   // this employee's days are longer.
-  const scheduledNetHours = resolveScheduledNetHours(scheduled.requiredCheckIn ?? "", scheduled.requiredCheckOut ?? "", scheduled.workingHours, scheduled.mealMinutes);
+  const baseNetHours = resolveScheduledNetHours(scheduled.requiredCheckIn ?? "", scheduled.requiredCheckOut ?? "", scheduled.workingHours, scheduled.mealMinutes);
+  const netHoursOn = (key: string): number => {
+    if (!history || scheduled.requiredCheckIn === undefined) return baseNetHours;
+    const t = requiredTimesOn(history, profileId, key, { checkIn: scheduled.requiredCheckIn, checkOut: scheduled.requiredCheckOut });
+    return resolveScheduledNetHours(t.checkIn, t.checkOut, scheduled.workingHours, scheduled.mealMinutes);
+  };
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const yyyy = d.getFullYear();
     const mm = String(d.getMonth() + 1).padStart(2, "0");
     const dd = String(d.getDate()).padStart(2, "0");
     const key = `${yyyy}-${mm}-${dd}`;
     const dow = d.getDay();
-    const isOffDay = daysOff.has(dow);
+    const isOffDay = history && scheduled.daysOff !== undefined ? offDaysOn(history, profileId, key, scheduled.daysOff).includes(dow) : daysOff.has(dow);
+    const scheduledNetHours = netHoursOn(key);
     const isHoliday = holidayDates.has(key);
     // An unpaid request for this date wins over a paid one — see the
     // unpaidLeaveDates param doc for why a caller might pass both.

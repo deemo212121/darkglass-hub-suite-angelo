@@ -12,7 +12,7 @@
  * numbers here always agree with the company-wide report.
  */
 import { getRestDayHistory } from "@/lib/supabase/restDayHistory";
-import { isRestDayOn, type RestDayHistory } from "@/lib/restDays";
+import { isRestDayOn, requiredTimesOn, type RestDayHistory } from "@/lib/restDays";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, Loader2, CalendarOff } from "lucide-react";
@@ -147,7 +147,7 @@ function EmployeeDetailsPage() {
     // Rest days in force on this date (rest_day_history, 0373), not just today's.
     const off = isRestDayOn(restHistory, employee.id, iso, employee.off_days);
     const entry = entryByDate.get(iso);
-    const st = dayStatus(entry, employee.required_check_in, off, graceMinutes);
+    const st = dayStatus(entry, requiredTimesOn(restHistory, employee.id, iso, { checkIn: employee.required_check_in }).checkIn, off, graceMinutes);
     if (off && !st.present) return { status: "day-off", st };
     if (!st.present) return { status: "absent", st };
     return { status: st.late ? "late" : "present", st };

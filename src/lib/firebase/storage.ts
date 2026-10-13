@@ -544,7 +544,7 @@ export async function uploadExceptionVisitReport(companyId: string, employeeName
 }
 
 /** Upload a drawn/typed signature (PNG data URL) for a Time Correction Request's Exception Report — same capture pattern as uploadSignableDocumentSignature. */
-export async function uploadTimecardCorrectionSignature(companyId: string, correctionId: string, slot: "employee" | "manager" | "hr_staff", dataUrl: string): Promise<string> {
+export async function uploadTimecardCorrectionSignature(companyId: string, correctionId: string, slot: "employee" | "manager" | "hr_staff" | "accounting", dataUrl: string): Promise<string> {
   if (!isFirebaseReady() || !storage) {
     throw new Error("Firebase Storage not configured");
   }
@@ -557,7 +557,7 @@ export async function uploadTimecardCorrectionSignature(companyId: string, corre
 }
 
 /** Same as uploadTimecardCorrectionSignature, for a Ticket Time Dispute's Exception Report (employee_requests row) instead of a timecard_corrections row. */
-export async function uploadEmployeeRequestSignature(companyId: string, requestId: string, slot: "employee" | "manager" | "hr_staff", dataUrl: string): Promise<string> {
+export async function uploadEmployeeRequestSignature(companyId: string, requestId: string, slot: "employee" | "manager" | "hr_staff" | "accounting", dataUrl: string): Promise<string> {
   if (!isFirebaseReady() || !storage) {
     throw new Error("Firebase Storage not configured");
   }
@@ -570,7 +570,7 @@ export async function uploadEmployeeRequestSignature(companyId: string, requestI
 }
 
 /** Same as uploadTimecardCorrectionSignature, for a Sick Leave / Unpaid Leave request's Exception Report (pto_requests row) instead of a timecard_corrections row. */
-export async function uploadPtoRequestSignature(companyId: string, requestId: string, slot: "employee" | "manager" | "hr_staff", dataUrl: string): Promise<string> {
+export async function uploadPtoRequestSignature(companyId: string, requestId: string, slot: "employee" | "manager" | "hr_staff" | "accounting", dataUrl: string): Promise<string> {
   if (!isFirebaseReady() || !storage) {
     throw new Error("Firebase Storage not configured");
   }

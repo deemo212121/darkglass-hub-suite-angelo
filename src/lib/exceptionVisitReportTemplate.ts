@@ -10,7 +10,7 @@
  * migration 0050), so this document type needed zero schema change.
  */
 
-export type ExceptionVisitSignatureSlot = "employee" | "manager" | "hr_staff";
+export type ExceptionVisitSignatureSlot = "employee" | "manager" | "hr_staff" | "accounting";
 
 export type ExceptionType = "missed_workday" | "late_early" | "missed_visit" | "other";
 
@@ -93,8 +93,8 @@ export interface ExceptionVisitFormData {
   hrReceivedDate: string;
   hrReviewerName: string;
   hrActionStatus: "approved" | "additional_review_required" | "";
-  /** Accounting's approval (a click, not a signature) — printed as section 7 when present. */
-  accountingApproval?: { name: string; date: string } | null;
+  /** Accounting's approval — printed as section 7 when present, with its comments and signature (signatures.accounting) once signed (migration 0376). */
+  accountingApproval?: { name: string; date: string; comments?: string } | null;
 }
 
 export interface ExceptionVisitSignatureEntry {
@@ -248,8 +248,13 @@ export function buildExceptionVisitReportBodyMarkup(
           ? `<div class="evr-section">
         <div class="evr-section-title">7. Accounting Approval</div>
         <div class="evr-checks"><span>${checkbox(true)} Approved</span></div>
-        <div class="evr-field"><span class="evr-label">Approved by:</span> <strong>${blank(data.accountingApproval.name)}</strong></div>
-        <div class="evr-field"><span class="evr-label">Date:</span> <strong>${blank(fmtDate(data.accountingApproval.date))}</strong></div>
+        ${data.accountingApproval.comments ? `<div class="evr-field"><span class="evr-label">Accounting Comments:</span> ${blank(data.accountingApproval.comments)}</div>` : ""}
+        ${
+          signatures.accounting
+            ? signRow("Accounting Signature", signatures.accounting.name || data.accountingApproval.name, signatures.accounting)
+            : `<div class="evr-field"><span class="evr-label">Approved by:</span> <strong>${blank(data.accountingApproval.name)}</strong></div>
+        <div class="evr-field"><span class="evr-label">Date:</span> <strong>${blank(fmtDate(data.accountingApproval.date))}</strong></div>`
+        }
       </div>`
           : ""
       }

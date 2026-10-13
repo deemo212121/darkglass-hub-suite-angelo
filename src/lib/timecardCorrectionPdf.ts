@@ -40,8 +40,16 @@ export interface CorrectionEmployeeInfo {
 }
 
 /** Section 7 data from the row, when the Accounting step is approved. */
-function accountingApprovalOf(c: Pick<TimecardCorrectionRow, "accountingStatus" | "accountingReviewedAt">, info: CorrectionEmployeeInfo) {
-  return c.accountingStatus === "approved" ? { name: info.accountingApproverName || "Accounting", date: (c.accountingReviewedAt || "").slice(0, 10) } : null;
+function accountingApprovalOf(c: Pick<TimecardCorrectionRow, "accountingStatus" | "accountingReviewedAt" | "accountingNote" | "accountingSignatureName">, info: CorrectionEmployeeInfo) {
+  return c.accountingStatus === "approved"
+    ? { name: c.accountingSignatureName || info.accountingApproverName || "Accounting", date: (c.accountingReviewedAt || "").slice(0, 10), comments: c.accountingNote || "" }
+    : null;
+}
+
+/** Accounting's stored signature (migration 0376), when it signed. */
+function withAccountingSignature(signatures: ExceptionVisitSignatures, c: Pick<TimecardCorrectionRow, "accountingSignatureUrl" | "accountingSignatureName" | "accountingSignedAt">): ExceptionVisitSignatures {
+  if (c.accountingSignatureUrl) signatures.accounting = { name: c.accountingSignatureName || "", url: c.accountingSignatureUrl, signedAt: c.accountingSignedAt || "" };
+  return signatures;
 }
 
 let cachedLogo: string | null = null;
@@ -58,7 +66,7 @@ function formDataFromCorrection(
   otherDescription: string,
   reason: string,
   employeeInfo: CorrectionEmployeeInfo,
-  extra?: { managerComments?: string; hrReceivedDate?: string; hrReviewerName?: string; hrActionStatus?: "approved" | "additional_review_required" | ""; accountingApproval?: { name: string; date: string } | null }
+  extra?: { managerComments?: string; hrReceivedDate?: string; hrReviewerName?: string; hrActionStatus?: "approved" | "additional_review_required" | ""; accountingApproval?: { name: string; date: string; comments?: string } | null }
 ): ExceptionVisitFormData {
   return {
     employeeId: "",
@@ -139,6 +147,7 @@ export async function buildCorrectionManagerSignaturePdf(input: {
   if (c.employeeSignatureUrl) signatures.employee = { name: c.employeeSignatureName || "", url: c.employeeSignatureUrl, signedAt: c.employeeSignedAt || "" };
   signatures.manager = { name: input.managerName, url: managerSignatureUrl, signedAt: new Date().toISOString() };
   if (c.hrSignatureUrl) signatures.hr_staff = { name: c.hrSignatureName || "", url: c.hrSignatureUrl, signedAt: c.hrSignedAt || "" };
+  withAccountingSignature(signatures, c);
   const captureSignatures = await resolveSignaturesForCapture(signatures, "manager", input.managerSignatureDataUrl);
   const pdfBlob = await captureHtmlToPdfBlob(buildExceptionVisitReportBodyMarkup(formData, logoDataUrl, captureSignatures), exceptionVisitReportStyles);
   const pdfUrl = await uploadExceptionVisitReport(input.companyId, input.employeeInfo.employeeName, pdfBlob);
@@ -176,10 +185,48 @@ export async function buildCorrectionHrSignaturePdf(input: {
   if (c.employeeSignatureUrl) signatures.employee = { name: c.employeeSignatureName || "", url: c.employeeSignatureUrl, signedAt: c.employeeSignedAt || "" };
   if (c.managerSignatureUrl) signatures.manager = { name: c.managerSignatureName || "", url: c.managerSignatureUrl, signedAt: c.managerSignedAt || "" };
   signatures.hr_staff = { name: input.hrReviewerName, url: hrSignatureUrl, signedAt: new Date().toISOString() };
+  withAccountingSignature(signatures, c);
   const captureSignatures = await resolveSignaturesForCapture(signatures, "hr_staff", input.hrSignatureDataUrl);
   const pdfBlob = await captureHtmlToPdfBlob(buildExceptionVisitReportBodyMarkup(formData, logoDataUrl, captureSignatures), exceptionVisitReportStyles);
   const pdfUrl = await uploadExceptionVisitReport(input.companyId, input.employeeInfo.employeeName, pdfBlob);
   return { pdfUrl, hrSignatureUrl };
+}
+
+/**
+ * Accounting approval (migration 0376) — stamps Accounting's signature and
+ * comments into section 7, merging in every earlier signature. Called the
+ * instant Accounting approves an exception-report correction (the shared
+ * Accounting sign popup — see reviewCorrectionStage).
+ */
+export async function buildCorrectionAccountingSignaturePdf(input: {
+  correction: TimecardCorrectionRow;
+  companyId: string;
+  employeeInfo: CorrectionEmployeeInfo;
+  accountingName: string;
+  accountingComments: string;
+  accountingSignatureDataUrl: string;
+}): Promise<{ pdfUrl: string; accountingSignatureUrl: string }> {
+  await refreshStorageAuthToken();
+  const accountingSignatureUrl = await uploadTimecardCorrectionSignature(input.companyId, input.correction.id, "accounting", input.accountingSignatureDataUrl);
+  const logoDataUrl = await getLogoDataUrl();
+  const c = input.correction;
+  const nowIso = new Date().toISOString();
+  const formData = formDataFromCorrection(c.workDate, c.exceptionType || "other", c.otherDescription, c.reason, input.employeeInfo, {
+    accountingApproval: { name: input.accountingName, date: nowIso.slice(0, 10), comments: input.accountingComments },
+    managerComments: c.managerComments,
+    hrReceivedDate: c.hrReceivedDate || "",
+    hrReviewerName: c.hrReviewerName || "",
+    hrActionStatus: c.hrPaperworkStatus === "pending" ? "" : c.hrPaperworkStatus,
+  });
+  const signatures: ExceptionVisitSignatures = {};
+  if (c.employeeSignatureUrl) signatures.employee = { name: c.employeeSignatureName || "", url: c.employeeSignatureUrl, signedAt: c.employeeSignedAt || "" };
+  if (c.managerSignatureUrl) signatures.manager = { name: c.managerSignatureName || "", url: c.managerSignatureUrl, signedAt: c.managerSignedAt || "" };
+  if (c.hrSignatureUrl) signatures.hr_staff = { name: c.hrSignatureName || "", url: c.hrSignatureUrl, signedAt: c.hrSignedAt || "" };
+  signatures.accounting = { name: input.accountingName, url: accountingSignatureUrl, signedAt: nowIso };
+  const captureSignatures = await resolveSignaturesForCapture(signatures, "accounting", input.accountingSignatureDataUrl);
+  const pdfBlob = await captureHtmlToPdfBlob(buildExceptionVisitReportBodyMarkup(formData, logoDataUrl, captureSignatures), exceptionVisitReportStyles);
+  const pdfUrl = await uploadExceptionVisitReport(input.companyId, input.employeeInfo.employeeName, pdfBlob);
+  return { pdfUrl, accountingSignatureUrl };
 }
 
 /**
@@ -212,6 +259,7 @@ export async function regenerateCorrectionPdf(input: {
   if (c.employeeSignatureUrl) signatures.employee = { name: c.employeeSignatureName || "", url: c.employeeSignatureUrl, signedAt: c.employeeSignedAt || "" };
   if (c.managerSignatureUrl) signatures.manager = { name: c.managerSignatureName || "", url: c.managerSignatureUrl, signedAt: c.managerSignedAt || "" };
   if (c.hrSignatureUrl) signatures.hr_staff = { name: c.hrSignatureName || "", url: c.hrSignatureUrl, signedAt: c.hrSignedAt || "" };
+  withAccountingSignature(signatures, c);
   const captureSignatures = await resolveSignaturesForCapture(signatures, "", "");
   const pdfBlob = await captureHtmlToPdfBlob(buildExceptionVisitReportBodyMarkup(formData, logoDataUrl, captureSignatures), exceptionVisitReportStyles);
   const pdfUrl = await uploadExceptionVisitReport(input.companyId, input.employeeInfo.employeeName, pdfBlob);

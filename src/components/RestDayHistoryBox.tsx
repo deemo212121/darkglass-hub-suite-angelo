@@ -9,6 +9,14 @@ const DAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const fmtDays = (d: number[]) => (d.length ? [...d].sort((a, b) => a - b).map((i) => DAY_SHORT[i]).join(", ") : "No rest days");
 const fmtDate = (iso: string) =>
   iso <= "2000-01-01" ? "the beginning" : new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+const fmtTime = (t: string | null) => {
+  if (!t) return "";
+  const [h, m] = t.split(":").map(Number);
+  if (Number.isNaN(h)) return t;
+  return `${((h + 11) % 12) + 1}:${String(m || 0).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+};
+const fmtTimes = (r: { checkIn: string | null; checkOut: string | null }) =>
+  r.checkIn || r.checkOut ? `${fmtTime(r.checkIn) || "—"} – ${fmtTime(r.checkOut) || "—"}` : "";
 const dayBefore = (iso: string) => {
   const d = new Date(`${iso}T00:00:00`);
   d.setDate(d.getDate() - 1);
@@ -16,18 +24,33 @@ const dayBefore = (iso: string) => {
 };
 
 /**
- * Rest day history (migration 0373) on a user's edit page — which rest days
- * applied when, so a change in October doesn't rewrite September. HR can add
- * an earlier schedule here for someone whose rest days were changed before
- * the history existed. `reloadKey` changes after a save so it refreshes.
+ * Schedule history (migrations 0373 + 0375) on a user's edit page — which
+ * rest days and Time In / Time Out Required applied when, so a change in
+ * October doesn't rewrite September. HR can add an earlier schedule here for
+ * someone whose schedule was changed before the history existed.
+ * `reloadKey` changes after a save so it refreshes.
  */
-export function RestDayHistoryBox({ profileId, companyId, reloadKey }: { profileId: string; companyId: string | null; reloadKey?: unknown }) {
+export function RestDayHistoryBox({
+  profileId,
+  companyId,
+  reloadKey,
+  currentCheckIn,
+  currentCheckOut,
+}: {
+  profileId: string;
+  companyId: string | null;
+  reloadKey?: unknown;
+  currentCheckIn?: string | null;
+  currentCheckOut?: string | null;
+}) {
   const { uid } = useAuth();
   const [rows, setRows] = useState<RestDayHistoryRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [newFrom, setNewFrom] = useState("");
   const [newDays, setNewDays] = useState<number[]>([0, 6]);
+  const [newIn, setNewIn] = useState("");
+  const [newOut, setNewOut] = useState("");
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
@@ -35,7 +58,7 @@ export function RestDayHistoryBox({ profileId, companyId, reloadKey }: { profile
       setRows(await getRestDayHistoryFor(profileId));
       setError(null);
     } catch (err) {
-      setError(err instanceof Error && /rest_day_history/.test(err.message) ? "Run migration 0373 in Supabase to turn on rest day history." : "Couldn't load the history.");
+      setError(err instanceof Error && /rest_day_history/.test(err.message) ? "Run migration 0373 in Supabase to turn on schedule history." : "Couldn't load the history.");
       setRows([]);
     }
   };
@@ -49,8 +72,11 @@ export function RestDayHistoryBox({ profileId, companyId, reloadKey }: { profile
     setBusy(true);
     try {
       const me = uid ? await getMyProfileId(uid) : null;
-      await upsertRestDayPeriod(profileId, companyId, newDays, newFrom, me);
-      toast.success(`Saved: ${fmtDays(newDays)} from ${fmtDate(newFrom)}.`);
+      const times = { checkIn: newIn || null, checkOut: newOut || null };
+      // Times only once 0375 is in — before that the columns don't exist.
+      const timesTracked = (rows ?? []).some((r) => r.checkIn != null || r.checkOut != null);
+      await upsertRestDayPeriod(profileId, companyId, newDays, newFrom, me, timesTracked || newIn || newOut ? times : undefined);
+      toast.success(`Saved: ${fmtDays(newDays)}${fmtTimes(times) ? ` · ${fmtTimes(times)}` : ""} from ${fmtDate(newFrom)}.`);
       setAdding(false);
       setNewFrom("");
       await load();
@@ -62,7 +88,7 @@ export function RestDayHistoryBox({ profileId, companyId, reloadKey }: { profile
   };
 
   const remove = async (r: RestDayHistoryRow) => {
-    if (!confirm(`Remove "${fmtDays(r.offDays)} from ${fmtDate(r.effectiveFrom)}" from the history?`)) return;
+    if (!confirm(`Remove "${fmtDays(r.offDays)}${fmtTimes(r) ? ` · ${fmtTimes(r)}` : ""} from ${fmtDate(r.effectiveFrom)}" from the history?`)) return;
     setBusy(true);
     try {
       await deleteRestDayPeriod(r.id);
@@ -77,14 +103,21 @@ export function RestDayHistoryBox({ profileId, companyId, reloadKey }: { profile
   return (
     <div className="mt-3 rounded-lg border border-white/10 bg-slate-900/40 p-3">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Rest day history</span>
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Schedule history</span>
         {!adding && rows && !error && (
-          <button type="button" onClick={() => setAdding(true)} className="inline-flex items-center gap-1 text-xs font-semibold text-blue-300 hover:text-blue-200">
+          <button
+            type="button"
+            onClick={() => {
+              setNewIn(currentCheckIn || "");
+              setNewOut(currentCheckOut || "");
+              setAdding(true);
+            }}
+            className="inline-flex items-center gap-1 text-xs font-semibold text-blue-300 hover:text-blue-200">
             <Plus className="h-3.5 w-3.5" /> Add an earlier schedule
           </button>
         )}
       </div>
-      <p className="mt-1 text-[11px] text-slate-500">Each day is checked against the rest days in force on that day — changing them doesn't rewrite past months.</p>
+      <p className="mt-1 text-[11px] text-slate-500">Each day is checked against the rest days and Time In / Time Out Required in force on that day — changing them doesn't rewrite past months.</p>
 
       {rows === null ? (
         <p className="mt-2 text-xs text-slate-400"><Loader2 className="mr-1 inline h-3 w-3 animate-spin" />Loading…</p>
@@ -100,6 +133,7 @@ export function RestDayHistoryBox({ profileId, companyId, reloadKey }: { profile
               <li key={r.id} className="flex items-center justify-between gap-2 rounded bg-white/5 px-2.5 py-1.5 text-xs">
                 <span>
                   <span className="font-semibold text-slate-100">{fmtDays(r.offDays)}</span>
+                  {fmtTimes(r) && <span className="text-slate-300"> · {fmtTimes(r)}</span>}
                   <span className="text-slate-400">
                     {" "}· from {fmtDate(r.effectiveFrom)}
                     {next ? ` until ${dayBefore(next.effectiveFrom)}` : " — current"}
@@ -119,7 +153,7 @@ export function RestDayHistoryBox({ profileId, companyId, reloadKey }: { profile
       {adding && (
         <div className="mt-3 space-y-2 rounded border border-white/10 p-2.5">
           <p className="text-[11px] text-slate-400">
-            E.g. they had Sat &amp; Sun before switching to Thu &amp; Fri on Oct 1: pick Sat + Sun, effective from their start (or the date that schedule began).
+            E.g. they had Sat &amp; Sun and 8:00 AM – 5:00 PM before switching on Oct 1: pick those, effective from their start (or the date that schedule began).
           </p>
           <div className="flex flex-wrap gap-1.5">
             {DAY_SHORT.map((d, idx) => {
@@ -135,6 +169,16 @@ export function RestDayHistoryBox({ profileId, companyId, reloadKey }: { profile
                 </button>
               );
             })}
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <label className="block text-xs text-slate-400">
+              Time In Required
+              <input type="time" value={newIn} onChange={(e) => setNewIn(e.target.value)} className="ml-2 rounded border border-white/10 bg-slate-800 px-2 py-1 text-xs text-white [color-scheme:dark]" />
+            </label>
+            <label className="block text-xs text-slate-400">
+              Time Out Required
+              <input type="time" value={newOut} onChange={(e) => setNewOut(e.target.value)} className="ml-2 rounded border border-white/10 bg-slate-800 px-2 py-1 text-xs text-white [color-scheme:dark]" />
+            </label>
           </div>
           <label className="block text-xs text-slate-400">
             Effective from

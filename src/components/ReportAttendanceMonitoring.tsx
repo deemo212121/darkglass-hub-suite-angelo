@@ -32,6 +32,8 @@ import { getCompanyPtoRequests, type PtoRequestRow } from "@/lib/supabase/pto";
 import { getCompanyTimecardCorrections, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import { localISODate, todayISO } from "@/lib/localDate";
+import { getRestDayHistory } from "@/lib/supabase/restDayHistory";
+import { isRestDayOn, requiredTimesOn, type RestDayHistory } from "@/lib/restDays";
 
 const TOOLTIP_STYLE = { background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 6, color: "#0f172a", fontSize: 12, fontWeight: 600, boxShadow: "0 4px 12px rgba(0,0,0,0.3)" } as const;
 const LEGEND_STYLE = { fontSize: 11, color: "#94a3b8" } as const;
@@ -232,6 +234,16 @@ export function ReportAttendanceMonitoring({
       return next;
     });
 
+  // Rest days and Time In / Time Out Required in force on each day
+  // (rest_day_history, migrations 0373 + 0375) — a later schedule change
+  // doesn't re-judge earlier days as absent or late.
+  const [restHistory, setRestHistory] = useState<RestDayHistory>(new Map());
+  useEffect(() => {
+    getRestDayHistory().then(setRestHistory).catch(() => {});
+  }, []);
+  const reqIn = (p: ProfileRow, d: string) => requiredTimesOn(restHistory, p.id, d, { checkIn: p.required_check_in, checkOut: p.required_check_out }).checkIn;
+  const reqOut = (p: ProfileRow, d: string) => requiredTimesOn(restHistory, p.id, d, { checkIn: p.required_check_in, checkOut: p.required_check_out }).checkOut;
+
   const entriesByProfileDate = useMemo(() => {
     const map = new Map<string, CompanyTimecardEntry>();
     for (const e of entries) map.set(`${e.profileId}|${e.workDate}`, e);
@@ -258,15 +270,15 @@ export function ReportAttendanceMonitoring({
       bucket.count += 1;
       const graceMinutes = graceMinutesFor(p);
       for (const d of dateRange) {
-        const off = isOffDay(d, p.off_days);
-        const st = dayStatus(entriesByProfileDate.get(`${p.id}|${d}`), p.required_check_in, off, graceMinutes);
+        const off = isRestDayOn(restHistory, p.id, d, p.off_days);
+        const st = dayStatus(entriesByProfileDate.get(`${p.id}|${d}`), reqIn(p, d), off, graceMinutes);
         if (st.present) { bucket.present++; if (st.late) bucket.late++; bucket.hours += st.hours; }
         else if (st.absent) bucket.absent++;
       }
       map.set(role, bucket);
     }
     return Array.from(map.entries()).map(([role, v]) => ({ role, ...v })).sort((a, b) => b.absent - a.absent || b.late - a.late);
-  }, [filteredProfiles, dateRange, entriesByProfileDate]);
+  }, [filteredProfiles, dateRange, entriesByProfileDate, restHistory]);
 
   // Day-by-day breakdown, for groupBy === "employee" — one row per
   // (employee, date), Name/Role on the far left same as the aggregate
@@ -294,13 +306,13 @@ export function ReportAttendanceMonitoring({
       const graceMinutes = graceMinutesFor(p);
       for (const d of dateRange) {
         const entry = entriesByProfileDate.get(`${p.id}|${d}`);
-        const off = isOffDay(d, p.off_days);
-        const st = dayStatus(entry, p.required_check_in, off, graceMinutes);
+        const off = isRestDayOn(restHistory, p.id, d, p.off_days);
+        const st = dayStatus(entry, reqIn(p, d), off, graceMinutes);
         const status: DailyStatus = st.present ? (st.late ? "late" : "present") : off ? "day-off" : "absent";
         rows.push({
           profileId: p.id, name, role, date: d,
           clockIn: entry?.checkIn || "", clockOut: entry?.checkOut || "",
-          requiredCheckIn: p.required_check_in || "", requiredCheckOut: p.required_check_out || "",
+          requiredCheckIn: reqIn(p, d), requiredCheckOut: reqOut(p, d),
           hours: st.hours, status,
         });
       }
@@ -309,7 +321,7 @@ export function ReportAttendanceMonitoring({
     // in on 8/11, then who was in on 8/10, ..." instead of one person's
     // entire week before jumping to the next person.
     return rows.sort((a, b) => b.date.localeCompare(a.date) || a.name.localeCompare(b.name));
-  }, [filteredProfiles, dateRange, entriesByProfileDate, employeeFilter]);
+  }, [filteredProfiles, dateRange, entriesByProfileDate, employeeFilter, restHistory]);
 
   // Today-scoped KPI tiles (only meaningful when today falls inside the
   // selected range — otherwise these read 0, same as a report for a past
@@ -319,13 +331,13 @@ export function ReportAttendanceMonitoring({
     if (!todayInRange) return { present: 0, absent: 0, late: 0 };
     let present = 0, absent = 0, late = 0;
     for (const p of filteredProfiles) {
-      const off = isOffDay(todayIso(), p.off_days);
+      const off = isRestDayOn(restHistory, p.id, todayIso(), p.off_days);
       const st = dayStatus(entriesByProfileDate.get(`${p.id}|${todayIso()}`), p.required_check_in, off, graceMinutesFor(p));
       if (st.present) { present++; if (st.late) late++; }
       else if (st.absent) absent++;
     }
     return { present, absent, late };
-  }, [todayInRange, filteredProfiles, entriesByProfileDate]);
+  }, [todayInRange, filteredProfiles, entriesByProfileDate, restHistory]);
 
   // Scoped to filteredProfiles (department filter AND the optional
   // filterProfile restriction) — company-wide PTO/correction counts would be
@@ -344,15 +356,15 @@ export function ReportAttendanceMonitoring({
     return dateRange.map((d) => {
       let present = 0, absent = 0, late = 0;
       for (const p of filteredProfiles) {
-        const off = isOffDay(d, p.off_days);
-        const st = dayStatus(entriesByProfileDate.get(`${p.id}|${d}`), p.required_check_in, off, graceMinutesFor(p));
+        const off = isRestDayOn(restHistory, p.id, d, p.off_days);
+        const st = dayStatus(entriesByProfileDate.get(`${p.id}|${d}`), reqIn(p, d), off, graceMinutesFor(p));
         if (st.present) { present++; if (st.late) late++; }
         else if (st.absent) absent++;
       }
       const [, m, day] = d.split("-");
       return { date: `${Number(m)}/${Number(day)}`, present, absent, late };
     });
-  }, [dateRange, filteredProfiles, entriesByProfileDate]);
+  }, [dateRange, filteredProfiles, entriesByProfileDate, restHistory]);
 
   const exportToXlsx = () => {
     const sheet: (string | number)[][] = [

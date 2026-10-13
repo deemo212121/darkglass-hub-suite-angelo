@@ -29,8 +29,16 @@ export interface PtoEmployeeInfo {
 }
 
 /** Section 7 data from the row, when the Accounting step is approved. */
-function accountingApprovalOf(r: Pick<PtoRequestRow, "accountingStatus" | "accountingReviewedAt">, info: PtoEmployeeInfo) {
-  return r.accountingStatus === "approved" ? { name: info.accountingApproverName || "Accounting", date: (r.accountingReviewedAt || "").slice(0, 10) } : null;
+function accountingApprovalOf(r: Pick<PtoRequestRow, "accountingStatus" | "accountingReviewedAt" | "accountingNote" | "accountingSignatureName">, info: PtoEmployeeInfo) {
+  return r.accountingStatus === "approved"
+    ? { name: r.accountingSignatureName || info.accountingApproverName || "Accounting", date: (r.accountingReviewedAt || "").slice(0, 10), comments: r.accountingNote || "" }
+    : null;
+}
+
+/** Accounting's stored signature (migration 0376), when it signed. */
+function withAccountingSignature(signatures: ExceptionVisitSignatures, r: Pick<PtoRequestRow, "accountingSignatureUrl" | "accountingSignatureName" | "accountingSignedAt">): ExceptionVisitSignatures {
+  if (r.accountingSignatureUrl) signatures.accounting = { name: r.accountingSignatureName || "", url: r.accountingSignatureUrl, signedAt: r.accountingSignedAt || "" };
+  return signatures;
 }
 
 let cachedLogo: string | null = null;
@@ -47,7 +55,7 @@ function formDataFromPto(
   otherDescription: string,
   detailedReason: string,
   employeeInfo: PtoEmployeeInfo,
-  extra?: { managerComments?: string; hrReceivedDate?: string; hrReviewerName?: string; hrActionStatus?: "approved" | "additional_review_required" | ""; accountingApproval?: { name: string; date: string } | null }
+  extra?: { managerComments?: string; hrReceivedDate?: string; hrReviewerName?: string; hrActionStatus?: "approved" | "additional_review_required" | ""; accountingApproval?: { name: string; date: string; comments?: string } | null }
 ): ExceptionVisitFormData {
   return {
     employeeId: "",
@@ -119,6 +127,7 @@ export async function buildPtoManagerSignaturePdf(input: {
   if (r.employeeSignatureUrl) signatures.employee = { name: r.employeeSignatureName || "", url: r.employeeSignatureUrl, signedAt: r.employeeSignedAt || "" };
   signatures.manager = { name: input.managerName, url: managerSignatureUrl, signedAt: new Date().toISOString() };
   if (r.hrSignatureUrl) signatures.hr_staff = { name: r.hrSignatureName || "", url: r.hrSignatureUrl, signedAt: r.hrSignedAt || "" };
+  withAccountingSignature(signatures, r);
   const captureSignatures = await resolveSignaturesForCapture(signatures, "manager", input.managerSignatureDataUrl);
   const pdfBlob = await captureHtmlToPdfBlob(buildExceptionVisitReportBodyMarkup(formData, logoDataUrl, captureSignatures), exceptionVisitReportStyles);
   const pdfUrl = await uploadExceptionVisitReport(input.companyId, input.employeeInfo.employeeName, pdfBlob);
@@ -150,10 +159,43 @@ export async function buildPtoHrSignaturePdf(input: {
   if (r.employeeSignatureUrl) signatures.employee = { name: r.employeeSignatureName || "", url: r.employeeSignatureUrl, signedAt: r.employeeSignedAt || "" };
   if (r.managerSignatureUrl) signatures.manager = { name: r.managerSignatureName || "", url: r.managerSignatureUrl, signedAt: r.managerSignedAt || "" };
   signatures.hr_staff = { name: input.hrReviewerName, url: hrSignatureUrl, signedAt: new Date().toISOString() };
+  withAccountingSignature(signatures, r);
   const captureSignatures = await resolveSignaturesForCapture(signatures, "hr_staff", input.hrSignatureDataUrl);
   const pdfBlob = await captureHtmlToPdfBlob(buildExceptionVisitReportBodyMarkup(formData, logoDataUrl, captureSignatures), exceptionVisitReportStyles);
   const pdfUrl = await uploadExceptionVisitReport(input.companyId, input.employeeInfo.employeeName, pdfBlob);
   return { pdfUrl, hrSignatureUrl };
+}
+
+/** Accounting approval (migration 0376) — stamps Accounting's signature and comments into section 7, merging in every earlier signature. */
+export async function buildPtoAccountingSignaturePdf(input: {
+  request: PtoRequestRow;
+  companyId: string;
+  employeeInfo: PtoEmployeeInfo;
+  accountingName: string;
+  accountingComments: string;
+  accountingSignatureDataUrl: string;
+}): Promise<{ pdfUrl: string; accountingSignatureUrl: string }> {
+  await refreshStorageAuthToken();
+  const accountingSignatureUrl = await uploadPtoRequestSignature(input.companyId, input.request.id, "accounting", input.accountingSignatureDataUrl);
+  const logoDataUrl = await getLogoDataUrl();
+  const r = input.request;
+  const nowIso = new Date().toISOString();
+  const formData = formDataFromPto(r.startDate, r.exceptionType || "other", r.otherDescription, r.reason, input.employeeInfo, {
+    accountingApproval: { name: input.accountingName, date: nowIso.slice(0, 10), comments: input.accountingComments },
+    managerComments: r.managerComments,
+    hrReceivedDate: r.hrReceivedDate || "",
+    hrReviewerName: r.hrReviewerName || "",
+    hrActionStatus: r.hrPaperworkStatus === "pending" ? "" : r.hrPaperworkStatus,
+  });
+  const signatures: ExceptionVisitSignatures = {};
+  if (r.employeeSignatureUrl) signatures.employee = { name: r.employeeSignatureName || "", url: r.employeeSignatureUrl, signedAt: r.employeeSignedAt || "" };
+  if (r.managerSignatureUrl) signatures.manager = { name: r.managerSignatureName || "", url: r.managerSignatureUrl, signedAt: r.managerSignedAt || "" };
+  if (r.hrSignatureUrl) signatures.hr_staff = { name: r.hrSignatureName || "", url: r.hrSignatureUrl, signedAt: r.hrSignedAt || "" };
+  signatures.accounting = { name: input.accountingName, url: accountingSignatureUrl, signedAt: nowIso };
+  const captureSignatures = await resolveSignaturesForCapture(signatures, "accounting", input.accountingSignatureDataUrl);
+  const pdfBlob = await captureHtmlToPdfBlob(buildExceptionVisitReportBodyMarkup(formData, logoDataUrl, captureSignatures), exceptionVisitReportStyles);
+  const pdfUrl = await uploadExceptionVisitReport(input.companyId, input.employeeInfo.employeeName, pdfBlob);
+  return { pdfUrl, accountingSignatureUrl };
 }
 
 /** Re-renders the PDF from whatever's already on file — no new signature capture, same idea as regenerateCorrectionPdf/regenerateTicketDisputePdf. */
@@ -175,6 +217,7 @@ export async function regeneratePtoExceptionReportPdf(input: {
   if (r.employeeSignatureUrl) signatures.employee = { name: r.employeeSignatureName || "", url: r.employeeSignatureUrl, signedAt: r.employeeSignedAt || "" };
   if (r.managerSignatureUrl) signatures.manager = { name: r.managerSignatureName || "", url: r.managerSignatureUrl, signedAt: r.managerSignedAt || "" };
   if (r.hrSignatureUrl) signatures.hr_staff = { name: r.hrSignatureName || "", url: r.hrSignatureUrl, signedAt: r.hrSignedAt || "" };
+  withAccountingSignature(signatures, r);
   const captureSignatures = await resolveSignaturesForCapture(signatures, "", "");
   const pdfBlob = await captureHtmlToPdfBlob(buildExceptionVisitReportBodyMarkup(formData, logoDataUrl, captureSignatures), exceptionVisitReportStyles);
   const pdfUrl = await uploadExceptionVisitReport(input.companyId, input.employeeInfo.employeeName, pdfBlob);
