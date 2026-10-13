@@ -1485,7 +1485,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       const noteRow = sheet.addRow({
         name: showAllColumns
           ? "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. Damage Assessment/Minor Ticket/Major Ticket/Redo/Total Completion/Reschedule/NCNS/Mileage/Hours Worked below are the CURRENT totals, for reference."
-          : "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. The numbers below are the CURRENT totals, for reference. Grade, Points, Average Tickets, Total Ticket, Redo %, Working Days, Average Hours, Average Mileage and Error Count are calculated, not read back on import. Grade: Master 11, Expert 10, Advanced 9, Proficient 8, Competent 7, Developing 5–6, Needs Attention 4 or less. Points: Maximum 3, Great 2, Median 1, Effort 0, Alert −1 over Average Tickets/Total Ticket/Redo %/Working Days (Redo % and Working Days top out at 2); Average Hours over 12 a day is −1; Average Mileage 250+ a day is +1. Colors: blue Maximum, green Great, yellow Median, orange Effort, red Alert.",
+          : "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. The numbers below are the CURRENT totals, for reference. Grade, Points, Average Tickets, Total Ticket, Redo %, Working Days, Average Hours, Average Mileage and Error Count are calculated, not read back on import. Grade: Master 11–12, Expert 10, Advanced 9, Proficient 8, Competent 7, Developing 5–6, Needs Attention 4 or less. Points: Maximum 3, Great 2, Median 1, Effort 0, Alert −1 over Average Tickets/Total Ticket/Redo %/Working Days (Redo % and Working Days top out at 2); Average Hours over 12 a day is −1; Average Mileage 250+ a day is +1; Error Count 0–1 is +1, 2 is 0, 3 is −1, 4 or more −2. Colors: blue Maximum, green Great, yellow Median, orange Effort, red Alert.",
       });
       noteRow.font = { italic: true, color: { argb: "FF64748B" } };
       for (const r of sortedRows) {
@@ -2174,7 +2174,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                               {s.ranges[g] ? (
                                 <>
                                   {s.ranges[g]}
-                                  <span className="block text-[10px] opacity-70">{s.unscored ? "not scored" : fmtPoints((s.points ?? GRADE_POINTS)[g])}</span>
+                                  <span className="block text-[10px] opacity-70">{fmtPoints((s.points ?? GRADE_POINTS)[g])}</span>
                                 </>
                               ) : (
                                 <span className="opacity-40">—</span>
@@ -2203,7 +2203,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                       <span className="font-semibold">Disclaimer:</span> Grades and points are calculated automatically from the data in this report (tickets, timecards, mileage and any imported corrections). Some of that data can be incomplete or wrong — for example a missed clock-in, a ticket not yet closed or synced, or mileage not yet logged — so a grade may not reflect a technician's actual performance. Please verify with the technician's manager before acting on it.
                     </p>
                   </div>
-                  <p className="mt-2 text-[10px] text-muted-foreground">Points = the sum over Average Tickets, Total Ticket, Redo %, Working Days, Average Hours and Average Mileage (−5 to 11). Total Ticket and Working Days are scaled for a 2-week pay period.</p>
+                  <p className="mt-2 text-[10px] text-muted-foreground">Points = the sum over Average Tickets, Total Ticket, Redo %, Working Days, Average Hours, Average Mileage and Error Count (−7 to 12). Total Ticket and Working Days are scaled for a 2-week pay period.</p>
                 </div>
               </details>
             )}
@@ -2231,7 +2231,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                       </tr>
                       <tr className="border-b border-white/10 bg-white/5">
                         <th className={`${thClass} sticky left-0 z-20 bg-[var(--background)]`} onClick={() => toggleSort("name")}>Name{sortIndicator("name")}</th>
-                        <th className={`${thClass} border-l border-white/10`} onClick={() => toggleSort("shortPoints")} title="Master 11 · Expert 10 · Advanced 9 · Proficient 8 · Competent 7 · Developing 5–6 · Needs Attention 4 or less">Grade</th>
+                        <th className={`${thClass} border-l border-white/10`} onClick={() => toggleSort("shortPoints")} title="Master 11–12 · Expert 10 · Advanced 9 · Proficient 8 · Competent 7 · Developing 5–6 · Needs Attention 4 or less">Grade</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("shortPoints")} title="Maximum 3 · Great 2 · Median 1 · Effort 0 · Alert −1 (Redo % and Working Days max 2), summed over Average Tickets, Total Ticket, Redo % and Working Days; Average Hours over 12 a day −1; Average Mileage 250+ a day +1">Points{sortIndicator("shortPoints")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("shortDailyAvg")} title="Total Ticket ÷ Working Days">Average Tickets{sortIndicator("shortDailyAvg")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("shortTotalTicket")} title="Minor + Major − Redo">Total Ticket{sortIndicator("shortTotalTicket")}</th>
