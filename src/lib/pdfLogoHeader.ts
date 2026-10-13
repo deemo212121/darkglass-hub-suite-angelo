@@ -27,6 +27,74 @@ async function loadLogoBytes(): Promise<Uint8Array> {
   return cachedLogoBytes;
 }
 
+/**
+ * The company logo as a faint watermark, centered on every page (e.g. the
+ * Performance Bonus Policy). Drawn large and at low opacity so the text
+ * stays fully readable; aspect ratio kept. Draw it BEFORE the page content
+ * when you can (see performanceBonusPolicyPdfFill.ts) so it sits behind the
+ * text, and on the BLANK form so the signing view and signed PDF both have it.
+ */
+const WATERMARK_WIDTH_RATIO = 0.6; // of the page width
+const WATERMARK_OPACITY = 0.06;
+
+export async function addLogoWatermark(pdfDoc: PDFDocument): Promise<void> {
+  const bytes = await loadLogoBytes();
+  const png = await pdfDoc.embedPng(bytes);
+  for (const page of pdfDoc.getPages()) {
+    const { width, height } = page.getSize();
+    const w = width * WATERMARK_WIDTH_RATIO;
+    const h = (png.height / png.width) * w;
+    page.drawImage(png, { x: (width - w) / 2, y: (height - h) / 2, width: w, height: h, opacity: WATERMARK_OPACITY });
+  }
+}
+
+/**
+ * Company letterhead on every page, the same look as the Certificate of
+ * Employment: logo top-LEFT, red/blue ribbon top-RIGHT, contact footer
+ * across the bottom. Takes the top ~84pt and bottom ~76pt of a US Letter
+ * page — shrink the form's own content to fit between them first (see
+ * performanceBonusPolicyPdfFill.ts's CONTENT_SCALE).
+ */
+const LETTERHEAD = {
+  margin: 36,
+  top: 12,
+  logoSize: 64,
+  ribbonHeight: 60,
+  footerSideMargin: 24,
+  footerBottom: 10,
+};
+
+let cachedRibbonBytes: Uint8Array | null = null;
+let cachedFooterBytes: Uint8Array | null = null;
+async function loadAssetBytes(load: () => Promise<{ default: string }>): Promise<Uint8Array> {
+  const mod = await load();
+  const res = await fetch(mod.default);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+export async function addLetterhead(pdfDoc: PDFDocument): Promise<void> {
+  cachedRibbonBytes ??= await loadAssetBytes(() => import("@/assets/us-in-home-services-ribbon.png"));
+  cachedFooterBytes ??= await loadAssetBytes(() => import("@/assets/us-in-home-services-footer.png"));
+  const [logo, ribbon, footer] = await Promise.all([
+    pdfDoc.embedPng(await loadLogoBytes()),
+    pdfDoc.embedPng(cachedRibbonBytes),
+    pdfDoc.embedPng(cachedFooterBytes),
+  ]);
+  const L = LETTERHEAD;
+  for (const page of pdfDoc.getPages()) {
+    const { width, height } = page.getSize();
+    // Logo — top left.
+    page.drawImage(logo, { x: L.margin, y: height - L.top - L.logoSize, width: L.logoSize, height: L.logoSize });
+    // Ribbon — top right, aspect ratio kept.
+    const rw = (ribbon.width / ribbon.height) * L.ribbonHeight;
+    page.drawImage(ribbon, { x: width - L.margin - rw, y: height - L.top - L.ribbonHeight - 2, width: rw, height: L.ribbonHeight });
+    // Footer — across the bottom, aspect ratio kept.
+    const fw = width - L.footerSideMargin * 2;
+    const fh = (footer.height / footer.width) * fw;
+    page.drawImage(footer, { x: L.footerSideMargin, y: L.footerBottom, width: fw, height: fh });
+  }
+}
+
 export async function addLogoHeader(pdfDoc: PDFDocument, opts?: { firstPageOnly?: boolean }): Promise<void> {
   const bytes = await loadLogoBytes();
   const png = await pdfDoc.embedPng(bytes);
