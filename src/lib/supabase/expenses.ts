@@ -111,6 +111,21 @@ export async function getProfileExpenses(profileId: string): Promise<ExpenseRow[
   }
 }
 
+/** Display names for the people on a set of expenses (who reviewed them), without loading the whole roster — the mobile My Expenses screen. */
+export async function getExpensePeopleNames(profileIds: string[]): Promise<Map<string, string>> {
+  const ids = Array.from(new Set(profileIds.filter(Boolean)));
+  const names = new Map<string, string>();
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await supabase.from("profiles").select("id, display_name, email").in("id", ids.slice(i, i + 100));
+    if (error) {
+      console.error("getExpensePeopleNames error:", error.message);
+      continue;
+    }
+    for (const p of data ?? []) names.set(p.id, p.display_name || p.email || "Accounting");
+  }
+  return names;
+}
+
 /** File a new expense on behalf of an employee (profileId). */
 export async function createExpense(input: {
   profileId: string;

@@ -94,6 +94,18 @@ export const MOBILE_TOURS: MobileTour[] = [
       step('[data-tour="m-submit"]', "Submit", "Sends it for approval.", "timeoff"),
     ],
   },
+  {
+    id: "m-expenses",
+    category: "Time & attendance",
+    audience: "everyone",
+    title: "My Expenses",
+    summary: "Sending an expense to Accounting and tracking your reimbursement.",
+    steps: [
+      step('[data-tour="m-tile-expenses"]', "My Expenses", "Expenses you paid for the company, and what's owed back to you.", "home"),
+      step('[data-tour="m-view-expenses"]', "Your totals", "Reimbursement Due, In Review, Reimbursed and Rejected — tap one to see just those.", "expenses", { side: "bottom" }),
+      step('[data-tour="m-expense-submit"]', "Send to Accounting", "The amount and a receipt photo are required. Accounting approves or rejects it — a rejection always comes with a reason.", "expenses"),
+    ],
+  },
 
   // ── Tickets ─────────────────────────────────────────────────────────
   {
