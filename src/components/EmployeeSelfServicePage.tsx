@@ -1813,7 +1813,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       </div>
                       <div data-tour="ess-form-corr-times" className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="text-xs font-semibold text-white block mb-1">Corrected Check In <span className="text-red-400">*</span></label>
+                          <label className="text-xs font-semibold text-white block mb-1">Corrected Check In</label>
                           <input
                             type="time"
                             step="1"
@@ -1824,7 +1824,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           />
                         </div>
                         <div>
-                          <label className="text-xs font-semibold text-white block mb-1">Corrected Check Out <span className="text-red-400">*</span></label>
+                          <label className="text-xs font-semibold text-white block mb-1">Corrected Check Out</label>
                           <input
                             type="time"
                             step="1"
@@ -1861,7 +1861,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       </div>
                       <p className={`text-[10px] ${correctionMealRequired ? "text-amber-300" : "text-slate-500"}`}>
                         {correctionShift === null
-                          ? "Check in and check out are required. Meal start/end are required only when the shift is over 6 hours."
+                          ? "Fill in only the punch(es) you need corrected — a blank one keeps what's on your timecard. Meal start/end are required only when the shift is over 6 hours."
                           : correctionMealRequired
                           ? `Shift is ${formatShift(correctionShift)} — over 6 hours, so meal start and end are required.`
                           : `Shift is ${formatShift(correctionShift)} — meal break optional (required only over 6 hours).`}

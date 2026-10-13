@@ -390,19 +390,26 @@ export function formatShift(minutes: number): string {
 
 /**
  * Rules every Time Correction Request submission must pass (desktop and
- * mobile share this): corrected check-in and check-out are both required;
- * a meal break is required once the corrected shift runs over 6 hours
- * (optional at 6 hours or less); and any meal given must be complete, in
- * order, and inside the shift.
+ * mobile share this). Every punch is optional — someone still working can
+ * correct just their Check In, and a blank punch keeps whatever is on the
+ * timecard when the request is approved — but at least one punch must be
+ * given. When both check-in and check-out are given, out must be after in
+ * and a meal break is required once that shift runs over 6 hours (optional
+ * at 6 hours or less). Any meal given must be complete, in order, and
+ * inside whatever part of the shift was given.
  * Returns an error message to show, or null when valid.
  */
 export function validateCorrectionTimes(t: { checkIn: string; checkOut: string; mealStart: string; mealEnd: string }): string | null {
-  if (!t.checkIn || !t.checkOut) return "Corrected Check In and Corrected Check Out are both required.";
-  const shift = correctionShiftMinutes(t.checkIn, t.checkOut);
-  if (shift === null) return `Check out (${t.checkOut}) must be after check in (${t.checkIn}). Double-check the AM/PM on the time picker.`;
   const hasMealStart = Boolean(t.mealStart);
   const hasMealEnd = Boolean(t.mealEnd);
-  if (shift > CORRECTION_MEAL_REQUIRED_AFTER_MINUTES && (!hasMealStart || !hasMealEnd)) {
+  if (!t.checkIn && !t.checkOut && !hasMealStart && !hasMealEnd) {
+    return "Enter at least one corrected time (Check In, Check Out, or the meal break).";
+  }
+  const shift = t.checkIn && t.checkOut ? correctionShiftMinutes(t.checkIn, t.checkOut) : null;
+  if (t.checkIn && t.checkOut && shift === null) {
+    return `Check out (${t.checkOut}) must be after check in (${t.checkIn}). Double-check the AM/PM on the time picker.`;
+  }
+  if (shift !== null && shift > CORRECTION_MEAL_REQUIRED_AFTER_MINUTES && (!hasMealStart || !hasMealEnd)) {
     return "This shift is over 6 hours, so Corrected Meal Start and Corrected Meal End are both required.";
   }
   if (hasMealStart !== hasMealEnd) return "Enter both Corrected Meal Start and Corrected Meal End, or leave both blank.";
@@ -410,9 +417,7 @@ export function validateCorrectionTimes(t: { checkIn: string; checkOut: string; 
     if (correctionShiftMinutes(t.mealStart, t.mealEnd) === null) {
       return `Meal end (${t.mealEnd}) must be after meal start (${t.mealStart}). Double-check the AM/PM on the time picker.`;
     }
-    const inMin = timeToMinutes(t.checkIn)!;
-    const outMin = timeToMinutes(t.checkOut)!;
-    if (timeToMinutes(t.mealStart)! < inMin || timeToMinutes(t.mealEnd)! > outMin) {
+    if ((t.checkIn && timeToMinutes(t.mealStart)! < timeToMinutes(t.checkIn)!) || (t.checkOut && timeToMinutes(t.mealEnd)! > timeToMinutes(t.checkOut)!)) {
       return "The meal break has to fall between the corrected check in and check out.";
     }
   }
@@ -648,9 +653,12 @@ export async function reviewCorrectionStage(
     // was given, preserve the existing meal_start/meal_end/notes rather
     // than clobbering them (a plain upsert would null them out since they
     // aren't part of every correction).
+    // A blank corrected Check In/Out (e.g. someone still working who only
+    // fixed their Check In) keeps the punch already on the timecard —
+    // including a Check Out made after the request was sent.
     const { data: existing } = await supabase
       .from("timecard_entries")
-      .select("meal_start, meal_end, notes")
+      .select("check_in, check_out, meal_start, meal_end, notes")
       .eq("profile_id", correction.profileId)
       .eq("work_date", correction.workDate)
       .maybeSingle();
@@ -658,8 +666,8 @@ export async function reviewCorrectionStage(
       {
         profile_id: correction.profileId,
         work_date: correction.workDate,
-        check_in: updated.correctedCheckIn || null,
-        check_out: updated.correctedCheckOut || null,
+        check_in: updated.correctedCheckIn || existing?.check_in || null,
+        check_out: updated.correctedCheckOut || existing?.check_out || null,
         meal_start: updated.correctedMealStart || existing?.meal_start || null,
         meal_end: updated.correctedMealEnd || existing?.meal_end || null,
         notes: existing?.notes ?? null,
