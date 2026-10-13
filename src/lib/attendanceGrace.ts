@@ -187,3 +187,49 @@ export function nowInTimezone(timeZone: string, at: Date = new Date()): { hhmm: 
   }).format(now);
   return { hhmm, dateISO };
 }
+
+/**
+ * A technician's own time zone — Master List schedule_timezone (CST/EST)
+ * first, else their branch's zone. Same rule the forced clock-out job uses
+ * (technicianForcedCheckout.ts), so ticket times shown with it line up with
+ * the Time In/Out on their timecard.
+ */
+export function technicianTimeZone(scheduleTimezone: string | null | undefined, branch: string | null | undefined): string {
+  const sched = String(scheduleTimezone ?? "").trim().toUpperCase();
+  if (sched === "EST") return "America/New_York";
+  if (sched === "CST") return "America/Chicago";
+  return timezoneForBranch(branch);
+}
+
+// US state -> its time zone, for labeling where a ticket actually was. States
+// split across two zones (TN, KY, IN, FL, MI, ND, SD, NE, KS, TX's far west,
+// ID, OR) are left out on purpose — the state alone can't say which side a
+// ticket was on, so callers get null and show nothing rather than guess.
+const EASTERN = "America/New_York";
+const CENTRAL = "America/Chicago";
+const MOUNTAIN = "America/Denver";
+const PACIFIC = "America/Los_Angeles";
+const STATE_ZONES: Record<string, string> = {
+  ME: EASTERN, NH: EASTERN, VT: EASTERN, MA: EASTERN, RI: EASTERN, CT: EASTERN, NY: EASTERN, NJ: EASTERN,
+  PA: EASTERN, DE: EASTERN, MD: EASTERN, DC: EASTERN, VA: EASTERN, WV: EASTERN, NC: EASTERN, SC: EASTERN,
+  GA: EASTERN, OH: EASTERN,
+  AL: CENTRAL, MS: CENTRAL, LA: CENTRAL, AR: CENTRAL, MO: CENTRAL, IA: CENTRAL, MN: CENTRAL, WI: CENTRAL,
+  IL: CENTRAL, OK: CENTRAL,
+  CO: MOUNTAIN, NM: MOUNTAIN, UT: MOUNTAIN, WY: MOUNTAIN, MT: MOUNTAIN, AZ: MOUNTAIN,
+  CA: PACIFIC, WA: PACIFIC, NV: PACIFIC,
+};
+const STATE_NAME_TO_CODE: Record<string, string> = {
+  MAINE: "ME", "NEW HAMPSHIRE": "NH", VERMONT: "VT", MASSACHUSETTS: "MA", "RHODE ISLAND": "RI", CONNECTICUT: "CT",
+  "NEW YORK": "NY", "NEW JERSEY": "NJ", PENNSYLVANIA: "PA", DELAWARE: "DE", MARYLAND: "MD", "DISTRICT OF COLUMBIA": "DC",
+  VIRGINIA: "VA", "WEST VIRGINIA": "WV", "NORTH CAROLINA": "NC", "SOUTH CAROLINA": "SC", GEORGIA: "GA", OHIO: "OH",
+  ALABAMA: "AL", MISSISSIPPI: "MS", LOUISIANA: "LA", ARKANSAS: "AR", MISSOURI: "MO", IOWA: "IA", MINNESOTA: "MN",
+  WISCONSIN: "WI", ILLINOIS: "IL", OKLAHOMA: "OK", COLORADO: "CO", "NEW MEXICO": "NM", UTAH: "UT", WYOMING: "WY",
+  MONTANA: "MT", ARIZONA: "AZ", CALIFORNIA: "CA", WASHINGTON: "WA", NEVADA: "NV",
+};
+
+/** The time zone of a US state ("GA" or "Georgia"), or null when unknown or the state spans two zones. */
+export function timeZoneForState(state: string | null | undefined): string | null {
+  const key = String(state ?? "").trim().toUpperCase();
+  if (!key) return null;
+  return STATE_ZONES[key] ?? STATE_ZONES[STATE_NAME_TO_CODE[key] ?? ""] ?? null;
+}

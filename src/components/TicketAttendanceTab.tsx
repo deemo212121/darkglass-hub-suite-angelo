@@ -22,9 +22,9 @@ import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
 import { getCompanyTicketReschedules, type TicketRescheduleRow } from "@/lib/supabase/ticketReschedules";
 import { getAttendanceNotes, upsertAttendanceNote, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
-import { ATTENDANCE_GRACE_MINUTES, toSeconds } from "@/lib/attendanceGrace";
+import { ATTENDANCE_GRACE_MINUTES, toSeconds, technicianTimeZone } from "@/lib/attendanceGrace";
 import { useAuth } from "@/lib/auth";
-import { todayISO as userTodayISO } from "@/lib/localDate";
+import { todayISO as userTodayISO, formatTimeInZone } from "@/lib/localDate";
 
 /**
  * Time Out vs the employee's own scheduled check-out (profiles.
@@ -90,7 +90,13 @@ const TIME_OUT_STATUS_CLASS: Record<TimeOutStatus, string> = {
   undertime: "border-red-400/30 bg-red-400/10 text-red-300",
 };
 
-export function TicketAttendanceTab() {
+/**
+ * `offTechsOnly` — the "Off Techs with Tickets" view: same page, filters and
+ * export, but only tickets whose technician has NO Time In on that ticket's
+ * day (not clocked in yet today, or absent on a past day) — the tickets that
+ * may need reassigning. Cancelled tickets are left out.
+ */
+export function TicketAttendanceTab({ offTechsOnly = false }: { offTechsOnly?: boolean } = {}) {
   const todayISO = useMemo(() => userTodayISO(), []);
   const [dateFrom, setDateFrom] = useState(todayISO);
   const [dateTo, setDateTo] = useState(todayISO);
@@ -104,6 +110,9 @@ export function TicketAttendanceTab() {
   // dateFrom === dateTo, since Time In/Out has no single value across a
   // multi-day range.
   const [statusFilter, setStatusFilter] = useState<"all" | "present" | "presentNoTimeOut" | "absent">("all");
+  // Off Techs view's own Status choices — by the ticket's day relative to
+  // today: today = not clocked in yet, past = absent, future = upcoming.
+  const [offStatusFilter, setOffStatusFilter] = useState<"all" | "notYet" | "absent" | "upcoming">("all");
   type ColumnKey = "location" | "timeIn" | "timeOut" | "scheduled" | "checkedIn" | "missingCheckIn" | "missingCheckOut" | "notes";
   const COLUMN_LABELS: Record<ColumnKey, string> = {
     location: "Location",
@@ -276,6 +285,16 @@ export function TicketAttendanceTab() {
     const q = search.trim().toLowerCase();
     const byTech = new Map<string, TicketAttendanceRow[]>();
     for (const row of rows) {
+      if (offTechsOnly) {
+        if (row.statusGroup === "cancelled") continue;
+        const emp = employeeByNormalizedName.get(row.technician.trim().toLowerCase());
+        // Not matched to a profile (e.g. a subcontractor name) — no
+        // timecard to check, so it can't be called "off".
+        if (!emp) continue;
+        if (timecardByProfileDate.get(`${emp.id}|${row.scheduleDate}`)?.checkIn) continue;
+        const bucket = row.scheduleDate === todayISO ? "notYet" : row.scheduleDate < todayISO ? "absent" : "upcoming";
+        if (offStatusFilter !== "all" && bucket !== offStatusFilter) continue;
+      }
       if (!byTech.has(row.technician)) byTech.set(row.technician, []);
       byTech.get(row.technician)!.push(row);
     }
@@ -299,6 +318,9 @@ export function TicketAttendanceTab() {
           missingCheckIn,
           missingCheckOut,
           branch: employee?.assigned_branch || null,
+          // Ticket Arrived/Done are shown in the technician's own zone so
+          // they match the Time In/Out on their timecard.
+          timeZone: technicianTimeZone(employee?.schedule_timezone, employee?.assigned_branch),
           timeIn: timecard?.checkIn || null,
           timeOut: timecard?.checkOut || null,
           requiredCheckOut: employee?.required_check_out || null,
@@ -308,7 +330,7 @@ export function TicketAttendanceTab() {
       })
       .filter((t) => {
         if (q && !t.technician.toLowerCase().includes(q) && !(t.branch || "").toLowerCase().includes(q)) return false;
-        if (statusFilter !== "all") {
+        if (!offTechsOnly && statusFilter !== "all") {
           const bucket = t.timeIn && t.timeOut ? "present" : t.timeIn ? "presentNoTimeOut" : "absent";
           if (bucket !== statusFilter) return false;
         }
@@ -326,6 +348,9 @@ export function TicketAttendanceTab() {
     rows,
     search,
     statusFilter,
+    offTechsOnly,
+    offStatusFilter,
+    todayISO,
     locationFilter,
     missingCheckInFilter,
     missingCheckOutFilter,
@@ -511,7 +536,7 @@ export function TicketAttendanceTab() {
         const diagnosisColor = reschedule ? SKY : diagnosis ? undefined : didNotGo ? RED : noDiagnosisFound ? AMBER : GRAY;
         const isDisputed = disputedTicketNosApproved.has(r.ticketNo);
         const arrivedText = r.arrivedAt
-          ? new Date(r.arrivedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+          ? formatTimeInZone(r.arrivedAt, t.timeZone)
           : isDisputed
           ? "Fixed via dispute"
           : r.statusGroup === "cancelled"
@@ -519,7 +544,7 @@ export function TicketAttendanceTab() {
           : "Missing";
         const arrivedColor = r.arrivedAt ? GREEN : isDisputed ? BLUE : r.statusGroup === "cancelled" ? GRAY : RED;
         const doneText = r.doneAt
-          ? new Date(r.doneAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+          ? formatTimeInZone(r.doneAt, t.timeZone)
           : isDisputed
           ? "Fixed via dispute"
           : !r.arrivedAt || r.statusGroup === "cancelled"
@@ -552,7 +577,7 @@ export function TicketAttendanceTab() {
     const summaryColgroup = colgroup(summaryWidths);
     const ticketColgroup = colgroup(ticketWidths, MAX_W);
     const parts: string[] = [
-      `<h2>Ticket Attendance — ${esc(dateFrom)} to ${esc(dateTo)}</h2>`,
+      `<h2>${offTechsOnly ? "Off Techs with Tickets" : "Ticket Attendance"} — ${esc(dateFrom)} to ${esc(dateTo)}</h2>`,
     ];
     for (const t of perTech) {
       parts.push('<table cellspacing="0" cellpadding="4" border="1" style="border-collapse:collapse;margin-bottom:4px;">');
@@ -577,7 +602,7 @@ export function TicketAttendanceTab() {
     const html = `<html><head><meta charset="utf-8"></head><body style="font-family:Calibri,Arial,sans-serif;font-size:12pt;">${parts.join("")}</body></html>`;
     const element = document.createElement("a");
     element.setAttribute("href", "data:application/vnd.ms-excel;charset=utf-8," + encodeURIComponent(html));
-    element.setAttribute("download", `ticket-attendance-${dateFrom}_to_${dateTo}.xls`);
+    element.setAttribute("download", `${offTechsOnly ? "off-techs-with-tickets" : "ticket-attendance"}-${dateFrom}_to_${dateTo}.xls`);
     element.style.display = "none";
     document.body.appendChild(element);
     element.click();
@@ -636,7 +661,9 @@ export function TicketAttendanceTab() {
   return (
     <div className="space-y-6">
       <p className="text-xs text-slate-400">
-        Did each technician actually check into their scheduled tickets (On-Site Check-In) — a different thing from clock In/Out attendance. A ticket already covered by an approved Ticket Time Dispute doesn't count as missing here.
+        {offTechsOnly
+          ? "Technicians who have tickets assigned for the day but no Time In — not clocked in yet (today) or absent (past days). Their tickets may need reassigning. Cancelled tickets aren't counted."
+          : "Did each technician actually check into their scheduled tickets (On-Site Check-In) — a different thing from clock In/Out attendance. A ticket already covered by an approved Ticket Time Dispute doesn't count as missing here."}
       </p>
 
       <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
@@ -673,16 +700,29 @@ export function TicketAttendanceTab() {
           </div>
           <div>
             <label className="block text-xs text-slate-400 uppercase mb-2">Status</label>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
-              className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
-            >
-              <option value="all">All</option>
-              <option value="present">Present (Time In &amp; Time Out)</option>
-              <option value="presentNoTimeOut">Present, No Time Out</option>
-              <option value="absent">Absent (No Time In)</option>
-            </select>
+            {offTechsOnly ? (
+              <select
+                value={offStatusFilter}
+                onChange={(e) => setOffStatusFilter(e.target.value as typeof offStatusFilter)}
+                className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+              >
+                <option value="all">All</option>
+                <option value="notYet">Not Clocked In Yet (today)</option>
+                <option value="absent">Absent (past days)</option>
+                <option value="upcoming">Upcoming (future days)</option>
+              </select>
+            ) : (
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+                className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+              >
+                <option value="all">All</option>
+                <option value="present">Present (Time In &amp; Time Out)</option>
+                <option value="presentNoTimeOut">Present, No Time Out</option>
+                <option value="absent">Absent (No Time In)</option>
+              </select>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -818,7 +858,7 @@ export function TicketAttendanceTab() {
             {loading ? (
               <tr><td colSpan={visibleColumnCount} className="px-3 py-8 text-center text-slate-400">Loading ticket attendance…</td></tr>
             ) : byTechnician.length === 0 ? (
-              <tr><td colSpan={visibleColumnCount} className="px-3 py-8 text-center text-slate-400">No tickets scheduled in this range.</td></tr>
+              <tr><td colSpan={visibleColumnCount} className="px-3 py-8 text-center text-slate-400">{offTechsOnly ? "No technicians off with tickets in this range." : "No tickets scheduled in this range."}</td></tr>
             ) : byTechnician.map((t) => (
               <Fragment key={t.technician}>
                 <tr
@@ -1014,7 +1054,7 @@ export function TicketAttendanceTab() {
                                         </td>
                                         <td className="px-2 py-1.5">
                                           {r.arrivedAt ? (
-                                            <span className="text-emerald-300">{new Date(r.arrivedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                                            <span className="text-emerald-300">{formatTimeInZone(r.arrivedAt, t.timeZone)}</span>
                                           ) : disputedTicketNosApproved.has(r.ticketNo) ? (
                                             <span className="text-blue-300">Fixed via dispute</span>
                                           ) : r.statusGroup === "cancelled" ? (
@@ -1025,7 +1065,7 @@ export function TicketAttendanceTab() {
                                         </td>
                                         <td className="px-2 py-1.5">
                                           {r.doneAt ? (
-                                            <span className="text-emerald-300">{new Date(r.doneAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                                            <span className="text-emerald-300">{formatTimeInZone(r.doneAt, t.timeZone)}</span>
                                           ) : disputedTicketNosApproved.has(r.ticketNo) ? (
                                             <span className="text-blue-300">Fixed via dispute</span>
                                           ) : !r.arrivedAt || r.statusGroup === "cancelled" ? (

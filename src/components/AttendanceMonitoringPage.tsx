@@ -554,7 +554,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
   const [corrections, setCorrections] = useState<TimecardCorrectionRow[]>([]);
   const [correctionHistory, setCorrectionHistory] = useState<TimecardCorrectionHistoryRow[]>([]);
-  const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "ticket-attendance", "ticket-dispute", "trainee-attendance", "settings"] as const;
+  const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "ticket-attendance", "off-techs", "ticket-dispute", "trainee-attendance", "settings"] as const;
   const [activeTab, setActiveTab] = usePersistedTab<typeof ATTENDANCE_TABS[number]>(
     "ahs:attendance-monitoring-active-tab",
     ATTENDANCE_TABS,
@@ -2223,6 +2223,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     { id: "daily-attendance", label: "Daily Attendance", Icon: Clock },
     { id: "pto-management", label: "Time-Off Management", Icon: Calendar },
     { id: "ticket-attendance", label: "Ticket Attendance", Icon: FileText },
+    { id: "off-techs", label: "Off Techs with Tickets", Icon: UserX },
     { id: "ticket-dispute", label: "Ticket Dispute", Icon: AlertTriangle },
     { id: "trainee-attendance", label: "Trainee Attendance", Icon: Clock },
     ...(isSuperAdmin ? [{ id: "settings", label: "Settings", Icon: Settings }] : []),
@@ -2421,12 +2422,12 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
           </div>
 
           {/* Tabs */}
-          <div className="flex gap-2 border-b border-white/10 overflow-x-auto">
+          <div className="flex gap-0.5 border-b border-white/10 overflow-x-auto">
             {tabConfig.map(tab => {
               const Icon = tab.Icon;
               return (
-                <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`px-4 py-2 border-b-2 transition whitespace-nowrap flex items-center gap-2 ${activeTab === tab.id ? "border-blue-500 text-blue-300" : "border-transparent text-slate-400 hover:text-slate-300"}`}>
-                  <Icon className="h-4 w-4" />
+                <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`px-2.5 py-1.5 border-b-2 text-[13px] transition whitespace-nowrap flex items-center gap-1.5 ${activeTab === tab.id ? "border-blue-500 text-blue-300" : "border-transparent text-slate-400 hover:text-slate-300"}`}>
+                  <Icon className="h-3.5 w-3.5" />
                   {tab.label}
                   {tabBadge(tab.id) > 0 && (
                     <span className="home-badge home-badge--sm" title={`${tabBadge(tab.id)} waiting on you`}>{badgeText(tabBadge(tab.id))}</span>
@@ -3589,6 +3590,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
           )}
 
           {activeTab === "ticket-attendance" && <TicketAttendanceTab />}
+          {activeTab === "off-techs" && <TicketAttendanceTab key="off-techs" offTechsOnly />}
 
           {activeTab === "ticket-dispute" && (
             <div data-tour="am-ticket-dispute">

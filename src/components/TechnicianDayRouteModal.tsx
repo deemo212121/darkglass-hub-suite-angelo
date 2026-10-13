@@ -30,11 +30,10 @@ import {
   OSM_ATTRIBUTION,
   type LatLng,
 } from "@/lib/mapEngine";
-import { todayISO } from "@/lib/localDate";
+import { todayISO, formatTimeInZone } from "@/lib/localDate";
+import { technicianTimeZone } from "@/lib/attendanceGrace";
+import { supabase } from "@/lib/supabase/client";
 
-function formatStopTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
 
 const STOP_STATUS_COLOR: Record<TechnicianRouteStop["statusGroup"], string> = {
   open: "#5b7eff",
@@ -63,6 +62,21 @@ export function TechnicianDayRouteModal({ technicianName, branch, profileId, liv
   const [stops, setStops] = useState<TechnicianRouteStop[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mapProvider, setMapProvider] = useState<"google" | "leaflet" | null>(null);
+  // Stop times are shown in the technician's own zone (Master List time
+  // zone, else their branch's) so they match the Time In/Out on their
+  // timecard — not the viewer's computer zone.
+  const [scheduleTimezone, setScheduleTimezone] = useState<string | null>(null);
+  const timeZone = technicianTimeZone(scheduleTimezone, branch);
+
+  useEffect(() => {
+    if (!profileId) return;
+    void supabase
+      .from("profiles")
+      .select("schedule_timezone")
+      .eq("id", profileId)
+      .maybeSingle()
+      .then(({ data }) => setScheduleTimezone((data?.schedule_timezone as string | null) ?? null));
+  }, [profileId]);
 
   useEffect(() => {
     void getCompanyMapProvider().then(setMapProvider);
@@ -460,7 +474,7 @@ export function TechnicianDayRouteModal({ technicianName, branch, profileId, liv
                             )}
                             {stop.arrivedAt && (
                               <p className="text-slate-500 mt-0.5">
-                                Timestamp (Start - End): {formatStopTime(stop.arrivedAt)} - {stop.doneAt ? formatStopTime(stop.doneAt) : "in progress"}
+                                Timestamp (Start - End): {formatTimeInZone(stop.arrivedAt, timeZone)} - {stop.doneAt ? formatTimeInZone(stop.doneAt, timeZone) : "in progress"}
                               </p>
                             )}
                           </div>

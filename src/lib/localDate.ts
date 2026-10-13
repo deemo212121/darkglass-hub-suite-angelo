@@ -58,3 +58,36 @@ export function formatISODate(value: string, options?: Intl.DateTimeFormatOption
   const d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(value);
   return Number.isNaN(d.getTime()) ? String(value ?? "") : d.toLocaleDateString(locale, options);
 }
+
+const ZONE_LABELS: Record<string, string> = {
+  "America/New_York": "ET",
+  "America/Chicago": "CT",
+  "America/Denver": "MT",
+  "America/Los_Angeles": "PT",
+};
+
+/**
+ * "6:36 PM CT" — a timestamp's clock time in a specific zone (e.g. the
+ * technician's own), labeled, instead of the viewer's computer zone. A
+ * Central viewer looking at an Eastern technician otherwise sees every
+ * ticket an hour off from that technician's timecard.
+ */
+export function formatTimeInZone(iso: string, timeZone: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso ?? "");
+  const time = d.toLocaleTimeString("en-US", { timeZone, hour: "numeric", minute: "2-digit" });
+  const label =
+    ZONE_LABELS[timeZone] ??
+    new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "short" }).formatToParts(d).find((p) => p.type === "timeZoneName")?.value ??
+    "";
+  return label ? `${time} ${label}` : time;
+}
+
+/** "ET" / "CT" / "MT" / "PT" for a zone (else its short name, e.g. "PHT"). */
+export function timeZoneLabel(timeZone: string, at: Date = new Date()): string {
+  return (
+    ZONE_LABELS[timeZone] ??
+    new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "short" }).formatToParts(at).find((p) => p.type === "timeZoneName")?.value ??
+    ""
+  );
+}
