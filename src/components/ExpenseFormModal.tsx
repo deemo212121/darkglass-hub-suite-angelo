@@ -70,8 +70,12 @@ export function ExpenseFormModal({
 
   const handleSubmit = async () => {
     const amount = Number(form.amount);
-    if (!form.profileId || !form.expenseDate || !Number.isFinite(amount) || amount <= 0) {
-      alert(profiles ? "Please select an employee, date, and a valid amount." : "Please enter a date and a valid amount.");
+    if (form.amount.trim() === "" || !Number.isFinite(amount) || amount <= 0) {
+      alert("Please enter the amount (more than $0).");
+      return;
+    }
+    if (!form.profileId || !form.expenseDate) {
+      alert(profiles ? "Please select an employee and a date." : "Please enter a date.");
       return;
     }
     if (requireReceipt && !form.receiptUrl) {
@@ -156,7 +160,9 @@ export function ExpenseFormModal({
             </div>
           </div>
           <div>
-            <label className="block text-xs text-slate-400 uppercase mb-1">Amount ($)</label>
+            <label className="block text-xs text-slate-400 uppercase mb-1">
+              Amount ($) <span className="text-red-400 normal-case">* required</span>
+            </label>
             <input type="number" step="0.01" min="0" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
           </div>
           <div>
