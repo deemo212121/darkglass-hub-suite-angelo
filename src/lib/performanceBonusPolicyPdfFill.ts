@@ -17,7 +17,7 @@
  * so the document is done once the technician signs.
  */
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import { addLetterhead, addLogoWatermark } from "./pdfLogoHeader";
+import { buildLetterheadPdf, placeOnLetterhead } from "./pdfLogoHeader";
 import { sanitizeForFont } from "./pdfFillSanitize";
 
 export const PERFORMANCE_BONUS_POLICY_TITLE = "Performance Bonus Policy & Acknowledgment Form";
@@ -31,22 +31,8 @@ export interface PerformanceBonusPolicyFormData {
 
 export interface PerformanceBonusRect { x: number; y: number; w: number; h: number }
 
-/**
- * The form's own content is shrunk to 92% and re-centered so it sits
- * between the full-size letterhead header and footer (addLetterhead) with
- * room to breathe: the title's top (y≈705 in the source) lands at y≈688,
- * ~28pt under the logo, and the lowest text stays well above the footer.
- * A point (x, y) of the source PDF ends up at (S·x + DX, S·y + DY).
- */
-const CONTENT_SCALE = 0.92;
-const CONTENT_DX = (612 * (1 - CONTENT_SCALE)) / 2;
-const CONTENT_DY = 688 - CONTENT_SCALE * 705;
-const place = (r: PerformanceBonusRect): PerformanceBonusRect => ({
-  x: CONTENT_SCALE * r.x + CONTENT_DX,
-  y: CONTENT_SCALE * r.y + CONTENT_DY,
-  w: CONTENT_SCALE * r.w,
-  h: CONTENT_SCALE * r.h,
-});
+/** The form sits on the company letterhead at 92% (buildLetterheadPdf) — its field boxes move with it. */
+const place = placeOnLetterhead;
 
 /** Page size and the signing page's field boxes (PDF units, origin bottom-left) — already moved with the shrunk content. */
 export const PERFORMANCE_BONUS_LAYOUT = {
@@ -69,22 +55,8 @@ export const PERFORMANCE_BONUS_LAYOUT = {
 export async function loadBlankPerformanceBonusPolicyBytes(): Promise<Uint8Array> {
   const mod = await import("@/assets/Performance Bonus Policy & Acknowledgment Form.pdf");
   const res = await fetch(mod.default);
-  const source = await PDFDocument.load(new Uint8Array(await res.arrayBuffer()));
-  // Fresh pages, built bottom-up: the original page shrunk to CONTENT_SCALE
-  // and re-centered, then the faint watermark, then the full-size letterhead.
-  // The watermark goes ON TOP of the content: HR's PDFs (Word / Google Docs
-  // exports) can paint a solid white page background, which would hide a
-  // watermark drawn underneath. Drawing the source as an embedded page
-  // (instead of scaleContent/translateContent) keeps later drawing — the
-  // letterhead, and the name/signature/date at fill time — in plain page coordinates.
-  const pdfDoc = await PDFDocument.create();
-  const embedded = await pdfDoc.embedPages(source.getPages());
-  for (const ep of embedded) pdfDoc.addPage([ep.width, ep.height]);
-  embedded.forEach((ep, i) => {
-    pdfDoc.getPage(i).drawPage(ep, { x: CONTENT_DX, y: CONTENT_DY, xScale: CONTENT_SCALE, yScale: CONTENT_SCALE });
-  });
-  await addLogoWatermark(pdfDoc);
-  await addLetterhead(pdfDoc);
+  // Shrunk onto the company letterhead (logo, ribbon, footer) with the faint watermark.
+  const pdfDoc = await buildLetterheadPdf(new Uint8Array(await res.arrayBuffer()));
   return pdfDoc.save();
 }
 

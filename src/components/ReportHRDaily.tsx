@@ -175,7 +175,7 @@ import { fillPartsResponsibilityPdf } from "@/lib/partsResponsibilityPdfFill";
 import { MILEAGE_FUEL_BRANCHES, type MileageFuelFormData } from "@/lib/mileageFuelFormTemplate";
 import { fillMileageFuelPdf } from "@/lib/mileageFuelPdfFill";
 import type { FlashTechnicianTravelFormData } from "@/lib/flashTechnicianTravelFormTemplate";
-import { fillFlashTechnicianTravelPdf, FLASH_TRAVEL_CURRENT_VERSION } from "@/lib/flashTechnicianTravelPdfFill";
+import { fillFlashTechnicianTravelPdf, FLASH_TRAVEL_CURRENT_VERSION, canRegenerateFlashTravelPdf } from "@/lib/flashTechnicianTravelPdfFill";
 import type { LocationConsentFormData } from "@/lib/locationConsentFormTemplate";
 import { fillLocationConsentPdf } from "@/lib/locationConsentPdfFill";
 import type { DamageFormData } from "@/lib/damageFormTemplate";
@@ -10642,6 +10642,39 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [flashTechnicianTravelEmployerSaving, setFlashTechnicianTravelEmployerSaving] = useState(false);
   const [flashTechnicianTravelEmployerError, setFlashTechnicianTravelEmployerError] = useState<string | null>(null);
   const flashTechnicianTravelEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
+
+  // "Regenerate PDF" — rebuilds a signed agreement's PDF from its saved data
+  // (form_data keeps the signature images as data: URLs) with the CURRENT
+  // layout (letterhead, watermark, wording fixes), then replaces pdf_url.
+  // Same idea as the other forms' Regenerate PDF; nobody re-signs.
+  const handleRegenerateFlashTechnicianTravelPdf = async (doc: SignableDocument) => {
+    const data = doc.formData as FlashTechnicianTravelFormData;
+    if (doc.formData?.paperCopy) {
+      setFlashTechnicianTravelActionError("This is a scanned paper copy — there's nothing to regenerate.");
+      return;
+    }
+    if (!data?.employeeSignatureDataUrl) {
+      setFlashTechnicianTravelActionError("This agreement has no saved signature to rebuild from.");
+      return;
+    }
+    if (!canRegenerateFlashTravelPdf(data)) {
+      setFlashTechnicianTravelActionError("This agreement was signed under the earlier wording — regenerating would put today's text above their signature. Send them the current agreement to sign instead.");
+      return;
+    }
+    setFlashTechnicianTravelActionBusyId(doc.id);
+    setFlashTechnicianTravelActionError(null);
+    try {
+      const toBytes = async (url?: string) => (url ? new Uint8Array(await (await fetch(url)).arrayBuffer()) : undefined);
+      const pdfBytes = await fillFlashTechnicianTravelPdf(data, await toBytes(data.employeeSignatureDataUrl), await toBytes(data.employerSignatureDataUrl));
+      const pdfUrl = await uploadFlashTechnicianTravelForm(doc.companyId, data.employeeName || "flash-technician-travel", new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+      await updateSignableDocumentPdfUrl(doc.id, pdfUrl);
+      await loadSentFlashTechnicianTravelForms();
+    } catch (err) {
+      setFlashTechnicianTravelActionError(err instanceof Error ? err.message : "Failed to regenerate the PDF.");
+    } finally {
+      setFlashTechnicianTravelActionBusyId(null);
+    }
+  };
 
   const handleOpenFlashTechnicianTravelEmployerDialog = (doc: SignableDocument) => {
     setFlashTechnicianTravelEmployerDialog(doc);
@@ -31228,6 +31261,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.pdfUrl && (
                             <button type="button" onClick={() => handleDownloadFlashTechnicianTravelPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
+                            </button>
+                          )}
+                          {doc.pdfUrl && data.employeeSignatureDataUrl && canRegenerateFlashTravelPdf(data) && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegenerateFlashTechnicianTravelPdf(doc)} title="Re-render this PDF from its saved data with the current layout (letterhead, watermark, wording) — nobody re-signs" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
                             </button>
                           )}
                           {doc.status === "confirmed" && (
