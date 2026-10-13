@@ -70,18 +70,20 @@ export async function loadBlankPerformanceBonusPolicyBytes(): Promise<Uint8Array
   const mod = await import("@/assets/Performance Bonus Policy & Acknowledgment Form.pdf");
   const res = await fetch(mod.default);
   const source = await PDFDocument.load(new Uint8Array(await res.arrayBuffer()));
-  // Fresh pages, built bottom-up: watermark (behind everything), then the
-  // original page shrunk to CONTENT_SCALE and re-centered, then the
-  // full-size letterhead. Drawing the source as an embedded page (instead of
-  // scaleContent/translateContent) keeps later drawing — the letterhead, and
-  // the name/signature/date at fill time — in plain page coordinates.
+  // Fresh pages, built bottom-up: the original page shrunk to CONTENT_SCALE
+  // and re-centered, then the faint watermark, then the full-size letterhead.
+  // The watermark goes ON TOP of the content: HR's PDFs (Word / Google Docs
+  // exports) can paint a solid white page background, which would hide a
+  // watermark drawn underneath. Drawing the source as an embedded page
+  // (instead of scaleContent/translateContent) keeps later drawing — the
+  // letterhead, and the name/signature/date at fill time — in plain page coordinates.
   const pdfDoc = await PDFDocument.create();
   const embedded = await pdfDoc.embedPages(source.getPages());
   for (const ep of embedded) pdfDoc.addPage([ep.width, ep.height]);
-  await addLogoWatermark(pdfDoc);
   embedded.forEach((ep, i) => {
     pdfDoc.getPage(i).drawPage(ep, { x: CONTENT_DX, y: CONTENT_DY, xScale: CONTENT_SCALE, yScale: CONTENT_SCALE });
   });
+  await addLogoWatermark(pdfDoc);
   await addLetterhead(pdfDoc);
   return pdfDoc.save();
 }

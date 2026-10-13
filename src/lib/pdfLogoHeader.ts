@@ -30,9 +30,10 @@ async function loadLogoBytes(): Promise<Uint8Array> {
 /**
  * The company logo as a faint watermark, centered on every page (e.g. the
  * Performance Bonus Policy). Drawn large and at low opacity so the text
- * stays fully readable; aspect ratio kept. Draw it BEFORE the page content
- * when you can (see performanceBonusPolicyPdfFill.ts) so it sits behind the
- * text, and on the BLANK form so the signing view and signed PDF both have it.
+ * stays fully readable; aspect ratio kept. Draw it AFTER the page content —
+ * many exported PDFs paint a solid white page background that would hide a
+ * watermark underneath — and on the BLANK form so the signing view and the
+ * signed PDF both have it.
  */
 const WATERMARK_WIDTH_RATIO = 0.6; // of the page width
 const WATERMARK_OPACITY = 0.06;
