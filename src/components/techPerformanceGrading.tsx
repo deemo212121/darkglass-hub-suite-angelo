@@ -70,8 +70,10 @@ export const GRADE_HEX: Record<Grade, string> = { max: "#38bdf8", great: "#34d39
 export const gradeAtLeast = (v: number | null, [max, great, median, effort]: [number, number, number, number]): Grade | null =>
   v == null ? null : v >= max ? "max" : v >= great ? "great" : v >= median ? "median" : v >= effort ? "effort" : "alert";
 export const GRADERS = {
-  dailyAvg: (v: number | null) => gradeAtLeast(v, [10, 7, 5, 3]),
-  totalTicket: (v: number | null) => gradeAtLeast(v, [90, 71, 60, 40]),
+  // Average Tickets: 6+ Maximum, 5–5.9 Great, 4–4.9 Median, 3–3.9 Effort, 2.9 or less Alert.
+  dailyAvg: (v: number | null) => gradeAtLeast(v, [6, 5, 4, 3]),
+  // Total Ticket: 61+ Maximum, 50–60 Great, 40–49 Median, 30–39 Effort, 29 or less Alert.
+  totalTicket: (v: number | null) => gradeAtLeast(v, [61, 50, 40, 30]),
   // Lower is better: ≤2% Maximum, ≤4% Great, ≤6% Median, under 10% Effort.
   // No tickets (null) counts as 0%.
   redoPct: (v: number | null): Grade => {
@@ -163,8 +165,8 @@ export function GradeMedal({ grade, size = "md" }: { grade: LetterGrade; size?: 
 
 export const fmtPoints =(p: number) => `${p > 0 ? `+${p}` : p < 0 ? `−${-p}` : "0"} pt${Math.abs(p) === 1 ? "" : "s"}`;
 export const GRADE_SCALE: { factor: string; ranges: Record<Grade, string>; points?: Record<Grade, number> }[] = [
-  { factor: "Average Tickets", ranges: { max: "10+", great: "7–9", median: "5–6", effort: "3–4", alert: "2 or less" } },
-  { factor: "Total Ticket", ranges: { max: "90+", great: "71–89", median: "60–70", effort: "40–59", alert: "39 or less" } },
+  { factor: "Average Tickets", ranges: { max: "6+", great: "5–5.9", median: "4–4.9", effort: "3–3.9", alert: "2.9 or less" } },
+  { factor: "Total Ticket", ranges: { max: "61+", great: "50–60", median: "40–49", effort: "30–39", alert: "29 or less" } },
   { factor: "Redo %", ranges: { max: "2% or less", great: "4% or less", median: "6% or less", effort: "7–9%", alert: "10%+" }, points: CAPPED_GRADE_POINTS },
   { factor: "Working Days", ranges: { max: "13–14", great: "11–12", median: "10", effort: "8–9", alert: "7 or less" }, points: CAPPED_GRADE_POINTS },
   { factor: "Average Mileage", ranges: { max: "", great: "250+", median: "under 250", effort: "", alert: "" }, points: AVG_MILES_POINTS },
