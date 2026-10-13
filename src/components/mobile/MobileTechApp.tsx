@@ -9992,10 +9992,10 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
           onClick={openNativePicker}
         />
 
-        <div className="mtech-section-title">Corrected Check In <span style={{ color: "#f87171" }}>*</span></div>
+        <div className="mtech-section-title">Corrected Check In</div>
         <input className="mtech-bill-input full" type="time" value={correctedCheckIn} onChange={(e) => setCorrectedCheckIn(e.target.value)} onClick={openNativePicker} />
 
-        <div className="mtech-section-title">Corrected Check Out <span style={{ color: "#f87171" }}>*</span></div>
+        <div className="mtech-section-title">Corrected Check Out</div>
         <input className="mtech-bill-input full" type="time" value={correctedCheckOut} onChange={(e) => setCorrectedCheckOut(e.target.value)} onClick={openNativePicker} />
 
         <div className="mtech-section-title">Corrected Meal Start {mealRequired && <span style={{ color: "#f87171" }}>*</span>}</div>
@@ -10006,7 +10006,7 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
 
         <p className="mtech-muted" style={{ padding: "0.25rem 0", color: mealRequired ? "#fcd34d" : undefined }}>
           {shiftMinutes === null
-            ? "Check in and check out are required. Meal start/end are required only when the shift is over 6 hours."
+            ? "Fill in only the punch(es) you need corrected — a blank one keeps what's on your timecard. Meal start/end are required only when the shift is over 6 hours."
             : mealRequired
             ? `Shift is ${formatShift(shiftMinutes)} — over 6 hours, so meal start and end are required.`
             : `Shift is ${formatShift(shiftMinutes)} — meal break optional (required only over 6 hours).`}
