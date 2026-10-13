@@ -8,9 +8,11 @@
  * forms that use it).
  *
  * Technician-only: the signature block on the last page (index 1) is
- *   Technician Name (Print): ____   (line x 196.8–411.9, y 276.2)
- *   Technician Signature: ____      (line x 180.3–419.3, y 251.2)
- *   Date: ____                      (line x 101.4–245.0, y 226.1)
+ *   Technician Name (Print): ____   (line x 196.8–412.0, y 251.0)
+ *   Technician Signature: ____      (line x 180.2–419.3, y 226.0)
+ *   Date: ____                      (line x 101.5–244.9, y 201.0)
+ * (Oct 13 2026 version — "Full Disqualification" moved to page 2, which
+ * pushed the signature block down one line; re-measure if the PDF changes.)
  * measured off the source PDF's text items (pdfjs-dist). No employer line,
  * so the document is done once the technician signs.
  */
@@ -51,11 +53,11 @@ export const PERFORMANCE_BONUS_LAYOUT = {
   pageWidth: 612,
   pageHeight: 792,
   rects: {
-    // Measured on the source PDF, then placed like its content.
-    name: place({ x: 200, y: 278, w: 210, h: 14 }),
+    // Measured on the source PDF (Oct 13 2026 version: lines at y 251.0 / 226.0 / 201.0), then placed like its content.
+    name: place({ x: 200, y: 253.1, w: 210, h: 14 }),
     // Right of the "Technician Signature:" label (x 72–177.5); up to the name line above.
-    signature: place({ x: 185, y: 252.5, w: 230, h: 22 }),
-    dateSigned: place({ x: 105, y: 228, w: 140, h: 14 }),
+    signature: place({ x: 185, y: 227.6, w: 230, h: 22 }),
+    dateSigned: place({ x: 105, y: 203.1, w: 140, h: 14 }),
   } satisfies Record<string, PerformanceBonusRect>,
 };
 
