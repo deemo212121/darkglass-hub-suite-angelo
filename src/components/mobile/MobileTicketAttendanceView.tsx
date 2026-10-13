@@ -34,6 +34,8 @@ import { getAttendanceNotes, upsertAttendanceNote, type AttendanceNoteRow } from
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import { useAuth } from "@/lib/auth";
 import { getServerNow, zonedDateKey, type ScheduleTimezone } from "@/lib/serverTime";
+import { technicianTimeZone } from "@/lib/attendanceGrace";
+import { formatTimeInZone } from "@/lib/localDate";
 
 const FULL_ACCESS_ROLES = new Set(["SUPERADMIN", "TECHNICAL_DIRECTOR", "TECHNICAL_ASSISTANT_DIRECTOR"]);
 const MANAGER_TIER_ROLES = new Set(["SENIOR_BRANCH_MANAGER", "BRANCH_MANAGER"]);
@@ -73,6 +75,8 @@ interface TechSummary {
   technician: string;
   profileId: string | null;
   branch: string | null;
+  /** The technician's own zone — ticket times are shown in it (matches their timecard). */
+  timeZone: string;
   timeIn: string | null;
   timeOut: string | null;
   scheduled: number;
@@ -83,9 +87,6 @@ interface TechSummary {
   tickets: TicketAttendanceRow[];
 }
 
-function fmtTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
 
 export function MobileTicketAttendanceView({ profileId }: { profileId: string | null }) {
   const { companyId, uid } = useAuth();
@@ -201,6 +202,7 @@ export function MobileTicketAttendanceView({ profileId }: { profileId: string | 
           technician,
           profileId: employee?.id || null,
           branch: employee?.assigned_branch || null,
+          timeZone: technicianTimeZone(employee?.schedule_timezone, employee?.assigned_branch),
           timeIn: tc?.checkIn || null,
           timeOut: tc?.checkOut || null,
           scheduled: techRows.length,
@@ -373,10 +375,10 @@ export function MobileTicketAttendanceView({ profileId }: { profileId: string | 
                   </div>
                   <div style={{ display: "flex", gap: "1rem", marginTop: "0.4rem", fontSize: "0.78rem" }}>
                     <span style={{ color: tk.arrivedAt ? "#6ee7b7" : missingIn ? "#f87171" : "rgba(255,255,255,0.5)", fontWeight: missingIn ? 700 : 500 }}>
-                      Arrived: {tk.arrivedAt ? fmtTime(tk.arrivedAt) : missingIn ? "Missing" : "—"}
+                      Arrived: {tk.arrivedAt ? formatTimeInZone(tk.arrivedAt, detail.timeZone) : missingIn ? "Missing" : "—"}
                     </span>
                     <span style={{ color: tk.doneAt ? "#6ee7b7" : missingOut ? "#fde047" : "rgba(255,255,255,0.5)", fontWeight: missingOut ? 700 : 500 }}>
-                      Done: {tk.doneAt ? fmtTime(tk.doneAt) : missingOut ? "Missing" : "—"}
+                      Done: {tk.doneAt ? formatTimeInZone(tk.doneAt, detail.timeZone) : missingOut ? "Missing" : "—"}
                     </span>
                   </div>
                 </div>
