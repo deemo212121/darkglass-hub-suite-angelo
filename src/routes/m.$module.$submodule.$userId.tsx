@@ -502,7 +502,7 @@ function UserDetailsPage() {
   const [profileId, setProfileId] = useState<string>("");
   const [profileCompanyId, setProfileCompanyId] = useState<string | null>(null);
   // Rest days as loaded — a change to them is saved with an "Effective from"
-  // date (rest_day_history, migration 0371), so past days keep the old ones.
+  // date (rest_day_history, migration 0373), so past days keep the old ones.
   const [originalOffDays, setOriginalOffDays] = useState<number[]>([]);
   const [restEffectiveFrom, setRestEffectiveFrom] = useState(() => zonedDateKey(new Date(), "CST"));
   const [restHistoryKey, setRestHistoryKey] = useState(0);

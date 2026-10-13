@@ -265,7 +265,7 @@ export async function runAttendanceAlertCheck(
   } catch {
     // Best-effort — without it, only the Master List Hire Date is used.
   }
-  // Rest days in force today (rest_day_history, 0371) — a change saved with a
+  // Rest days in force today (rest_day_history, 0373) — a change saved with a
   // future "Effective from" doesn't apply early.
   let restHistory: RestDayHistory = new Map();
   try {

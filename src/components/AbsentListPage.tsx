@@ -221,7 +221,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   const [hireDateByProfileId, setHireDateByProfileId] = useState<Map<string, string>>(new Map());
   // "Attendance starts on" — the later of Hire Date and the HR Hiring training/start date (src/lib/attendanceStart.ts).
   const [attendanceStartById, setAttendanceStartById] = useState<Map<string, string>>(new Map());
-  // Rest days in force on each date (rest_day_history, 0371) — not just today's.
+  // Rest days in force on each date (rest_day_history, 0373) — not just today's.
   const [restHistory, setRestHistory] = useState<RestDayHistory>(new Map());
   useEffect(() => {
     getRestDayHistory().then(setRestHistory).catch(() => {});

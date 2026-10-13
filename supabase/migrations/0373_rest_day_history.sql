@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0371 — Rest day history ("effective from").
+-- 0373 — Rest day history ("effective from").
 --
 -- profiles.off_days only held the CURRENT rest days, and every page checked
 -- every date — past ones included — against it. Changing someone from
@@ -19,7 +19,7 @@
 --   * HR can add an earlier schedule by hand for someone whose rest days
 --     were changed before this existed.
 --
--- Run once in the Supabase SQL Editor, after 0370.
+-- Run once in the Supabase SQL Editor, after 0372 (renumbered from 0371, which is the Reports Library).
 -- =====================================================================
 
 create table if not exists rest_day_history (

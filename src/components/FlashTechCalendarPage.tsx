@@ -1322,7 +1322,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                           ) : !formFiled ? (
                             <span
                               className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-300"
-                              title="Flash Technician Travel & Out-of-State Policy form isn't on file (or still awaiting HR review)"
+                              title="Flash Tech Travel & Expense Policy Agreement isn't on file (or still awaiting HR review)"
                             >
                               <span className="h-1.5 w-1.5 rounded-full bg-amber-400" /> Form Not Filed
                             </span>
@@ -1405,10 +1405,12 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
                       const formStatus = flashFormStatusByProfileId.get(u.id) ?? "not_sent";
                       const badge =
                         formStatus === "done"
-                          ? { icon: <Check className="h-2.5 w-2.5" />, cls: "bg-emerald-500/20 text-emerald-400", title: "Flash Technician Travel form on file" }
+                          ? { icon: <Check className="h-2.5 w-2.5" />, cls: "bg-emerald-500/20 text-emerald-400", title: "Flash Tech Travel & Expense Policy Agreement on file" }
                           : formStatus === "awaiting_hr"
-                          ? { icon: <Minus className="h-2.5 w-2.5" />, cls: "bg-amber-500/20 text-amber-400", title: "Flash Technician Travel form submitted — awaiting HR review" }
-                          : { icon: <X className="h-2.5 w-2.5" />, cls: "bg-red-500/20 text-red-400", title: "Flash Technician Travel form not on file — can still be scheduled" };
+                          ? { icon: <Minus className="h-2.5 w-2.5" />, cls: "bg-amber-500/20 text-amber-400", title: "Flash travel form submitted — awaiting HR review" }
+                          : formStatus === "outdated"
+                          ? { icon: <Minus className="h-2.5 w-2.5" />, cls: "bg-amber-500/20 text-amber-400", title: "Signed the old Flash Technician Travel & Out-of-State Policy — needs the new Flash Tech Travel & Expense Policy Agreement (can still be scheduled)" }
+                          : { icon: <X className="h-2.5 w-2.5" />, cls: "bg-red-500/20 text-red-400", title: "Flash Tech Travel & Expense Policy Agreement not on file — can still be scheduled" };
                       return (
                         <button
                           key={u.id}

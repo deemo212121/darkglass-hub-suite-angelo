@@ -130,6 +130,8 @@ import {
   pickAuthoritativeDocument,
   DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE,
   SHARED_OLD_NEW_AUTOMATION_TYPES,
+  isOutdatedDocument,
+  DEFAULT_EXEMPT_DOCUMENT_TYPES,
 } from "@/lib/signableDocumentRegistry";
 import { ManagerReviewPage } from "@/components/ManagerReviewPage";
 import { getCandidateRequiredFormTypes, setCandidateRequiredFormTypes } from "@/lib/supabase/candidateRequiredForms";
@@ -167,12 +169,13 @@ import { MEAL_REST_BREAK_BRANCHES, type MealRestBreakFormData } from "@/lib/meal
 import { fillMealRestBreakPdf } from "@/lib/mealRestBreakPdfFill";
 import { PTO_ACK_BRANCHES, type PtoAckFormData } from "@/lib/ptoAckFormTemplate";
 import { fillPtoAckPdf } from "@/lib/ptoAckPdfFill";
+import { fillPerformanceBonusPolicyPdf, PERFORMANCE_BONUS_POLICY_TITLE, type PerformanceBonusPolicyFormData } from "@/lib/performanceBonusPolicyPdfFill";
 import { PARTS_RESPONSIBILITY_BRANCHES, type PartsResponsibilityFormData } from "@/lib/partsResponsibilityFormTemplate";
 import { fillPartsResponsibilityPdf } from "@/lib/partsResponsibilityPdfFill";
 import { MILEAGE_FUEL_BRANCHES, type MileageFuelFormData } from "@/lib/mileageFuelFormTemplate";
 import { fillMileageFuelPdf } from "@/lib/mileageFuelPdfFill";
 import type { FlashTechnicianTravelFormData } from "@/lib/flashTechnicianTravelFormTemplate";
-import { fillFlashTechnicianTravelPdf } from "@/lib/flashTechnicianTravelPdfFill";
+import { fillFlashTechnicianTravelPdf, FLASH_TRAVEL_CURRENT_VERSION } from "@/lib/flashTechnicianTravelPdfFill";
 import type { LocationConsentFormData } from "@/lib/locationConsentFormTemplate";
 import { fillLocationConsentPdf } from "@/lib/locationConsentPdfFill";
 import type { DamageFormData } from "@/lib/damageFormTemplate";
@@ -237,7 +240,7 @@ import { FLASH_TECH_TIER_LEVELS } from "@/lib/supabase/flashTechTrips";
 import { CustomFormsPanel } from "./CustomFormsPanel";
 import * as XLSX from "xlsx";
 import { exportToCSV } from "@/lib/csvExport";
-import { todayISO } from "@/lib/localDate";
+import { todayISO, formatISODate } from "@/lib/localDate";
 
 // Formats a <input type="date"> value ("YYYY-MM-DD") as a long-form date
 // ("July 17, 2026") via the multi-arg Date constructor (new Date(y, m-1, d),
@@ -1141,7 +1144,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "compensationUpdate" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "confidentialityNonCompeteAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList" | "clockInCodes">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "compensationUpdate" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "confidentialityNonCompeteAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList" | "clockInCodes" | "performanceBonusPolicy">(paperworksOnly ? "combineForms" : "hiring");
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -1168,7 +1171,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [startDateFor, setStartDateFor] = useState<{ id: string; date: string } | null>(null);
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string; viewCvCandidateId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList", "clockInCodes", "ndaForm", "confidentialityNonCompeteAgreement"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList", "clockInCodes", "ndaForm", "confidentialityNonCompeteAgreement", "performanceBonusPolicy"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -2428,7 +2431,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     for (const tier of STAFF_FORM_TIERS) {
       const overlap = tier.formTypes.filter((t) => sentSet.has(t)).length;
       if (overlap > bestOverlap) {
-        best = tier.formTypes;
+        // Per-trip forms (Flash travel) are N/A until sent — never part of a new hire's required set.
+        best = tier.formTypes.filter((t) => !DEFAULT_EXEMPT_DOCUMENT_TYPES.has(t));
         bestOverlap = overlap;
       }
     }
@@ -2542,6 +2546,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     employee_confidentiality: "employeeConfidentiality",
     meal_rest_break: "mealRestBreak",
     pto_ack: "ptoAck",
+    performance_bonus_policy: "performanceBonusPolicy",
     parts_responsibility: "partsResponsibility",
     mileage_fuel: "mileageFuel",
     location_consent: "locationConsent",
@@ -9581,6 +9586,167 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // ── Performance Bonus Policy & Acknowledgment Form — every technician
+  // (Staff Form Checklist, New Technician tier; New Automation Forms →
+  // New Technician Forms). Technician-only: they sign the real PDF on
+  // FillPerformanceBonusPolicyPage.tsx and it's done — no employer step. ──
+  const [sentPerformanceBonusForms, setSentPerformanceBonusForms] = useState<SignableDocument[]>([]);
+  const loadSentPerformanceBonusForms = async () => {
+    try {
+      setSentPerformanceBonusForms(await getSignableDocuments("performance_bonus_policy"));
+    } catch (err) {
+      console.error("Failed to load sent Performance Bonus Policy forms:", err);
+    }
+  };
+  type PerformanceBonusSortColumn = "employee" | "branch" | "sentBy" | "status" | "sent";
+  const performanceBonusStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "signed" || doc.status === "confirmed" ? "Signed" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Signature";
+  const performanceBonusBranch = (doc: SignableDocument): string => employees.find((e) => e.id === doc.recipientId)?.branch || "";
+  const {
+    search: performanceBonusSentSearch,
+    setSearch: setPerformanceBonusSentSearch,
+    sortColumn: performanceBonusSentSortColumn,
+    sortDir: performanceBonusSentSortDir,
+    handleSort: handlePerformanceBonusSentSort,
+    filterOptionsFor: performanceBonusFilterOptionsFor,
+    toggleFilterValue: performanceBonusToggleFilterValue,
+    clearColumnFilter: performanceBonusClearColumnFilter,
+    isColumnFiltered: performanceBonusIsColumnFiltered,
+    isValueChecked: performanceBonusIsValueChecked,
+    rows: sortedSentPerformanceBonusForms,
+  } = useSortableSearchTable<SignableDocument, PerformanceBonusSortColumn>(
+    sentPerformanceBonusForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<PerformanceBonusPolicyFormData>;
+      return (data.employeeName || doc.recipientName || "").toLowerCase().includes(q) || performanceBonusBranch(doc).toLowerCase().includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<PerformanceBonusPolicyFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "branch": return performanceBonusBranch(doc).toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return performanceBonusStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      switch (column) {
+        case "branch": return performanceBonusBranch(doc) || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return performanceBonusStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
+  useEffect(() => {
+    if (activeTab === "performanceBonusPolicy") void loadSentPerformanceBonusForms();
+  }, [activeTab]);
+
+  const [performanceBonusRecipientId, setPerformanceBonusRecipientId] = useState("");
+  const [performanceBonusRecipientSearch, setPerformanceBonusRecipientSearch] = useState("");
+  const [performanceBonusRecipientDropdownOpen, setPerformanceBonusRecipientDropdownOpen] = useState(false);
+  const [performanceBonusSending, setPerformanceBonusSending] = useState(false);
+  const [performanceBonusSendError, setPerformanceBonusSendError] = useState<string | null>(null);
+  const [performanceBonusActionBusyId, setPerformanceBonusActionBusyId] = useState<string | null>(null);
+  const [performanceBonusActionError, setPerformanceBonusActionError] = useState<string | null>(null);
+  const [performanceBonusDocPreview, setPerformanceBonusDocPreview] = useState<SignableDocument | null>(null);
+  const [performanceBonusPreviewExpanded, setPerformanceBonusPreviewExpanded] = useState(false);
+  const [performanceBonusPreviewPdfUrl, setPerformanceBonusPreviewPdfUrl] = useState<string | null>(null);
+  const [performanceBonusPreviewLoading, setPerformanceBonusPreviewLoading] = useState(false);
+  const filteredPerformanceBonusRecipients = useMemo(
+    () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(performanceBonusRecipientSearch.toLowerCase())),
+    [employees, performanceBonusRecipientSearch]
+  );
+
+  const togglePerformanceBonusPreview = async () => {
+    if (performanceBonusPreviewExpanded) {
+      setPerformanceBonusPreviewExpanded(false);
+      if (performanceBonusPreviewPdfUrl) URL.revokeObjectURL(performanceBonusPreviewPdfUrl);
+      setPerformanceBonusPreviewPdfUrl(null);
+      return;
+    }
+    setPerformanceBonusSendError(null);
+    setPerformanceBonusPreviewExpanded(true);
+    setPerformanceBonusPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === performanceBonusRecipientId)?.name || "";
+      const pdfBytes = await fillPerformanceBonusPolicyPdf({ employeeId: "", employeeName: recipientName, employeeDateSigned: "", employeeSignatureDataUrl: "" });
+      setPerformanceBonusPreviewPdfUrl(URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" })));
+    } catch (err) {
+      setPerformanceBonusSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setPerformanceBonusPreviewLoading(false);
+    }
+  };
+
+  const handleSendPerformanceBonus = async () => {
+    if (!performanceBonusRecipientId || !uid) return;
+    setPerformanceBonusSending(true);
+    setPerformanceBonusSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === performanceBonusRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["performance_bonus_policy"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a ${PERFORMANCE_BONUS_POLICY_TITLE} on file. Send another one anyway?`)) {
+        return;
+      }
+      const doc = await createSignableDocument({
+        documentType: "performance_bonus_policy",
+        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        recipientId: performanceBonusRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, performanceBonusRecipientId);
+      const fillLink = `${getAppUrl()}/fill-performance-bonus-policy/${doc.id}`;
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the ${PERFORMANCE_BONUS_POLICY_TITLE}: ${fillLink}`,
+      });
+      void logActivity({ action: "performance_bonus_policy_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+      setPerformanceBonusRecipientId("");
+      setPerformanceBonusRecipientSearch("");
+      await loadSentPerformanceBonusForms();
+    } catch (err) {
+      setPerformanceBonusSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setPerformanceBonusSending(false);
+    }
+  };
+
+  const handleCopyPerformanceBonusLink = async (doc: SignableDocument) => {
+    try {
+      await navigator.clipboard.writeText(`${getAppUrl()}/fill-performance-bonus-policy/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const handleDownloadPerformanceBonusPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    const name = (doc.formData as Partial<PerformanceBonusPolicyFormData>).employeeName || doc.recipientName || "performance-bonus-policy";
+    await downloadSignableDocumentPdf(doc.pdfUrl, `${PERFORMANCE_BONUS_POLICY_TITLE} - ${name}.pdf`);
+  };
+
+  const handleDeletePerformanceBonus = async (doc: SignableDocument) => {
+    if (!window.confirm(`Permanently delete this ${PERFORMANCE_BONUS_POLICY_TITLE} request?`)) return;
+    setPerformanceBonusActionBusyId(doc.id);
+    setPerformanceBonusActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentPerformanceBonusForms();
+    } catch (err) {
+      setPerformanceBonusActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setPerformanceBonusActionBusyId(null);
+    }
+  };
+
   // ── Parts Responsibility and Technician Floor Protection Acknowledgment
   // Form — genuine two-party flow like Acknowledgment of Wage/Meal and Rest
   // Break: the source PDF has no AcroForm fields at all (see
@@ -10310,6 +10476,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     employeeSignatureDataUrl: "",
     employerDateSigned: "",
     employerSignatureDataUrl: "",
+    templateVersion: FLASH_TRAVEL_CURRENT_VERSION,
   });
 
   /** Toggles the inline collapsible preview panel — collapsing just hides it (and revokes the blob URL); expanding (re)builds a fresh blank-filled sample from the currently-selected recipient's name. */
@@ -10344,13 +10511,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       if (!recipient) throw new Error("Select a recipient first.");
 
       const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["flash_technician_travel"]);
-      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Flash Technician Travel & Out-of-State Policy on file. Send another one anyway?`)) {
+      const signedOldFlashForm = sentFlashTechnicianTravelForms.some((d) => d.recipientId === recipient.id && isOutdatedDocument(d));
+      if (alreadySent.length > 0 && !window.confirm(signedOldFlashForm
+        ? `${recipient.name} signed the OLD Flash Technician Travel & Out-of-State Policy. Send the new Flash Tech Travel & Expense Policy Agreement for them to sign? The old one stays on file.`
+        : `${recipient.name} already has a Flash Tech Travel & Expense Policy Agreement on file. Send another one anyway?`)) {
         return;
       }
 
       const doc = await createSignableDocument({
         documentType: "flash_technician_travel",
-        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        formData: { employeeId: recipient.id, employeeName: recipient.name, templateVersion: FLASH_TRAVEL_CURRENT_VERSION } as unknown as Record<string, any>,
         recipientId: flashTechnicianTravelRecipientId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -10365,7 +10535,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         dmThreadId: thread.id,
         senderId: myProfileId,
         senderName: displayName || "HR",
-        body: `📋 Please complete the Flash Technician Travel & Out-of-State Policy: ${fillLink}`,
+        body: `📋 Please complete the Flash Tech Travel & Expense Policy Agreement: ${fillLink}`,
       });
 
       void logActivity({ action: "flash_technician_travel_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
@@ -10388,7 +10558,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const name = flashTechnicianTravelExternalName.trim() || "External Recipient";
       const doc = await createSignableDocument({
         documentType: "flash_technician_travel",
-        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        formData: { employeeId: "", employeeName: name, templateVersion: FLASH_TRAVEL_CURRENT_VERSION } as unknown as Record<string, any>,
         recipientName: name,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -10431,7 +10601,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadFlashTechnicianTravelPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<FlashTechnicianTravelFormData>).employeeName || doc.recipientName || "flash-technician-travel";
-    await downloadSignableDocumentPdf(doc.pdfUrl, `Flash Technician Travel & Out-of-State Policy - ${name}.pdf`);
+    const flashTitle = Number((doc.formData as Partial<FlashTechnicianTravelFormData>).templateVersion) >= 2 ? "Flash Tech Travel & Expense Policy Agreement" : "Flash Technician Travel & Out-of-State Policy";
+    await downloadSignableDocumentPdf(doc.pdfUrl, `${flashTitle} - ${name}.pdf`);
   };
 
   const handleReopenFlashTechnicianTravelEmployer = async (doc: SignableDocument) => {
@@ -10449,7 +10620,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const handleDeleteFlashTechnicianTravel = async (doc: SignableDocument) => {
-    if (!window.confirm("Permanently delete this Flash Technician Travel & Out-of-State Policy request?")) return;
+    if (!window.confirm("Permanently delete this Flash Tech Travel & Expense Policy Agreement request?")) return;
     setFlashTechnicianTravelActionBusyId(doc.id);
     setFlashTechnicianTravelActionError(null);
     try {
@@ -12894,7 +13065,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "damage", label: "Damage Agreement" },
     { type: "direct_deposit", label: "Direct Deposit Authorization" },
     { type: "employee_confidentiality", label: "Employee Confidentiality Agreement" },
-    { type: "flash_technician_travel", label: "Flash Technician Travel & Out-of-State Policy" },
+    { type: "flash_technician_travel", label: "Flash Tech Travel & Expense Policy Agreement" },
     { type: "location_consent", label: "Location Sharing Consent" },
     { type: "meal_rest_break", label: "Meal & Rest Break Policy" },
     { type: "mileage_fuel", label: "Mileage & Fuel Policy" },
@@ -12929,6 +13100,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "ssn_card_form", label: "SSN Card" },
     { type: "drivers_license_form", label: "Driver's License" },
     { type: "confidentiality_noncompete_agreement", label: "Master Confidentiality & Non-Compete Agreement" },
+    { type: "performance_bonus_policy", label: "Performance Bonus Policy & Acknowledgment Form" },
   ];
   const NEW_OFFICE_BULK_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
     { type: "master_w2_office_agreement", label: "Master W-2 Office Agreement" },
@@ -15096,7 +15268,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     location_consent: "Location Sharing Consent",
     damage: "Damage Agreement",
     mileage_fuel: "Mileage & Fuel Policy",
-    flash_technician_travel: "Flash Technician Travel & Out-of-State Policy",
+    flash_technician_travel: "Flash Tech Travel & Expense Policy Agreement",
   };
   const EMPLOYER_QUEUE_CONFIRM_ONLY_TYPES = new Set(["warning_form", "promotion_form", "action_plan_form", "termination_form"]);
 
@@ -17830,7 +18002,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "driversLicense", label: "Driver's License", count: 0, icon: FileCheck },
     { key: "employeeConfidentiality", label: "Employee Confidentiality Agreement", count: 0, icon: FileCheck },
     { key: "contractorData", label: "Employee Data", count: 0, icon: FileCheck },
-    { key: "flashTechnicianTravel", label: "Flash Technician Travel & Out-of-State Policy", count: sentFlashTechnicianTravelAwaitingEmployerCount, icon: FileCheck },
     { key: "locationConsent", label: "Location Sharing Consent", count: sentLocationConsentAwaitingEmployerCount, icon: FileCheck },
     { key: "mealRestBreak", label: "Meal & Rest Break Policy", count: sentMealRestBreakAwaitingEmployerCount, icon: FileCheck },
     { key: "mileageFuel", label: "Mileage & Fuel Policy", count: sentMileageFuelAwaitingEmployerCount, icon: FileCheck },
@@ -17858,6 +18029,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     // Checklist's own NEW_TECHNICIAN_FORM_TYPES tier already expects both.
     { key: "ssnCard", label: "SSN Card", count: 0, icon: FileCheck },
     { key: "driversLicense", label: "Driver's License", count: 0, icon: FileCheck },
+    { key: "performanceBonusPolicy", label: "Performance Bonus Policy", count: 0, icon: FileCheck },
+    { key: "flashTechnicianTravel", label: "Flash Tech Travel & Expense Policy Agreement", count: sentFlashTechnicianTravelAwaitingEmployerCount, icon: FileCheck },
   ] as const;
 
   // "New Office Forms (US)" — the office/logistics counterpart to New
@@ -22440,7 +22613,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       sectionRows.map((r) => {
                         const interview = r.scheduledInterviews[0];
                         const interviewText = r.scheduledInterviews.length > 0
-                          ? `${r.scheduledInterviews.length}${interview?.date ? ` on ${new Date(interview.date).toLocaleDateString()}` : ""}`
+                          ? `${r.scheduledInterviews.length}${interview?.date ? ` on ${formatISODate(interview.date)}` : ""}`
                           : null;
                         const savingPrefix = `${sectionKey}|${r.groupKey}|`;
                         return (
@@ -23353,7 +23526,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <ul className="text-xs space-y-1">
                 {warnPreviousWarnings.map((w, i) => (
                   <li key={i} className="text-muted-foreground">
-                    {i + 1}. {w.cause} — <span className="text-foreground">{new Date(w.date).toLocaleDateString()}</span>, issued by {w.issuedBy}
+                    {i + 1}. {w.cause} — <span className="text-foreground">{formatISODate(w.date)}</span>, issued by {w.issuedBy}
                   </li>
                 ))}
               </ul>
@@ -28237,6 +28410,220 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
+      {activeTab === "performanceBonusPolicy" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send Performance Bonus Policy & Acknowledgment Request</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a technician — they'll get a link to read the Performance Bonus Policy (bi-weekly rank bonuses, reductions and disqualifications) and sign it. It's complete once they sign; no employer signature.</p>
+        </div>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={performanceBonusRecipientSearch}
+                onChange={(e) => { setPerformanceBonusRecipientSearch(e.target.value); setPerformanceBonusRecipientId(""); setPerformanceBonusRecipientDropdownOpen(true); }}
+                onFocus={() => setPerformanceBonusRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setPerformanceBonusRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {performanceBonusRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredPerformanceBonusRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredPerformanceBonusRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          setPerformanceBonusRecipientId(e.id);
+                          setPerformanceBonusRecipientSearch(`${e.name} — ${ROLE_LABELS[normalizeRole(e.position)] ?? e.position}`);
+                          setPerformanceBonusRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${performanceBonusRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {performanceBonusSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{performanceBonusSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={togglePerformanceBonusPreview}
+                className="btn text-sm px-4 py-2 flex items-center gap-1.5"
+              >
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${performanceBonusPreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendPerformanceBonus}
+                disabled={!performanceBonusRecipientId || performanceBonusSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {performanceBonusSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {performanceBonusPreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {performanceBonusPreviewLoading || !performanceBonusPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={performanceBonusPreviewPdfUrl} title="Performance Bonus Policy & Acknowledgment Form Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent Performance Bonus Policy Forms</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
+        </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={performanceBonusSentSearch}
+              onChange={(e) => setPerformanceBonusSentSearch(e.target.value)}
+              placeholder="Name or branch…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {performanceBonusSentSearch && (
+            <button onClick={() => setPerformanceBonusSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentPerformanceBonusForms.length}{performanceBonusSentSearch ? ` of ${sentPerformanceBonusForms.length}` : ""} forms
+          </span>
+        </div>
+        {performanceBonusActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{performanceBonusActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <SortableTh column="employee" label="Employee" sortColumn={performanceBonusSentSortColumn} sortDir={performanceBonusSentSortDir} onSort={handlePerformanceBonusSentSort} />
+                <FilterableTh
+                  column="branch" label="Branch"
+                  sortColumn={performanceBonusSentSortColumn} sortDir={performanceBonusSentSortDir} onSort={handlePerformanceBonusSentSort}
+                  options={performanceBonusFilterOptionsFor("branch")}
+                  isChecked={(v) => performanceBonusIsValueChecked("branch", v)}
+                  onToggleValue={(v) => performanceBonusToggleFilterValue("branch", v)}
+                  onClear={() => performanceBonusClearColumnFilter("branch")}
+                  isFiltered={performanceBonusIsColumnFiltered("branch")}
+                />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={performanceBonusSentSortColumn} sortDir={performanceBonusSentSortDir} onSort={handlePerformanceBonusSentSort}
+                  options={performanceBonusFilterOptionsFor("sentBy")}
+                  isChecked={(v) => performanceBonusIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => performanceBonusToggleFilterValue("sentBy", v)}
+                  onClear={() => performanceBonusClearColumnFilter("sentBy")}
+                  isFiltered={performanceBonusIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={performanceBonusSentSortColumn} sortDir={performanceBonusSentSortDir} onSort={handlePerformanceBonusSentSort}
+                  options={performanceBonusFilterOptionsFor("status")}
+                  isChecked={(v) => performanceBonusIsValueChecked("status", v)}
+                  onToggleValue={(v) => performanceBonusToggleFilterValue("status", v)}
+                  onClear={() => performanceBonusClearColumnFilter("status")}
+                  isFiltered={performanceBonusIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={performanceBonusSentSortColumn} sortDir={performanceBonusSentSortDir} onSort={handlePerformanceBonusSentSort} />
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedSentPerformanceBonusForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentPerformanceBonusForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
+              ) : (
+                sortedSentPerformanceBonusForms.map((doc) => {
+                  const data = doc.formData as Partial<PerformanceBonusPolicyFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = performanceBonusActionBusyId === doc.id;
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl ? (
+                          <button type="button" onClick={() => setPerformanceBonusDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{recipient?.branch || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "signed" || doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {performanceBonusStatusLabel(doc)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && (
+                            <button type="button" onClick={() => handleCopyPerformanceBonusLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => setPerformanceBonusDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" onClick={() => handleDownloadPerformanceBonusPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeletePerformanceBonus(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
       {activeTab === "ptoAck" && (
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
@@ -30615,7 +31002,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Send Flash Technician Travel & Out-of-State Policy Request</h2>
+          <h2 className="font-semibold text-sm">Send Flash Tech Travel & Expense Policy Agreement Request</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to read the policy and sign it. Once they submit, it lands back here for HR to add the employer/representative signature.</p>
         </div>
         <div className="p-4 flex flex-col md:flex-row gap-6">
@@ -30718,7 +31105,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 {flashTechnicianTravelPreviewLoading || !flashTechnicianTravelPreviewPdfUrl ? (
                   <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
                 ) : (
-                  <iframe src={flashTechnicianTravelPreviewPdfUrl} title="Flash Technician Travel & Out-of-State Policy Preview" className="w-full border-0" style={{ height: 560 }} />
+                  <iframe src={flashTechnicianTravelPreviewPdfUrl} title="Flash Tech Travel & Expense Policy Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
                 )}
               </div>
             ) : (
@@ -30732,7 +31119,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Sent Flash Technician Travel & Out-of-State Policy Forms</h2>
+          <h2 className="font-semibold text-sm">Sent Flash Tech Travel & Expense Policy Agreement Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the employee finished — add your signature to finalize.</p>
         </div>
         <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
@@ -30813,6 +31200,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         }`}>
                           {doc.status === "confirmed" ? "Completed" : awaitingEmployer ? "Awaiting Employer Signature" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Employee"}
                         </span>
+                        {isOutdatedDocument(doc) && <span className="ml-1.5 px-2 py-1 rounded text-xs font-semibold bg-amber-500/15 text-amber-300" title="Signed the old Flash Technician Travel & Out-of-State Policy — send this person the new agreement">Old version</span>}
                       </td>
                       <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
                       <td className="px-4 py-3">
@@ -33215,6 +33603,28 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       )}
 
       {/* PTO & Sick Leave Policy Acknowledgment Sent History PDF preview — same inline-frame pattern used for the other Sent History tables */}
+      {performanceBonusDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setPtoAckDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(performanceBonusDocPreview.formData as Partial<PerformanceBonusPolicyFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">Submitted {new Date(performanceBonusDocPreview.signedAt ?? performanceBonusDocPreview.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {performanceBonusDocPreview.pdfUrl && (
+                  <a href={performanceBonusDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setPtoAckDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {performanceBonusDocPreview.pdfUrl && <iframe src={performanceBonusDocPreview.pdfUrl} title="Performance Bonus Policy & Acknowledgment Form" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
       {ptoAckDocPreview && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setPtoAckDocPreview(null)}>
           <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
@@ -33380,7 +33790,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </div>
             </div>
             <div className="flex-1 overflow-hidden bg-slate-950">
-              {flashTechnicianTravelDocPreview.pdfUrl && <iframe src={flashTechnicianTravelDocPreview.pdfUrl} title="Flash Technician Travel & Out-of-State Policy" className="w-full h-full min-h-[70vh] border-0" />}
+              {flashTechnicianTravelDocPreview.pdfUrl && <iframe src={flashTechnicianTravelDocPreview.pdfUrl} title="Flash Tech Travel & Expense Policy Agreement" className="w-full h-full min-h-[70vh] border-0" />}
             </div>
           </div>
         </div>
@@ -35523,7 +35933,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <button
                   key={tier.key}
                   type="button"
-                  onClick={() => setFormsDialog({ ...formsDialog, selected: new Set(tier.formTypes) })}
+                  onClick={() => setFormsDialog({ ...formsDialog, selected: new Set(tier.formTypes.filter((t) => !DEFAULT_EXEMPT_DOCUMENT_TYPES.has(t))) })}
                   title={`Set required forms to this tier's set: ${tier.formTypes.map((t) => SIGNABLE_DOCUMENT_REGISTRY[t].label).join(", ")}`}
                   className="text-xs px-2.5 py-1 rounded-md border border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 text-slate-300 hover:text-white transition"
                 >
@@ -36144,7 +36554,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               {hiringDetailDialog.items.map((it, idx) => (
                 <li key={idx} className="flex items-center justify-between gap-3 text-sm border-b border-white/5 pb-2 last:border-0">
                   <span className="font-medium">{it.name}</span>
-                  <span className="text-muted-foreground text-xs">{it.date ? new Date(it.date).toLocaleDateString() : "—"}</span>
+                  <span className="text-muted-foreground text-xs">{it.date ? formatISODate(it.date) : "—"}</span>
                 </li>
               ))}
             </ul>

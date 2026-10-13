@@ -10,7 +10,8 @@
  * continuation line) starting at the same y=695.5 (measured directly off
  * each source PDF's text items), which leaves ~17.5pt of clearance below
  * the logo (title cap-height reaches roughly to y=704.5) — enough to never
- * collide with existing text at this size.
+ * collide with existing text at this size. Pass { firstPageOnly: true } to
+ * stamp just page 1 (Flash Tech agreement, Performance Bonus Policy).
  */
 import type { PDFDocument } from "pdf-lib";
 
@@ -26,10 +27,11 @@ async function loadLogoBytes(): Promise<Uint8Array> {
   return cachedLogoBytes;
 }
 
-export async function addLogoHeader(pdfDoc: PDFDocument): Promise<void> {
+export async function addLogoHeader(pdfDoc: PDFDocument, opts?: { firstPageOnly?: boolean }): Promise<void> {
   const bytes = await loadLogoBytes();
   const png = await pdfDoc.embedPng(bytes);
-  for (const page of pdfDoc.getPages()) {
+  const pages = pdfDoc.getPages();
+  for (const page of opts?.firstPageOnly ? pages.slice(0, 1) : pages) {
     const { width, height } = page.getSize();
     page.drawImage(png, {
       x: (width - LOGO_SIZE) / 2,

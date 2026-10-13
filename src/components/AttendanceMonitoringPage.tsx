@@ -45,7 +45,8 @@ import { resolveTeamLeadOrManager, visibleAttendanceProfileIds } from "@/lib/not
 import { correctionIssueLabel, correctionIssueKey, correctionIssueOptions } from "@/lib/exceptionVisitReportTemplate";
 import { chainCanClockIn } from "@/lib/approvalDirectory";
 import { ClockInCodePrompt } from "@/components/ClockInCodePrompt";
-import { CorrectionStageBadges, CorrectionOverallBadge } from "@/components/CorrectionStageBadges";
+import { CorrectionStageBadges, CorrectionOverallBadge, CorrectionComments } from "@/components/CorrectionStageBadges";
+import { timestampParts } from "@/lib/localDate";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { ATTENDANCE_GRACE_MINUTES, addMinutesToHHMM, nowInTimezone, timezoneForBranch, DEFAULT_ATTENDANCE_TIMEZONE, payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule, toSeconds, ON_TIME_BUFFER_SECONDS } from "@/lib/attendanceGrace";
 import { getServerNow } from "@/lib/serverTime";
@@ -1244,7 +1245,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // A date before this profile's own hireDate (employee_info.hireDate) —
   // no hire date on file falls back to "always counts" (false), same as
   // before this existed, rather than guessing.
-  // Rest days with an effective-from date (rest_day_history, 0371) — each
+  // Rest days with an effective-from date (rest_day_history, 0373) — each
   // date checked against the rest days in force THAT day, so a change in
   // October doesn't turn September's rest days into absences.
   const [restHistory, setRestHistory] = useState<RestDayHistory>(new Map());
@@ -1344,7 +1345,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         tickets: ticketsByNameAndDate.get(`${(p.display_name || p.email || "").trim().toLowerCase()}|${dateISO}`) ?? [],
       };
     },
-    [nowByTimezone, allProfileById, checkoutProposalsByKey, lastTicketUpdateByProfile, ticketsByNameAndDate, isCompanyHolidayFor, hasPendingCorrectionFor, isBeforeHireFor, isRestDayFor, isOnLeaveFor]
+    [nowByTimezone, allProfileById, checkoutProposalsByKey, lastTicketUpdateByProfile, ticketsByNameAndDate, isCompanyHolidayFor, hasPendingCorrectionFor, isBeforeHireFor, isOnLeaveFor, isRestDayFor]
   );
 
   const dailyRecords: DailyRecord[] = useMemo(
@@ -3510,19 +3511,21 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   Work Date <span className="text-[10px]">{workDateSort === "desc" ? "▼" : "▲"}</span>
                 </button>
               </th>
+              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Submitted</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Issue</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Original Time</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Requested Time</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Reason</th>
+                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Comments</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {loading ? (
-                      <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
+                      <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
                     ) : filteredCorrections.length === 0 ? (
-                      <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" || correctionIssueFilter !== "all" || correctionDepartmentFilter !== "all" || correctionBranchFilter !== "all" || correctionWorkDateFrom || correctionWorkDateTo ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
+                      <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" || correctionIssueFilter !== "all" || correctionDepartmentFilter !== "all" || correctionBranchFilter !== "all" || correctionWorkDateFrom || correctionWorkDateTo ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
                     ) : sortedCorrections.map((correction) => (
                       <tr key={correction.id} className="border-b border-white/5 hover:bg-white/5 transition">
                         <td className="px-3 py-3 text-white font-medium">
@@ -3531,12 +3534,21 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           </a>
                         </td>
                         <td className="px-3 py-3 text-slate-300">{correction.workDate}</td>
+                        <td className="px-3 py-3 text-slate-300 whitespace-nowrap">
+                          {(() => {
+                            const submitted = timestampParts(correction.createdAt);
+                            return submitted ? <>{submitted.date}<div className="text-xs text-slate-500">{submitted.time}</div></> : "—";
+                          })()}
+                        </td>
                         <td className="px-3 py-3 text-slate-300">{correctionIssueLabel(correction.exceptionType, correction.otherDescription)}</td>
                         <td className="px-3 py-3 text-slate-300">{correction.originalCheckIn || "—"} → {correction.originalCheckOut || "—"}</td>
                         <td className="px-3 py-3 text-amber-200">
                           <RequestedTime c={correction} />
                         </td>
                         <td className="px-3 py-3 text-slate-300">{correction.reason || "—"}</td>
+                        <td className="px-3 py-3 max-w-xs">
+                          <CorrectionComments row={correction} />
+                        </td>
                         <td className="px-3 py-3">
                           <CorrectionStageBadges row={correction} />
                         </td>
@@ -3780,7 +3792,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 <h3 className="text-sm font-bold text-white mb-4">Correction Details</h3>
                 <div className="space-y-2">
                   <p className="text-sm text-slate-300"><span className="text-slate-400">Reason:</span> {selectedCorrection.reason || "—"}</p>
-                  <p className="text-sm text-slate-300"><span className="text-slate-400">Requested:</span> {new Date(selectedCorrection.createdAt).toLocaleString()}</p>
+                  <p className="text-sm text-slate-300"><span className="text-slate-400">Requested:</span> {(() => { const t = timestampParts(selectedCorrection.createdAt); return t ? `${t.date}, ${t.time}` : "—"; })()}</p>
                   <div className="flex flex-wrap gap-2 mt-2">
                     <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold border ${selectedCorrection.managerStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30" : selectedCorrection.managerStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30" : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"}`}>
                       Manager: {selectedCorrection.managerStatus}

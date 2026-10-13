@@ -16,7 +16,7 @@ const dayBefore = (iso: string) => {
 };
 
 /**
- * Rest day history (migration 0371) on a user's edit page — which rest days
+ * Rest day history (migration 0373) on a user's edit page — which rest days
  * applied when, so a change in October doesn't rewrite September. HR can add
  * an earlier schedule here for someone whose rest days were changed before
  * the history existed. `reloadKey` changes after a save so it refreshes.
@@ -35,7 +35,7 @@ export function RestDayHistoryBox({ profileId, companyId, reloadKey }: { profile
       setRows(await getRestDayHistoryFor(profileId));
       setError(null);
     } catch (err) {
-      setError(err instanceof Error && /rest_day_history/.test(err.message) ? "Run migration 0371 in Supabase to turn on rest day history." : "Couldn't load the history.");
+      setError(err instanceof Error && /rest_day_history/.test(err.message) ? "Run migration 0373 in Supabase to turn on rest day history." : "Couldn't load the history.");
       setRows([]);
     }
   };

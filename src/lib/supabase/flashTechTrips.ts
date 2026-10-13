@@ -179,6 +179,8 @@ function mapExpenseRow(row: any): ExpenseRow {
     fromLocation: row.from_location ?? null,
     toLocation: row.to_location ?? null,
     flashTechTripId: row.flash_tech_trip_id ?? null,
+    expenseSubtype: row.expense_subtype ?? null,
+    reviewNote: row.review_note ?? null,
     createdAt: row.created_at,
   };
 }

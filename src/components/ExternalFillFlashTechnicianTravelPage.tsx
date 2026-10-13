@@ -1,6 +1,8 @@
 /**
- * External Fill Flash Technician Travel & Out-of-State Policy — the
- * no-login counterpart to FillFlashTechnicianTravelPage.tsx, opened from
+ * External Fill — Flash travel form (version 2: Flash Tech Travel & Expense
+ * Policy Agreement; version 1: Flash Technician Travel & Out-of-State
+ * Policy — see flashTechnicianTravelPdfFill.ts) — the no-login counterpart
+ * to FillFlashTechnicianTravelPage.tsx, opened from
  * the link ReportHRDaily.tsx's "Send Request" panel generates when HR
  * picks "External Link" instead of an AHS teammate. No AHS account needed:
  * talks only to /api/signable-documents (see externalSignableDocuments.ts /
@@ -8,7 +10,7 @@
  * that have no linked AHS profile (recipient_id IS NULL).
  *
  * Same real-PDF overlay rendering as FillFlashTechnicianTravelPage.tsx
- * (identical field rects, same A4 page size). The PDF is built entirely
+ * (same per-version layout from flashTravelLayout). The PDF is built entirely
  * client-side via the same pure fillFlashTechnicianTravelPdf used by the
  * logged-in flow, then POSTed already-finished to the server bridge, which
  * uploads it and notifies HR — no DM step here since there's no sender
@@ -19,7 +21,7 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 import { getExternalSignableDocument, submitExternalSignature, type ExternalSignableDocument } from "@/lib/supabase/externalSignableDocuments";
-import { fillFlashTechnicianTravelPdf, loadBlankFlashTechnicianTravelBytes } from "@/lib/flashTechnicianTravelPdfFill";
+import { fillFlashTechnicianTravelPdf, flashTravelLayout, loadBlankFlashTechnicianTravelBytes, FLASH_TRAVEL_CURRENT_VERSION, FLASH_TRAVEL_TITLE } from "@/lib/flashTechnicianTravelPdfFill";
 import type { FlashTechnicianTravelFormData } from "@/lib/flashTechnicianTravelFormTemplate";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
@@ -29,15 +31,7 @@ interface Props {
   docId: string;
 }
 
-const PAGE_WIDTH = 595.56;
-const PAGE_HEIGHT = 842.04;
-
-// Same field rectangles as FillFlashTechnicianTravelPage.tsx — see that
-// file's header comment for how these were derived.
-const PAGE3_RECT = {
-  signature: { x: 183, y: 716, w: 200, h: 26 },
-  dateSigned: { x: 424, y: 716, w: 90, h: 14 },
-} as const;
+const OLD_TITLE = "Flash Technician Travel & Out-of-State Policy";
 
 const fmtDateSignedDisplay = (d: Date) => d.toLocaleDateString("en-US");
 
@@ -65,6 +59,12 @@ export function ExternalFillFlashTechnicianTravelPage({ docId }: Props) {
   const pageCanvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
 
   const [form, setForm] = useState<FlashTechnicianTravelFormData>({ ...BLANK_FORM });
+  const version = form.templateVersion ?? 1;
+  const isV2 = version >= 2;
+  const layout = flashTravelLayout(version);
+  const PAGE_WIDTH = layout.pageWidth;
+  const PAGE_HEIGHT = layout.pageHeight;
+  const title = isV2 ? FLASH_TRAVEL_TITLE : OLD_TITLE;
 
   const sigPad = useSignaturePad({ width: 440, height: 100 });
 
@@ -81,7 +81,9 @@ export function ExternalFillFlashTechnicianTravelPage({ docId }: Props) {
         } else {
           setDoc(document);
           const existing = document.formData as Partial<FlashTechnicianTravelFormData>;
-          setForm((prev) => ({ ...prev, ...existing }));
+          // Not signed yet: signed in the current agreement.
+          const unsigned = document.status !== "signed" && document.status !== "confirmed";
+          setForm((prev) => ({ ...prev, ...existing, ...(unsigned ? { templateVersion: FLASH_TRAVEL_CURRENT_VERSION } : {}) }));
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load document.");
@@ -97,7 +99,7 @@ export function ExternalFillFlashTechnicianTravelPage({ docId }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const [pdfjsLib, bytes] = await Promise.all([import("pdfjs-dist/legacy/build/pdf.mjs"), loadBlankFlashTechnicianTravelBytes()]);
+        const [pdfjsLib, bytes] = await Promise.all([import("pdfjs-dist/legacy/build/pdf.mjs"), loadBlankFlashTechnicianTravelBytes(version)]);
         pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
         const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
         if (cancelled) return;
@@ -108,7 +110,7 @@ export function ExternalFillFlashTechnicianTravelPage({ docId }: Props) {
       }
     })();
     return () => { cancelled = true; };
-  }, [loading, error, submitted]);
+  }, [loading, error, submitted, version]);
 
   useEffect(() => {
     if (!numPages || !pdfDocRef.current) return;
@@ -198,7 +200,7 @@ export function ExternalFillFlashTechnicianTravelPage({ docId }: Props) {
         ) : !doc ? null : submitted || doc.status === "signed" ? (
           <div className="panel p-6 text-center">
             <p className="text-sm font-semibold mb-2">✅ Submitted{submitted ? " and sent back to HR" : ""}.</p>
-            <p className="text-xs text-muted-foreground mb-2">HR will add the employer/representative signature separately.</p>
+            {!isV2 && <p className="text-xs text-muted-foreground mb-2">HR will add the employer/representative signature separately.</p>}
             {submittedPdfUrl && (
               <InlinePdfLink url={submittedPdfUrl} label="View the completed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
             )}
@@ -206,8 +208,9 @@ export function ExternalFillFlashTechnicianTravelPage({ docId }: Props) {
           </div>
         ) : (
           <div className="panel p-4">
+            <h1 className="text-lg font-bold mb-1">{title}</h1>
             <p className="text-xs text-muted-foreground mb-3">
-              Read the Flash Technician Travel & Out-of-State Policy below, add your signature at the bottom, then submit.
+              Read the agreement below{isV2 ? ", enter your Employee ID" : ""}, add your signature at the bottom, then submit.
             </p>
 
             <div className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
@@ -226,13 +229,16 @@ export function ExternalFillFlashTechnicianTravelPage({ docId }: Props) {
                         {...sigPad.canvasProps}
                         style={{
                           position: "absolute",
-                          left: PAGE3_RECT.signature.x * scale,
-                          top: (PAGE_HEIGHT - PAGE3_RECT.signature.y - PAGE3_RECT.signature.h) * scale,
-                          width: PAGE3_RECT.signature.w * scale,
-                          height: PAGE3_RECT.signature.h * scale,
+                          left: layout.rects.signature.x * scale,
+                          top: (PAGE_HEIGHT - layout.rects.signature.y - layout.rects.signature.h) * scale,
+                          width: layout.rects.signature.w * scale,
+                          height: layout.rects.signature.h * scale,
                         }}
                       />
-                      <div style={overlayStyle(PAGE3_RECT.dateSigned)} className="flex items-center font-bold text-[#00008B]">
+                      {isV2 && layout.rects.name && (
+                        <div style={overlayStyle(layout.rects.name)} className="flex items-center font-bold text-[#00008B]">{doc.recipientName || ""}</div>
+                      )}
+                      <div style={overlayStyle(layout.rects.dateSigned)} className="flex items-center font-bold text-[#00008B]">
                         {fmtDateSignedDisplay(new Date())}
                       </div>
                     </>

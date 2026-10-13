@@ -144,7 +144,7 @@ function EmployeeDetailsPage() {
   const dayInfo = (iso: string): { status: "present" | "late" | "absent" | "day-off" | "future" | "no-data"; st: DayStatus | null } => {
     if (!employee) return { status: "no-data", st: null };
     if (iso > todayIso) return { status: "future", st: null };
-    // Rest days in force on this date (rest_day_history, 0371), not just today's.
+    // Rest days in force on this date (rest_day_history, 0373), not just today's.
     const off = isRestDayOn(restHistory, employee.id, iso, employee.off_days);
     const entry = entryByDate.get(iso);
     const st = dayStatus(entry, employee.required_check_in, off, graceMinutes);

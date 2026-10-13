@@ -1,6 +1,6 @@
 /**
  * "Rest days on this date" — rest days with an effective-from date
- * (rest_day_history, migration 0371), so changing someone's rest days in
+ * (rest_day_history, migration 0373), so changing someone's rest days in
  * October doesn't turn their September rest days into absences.
  *
  * Pure (no Supabase client) so the Worker can share it.
@@ -29,7 +29,7 @@ export function buildRestDayHistory(rows: { profile_id: string; off_days: number
 
 /**
  * The rest days in force on `date` for this employee: the latest schedule
- * that started on or before it. No history (or 0371 not run yet) → their
+ * that started on or before it. No history (or 0373 not run yet) → their
  * current `fallback` (profiles.off_days), exactly as before.
  */
 export function offDaysOn(history: RestDayHistory | null | undefined, profileId: string, date: string, fallback: number[] | null | undefined): number[] {

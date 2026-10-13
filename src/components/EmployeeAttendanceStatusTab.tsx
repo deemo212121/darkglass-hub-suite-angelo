@@ -107,7 +107,7 @@ function computeStatus(args: {
   nameOf: (id: string) => string;
   /** "Attendance starts on" (src/lib/attendanceStart.ts) — days before it are never Missing. */
   attendanceStart?: string | null;
-  /** Rest days with an effective-from date (rest_day_history, 0371). */
+  /** Rest days with an effective-from date (rest_day_history, 0373). */
   restHistory?: RestDayHistory;
 }): DayStatus {
   const { profile, date, today, entry, corrections, ptos, nameOf, attendanceStart, restHistory } = args;

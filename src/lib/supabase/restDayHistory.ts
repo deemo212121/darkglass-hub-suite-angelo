@@ -1,7 +1,7 @@
 /**
- * rest_day_history (migration 0371) — rest days with an "effective from"
+ * rest_day_history (migration 0373) — rest days with an "effective from"
  * date. See src/lib/restDays.ts for how pages use it. Every read falls back
- * gracefully (empty history → current profiles.off_days) if 0371 hasn't
+ * gracefully (empty history → current profiles.off_days) if 0373 hasn't
  * been run yet.
  */
 import { supabase } from "./client";
@@ -29,7 +29,7 @@ export async function getRestDayHistory(): Promise<RestDayHistory> {
       .order("effective_from", { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
     if (error) {
-      // 0371 not run yet — pages fall back to profiles.off_days.
+      // 0373 not run yet — pages fall back to profiles.off_days.
       console.warn("getRestDayHistory:", error.message);
       return new Map();
     }
@@ -60,7 +60,7 @@ export async function getRestDayHistoryFor(profileId: string): Promise<RestDayHi
 /**
  * Change someone's rest days starting on `effectiveFrom` (YYYY-MM-DD).
  * Days before it keep the schedule they had. Falls back to a plain update
- * (recorded as effective today) if 0371's function isn't there yet.
+ * (recorded as effective today) if 0373's function isn't there yet.
  */
 export async function setProfileRestDays(profileId: string, offDays: number[], effectiveFrom: string): Promise<void> {
   const { error } = await supabase.rpc("set_profile_rest_days", {

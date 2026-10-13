@@ -42,7 +42,35 @@ export function setUserScheduleTimezone(tz: string | null | undefined): void {
   userTimeZone = SCHEDULE_ZONES[String(tz ?? "").trim().toUpperCase()] ?? "America/Chicago";
 }
 
+const ZONE_LABELS: Record<string, string> = { "America/Chicago": "CST", "America/New_York": "EST" };
+
+/**
+ * A stored timestamp as date + time in the signed-in person's assigned time
+ * zone, labelled the same way as the header clock (CST / EST):
+ * { date: "Oct 12, 2026", time: "3:42 PM CST" }. null when there's no valid timestamp.
+ */
+export function timestampParts(iso: string | null | undefined): { date: string; time: string } | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const date = new Intl.DateTimeFormat("en-US", { timeZone: userTimeZone, month: "short", day: "numeric", year: "numeric" }).format(d);
+  const time = new Intl.DateTimeFormat("en-US", { timeZone: userTimeZone, hour: "numeric", minute: "2-digit" }).format(d);
+  return { date, time: `${time} ${ZONE_LABELS[userTimeZone] ?? ""}`.trim() };
+}
+
 /** Today's date ("YYYY-MM-DD") in the signed-in person's assigned time zone. */
 export function todayISO(now: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: userTimeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+}
+
+/**
+ * Format a stored date for display. A plain "YYYY-MM-DD" (a date column) is
+ * read as that LOCAL calendar day — `new Date("2026-10-12")` would be UTC
+ * midnight, which shows as Oct 11 anywhere in the US. Full timestamps are
+ * formatted normally.
+ */
+export function formatISODate(value: string, options?: Intl.DateTimeFormatOptions, locale?: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? "").trim());
+  const d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(value);
+  return Number.isNaN(d.getTime()) ? String(value ?? "") : d.toLocaleDateString(locale, options);
 }

@@ -40,7 +40,7 @@ export const SIGNABLE_DOCUMENT_REGISTRY: Record<SignableDocumentType, SignableDo
   contractor_data_us: { label: "Contractor Data (US)", internalPath: "/fill-contractor-data-us", externalPath: "/fill-contractor-data-us-external" },
   direct_deposit: { label: "Direct Deposit Authorization", internalPath: "/fill-direct-deposit", externalPath: "/fill-direct-deposit-external" },
   substance_screening: { label: "Substance Screening & Conduct Agreement", internalPath: "/fill-substance-screening", externalPath: "/fill-substance-screening-external" },
-  flash_technician_travel: { label: "Flash Technician Travel & Out-of-State Policy", internalPath: "/fill-flash-technician-travel", externalPath: "/fill-flash-technician-travel-external" },
+  flash_technician_travel: { label: "Flash Tech Travel & Expense Policy Agreement", internalPath: "/fill-flash-technician-travel", externalPath: "/fill-flash-technician-travel-external" },
   nda_form: { label: "Non-Disclosure Agreement", internalPath: "/sign-nda-form", externalPath: "/sign-nda-external" },
   vehicle_use_agreement: { label: "Vehicle Use Agreement", internalPath: "/fill-vehicle-use-agreement", externalPath: "/fill-vehicle-use-agreement-external" },
   contractor_addendum: { label: "Master Independent Contractor Subcontractor Agreement Addendum", internalPath: "/fill-contractor-addendum", externalPath: "/fill-contractor-addendum-external" },
@@ -61,6 +61,9 @@ export const SIGNABLE_DOCUMENT_REGISTRY: Record<SignableDocumentType, SignableDo
   // Sent to everyone (every checklist tier). Login-only like the Master
   // agreements — recipients are existing AHS staff.
   confidentiality_noncompete_agreement: { label: "Master Confidentiality & Non-Compete Agreement", internalPath: "/fill-confidentiality-noncompete-agreement", externalPath: "/fill-confidentiality-noncompete-agreement" },
+  // Every technician (New Technician tier). Login-only — recipients are
+  // existing AHS technicians, so no external/no-login variant.
+  performance_bonus_policy: { label: "Performance Bonus Policy & Acknowledgment Form", internalPath: "/fill-performance-bonus-policy", externalPath: "/fill-performance-bonus-policy" },
   // Signer is always an AHS teammate (a manager/HR staffer countersigning a
   // company-generated certificate) — same "internal recipients only"
   // reasoning as master_w2_agreement above, no external/no-login variant.
@@ -103,7 +106,6 @@ export const TECHNICIAN_FORM_TYPES: SignableDocumentType[] = [
   "drivers_license_form",
   "employee_confidentiality",
   "contractor_data",
-  "flash_technician_travel",
   "location_consent",
   "meal_rest_break",
   "mileage_fuel",
@@ -125,7 +127,7 @@ export const TECHNICIAN_FORM_TYPES: SignableDocumentType[] = [
  * below) to let HR quick-select a candidate's forms by role/tier instead of
  * checking each one by hand.
  */
-export const NEW_TECHNICIAN_FORM_TYPES: SignableDocumentType[] = ["master_w2_agreement", "w4", "i9", "direct_deposit", "ssn_card_form", "drivers_license_form", "confidentiality_noncompete_agreement"];
+export const NEW_TECHNICIAN_FORM_TYPES: SignableDocumentType[] = ["master_w2_agreement", "w4", "i9", "direct_deposit", "ssn_card_form", "drivers_license_form", "confidentiality_noncompete_agreement", "performance_bonus_policy", "flash_technician_travel"];
 export const OFFICE_STAFF_US_FORM_TYPES: SignableDocumentType[] = ["master_w2_office_agreement", "w4", "i9", "direct_deposit", "ssn_card_form", "drivers_license_form", "confidentiality_noncompete_agreement"];
 export const PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "w8ben", "direct_deposit", "valid_id_form", "confidentiality_noncompete_agreement"];
 export const BM_AND_UP_FORM_TYPES: SignableDocumentType[] = ["master_w2_executive_agreement", "direct_deposit", "confidentiality_noncompete_agreement"];
@@ -210,18 +212,37 @@ export const DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE = new Set<SignableDocum
 export const CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION = 2;
 
 /**
+ * Flash travel form in use (see flashTechnicianTravelPdfFill.ts): version 2
+ * (2026-10-12) is the "Flash Tech Travel & Expense Policy Agreement", which
+ * replaced the "Flash Technician Travel & Out-of-State Policy" (version 1).
+ */
+export const FLASH_TRAVEL_CURRENT_VERSION = 2;
+
+/** Document types whose wording has been replaced, and the version now in use. A missing form_data.templateVersion means 1. */
+const CURRENT_TEMPLATE_VERSION: Partial<Record<SignableDocumentType, number>> = {
+  confidentiality_noncompete_agreement: CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION,
+  flash_technician_travel: FLASH_TRAVEL_CURRENT_VERSION,
+};
+
+/** The wording version a NEW document of this type is sent in, or undefined for a type that has only ever had one. */
+export function currentTemplateVersion(type: SignableDocumentType): number | undefined {
+  return CURRENT_TEMPLATE_VERSION[type];
+}
+
+/**
  * Signed, but in an older wording than the one in use — a Master
  * Confidentiality agreement signed before version 2 (the "…Non-Compete…"
- * text, including the paper copies). Still on file, but the person needs to
- * sign the new version, so the checklist shows "Needs new version" and lets
- * HR send it.
+ * text, including the paper copies), or the old Flash Technician Travel &
+ * Out-of-State Policy. Still on file, but the person needs to sign the new
+ * version, so the checklist shows "Needs new version" and lets HR send it.
  */
 export function isOutdatedDocument(doc: { documentType?: string; status: SignableDocumentStatus; formData?: Record<string, any> } | undefined): boolean {
+  const current = doc?.documentType ? CURRENT_TEMPLATE_VERSION[doc.documentType as SignableDocumentType] : undefined;
   return (
     !!doc &&
-    doc.documentType === "confidentiality_noncompete_agreement" &&
+    current != null &&
     (doc.status === "signed" || doc.status === "confirmed") &&
-    !(Number(doc.formData?.templateVersion) >= CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION)
+    !(Number(doc.formData?.templateVersion) >= current)
   );
 }
 

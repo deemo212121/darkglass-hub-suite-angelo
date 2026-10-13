@@ -44,6 +44,7 @@ export const INTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   master_ph_contractor_agreement: lazy(() => import("@/components/FillMasterPhContractorAgreementPage").then((m) => ({ default: m.FillMasterPhContractorAgreementPage }))),
   master_w2_executive_agreement: lazy(() => import("@/components/FillMasterW2ExecutiveAgreementPage").then((m) => ({ default: m.FillMasterW2ExecutiveAgreementPage }))),
   confidentiality_noncompete_agreement: lazy(() => import("@/components/FillConfidentialityNonCompeteAgreementPage").then((m) => ({ default: m.FillConfidentialityNonCompeteAgreementPage }))),
+  performance_bonus_policy: lazy(() => import("@/components/FillPerformanceBonusPolicyPage").then((m) => ({ default: m.FillPerformanceBonusPolicyPage }))),
   // Signer is always an AHS teammate — no external/no-login variant (see
   // signableDocumentRegistry.ts's entry), so both maps point at the same
   // internal sign page.
@@ -91,6 +92,7 @@ export const EXTERNAL_SIGNABLE_DOCUMENT_COMPONENTS: Record<SignableDocumentType,
   master_ph_contractor_agreement: lazy(() => import("@/components/FillMasterPhContractorAgreementPage").then((m) => ({ default: m.FillMasterPhContractorAgreementPage }))),
   master_w2_executive_agreement: lazy(() => import("@/components/FillMasterW2ExecutiveAgreementPage").then((m) => ({ default: m.FillMasterW2ExecutiveAgreementPage }))),
   confidentiality_noncompete_agreement: lazy(() => import("@/components/FillConfidentialityNonCompeteAgreementPage").then((m) => ({ default: m.FillConfidentialityNonCompeteAgreementPage }))),
+  performance_bonus_policy: lazy(() => import("@/components/FillPerformanceBonusPolicyPage").then((m) => ({ default: m.FillPerformanceBonusPolicyPage }))),
   // Signer is always an AHS teammate — no external/no-login variant (see
   // signableDocumentRegistry.ts's entry), so both maps point at the same
   // internal sign page.

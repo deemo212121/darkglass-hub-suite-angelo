@@ -55,8 +55,12 @@ import {
   UserRole,
 } from "@/lib/firebase/users";
 import { getCurrentUser } from "@/lib/firebase/auth";
+import { useAuth } from "@/lib/auth";
 
 export default function UserManagementPage() {
+  // Secondary roles count the same as the primary one (an ADMIN extra role
+  // gets the admin view too).
+  const { extraRoles } = useAuth();
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
   const [users, setUsers] = useState<UserAccount[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -97,7 +101,7 @@ export default function UserManagementPage() {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [extraRoles]);
 
   const loadData = async () => {
     try {
@@ -118,7 +122,7 @@ export default function UserManagementPage() {
         ]);
         setUsers(allUsers);
         setCompanies(allCompanies);
-      } else if (userData?.role === "ADMIN") {
+      } else if (userData && (userData.role === "ADMIN" || extraRoles.includes("ADMIN"))) {
         const [companyUsers, companyData] = await Promise.all([
           getCompanyUsers(userData.companyId),
           getCompany(userData.companyId),
@@ -362,7 +366,7 @@ export default function UserManagementPage() {
   }
 
   const isSuperAdmin = currentUser?.role === "SUPERADMIN";
-  const isAdmin = currentUser?.role === "ADMIN" || isSuperAdmin;
+  const isAdmin = currentUser?.role === "ADMIN" || extraRoles.includes("ADMIN") || isSuperAdmin;
 
   if (!isAdmin) {
     return (

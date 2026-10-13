@@ -49,6 +49,8 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   master_w2_executive_agreement_sent: "Sent W-2 Executive Exempt Management Agreement",
   master_w2_executive_agreement_signed: "Signed W-2 Executive Exempt Management Agreement",
   master_w2_executive_agreement_employer_signed: "Completed W-2 Executive Exempt Management Agreement (employer signature)",
+  performance_bonus_policy_sent: "Sent Performance Bonus Policy & Acknowledgment Form",
+  performance_bonus_policy_signed: "Signed Performance Bonus Policy & Acknowledgment Form",
   confidentiality_noncompete_agreement_sent: "Sent Master Confidentiality & Non-Compete Agreement",
   confidentiality_noncompete_agreement_signed: "Signed Master Confidentiality & Non-Compete Agreement",
   confidentiality_noncompete_agreement_employer_signed: "Completed Master Confidentiality & Non-Compete Agreement (employer signature)",

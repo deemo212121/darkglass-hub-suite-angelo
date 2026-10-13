@@ -4,7 +4,7 @@ import { FillFlashTechnicianTravelPage } from "@/components/FillFlashTechnicianT
 export const Route = createFileRoute("/fill-flash-technician-travel/$docId")({
   ssr: false,
   head: () => ({
-    meta: [{ title: `Flash Technician Travel & Out-of-State Policy — Admin Hub Solutions` }],
+    meta: [{ title: `Flash Tech Travel & Expense Policy Agreement — Admin Hub Solutions` }],
   }),
   component: RouteComponent,
 });

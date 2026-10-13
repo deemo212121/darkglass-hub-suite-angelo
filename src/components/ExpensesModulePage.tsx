@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, Plane } from "lucide-react";
+import { ChevronLeft, Plane, Receipt } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
@@ -10,11 +10,12 @@ import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
  * "one page, several sections, room to grow" shape as Absent List's own
  * view toggle. Flash Tech is the only category for now (its own Hotel/
  * Transportation expense rows, scoped out of the full Expense Tracking
- * list via ExpenseTrackingPage's flashTechOnly prop); more expense
- * categories land here as their own tabs later without restructuring
- * this page.
+ * list via ExpenseTrackingPage's flashTechOnly prop); Employee Requests
+ * holds the expenses employees send themselves from Employee Self-Service
+ * → My Requests (selfFiledOnly). More expense categories land here
+ * as their own tabs later without restructuring this page.
  */
-type ExpensesTab = "flashTech";
+type ExpensesTab = "flashTech" | "employeeRequests";
 
 export function ExpensesModulePage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
@@ -43,9 +44,17 @@ export function ExpensesModulePage({ mod, sub }: { mod: ModuleDef; sub: SubModul
           >
             <Plane className="h-3.5 w-3.5" /> Flash Tech
           </button>
+          <button
+            type="button"
+            onClick={() => setTab("employeeRequests")}
+            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${tab === "employeeRequests" ? "bg-primary/20 text-primary" : ""}`}
+          >
+            <Receipt className="h-3.5 w-3.5" /> Employee Requests
+          </button>
         </div>
 
         {tab === "flashTech" && <ExpenseTrackingPage mod={mod} sub={sub} embedded flashTechOnly />}
+        {tab === "employeeRequests" && <ExpenseTrackingPage mod={mod} sub={sub} embedded selfFiledOnly />}
       </div>
     </main>
   );

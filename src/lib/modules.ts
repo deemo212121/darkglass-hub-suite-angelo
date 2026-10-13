@@ -362,14 +362,15 @@ const accountingMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
-    // Category-tabbed container (ExpensesModulePage) — Flash Tech is the
-    // only tab for now (its own Hotel/Transportation expense rows, scoped
-    // out of the full Expense Tracking list), more categories land here as
+    // Category-tabbed container (ExpensesModulePage) — Flash Tech (its own
+    // Hotel/Transportation expense rows, scoped out of the full Expense
+    // Tracking list) and Employee Requests (expenses employees send from
+    // Employee Self-Service → My Requests); more categories land here as
     // their own tabs later.
     {
       slug: "expenses",
       title: "Expenses",
-      description: "Expense tracking by category — Flash Tech for now, more categories to come.",
+      description: "Expense tracking by category — Flash Tech trips and employees' own expense requests.",
       custom: "expenses" as any,
       fields: [],
       count: 0,
@@ -1936,6 +1937,15 @@ const adminMod: ModuleDef = {
       title: "Activity Logs",
       description: "Every department's recent activity in one feed — Claims, Parts, CSR, Triage, BizOps, Technician, HR, Accounting, IT, Admin, or ALL combined.",
       custom: "universal-activity-log",
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "reports-library",
+      title: "Reports Library",
+      description: "Imported reports for leadership (attendance and leave reports, dashboards), kept separate from live data. Admin and SuperAdmin only.",
+      custom: "reports-library" as any,
       fields: [],
       count: 0,
       seed: () => ({}),
