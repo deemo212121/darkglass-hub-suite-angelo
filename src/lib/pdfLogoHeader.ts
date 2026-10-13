@@ -96,6 +96,54 @@ export async function addLetterhead(pdfDoc: PDFDocument): Promise<void> {
   }
 }
 
+/**
+ * Full company letterhead treatment for a US Letter form whose text runs
+ * from y≈705 down to y≈75 (HR's Word/Google Docs exports): the form's own
+ * content is shrunk to 92% and re-centered, then the faint watermark and the
+ * full-size letterhead are drawn over it. A point (x, y) of the source page
+ * ends up at (S·x + DX, S·y + DY) — move any field boxes with
+ * placeOnLetterhead so they still sit on the form's lines.
+ *
+ * Built on fresh pages with the source drawn as an embedded page (not
+ * scaleContent/translateContent, which would also shift everything drawn
+ * afterwards). The watermark goes ON TOP of the content: these exports often
+ * paint a solid white page background that would hide it underneath.
+ */
+export const LETTERHEAD_CONTENT_SCALE = 0.92;
+const LETTERHEAD_CONTENT_DX = (612 * (1 - LETTERHEAD_CONTENT_SCALE)) / 2;
+// The source title's top (y≈705) lands at y≈688, ~28pt under the logo.
+const LETTERHEAD_CONTENT_DY = 688 - LETTERHEAD_CONTENT_SCALE * 705;
+
+export function placeOnLetterhead<R extends { x: number; y: number; w: number; h: number }>(r: R): R {
+  return {
+    ...r,
+    x: LETTERHEAD_CONTENT_SCALE * r.x + LETTERHEAD_CONTENT_DX,
+    y: LETTERHEAD_CONTENT_SCALE * r.y + LETTERHEAD_CONTENT_DY,
+    w: LETTERHEAD_CONTENT_SCALE * r.w,
+    h: LETTERHEAD_CONTENT_SCALE * r.h,
+  };
+}
+
+/** A new PDF: every page of `sourceBytes` shrunk onto a letterhead page with the watermark. */
+export async function buildLetterheadPdf(sourceBytes: Uint8Array): Promise<PDFDocument> {
+  const { PDFDocument: Doc } = await import("pdf-lib");
+  const source = await Doc.load(sourceBytes);
+  const pdfDoc = await Doc.create();
+  const embedded = await pdfDoc.embedPages(source.getPages());
+  for (const ep of embedded) pdfDoc.addPage([ep.width, ep.height]);
+  embedded.forEach((ep, i) => {
+    pdfDoc.getPage(i).drawPage(ep, {
+      x: LETTERHEAD_CONTENT_DX,
+      y: LETTERHEAD_CONTENT_DY,
+      xScale: LETTERHEAD_CONTENT_SCALE,
+      yScale: LETTERHEAD_CONTENT_SCALE,
+    });
+  });
+  await addLogoWatermark(pdfDoc);
+  await addLetterhead(pdfDoc);
+  return pdfDoc;
+}
+
 export async function addLogoHeader(pdfDoc: PDFDocument, opts?: { firstPageOnly?: boolean }): Promise<void> {
   const bytes = await loadLogoBytes();
   const png = await pdfDoc.embedPng(bytes);

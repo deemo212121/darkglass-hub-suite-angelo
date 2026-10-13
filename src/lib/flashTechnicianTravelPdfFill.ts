@@ -28,7 +28,7 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { FlashTechnicianTravelFormData } from "./flashTechnicianTravelFormTemplate";
 import { sanitizeForFont } from "./pdfFillSanitize";
-import { addLogoHeader } from "./pdfLogoHeader";
+import { buildLetterheadPdf, placeOnLetterhead } from "./pdfLogoHeader";
 import { FLASH_TRAVEL_CURRENT_VERSION } from "./signableDocumentRegistry";
 
 export { FLASH_TRAVEL_CURRENT_VERSION };
@@ -59,10 +59,12 @@ export function flashTravelLayout(version: number | undefined): FlashTravelLayou
       // ID row is gone, starting x 72 (Date's at x 105.4). Text sits just above
       // its line; the signature starts right of the "Employee Signature:"
       // label (x 72–191) so the two can't meet.
+      // Measured on the (edited) source page, moved down with page 4's content
+      // (V2_KEEP_TOGETHER.shift), then onto the letterhead with the rest.
       rects: {
-        name: { x: 76, y: 546, w: 330, h: 14 },
-        signature: { x: 200, y: 466 + V2_ID_ROW_HEIGHT, w: 280, h: 32 },
-        dateSigned: { x: 110, y: 442 + V2_ID_ROW_HEIGHT, w: 150, h: 14 },
+        name: placeOnLetterhead({ x: 76, y: 546 - V2_KEEP_TOGETHER.shift, w: 330, h: 14 }),
+        signature: placeOnLetterhead({ x: 200, y: 466 + V2_ID_ROW_HEIGHT - V2_KEEP_TOGETHER.shift, w: 280, h: 32 }),
+        dateSigned: placeOnLetterhead({ x: 110, y: 442 + V2_ID_ROW_HEIGHT - V2_KEEP_TOGETHER.shift, w: 150, h: 14 }),
       },
     };
   }
@@ -81,6 +83,115 @@ export function flashTravelLayout(version: number | undefined): FlashTravelLayou
  * don't know the document's version are the employer-signature screens,
  * which only ever handle version 1 (version 2 has no employer step).
  */
+/**
+ * Version 2, page 2: HR's rewrite of the meal-reimbursement exclusions. The
+ * source PDF's "Strict Alcohol Prohibition" bullet and "Non-Reimbursable
+ * Items" section (baselines 527.7 down to 240.1; "4. ACCOMMODATIONS &
+ * COMMUTING RULES" follows at 216.1) are whited out and this text is set in
+ * their place, in the page's own style: bullet + bold heading at x 90/108,
+ * 12pt body indented under the heading at x 108, 16pt lines, 8pt between paragraphs.
+ */
+const V2_INELIGIBLE = {
+  pageIndex: 1,
+  heading: "Ineligible Purchases and Reimbursement Limitations",
+  paragraphs: [
+    "Meal reimbursements are strictly limited to ordinary food and non-alcoholic beverages consumed by the technician. US In Home Services will not reimburse any expenses related to the purchase of alcoholic beverages (including beer, wine, liquor, etc.), tobacco, e-cigarettes, vaping products, nicotine items, controlled substances, cannabis, marijuana, THC/CBD products, illegal or recreational drugs (regardless of legal status in the destination state), over-the-counter (OTC) medications, or any other personal-use medications or prohibited substances.",
+    "All such purchases must be paid for personally by the employee and may not be included in meal expense claims or submitted for reimbursement.",
+    "If any non-reimbursable items appear on an itemized receipt submitted for reimbursement, the entire meal reimbursement claim for that receipt will be denied. No portion of the meal expense associated with that receipt will be eligible for reimbursement, regardless of whether the remaining items are otherwise eligible under this agreement.",
+  ],
+  // Area covered: from just above the old bullet's cap height down to just under its last line.
+  cover: { left: 70, bottom: 234, right: 560, top: 542 },
+  headingY: 527.7,
+  // Indented under the bold heading, like the page's other bullets' wrapped text.
+  bodyX: 108,
+  bodyRight: 540,
+  /** The lowest a body baseline may sit (the old section's last line) — keeps clear of section 4. */
+  minBaseline: 240,
+};
+
+async function replaceV2IneligibleSection(pdfDoc: PDFDocument): Promise<void> {
+  const S = V2_INELIGIBLE;
+  const page = pdfDoc.getPage(S.pageIndex);
+  const regular = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const wrap = (text: string, size: number) => {
+    const lines: string[] = [];
+    let line = "";
+    for (const word of text.split(/\s+/)) {
+      const next = line ? `${line} ${word}` : word;
+      if (regular.widthOfTextAtSize(next, size) > S.bodyRight - S.bodyX && line) {
+        lines.push(line);
+        line = word;
+      } else line = next;
+    }
+    if (line) lines.push(line);
+    return lines;
+  };
+  // 12pt like the rest of the page; 11pt only if 12pt wouldn't fit above section 4.
+  const layoutFor = (size: number, lead: number) => {
+    const paras = S.paragraphs.map((p) => wrap(p, size));
+    let y = S.headingY - 24;
+    const placed: { text: string; y: number }[] = [];
+    paras.forEach((lines, i) => {
+      if (i > 0) y -= 8;
+      for (const l of lines) {
+        placed.push({ text: l, y });
+        y -= lead;
+      }
+    });
+    return { placed, lowest: placed[placed.length - 1]?.y ?? S.headingY, size };
+  };
+  let layout = layoutFor(12, 16);
+  if (layout.lowest < S.minBaseline) layout = layoutFor(11, 14.6);
+
+  const c = S.cover;
+  page.drawRectangle({ x: c.left, y: c.bottom, width: c.right - c.left, height: c.top - c.bottom, color: rgb(1, 1, 1) });
+  // Bullet as a filled dot, the size of the page's own "•" bullets (a Helvetica "•" prints much smaller).
+  page.drawCircle({ x: 93.2, y: S.headingY + 3.6, size: 2.3, color: rgb(0, 0, 0) });
+  page.drawText(S.heading, { x: 108, y: S.headingY, size: 12, font: bold, color: rgb(0, 0, 0) });
+  for (const { text, y } of layout.placed) page.drawText(text, { x: S.bodyX, y, size: layout.size, font: regular, color: rgb(0, 0, 0) });
+}
+
+/**
+ * Version 2: the "Financial Recovery & Legal Remedies" bullet starts at the
+ * bottom of page 3 (4 lines, baselines 136.1 → 88.1) and runs onto page 4 —
+ * split across the letterhead footer/header it read badly. Its page-3 lines
+ * are moved to the top of page 4 (first baseline 695.6, where page 4's text
+ * starts) and everything on page 4 moves down 4 lines (64pt) to make room,
+ * so the whole bullet sits together.
+ */
+const V2_KEEP_TOGETHER = {
+  fromPage: 2,
+  toPage: 3,
+  // The bullet's lines on page 3: cap height above the first baseline to descenders below the last.
+  box: { left: 60, bottom: 82, right: 552, top: 150 },
+  firstBaseline: 136.1,
+  destFirstBaseline: 695.6,
+  shift: 64,
+};
+
+/**
+ * Takes the already-edited form's bytes and returns new bytes. Works on a
+ * freshly loaded document: drawing more on a page pdf-lib has already saved
+ * (page 4, edited for the Employee ID row) is silently dropped.
+ */
+async function keepV2FinancialRecoveryTogether(editedBytes: Uint8Array): Promise<Uint8Array> {
+  const K = V2_KEEP_TOGETHER;
+  const pdfDoc = await PDFDocument.load(editedBytes);
+  const snapshot = await PDFDocument.load(editedBytes);
+  const chunk = await pdfDoc.embedPage(snapshot.getPage(K.fromPage), K.box);
+  const lastPage = await pdfDoc.embedPage(snapshot.getPage(K.toPage));
+  const from = pdfDoc.getPage(K.fromPage);
+  const to = pdfDoc.getPage(K.toPage);
+  const white = rgb(1, 1, 1);
+  from.drawRectangle({ x: K.box.left, y: K.box.bottom, width: K.box.right - K.box.left, height: K.box.top - K.box.bottom, color: white });
+  const { width, height } = to.getSize();
+  to.drawRectangle({ x: 0, y: 0, width, height, color: white });
+  to.drawPage(lastPage, { x: 0, y: -K.shift });
+  to.drawPage(chunk, { x: K.box.left, y: K.box.bottom + (K.destFirstBaseline - K.firstBaseline) });
+  return pdfDoc.save();
+}
+
 export async function loadBlankFlashTechnicianTravelBytes(version: number = 1): Promise<Uint8Array> {
   const mod = version >= 2
     ? await import("@/assets/Flash Tech Travel & Expense Policy Agreement.pdf")
@@ -98,10 +209,15 @@ export async function loadBlankFlashTechnicianTravelBytes(version: number = 1): 
     const b = V2_SIG_DATE_BOX;
     page.drawRectangle({ x: b.left, y: b.bottom, width: b.right - b.left, height: b.top - b.bottom + V2_ID_ROW_HEIGHT, color: rgb(1, 1, 1) });
     page.drawPage(sigDateRows, { x: b.left, y: b.bottom + V2_ID_ROW_HEIGHT });
-    // Version 2 has no letterhead — stamp the company logo on page 1 only
-    // (its title starts at y=695.5, same clearance as the other forms using
-    // addLogoHeader). Version 1 has its own "US IN HOME SERVICES" header.
-    await addLogoHeader(pdfDoc, { firstPageOnly: true });
+    // Page 2: HR's rewritten "Ineligible Purchases and Reimbursement Limitations".
+    await replaceV2IneligibleSection(pdfDoc);
+    // Pages 3–4: keep "Financial Recovery & Legal Remedies" in one piece on page 4.
+    const kept = await keepV2FinancialRecoveryTogether(await pdfDoc.save());
+    // Then the whole edited form onto the company letterhead (logo top-left,
+    // ribbon top-right, footer, faint watermark) at 92%. Version 1 has its
+    // own "US IN HOME SERVICES" header and is left as it is.
+    const onLetterhead = await buildLetterheadPdf(kept);
+    return onLetterhead.save();
   }
   return pdfDoc.save();
 }
