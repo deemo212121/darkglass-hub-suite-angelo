@@ -1529,7 +1529,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           paint("shortAvgHours", GRADERS.avgHours(shortAvgHours(r)));
           paint("shortAvgMiles", GRADERS.avgMiles(shortAvgMiles(r)));
           row.getCell("shortErrorCount").value = shortErrorCount(r);
-          if (shortErrorCount(r) > 0) row.getCell("shortErrorCount").font = { bold: true, color: { argb: "FFB91C1C" } };
+          paint("shortErrorCount", GRADERS.errorCount(shortErrorCount(r)));
           const pts = shortPoints(r);
           const letter = letterGrade(pts);
           row.getCell("shortPoints").value = pts;
@@ -2174,7 +2174,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                               {s.ranges[g] ? (
                                 <>
                                   {s.ranges[g]}
-                                  <span className="block text-[10px] opacity-70">{fmtPoints((s.points ?? GRADE_POINTS)[g])}</span>
+                                  <span className="block text-[10px] opacity-70">{s.unscored ? "not scored" : fmtPoints((s.points ?? GRADE_POINTS)[g])}</span>
                                 </>
                               ) : (
                                 <span className="opacity-40">—</span>
@@ -2398,10 +2398,10 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                                 {gradedTd(GRADERS.avgHours(shortAvgHours(r)), fmt1(shortAvgHours(r)))}
                                 {gradedTd(GRADERS.avgMiles(shortAvgMiles(r)), fmt1(shortAvgMiles(r)))}
                                 <td
-                                  className={`px-3 py-2 text-right tabular-nums font-semibold border-r border-white/10 ${shortErrorCount(r) > 0 ? "text-red-300" : "text-muted-foreground"}`}
+                                  className="px-2 py-1.5 text-right border-r border-white/10"
                                   title={`Timecard issues: ${r.timecardIssueCount} · Damages: ${r.damageAssessmentCount} · Missed clock-in / Time Out: ${r.missedClockInCount}`}
                                 >
-                                  {shortErrorCount(r)}
+                                  <GradePill grade={GRADERS.errorCount(shortErrorCount(r))}>{shortErrorCount(r)}</GradePill>
                                 </td>
                                 <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">{r.minorTicketCount}</td>
                                 <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">{r.majorTicketCount}</td>

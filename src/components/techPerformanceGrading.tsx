@@ -85,6 +85,9 @@ export const GRADERS = {
   avgHours: (v: number): Grade => (v > 12 ? "effort" : "median"),
   // Average Mileage: 250+ a day is green (+1 pt); under 250 is yellow (0).
   avgMiles: (v: number): Grade => (v >= 250 ? "great" : "median"),
+  // Error Count (lower is better): 0 Maximum, 1 Great, 2 Median, 3 Effort,
+  // 4 or more Alert. Colour only — it isn't part of Points / the grade.
+  errorCount: (v: number): Grade => (v <= 0 ? "max" : v === 1 ? "great" : v === 2 ? "median" : v === 3 ? "effort" : "alert"),
 };
 // Points per grade; a technician's Points = the sum over the scored
 // factors, −5 to 11. Redo % and Working Days top out at 2 (their Maximum
@@ -164,13 +167,14 @@ export function GradeMedal({ grade, size = "md" }: { grade: LetterGrade; size?: 
 }
 
 export const fmtPoints =(p: number) => `${p > 0 ? `+${p}` : p < 0 ? `−${-p}` : "0"} pt${Math.abs(p) === 1 ? "" : "s"}`;
-export const GRADE_SCALE: { factor: string; ranges: Record<Grade, string>; points?: Record<Grade, number> }[] = [
+export const GRADE_SCALE: { factor: string; ranges: Record<Grade, string>; points?: Record<Grade, number>; unscored?: boolean }[] = [
   { factor: "Average Tickets", ranges: { max: "6+", great: "5–5.9", median: "4–4.9", effort: "3–3.9", alert: "2.9 or less" } },
   { factor: "Total Ticket", ranges: { max: "61+", great: "50–60", median: "40–49", effort: "30–39", alert: "29 or less" } },
   { factor: "Redo %", ranges: { max: "2% or less", great: "4% or less", median: "6% or less", effort: "7–9%", alert: "10%+" }, points: CAPPED_GRADE_POINTS },
   { factor: "Working Days", ranges: { max: "13–14", great: "11–12", median: "10", effort: "8–9", alert: "7 or less" }, points: CAPPED_GRADE_POINTS },
   { factor: "Average Mileage", ranges: { max: "", great: "250+", median: "under 250", effort: "", alert: "" }, points: AVG_MILES_POINTS },
   { factor: "Average Hours", ranges: { max: "", great: "", median: "12 or less", effort: "over 12", alert: "" }, points: AVG_HOURS_POINTS },
+  { factor: "Error Count", ranges: { max: "0", great: "1", median: "2", effort: "3", alert: "4 or more" }, unscored: true },
 ];
 
 export function GradePill({ grade, children }: { grade: Grade | null; children: ReactNode }) {
