@@ -369,11 +369,16 @@ function RoleMultiSelect({
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
-  const labelByValue = useMemo(() => {
-    const m: Record<string, string> = {};
-    for (const o of options) m[normalizeRole(o.value)] = o.label;
-    return m;
-  }, [options]);
+  // A role the person still holds that the list no longer offers (e.g. the
+  // retired plain "CSR") — listed first so it can be unticked; otherwise it
+  // stayed on their account with no way to remove it here.
+  const shownOptions = useMemo(() => {
+    const offered = new Set(options.map((o) => normalizeRole(o.value)));
+    const held = values
+      .filter((v) => v && !offered.has(normalizeRole(v)))
+      .map((v) => ({ value: v, label: `${v} (old role — no longer offered)` }));
+    return [...held, ...options];
+  }, [options, values]);
   // Some profiles still carry a legacy free-text role (e.g. "CSR Manager"
   // instead of the canonical "CSR_MANAGER") — compared by exact string, that
   // value would match none of this list's option values, so its checkbox
@@ -402,7 +407,7 @@ function RoleMultiSelect({
     onChange(next);
   };
   const summary = values.length
-    ? `${values.length} selected: ${values.map((v) => labelByValue[normalizeRole(v)] || v).join(", ")}`
+    ? `${values.length} selected: ${values.map((v) => options.find((o) => normalizeRole(o.value) === normalizeRole(v))?.label || v).join(", ")}`
     : placeholder;
   return (
     <div className="relative" ref={ref}>
@@ -416,7 +421,7 @@ function RoleMultiSelect({
       </button>
       {open && (
         <div className="absolute z-50 mt-1 w-full max-h-64 overflow-y-auto rounded-lg border border-white/10 bg-slate-900 shadow-xl">
-          {options.map((opt) => {
+          {shownOptions.map((opt) => {
             const checked = values.some((v) => normalizeRole(v) === normalizeRole(opt.value));
             const isPrimary = values.length > 0 && normalizeRole(values[0]) === normalizeRole(opt.value);
             return (
