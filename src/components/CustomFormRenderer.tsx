@@ -28,6 +28,7 @@ import {
   type CustomFormField,
 } from "@/lib/formElements";
 import { hasAnswer, isSignerSectionComplete, splitSignerSections, type SignerSection } from "@/lib/customFormSections";
+import { CustomFormSignatureInput } from "@/components/CustomFormSignatureInput";
 
 export type CustomFormRendererValue = any;
 
@@ -167,7 +168,11 @@ function validateFieldValue(field: CustomFormField, value: any, valuesByName: Re
   return null;
 }
 
-function FieldRow({ field, value, disabled, onChange, valuesByName }: { field: CustomFormField; value: any; disabled: boolean; onChange: (v: any) => void; valuesByName: Record<string, any> }) {
+/** A Signature field's printed-name line: its current value, and whether it's pre-printed (read-only). */
+interface SignerName { name: string; locked: boolean }
+type RowProps = { field: CustomFormField; value: any; disabled: boolean; onChange: (v: any) => void; valuesByName: Record<string, any>; signer?: SignerName };
+
+function FieldRow({ field, value, disabled, onChange, valuesByName, signer }: RowProps) {
   const def = ELEMENT_REGISTRY[field.type];
   if (!def) return null;
   const style = applyFieldStyle(field);
@@ -193,7 +198,11 @@ function FieldRow({ field, value, disabled, onChange, valuesByName }: { field: C
         {field.description && <p className="text-xs text-muted-foreground -mt-1">{field.description}</p>}
         {field.helpText && <p className="text-xs text-muted-foreground -mt-1">{field.helpText}</p>}
         <fieldset disabled={disabled} className="contents">
-          <def.FillInput field={field} value={value} onChange={onChange} valuesByName={valuesByName} />
+          {field.type === "signature" ? (
+            <CustomFormSignatureInput field={field} onChange={onChange} signerName={signer?.name} signerNameLocked={signer?.locked} />
+          ) : (
+            <def.FillInput field={field} value={value} onChange={onChange} valuesByName={valuesByName} />
+          )}
         </fieldset>
       </div>
     </div>
@@ -201,20 +210,34 @@ function FieldRow({ field, value, disabled, onChange, valuesByName }: { field: C
 }
 
 /** Paper view: the answer written on a line with its label underneath, the way the printed document reads. */
-function PaperLineRow({ field, value, disabled, onChange, valuesByName }: { field: CustomFormField; value: any; disabled: boolean; onChange: (v: any) => void; valuesByName: Record<string, any> }) {
+function PaperLineRow({ field, value, disabled, onChange, valuesByName, signer }: RowProps) {
   const def = ELEMENT_REGISTRY[field.type];
   if (!def) return null;
+  const line = (
+    <>
+      <div className="paper-rule" />
+      <div className="paper-label" title={field.tooltip || undefined}>
+        {field.label}{field.required && !field.readonly && <span className="text-red-600 ml-0.5">*</span>}
+      </div>
+    </>
+  );
   return (
     // Bottom-aligned (self-end) so a Date beside a Signature shares its line, as on the PDF.
     <div style={applyFieldStyle(field)} className={`paper-line-row self-end ${field.cssClass ?? ""}`}>
       <div className={`paper-line ${field.type === "signature" ? "paper-sig" : ""} ${field.displayMode === "block" && field.width < 100 ? "paper-gutter" : ""}`}>
-        <fieldset disabled={disabled} className="contents">
-          <def.FillInput field={field} value={value} onChange={onChange} valuesByName={valuesByName} />
-        </fieldset>
-        <div className="paper-rule" />
-        <div className="paper-label" title={field.tooltip || undefined}>
-          {field.label}{field.required && !field.readonly && <span className="text-red-600 ml-0.5">*</span>}
-        </div>
+        {/* A signature's line and label go between the pad and its Type/Draw controls. */}
+        {field.type === "signature" ? (
+          <fieldset disabled={disabled} className="contents">
+            <CustomFormSignatureInput field={field} onChange={onChange} signerName={signer?.name} signerNameLocked={signer?.locked} belowCanvas={line} controlsFirst />
+          </fieldset>
+        ) : (
+          <>
+            <fieldset disabled={disabled} className="contents">
+              <def.FillInput field={field} value={value} onChange={onChange} valuesByName={valuesByName} />
+            </fieldset>
+            {line}
+          </>
+        )}
       </div>
     </div>
   );
@@ -261,6 +284,34 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
   const [autoName, setAutoName] = useState("");
 
   const valuesByName = useMemo(() => Object.fromEntries(allFields.map((f) => [f.name, values[f.id]])), [allFields, values]);
+
+  // Each Signature's printed-name line (config.nameField, else the nearest
+  // "Name" / "Printed Name" / "Full Name" field in its block) — its typed
+  // signature is that name, as on the other HR forms.
+  const signerNameFieldBySig = useMemo(() => {
+    const isNameField = (g: CustomFormField) => (g.type === "shortText" || g.type === "fullName") && /^(full |printed )?name$|printed name|full name/i.test((g.label || "").trim());
+    const map = new Map<string, CustomFormField>();
+    allFields.forEach((f, i) => {
+      if (f.type !== "signature") return;
+      const named = f.config?.nameField ? allFields.find((g) => g.name === f.config.nameField) : undefined;
+      if (named) { map.set(f.id, named); return; }
+      for (const step of [1, -1]) {
+        for (let j = i + step; j >= 0 && j < allFields.length; j += step) {
+          const g = allFields[j];
+          if (g.type === "heading" || g.type === "signature" || g.type === "pageBreak") break;
+          if (isNameField(g)) { map.set(f.id, g); return; }
+        }
+      }
+    });
+    return map;
+  }, [allFields]);
+  const signerFor = (f: CustomFormField): SignerName | undefined => {
+    const nameField = signerNameFieldBySig.get(f.id);
+    if (!nameField) return undefined;
+    const v = values[nameField.id];
+    const name = typeof v === "string" ? v.trim() : v?.first ? [v.first, v.last].filter(Boolean).join(" ") : "";
+    return { name, locked: !!nameField.readonly };
+  };
 
   // Company mode, more than one signer section (e.g. the CEO, then HR): a
   // section someone already completed is read-only, and the person fills
@@ -359,7 +410,7 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
     const { visible, disabled } = computeFieldState(f, valuesByName);
     if (!visible) return null;
     const Row = paper && PAPER_LINE_TYPES.has(f.type) ? PaperLineRow : FieldRow;
-    const row = <Row key={f.id} field={f} value={values[f.id]} disabled={disabled} onChange={(v) => setValue(f.id, v)} valuesByName={valuesByName} />;
+    const row = <Row key={f.id} field={f} value={values[f.id]} disabled={disabled} onChange={(v) => setValue(f.id, v)} valuesByName={valuesByName} signer={signerFor(f)} />;
     if (!signedFieldIds.has(f.id)) return row;
     if (f.type === "heading") {
       return (

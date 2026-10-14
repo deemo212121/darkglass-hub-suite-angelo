@@ -15185,10 +15185,13 @@ button.home-attn:focus-visible { outline: 2px solid var(--tone); outline-offset:
 }
 .paper-rule { border-top: 1px solid #111827; }
 .paper-label { font-size: 12px; color: #4b5563; margin-top: 3px; }
-/* Signature: a light "sign here" area on the line; Clear sits in its corner. */
-.paper-sig { position: relative; }
+/* Signature: a light "sign here" area on the line, then its Type/Draw controls
+   (SignaturePadControls, styled for the white page). */
 .paper-sig canvas { max-width: 100% !important; border: 0 !important; border-radius: 0 !important; background-color: #f1f6ff !important; }
-.paper-sig fieldset button { position: absolute; top: 4px; right: 0.25rem; padding: 2px 8px; font-size: 11px; }
-.paper-sheet .paper-sig.paper-gutter fieldset button { right: 1.75rem; }
-@media (max-width: 640px) { .paper-sheet .paper-sig.paper-gutter fieldset button { right: 0.25rem; } }
-.paper-sig fieldset span { display: none; }
+.paper-sheet .sig-controls { margin-bottom: 6px; }
+.paper-sheet .sig-controls .bg-white\/5 { background-color: #f1f5f9 !important; }
+.paper-sheet .sig-controls .border-white\/10 { border-color: rgba(15, 23, 42, 0.15) !important; }
+.paper-sheet .sig-controls .text-slate-300 { color: #334155 !important; }
+.paper-sheet .sig-controls .bg-blue-500\/10.text-white { color: #111827 !important; }
+.paper-sheet .sig-controls .hover\:text-white:hover { color: #111827 !important; }
+.paper-sheet .sig-controls .text-red-300 { color: #b91c1c !important; }
