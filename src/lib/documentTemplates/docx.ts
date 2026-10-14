@@ -145,7 +145,7 @@ export async function generateSubmissionDocx(form: Pick<CustomForm, "title" | "f
   const body: (Paragraph | Table)[] = [];
 
   const logo = await loadDocumentLogo();
-  if (logo) body.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 120 }, children: [new ImageRun({ type: "png", data: await dataUrlToBytes(logo), transformation: { width: 64, height: 64 } })] }));
+  if (logo) body.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 120 }, children: [new ImageRun({ type: "png", data: await dataUrlToBytes(logo), transformation: { width: 100, height: 100 } })] }));
   if (!fields.some((f) => f.type === "heading")) {
     body.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 200 }, children: [new TextRun({ text: form.title, bold: true, size: 28, color: INK })] }));
   }

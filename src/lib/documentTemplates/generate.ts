@@ -318,7 +318,7 @@ function renderAnswerHtml(field: CustomFormField, value: CustomFormResponseValue
 /** The form itself laid out as a document, in field order: its own headings and paragraphs as written, every answer, signatures on signing lines. */
 function buildAutoDocumentBlocks(form: Pick<CustomForm, "title" | "fields">, valuesByName: Record<string, CustomFormResponseValue>, fieldsByName: Record<string, CustomFormField>, logoDataUrl: string): string[] {
   const blocks: string[] = [];
-  if (logoDataUrl) blocks.push(`<div class="doc-blk full text" style="width:100%;text-align:center;"><img src="${logoDataUrl}" style="width:60px;height:60px;" /></div>`);
+  if (logoDataUrl) blocks.push(`<div class="doc-blk full text" style="width:100%;text-align:center;"><img src="${logoDataUrl}" style="width:100px;height:100px;" /></div>`);
   const fields = form.fields.filter((f) => !f.hidden && !SKIPPED_IN_DOCUMENT.has(f.type));
   if (!fields.some((f) => f.type === "heading")) {
     blocks.push(`<div class="doc-blk full" style="width:100%;font-size:16px;font-weight:700;text-align:center;">${escapeHtml(form.title)}</div>`);
