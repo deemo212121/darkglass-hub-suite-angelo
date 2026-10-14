@@ -27,7 +27,7 @@ import {
   ELEMENT_REGISTRY, applyFieldStyle, checkConditions, evaluateBooleanExpression, evaluateNumericExpression,
   type CustomFormField,
 } from "@/lib/formElements";
-import { hasAnswer, isSignerSectionComplete, splitSignerSections, type SignerSection } from "@/lib/customFormSections";
+import { canSignSection, hasAnswer, isSignerSectionComplete, sectionSigner, signerSectionName, splitSignerSections, type CurrentSigner, type SignerSection } from "@/lib/customFormSections";
 import { CustomFormSignatureInput } from "@/components/CustomFormSignatureInput";
 
 export type CustomFormRendererValue = any;
@@ -52,6 +52,12 @@ interface Props {
    * in styles.css. Errors and the Submit button sit below the page.
    */
   paper?: { header?: ReactNode };
+  /**
+   * Company mode: who is completing it. A signer section whose heading names
+   * its signer (config.signer — e.g. only Justin Lee, or only HR) can only be
+   * signed by that person; everyone else sees "Waiting for … to sign."
+   */
+  signer?: CurrentSigner | null;
 }
 
 /** Answers drawn on a line with the label underneath in paper view — the rest keep their usual label-above layout. */
@@ -262,7 +268,7 @@ function SignedFieldRow({ field, value }: { field: CustomFormField; value: any }
   );
 }
 
-export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submitter", initialValues, paper }: Props) {
+export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submitter", initialValues, paper, signer }: Props) {
   const fields = useMemo(() => allFields.filter((f) => (mode === "company" ? f.fillBy === "company" : f.fillBy !== "company")), [allFields, mode]);
   const [values, setValues] = useState<Record<string, any>>(() => ({
     ...Object.fromEntries(fields.filter((f) => f.defaultValue !== undefined).map((f) => [f.id, f.defaultValue])),
@@ -313,23 +319,28 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
     return { name, locked: !!nameField.readonly };
   };
 
-  // Company mode, more than one signer section (e.g. the CEO, then HR): a
-  // section someone already completed is read-only, and the person fills
-  // just their own — see customFormSections.ts.
+  // Company mode with more than one signer section (e.g. the CEO, then HR),
+  // or one that names its signer: a section someone already completed is
+  // read-only, one that's someone else's to sign shows who it's waiting for,
+  // and the person fills just their own — see customFormSections.ts.
   const signerSections = useMemo<SignerSection[]>(() => {
     if (mode !== "company") return [];
     const sections = splitSignerSections(fields.filter((f) => !f.hidden));
-    return sections.length > 1 ? sections : [];
+    return sections.length > 1 || sections.some(sectionSigner) ? sections : [];
   }, [fields, mode]);
   const signedFieldIds = useMemo(
     () => new Set(signerSections.filter((s) => isSignerSectionComplete(s, initialValues ?? {})).flatMap((s) => s.fields.map((f) => f.id))),
     [signerSections, initialValues]
   );
+  /** Sections still to sign that are this person's to sign. */
+  const mySections = signerSections.filter((s) => !signedFieldIds.has(s.fields[0].id) && canSignSection(s, signer));
+  /** …and the ones still waiting on someone else. */
+  const othersSections = signerSections.filter((s) => !signedFieldIds.has(s.fields[0].id) && !canSignSection(s, signer));
+  const sectionOfField = useMemo(() => new Map(signerSections.flatMap((s) => s.fields.map((f) => [f.id, s] as const))), [signerSections]);
   /** Open sections this person has started on — anything entered beyond the preset defaults (e.g. a pre-printed name). */
   const sectionsBeingSigned = () =>
-    signerSections.filter(
-      (s) => !signedFieldIds.has(s.fields[0].id) && s.fields.some((f) => hasAnswer(f, values[f.id]) && values[f.id] !== f.defaultValue)
-    );
+    mySections.filter((s) => s.fields.some((f) => hasAnswer(f, values[f.id]) && values[f.id] !== f.defaultValue));
+  const nothingForMe = signerSections.length > 0 && mySections.length === 0;
 
   // Calculated fields recompute from every other field's live value and are never directly edited.
   useEffect(() => {
@@ -348,6 +359,7 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
     if (isFirstPage && needsAutoName && !autoName.trim()) return "Please enter your name.";
     if (signerSections.length) {
       if (signerSections.every((s) => signedFieldIds.has(s.fields[0].id))) return "Every part of this form is already signed.";
+      if (nothingForMe) return `Nothing here for you to sign — waiting on ${othersSections.map(signerSectionName).join(", ")}.`;
       const signing = sectionsBeingSigned();
       if (!signing.length) return "Fill in your part — sign it and add the date.";
       for (const f of signing.flatMap((s) => s.fields)) {
@@ -411,6 +423,17 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
     if (!visible) return null;
     const Row = paper && PAPER_LINE_TYPES.has(f.type) ? PaperLineRow : FieldRow;
     const row = <Row key={f.id} field={f} value={values[f.id]} disabled={disabled} onChange={(v) => setValue(f.id, v)} valuesByName={valuesByName} signer={signerFor(f)} />;
+    // Someone else's part, not signed yet: just its heading and who it's waiting for.
+    const section = sectionOfField.get(f.id);
+    if (section && othersSections.includes(section)) {
+      if (f.id !== section.fields[0].id) return null;
+      return (
+        <Fragment key={f.id}>
+          {f.type === "heading" && row}
+          <p className="w-full -mt-2 text-xs font-semibold text-amber-500">Waiting for {signerSectionName(section)} to sign.</p>
+        </Fragment>
+      );
+    }
     if (!signedFieldIds.has(f.id)) return row;
     if (f.type === "heading") {
       return (
@@ -484,6 +507,9 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
 
       {error && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{error}</p>}
 
+      {nothingForMe ? (
+        <p className="text-xs text-muted-foreground">Nothing here for you to sign — waiting on {othersSections.map(signerSectionName).join(", ")}.</p>
+      ) : (
       <div className="flex items-center gap-2">
         {pageIndex > 0 && (
           <button type="button" onClick={handleBack} disabled={submitting} className="btn text-sm px-4 py-2 flex items-center gap-1.5 disabled:opacity-50">
@@ -501,6 +527,7 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
           </button>
         )}
       </div>
+      )}
     </div>
   );
 }

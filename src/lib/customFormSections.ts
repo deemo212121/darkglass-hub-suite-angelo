@@ -24,9 +24,9 @@ export function splitSignerSections(companyFields: CustomFormField[]): SignerSec
   return sections;
 }
 
-/** The section's display name — its heading's text (e.g. "HUMAN RESOURCES"). */
+/** Who signs the section — its signer's name (e.g. "Justin Lee"), else its heading's text (e.g. "HUMAN RESOURCES"). */
 export function signerSectionName(section: SignerSection): string {
-  return String(section.heading?.config?.text ?? "").trim() || "Company";
+  return String(section.heading?.config?.signer?.name ?? "").trim() || String(section.heading?.config?.text ?? "").trim() || "Company";
 }
 
 /**
@@ -44,4 +44,37 @@ export function hasAnswer(field: CustomFormField, value: unknown): boolean {
 /** Every required field in the section has an answer. */
 export function isSignerSectionComplete(section: SignerSection, values: Record<string, unknown>): boolean {
   return section.fields.every((f) => f.hidden || !f.required || ELEMENT_REGISTRY[f.type]?.kind === "structural" || hasAnswer(f, values[f.id]));
+}
+
+/**
+ * Who may sign a section — set on its company Heading as config.signer
+ * (e.g. { profileIds: [Justin Lee's id], name: "Justin Lee" } or
+ * { roles: ["HR"], name: "HR" }). No signer = anyone completing the form.
+ */
+export interface SectionSigner {
+  profileIds?: string[];
+  roles?: string[];
+  /** Shown to everyone else, e.g. "Waiting for Justin Lee to sign." */
+  name?: string;
+}
+
+/** The person completing the form: their profile id and real role(s). */
+export interface CurrentSigner {
+  profileId: string | null;
+  roles: string[];
+}
+
+export function sectionSigner(section: SignerSection): SectionSigner | null {
+  const s = section.heading?.config?.signer;
+  return s && (s.profileIds?.length || s.roles?.length) ? s : null;
+}
+
+/** Whether this person may sign the section (always, when it names no signer). Unknown person = only unrestricted sections. */
+export function canSignSection(section: SignerSection, me: CurrentSigner | null | undefined): boolean {
+  const s = sectionSigner(section);
+  if (!s) return true;
+  if (!me) return false;
+  if (me.profileId && s.profileIds?.includes(me.profileId)) return true;
+  const mine = new Set(me.roles.map((r) => r.toUpperCase()));
+  return !!s.roles?.some((r) => mine.has(r.toUpperCase()));
 }

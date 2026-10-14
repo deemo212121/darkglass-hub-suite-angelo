@@ -20,7 +20,7 @@ import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
 import { downloadStyledReport, type ReportSheet } from "@/lib/styledReportExport";
 import { uploadCustomFormFile } from "@/lib/firebase/storage";
 import { ELEMENT_REGISTRY, type CustomFormField } from "@/lib/formElements";
-import { isSignerSectionComplete, signerSectionName, splitSignerSections } from "@/lib/customFormSections";
+import { canSignSection, isSignerSectionComplete, sectionSigner, signerSectionName, splitSignerSections, type CurrentSigner } from "@/lib/customFormSections";
 import {
   getCustomForms,
   getCustomFormSubmissions,
@@ -80,7 +80,27 @@ function exportCellText(value: CustomFormResponseValue | undefined, field: Custo
 }
 
 export function CustomFormsPanel() {
-  const { uid } = useAuth();
+  const { uid, realRole, extraRoles, viewAsRole } = useAuth();
+
+  // Who's signed in, for forms whose company parts name their signer (e.g.
+  // only Justin Lee signs the CEO part, only HR the HR part). The real role —
+  // a "View as" preview doesn't let anyone sign as another role.
+  const [myProfileId, setMyProfileId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!uid) return;
+    getMyProfileId(uid).then(setMyProfileId).catch(() => setMyProfileId(null));
+  }, [uid]);
+  const me = useMemo<CurrentSigner>(
+    () => ({ profileId: myProfileId, roles: [realRole, ...(viewAsRole ? [] : extraRoles)].filter((r): r is string => !!r) }),
+    [myProfileId, realRole, extraRoles, viewAsRole]
+  );
+  /** Awaiting the company's part AND there's a part left that's this person's to sign. */
+  const canComplete = (form: CustomForm | undefined, submission: CustomFormSubmission): boolean => {
+    if (!form || !isAwaitingCompany(form, submission)) return false;
+    const sections = splitSignerSections(companyFields(form));
+    if (!sections.some(sectionSigner)) return true;
+    return sections.some((sec) => !isSignerSectionComplete(sec, submission.responses) && canSignSection(sec, me));
+  };
 
   const [forms, setForms] = useState<CustomForm[]>([]);
   const [formsLoading, setFormsLoading] = useState(true);
@@ -726,7 +746,7 @@ export function CustomFormsPanel() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        {isAwaitingCompany(formsById.get(s.formId), s) && (
+                        {canComplete(formsById.get(s.formId), s) && (
                           <button type="button" onClick={() => setCompleting(s)} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white" title="Fill in the company's part — e.g. the Authorized Representative signature">
                             <PenLine className="h-3 w-3" /> Complete
                           </button>
@@ -817,7 +837,7 @@ export function CustomFormsPanel() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  {awaiting && (
+                  {canComplete(formsById.get(live.formId), live) && (
                     <button type="button" onClick={() => { closePreview(); setCompleting(live); }} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white">
                       <PenLine className="h-3 w-3" /> Complete
                     </button>
@@ -865,7 +885,7 @@ export function CustomFormsPanel() {
               </div>
               <div className="p-4 overflow-y-auto">
                 {form ? (
-                  <CustomFormRenderer key={completing.id} fields={form.fields} mode="company" initialValues={completing.responses} onSubmit={(values) => handleComplete(values)} />
+                  <CustomFormRenderer key={completing.id} fields={form.fields} mode="company" initialValues={completing.responses} signer={me} onSubmit={(values) => handleComplete(values)} />
                 ) : (
                   <p className="text-sm text-red-300">This submission's form was deleted.</p>
                 )}
