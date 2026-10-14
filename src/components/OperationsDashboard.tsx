@@ -28,11 +28,11 @@ import { ReportAttendanceMonitoring } from "@/components/ReportAttendanceMonitor
 import { WorkHoursPanel } from "@/components/WorkHoursPanel";
 import { computeBranchRows, CANCEL_REASONS } from "@/lib/operationsBranchMetrics";
 
-// BizOps Manager / Senior Manager — same roster definition as
+// The BizOps department (Associate, Team Leader, Manager, Senior Manager) — same roster definition as
 // ReportOperationsDaily.tsx's isBizOpsProfile (kept as its own copy here,
 // same convention every sibling dashboard follows — e.g. ClaimsDashboard's
 // isClaimsProfile — rather than a shared cross-file helper).
-const BIZOPS_ROLES = new Set(["BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"]);
+const BIZOPS_ROLES = new Set(["BIZOPS_ASSOCIATE", "BIZOPS_TEAM_LEADER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"]);
 function isBizOpsProfile(p: ProfileRow): boolean {
   if (BIZOPS_ROLES.has(normalizeRole(p.role))) return true;
   return (p.extra_roles || []).some((r) => BIZOPS_ROLES.has(normalizeRole(r)));

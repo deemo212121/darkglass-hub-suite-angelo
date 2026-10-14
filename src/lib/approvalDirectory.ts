@@ -80,7 +80,7 @@ const PH_DEPT_BY_ROLE: Record<string, string> = {
   CSR: "CSR", CSR_AGENT: "CSR", CSR_TEAM_LEADER: "CSR", CSR_MANAGER: "CSR",
   CLAIMS: "Claims", CLAIMS_TEAM_LEADER: "Claims", CLAIMS_MANAGER: "Claims",
   PARTS: "Parts", PARTS_ORDER: "Parts", PARTS_TEAM_LEADER: "Parts", PARTS_MANAGER: "Parts",
-  BIZOPS_MANAGER: "BizOps", BIZOPS_SENIOR_MANAGER: "BizOps",
+  BIZOPS_ASSOCIATE: "BizOps", BIZOPS_TEAM_LEADER: "BizOps", BIZOPS_MANAGER: "BizOps", BIZOPS_SENIOR_MANAGER: "BizOps",
   TRIAGE_USER: "Triage", TRIAGE_MANAGER: "Triage",
   MANAGER: "Management", SENIOR_MANAGER: "Management",
   FINANCE: "Accounting", HR: "HR", IT: "IT", DISPATCHER: "Dispatch",

@@ -44,6 +44,9 @@ import { getCsrDailyReportEntries, upsertCsrDailyReportEntry, type CsrDailyRepor
 import { createCsrMistakeLogEntry } from "@/lib/supabase/csrMistakeLog";
 
 const MANAGER_TIER_ROLES = new Set(["ADMIN", "SUPERADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"]);
+// BizOps Team Leader / Associate see every CSR team like a BizOps Manager
+// (Team List), but can't change the teams (Team Composition stays manager-tier).
+const ALL_TEAMS_VIEW_ROLES = new Set([...MANAGER_TIER_ROLES, "BIZOPS_TEAM_LEADER", "BIZOPS_ASSOCIATE"]);
 
 type Tab = "todo" | "team-list" | "team-composition" | "flash-tech-grid" | "time-off-calendar";
 
@@ -58,6 +61,7 @@ export function CSRMainDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef })
   const { role, uid, ready } = useAuth();
   const normalizedRole = normalizeRole(role);
   const isManagerTier = MANAGER_TIER_ROLES.has(normalizedRole);
+  const seesAllTeams = ALL_TEAMS_VIEW_ROLES.has(normalizedRole);
   const isTeamLeader = normalizedRole === "CSR_TEAM_LEADER";
 
   const [tab, setTab] = useState<Tab>("todo");
@@ -73,8 +77,8 @@ export function CSRMainDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef })
   // before a role change).
   useEffect(() => {
     if (tab === "team-composition" && !isManagerTier) setTab("todo");
-    if (tab === "team-list" && !isManagerTier && !isTeamLeader) setTab("todo");
-  }, [tab, isManagerTier, isTeamLeader]);
+    if (tab === "team-list" && !seesAllTeams && !isTeamLeader) setTab("todo");
+  }, [tab, isManagerTier, seesAllTeams, isTeamLeader]);
 
   if (!ready) {
     return (
@@ -86,7 +90,7 @@ export function CSRMainDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef })
 
   const tabs: { key: Tab; label: string }[] = [
     { key: "todo", label: "To Do List" },
-    ...(isManagerTier || isTeamLeader ? [{ key: "team-list" as Tab, label: "Team List" }] : []),
+    ...(seesAllTeams || isTeamLeader ? [{ key: "team-list" as Tab, label: "Team List" }] : []),
     ...(isManagerTier ? [{ key: "team-composition" as Tab, label: "Team Composition" }] : []),
     { key: "flash-tech-grid", label: "Flash Tech Grid" },
     { key: "time-off-calendar", label: "Time Off Calendar" },
@@ -120,8 +124,8 @@ export function CSRMainDashboard({ mod }: { mod: ModuleDef; sub: SubModuleDef })
         </div>
 
         {tab === "todo" && <CSRToDoListContent />}
-        {tab === "team-list" && (isManagerTier || isTeamLeader) && (
-          <TeamListTab isManagerTier={isManagerTier} myProfileId={myProfileId} navigate={navigate} />
+        {tab === "team-list" && (seesAllTeams || isTeamLeader) && (
+          <TeamListTab isManagerTier={seesAllTeams} myProfileId={myProfileId} navigate={navigate} />
         )}
         {tab === "team-composition" && isManagerTier && (
           <div className="space-y-6">

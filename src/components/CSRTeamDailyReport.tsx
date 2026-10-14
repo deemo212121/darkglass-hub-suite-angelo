@@ -156,7 +156,8 @@ const DETAILS_PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 500];
 // Same manager-tier set CSRMainDashboard.tsx's Team List tab uses — a
 // CSR_TEAM_LEADER (not in this set) only ever sees their own team's rows
 // below (see visibleTeams), everyone in this set sees every team.
-const MANAGER_TIER_ROLES = new Set(["ADMIN", "SUPERADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"]);
+// Sees every CSR team's report (not just a team they lead) — BizOps Team Leader / Associate too, like a BizOps Manager.
+const MANAGER_TIER_ROLES = new Set(["ADMIN", "SUPERADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "BIZOPS_TEAM_LEADER", "BIZOPS_ASSOCIATE"]);
 
 // Same check as CSRMainDashboard.tsx's isCsrProfileFilter — the Mistake
 // Log's Name dropdown for a manager-tier viewer lists every CSR Associate/

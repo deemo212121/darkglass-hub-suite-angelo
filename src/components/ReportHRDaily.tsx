@@ -3308,8 +3308,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Office Use box signer is any manager (Branch, CSR, Parts, BizOps, etc.
   // — anything with "MANAGER" in the role code) as well as Admin/HR/BizOps,
   // since a branch-level manager like the reference's "CSR Manager" isn't
-  // covered by COE_OFFICE_USE_ROLES's fixed BizOps-only list above.
-  const isCoeOfficeUseEligible = (role: string) => role.includes("MANAGER") || role === "ADMIN" || role === "SUPERADMIN" || role === "HR" || role.includes("BIZOPS");
+  // covered by COE_OFFICE_USE_ROLES's fixed BizOps-only list above. BizOps
+  // Team Leader / Associate aren't signers — only the BizOps managers are.
+  const isCoeOfficeUseEligible = (role: string) => role.includes("MANAGER") || role === "ADMIN" || role === "SUPERADMIN" || role === "HR" || COE_OFFICE_USE_ROLES.has(role);
   const [coeOfficeUseNameDropdownOpen, setCoeOfficeUseNameDropdownOpen] = useState(false);
   // Held roles pile up: a secondary Manager/Admin/HR/BizOps role makes
   // someone just as eligible a signer as if it were their primary position.

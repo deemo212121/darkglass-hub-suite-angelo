@@ -37,6 +37,8 @@ export const ROLE_LABELS: Record<string, string> = {
   PARTS_MANAGER: "Parts Manager",
   PARTS_TEAM_LEADER: "Parts Team Leader",
   PARTS_ORDER: "Parts Order",
+  BIZOPS_ASSOCIATE: "BizOps Associate",
+  BIZOPS_TEAM_LEADER: "BizOps Team Leader",
   BIZOPS_MANAGER: "BizOps Manager",
   BIZOPS_SENIOR_MANAGER: "BizOps Senior Manager",
   TRIAGE_USER: "Technical Support",
@@ -105,6 +107,8 @@ export const ROLE_DEPARTMENT_BREAKDOWN: Record<string, { department: string; rol
   PARTS_MANAGER: { department: "Parts", roleLabel: "Manager" },
   PARTS_TEAM_LEADER: { department: "Parts", roleLabel: "Team Leader" },
   PARTS_ORDER: { department: "Parts", roleLabel: "Order" },
+  BIZOPS_ASSOCIATE: { department: "BizOps", roleLabel: "Associate" },
+  BIZOPS_TEAM_LEADER: { department: "BizOps", roleLabel: "Team Leader" },
   BIZOPS_MANAGER: { department: "BizOps", roleLabel: "Manager" },
   BIZOPS_SENIOR_MANAGER: { department: "BizOps", roleLabel: "Senior Manager" },
   TRIAGE_USER: { department: "Triage", roleLabel: "Agent" },
@@ -514,7 +518,7 @@ export function isFinanceRole(role: string | null | undefined, extraRoles?: stri
 const CONDUCT_NOTE_SUBMITTER_ROLES = new Set([
   "CSR_TEAM_LEADER", "CSR_MANAGER", "MANAGER", "SENIOR_MANAGER", "ADMIN", "SUPERADMIN", "HR",
   "BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER", "TECHNICIAN_MANAGER",
-  "CLAIMS_MANAGER", "PARTS_MANAGER", "PARTS_TEAM_LEADER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER",
+  "CLAIMS_MANAGER", "PARTS_MANAGER", "PARTS_TEAM_LEADER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "BIZOPS_TEAM_LEADER",
 ]);
 
 export function canSubmitConductNote(role: string | null | undefined, extraRoles?: string[] | null): boolean {
@@ -539,7 +543,7 @@ export function canFastTrackConductNote(role: string | null | undefined, extraRo
  * and Claims rather than shown to every role that can view tickets.
  */
 const DATA_CLOSE_FILTER_ROLES = new Set([
-  "ADMIN", "SUPERADMIN", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "CLAIMS", "CLAIMS_MANAGER",
+  "ADMIN", "SUPERADMIN", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "BIZOPS_TEAM_LEADER", "BIZOPS_ASSOCIATE", "CLAIMS", "CLAIMS_MANAGER",
 ]);
 
 export function canFilterDataClosedTickets(role: string | null | undefined, extraRoles?: string[] | null): boolean {
@@ -590,6 +594,7 @@ const ATTENDANCE_MANAGER_TIER_ROLES = new Set([
   "TRIAGE_MANAGER",
   "BIZOPS_MANAGER",
   "BIZOPS_SENIOR_MANAGER",
+  "BIZOPS_TEAM_LEADER",
 ]);
 
 export function isAttendanceManagerTierRole(role: string | null | undefined, extraRoles?: string[] | null): boolean {
@@ -674,7 +679,7 @@ export function isCsrManagerRole(role: string | null | undefined, extraRoles?: s
  * ATTENDANCE_MANAGER_TIER_ROLES itself, which stays untouched — Attendance
  * Monitoring's own single-level scoping isn't part of this change.
  */
-const EMPLOYEE_MONITORING_TEAM_LEAD_ONLY_ROLES = new Set(["CSR_TEAM_LEADER", "PARTS_TEAM_LEADER", "CLAIMS_TEAM_LEADER"]);
+const EMPLOYEE_MONITORING_TEAM_LEAD_ONLY_ROLES = new Set(["CSR_TEAM_LEADER", "PARTS_TEAM_LEADER", "CLAIMS_TEAM_LEADER", "BIZOPS_TEAM_LEADER"]);
 const EMPLOYEE_MONITORING_SENIOR_ROLES = new Set(
   Array.from(ATTENDANCE_MANAGER_TIER_ROLES).filter((r) => !EMPLOYEE_MONITORING_TEAM_LEAD_ONLY_ROLES.has(r))
 );

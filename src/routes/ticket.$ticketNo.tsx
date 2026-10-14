@@ -4382,6 +4382,8 @@ function TicketDetailsPage() {
       "SENIOR_BRANCH_MANAGER",
       "BIZOPS_MANAGER",
       "BIZOPS_SENIOR_MANAGER",
+      "BIZOPS_TEAM_LEADER",
+      "BIZOPS_ASSOCIATE",
     ]),
     [],
   );
@@ -4655,6 +4657,8 @@ function TicketDetailsPage() {
       "SENIOR_BRANCH_MANAGER",
       "BIZOPS_MANAGER",
       "BIZOPS_SENIOR_MANAGER",
+      "BIZOPS_TEAM_LEADER",
+      "BIZOPS_ASSOCIATE",
       "TRIAGE_USER",
       "TRIAGE_MANAGER",
       "SUPERADMIN",
