@@ -374,8 +374,22 @@ export interface EmployeePayrollRow {
    * from — straight-time wages plus this period's includable incentive pay,
    * divided by total hours worked. Equals hourlyRate when there's no
    * overtime or no includable pay this period. Display-only.
+   * Since the premium is now computed per workweek (techWeeklyOt), this is
+   * the OT-hours-weighted average of those weekly rates — the single rate
+   * that reproduces techHourlyPayOtPremium over the period's premium hours.
    */
   techWeightedRegularRate: number;
+  /**
+   * The OT premium broken out per Sunday workweek, as FLSA requires (and
+   * as the reference payroll workbook computes it): each week's regular
+   * rate = (that week's straight-time wages + that week's includable pay)
+   * ÷ that week's hours, and its premium = 0.5 × rate × its OT hours.
+   * Includable pay comes from custom lines tagged with that week
+   * (work_week_start, migration 0373); everything not tied to a week
+   * (ticket pay, Training, untagged lines) is spread across the weeks by
+   * hours. Premiums sum to techHourlyPayOtPremium. Empty for office rows.
+   */
+  techWeeklyOt: TechWeeklyOt[];
   /**
    * Guaranteed-minimum-salary match — see latestFixedSalaryByProfile in
    * payrollRows. techGuaranteedSalaryTarget is that salary's per-cutoff
@@ -665,6 +679,61 @@ function computeHoursMap(
     }
   }
   return { totals: hoursMap, daily: dailyMap };
+}
+
+/** One Sunday workweek's piece of a technician's OT premium — see EmployeePayrollRow.techWeeklyOt. */
+export interface TechWeeklyOt {
+  weekStart: string;
+  hours: number;
+  /** OT hours that earn the premium (training days excluded). */
+  premiumHours: number;
+  straightPay: number;
+  /** Includable pay counted in this week: its week-tagged lines + its hours-share of the untagged pay. */
+  includablePay: number;
+  regularRate: number;
+  premium: number;
+}
+
+/**
+ * FLSA overtime premium computed per workweek, then summed for the pay
+ * period. `taggedIncludable` holds includable pay already tied to a week
+ * (custom lines with work_week_start); `untaggedIncludable` is spread over
+ * the weeks by hours, which with one hourly rate gives exactly the old
+ * period-wide result — so nothing changes until lines are tagged.
+ */
+function weeklyOtPremium(
+  dailyHours: DailyHours[],
+  rateForDate: (date: string) => number,
+  earnsPremium: (date: string) => boolean,
+  taggedIncludable: Map<string, number> | undefined,
+  untaggedIncludable: number
+): TechWeeklyOt[] {
+  const weeks = new Map<string, TechWeeklyOt>();
+  for (const day of dailyHours) {
+    const weekStart = startOfWeekSunday(day.date);
+    const week = weeks.get(weekStart) ?? { weekStart, hours: 0, premiumHours: 0, straightPay: 0, includablePay: 0, regularRate: 0, premium: 0 };
+    const dayHours = day.regular + day.overtime;
+    week.hours += dayHours;
+    week.straightPay += dayHours * rateForDate(day.date);
+    if (earnsPremium(day.date)) week.premiumHours += day.overtime;
+    weeks.set(weekStart, week);
+  }
+  const list = [...weeks.values()].sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+  const totalHours = list.reduce((sum, w) => sum + w.hours, 0);
+  // A line tagged with a week that has no hours in this period can't raise
+  // any week's rate — it's left in the untagged pool rather than dropped.
+  let unplaced = untaggedIncludable;
+  for (const [weekStart, amount] of taggedIncludable ?? []) {
+    const week = weeks.get(weekStart);
+    if (week && week.hours > 0) week.includablePay += amount;
+    else unplaced += amount;
+  }
+  for (const week of list) {
+    if (totalHours > 0) week.includablePay += unplaced * (week.hours / totalHours);
+    week.regularRate = week.hours > 0 ? (week.straightPay + week.includablePay) / week.hours : 0;
+    week.premium = week.premiumHours * week.regularRate * 0.5;
+  }
+  return list;
 }
 
 /** One employee's period totals for straight-time-all-hours pay (hours × that
@@ -2619,10 +2688,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // reduction in earned piece-rate wages, not an unrelated adjustment) —
   // sign alone was never a safe signal for exclusion anyway.
   const techCustomIncludableByProfile = new Map<string, number>();
+  // The week-tagged part of the above (migration 0373), per Sunday week —
+  // feeds that week's own regular rate (see weeklyOtPremium).
+  const techCustomIncludableByProfileWeek = new Map<string, Map<string, number>>();
   for (const item of techCustomPayItemsAll) {
     techCustomTotalByProfile.set(item.profileId, (techCustomTotalByProfile.get(item.profileId) ?? 0) + item.value * item.rate);
     if (item.isWageIncludable) {
       techCustomIncludableByProfile.set(item.profileId, (techCustomIncludableByProfile.get(item.profileId) ?? 0) + item.value * item.rate);
+      if (item.workWeekStart) {
+        const byWeek = techCustomIncludableByProfileWeek.get(item.profileId) ?? new Map<string, number>();
+        byWeek.set(item.workWeekStart, (byWeek.get(item.workWeekStart) ?? 0) + item.value * item.rate);
+        techCustomIncludableByProfileWeek.set(item.profileId, byWeek);
+      }
     }
   }
 
@@ -2800,12 +2877,34 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const techDailyPay = blendedDailyPay(dailyHoursByEmployeeId.get(emp.id), hours, (date) => hourlyRateOnDate(emp.id, date, hourlyRate), hourlyRate);
     const techTotalHours = techDailyPay.totalHours;
     const techStraightTimeAllHours = techDailyPay.straightAllHours;
-    const techWeightedRegularRate = techTotalHours > 0 ? (techStraightTimeAllHours + techIncludablePay) / techTotalHours : hourlyRate;
+    const techPeriodRegularRate = techTotalHours > 0 ? (techStraightTimeAllHours + techIncludablePay) / techTotalHours : hourlyRate;
     const techHourlyPayStraight = includeTech && isTechRole(emp) ? techStraightTimeAllHours : 0;
     const traineeWindow = trainingWindow(emp.hrTrainingStart, emp.hrFieldStart,
       employeeInfoByProfileId.get(emp.id)?.hireDate, emp.isTrainee);
-    const premiumHours = (dailyHoursByEmployeeId.get(emp.id) ?? []).reduce((sum, day) => sum + (isTrainingDay(day.date, traineeWindow) ? 0 : day.overtime), 0);
-    const techHourlyPayOtPremium = includeTech && isTechRole(emp) ? premiumHours * techWeightedRegularRate * 0.5 : 0;
+    const techDailyHours = dailyHoursByEmployeeId.get(emp.id) ?? [];
+    const premiumHours = techDailyHours.reduce((sum, day) => sum + (isTrainingDay(day.date, traineeWindow) ? 0 : day.overtime), 0);
+    // FLSA: the regular rate — and so the OT premium — is set per WORKWEEK
+    // even on a biweekly payroll, matching the reference workbook's Weekly
+    // Calculations tab (see weeklyOtPremium). Without a daily breakdown
+    // (no schedule configured) there are no weeks to split, so the old
+    // period-wide rate is used.
+    const taggedIncludable = techCustomIncludableByProfileWeek.get(emp.id);
+    const taggedIncludableTotal = [...(taggedIncludable?.values() ?? [])].reduce((sum, v) => sum + v, 0);
+    const techWeeklyOt = includeTech && isTechRole(emp) && techDailyHours.length > 0
+      ? weeklyOtPremium(
+          techDailyHours,
+          (date) => hourlyRateOnDate(emp.id, date, hourlyRate),
+          (date) => !isTrainingDay(date, traineeWindow),
+          taggedIncludable,
+          techIncludablePay - taggedIncludableTotal
+        )
+      : [];
+    const techHourlyPayOtPremium = !(includeTech && isTechRole(emp))
+      ? 0
+      : techWeeklyOt.length > 0
+      ? techWeeklyOt.reduce((sum, w) => sum + w.premium, 0)
+      : premiumHours * techPeriodRegularRate * 0.5;
+    const techWeightedRegularRate = premiumHours > 0 && techWeeklyOt.length > 0 ? techHourlyPayOtPremium / (premiumHours * 0.5) : techPeriodRegularRate;
     const techHourlyPayCompanyOnly = techHourlyPayStraight + techHourlyPayOtPremium;
     // A State-mode override (payroll_hourly_ot_overrides, migration 0289,
     // set from the payroll detail step's Compliant/"State" toggle) replaces
@@ -2929,6 +3028,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             techHourlyPayStraight,
             techHourlyPayOtPremium,
             techWeightedRegularRate,
+            techWeeklyOt,
             techGuaranteedSalaryTarget,
             techGuaranteedSalaryMatch,
             techHolidayPremium,
@@ -2980,6 +3080,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       techHourlyPayStraight: 0,
       techHourlyPayOtPremium: 0,
       techWeightedRegularRate: hourlyRate,
+      techWeeklyOt: [],
       techGuaranteedSalaryTarget: 0,
       techGuaranteedSalaryMatch: 0,
       techHolidayPremium: 0,

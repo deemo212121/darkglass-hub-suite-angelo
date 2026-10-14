@@ -180,7 +180,7 @@ export function addAttendanceAdjustmentTemplates(sheet: Worksheet, attendanceCou
   instructions.value = "Blank templates: enter the type, rate and quantity (use 1 for a flat amount). To add rows, press Tab in the last table cell or use Insert > Table Rows. Totals expand with each table. Workbook entries only; attendance totals and saved payroll are unchanged.";
   instructions.alignment = { wrapText: true, vertical: "top" };
 }
-/** Transparent period-based calculation, using the same weighted-rate cascade as the app. */
+/** Transparent period-based calculation (the app sets the regular rate per workweek — see weeklyOtPremium in AccountingDashboard.tsx). */
 export function addAttendancePayBreakdown(sheet: Worksheet, attendanceCount: number, isPh: boolean) {
   const end = attendanceCount + 1;
   const total = attendanceCount + 3;
@@ -244,13 +244,13 @@ export function addAttendancePayBreakdown(sheet: Worksheet, attendanceCount: num
   sheet.getCell(inputTitleRow + 1, 13).dataValidation = { type: "list", allowBlank: false, formulae: ['"Company,State"'] };
   sheet.mergeCells(inputTitleRow + 7, 9, inputTitleRow + 10, 13);
   const explanation = sheet.getCell(inputTitleRow + 7, 9);
-  explanation.value = "Period-based weighted rate, matching the app's current calculation. Includable and reimbursement tables feed this breakdown automatically. Other additions can include a separately calculated salary/trainee guarantee or override; these are not fetched here. Holiday premium and deductions start at zero. Step explanations appear below each equation. This template does not update saved payroll.";
+  explanation.value = "Period-based weighted rate. The app sets this rate per workweek (custom lines tagged with a week count toward that week), so its OT premium can differ slightly when includable pay is uneven across weeks. Includable and reimbursement tables feed this breakdown automatically. Other additions can include a separately calculated salary/trainee guarantee or override; these are not fetched here. Holiday premium and deductions start at zero. Step explanations appear below each equation. This template does not update saved payroll.";
   explanation.alignment = { wrapText: true, vertical: "top" };
   const steps: [string, string, string, number, string][] = [
     ["Total Includable", "Sum of includable Rate × Quantity", `SUMPRODUCT(Includable_${sheet.id}[Rate],Includable_${sheet.id}[Quantity])`, 0, "Includes negative entries, such as Redo, exactly once."],
     ["Base Straight Wages", "Sum of daily Total Hours × Company Hourly Rate", sum("I"), straight, "Includes all paid hours, including overtime at straight time; preserves daily rate changes."],
     ["Corrected Straight-Time Pay", "Step 1 + Step 2", "AL3+AL4", straight, "Straight-time wages plus includable compensation; reimbursements excluded."],
-    ["Period Weighted Regular Rate", "Step 3 ÷ Total Hours", `IFERROR(AL5/H${total},0)`, weighted, "Period calculation used by the app; not a per-workweek allocation."],
+    ["Period Weighted Regular Rate", "Step 3 ÷ Total Hours", `IFERROR(AL5/H${total},0)`, weighted, "Period calculation; the app computes it per workweek."],
     ["Corrected OT Premium", "OT Hours × Step 4 × OT Premium Factor", `G${total}*AL6*$AP$6`, premium, "Only the extra premium; the straight-time portion of OT is already in Step 2."],
     ["Holiday Premium", "Holiday premium input", "$AP$3", 0, "Enter any applicable holiday premium in AP3; default zero."],
     ["Wages Before State Match", "Step 3 + Step 5 + Step 6", "AL5+AL7+AL8", straight + premium, "Includable pay is already included; do not add it again."],
