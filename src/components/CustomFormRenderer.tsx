@@ -58,6 +58,12 @@ interface Props {
    * signed by that person; everyone else sees "Waiting for … to sign."
    */
   signer?: CurrentSigner | null;
+  /**
+   * Company mode: also show the rest of the document — its text, and the
+   * submitter's answers read-only (e.g. the employee's signed block) — so a
+   * signer opening a direct link sees the whole thing they're signing.
+   */
+  showSubmitterPart?: boolean;
 }
 
 /** Answers drawn on a line with the label underneath in paper view — the rest keep their usual label-above layout. */
@@ -250,10 +256,26 @@ function PaperLineRow({ field, value, disabled, onChange, valuesByName, signer }
 }
 
 /** A field of a signer section someone already completed — shown as saved, not editable (a signature can't be redrawn over). */
-function SignedFieldRow({ field, value }: { field: CustomFormField; value: any }) {
+function SignedFieldRow({ field, value, paper }: { field: CustomFormField; value: any; paper?: boolean }) {
   const def = ELEMENT_REGISTRY[field.type];
   const isFile = !!def?.isFileField;
   const text = def?.formatValue ? def.formatValue(value, field) : typeof value === "string" || typeof value === "number" ? String(value) : "";
+  // Paper view: the saved answer on its line with the label underneath, as printed.
+  if (paper && PAPER_LINE_TYPES.has(field.type)) {
+    return (
+      <div style={applyFieldStyle(field)} className="paper-line-row self-end">
+        <div className={`paper-line ${field.displayMode === "block" && field.width < 100 ? "paper-gutter" : ""}`}>
+          {isFile ? (
+            value?.url ? <img src={value.url} alt={field.label} className="h-16 w-auto max-w-full" /> : <div className="h-16" />
+          ) : (
+            <div className="px-0.5 pb-1">{text || "\u00a0"}</div>
+          )}
+          <div className="paper-rule" />
+          <div className="paper-label">{field.label}</div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div style={applyFieldStyle(field)}>
       <div className={`flex flex-col gap-1.5 ${field.displayMode === "block" && field.width < 100 ? "pr-4" : ""}`}>
@@ -268,8 +290,11 @@ function SignedFieldRow({ field, value }: { field: CustomFormField; value: any }
   );
 }
 
-export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submitter", initialValues, paper, signer }: Props) {
-  const fields = useMemo(() => allFields.filter((f) => (mode === "company" ? f.fillBy === "company" : f.fillBy !== "company")), [allFields, mode]);
+export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submitter", initialValues, paper, signer, showSubmitterPart }: Props) {
+  const fields = useMemo(
+    () => (mode === "company" && showSubmitterPart ? allFields : allFields.filter((f) => (mode === "company" ? f.fillBy === "company" : f.fillBy !== "company"))),
+    [allFields, mode, showSubmitterPart]
+  );
   const [values, setValues] = useState<Record<string, any>>(() => ({
     ...Object.fromEntries(fields.filter((f) => f.defaultValue !== undefined).map((f) => [f.id, f.defaultValue])),
     ...(initialValues ?? {}),
@@ -325,7 +350,7 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
   // and the person fills just their own — see customFormSections.ts.
   const signerSections = useMemo<SignerSection[]>(() => {
     if (mode !== "company") return [];
-    const sections = splitSignerSections(fields.filter((f) => !f.hidden));
+    const sections = splitSignerSections(fields.filter((f) => !f.hidden && f.fillBy === "company"));
     return sections.length > 1 || sections.some(sectionSigner) ? sections : [];
   }, [fields, mode]);
   const signedFieldIds = useMemo(
@@ -371,6 +396,7 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
     }
     for (const group of page.groups) {
       for (const f of group.fields) {
+        if (mode === "company" && f.fillBy !== "company") continue; // the submitter's part, shown read-only
         const { visible } = computeFieldState(f, valuesByName);
         if (!visible) continue;
         const err = validateFieldValue(f, values[f.id], valuesByName);
@@ -423,6 +449,10 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
     if (!visible) return null;
     const Row = paper && PAPER_LINE_TYPES.has(f.type) ? PaperLineRow : FieldRow;
     const row = <Row key={f.id} field={f} value={values[f.id]} disabled={disabled} onChange={(v) => setValue(f.id, v)} valuesByName={valuesByName} signer={signerFor(f)} />;
+    // The submitter's part (showSubmitterPart): text as written, answers read-only.
+    if (mode === "company" && f.fillBy !== "company") {
+      return ELEMENT_REGISTRY[f.type]?.kind === "structural" ? row : <SignedFieldRow key={f.id} field={f} value={values[f.id]} paper={!!paper} />;
+    }
     // Someone else's part, not signed yet: just its heading and who it's waiting for.
     const section = sectionOfField.get(f.id);
     if (section && othersSections.includes(section)) {
@@ -443,7 +473,7 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
         </Fragment>
       );
     }
-    return ELEMENT_REGISTRY[f.type]?.kind === "structural" ? row : <SignedFieldRow key={f.id} field={f} value={values[f.id]} />;
+    return ELEMENT_REGISTRY[f.type]?.kind === "structural" ? row : <SignedFieldRow key={f.id} field={f} value={values[f.id]} paper={!!paper} />;
   };
 
   // The auto-name prompt (if needed) and this page's fields.

@@ -255,6 +255,15 @@ export async function getCustomFormSubmissions(): Promise<CustomFormSubmission[]
   return all;
 }
 
+/** One submission (not deleted), e.g. for a signer's direct /complete-form/<id> link — null if it's gone or not this company's. */
+export async function getCustomFormSubmission(id: string): Promise<CustomFormSubmission | null> {
+  const query = (cols: string) => supabase.from("hr_custom_form_submissions").select(cols).eq("id", id).is("deleted_at", null).maybeSingle();
+  let { data, error } = await query(SUBMISSION_SELECT);
+  if (isMissingColumnError(error)) ({ data, error } = await query(SUBMISSION_SELECT_BASE));
+  if (error) throw error;
+  return data ? submissionFromRow(data) : null;
+}
+
 /** Soft-deleted submissions still within the 30-day restore window, most recently deleted first. */
 export async function getDeletedCustomFormSubmissions(): Promise<CustomFormSubmission[]> {
   const cutoff = new Date(Date.now() - RESTORE_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
