@@ -5,7 +5,7 @@ import { X, Plus, Trash2, Loader2 } from "lucide-react";
 import type { EmployeePayrollRow } from "@/components/AccountingDashboard";
 import { getAttendanceForRange, computeMealTimeCredit, splitRegularOvertimeWeekly, startOfWeekSunday, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
 import { getSalaryHistory, rateEffectiveOn, type SalaryEntryRow } from "@/lib/supabase/salary";
-import { STATE_MIN_WAGE_2026 } from "@/lib/stateMinWage";
+import { stateMinWageOn } from "@/lib/stateMinWage";
 import { isMealAlwaysPaidRole } from "@/lib/roleLabels";
 import {
   REPAIR_TYPES,
@@ -192,7 +192,7 @@ export function TechActivityReportModal({
       // PD Min still counts it (unconditional on state), silently
       // understating the state side and hiding a real shortfall on the
       // days that DO have a higher state assigned.
-      const floor = (d.state ? STATE_MIN_WAGE_2026.find((s) => s.state === d.state)?.rate : null) ?? rateOnDate(d.date);
+      const floor = stateMinWageOn(d.state, d.date) ?? rateOnDate(d.date);
       const split = dailySplit.get(d.date) ?? { regular: 0, overtime: 0 };
       min += split.regular * floor;
     }
@@ -306,7 +306,7 @@ export function TechActivityReportModal({
       const dayHours = split.regular + split.overtime;
       if (dayHours <= 0) continue;
       const companyRate = rateOnDate(d.date);
-      const floorRate = d.state ? STATE_MIN_WAGE_2026.find((s) => s.state === d.state)?.rate ?? null : null;
+      const floorRate = stateMinWageOn(d.state, d.date);
       const effectiveRate = floorRate != null ? Math.max(floorRate, companyRate) : companyRate;
       const actualDailyPay = dayHours * effectiveRate;
       if (actualDailyPay < TRAINEE_DAILY_MATCH_TARGET) {

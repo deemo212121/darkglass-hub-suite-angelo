@@ -8755,14 +8755,23 @@ function MobilePayrollDisputeView({
             <div key={r.id} className="mtech-payroll-row">
               <div className="mtech-payroll-row-head">
                 <div className="mtech-payroll-row-date">{r.payPeriod || new Date(r.createdAt).toLocaleDateString()}</div>
-                <div className="mtech-payroll-status" style={{ background: PAYROLL_DISPUTE_STATUS_COLORS[r.status].bg, color: PAYROLL_DISPUTE_STATUS_COLORS[r.status].fg }}>
-                  {PAYROLL_DISPUTE_STATUS_LABELS[r.status]}
+                <div className="mtech-payroll-status" style={r.modifiedAt && r.status === "approved" ? { background: "rgba(14,165,233,0.18)", color: "#7dd3fc" } : { background: PAYROLL_DISPUTE_STATUS_COLORS[r.status].bg, color: PAYROLL_DISPUTE_STATUS_COLORS[r.status].fg }}>
+                  {r.modifiedAt && r.status === "approved" ? "Modified" : PAYROLL_DISPUTE_STATUS_LABELS[r.status]}
                 </div>
               </div>
               <div className="mtech-payroll-row-body" style={{ display: "block", padding: "0.4rem 0.85rem 0.7rem" }}>
                 {r.ticketNo && <p className="mtech-muted" style={{ padding: "0.25rem 0", fontWeight: 600, color: "#93c5fd" }}>Ticket {r.ticketNo}</p>}
                 {r.disputeReason && <p className="mtech-muted" style={{ padding: "0.25rem 0", fontWeight: 600 }}>{r.disputeReason}</p>}
-                {(r.totalReceived !== null || r.totalExpected !== null) && (
+                {r.modifiedAt ? (
+                  <>
+                    <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>
+                      You requested: Received ${(r.originalTotalReceived ?? 0).toFixed(2)} · Expected ${(r.originalTotalExpected ?? 0).toFixed(2)} · Missing <span style={{ textDecoration: "line-through" }}>${(r.originalMissingAmount ?? 0).toFixed(2)}</span>
+                    </p>
+                    <p className="mtech-muted" style={{ padding: "0.25rem 0", color: "#0284c7", fontWeight: 600 }}>
+                      Modified by Accounting: Received ${(r.totalReceived ?? 0).toFixed(2)} · Expected ${(r.totalExpected ?? 0).toFixed(2)} · Missing ${(r.missingAmount ?? 0).toFixed(2)}
+                    </p>
+                  </>
+                ) : (r.totalReceived !== null || r.totalExpected !== null) && (
                   <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>
                     Received ${(r.totalReceived ?? 0).toFixed(2)} · Expected ${(r.totalExpected ?? 0).toFixed(2)} · Missing ${(r.missingAmount ?? 0).toFixed(2)}
                   </p>
@@ -8778,7 +8787,7 @@ function MobilePayrollDisputeView({
                   </p>
                 )}
                 {r.reviewNote && (
-                  <p className="mtech-muted" style={{ color: r.status === "rejected" || (r.status as string) === "denied" ? "#dc2626" : "#16a34a", fontWeight: 600, padding: "0.25rem 0", whiteSpace: "pre-line" }}>{r.status === "rejected" || (r.status as string) === "denied" ? "Reason rejected: " : "Response: "}{r.reviewNote}</p>
+                  <p className="mtech-muted" style={{ color: r.status === "rejected" || (r.status as string) === "denied" ? "#dc2626" : "#16a34a", fontWeight: 600, padding: "0.25rem 0", whiteSpace: "pre-line" }}>{r.status === "rejected" || (r.status as string) === "denied" ? "Reason rejected: " : r.modifiedAt ? "Accounting’s comment: " : "Response: "}{r.reviewNote}</p>
                 )}
               </div>
             </div>

@@ -22,6 +22,7 @@ import {
   Send,
   MapPin,
   Trash2,
+  Plus,
   Clock,
   X,
   Ban,
@@ -43,13 +44,13 @@ import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { supabase } from "@/lib/supabase/client";
 import { getBranchRates, upsertBranchRate, type BranchRate } from "@/lib/supabase/branchRates";
-import { STATE_MIN_WAGE_2026 } from "@/lib/stateMinWage";
+import { STATE_MIN_WAGE_2026, stateMinWageOn } from "@/lib/stateMinWage";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, isCarIqEligible, mileageRateForCarIq, CAR_IQ_MILEAGE_RATE_WITH, CAR_IQ_MILEAGE_RATE_WITHOUT } from "@/lib/roleLabels";
 import { getCompanyCarIqHistory, addCarIqHistoryEntry, updateCarIqHistoryEffectiveDate, carIqEntryEffectiveOn, carIqSwitchDatesInRange, type CarIqHistoryEntry } from "@/lib/supabase/carIqHistory";
-import { getCarIqMileageRates, setCarIqMileageRates } from "@/lib/supabase/companySettings";
+import { getCarIqMileageRateHistory, addCarIqMileageRate, deleteCarIqMileageRate, carIqRatesOn, carIqRateChangeDatesInRange, CAR_IQ_RATE_HISTORY_START, type CarIqMileageRateEntry } from "@/lib/supabase/companySettings";
 import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, computeMealTimeCredit, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
 import { payGraceMinutesFor } from "@/lib/attendanceGrace";
 import { updatePayrollLineItemExtra, updatePayrollLineItemPaid } from "@/lib/supabase/payslips";
@@ -96,7 +97,7 @@ import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
 import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
 import { TicketTimeDisputesTab } from "@/components/TicketTimeDisputesTab";
 import { BranchManagerCommissionTab } from "@/components/BranchManagerCommissionTab";
-import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, linkPayrollDisputeCustomPayItem, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
+import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, linkPayrollDisputeCustomPayItem, modifyPayrollDispute, restorePayrollDisputeOriginal, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { perCutoffSalary } from "@/lib/supabase/salary";
@@ -110,7 +111,7 @@ import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, blobToBase64 } from "@
 import { renderPayslipBodyHtml, renderTechActivitySummaryPageHtml, PAYSLIP_STYLES, formatClockTime, offDaysInRange, ptoDaysInRange, type PayslipDailyRow, type EmployeePayslipData } from "@/lib/payslipTemplate";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity, getModuleActivityLog, getModuleActivityLogByAction, moduleActivityActionLabel, type ModuleActivityLogEntry } from "@/lib/supabase/moduleActivityLog";
-import { todayISO } from "@/lib/localDate";
+import { todayISO, formatISODate } from "@/lib/localDate";
 import { toast } from "sonner";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -980,7 +981,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       .catch((err) => console.error("Failed to load payroll disputes:", err))
       .finally(() => setPayrollDisputesLoading(false));
   }, [activeTab, payrollDisputesLoaded]);
-  const [payrollDisputesSubTab, setPayrollDisputesSubTab] = useState<"pending" | "approved">("pending");
+  const [payrollDisputesSubTab, setPayrollDisputesSubTab] = useState<"pending" | "approved" | "modified">("pending");
 
   // Activity Logs tab — every module_activity_log row for "accounting"
   // (payroll runs generated, payslips sent, mileage holds toggled, Gmail
@@ -1068,7 +1069,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // Approved disputes stay visible (not just pending ones) so an accidental
   // Approve click can be walked back — see handlePayrollDisputeAction's
   // "pending" case below, which reuses the exact same status-update path.
-  const approvedPayrollDisputes = payrollDisputes.filter((r) => r.status === "approved");
+  // Approved with Accounting's changes ("Modify", migration 0382) get their
+  // own Modified tab — still status "approved" underneath so pay is unchanged.
+  const approvedPayrollDisputes = payrollDisputes.filter((r) => r.status === "approved" && !r.modifiedAt);
+  const modifiedPayrollDisputes = payrollDisputes.filter((r) => r.status === "approved" && !!r.modifiedAt);
+  const shownDecidedPayrollDisputes = payrollDisputesSubTab === "modified" ? modifiedPayrollDisputes : approvedPayrollDisputes;
   /**
    * Approving a dispute with a real linked period (migration 0186 — only
    * set when submitted via the mobile On Hold Tickets Dispute tab) auto-adds
@@ -1081,6 +1086,30 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
    * free-text payPeriod dispute, not from the Dispute tab flow) just gets
    * the plain status change — nothing to auto-inject.
    */
+  // Adds the dispute's (approved) missing amount to its linked pay period's
+  // Tech Activity Report — shared by Approve and Modify.
+  const addPayrollDisputePayLine = async (dispute: EmployeeRequestRow, missingAmount: number) => {
+    if (dispute.customPayItemId || !dispute.periodStart || !dispute.periodEnd || missingAmount <= 0) return;
+    const existing = await getTechCustomPayItems(dispute.profileId, dispute.periodStart, dispute.periodEnd);
+    const created = await addTechCustomPayItem(dispute.profileId, dispute.periodStart, dispute.periodEnd, existing.length);
+    await updateTechCustomPayItem(created.id, {
+      label: `Payroll Dispute${dispute.ticketNo ? ` — Ticket ${dispute.ticketNo}` : ""}`,
+      value: 1,
+      rate: missingAmount,
+    });
+    await linkPayrollDisputeCustomPayItem(dispute.id, created.id);
+  };
+  const reloadPayrollDisputes = async (id: string) => {
+    void refreshTechCustomPayItems();
+    const rows = await getCompanyEmployeeRequests();
+    setPayrollDisputes(rows.filter((r) => r.requestType === "payroll_dispute"));
+    setPayrollDisputeNote((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
   const handlePayrollDisputeAction = async (id: string, status: "approved" | "rejected" | "pending") => {
     try {
       const dispute = payrollDisputes.find((d) => d.id === id);
@@ -1089,27 +1118,56 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       if (dispute?.customPayItemId && status !== "approved") {
         await deleteTechCustomPayItem(dispute.customPayItemId).catch((err) => console.error("Failed to remove custom pay item on revert:", err));
         await linkPayrollDisputeCustomPayItem(id, null).catch((err) => console.error("Failed to clear custom pay item link:", err));
-      } else if (status === "approved" && dispute && !dispute.customPayItemId && dispute.periodStart && dispute.periodEnd && (dispute.missingAmount ?? 0) > 0) {
-        const existing = await getTechCustomPayItems(dispute.profileId, dispute.periodStart, dispute.periodEnd);
-        const created = await addTechCustomPayItem(dispute.profileId, dispute.periodStart, dispute.periodEnd, existing.length);
-        await updateTechCustomPayItem(created.id, {
-          label: `Payroll Dispute${dispute.ticketNo ? ` — Ticket ${dispute.ticketNo}` : ""}`,
-          value: 1,
-          rate: dispute.missingAmount ?? 0,
-        });
-        await linkPayrollDisputeCustomPayItem(id, created.id);
+      } else if (status === "approved" && dispute) {
+        await addPayrollDisputePayLine(dispute, dispute.missingAmount ?? 0);
       }
-      void refreshTechCustomPayItems();
-
-      const rows = await getCompanyEmployeeRequests();
-      setPayrollDisputes(rows.filter((r) => r.requestType === "payroll_dispute"));
-      setPayrollDisputeNote((prev) => {
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
+      // Back to Pending: a modified dispute gets the employee's own figures back.
+      if (status === "pending" && dispute?.modifiedAt) await restorePayrollDisputeOriginal(dispute);
+      await reloadPayrollDisputes(id);
     } catch (err) {
-      alert(`Failed to update dispute: ${err instanceof Error ? err.message : "Unknown error"}`);
+      toast.error(`Failed to update dispute: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  };
+
+  // "Modify" — approve with corrected amounts and a required comment; the
+  // employee's own figures are kept (migration 0382) and shown beside the
+  // approved ones, here and on their side.
+  const [payrollDisputeEdit, setPayrollDisputeEdit] = useState<Record<string, { received: string; expected: string; missing: string }>>({});
+  const startPayrollDisputeModify = (r: EmployeeRequestRow) =>
+    setPayrollDisputeEdit((prev) => ({
+      ...prev,
+      [r.id]: { received: String(r.totalReceived ?? 0), expected: String(r.totalExpected ?? 0), missing: String(r.missingAmount ?? 0) },
+    }));
+  const cancelPayrollDisputeModify = (id: string) =>
+    setPayrollDisputeEdit((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  const handlePayrollDisputeModify = async (id: string) => {
+    const dispute = payrollDisputes.find((d) => d.id === id);
+    const edit = payrollDisputeEdit[id];
+    if (!dispute || !edit) return;
+    const received = Number(edit.received);
+    const expected = Number(edit.expected);
+    const missing = Number(edit.missing);
+    if (![received, expected, missing].every((n) => Number.isFinite(n) && n >= 0)) {
+      toast.error("Amounts must be numbers, 0 or more.");
+      return;
+    }
+    const note = (payrollDisputeNote[id] || "").trim();
+    if (!note) {
+      toast.error("Add a comment explaining the change — the employee sees it.");
+      return;
+    }
+    try {
+      await modifyPayrollDispute(dispute, { totalReceived: received, totalExpected: expected, missingAmount: missing }, myProfileId, note, displayName || email || undefined);
+      await addPayrollDisputePayLine(dispute, missing);
+      cancelPayrollDisputeModify(id);
+      await reloadPayrollDisputes(id);
+      toast.success("Dispute approved with your changes.");
+    } catch (err) {
+      toast.error(`Failed to modify dispute: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
   };
 
@@ -1256,28 +1314,57 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // JSON blob the Employee Information tab edits), not duplicated anywhere.
   const [employeeInfoByProfileId, setEmployeeInfoByProfileId] = useState<Map<string, EmployeeInfo>>(new Map());
   const [carIqHistory, setCarIqHistory] = useState<CarIqHistoryEntry[]>([]);
-  // Company-configurable Car IQ mileage rates (migration 0324) — falls back
-  // to roleLabels.ts's hardcoded defaults until a company sets its own, so
-  // a rate change never again needs a code deploy.
-  const [carIqRateWith, setCarIqRateWith] = useState(CAR_IQ_MILEAGE_RATE_WITH);
-  const [carIqRateWithout, setCarIqRateWithout] = useState(CAR_IQ_MILEAGE_RATE_WITHOUT);
+  // Car IQ mileage rates, effective-dated (migration 0381): each change
+  // applies from its own date, so a new rate never re-prices a past period.
+  // A payroll period uses the rates in effect on its start date (see
+  // mileageRateOverride below); a change inside the period is flagged on the
+  // Tech Activity Report like a Car IQ status switch. Before any change is
+  // saved, the history is one "since the start" entry from the old flat
+  // rates (0324) or roleLabels.ts's defaults.
+  const carIqRateDefaults = { with: CAR_IQ_MILEAGE_RATE_WITH, without: CAR_IQ_MILEAGE_RATE_WITHOUT };
+  const [carIqRateHistory, setCarIqRateHistory] = useState<CarIqMileageRateEntry[]>([
+    { effectiveDate: CAR_IQ_RATE_HISTORY_START, ...carIqRateDefaults, changedByName: null, changedAt: null },
+  ]);
   const [carIqRatesSaving, setCarIqRatesSaving] = useState(false);
-  useEffect(() => {
-    getCarIqMileageRates()
-      .then((rates) => {
-        if (rates.with != null) setCarIqRateWith(rates.with);
-        if (rates.without != null) setCarIqRateWithout(rates.without);
-      })
+  const [carIqRateDraft, setCarIqRateDraft] = useState<{ effectiveDate: string; with: string; without: string }>({ effectiveDate: "", with: "", without: "" });
+  const loadCarIqRateHistory = () =>
+    getCarIqMileageRateHistory(carIqRateDefaults)
+      .then(setCarIqRateHistory)
       .catch((err) => console.error("Failed to load Car IQ mileage rates:", err));
+  useEffect(() => {
+    void loadCarIqRateHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  async function handleSaveCarIqRates(rateWith: number, rateWithout: number) {
+  // Today's rates — shown in the tab header; payroll uses carIqRatesOn(…, genStart).
+  const carIqRatesToday = carIqRatesOn(carIqRateHistory, todayISO());
+  async function handleAddCarIqRate() {
+    const rateWith = Number(carIqRateDraft.with);
+    const rateWithout = Number(carIqRateDraft.without);
+    if (!carIqRateDraft.effectiveDate) { toast.error("Pick the date the new rate takes effect."); return; }
+    if (carIqRateDraft.with === "" || carIqRateDraft.without === "" || !Number.isFinite(rateWith) || !Number.isFinite(rateWithout) || rateWith < 0 || rateWithout < 0) {
+      toast.error("Enter both rates (0 or more).");
+      return;
+    }
     setCarIqRatesSaving(true);
     try {
-      await setCarIqMileageRates(rateWith, rateWithout);
-      setCarIqRateWith(rateWith);
-      setCarIqRateWithout(rateWithout);
+      await addCarIqMileageRate(carIqRateDraft.effectiveDate, rateWith, rateWithout, displayName || email || null);
+      await loadCarIqRateHistory();
+      setCarIqRateDraft({ effectiveDate: "", with: "", without: "" });
+      toast.success(`Car IQ rates $${rateWith.toFixed(2)} / $${rateWithout.toFixed(2)} per mile from ${carIqRateDraft.effectiveDate}.`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save Car IQ mileage rates.");
+    } finally {
+      setCarIqRatesSaving(false);
+    }
+  }
+  async function handleDeleteCarIqRate(effectiveDate: string) {
+    if (!window.confirm(`Remove the Car IQ rate change effective ${effectiveDate}? Periods from that date will use the rate before it.`)) return;
+    setCarIqRatesSaving(true);
+    try {
+      await deleteCarIqMileageRate(effectiveDate);
+      await loadCarIqRateHistory();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove that Car IQ rate.");
     } finally {
       setCarIqRatesSaving(false);
     }
@@ -2345,7 +2432,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // New York, Oregon) have no suggestion; Finance enters the correct
   // county-specific number by hand for those.
   const suggestedBranchRateByName = new Map<string, number>();
-  for (const { state, rate } of STATE_MIN_WAGE_2026) {
+  for (const { state } of STATE_MIN_WAGE_2026) {
+    const rate = stateMinWageOn(state); // today's rate (Florida: $15 from 2026-09-30)
     if (rate != null) suggestedBranchRateByName.set(state, rate);
   }
   // "Prefill from State Minimum Wage" — fills every state that (a) doesn't
@@ -2617,20 +2705,30 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // manual.mileagePay, since the whole point of locking it is that
     // Finance shouldn't need to re-touch this technician's mileage line
     // just to pick up a Car IQ status set after their last edit.
-    const mileageRateOverride = mileageRateForCarIq(employeeInfoByProfileId.get(emp.id)?.hasCarIq, carIqRateWith, carIqRateWithout);
-    // A switch date strictly inside the period means mileageRateOverride's
-    // single "current status" rate doesn't actually cover every day of it —
-    // only the very last switch matters here (a second switch back within
-    // the same period is rare enough that flagging just the latest one and
-    // letting Finance sort out the detail manually is enough).
-    const carIqSwitchDates = carIqSwitchDatesInRange(carIqHistory, emp.id, genStart, genEnd);
+    // Rates in effect on the period's first day (migration 0381 — a rate
+    // change dated later doesn't re-price this period's start).
+    const periodCarIqRates = carIqRatesOn(carIqRateHistory, genStart || todayISO());
+    const mileageRateOverride = mileageRateForCarIq(employeeInfoByProfileId.get(emp.id)?.hasCarIq, periodCarIqRates.with, periodCarIqRates.without);
+    // A switch date strictly inside the period — the technician's Car IQ
+    // status changing, or the company's Car IQ rates changing — means
+    // mileageRateOverride's single rate doesn't cover every day of it.
+    // Only the very last switch matters here (a second one within the same
+    // period is rare enough that flagging the latest and letting Finance
+    // sort out the detail manually is enough).
+    const hasStatusHistory = carIqHistory.some((e) => e.profileId === emp.id);
+    const carIqStatusOn = (date: string) =>
+      hasStatusHistory ? carIqEntryEffectiveOn(carIqHistory, emp.id, date)?.hasCarIq ?? null : employeeInfoByProfileId.get(emp.id)?.hasCarIq ?? null;
+    const carIqSwitchDates = Array.from(new Set([
+      ...carIqSwitchDatesInRange(carIqHistory, emp.id, genStart, genEnd),
+      ...carIqRateChangeDatesInRange(carIqRateHistory, genStart, genEnd),
+    ])).sort();
     const carIqSwitch = carIqSwitchDates.length === 0 ? null : (() => {
       const switchDate = carIqSwitchDates[carIqSwitchDates.length - 1];
       const dayBefore = addDaysISO(switchDate, -1);
-      const beforeEntry = carIqEntryEffectiveOn(carIqHistory, emp.id, dayBefore);
-      const afterEntry = carIqEntryEffectiveOn(carIqHistory, emp.id, switchDate);
-      const rateBefore = mileageRateForCarIq(beforeEntry?.hasCarIq ?? null, carIqRateWith, carIqRateWithout);
-      const rateAfter = mileageRateForCarIq(afterEntry?.hasCarIq ?? null, carIqRateWith, carIqRateWithout);
+      const ratesBefore = carIqRatesOn(carIqRateHistory, dayBefore);
+      const ratesAfter = carIqRatesOn(carIqRateHistory, switchDate);
+      const rateBefore = mileageRateForCarIq(carIqStatusOn(dayBefore), ratesBefore.with, ratesBefore.without);
+      const rateAfter = mileageRateForCarIq(carIqStatusOn(switchDate), ratesAfter.with, ratesAfter.without);
       if (rateBefore == null || rateAfter == null || rateBefore === rateAfter) return null;
       return { date: switchDate, rateBefore, rateAfter };
     })();
@@ -5432,7 +5530,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         {/* ── Payroll Disputes Tab ─────────────────────────────────────────── */}
         {activeTab === "payrollDisputes" && (
           <div className="space-y-6">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-1">Pending Payroll Disputes</p>
                 <p className="text-2xl font-bold text-yellow-300">{pendingPayrollDisputes.length}</p>
@@ -5441,12 +5539,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <p className="text-xs text-slate-400 mb-1">Approved Payroll Disputes</p>
                 <p className="text-2xl font-bold text-green-300">{approvedPayrollDisputes.length}</p>
               </div>
+              <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
+                <p className="text-xs text-slate-400 mb-1">Modified Payroll Disputes</p>
+                <p className="text-2xl font-bold text-sky-300">{modifiedPayrollDisputes.length}</p>
+              </div>
             </div>
 
             <div className="flex gap-2 border-b border-white/10">
               {[
                 { id: "pending" as const, label: "Pending", count: pendingPayrollDisputes.length },
                 { id: "approved" as const, label: "Approved Disputes", count: approvedPayrollDisputes.length },
+                { id: "modified" as const, label: "Modified Disputes", count: modifiedPayrollDisputes.length },
               ].map((t) => (
                 <button
                   key={t.id}
@@ -5505,8 +5608,41 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           ))}
                         </div>
                       )}
+                      {payrollDisputeEdit[r.id] && (
+                        <div className="mt-2 rounded border border-sky-500/30 bg-sky-500/5 p-2">
+                          <p className="text-[11px] text-sky-300 mb-1.5">Modify — approve with these amounts instead. The employee sees what they asked for next to what was approved, plus your comment below (required).</p>
+                          <div className="flex flex-wrap gap-2">
+                            {([
+                              ["received", "Received"],
+                              ["expected", "Expected"],
+                              ["missing", "Missing (paid)"],
+                            ] as const).map(([key, label]) => (
+                              <label key={key} className="flex flex-col gap-0.5 text-[10px] uppercase tracking-wide text-slate-400">
+                                {label}
+                                <input
+                                  type="number" min={0} step={0.01}
+                                  value={payrollDisputeEdit[r.id][key]}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    setPayrollDisputeEdit((prev) => {
+                                      const cur = { ...prev[r.id], [key]: value };
+                                      // Keep Missing = Expected - Received while either of those changes.
+                                      if (key !== "missing") {
+                                        const diff = Number(cur.expected) - Number(cur.received);
+                                        if (Number.isFinite(diff)) cur.missing = String(Math.max(0, Math.round(diff * 100) / 100));
+                                      }
+                                      return { ...prev, [r.id]: cur };
+                                    });
+                                  }}
+                                  className="w-32 px-2 py-1 bg-slate-800 border border-white/10 rounded text-white text-sm normal-case tracking-normal focus:outline-none focus:border-blue-500"
+                                />
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       <textarea
-                        placeholder="Optional response note (visible to the employee)..."
+                        placeholder={payrollDisputeEdit[r.id] ? "Comment explaining the change (required, visible to the employee)..." : "Optional response note (visible to the employee)..."}
                         value={payrollDisputeNote[r.id] || ""}
                         onChange={(e) => setPayrollDisputeNote({ ...payrollDisputeNote, [r.id]: e.target.value })}
                         rows={2}
@@ -5518,20 +5654,48 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           : "No linked pay period — approving is acknowledgement-only, won't auto-add to payroll."}
                       </p>
                       <div className="flex gap-2 mt-2">
-                        <button
-                          type="button"
-                          onClick={() => handlePayrollDisputeAction(r.id, "approved")}
-                          className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition"
-                        >
-                          Approve
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handlePayrollDisputeAction(r.id, "rejected")}
-                          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition"
-                        >
-                          Reject
-                        </button>
+                        {payrollDisputeEdit[r.id] ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => void handlePayrollDisputeModify(r.id)}
+                              className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded text-xs font-semibold transition"
+                            >
+                              Approve with Changes
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => cancelPayrollDisputeModify(r.id)}
+                              className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs font-semibold transition"
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handlePayrollDisputeAction(r.id, "approved")}
+                              className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-semibold transition"
+                            >
+                              Approve
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => startPayrollDisputeModify(r)}
+                              className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded text-xs font-semibold transition"
+                            >
+                              Modify
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handlePayrollDisputeAction(r.id, "rejected")}
+                              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition"
+                            >
+                              Reject
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -5540,17 +5704,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             </div>
             ) : (
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <h3 className="text-sm font-bold text-white mb-4">Payroll Disputes — Approved</h3>
+              <h3 className="text-sm font-bold text-white mb-4">Payroll Disputes — {payrollDisputesSubTab === "modified" ? "Modified" : "Approved"}</h3>
               <p className="text-xs text-slate-500 mb-4">
+                {payrollDisputesSubTab === "modified" ? "Approved with Accounting's changed amounts — the employee sees what they asked for next to what was approved, and your comment. Revert puts their original amounts back and returns it to Pending. " : ""}
                 Already approved — use Revert if one was approved by mistake. For a dispute with a linked pay period, approving already added a "Payroll Dispute" line to that period's Tech Activity Report; Revert removes that line again and sends the request back to Pending for a fresh decision.
               </p>
               {payrollDisputesLoading ? (
                 <p className="text-sm text-slate-400 flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</p>
-              ) : approvedPayrollDisputes.length === 0 ? (
-                <p className="text-sm text-slate-400">No approved payroll disputes.</p>
+              ) : shownDecidedPayrollDisputes.length === 0 ? (
+                <p className="text-sm text-slate-400">{payrollDisputesSubTab === "modified" ? "No modified payroll disputes." : "No approved payroll disputes."}</p>
               ) : (
                 <div className="space-y-3">
-                  {approvedPayrollDisputes.map((r) => (
+                  {shownDecidedPayrollDisputes.map((r) => (
                     <div key={r.id} className="border border-white/10 rounded-lg p-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="text-sm font-semibold text-white">
@@ -5565,9 +5730,22 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                       </div>
                       <p className="text-xs text-slate-400 mt-1">
                         Submitted: {r.createdAt.slice(0, 10)}
-                        {r.reviewedAt && ` · Approved: ${r.reviewedAt.slice(0, 10)}`}
+                        {r.reviewedAt && ` · ${r.modifiedAt ? "Modified" : "Approved"}: ${r.reviewedAt.slice(0, 10)}`}
                       </p>
-                      {(r.totalReceived !== null || r.totalExpected !== null) && (
+                      {r.modifiedAt ? (
+                        <div className="text-sm mt-2 space-y-0.5">
+                          <p className="text-slate-400">
+                            <span className="inline-block mr-1.5 px-1.5 py-px rounded text-[10px] font-bold border border-sky-500/40 bg-sky-500/10 text-sky-300 align-middle">MODIFIED</span>
+                            Requested: Received ${(r.originalTotalReceived ?? 0).toFixed(2)} · Expected ${(r.originalTotalExpected ?? 0).toFixed(2)} · Missing <span className="line-through">${(r.originalMissingAmount ?? 0).toFixed(2)}</span>
+                          </p>
+                          <p className="text-slate-300">
+                            Approved: Received <span className="font-semibold text-white">${(r.totalReceived ?? 0).toFixed(2)}</span>
+                            {" · "}Expected <span className="font-semibold text-white">${(r.totalExpected ?? 0).toFixed(2)}</span>
+                            {" · "}Missing <span className="font-semibold text-green-300">${(r.missingAmount ?? 0).toFixed(2)}</span>
+                            {r.modifiedBy && <span className="text-xs text-slate-500"> — by {employeeNameById.get(r.modifiedBy) || "Accounting"}{r.modifiedAt ? ` on ${r.modifiedAt.slice(0, 10)}` : ""}</span>}
+                          </p>
+                        </div>
+                      ) : (r.totalReceived !== null || r.totalExpected !== null) && (
                         <p className="text-sm text-slate-300 mt-2">
                           Received <span className="font-semibold text-white">${(r.totalReceived ?? 0).toFixed(2)}</span>
                           {" · "}Expected <span className="font-semibold text-white">${(r.totalExpected ?? 0).toFixed(2)}</span>
@@ -5975,32 +6153,100 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             <div className="px-4 py-4 border-b border-white/10">
               <h2 className="font-semibold text-sm">Car IQ</h2>
               <p className="text-[10px] text-muted-foreground mt-0.5">
-                Which technicians (any tier — Technician, Branch Manager, Senior Branch Manager, Tech Manager, Technical Director, Assistant Technical Director — primary or secondary role) have a company-installed Car IQ vehicle tracking device — drives their mileage rate (${carIqRateWith.toFixed(2)}/mi with Car IQ, ${carIqRateWithout.toFixed(2)}/mi without, editable below). Toggling here only updates this record; the Mileage rate on their Tech Activity Report is still entered by hand.
+                Which technicians (any tier — Technician, Branch Manager, Senior Branch Manager, Tech Manager, Technical Director, Assistant Technical Director — primary or secondary role) have a company-installed Car IQ vehicle tracking device — drives their mileage rate (today: ${carIqRatesToday.with.toFixed(2)}/mi with Car IQ, ${carIqRatesToday.without.toFixed(2)}/mi without). Each rate applies from its effective date, so a change never re-prices an earlier payroll period. Toggling here only updates this record; the Mileage rate on their Tech Activity Report is still entered by hand.
               </p>
               <div className="flex flex-wrap items-end gap-3 mt-3">
                 <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Effective From</label>
+                  <input
+                    type="date"
+                    value={carIqRateDraft.effectiveDate}
+                    onChange={(e) => setCarIqRateDraft((d) => ({ ...d, effectiveDate: e.target.value }))}
+                    disabled={carIqRatesSaving}
+                    className="glass-input text-sm py-1.5 px-3 rounded-md w-40"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
                   <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Rate With Car IQ ($/mi)</label>
                   <input
-                    key={`with:${carIqRateWith}`}
                     type="number" min={0} step={0.01}
-                    defaultValue={carIqRateWith}
+                    value={carIqRateDraft.with}
+                    placeholder={carIqRatesToday.with.toFixed(2)}
+                    onChange={(e) => setCarIqRateDraft((d) => ({ ...d, with: e.target.value }))}
                     disabled={carIqRatesSaving}
-                    onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= 0 && v !== carIqRateWith) void handleSaveCarIqRates(v, carIqRateWithout); }}
                     className="glass-input text-sm py-1.5 px-3 rounded-md w-32"
                   />
                 </div>
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Rate Without Car IQ ($/mi)</label>
                   <input
-                    key={`without:${carIqRateWithout}`}
                     type="number" min={0} step={0.01}
-                    defaultValue={carIqRateWithout}
+                    value={carIqRateDraft.without}
+                    placeholder={carIqRatesToday.without.toFixed(2)}
+                    onChange={(e) => setCarIqRateDraft((d) => ({ ...d, without: e.target.value }))}
                     disabled={carIqRatesSaving}
-                    onBlur={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= 0 && v !== carIqRateWithout) void handleSaveCarIqRates(carIqRateWith, v); }}
                     className="glass-input text-sm py-1.5 px-3 rounded-md w-32"
                   />
                 </div>
-                {carIqRatesSaving && <Loader2 className="h-4 w-4 animate-spin text-slate-400 mb-1.5" />}
+                <button
+                  type="button"
+                  onClick={() => void handleAddCarIqRate()}
+                  disabled={carIqRatesSaving}
+                  className="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold flex items-center gap-1.5"
+                >
+                  {carIqRatesSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  Add Rate Change
+                </button>
+              </div>
+              <div className="mt-3 rounded-md border border-white/10 overflow-hidden max-w-3xl">
+                <table className="w-full text-xs">
+                  <thead className="bg-white/5 text-muted-foreground">
+                    <tr>
+                      <th className="text-left px-3 py-1.5 font-semibold">Effective From</th>
+                      <th className="text-right px-3 py-1.5 font-semibold">With Car IQ</th>
+                      <th className="text-right px-3 py-1.5 font-semibold">Without Car IQ</th>
+                      <th className="text-left px-3 py-1.5 font-semibold">Changed By</th>
+                      <th className="text-left px-3 py-1.5 font-semibold">Status</th>
+                      <th className="px-3 py-1.5" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      const today = todayISO();
+                      const inEffect = carIqRateHistory.filter((e) => e.effectiveDate <= today).pop()?.effectiveDate ?? carIqRateHistory[0]?.effectiveDate;
+                      return [...carIqRateHistory].reverse().map((entry) => {
+                        const status = entry.effectiveDate > today ? "Scheduled" : entry.effectiveDate === inEffect ? "In effect" : "Past";
+                        return (
+                          <tr key={entry.effectiveDate} className="border-t border-white/5">
+                            <td className="px-3 py-1.5">{entry.effectiveDate === CAR_IQ_RATE_HISTORY_START ? "Since the start" : formatISODate(entry.effectiveDate)}</td>
+                            <td className="px-3 py-1.5 text-right">${entry.with.toFixed(2)}/mi</td>
+                            <td className="px-3 py-1.5 text-right">${entry.without.toFixed(2)}/mi</td>
+                            <td className="px-3 py-1.5 text-muted-foreground">
+                              {entry.changedByName || "—"}
+                              {entry.changedAt && <span className="ml-1 text-[10px]">· {new Date(entry.changedAt).toLocaleString()}</span>}
+                            </td>
+                            <td className="px-3 py-1.5">
+                              <span className={`inline-block px-1.5 py-px rounded text-[10px] font-bold border ${status === "In effect" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : status === "Scheduled" ? "border-sky-500/40 bg-sky-500/10 text-sky-300" : "border-white/10 text-slate-400"}`}>{status}</span>
+                            </td>
+                            <td className="px-3 py-1.5 text-right">
+                              {carIqRateHistory.length > 1 && entry.effectiveDate !== CAR_IQ_RATE_HISTORY_START && (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleDeleteCarIqRate(entry.effectiveDate)}
+                                  disabled={carIqRatesSaving}
+                                  title="Remove this rate change"
+                                  className="text-slate-500 hover:text-red-400 disabled:opacity-40"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
               </div>
             </div>
 
