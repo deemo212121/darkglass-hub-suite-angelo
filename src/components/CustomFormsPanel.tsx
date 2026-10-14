@@ -20,6 +20,7 @@ import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
 import { downloadStyledReport, type ReportSheet } from "@/lib/styledReportExport";
 import { uploadCustomFormFile } from "@/lib/firebase/storage";
 import { ELEMENT_REGISTRY, type CustomFormField } from "@/lib/formElements";
+import { isSignerSectionComplete, signerSectionName, splitSignerSections } from "@/lib/customFormSections";
 import {
   getCustomForms,
   getCustomFormSubmissions,
@@ -36,6 +37,7 @@ import {
   companyFields,
   isAwaitingCompany,
   completeCustomFormSubmission,
+  saveCustomFormCompanyPart,
   type CustomForm,
   type CustomFormSubmission,
   type CustomFormSubmissionStatus,
@@ -52,6 +54,13 @@ const STATUS_BADGE: Record<string, string> = {
   published: "bg-green-500/20 text-green-300",
   archived: "bg-slate-700 text-slate-400",
 };
+
+/** A form with several company signers: the parts not signed yet (e.g. "HUMAN RESOURCES"). Empty for a single company part. */
+function pendingSignerNames(form: CustomForm | undefined, submission: CustomFormSubmission): string {
+  if (!form) return "";
+  const sections = splitSignerSections(companyFields(form));
+  return sections.length > 1 ? sections.filter((s) => !isSignerSectionComplete(s, submission.responses)).map(signerSectionName).join(", ") : "";
+}
 
 /** Fields that carry an answer (not headings/paragraphs/page markers) — the columns of an export. */
 const NON_ANSWER_TYPES = new Set(["heading", "paragraph", "divider", "pageBreak", "sectionCollapse", "submitButton", "captcha", "image"]);
@@ -293,6 +302,7 @@ export function CustomFormsPanel() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
 
   const revokeIfBlob = (url: string | null) => { if (url?.startsWith("blob:")) URL.revokeObjectURL(url); };
 
@@ -425,6 +435,18 @@ export function CustomFormsPanel() {
       } else if (v !== undefined) {
         responses[field.id] = v;
       }
+    }
+    // Several company signers (e.g. the CEO, then HR): save this part, and
+    // only complete — and save the finished document — once the last is in.
+    const sections = splitSignerSections(companyFields(form));
+    const waitingOn = sections.length > 1 ? sections.filter((s) => !isSignerSectionComplete(s, responses)) : [];
+    setActionNotice(null);
+    if (waitingOn.length) {
+      await saveCustomFormCompanyPart(submission.id, responses);
+      setSubmissions((prev) => prev.map((s) => (s.id === submission.id ? { ...s, responses } : s)));
+      setCompleting(null);
+      setActionNotice(`Saved your part of "${submission.formTitle || "the form"}". Still waiting on: ${waitingOn.map(signerSectionName).join(", ")}.`);
+      return;
     }
     await completeCustomFormSubmission(submission.id, responses, me);
     const completed: CustomFormSubmission = { ...submission, responses, completedAt: new Date().toISOString(), pdfUrl: null };
@@ -635,6 +657,7 @@ export function CustomFormsPanel() {
           </button>
         </div>
         {actionError && <p className="px-4 py-2 text-xs text-red-300 bg-red-500/10 border-b border-red-500/20">{actionError}</p>}
+        {actionNotice && <p className="px-4 py-2 text-xs text-green-300 bg-green-500/10 border-b border-green-500/20">{actionNotice}</p>}
         <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
@@ -696,7 +719,9 @@ export function CustomFormsPanel() {
                         <option value="archived">Archived</option>
                       </select>
                       {isAwaitingCompany(formsById.get(s.formId), s) && (
-                        <span className="block mt-1 text-[10px] font-semibold text-orange-300" title="The company's part (e.g. Authorized Representative signature) isn't filled in yet — use Complete.">Awaiting company signature</span>
+                        <span className="block mt-1 text-[10px] font-semibold text-orange-300" title="The company's part (e.g. Authorized Representative signature) isn't filled in yet — use Complete.">
+                          Awaiting company signature{pendingSignerNames(formsById.get(s.formId), s) ? ` — ${pendingSignerNames(formsById.get(s.formId), s)}` : ""}
+                        </span>
                       )}
                     </td>
                     <td className="px-4 py-3">

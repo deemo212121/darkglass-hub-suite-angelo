@@ -377,6 +377,12 @@ export async function saveCustomFormSubmissionPdf(id: string, pdfUrl: string): P
 }
 
 /** HR's half of a two-party form: merges the company fields' answers into the submission and stamps who completed it. */
+/** One signer's part of a form with several company signers (see customFormSections.ts) — saved, but the submission isn't complete until the last part is in. */
+export async function saveCustomFormCompanyPart(id: string, responses: Record<string, CustomFormResponseValue>): Promise<void> {
+  const { error } = await supabase.from("hr_custom_form_submissions").update({ responses }).eq("id", id);
+  if (error) throw error;
+}
+
 export async function completeCustomFormSubmission(id: string, responses: Record<string, CustomFormResponseValue>, completedBy: string): Promise<void> {
   const { error } = await supabase
     .from("hr_custom_form_submissions")

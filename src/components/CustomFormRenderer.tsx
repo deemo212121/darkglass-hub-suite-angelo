@@ -21,12 +21,13 @@
  * Disable If) and Calculation fields are evaluated against every other
  * field's current value, keyed by its human-readable Unique Field Name.
  */
-import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import {
   ELEMENT_REGISTRY, applyFieldStyle, checkConditions, evaluateBooleanExpression, evaluateNumericExpression,
   type CustomFormField,
 } from "@/lib/formElements";
+import { hasAnswer, isSignerSectionComplete, splitSignerSections, type SignerSection } from "@/lib/customFormSections";
 
 export type CustomFormRendererValue = any;
 
@@ -37,7 +38,9 @@ interface Props {
    * "submitter" (default) — the fill page: fields marked "Filled in by:
    * Company" are left out. "company" — HR completing a submission: ONLY
    * those fields are shown, with the submitter's answers (initialValues)
-   * still feeding merge tokens and conditional logic.
+   * still feeding merge tokens and conditional logic. When the company part
+   * has more than one signer section (see customFormSections.ts), sections
+   * already completed show read-only and the person fills just their own.
    */
   mode?: "submitter" | "company";
   initialValues?: Record<string, CustomFormRendererValue>;
@@ -187,6 +190,25 @@ function FieldRow({ field, value, disabled, onChange, valuesByName }: { field: C
   );
 }
 
+/** A field of a signer section someone already completed — shown as saved, not editable (a signature can't be redrawn over). */
+function SignedFieldRow({ field, value }: { field: CustomFormField; value: any }) {
+  const def = ELEMENT_REGISTRY[field.type];
+  const isFile = !!def?.isFileField;
+  const text = def?.formatValue ? def.formatValue(value, field) : typeof value === "string" || typeof value === "number" ? String(value) : "";
+  return (
+    <div style={applyFieldStyle(field)}>
+      <div className={`flex flex-col gap-1.5 ${field.displayMode === "block" && field.width < 100 ? "pr-4" : ""}`}>
+        <span className="text-sm font-medium text-muted-foreground">{field.label}</span>
+        {isFile ? (
+          value?.url ? <img src={value.url} alt={field.label} className="h-16 w-auto max-w-full self-start rounded-md bg-white p-1" /> : <span className="text-sm">—</span>
+        ) : (
+          <span className="text-sm">{text || "—"}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submitter", initialValues }: Props) {
   const fields = useMemo(() => allFields.filter((f) => (mode === "company" ? f.fillBy === "company" : f.fillBy !== "company")), [allFields, mode]);
   const [values, setValues] = useState<Record<string, any>>(() => ({
@@ -210,6 +232,24 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
 
   const valuesByName = useMemo(() => Object.fromEntries(allFields.map((f) => [f.name, values[f.id]])), [allFields, values]);
 
+  // Company mode, more than one signer section (e.g. the CEO, then HR): a
+  // section someone already completed is read-only, and the person fills
+  // just their own — see customFormSections.ts.
+  const signerSections = useMemo<SignerSection[]>(() => {
+    if (mode !== "company") return [];
+    const sections = splitSignerSections(fields.filter((f) => !f.hidden));
+    return sections.length > 1 ? sections : [];
+  }, [fields, mode]);
+  const signedFieldIds = useMemo(
+    () => new Set(signerSections.filter((s) => isSignerSectionComplete(s, initialValues ?? {})).flatMap((s) => s.fields.map((f) => f.id))),
+    [signerSections, initialValues]
+  );
+  /** Open sections this person has started on — anything entered beyond the preset defaults (e.g. a pre-printed name). */
+  const sectionsBeingSigned = () =>
+    signerSections.filter(
+      (s) => !signedFieldIds.has(s.fields[0].id) && s.fields.some((f) => hasAnswer(f, values[f.id]) && values[f.id] !== f.defaultValue)
+    );
+
   // Calculated fields recompute from every other field's live value and are never directly edited.
   useEffect(() => {
     const patch: Record<string, any> = {};
@@ -225,6 +265,17 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
 
   const validatePage = (page: FormPage, isFirstPage: boolean): string | null => {
     if (isFirstPage && needsAutoName && !autoName.trim()) return "Please enter your name.";
+    if (signerSections.length) {
+      if (signerSections.every((s) => signedFieldIds.has(s.fields[0].id))) return "Every part of this form is already signed.";
+      const signing = sectionsBeingSigned();
+      if (!signing.length) return "Fill in your part — sign it and add the date.";
+      for (const f of signing.flatMap((s) => s.fields)) {
+        if (!computeFieldState(f, valuesByName).visible) continue;
+        const err = validateFieldValue(f, values[f.id], valuesByName);
+        if (err) return err;
+      }
+      return null;
+    }
     for (const group of page.groups) {
       for (const f of group.fields) {
         const { visible } = computeFieldState(f, valuesByName);
@@ -252,9 +303,11 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
     if (validationError) { setError(validationError); return; }
     setError(null);
     setSubmitting(true);
+    // Signer sections: send the ones being signed (and the saved ones, unchanged) — not another signer's preset defaults.
+    const sending = signerSections.length ? new Set([...signedFieldIds, ...sectionsBeingSigned().flatMap((s) => s.fields.map((f) => f.id))]) : null;
     try {
       await onSubmit(
-        Object.fromEntries(fields.filter((f) => values[f.id] !== undefined).map((f) => [f.id, values[f.id]])),
+        Object.fromEntries(fields.filter((f) => values[f.id] !== undefined && (!sending || sending.has(f.id))).map((f) => [f.id, values[f.id]])),
         needsAutoName ? autoName.trim() || null : deriveSubmitterName(fields, values)
       );
       setSubmitted(true);
@@ -271,6 +324,22 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
   }
 
   const page = pages[pageIndex];
+
+  const renderField = (f: CustomFormField) => {
+    const { visible, disabled } = computeFieldState(f, valuesByName);
+    if (!visible) return null;
+    const row = <FieldRow key={f.id} field={f} value={values[f.id]} disabled={disabled} onChange={(v) => setValue(f.id, v)} valuesByName={valuesByName} />;
+    if (!signedFieldIds.has(f.id)) return row;
+    if (f.type === "heading") {
+      return (
+        <Fragment key={f.id}>
+          {row}
+          <p className="w-full -mt-2 text-xs font-semibold text-green-400 flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" /> Signed</p>
+        </Fragment>
+      );
+    }
+    return ELEMENT_REGISTRY[f.type]?.kind === "structural" ? row : <SignedFieldRow key={f.id} field={f} value={values[f.id]} />;
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -306,19 +375,11 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
             <details key={gi} open={group.defaultOpen !== false} className="rounded-md border border-white/10 p-3 w-full">
               <summary className="text-sm font-semibold cursor-pointer flex items-center gap-1.5"><ChevronDown className="h-3.5 w-3.5" /> {group.title}</summary>
               <div className="flex flex-wrap gap-y-4 mt-3">
-                {group.fields.map((f) => {
-                  const { visible, disabled } = computeFieldState(f, valuesByName);
-                  if (!visible) return null;
-                  return <FieldRow key={f.id} field={f} value={values[f.id]} disabled={disabled} onChange={(v) => setValue(f.id, v)} valuesByName={valuesByName} />;
-                })}
+                {group.fields.map(renderField)}
               </div>
             </details>
           ) : (
-            group.fields.map((f) => {
-              const { visible, disabled } = computeFieldState(f, valuesByName);
-              if (!visible) return null;
-              return <FieldRow key={f.id} field={f} value={values[f.id]} disabled={disabled} onChange={(v) => setValue(f.id, v)} valuesByName={valuesByName} />;
-            })
+            group.fields.map(renderField)
           )
         )}
       </div>
