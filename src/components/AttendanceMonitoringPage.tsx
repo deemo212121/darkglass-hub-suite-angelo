@@ -1878,7 +1878,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     // Leading BOM — without it, Excel (unlike most other CSV readers)
     // ignores the charset=utf-8 above and mis-decodes any non-ASCII
     // character (the "—" placeholder below included) as Windows-1252,
-    // turning it into "â€”" on open.
+    // turning it into "—" on open.
     element.setAttribute("href", "data:text/csv;charset=utf-8," + encodeURIComponent(String.fromCharCode(0xfeff) + csvContent));
     const filenameDate = dateRangeActive ? `${filterDateFrom}_to_${filterDateTo}` : dailyDate;
     element.setAttribute("download", `attendance-summary-${filenameDate}.csv`);

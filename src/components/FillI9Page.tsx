@@ -1,18 +1,18 @@
 /**
- * Fill I-9 â opened from the deep link a Team Messenger message sends (see
+ * Fill I-9 — opened from the deep link a Team Messenger message sends (see
  * ReportHRDaily.tsx's "Form I-9" tab "Send I-9 Request" flow). Same
  * architecture as FillW4Page.tsx: renders the REAL official PDF's pages to
  * canvases via pdf.js, with input overlays at each field's own coordinates
- * â no redrawn lookalike. Submitting fills that same real PDF's own Section
+ * — no redrawn lookalike. Submitting fills that same real PDF's own Section
  * 1 fields via fillI9Pdf and sends the result back to HR.
  *
- * Only Section 1 (page 1's employee half) is fillable here â Section 2 (the
+ * Only Section 1 (page 1's employee half) is fillable here — Section 2 (the
  * employer/AR document-review half, further down the same page) is
  * completed separately afterward by HR, see i9FormTemplate.ts's header
  * comment for why this form is a genuine two-party flow. Page 2 ("Lists of
  * Acceptable Documents") is shown read-only for reference, same treatment
  * FillW4Page.tsx gives its non-fillable worksheet pages. Pages 3-4
- * (Supplement A/B â preparer/translator certification, reverification and
+ * (Supplement A/B — preparer/translator certification, reverification and
  * rehire) aren't relevant to a new hire's own submission and aren't shown.
  */
 import { InlinePdfLink } from "@/components/InlinePdfViewer";
@@ -42,7 +42,7 @@ interface Props {
 
 const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792;
-/** Only Section 1's page and the reference "Lists of Acceptable Documents" page are shown â see header comment. */
+/** Only Section 1's page and the reference "Lists of Acceptable Documents" page are shown — see header comment. */
 const VISIBLE_PAGES = 2;
 
 const STATE_OPTIONS = [
@@ -53,7 +53,7 @@ const STATE_OPTIONS = [
 ];
 
 // Field rectangles (PDF user-space units, origin bottom-left), extracted via
-// pdf-lib's acroField.getWidgets()[0].getRectangle() on src/assets/i-9.pdf â
+// pdf-lib's acroField.getWidgets()[0].getRectangle() on src/assets/i-9.pdf —
 // same technique w4FormTemplate.ts's rects were derived from. Section 1 only
 // (y=605 down to the signature/date row at y=421); Section 2 (y=342 down to
 // y=53) is left showing the blank PDF underneath with no overlay, since the
@@ -287,7 +287,7 @@ export function FillI9Page({ docId }: Props) {
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "Employee",
-          body: `ð Form I-9 Section 1 for ${employeeName} has been completed and submitted, and is ready for Section 2: [${filename}](${pdfUrl})`,
+          body: `📄 Form I-9 Section 1 for ${employeeName} has been completed and submitted, and is ready for Section 2: [${filename}](${pdfUrl})`,
         });
       }
 
@@ -295,7 +295,7 @@ export function FillI9Page({ docId }: Props) {
         .then(({ taxForms }) => {
           if (!taxForms) return;
           const excludeIds = doc.createdBy ? [doc.createdBy] : [];
-          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `ð Form I-9 Section 1 for ${employeeName} has been completed â Section 2 is ready to be filled in.`);
+          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📄 Form I-9 Section 1 for ${employeeName} has been completed — Section 2 is ready to be filled in.`);
         })
         .catch((err) => console.error("[i9] hr notify check failed:", err));
 
@@ -323,7 +323,7 @@ export function FillI9Page({ docId }: Props) {
 
   // Conditional fields (work-auth expiration date, A-Number, etc.) only
   // appear after checking a citizenship-status box, which makes them easy to
-  // miss against the plain white PDF page â a persistent light highlight
+  // miss against the plain white PDF page — a persistent light highlight
   // (the same convention Acrobat/other PDF fillers use for fillable fields)
   // keeps every field visually discoverable, not just the ones a user
   // happens to click into.
@@ -355,7 +355,7 @@ export function FillI9Page({ docId }: Props) {
           <FillFormSignInRequired />
         ) : loading ? (
           <div className="panel p-8 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading documentâ¦
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading document…
           </div>
         ) : error && !doc ? (
           <div className="panel p-6 text-sm text-red-300">{error}</div>
@@ -363,7 +363,7 @@ export function FillI9Page({ docId }: Props) {
           <div className="panel p-6 text-sm text-muted-foreground">This document isn't addressed to your account.</div>
         ) : submitted || doc.status === "signed" || doc.status === "confirmed" ? (
           <div className="panel p-6 text-center">
-            <p className="text-sm font-semibold mb-2">â Section 1 submitted{submitted ? " and sent back to HR" : ""}.</p>
+            <p className="text-sm font-semibold mb-2">✅ Section 1 submitted{submitted ? " and sent back to HR" : ""}.</p>
             <p className="text-xs text-muted-foreground mb-2">HR will complete Section 2 (document review) separately.</p>
             {doc.pdfUrl && (
               <InlinePdfLink url={doc.pdfUrl} label="View the completed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
@@ -381,7 +381,7 @@ export function FillI9Page({ docId }: Props) {
                   <canvas ref={(el) => { pageCanvasRefs.current[pageNum - 1] = el; }} className="absolute inset-0" />
                   {pageLoading && (
                     <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-muted-foreground gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" /> Loading formâ¦
+                      <Loader2 className="h-4 w-4 animate-spin" /> Loading form…
                     </div>
                   )}
 
@@ -410,11 +410,11 @@ export function FillI9Page({ docId }: Props) {
                       {singleLineInput("ssn", SECTION1_RECT.ssn)}
                       {singleLineInput("phone", SECTION1_RECT.phone)}
 
-                      <button type="button" style={overlayStyle(SECTION1_RECT.citizenCheckbox)} onClick={() => setCitizenshipStatus("citizen")} className={checkboxCls}>{form.citizenshipStatus === "citizen" ? "â" : ""}</button>
-                      <button type="button" style={overlayStyle(SECTION1_RECT.noncitizenNationalCheckbox)} onClick={() => setCitizenshipStatus("noncitizen_national")} className={checkboxCls}>{form.citizenshipStatus === "noncitizen_national" ? "â" : ""}</button>
-                      <button type="button" style={overlayStyle(SECTION1_RECT.lprCheckbox)} onClick={() => setCitizenshipStatus("lawful_permanent_resident")} className={checkboxCls}>{form.citizenshipStatus === "lawful_permanent_resident" ? "â" : ""}</button>
+                      <button type="button" style={overlayStyle(SECTION1_RECT.citizenCheckbox)} onClick={() => setCitizenshipStatus("citizen")} className={checkboxCls}>{form.citizenshipStatus === "citizen" ? "✔" : ""}</button>
+                      <button type="button" style={overlayStyle(SECTION1_RECT.noncitizenNationalCheckbox)} onClick={() => setCitizenshipStatus("noncitizen_national")} className={checkboxCls}>{form.citizenshipStatus === "noncitizen_national" ? "✔" : ""}</button>
+                      <button type="button" style={overlayStyle(SECTION1_RECT.lprCheckbox)} onClick={() => setCitizenshipStatus("lawful_permanent_resident")} className={checkboxCls}>{form.citizenshipStatus === "lawful_permanent_resident" ? "✔" : ""}</button>
                       {form.citizenshipStatus === "lawful_permanent_resident" && singleLineInput("lprANumber", SECTION1_RECT.lprANumber)}
-                      <button type="button" style={overlayStyle(SECTION1_RECT.authorizedCheckbox)} onClick={() => setCitizenshipStatus("noncitizen_authorized")} className={checkboxCls}>{form.citizenshipStatus === "noncitizen_authorized" ? "â" : ""}</button>
+                      <button type="button" style={overlayStyle(SECTION1_RECT.authorizedCheckbox)} onClick={() => setCitizenshipStatus("noncitizen_authorized")} className={checkboxCls}>{form.citizenshipStatus === "noncitizen_authorized" ? "✔" : ""}</button>
                       {form.citizenshipStatus === "noncitizen_authorized" && singleLineInput("workAuthExpDate", SECTION1_RECT.workAuthExpDate)}
 
                       {form.citizenshipStatus === "noncitizen_authorized" && (
@@ -457,7 +457,7 @@ export function FillI9Page({ docId }: Props) {
               disabled={submitting}
               className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white mt-3 disabled:opacity-50"
             >
-              {submitting ? "Submittingâ¦" : "Submit to HR"}
+              {submitting ? "Submitting…" : "Submit to HR"}
             </button>
           </div>
         )}

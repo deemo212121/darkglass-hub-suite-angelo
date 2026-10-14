@@ -33,10 +33,27 @@ import { storage, auth, isFirebaseReady } from "./config";
  */
 export async function refreshStorageAuthToken(): Promise<void> {
   try {
-    await auth?.currentUser?.getIdToken(true);
+    // Capped at 10s — a refresh that never answers mustn't hold up the upload after it.
+    await Promise.race([auth?.currentUser?.getIdToken(true), new Promise((resolve) => setTimeout(resolve, 10_000))]);
   } catch {
     // best-effort — see doc comment above
   }
+}
+
+/**
+ * A Storage upload error in words the signer can act on (the raw Firebase
+ * messages are cryptic), with its code kept for anyone diagnosing it.
+ */
+export function describeStorageError(err: unknown): string {
+  const code = (err as { code?: string } | null)?.code ?? "";
+  if (code === "storage/retry-limit-exceeded")
+    return "Couldn't reach the file storage service — the connection timed out. Check the internet connection (or try another network or browser) and submit again. (storage/retry-limit-exceeded)";
+  if (code === "storage/unauthorized" || code === "storage/unauthenticated")
+    return `Your login session has expired — refresh the page (or sign in again) and submit again. (${code})`;
+  if (code === "storage/canceled") return "The upload was cancelled — submit again. (storage/canceled)";
+  if (code === "storage/quota-exceeded") return "File storage is full — tell an admin. (storage/quota-exceeded)";
+  const message = err instanceof Error ? err.message : String(err ?? "Unknown error");
+  return code ? `${message} (${code})` : message;
 }
 
 export interface TicketPhoto {
