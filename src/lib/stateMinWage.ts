@@ -10,7 +10,10 @@
  */
 export interface StateMinWage {
   state: string;
+  /** The rate before any of `changes` take effect. */
   rate: number | null;
+  /** Scheduled increases, oldest first — each applies from `from` (YYYY-MM-DD) onward. */
+  changes?: { from: string; rate: number }[];
 }
 
 /** Federal minimum wage floor (unchanged since 2009) — every state below
@@ -28,7 +31,8 @@ export const STATE_MIN_WAGE_2026: StateMinWage[] = [
   { state: "Colorado", rate: 15.16 },
   { state: "Connecticut", rate: 16.94 },
   { state: "Delaware", rate: 15 },
-  { state: "Florida", rate: 14 },
+  // Amendment 2 (2020): $1 a year every Sept 30, reaching $15 on 2026-09-30.
+  { state: "Florida", rate: 14, changes: [{ from: "2026-09-30", rate: 15 }] },
   { state: "Georgia", rate: 7.25 },
   { state: "Idaho", rate: 7.25 },
   { state: "Illinois", rate: 15 },
@@ -110,15 +114,46 @@ export function normalizeStateName(raw: string | null | undefined): string | nul
  * (county-based, e.g. NY/Oregon) are skipped since they can't be compared
  * numerically. Returns null if `states` is empty or none have a fixed rate.
  */
-export function highestRateAmong(states: string[]): string | null {
+export function highestRateAmong(states: string[], date?: string): string | null {
   let best: string | null = null;
   let bestRate = -Infinity;
   for (const s of states) {
-    const rate = STATE_MIN_WAGE_2026.find((sw) => sw.state === s)?.rate;
+    const rate = stateMinWageOn(s, date);
     if (rate != null && rate > bestRate) {
       bestRate = rate;
       best = s;
     }
   }
   return best;
+}
+
+function todayKey(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** A state's rate on/after its latest change and the rate before it — for an
+ *  exported sheet that has one editable cell per rate. `changedOn` is null
+ *  when the state has no scheduled change. */
+export function stateRateChangeInfo(entry: StateMinWage): { changedOn: string | null; current: number | null; previous: number | null } {
+  const last = entry.changes?.[entry.changes.length - 1];
+  if (!last) return { changedOn: null, current: entry.rate, previous: null };
+  const prior = entry.changes!.length > 1 ? entry.changes![entry.changes!.length - 2].rate : entry.rate;
+  return { changedOn: last.from, current: last.rate, previous: prior };
+}
+
+/**
+ * A state's minimum wage IN EFFECT ON `date` (YYYY-MM-DD; defaults to today)
+ * — a pay period that spans a change (e.g. Florida's $14 -> $15 on
+ * 2026-09-30) gets each day's own rate. null for an unknown state or a
+ * county-set one (NY/Oregon).
+ */
+export function stateMinWageOn(state: string | null | undefined, date?: string): number | null {
+  if (!state) return null;
+  const entry = STATE_MIN_WAGE_2026.find((s) => s.state === state);
+  if (!entry) return null;
+  const on = date || todayKey();
+  let rate = entry.rate;
+  for (const c of entry.changes ?? []) if (c.from <= on) rate = c.rate;
+  return rate;
 }

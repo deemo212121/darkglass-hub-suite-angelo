@@ -9,7 +9,7 @@ import { getCompanyHolidaysInRange } from "./supabase/companyHolidays";
 import { getPendingCorrectionsInRange } from "./supabase/timecardCorrections";
 import { isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold } from "./roleLabels";
 import { payGraceMinutesFor } from "./attendanceGrace";
-import { normalizeStateName, highestRateAmong, STATE_MIN_WAGE_2026 } from "./stateMinWage";
+import { normalizeStateName, highestRateAmong, STATE_MIN_WAGE_2026, stateMinWageOn, stateRateChangeInfo } from "./stateMinWage";
 
 export const attendanceExportHeaders = ["Date", "States Worked", "Check In", "Check Out", "Regular Hr", "Meal Time", "Over Time", "Total Hours", "Rate", "State Floor Min", "State OT Floor Min"];
 /**
@@ -70,6 +70,7 @@ export function addAttendanceStateFormulas(
   sheet.getCell("O1").value = "State";
   sheet.getCell("P1").value = "State Rate / Hour";
   sheet.getCell("Q1").value = "Rate Notes";
+  sheet.getCell("R1").value = "Rate Before Change";
   sheet.getCell("S1").value = "OT Multiplier";
   sheet.getCell("S2").value = isPh ? 1 : 1.5;
   sheet.getCell("S4").value = "Edit States Worked using full names separated by / (e.g. Louisiana / Mississippi).";
@@ -78,23 +79,37 @@ export function addAttendanceStateFormulas(
   sheet.getCell("S7").value = "Blank state rates need a local rate entered; until then the company rate is used.";
   sheet.getCell("S8").value = isPh ? "PH payroll uses the company rate and straight-time overtime." : "State rates copied from the app's configured reference table.";
   sheet.getCell("S9").value = "Workbook edits do not update saved payroll data. Fixed-salary days have no hourly pay.";
+  // A state with a dated increase (Florida $14 -> $15 on 2026-09-30) gets
+  // its new rate in P and the earlier one in R; each day's formula below
+  // points at whichever applied on that day.
+  const changeInfo = STATE_MIN_WAGE_2026.map((s) => stateRateChangeInfo(s));
   for (const [index, state] of STATE_MIN_WAGE_2026.entries()) {
     const row = index + 2;
+    const info = changeInfo[index];
     sheet.getCell(`O${row}`).value = state.state;
-    sheet.getCell(`P${row}`).value = state.rate;
-    sheet.getCell(`Q${row}`).value = state.rate == null ? "Enter applicable local rate" : "";
-    sheet.getCell(`P${row}`).numFmt = '"$"0.00';
-    sheet.getCell(`P${row}`).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF2CC" } };
-    sheet.getCell(`P${row}`).dataValidation = { type: "decimal", operator: "greaterThanOrEqual", formulae: [0], allowBlank: true, showErrorMessage: true, error: "Enter a non-negative hourly rate." };
+    sheet.getCell(`P${row}`).value = info.current;
+    sheet.getCell(`Q${row}`).value = state.rate == null
+      ? "Enter applicable local rate"
+      : info.changedOn ? `From ${info.changedOn}; earlier days use column R` : "";
+    for (const col of info.changedOn ? ["P", "R"] : ["P"]) {
+      if (col === "R") sheet.getCell(`R${row}`).value = info.previous;
+      sheet.getCell(`${col}${row}`).numFmt = '"$"0.00';
+      sheet.getCell(`${col}${row}`).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF2CC" } };
+      sheet.getCell(`${col}${row}`).dataValidation = { type: "decimal", operator: "greaterThanOrEqual", formulae: [0], allowBlank: true, showErrorMessage: true, error: "Enter a non-negative hourly rate." };
+    }
   }
   for (const [index, day] of attendance.entries()) {
     const row = index + 2;
     const companyRate = pay.get(day.date)?.companyRate ?? 0;
     const worked = String(sheet.getCell(`B${row}`).value ?? "").split("/").map(s => s.trim().toLowerCase());
-    const floor = Math.max(0, ...STATE_MIN_WAGE_2026.filter(s => worked.includes(s.state.toLowerCase())).map(s => s.rate ?? 0));
+    const floor = Math.max(0, ...STATE_MIN_WAGE_2026.filter(s => worked.includes(s.state.toLowerCase())).map(s => stateMinWageOn(s.state, day.date) ?? 0));
     const applied = companyRate > 0 ? (isPh ? companyRate : Math.max(companyRate, floor)) : 0;
     // Individual IF terms avoid dynamic-array functions and support older Excel versions.
-    const lookups = STATE_MIN_WAGE_2026.map((_, i) => `IF(ISNUMBER(SEARCH("/"&SUBSTITUTE($O$${i + 2}," ","")&"/","/"&SUBSTITUTE(B${row}," ","")&"/")),N($P$${i + 2}),0)`);
+    const lookups = STATE_MIN_WAGE_2026.map((_, i) => {
+      const changedOn = changeInfo[i].changedOn;
+      const rateCol = changedOn && day.date < changedOn ? "R" : "P";
+      return `IF(ISNUMBER(SEARCH("/"&SUBSTITUTE($O$${i + 2}," ","")&"/","/"&SUBSTITUTE(B${row}," ","")&"/")),N($${rateCol}$${i + 2}),0)`;
+    });
     sheet.getCell(`M${row}`).value = companyRate;
     sheet.getCell(`N${row}`).value = { formula: isPh ? `M${row}` : `IF(M${row}<=0,0,MAX(M${row},${lookups.join(",")}))`, result: applied };
     const total = Number(sheet.getCell(`H${row}`).value ?? 0);
@@ -114,7 +129,7 @@ export function addAttendanceStateFormulas(
     }
     sheet.getCell(`${column}${totalRow}`).value = { formula: attendance.length ? `SUM(${column}2:${column}${attendance.length + 1})` : "0", result };
   }
-  for (const column of ["M", "N", "O", "P", "Q", "S"]) {
+  for (const column of ["M", "N", "O", "P", "Q", "R", "S"]) {
     sheet.getColumn(column).width = column === "Q" ? 30 : 24;
     sheet.getCell(`${column}1`).font = { bold: true };
   }
@@ -493,8 +508,8 @@ export async function downloadPayrollAttendanceWorkbook(
       for (const row of attendance) {
         if (row.status === "paid-leave" && row.hoursWorked) hours.set(row.date, { regular: row.hoursWorked, overtime: 0 });
         const companyRate = rateEffectiveOn(history, row.date);
-        const state = row.state || highestRateAmong(states.get(row.date)?.states ?? []);
-        const floor = STATE_MIN_WAGE_2026.find(s => s.state === state)?.rate ?? 0;
+        const state = row.state || highestRateAmong(states.get(row.date)?.states ?? [], row.date);
+        const floor = stateMinWageOn(state, row.date) ?? 0;
         pay.set(row.date, { companyRate, effectiveRate: companyRate > 0 ? Math.max(companyRate, floor) : 0 });
       }
       const sheet = workbook.addWorksheet(uniqueAttendanceSheetName(employee.full_name, used));

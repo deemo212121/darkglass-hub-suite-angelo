@@ -19,7 +19,7 @@ import { getTicketAttendanceForTechnician, slotSortKey, type TicketAttendanceRow
 import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
 import { getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
 import { getMileageEntries, setMileageEstimateTime, setMileageLegMileage, type MileageEntry } from "@/lib/supabase/mileage";
-import { STATE_MIN_WAGE_2026, normalizeStateName, highestRateAmong, FEDERAL_MIN_WAGE } from "@/lib/stateMinWage";
+import { STATE_MIN_WAGE_2026, normalizeStateName, highestRateAmong, stateMinWageOn, FEDERAL_MIN_WAGE } from "@/lib/stateMinWage";
 import {
   getSalaryHistory,
   addSalaryEntry,
@@ -661,7 +661,7 @@ export function EmployeePayrollDetailModal({
             .filter((s): s is string => s != null)
         )
       );
-      map.set(date, { bestState: highestRateAmong(states), states });
+      map.set(date, { bestState: highestRateAmong(states, date), states });
     }
     return map;
   }, [ticketRowsByDate]);
@@ -878,7 +878,7 @@ export function EmployeePayrollDetailModal({
         map.set(row.date, { companyRate: 0, effectiveRate: 0, isMatched: false, calculatedPay: 0, compliantPay: 0 });
         continue;
       }
-      const stateFloor = row.state ? STATE_MIN_WAGE_2026.find((s) => s.state === row.state)?.rate ?? null : null;
+      const stateFloor = stateMinWageOn(row.state, row.date);
       const isMatched = stateFloor != null && stateFloor > companyRate;
       const effectiveRate = isMatched ? (stateFloor as number) : companyRate;
       const dayOtMultiplier = isTrainingDay(row.date, traineeWindow) ? 1 : otMultiplier;

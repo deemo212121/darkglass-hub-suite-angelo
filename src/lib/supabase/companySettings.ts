@@ -231,6 +231,76 @@ export async function getCarIqMileageRates(): Promise<CarIqMileageRates> {
   };
 }
 
+/**
+ * Effective-dated Car IQ mileage rates (migration 0371) — each change applies
+ * from its effectiveDate onward, so a new rate never re-prices past periods.
+ * A company with no history yet gets one synthesized "since the start" entry
+ * from its flat 0324 rates (or the code defaults), matching what it paid.
+ */
+export interface CarIqMileageRateEntry {
+  effectiveDate: string; // "YYYY-MM-DD"
+  with: number;
+  without: number;
+  changedByName: string | null;
+  changedAt: string | null;
+}
+
+export const CAR_IQ_RATE_HISTORY_START = "2000-01-01";
+
+export async function getCarIqMileageRateHistory(defaults: { with: number; without: number }): Promise<CarIqMileageRateEntry[]> {
+  const { data, error } = await supabase.from("companies").select("settings").limit(1).maybeSingle();
+  if (error) console.error("getCarIqMileageRateHistory error:", error.message);
+  const s = ((data?.settings as Record<string, unknown> | null) ?? {}) as Record<string, any>;
+  const raw = Array.isArray(s.carIqMileageRateHistory) ? s.carIqMileageRateHistory : [];
+  const entries: CarIqMileageRateEntry[] = raw
+    .filter((e: any) => e && typeof e.effectiveDate === "string")
+    .map((e: any) => ({
+      effectiveDate: e.effectiveDate,
+      with: Number(e.with) || 0,
+      without: Number(e.without) || 0,
+      changedByName: e.changedByName ?? null,
+      changedAt: e.changedAt ?? null,
+    }))
+    .sort((a: CarIqMileageRateEntry, b: CarIqMileageRateEntry) => a.effectiveDate.localeCompare(b.effectiveDate));
+  if (entries.length > 0) return entries;
+  return [{
+    effectiveDate: CAR_IQ_RATE_HISTORY_START,
+    with: typeof s.carIqMileageRateWith === "number" ? s.carIqMileageRateWith : defaults.with,
+    without: typeof s.carIqMileageRateWithout === "number" ? s.carIqMileageRateWithout : defaults.without,
+    changedByName: null,
+    changedAt: null,
+  }];
+}
+
+/** The rates in effect on `date` (the latest entry dated on/before it; the earliest entry for a date before all of them). */
+export function carIqRatesOn(history: CarIqMileageRateEntry[], date: string): { with: number; without: number } {
+  let best = history[0];
+  for (const e of history) if (e.effectiveDate <= date) best = e;
+  return best ? { with: best.with, without: best.without } : { with: 0, without: 0 };
+}
+
+/** Effective dates strictly inside (dateFrom, dateTo] where the rates change — the mid-period switch points. */
+export function carIqRateChangeDatesInRange(history: CarIqMileageRateEntry[], dateFrom: string, dateTo: string): string[] {
+  return history.filter((e) => e.effectiveDate > dateFrom && e.effectiveDate <= dateTo).map((e) => e.effectiveDate);
+}
+
+/** Admin/Finance/Superadmin only (role or extra_roles) — enforced by the add_car_iq_mileage_rate RPC. Re-saving a date replaces that entry. */
+export async function addCarIqMileageRate(effectiveDate: string, rateWith: number, rateWithout: number, changedByName: string | null): Promise<void> {
+  const { error } = await supabase.rpc("add_car_iq_mileage_rate", { p_effective: effectiveDate, p_with: rateWith, p_without: rateWithout, p_changed_by: changedByName });
+  if (error) {
+    console.error("addCarIqMileageRate error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
+export async function deleteCarIqMileageRate(effectiveDate: string): Promise<void> {
+  const { error } = await supabase.rpc("delete_car_iq_mileage_rate", { p_effective: effectiveDate });
+  if (error) {
+    console.error("deleteCarIqMileageRate error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
 /** Admin/Finance/Superadmin only — enforced server-side by the set_car_iq_mileage_rates RPC. */
 export async function setCarIqMileageRates(rateWith: number, rateWithout: number): Promise<void> {
   const { error } = await supabase.rpc("set_car_iq_mileage_rates", { p_with: rateWith, p_without: rateWithout });
