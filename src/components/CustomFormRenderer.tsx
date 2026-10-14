@@ -27,7 +27,7 @@ import {
   ELEMENT_REGISTRY, applyFieldStyle, checkConditions, evaluateBooleanExpression, evaluateNumericExpression,
   type CustomFormField,
 } from "@/lib/formElements";
-import { canSignSection, hasAnswer, isSignerSectionComplete, sectionSigner, signerSectionName, splitSignerSections, type CurrentSigner, type SignerSection } from "@/lib/customFormSections";
+import { canSignSection, hasAnswer, inSigningOrder, isSectionsTurn, isSignerSectionComplete, sectionSigner, sectionsBefore, signerSectionName, splitSignerSections, type CurrentSigner, type SignerSection } from "@/lib/customFormSections";
 import { CustomFormSignatureInput } from "@/components/CustomFormSignatureInput";
 
 export type CustomFormRendererValue = any;
@@ -357,10 +357,21 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
     () => new Set(signerSections.filter((s) => isSignerSectionComplete(s, initialValues ?? {})).flatMap((s) => s.fields.map((f) => f.id))),
     [signerSections, initialValues]
   );
-  /** Sections still to sign that are this person's to sign. */
-  const mySections = signerSections.filter((s) => !signedFieldIds.has(s.fields[0].id) && canSignSection(s, signer));
-  /** …and the ones still waiting on someone else. */
-  const othersSections = signerSections.filter((s) => !signedFieldIds.has(s.fields[0].id) && !canSignSection(s, signer));
+  const isSigned = (s: SignerSection) => signedFieldIds.has(s.fields[0].id);
+  /** Its turn by signing order (config.signer.order — e.g. HR before the CEO), going by what's already saved. */
+  const isTurn = (s: SignerSection) => isSectionsTurn(s, signerSections, initialValues ?? {});
+  /** Sections still to sign that are this person's to sign, now. */
+  const mySections = signerSections.filter((s) => !isSigned(s) && canSignSection(s, signer) && isTurn(s));
+  /** …and the ones waiting on someone else, or on an earlier signer. */
+  const othersSections = signerSections.filter((s) => !isSigned(s) && !mySections.includes(s));
+  /** Who can sign right now (for "waiting on …"), in signing order. */
+  const nextUp = inSigningOrder(othersSections.filter(isTurn).length ? othersSections.filter(isTurn) : othersSections).map(signerSectionName).join(", ");
+  /** The note on a part that isn't this person's to sign now. */
+  const waitingNote = (s: SignerSection) => {
+    if (isTurn(s)) return `Waiting for ${signerSectionName(s)} to sign.`;
+    const first = inSigningOrder(sectionsBefore(s, signerSections).filter((b) => !isSigned(b))).map(signerSectionName).join(", ");
+    return `${signerSectionName(s)} signs after ${first}.`;
+  };
   const sectionOfField = useMemo(() => new Map(signerSections.flatMap((s) => s.fields.map((f) => [f.id, s] as const))), [signerSections]);
   /** Open sections this person has started on — anything entered beyond the preset defaults (e.g. a pre-printed name). */
   const sectionsBeingSigned = () =>
@@ -384,7 +395,7 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
     if (isFirstPage && needsAutoName && !autoName.trim()) return "Please enter your name.";
     if (signerSections.length) {
       if (signerSections.every((s) => signedFieldIds.has(s.fields[0].id))) return "Every part of this form is already signed.";
-      if (nothingForMe) return `Nothing here for you to sign — waiting on ${othersSections.map(signerSectionName).join(", ")}.`;
+      if (nothingForMe) return `Nothing here for you to sign right now — waiting on ${nextUp}.`;
       const signing = sectionsBeingSigned();
       if (!signing.length) return "Fill in your part — sign it and add the date.";
       for (const f of signing.flatMap((s) => s.fields)) {
@@ -460,7 +471,7 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
       return (
         <Fragment key={f.id}>
           {f.type === "heading" && row}
-          <p className="w-full -mt-2 text-xs font-semibold text-amber-500">Waiting for {signerSectionName(section)} to sign.</p>
+          <p className="w-full -mt-2 text-xs font-semibold text-amber-500">{waitingNote(section)}</p>
         </Fragment>
       );
     }
@@ -538,7 +549,7 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
       {error && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{error}</p>}
 
       {nothingForMe ? (
-        <p className="text-xs text-muted-foreground">Nothing here for you to sign — waiting on {othersSections.map(signerSectionName).join(", ")}.</p>
+        <p className="text-xs text-muted-foreground">Nothing here for you to sign right now — waiting on {nextUp}.</p>
       ) : (
       <div className="flex items-center gap-2">
         {pageIndex > 0 && (

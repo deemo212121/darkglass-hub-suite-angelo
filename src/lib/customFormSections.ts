@@ -56,6 +56,12 @@ export interface SectionSigner {
   roles?: string[];
   /** Shown to everyone else, e.g. "Waiting for Justin Lee to sign." */
   name?: string;
+  /**
+   * Signing order — lower numbers sign first (e.g. HR 1, then the CEO 2): a
+   * section only opens once every section with a lower number is signed.
+   * Sections without one aren't held back and don't hold others back.
+   */
+  order?: number;
 }
 
 /** The person completing the form: their profile id and real role(s). */
@@ -77,4 +83,24 @@ export function canSignSection(section: SignerSection, me: CurrentSigner | null 
   if (me.profileId && s.profileIds?.includes(me.profileId)) return true;
   const mine = new Set(me.roles.map((r) => r.toUpperCase()));
   return !!s.roles?.some((r) => mine.has(r.toUpperCase()));
+}
+
+/** The sections that have to be signed before this one (config.signer.order). */
+export function sectionsBefore(section: SignerSection, sections: SignerSection[]): SignerSection[] {
+  const n = sectionSigner(section)?.order;
+  if (n == null) return [];
+  return sections.filter((s) => s !== section && (sectionSigner(s)?.order ?? Infinity) < n);
+}
+
+/** Whether it's this section's turn — everything before it (by signing order) is signed in `values`. */
+export function isSectionsTurn(section: SignerSection, sections: SignerSection[], values: Record<string, unknown>): boolean {
+  return sectionsBefore(section, sections).every((s) => isSignerSectionComplete(s, values));
+}
+
+/** Sections in signing order (config.signer.order first, lowest number first); the rest keep their place in the form. */
+export function inSigningOrder(sections: SignerSection[]): SignerSection[] {
+  return sections
+    .map((s, i) => ({ s, i, n: sectionSigner(s)?.order ?? Infinity }))
+    .sort((a, b) => a.n - b.n || a.i - b.i)
+    .map((x) => x.s);
 }

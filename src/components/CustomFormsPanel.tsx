@@ -20,7 +20,7 @@ import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
 import { downloadStyledReport, type ReportSheet } from "@/lib/styledReportExport";
 import type { CustomFormField } from "@/lib/formElements";
 import { saveCompanyPart } from "@/lib/customFormCompletion";
-import { canSignSection, isSignerSectionComplete, sectionSigner, signerSectionName, splitSignerSections, type CurrentSigner } from "@/lib/customFormSections";
+import { canSignSection, inSigningOrder, isSectionsTurn, isSignerSectionComplete, sectionSigner, signerSectionName, splitSignerSections, type CurrentSigner } from "@/lib/customFormSections";
 import {
   getCustomForms,
   getCustomFormSubmissions,
@@ -57,7 +57,7 @@ const STATUS_BADGE: Record<string, string> = {
 function pendingSignerNames(form: CustomForm | undefined, submission: CustomFormSubmission): string {
   if (!form) return "";
   const sections = splitSignerSections(companyFields(form));
-  return sections.length > 1 ? sections.filter((s) => !isSignerSectionComplete(s, submission.responses)).map(signerSectionName).join(", ") : "";
+  return sections.length > 1 ? inSigningOrder(sections).filter((s) => !isSignerSectionComplete(s, submission.responses)).map(signerSectionName).join(", ") : "";
 }
 
 /** Fields that carry an answer (not headings/paragraphs/page markers) — the columns of an export. */
@@ -97,7 +97,7 @@ export function CustomFormsPanel() {
     if (!form || !isAwaitingCompany(form, submission)) return false;
     const sections = splitSignerSections(companyFields(form));
     if (!sections.some(sectionSigner)) return true;
-    return sections.some((sec) => !isSignerSectionComplete(sec, submission.responses) && canSignSection(sec, me));
+    return sections.some((sec) => !isSignerSectionComplete(sec, submission.responses) && canSignSection(sec, me) && isSectionsTurn(sec, sections, submission.responses));
   };
 
   const [forms, setForms] = useState<CustomForm[]>([]);
