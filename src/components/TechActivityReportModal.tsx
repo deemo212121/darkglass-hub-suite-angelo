@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { X, Plus, Trash2, Loader2 } from "lucide-react";
 import type { EmployeePayrollRow } from "@/components/AccountingDashboard";
-import { getAttendanceForRange, computeMealTimeCredit, splitRegularOvertimeWeekly, startOfWeekSunday, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
+import { getAttendanceForRange, computeMealTimeCredit, splitRegularOvertimeWeekly, startOfWeekSunday, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
 import { getSalaryHistory, rateEffectiveOn, type SalaryEntryRow } from "@/lib/supabase/salary";
 import { stateMinWageOn } from "@/lib/stateMinWage";
 import { isMealAlwaysPaidRole } from "@/lib/roleLabels";
@@ -107,7 +107,7 @@ export function TechActivityReportModal({
   hourlyOtModeBusy,
   periodDataSettling,
 }: Props) {
-  const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay, techHourlyPayStraight, techHourlyPayOtPremium, techWeightedRegularRate, techGuaranteedSalaryTarget, techHolidayPremium, techIncludablePay, mileageRateOverride, carIqSwitch } = row;
+  const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay, techHourlyPayStraight, techHourlyPayOtPremium, techWeightedRegularRate, techWeeklyOt, techGuaranteedSalaryTarget, techHolidayPremium, techIncludablePay, mileageRateOverride, carIqSwitch } = row;
   const branch = employee.assigned_branch || "";
 
   // Live Company-vs-State comparison for the Hourly Pay figure — fetched
@@ -484,7 +484,17 @@ export function TechActivityReportModal({
       alert(`Failed to add Car IQ mileage line: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
   };
-  const handleCustomLineBlur = async (item: TechCustomPayItem, fields: { label?: string; value?: number; rate?: number; isWageIncludable?: boolean }) => {
+  // Sunday workweeks this period touches — a custom line can be tagged
+  // with the one it was earned in (migration 0383) so it feeds that week's
+  // own FLSA regular rate instead of being spread over the period.
+  const periodWeeks = useMemo(() => {
+    const weeks: string[] = [];
+    if (!periodStart || !periodEnd) return weeks;
+    for (let w = startOfWeekSunday(periodStart); w <= periodEnd; w = addDaysISO(w, 7)) weeks.push(w);
+    return weeks;
+  }, [periodStart, periodEnd]);
+  const weekLabel = (weekStart: string) => `Wk ${Number(weekStart.slice(5, 7))}/${Number(weekStart.slice(8, 10))}`;
+  const handleCustomLineBlur = async (item: TechCustomPayItem, fields: { label?: string; value?: number; rate?: number; isWageIncludable?: boolean; workWeekStart?: string | null }) => {
     setSavingCustomId(item.id);
     try {
       await updateTechCustomPayItem(item.id, fields);
@@ -674,7 +684,22 @@ export function TechActivityReportModal({
                         <td className="px-3 py-2 text-right text-slate-300">{fmt(hourlyRate)}/hr</td>
                         <td className="px-3 py-2 text-right text-slate-200">{fmt(techHourlyPayStraight)}</td>
                       </tr>
-                      {overtimeHours > 0 && (
+                      {overtimeHours > 0 && techWeeklyOt.some((w) => w.premiumHours > 0) ? (
+                        // One row per workweek: FLSA sets the regular rate per week,
+                        // even on a biweekly payroll (see weeklyOtPremium,
+                        // AccountingDashboard.tsx).
+                        techWeeklyOt.filter((w) => w.premiumHours > 0).map((w) => (
+                          <tr
+                            key={w.weekStart}
+                            title={`Week of ${weekLabel(w.weekStart).slice(3)}: regular rate = (straight-time ${fmt(w.straightPay)} + includable ${fmt(w.includablePay)}) ÷ ${w.hours.toFixed(3)} hrs = ${fmt(w.regularRate)}/hr. Includable pay counts in the week its custom line is tagged with; untagged pay (and ticket pay) is spread over the weeks by hours.`}
+                          >
+                            <td className="px-3 py-2 text-slate-300">OT Premium ({weekLabel(w.weekStart)})</td>
+                            <td className="px-3 py-2 text-right text-slate-300">{w.premiumHours.toFixed(3)} OT</td>
+                            <td className="px-3 py-2 text-right text-slate-300">{fmt(w.regularRate)}/hr × 0.5</td>
+                            <td className="px-3 py-2 text-right text-slate-200">{fmt(w.premium)}</td>
+                          </tr>
+                        ))
+                      ) : overtimeHours > 0 && (
                         <tr title="The extra 0.5x overtime premium, computed off the FLSA weighted regular rate — straight-time wages plus this period's includable incentive/bonus pay (piece-rate, carryover, LDT/Training, Two Tech, MCA, Completed Tickets, custom lines), divided by total hours — instead of the flat hourly rate. Required once a technician earns incentive pay alongside overtime in the same period.">
                           <td className="px-3 py-2 text-slate-300">OT Premium (Weighted Rate)</td>
                           <td className="px-3 py-2 text-right text-slate-300">{overtimeHours.toFixed(3)} OT</td>
@@ -904,6 +929,20 @@ export function TechActivityReportModal({
                             <option value="includable">Includable</option>
                             <option value="reimbursement">Reimbursement</option>
                           </select>
+                          {periodWeeks.length > 1 && (
+                            <select
+                              title="The workweek this pay was earned in. An Includable line counts toward THAT week's regular rate for the OT premium (FLSA sets it per week). Whole period = spread over the weeks by hours."
+                              value={item.workWeekStart ?? ""}
+                              disabled={savingCustomId === item.id}
+                              onChange={(e) => handleCustomLineBlur(item, { workWeekStart: e.target.value || null })}
+                              className="bg-slate-800/50 border border-white/10 rounded px-1 py-1 text-[10px] text-slate-300 focus:border-blue-500 focus:outline-none disabled:opacity-50"
+                            >
+                              <option value="">Whole period</option>
+                              {periodWeeks.map((w) => (
+                                <option key={w} value={w}>{weekLabel(w)}</option>
+                              ))}
+                            </select>
+                          )}
                           <input
                             key={`rate:${item.id}:${item.rate}`}
                             type="number" step={0.01}
