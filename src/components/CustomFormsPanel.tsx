@@ -6,7 +6,8 @@
  * Documents (Jotform) tab, since this is the self-built equivalent of it.
  */
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Pencil, Trash2, Copy, Search, FileText, ExternalLink, X, FileDown, Loader2, HardDrive, Download, FileSpreadsheet, PenLine, CheckCircle2, Link2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Copy, Search, FileText, ExternalLink, X, FileDown, Loader2, HardDrive, Download, FileSpreadsheet, PenLine, CheckCircle2, Link2, Eye } from "lucide-react";
+import { CustomFormSignersModal } from "./CustomFormSignersModal";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
@@ -78,7 +79,7 @@ function exportCellText(value: CustomFormResponseValue | undefined, field: Custo
 }
 
 export function CustomFormsPanel() {
-  const { uid, realRole, extraRoles, viewAsRole } = useAuth();
+  const { uid, realRole, extraRoles, viewAsRole, displayName } = useAuth();
 
   // Who's signed in, for forms whose company parts name their signer (e.g.
   // only Justin Lee signs the CEO part, only HR the HR part). The real role —
@@ -443,7 +444,7 @@ export function CustomFormsPanel() {
     const myId = await getMyProfileId(uid);
     if (!myId) throw new Error("Couldn't identify your account — refresh and try again.");
     setActionNotice(null);
-    const result = await saveCompanyPart(form, submission, values, myId);
+    const result = await saveCompanyPart(form, submission, values, myId, displayName || "Someone");
     setSubmissions((prev) => prev.map((s) => (s.id === submission.id ? result.submission : s)));
     setCompleting(null);
     if (result.waitingOn.length) setActionNotice(`Saved your part of "${submission.formTitle || "the form"}". Still waiting on: ${result.waitingOn.join(", ")}.`);
@@ -453,6 +454,8 @@ export function CustomFormsPanel() {
   // ── Signing link — /complete-form/<id>, sent to whoever signs for the
   // company (e.g. the CEO) so they sign without opening HR Paperworks. ──
   const [copiedSignId, setCopiedSignId] = useState<string | null>(null);
+  // ── View — who has signed a form's submissions (CustomFormSignersModal). ──
+  const [viewingSignersFormId, setViewingSignersFormId] = useState<string | null>(null);
   const copySigningLink = (submission: CustomFormSubmission) => {
     navigator.clipboard.writeText(`${getAppUrl()}/complete-form/${submission.id}`);
     setCopiedSignId(submission.id);
@@ -616,6 +619,9 @@ export function CustomFormsPanel() {
                             <Switch checked={f.driveUploadEnabled} onCheckedChange={(checked) => void handleToggleDriveUpload(f, checked)} />
                           </div>
                         )}
+                        <button type="button" onClick={() => setViewingSignersFormId(f.id)} title="Who has signed this form" className="btn text-[10px] px-2 py-1 flex items-center gap-1">
+                          <Eye className="h-3 w-3" /> View
+                        </button>
                         <button type="button" onClick={() => void handleExportBlank(f, "pdf")} disabled={!!exportingFormId} title="Export this form (blank) as PDF" className="btn text-[10px] px-2 py-1 flex items-center gap-1 disabled:opacity-50">
                           {exportingFormId === `${f.id}:pdf` ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileDown className="h-3 w-3" />} PDF
                         </button>
@@ -852,6 +858,17 @@ export function CustomFormsPanel() {
           </div>
         );
       })()}
+
+      {viewingSignersFormId && formsById.get(viewingSignersFormId) && (
+        <CustomFormSignersModal
+          form={formsById.get(viewingSignersFormId)!}
+          submissions={submissions.filter((s) => s.formId === viewingSignersFormId)}
+          onClose={() => setViewingSignersFormId(null)}
+          onViewPdf={(s) => { setViewingSignersFormId(null); void openPreview(s); }}
+          onCopySigningLink={copySigningLink}
+          copiedSigningLinkId={copiedSignId}
+        />
+      )}
 
       {/* ── Complete — the company's part of a two-party form ── */}
       {completing && (() => {

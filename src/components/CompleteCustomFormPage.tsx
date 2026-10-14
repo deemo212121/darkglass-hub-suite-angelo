@@ -25,7 +25,7 @@ import { InlinePdfLink } from "@/components/InlinePdfViewer";
 import usihsLogo from "@/assets/us-in-home-services-logo.png";
 
 export function CompleteCustomFormPage({ submissionId }: { submissionId: string }) {
-  const { ready, uid, realRole, extraRoles, viewAsRole } = useAuth();
+  const { ready, uid, realRole, extraRoles, viewAsRole, displayName } = useAuth();
   const [form, setForm] = useState<CustomForm | null>(null);
   const [submission, setSubmission] = useState<CustomFormSubmission | null>(null);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
@@ -65,7 +65,7 @@ export function CompleteCustomFormPage({ submissionId }: { submissionId: string 
   const handleSubmit = async (values: Record<string, CustomFormRendererValue>) => {
     if (!form || !submission) return;
     if (!myProfileId) throw new Error("Couldn't identify your account — refresh and try again.");
-    const result = await saveCompanyPart(form, submission, values, myProfileId);
+    const result = await saveCompanyPart(form, submission, values, myProfileId, displayName || "Someone");
     setSubmission(result.submission);
     setDone({ waitingOn: result.waitingOn, documentError: result.documentError });
   };
