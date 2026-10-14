@@ -21,7 +21,7 @@
  * Disable If) and Calculation fields are evaluated against every other
  * field's current value, keyed by its human-readable Unique Field Name.
  */
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import {
   ELEMENT_REGISTRY, applyFieldStyle, checkConditions, evaluateBooleanExpression, evaluateNumericExpression,
@@ -44,7 +44,17 @@ interface Props {
    */
   mode?: "submitter" | "company";
   initialValues?: Record<string, CustomFormRendererValue>;
+  /**
+   * Paper view (the internal fill page): the form as a white document page
+   * with `header` (e.g. the logo) at its top, simple answers written on a
+   * line with the label underneath like the generated PDF — see .paper-sheet
+   * in styles.css. Errors and the Submit button sit below the page.
+   */
+  paper?: { header?: ReactNode };
 }
+
+/** Answers drawn on a line with the label underneath in paper view — the rest keep their usual label-above layout. */
+const PAPER_LINE_TYPES = new Set(["signature", "datePicker", "shortText", "email", "phone", "number"]);
 
 interface FieldGroup {
   /** Set when this group came from a "sectionCollapse" marker — renders as a collapsible block with this title. */
@@ -190,6 +200,26 @@ function FieldRow({ field, value, disabled, onChange, valuesByName }: { field: C
   );
 }
 
+/** Paper view: the answer written on a line with its label underneath, the way the printed document reads. */
+function PaperLineRow({ field, value, disabled, onChange, valuesByName }: { field: CustomFormField; value: any; disabled: boolean; onChange: (v: any) => void; valuesByName: Record<string, any> }) {
+  const def = ELEMENT_REGISTRY[field.type];
+  if (!def) return null;
+  return (
+    // Bottom-aligned (self-end) so a Date beside a Signature shares its line, as on the PDF.
+    <div style={applyFieldStyle(field)} className={`paper-line-row self-end ${field.cssClass ?? ""}`}>
+      <div className={`paper-line ${field.type === "signature" ? "paper-sig" : ""} ${field.displayMode === "block" && field.width < 100 ? "paper-gutter" : ""}`}>
+        <fieldset disabled={disabled} className="contents">
+          <def.FillInput field={field} value={value} onChange={onChange} valuesByName={valuesByName} />
+        </fieldset>
+        <div className="paper-rule" />
+        <div className="paper-label" title={field.tooltip || undefined}>
+          {field.label}{field.required && !field.readonly && <span className="text-red-600 ml-0.5">*</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** A field of a signer section someone already completed — shown as saved, not editable (a signature can't be redrawn over). */
 function SignedFieldRow({ field, value }: { field: CustomFormField; value: any }) {
   const def = ELEMENT_REGISTRY[field.type];
@@ -209,7 +239,7 @@ function SignedFieldRow({ field, value }: { field: CustomFormField; value: any }
   );
 }
 
-export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submitter", initialValues }: Props) {
+export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submitter", initialValues, paper }: Props) {
   const fields = useMemo(() => allFields.filter((f) => (mode === "company" ? f.fillBy === "company" : f.fillBy !== "company")), [allFields, mode]);
   const [values, setValues] = useState<Record<string, any>>(() => ({
     ...Object.fromEntries(fields.filter((f) => f.defaultValue !== undefined).map((f) => [f.id, f.defaultValue])),
@@ -328,7 +358,8 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
   const renderField = (f: CustomFormField) => {
     const { visible, disabled } = computeFieldState(f, valuesByName);
     if (!visible) return null;
-    const row = <FieldRow key={f.id} field={f} value={values[f.id]} disabled={disabled} onChange={(v) => setValue(f.id, v)} valuesByName={valuesByName} />;
+    const Row = paper && PAPER_LINE_TYPES.has(f.type) ? PaperLineRow : FieldRow;
+    const row = <Row key={f.id} field={f} value={values[f.id]} disabled={disabled} onChange={(v) => setValue(f.id, v)} valuesByName={valuesByName} />;
     if (!signedFieldIds.has(f.id)) return row;
     if (f.type === "heading") {
       return (
@@ -341,19 +372,9 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
     return ELEMENT_REGISTRY[f.type]?.kind === "structural" ? row : <SignedFieldRow key={f.id} field={f} value={values[f.id]} />;
   };
 
-  return (
-    <div className="flex flex-col gap-4">
-      {pages.length > 1 && (
-        <div className="flex flex-col gap-1">
-          <p className="text-xs text-muted-foreground">Step {pageIndex + 1} of {pages.length}{page.stepTitle ? ` — ${page.stepTitle}` : ""}</p>
-          {page.showProgressBar && (
-            <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
-              <div className="h-full bg-blue-500 transition-all" style={{ width: `${((pageIndex + 1) / pages.length) * 100}%` }} />
-            </div>
-          )}
-        </div>
-      )}
-
+  // The auto-name prompt (if needed) and this page's fields.
+  const body = (
+    <>
       {/* Only shown when the form has no field of its own that would identify the submitter — otherwise every submission would just show as "Someone" in the HR review list. */}
       {pageIndex === 0 && needsAutoName && (
         <div className="flex flex-col gap-1.5">
@@ -383,6 +404,32 @@ export function CustomFormRenderer({ fields: allFields, onSubmit, mode = "submit
           )
         )}
       </div>
+    </>
+  );
+
+  return (
+    <div className="flex flex-col gap-4">
+      {pages.length > 1 && (
+        <div className="flex flex-col gap-1">
+          <p className="text-xs text-muted-foreground">Step {pageIndex + 1} of {pages.length}{page.stepTitle ? ` — ${page.stepTitle}` : ""}</p>
+          {page.showProgressBar && (
+            <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+              <div className="h-full bg-blue-500 transition-all" style={{ width: `${((pageIndex + 1) / pages.length) * 100}%` }} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {paper ? (
+        <div className="rounded-md bg-white/5 p-2 sm:p-4">
+          <div className="paper-sheet">
+            {paper.header}
+            <div className="flex flex-col gap-4">{body}</div>
+          </div>
+        </div>
+      ) : (
+        body
+      )}
 
       {error && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{error}</p>}
 

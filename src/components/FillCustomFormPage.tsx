@@ -123,7 +123,7 @@ export function FillCustomFormPage({ formId }: Props) {
   return (
     <div className="min-h-screen bg-background">
       <AppHeader />
-      <main className="max-w-2xl mx-auto p-4">
+      <main className="max-w-4xl mx-auto p-4">
         <Link to="/home" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 w-fit mb-4">
           <ChevronLeft className="h-3.5 w-3.5" /> Home
         </Link>
@@ -151,11 +151,23 @@ export function FillCustomFormPage({ formId }: Props) {
             )}
           </div>
         ) : (
-          <div className="panel p-5">
-            <img src={usihsLogo} alt="US In Home Services" className="h-16 w-16 mx-auto mb-3" />
+          <div className="panel p-4 sm:p-5">
             <h1 className="text-lg font-bold mb-1">{form.title}</h1>
             {form.description && <p className="text-sm text-muted-foreground mb-4">{form.description}</p>}
-            <CustomFormRenderer fields={form.fields} onSubmit={handleSubmit} />
+            {/* Paper view — the form as the document it becomes (same logo and layout as its PDF). */}
+            <CustomFormRenderer
+              fields={form.fields}
+              onSubmit={handleSubmit}
+              paper={{
+                header: (
+                  <>
+                    <img src={usihsLogo} alt="US In Home Services" className="h-[100px] w-[100px] mx-auto mb-5" />
+                    {/* The PDF prints the form's title only when the form has no heading of its own. */}
+                    {!form.fields.some((f) => f.type === "heading" && !f.hidden) && <h2 className="text-center mb-4">{form.title}</h2>}
+                  </>
+                ),
+              }}
+            />
           </div>
         )}
       </main>
