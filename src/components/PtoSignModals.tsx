@@ -21,6 +21,7 @@ import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { reviewPtoStage, signPtoHrPaperwork, type PtoRequestRow } from "@/lib/supabase/pto";
 import { buildPtoManagerSignaturePdf, buildPtoHrSignaturePdf } from "@/lib/ptoExceptionReportPdf";
 import { todayISO } from "@/lib/localDate";
+import { logAppError } from "@/lib/appErrorLog";
 
 /** Same MinimalCorrectionProfile shape as CorrectionSignModals.tsx — some callers only have a minimal roster loaded, not every ProfileRow column. */
 export interface MinimalPtoProfile {
@@ -87,6 +88,7 @@ export function PtoManagerSignModal({ request, companyId, profiles, reviewerId, 
       });
       onSigned();
     } catch (err) {
+      logAppError("signing", "Signing leave exception report (Manager)", err);
       setError(err instanceof Error ? err.message : "Failed to submit signature.");
     } finally {
       setSubmitting(false);
@@ -164,6 +166,7 @@ export function PtoHrSignModal({ request, companyId, profiles, reviewerId, revie
       }
       onSigned();
     } catch (err) {
+      logAppError("signing", "Signing leave exception report (HR)", err);
       setError(err instanceof Error ? err.message : "Failed to submit signature.");
     } finally {
       setSubmitting(false);

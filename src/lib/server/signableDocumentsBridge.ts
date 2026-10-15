@@ -38,6 +38,7 @@
  *     type's shape needed.
  */
 import { getGoogleAccessToken, uploadFileToStorage } from "./jotformBridge";
+import { describeDevice } from "@/lib/deviceLabel";
 
 function sv(s: string) {
   return { stringValue: s };
@@ -177,10 +178,13 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
   const envResult = readEnv(env);
   if ("error" in envResult) return json(envResult, 500);
   const envBag = envResult;
+  // For the app error log if signing fails (AHS Server Status, migration 0379).
+  let docForLog: { company_id: string; document_type: string; recipient_name: string | null } | null = null;
 
   try {
     const doc = await fetchExternalDoc(envBag, id);
     if (!doc) return json({ error: "Document not found." }, 404);
+    docForLog = doc as any;
 
     if (request.method === "GET") {
       return json({
@@ -348,6 +352,23 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
     return json({ success: true, pdfUrl });
   } catch (err) {
     console.error("[signable-documents] error:", err);
+    if (request.method === "POST" && docForLog) {
+      // Save it for AHS Server Status — the signer has no account, so the
+      // name is the one this link was sent to. Best effort.
+      await fetch(`${envBag.supabaseUrl}/rest/v1/app_error_log`, {
+        method: "POST",
+        headers: { apikey: envBag.supabaseServiceKey, Authorization: `Bearer ${envBag.supabaseServiceKey}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({
+          company_id: docForLog.company_id,
+          user_name: docForLog.recipient_name ? `${docForLog.recipient_name} (signing link)` : "Signer (signing link)",
+          area: "signing",
+          action: `Signing ${String(docForLog.document_type).replace(/_/g, " ")} by link`,
+          message: err instanceof Error ? err.message : "Request failed",
+          device: describeDevice(request.headers.get("user-agent") ?? ""),
+          page: `/api/signable-documents?id=${id}`,
+        }),
+      }).catch(() => undefined);
+    }
     return json({ error: err instanceof Error ? err.message : "Request failed" }, 500);
   }
 }

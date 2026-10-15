@@ -8,14 +8,45 @@
 
 import {
   ref,
-  uploadBytes,
-  uploadBytesResumable,
+  uploadBytes as fbUploadBytes,
+  uploadBytesResumable as fbUploadBytesResumable,
   getDownloadURL,
   listAll,
   deleteObject,
   getMetadata,
+  type StorageReference,
+  type UploadMetadata,
+  type UploadResult,
+  type UploadTask,
 } from "firebase/storage";
 import { storage, auth, isFirebaseReady } from "./config";
+import { describeStoragePath, logAppError } from "@/lib/appErrorLog";
+
+// Every upload in the app goes through these two — a failure is saved to the
+// app error log (migration 0379) for AHS Server Status, then rethrown
+// unchanged so each caller's own error handling still runs.
+function logUploadFailure(objectRef: StorageReference, err: unknown) {
+  if (objectRef.fullPath.includes("/status-checks/")) return; // Server Status's own test
+  const { area, action } = describeStoragePath(objectRef.fullPath);
+  logAppError(area, action, err);
+}
+
+async function uploadBytes(objectRef: StorageReference, data: Blob | Uint8Array | ArrayBuffer, metadata?: UploadMetadata): Promise<UploadResult> {
+  try {
+    return await fbUploadBytes(objectRef, data, metadata);
+  } catch (err) {
+    logUploadFailure(objectRef, err);
+    throw err;
+  }
+}
+
+function uploadBytesResumable(objectRef: StorageReference, data: Blob | Uint8Array | ArrayBuffer, metadata?: UploadMetadata): UploadTask {
+  const task = fbUploadBytesResumable(objectRef, data, metadata);
+  task.on("state_changed", undefined, (err) => {
+    if (err?.code !== "storage/canceled") logUploadFailure(objectRef, err);
+  });
+  return task;
+}
 
 /**
  * Force-refreshes the signed-in user's Firebase ID token before a batch of
@@ -1026,4 +1057,26 @@ export async function uploadPerformanceBonusPolicyForm(companyId: string, employ
   const objectRef = ref(storage, `${folder}/${objectName}`);
   const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
   return getDownloadURL(snapshot.ref);
+}
+
+/**
+ * AHS Server Status — upload test from the signed-in browser: the same
+ * Firebase Storage path, sign-in and storage rules every real upload uses
+ * (photos, receipts, signatures, PDFs). Uploads a tiny file under the
+ * company folder, gets its link, then deletes it. Returns the timings.
+ */
+export async function runBrowserUploadTest(companyId: string): Promise<{ uploadMs: number; linkMs: number; removed: boolean; path: string }> {
+  if (!isFirebaseReady() || !storage) throw new Error("Firebase Storage not configured");
+  const objectRef = ref(storage, `companies/${companyId}/status-checks/browser-${Date.now()}.txt`);
+  const t0 = performance.now();
+  const snapshot = await uploadBytes(objectRef, new Blob(["status check"], { type: "text/plain" }), { contentType: "text/plain" });
+  const uploadMs = Math.round(performance.now() - t0);
+  const t1 = performance.now();
+  await getDownloadURL(snapshot.ref);
+  const linkMs = Math.round(performance.now() - t1);
+  // storage.rules' company-folder rule checks the upload size on every write,
+  // deletes included (a delete has no size), so the browser usually can't
+  // remove it — the page then asks the server to (cleanup-browser-test).
+  const removed = await deleteObject(snapshot.ref).then(() => true, () => false);
+  return { uploadMs, linkMs, removed, path: snapshot.ref.fullPath };
 }

@@ -7,14 +7,15 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { Activity, AlertTriangle, CheckCircle2, ChevronLeft, Clock, Database, Globe, Loader2, Plug, RefreshCw, Server, XCircle } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, ChevronDown, ChevronLeft, Clock, Database, FileSignature, Globe, Loader2, Plug, RefreshCw, Server, XCircle } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { isSuperAdminHolder } from "@/lib/roleLabels";
 import { zonedDateKey } from "@/lib/serverTime";
+import { runBrowserUploadTest } from "@/lib/firebase/storage";
 
 type State = "up" | "slow" | "down";
-type Group = "database" | "hosting" | "provider" | "integration";
+type Group = "database" | "documents" | "hosting" | "provider" | "integration";
 
 interface Check {
   key: string;
@@ -28,6 +29,22 @@ interface Check {
 interface DailyRow { service: string; day: string; total: number; up: number; slow: number; down: number }
 interface Problem { checked_at: string; service: string; status: State; response_ms: number | null; detail: string | null }
 interface Heartbeat { job: string; last_run_at: string; ok: boolean; detail: string | null }
+/** A failed upload / signing step for one person (app_error_log, migration 0379). */
+interface AppError {
+  id: number;
+  created_at: string;
+  profile_id: string | null;
+  user_name: string | null;
+  area: "upload" | "signing";
+  action: string;
+  message: string | null;
+  device: string | null;
+  page: string | null;
+}
+
+/** Which rows get the per-person error dropdown, and which errors they show. */
+const ERROR_AREA_FOR_ROW: Record<string, AppError["area"]> = { "file-upload": "upload", "signing-papers": "signing" };
+
 interface StatusResponse {
   checkedAt: string;
   checks: Check[];
@@ -36,6 +53,9 @@ interface StatusResponse {
   daily: DailyRow[];
   problems: Problem[];
   heartbeats: Heartbeat[];
+  /** False until migration 0379 (app_error_log) is run. */
+  errorsEnabled?: boolean;
+  errors?: AppError[];
 }
 
 const REFRESH_MS = 60_000;
@@ -43,6 +63,7 @@ const HISTORY_DAYS = 30;
 
 const GROUPS: { key: Group; title: string; blurb: string; icon: typeof Database }[] = [
   { key: "database", title: "Databases", blurb: "Where the app's data, logins and files live.", icon: Database },
+  { key: "documents", title: "Uploads & signing papers", blurb: "A real test file is uploaded, read back and removed; plus signing activity.", icon: FileSignature },
   { key: "hosting", title: "Hosting & scheduled jobs", blurb: "The Cloudflare Worker serving the app and its cron jobs.", icon: Server },
   { key: "provider", title: "Provider status pages", blurb: "What Supabase, Cloudflare and Firebase report about their own systems.", icon: Globe },
   { key: "integration", title: "Outside services", blurb: "Reachability only — nothing is logged into, ordered or billed.", icon: Plug },
@@ -77,7 +98,7 @@ const fmtPct = (v: number | null | undefined) => (v == null ? "—" : v >= 99.99
 
 export function ServerStatusPage() {
   const navigate = useNavigate();
-  const { role, extraRoles, realRole } = useAuth();
+  const { role, extraRoles, realRole, companyId } = useAuth();
   const allowed = isSuperAdminHolder(realRole ?? role, extraRoles);
 
   const [data, setData] = useState<StatusResponse | null>(null);
@@ -88,6 +109,43 @@ export function ServerStatusPage() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [now, setNow] = useState(Date.now());
   const inFlight = useRef(false);
+  /** Live upload test from this browser (not saved to the history). */
+  const [browserUpload, setBrowserUpload] = useState<Check | null>(null);
+
+  const runBrowserTest = useCallback(async () => {
+    const base = { key: "browser-upload", label: "Upload from your browser", group: "documents" as Group, checkedAt: new Date().toISOString() };
+    if (!companyId) {
+      setBrowserUpload({ ...base, status: "down", ms: null, detail: "No company on your account — can't pick a folder to test" });
+      return;
+    }
+    try {
+      const r = await runBrowserUploadTest(companyId);
+      const ms = r.uploadMs + r.linkMs;
+      let removed = r.removed;
+      if (!removed) {
+        // The browser isn't allowed to delete it (storage.rules) — the server removes it.
+        try {
+          const idToken = await firebaseAuth?.currentUser?.getIdToken();
+          const res = await fetch("/api/server-status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ idToken, action: "cleanup-browser-test", path: r.path }),
+          });
+          removed = res.ok && (await res.json().catch(() => ({}))).removed === true;
+        } catch {
+          removed = false;
+        }
+      }
+      setBrowserUpload({
+        ...base,
+        status: ms > 4000 ? "slow" : "up",
+        ms,
+        detail: `Upload ${r.uploadMs} ms · link ${r.linkMs} ms${removed ? " · test file removed" : " · test file not removed"} — same path as users' uploads`,
+      });
+    } catch (err) {
+      setBrowserUpload({ ...base, status: "down", ms: null, detail: `Upload failed — ${err instanceof Error ? err.message : "unknown error"}` });
+    }
+  }, [companyId]);
 
   const load = useCallback(async () => {
     if (inFlight.current) return;
@@ -110,6 +168,7 @@ export function ServerStatusPage() {
       if (!res.ok) throw new Error(body.error || `Status check failed (HTTP ${res.status})`);
       setData(body as StatusResponse);
       setError(null);
+      void runBrowserTest();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Status check failed");
     } finally {
@@ -117,7 +176,7 @@ export function ServerStatusPage() {
       setLoading(false);
       setNow(Date.now());
     }
-  }, []);
+  }, [runBrowserTest]);
 
   useEffect(() => {
     if (allowed) void load();
@@ -136,10 +195,10 @@ export function ServerStatusPage() {
   }, []);
 
   const checks = useMemo(() => {
-    const list = data?.checks ?? [];
+    const list = [...(data?.checks ?? []), ...(browserUpload ? [browserUpload] : [])];
     if (!hostingUnreachable) return list;
     return list.map((c) => (c.group === "hosting" ? { ...c, status: "down" as State, detail: "The app server didn't answer" } : c));
-  }, [data, hostingUnreachable]);
+  }, [data, hostingUnreachable, browserUpload]);
 
   const dayKeys = useMemo(() => {
     const keys: string[] = [];
@@ -164,7 +223,8 @@ export function ServerStatusPage() {
   const overall = useMemo(() => {
     if (hostingUnreachable) return { state: "down" as State, text: "The app server isn't answering" };
     if (!data) return null;
-    const core = checks.filter((c) => c.group === "database" || c.group === "hosting");
+    // Signing activity is informational — it never makes the page say "down".
+    const core = checks.filter((c) => c.group === "database" || c.group === "hosting" || (c.group === "documents" && c.key !== "signing-papers"));
     const coreDown = core.filter((c) => c.status === "down");
     if (coreDown.length) return { state: "down" as State, text: `${coreDown.map((c) => c.label).join(", ")} ${coreDown.length === 1 ? "is" : "are"} down` };
     const issues = checks.filter((c) => c.status !== "up");
@@ -242,6 +302,12 @@ export function ServerStatusPage() {
         </p>
       )}
 
+      {data && data.errorsEnabled === false && (
+        <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+          Upload and signing errors per person are off — run migration <span className="font-mono">0379_app_error_log.sql</span> in Supabase.
+        </p>
+      )}
+
       {/* Groups */}
       {GROUPS.map((g) => {
         const list = checks.filter((c) => c.group === g.key);
@@ -264,7 +330,15 @@ export function ServerStatusPage() {
                   uptime={{ h24: data?.uptime.h24[c.key], d7: data?.uptime.d7[c.key], d30: data?.uptime.d30[c.key] }}
                   days={dayKeys}
                   daily={dailyByService.get(c.key)}
-                  showHistory={!!data?.historyEnabled}
+                  showHistory={!!data?.historyEnabled && c.key !== "browser-upload"}
+                  errors={(() => {
+                    // Upload errors go on the server's File uploads row, or on
+                    // the browser row when that one isn't there.
+                    const area = ERROR_AREA_FOR_ROW[c.key] ?? (c.key === "browser-upload" && !list.some((x) => x.key === "file-upload") ? "upload" : undefined);
+                    return area && data?.errorsEnabled ? (data.errors ?? []).filter((e) => e.area === area) : undefined;
+                  })()}
+                  errorsArea={ERROR_AREA_FOR_ROW[c.key] ?? "upload"}
+                  now={now}
                 />
               ))}
               {g.key === "hosting" &&
@@ -348,6 +422,9 @@ function ServiceRow({
   days,
   daily,
   showHistory,
+  errors,
+  errorsArea,
+  now,
 }: {
   check: Check;
   isProvider: boolean;
@@ -356,8 +433,15 @@ function ServiceRow({
   days: string[];
   daily?: Map<string, DailyRow>;
   showHistory: boolean;
+  /** Set on File uploads / Signing papers: that area's per-person errors (the dropdown). */
+  errors?: AppError[];
+  errorsArea?: AppError["area"];
+  now: number;
 }) {
   const ms = check.ms ?? extraMs;
+  const [showErrors, setShowErrors] = useState(false);
+  const errors24h = errors ? errors.filter((e) => now - new Date(e.created_at).getTime() < 86400000) : [];
+  const people24h = new Set(errors24h.map((e) => e.profile_id ?? e.user_name ?? "?")).size;
   return (
     <div className="px-4 py-3">
       <div className="flex flex-wrap items-center gap-3">
@@ -370,6 +454,21 @@ function ServiceRow({
           {(isProvider ? PROVIDER_STATE_LABEL : STATE_LABEL)[check.status]}
         </span>
         {!isProvider && <span className="w-20 text-right text-xs tabular-nums text-slate-300">{ms != null ? `${ms} ms` : "—"}</span>}
+        {errors && (
+          <button
+            type="button"
+            onClick={() => setShowErrors((v) => !v)}
+            aria-expanded={showErrors}
+            className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-semibold ${
+              errors24h.length ? "border-red-500/40 bg-red-500/10 text-red-200 hover:bg-red-500/20" : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
+            }`}
+          >
+            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showErrors ? "rotate-180" : ""}`} />
+            {errors24h.length
+              ? `${errors24h.length} error${errors24h.length === 1 ? "" : "s"} · ${people24h} ${people24h === 1 ? "person" : "people"} today`
+              : `Errors (${errors.length} in 30 days)`}
+          </button>
+        )}
         {showHistory && (
           <div className="flex gap-3 text-right text-[11px] tabular-nums">
             <span className="text-slate-500">24h <span className="font-semibold text-slate-200">{fmtPct(uptime.h24)}</span></span>
@@ -389,6 +488,77 @@ function ServiceRow({
             return <span key={d} title={title} className={`h-6 flex-1 rounded-[2px] ${cls}`} />;
           })}
         </div>
+      )}
+      {errors && showErrors && <ErrorsPanel errors={errors} area={errorsArea ?? "upload"} now={now} />}
+    </div>
+  );
+}
+
+const RANGES: { key: string; label: string; ms: number }[] = [
+  { key: "24h", label: "Last 24 hours", ms: 86400000 },
+  { key: "7d", label: "Last 7 days", ms: 7 * 86400000 },
+  { key: "30d", label: "Last 30 days", ms: 30 * 86400000 },
+];
+
+/** The dropdown under File uploads / Signing papers: errors per person, newest first. */
+function ErrorsPanel({ errors, area, now }: { errors: AppError[]; area: AppError["area"]; now: number }) {
+  const [person, setPerson] = useState("all");
+  const [range, setRange] = useState("7d");
+  const personKey = (e: AppError) => e.profile_id ?? `name:${e.user_name ?? "Unknown"}`;
+  const rangeMs = RANGES.find((r) => r.key === range)?.ms ?? 7 * 86400000;
+  const inRange = errors.filter((e) => now - new Date(e.created_at).getTime() <= rangeMs);
+  const counts = new Map<string, { name: string; count: number }>();
+  for (const e of inRange) {
+    const k = personKey(e);
+    counts.set(k, { name: e.user_name || "Unknown", count: (counts.get(k)?.count ?? 0) + 1 });
+  }
+  const people = Array.from(counts).sort((a, b) => b[1].count - a[1].count || a[1].name.localeCompare(b[1].name));
+  const shown = person === "all" ? inRange : inRange.filter((e) => personKey(e) === person);
+  const noun = area === "upload" ? "upload" : "signing";
+
+  return (
+    <div className="mt-3 rounded-lg border border-white/10 bg-slate-950/40 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-400" htmlFor={`err-person-${area}`}>Person</label>
+        <select
+          id={`err-person-${area}`}
+          value={person}
+          onChange={(e) => setPerson(e.target.value)}
+          className="min-w-[200px] rounded-lg border border-white/10 bg-slate-800 px-2 py-1 text-xs text-white focus:border-blue-500 focus:outline-none"
+        >
+          <option value="all">Everyone ({inRange.length})</option>
+          {people.map(([key, p]) => (
+            <option key={key} value={key}>{p.name} ({p.count})</option>
+          ))}
+        </select>
+        <select
+          value={range}
+          onChange={(e) => setRange(e.target.value)}
+          aria-label="Time range"
+          className="rounded-lg border border-white/10 bg-slate-800 px-2 py-1 text-xs text-white focus:border-blue-500 focus:outline-none"
+        >
+          {RANGES.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
+        </select>
+        <span className="text-[11px] text-slate-500">{people.length} {people.length === 1 ? "person" : "people"} with {noun} errors</span>
+      </div>
+      {shown.length === 0 ? (
+        <p className="mt-3 text-center text-xs text-slate-500">No {noun} errors {person === "all" ? "" : "for this person "}in this time range.</p>
+      ) : (
+        <ul className="mt-3 max-h-80 space-y-2 overflow-y-auto pr-1">
+          {shown.slice(0, 200).map((e) => (
+            <li key={e.id} className="rounded-md border border-white/5 bg-white/[0.03] px-3 py-2">
+              <p className="text-xs text-slate-400">
+                <span className="tabular-nums">{fmtTime(e.created_at)}</span>
+                {" · "}
+                <span className="font-semibold text-white">{e.user_name || "Unknown"}</span>
+                {e.device ? ` · ${e.device}` : ""}
+              </p>
+              <p className="mt-0.5 text-sm text-slate-200">{e.action}</p>
+              <p className="mt-0.5 break-words text-xs text-red-300">{e.message || "No error message"}</p>
+              {e.page && <p className="mt-0.5 break-all text-[11px] text-slate-500">Page: {e.page}</p>}
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
