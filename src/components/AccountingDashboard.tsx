@@ -1,5 +1,5 @@
 import { TraineeMonitoringTab } from "@/components/TraineeMonitoringTab";
-import { resolveTrainingRecord, trainingWindow, isTrainingDay } from "@/lib/fieldStartDate";
+import { resolveTrainingRecord, trainingWindow } from "@/lib/fieldStartDate";
 import { getTrainingDates } from "@/lib/supabase/trainingDates";
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
@@ -2498,9 +2498,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     return premium;
   }
 
-  // Eligible trainee worked days receive max(straight-time pay, $100).
-  // Their overtime hours are already included in straight-time pay and
-  // do not also receive the separate OT premium.
+  // Eligible trainee worked days receive max(that day's pay, $100) — the
+  // company's $100/day training guarantee. Overtime on a training day is
+  // still overtime (FLSA/state law covers trainees): it earns the OT premium
+  // like any other day (techHourlyPayOtPremium), so the day's pay checked
+  // against $100 includes that premium too — otherwise the guarantee would
+  // top up pay the premium already covers.
   const TRAINEE_DAILY_MATCH_TARGET = 100;
   function traineeDailyMatchFor(
     profileId: string,
@@ -2518,7 +2521,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       const dayHours = day.regular + day.overtime;
       if (dayHours <= 0) continue;
       const rate = hourlyRateOnDate(profileId, day.date, fallbackRate);
-      const actualDailyPay = dayHours * rate;
+      const actualDailyPay = dayHours * rate + day.overtime * weightedRate * 0.5;
       if (actualDailyPay < TRAINEE_DAILY_MATCH_TARGET) {
         match += TRAINEE_DAILY_MATCH_TARGET - actualDailyPay;
       }
@@ -2923,7 +2926,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const traineeWindow = trainingWindow(emp.hrTrainingStart, emp.hrFieldStart,
       employeeInfoByProfileId.get(emp.id)?.hireDate, emp.isTrainee);
     const techDailyHours = dailyHoursByEmployeeId.get(emp.id) ?? [];
-    const premiumHours = techDailyHours.reduce((sum, day) => sum + (isTrainingDay(day.date, traineeWindow) ? 0 : day.overtime), 0);
+    // Training days included: overtime during training is still overtime
+    // (Vincent Pullens 9/28–10/2: 12.838 OT hrs had been paid flat $7.25).
+    const premiumHours = techDailyHours.reduce((sum, day) => sum + day.overtime, 0);
     // FLSA: the regular rate — and so the OT premium — is set per WORKWEEK
     // even on a biweekly payroll, matching the reference workbook's Weekly
     // Calculations tab (see weeklyOtPremium). Without a daily breakdown
@@ -2935,7 +2940,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       ? weeklyOtPremium(
           techDailyHours,
           (date) => hourlyRateOnDate(emp.id, date, hourlyRate),
-          (date) => !isTrainingDay(date, traineeWindow),
+          () => true,
           taggedIncludable,
           techIncludablePay - taggedIncludableTotal
         )
