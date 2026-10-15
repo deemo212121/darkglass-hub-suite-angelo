@@ -27,6 +27,7 @@ import {
 } from "@/lib/supabase/techPayroll";
 import { getCompanyEmployeeRequests, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { getMileageEntries, mileageEffectiveTotal } from "@/lib/supabase/mileage";
+import type { PayrollReviewAmounts } from "@/lib/supabase/payrollReviewBreakdowns";
 
 interface Props {
   row: EmployeePayrollRow;
@@ -54,7 +55,8 @@ interface Props {
   onClose: () => void;
   /** Office Payroll review wizard only — when set, a footer with "← Prev" / "Done" replaces the bare close. `onPrev` returns to the attendance detail step; `onDone` records the review mark and closes back to the Office Payroll table. */
   onPrev?: () => void;
-  onDone?: () => void;
+  /** Receives this report's pay broken into Finance's summary columns (Reviewed Periods tab, migration 0392). */
+  onDone?: (breakdown: PayrollReviewAmounts) => void;
   doneBusy?: boolean;
   /** Saves ("state") or clears ("company") this technician/period's Hourly + OT pay-mode override — see payroll_hourly_ot_overrides. When omitted, the Company/State comparison box shows read-only totals with no switch. */
   onSetHourlyOtMode?: (mode: "company" | "state", stateTotal: number) => void | Promise<void>;
@@ -667,6 +669,52 @@ export function TechActivityReportModal({
     twoTechPayment + completedTicketsPayment + redoReductionPayment + customLinesTotal + carryoverTotal + row.techHourlyPay + techGuaranteedSalaryMatch + techHolidayPremium + techTraineeMatch;
   const owIncentivePay = (techManual.owIncentivePct / 100) * subtotal;
   const totalPayment = subtotal + owIncentivePay;
+
+  // Finance's payroll-summary columns (Accounting Dashboard → Reviewed
+  // Periods, saved on Done). They add up to totalPayment:
+  // regular + OT + bonus + commission + reimbursements + salary match
+  // − deductions − pre-tax insurance.
+  const reviewBreakdown = useMemo((): PayrollReviewAmounts => {
+    const BONUS = /ltp|bonus|performance|incentive|flash tech allowance/i;
+    const INSURANCE = /insur|pre-?tax/i;
+    let bonus = owIncentivePay;
+    let customCommission = 0;
+    let deduction = 0;
+    let pretaxInsurance = 0;
+    let reimb = techManual.mileagePay;
+    for (const item of customItems) {
+      const amount = item.value * item.rate;
+      if (item.isWageIncludable) {
+        if (BONUS.test(item.label)) bonus += amount;
+        else customCommission += amount;
+      } else if (amount < 0) {
+        if (INSURANCE.test(item.label)) pretaxInsurance += -amount;
+        else deduction += -amount;
+      } else {
+        reimb += amount;
+      }
+    }
+    const commission =
+      categoryPayments.reduce((s, c) => s + c.payment, 0) + techManual.ldtPay + techManual.trainingPay +
+      twoTechPayment + completedTicketsPayment + redoReductionPayment + carryoverTotal + customCommission;
+    // row.techHourlyPay is what's actually paid for hours (the State total
+    // when State mode is applied). Regular = regular hours at the company
+    // rate + the state regular match; everything else in it is OT.
+    const isFixedPay = row.compensationType === "fixed";
+    const regularHourly = isFixedPay ? row.techHourlyPay : companyRegularPayBlended + (appliedIsState ? matchMin : 0);
+    return {
+      regularPay: regularHourly + techTraineeMatch + techHolidayPremium,
+      otPay: isFixedPay ? 0 : row.techHourlyPay - regularHourly,
+      bonus,
+      commission,
+      ptoPay: 0,
+      deduction,
+      mileageOtherReimb: reimb,
+      pretaxInsurance,
+      salaryMatch: techGuaranteedSalaryMatch,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [owIncentivePay, customItems, techManual, categoryPayments, twoTechPayment, completedTicketsPayment, redoReductionPayment, carryoverTotal, row.techHourlyPay, row.compensationType, companyRegularPayBlended, appliedIsState, matchMin, techTraineeMatch, techHolidayPremium, techGuaranteedSalaryMatch]);
 
   const ratioPct = ticketsAssigned > 0 ? (effectiveTicketsCompleted / ticketsAssigned) * 100 : 0;
   const avgDailyCompletion = effectiveTicketsCompleted / Math.max(1, workingDays);
@@ -1385,7 +1433,7 @@ export function TechActivityReportModal({
             {onDone && (
               <button
                 type="button"
-                onClick={onDone}
+                onClick={() => onDone(reviewBreakdown)}
                 disabled={doneBusy}
                 className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold transition disabled:opacity-50 flex items-center gap-2"
               >

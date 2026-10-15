@@ -9,7 +9,33 @@ import { getCompanyHolidaysInRange } from "./supabase/companyHolidays";
 import { getPendingCorrectionsInRange } from "./supabase/timecardCorrections";
 import { isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold } from "./roleLabels";
 import { payGraceMinutesFor } from "./attendanceGrace";
-import { normalizeStateName, highestRateAmong, STATE_MIN_WAGE_2026, stateMinWageOn, stateRateChangeInfo, COMMISSION_COUNTS_TOWARD_STATE_MIN } from "./stateMinWage";
+import { normalizeStateName, highestRateAmong, STATE_MIN_WAGE_2026, stateMinWageOn, stateRateChangeInfo, COMMISSION_COUNTS_TOWARD_STATE_MIN, OT_MATCH_ADDS_TRUE_UP_AND_FLOOR } from "./stateMinWage";
+
+/** One prefilled row of a sheet's Includable / Reimbursements table. */
+export interface AttendanceAdjustmentLine { type: string; rate: number; quantity: number }
+/**
+ * What the app already knows for this employee and period, written into the
+ * sheet so its 15-step calculation comes up with the total: custom pay lines
+ * (Tech Activity Report), ticket/category pay, the Mileage field, and the
+ * top-ups the app adds outside the hourly calc. All optional; an employee
+ * without any keeps the blank templates.
+ */
+export interface AttendanceAdjustments {
+  includable: AttendanceAdjustmentLine[];
+  reimbursements: AttendanceAdjustmentLine[];
+  holidayPremium?: number;
+  /** Trainee $100/day match + guaranteed-salary match. */
+  otherAdditions?: number;
+}
+// Rows available between a table's header and the sheet footer.
+const MAX_ADJUSTMENT_ROWS = 34;
+const fitAdjustmentRows = (lines: AttendanceAdjustmentLine[]): AttendanceAdjustmentLine[] => {
+  if (lines.length <= MAX_ADJUSTMENT_ROWS) return lines;
+  const kept = lines.slice(0, MAX_ADJUSTMENT_ROWS - 1);
+  const rest = lines.slice(MAX_ADJUSTMENT_ROWS - 1).reduce((sum, l) => sum + l.rate * l.quantity, 0);
+  return [...kept, { type: "Other lines (combined)", rate: rest, quantity: 1 }];
+};
+const linesTotal = (lines: AttendanceAdjustmentLine[] | undefined) => (lines ?? []).reduce((sum, l) => sum + l.rate * l.quantity, 0);
 
 export const attendanceExportHeaders = ["Date", "States Worked", "Check In", "Check Out", "Regular Hr", "Meal Time", "Over Time", "Total Hours", "Rate", "State Floor Min", "State OT Floor Min"];
 /**
@@ -136,15 +162,16 @@ export function addAttendanceStateFormulas(
   sheet.getColumn("M").numFmt = '"$"0.00';
   sheet.getColumn("N").numFmt = '"$"0.00';
 }
-/** Blank, expandable workbook-only adjustments; never prefill or save payroll values. */
-export function addAttendanceAdjustmentTemplates(sheet: Worksheet, attendanceCount: number) {
+/** Expandable workbook-only adjustment tables, prefilled from the app when `adjustments` is given; never saved back. */
+export function addAttendanceAdjustmentTemplates(sheet: Worksheet, attendanceCount: number, adjustments?: AttendanceAdjustments) {
   const titleRow = attendanceCount + 6;
   const headerRow = titleRow + 3;
   const templates = [
-    { label: "Includable", first: 1, last: 3, color: "FFFCE4D6", prefix: "Includable" },
-    { label: "Reimbursements", first: 5, last: 7, color: "FFE4DFEC", prefix: "Reimbursements" },
+    { label: "Includable", first: 1, last: 3, color: "FFFCE4D6", prefix: "Includable", lines: fitAdjustmentRows(adjustments?.includable ?? []) },
+    { label: "Reimbursements", first: 5, last: 7, color: "FFE4DFEC", prefix: "Reimbursements", lines: fitAdjustmentRows(adjustments?.reimbursements ?? []) },
   ];
   for (const template of templates) {
+    const rowCount = Math.max(6, template.lines.length);
     const name = `${template.prefix}_${sheet.id}`;
     sheet.mergeCells(titleRow, template.first, titleRow, template.last);
     const title = sheet.getCell(titleRow, template.first);
@@ -153,7 +180,7 @@ export function addAttendanceAdjustmentTemplates(sheet: Worksheet, attendanceCou
     title.fill = { type: "pattern", pattern: "solid", fgColor: { argb: template.color } };
     sheet.getCell(titleRow + 1, template.first).value = "Total (Rate × Quantity)";
     const total = sheet.getCell(titleRow + 1, template.last);
-    total.value = { formula: `SUMPRODUCT(${name}[Rate],${name}[Quantity])`, result: 0 };
+    total.value = { formula: `SUMPRODUCT(${name}[Rate],${name}[Quantity])`, result: linesTotal(template.lines) };
     total.numFmt = '"$"#,##0.00;[Red]-"$"#,##0.00';
     total.font = { bold: true };
     sheet.addTable({
@@ -163,9 +190,12 @@ export function addAttendanceAdjustmentTemplates(sheet: Worksheet, attendanceCou
       totalsRow: false,
       style: { theme: "TableStyleLight1", showRowStripes: false },
       columns: [{ name: "Type", filterButton: false }, { name: "Rate", filterButton: false }, { name: "Quantity", filterButton: false }],
-      rows: Array.from({ length: 6 }, () => [null, null, null]),
+      rows: Array.from({ length: rowCount }, (_, i) => {
+        const line = template.lines[i];
+        return line ? [line.type, Math.round(line.rate * 10000) / 10000, Math.round(line.quantity * 10000) / 10000] : [null, null, null];
+      }),
     });
-    for (let row = headerRow; row <= headerRow + 6; row++) {
+    for (let row = headerRow; row <= headerRow + rowCount; row++) {
       for (let column = template.first; column <= template.last; column++) {
         const cell = sheet.getCell(row, column);
         cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: template.color } };
@@ -177,11 +207,13 @@ export function addAttendanceAdjustmentTemplates(sheet: Worksheet, attendanceCou
   }
   sheet.mergeCells(titleRow, 9, titleRow + 4, 11);
   const instructions = sheet.getCell(titleRow, 9);
-  instructions.value = "Blank templates: enter the type, rate and quantity (use 1 for a flat amount). To add rows, press Tab in the last table cell or use Insert > Table Rows. Totals expand with each table. Workbook entries only; attendance totals and saved payroll are unchanged.";
+  instructions.value = adjustments && (adjustments.includable.length || adjustments.reimbursements.length)
+    ? "Prefilled from the app for this period: the Tech Activity Report's custom lines (with their week), ticket/category pay, and the Mileage field. Edit or add rows (Tab in the last table cell, or Insert > Table Rows); totals expand with each table. Workbook entries only; saved payroll is unchanged."
+    : "Blank templates: enter the type, rate and quantity (use 1 for a flat amount). To add rows, press Tab in the last table cell or use Insert > Table Rows. Totals expand with each table. Workbook entries only; attendance totals and saved payroll are unchanged.";
   instructions.alignment = { wrapText: true, vertical: "top" };
 }
 /** Transparent period-based calculation (the app sets the regular rate per workweek — see weeklyOtPremium in AccountingDashboard.tsx). */
-export function addAttendancePayBreakdown(sheet: Worksheet, attendanceCount: number, isPh: boolean) {
+export function addAttendancePayBreakdown(sheet: Worksheet, attendanceCount: number, isPh: boolean, adjustments?: AttendanceAdjustments) {
   const end = attendanceCount + 1;
   const total = attendanceCount + 3;
   const amount = (address: string) => {
@@ -195,10 +227,17 @@ export function addAttendancePayBreakdown(sheet: Worksheet, attendanceCount: num
   const hours = amount(`H${total}`), otHours = amount(`G${total}`);
   const straight = amount(`I${total}`), stateRegular = amount(`J${total}`);
   const premiumFactor = isPh ? 0 : 0.5;
-  const weighted = hours > 0 ? straight / hours : 0;
+  // Cached results only (Excel recalculates on open) — include the
+  // prefilled tables so viewers that don't recalculate show the same total.
+  const includable = linesTotal(fitAdjustmentRows(adjustments?.includable ?? []));
+  const reimbursements = linesTotal(fitAdjustmentRows(adjustments?.reimbursements ?? []));
+  const holidayPremium = adjustments?.holidayPremium ?? 0;
+  const otherAdditions = adjustments?.otherAdditions ?? 0;
+  const corrected = straight + includable;
+  const weighted = hours > 0 ? corrected / hours : 0;
   const premium = otHours * weighted * premiumFactor;
-  const minMatch = isPh ? 0 : Math.max(0, stateRegular - companyRegular);
-  const afterRate = hours > 0 ? (straight + minMatch) / hours : 0;
+  const minMatch = isPh ? 0 : Math.max(0, stateRegular - companyRegular - (COMMISSION_COUNTS_TOWARD_STATE_MIN ? includable : 0));
+  const afterRate = hours > 0 ? (corrected + minMatch) / hours : 0;
   const requiredPremium = otHours * afterRate * premiumFactor;
   // OT hours are owed at least 1.5x the minimum of the state they were worked
   // in: K (OT hours x applied rate x 1.5) minus their straight time at the
@@ -206,11 +245,15 @@ export function addAttendancePayBreakdown(sheet: Worksheet, attendanceCount: num
   let otStateFloor = 0;
   for (let row = 2; row <= end; row++) otStateFloor += amount(`K${row}`) - amount(`G${row}`) * amount(`M${row}`);
   const otFloorFormula = attendanceCount ? `SUM(K2:K${end})-SUMPRODUCT(G2:G${end},M2:M${end})` : "0";
-  const otMatch = isPh ? 0 : Math.max(0, Math.max(requiredPremium, otStateFloor) - premium);
+  // OT_MATCH_ADDS_TRUE_UP_AND_FLOOR (stateMinWage.ts): add both OT checks
+  // (Finance's sheet) or take the higher one — same switch as the app.
+  const otMatch = isPh ? 0 : OT_MATCH_ADDS_TRUE_UP_AND_FLOOR
+    ? Math.max(0, requiredPremium - premium) + Math.max(0, otStateFloor - premium)
+    : Math.max(0, Math.max(requiredPremium, otStateFloor) - premium);
   const inputs = [
     ["Pay mode", "State"],
-    ["Holiday premium ($)", 0],
-    ["Other additions ($)", 0],
+    ["Holiday premium ($)", Math.round(holidayPremium * 100) / 100],
+    ["Other additions ($)", Math.round(otherAdditions * 100) / 100],
     ["Deductions ($)", 0],
     ["OT premium factor", premiumFactor],
   ] as const;
@@ -253,23 +296,25 @@ export function addAttendancePayBreakdown(sheet: Worksheet, attendanceCount: num
   explanation.value = "Period-based weighted rate. The app sets this rate per workweek (custom lines tagged with a week count toward that week), so its OT premium can differ slightly when includable pay is uneven across weeks. Includable and reimbursement tables feed this breakdown automatically. Other additions can include a separately calculated salary/trainee guarantee or override; these are not fetched here. Holiday premium and deductions start at zero. Step explanations appear below each equation. This template does not update saved payroll.";
   explanation.alignment = { wrapText: true, vertical: "top" };
   const steps: [string, string, string, number, string][] = [
-    ["Total Includable", "Sum of includable Rate × Quantity", `SUMPRODUCT(Includable_${sheet.id}[Rate],Includable_${sheet.id}[Quantity])`, 0, "Includes negative entries, such as Redo, exactly once."],
+    ["Total Includable", "Sum of includable Rate × Quantity", `SUMPRODUCT(Includable_${sheet.id}[Rate],Includable_${sheet.id}[Quantity])`, includable, "Includes negative entries, such as Redo, exactly once."],
     ["Base Straight Wages", "Sum of daily Total Hours × Company Hourly Rate", sum("I"), straight, "Includes all paid hours, including overtime at straight time; preserves daily rate changes."],
-    ["Corrected Straight-Time Pay", "Step 1 + Step 2", "AL3+AL4", straight, "Straight-time wages plus includable compensation; reimbursements excluded."],
+    ["Corrected Straight-Time Pay", "Step 1 + Step 2", "AL3+AL4", corrected, "Straight-time wages plus includable compensation; reimbursements excluded."],
     ["Period Weighted Regular Rate", "Step 3 ÷ Total Hours", `IFERROR(AL5/H${total},0)`, weighted, "Period calculation; the app computes it per workweek."],
     ["Corrected OT Premium", "OT Hours × Step 4 × OT Premium Factor", `G${total}*AL6*$AP$6`, premium, "Only the extra premium; the straight-time portion of OT is already in Step 2."],
-    ["Holiday Premium", "Holiday premium input", "$AP$3", 0, "Enter any applicable holiday premium in AP3; default zero."],
-    ["Wages Before State Match", "Step 3 + Step 5 + Step 6", "AL5+AL7+AL8", straight + premium, "Includable pay is already included; do not add it again."],
+    ["Holiday Premium", "Holiday premium input", "$AP$3", holidayPremium, "Holiday premium in AP3 (prefilled from the app when known)."],
+    ["Wages Before State Match", "Step 3 + Step 5 + Step 6", "AL5+AL7+AL8", corrected + premium + holidayPremium, "Includable pay is already included; do not add it again."],
     COMMISSION_COUNTS_TOWARD_STATE_MIN
       ? ["State Regular-Pay Match", "MAX(State regular floor − Company regular pay − Step 1, 0)", isPh ? "0" : `MAX(0,${sum("J")}-${companyRegularFormula}-AL3)`, minMatch, "Regular hours only, including paid meal credit. Includable pay (commission) counts toward the state floor. Recalculates from States Worked and state rates."]
       : ["State Regular-Pay Match", "MAX(State regular floor − Company regular pay, 0)", isPh ? "0" : `MAX(0,${sum("J")}-${companyRegularFormula})`, minMatch, "Regular hours only, including paid meal credit. Recalculates from States Worked and state rates."],
     ["Regular Rate After Match", "(Step 3 + Step 8) ÷ Total Hours", `IFERROR((AL5+AL10)/H${total},0)`, afterRate, "Includes the regular-pay shortfall before recalculating overtime."],
     ["Required OT Premium After Match", "OT Hours × Step 9 × OT Premium Factor", `G${total}*AL11*$AP$6`, requiredPremium, "Recomputed premium after the state regular-pay match."],
-    ["Additional OT Match", "MAX(MAX(Step 10, OT at 1.5× state min) − Step 5, 0)", isPh ? "0" : `MAX(MAX(AL12,${otFloorFormula})-AL7,0)`, otMatch, "OT hours are owed at least 1.5× the minimum of the state they were worked in (column K less their straight time at the company rate). Only incremental overtime; avoids counting the original premium twice."],
+    OT_MATCH_ADDS_TRUE_UP_AND_FLOOR
+      ? ["Additional OT Match", "MAX(Step 10 − Step 5, 0) + MAX(OT at 1.5× state min − Step 5, 0)", isPh ? "0" : `MAX(AL12-AL7,0)+MAX(${otFloorFormula}-AL7,0)`, otMatch, "Both checks added together, as Finance's payroll sheet does: the regular-rate true-up and OT hours at 1.5× the minimum of the state they were worked in (column K less their straight time at the company rate)."]
+      : ["Additional OT Match", "MAX(MAX(Step 10, OT at 1.5× state min) − Step 5, 0)", isPh ? "0" : `MAX(MAX(AL12,${otFloorFormula})-AL7,0)`, otMatch, "OT hours are owed at least 1.5× the minimum of the state they were worked in (column K less their straight time at the company rate). Only incremental overtime; avoids counting the original premium twice."],
     ["Applied Total State Match", "State mode: Step 8 + Step 11; Company mode: 0", 'IF($AP$2="State",AL10+AL13,0)', minMatch + otMatch, "Choose Company or State in AP2. State adjustments are separate from reimbursements."],
-    ["Earned Before Match / Deductions", "Step 7 + Reimbursements + Other Additions", `AL9+SUMPRODUCT(Reimbursements_${sheet.id}[Rate],Reimbursements_${sheet.id}[Quantity])+$AP$4`, straight + premium, "Reimbursements are added after the weighted-rate and OT calculation."],
+    ["Earned Before Match / Deductions", "Step 7 + Reimbursements + Other Additions", `AL9+SUMPRODUCT(Reimbursements_${sheet.id}[Rate],Reimbursements_${sheet.id}[Quantity])+$AP$4`, corrected + premium + holidayPremium + reimbursements + otherAdditions, "Reimbursements and other additions (trainee $100/day match, salary guarantee) are added after the weighted-rate and OT calculation."],
     ["Total Deductions", "Deductions input", "$AP$5", 0, "Enter deductions as a positive amount in AP5. Do not repeat negative includable entries here."],
-    ["FINAL PAY DUE", "Step 13 − Step 14 + Step 12", "AL15-AL16+AL14", straight + premium + minMatch + otMatch, "Formula result for this worksheet's inputs; displayed to cents without rounding intermediate steps."],
+    ["FINAL PAY DUE", "Step 13 − Step 14 + Step 12", "AL15-AL16+AL14", corrected + premium + holidayPremium + reimbursements + otherAdditions + minMatch + otMatch, "Formula result for this worksheet's inputs; displayed to cents without rounding intermediate steps."],
   ];
   steps.forEach(([name, equation, formula, result, notes], index) => {
     const row = titleRow + index + 2;
@@ -405,6 +450,7 @@ export function populateAttendanceSheet(
   pay: Parameters<typeof attendanceExportRows>[2],
   states: Parameters<typeof attendanceExportRows>[3],
   isPh: boolean,
+  adjustments?: AttendanceAdjustments,
 ) {
       sheet.addRow(isPh ? attendanceExportHeadersPh : attendanceExportHeaders);
       sheet.addRows(attendanceExportRows(attendance, hours, pay, states, isPh ? 1 : 1.5, employeeName));
@@ -414,8 +460,8 @@ export function populateAttendanceSheet(
       sheet.getRow(1).font = { bold: true };
       sheet.getRow(attendance.length + 3).font = { bold: true };
       addAttendanceStateFormulas(sheet, attendance, pay, isPh);
-      addAttendanceAdjustmentTemplates(sheet, attendance.length);
-      addAttendancePayBreakdown(sheet, attendance.length, isPh);
+      addAttendanceAdjustmentTemplates(sheet, attendance.length, adjustments);
+      addAttendancePayBreakdown(sheet, attendance.length, isPh, adjustments);
       styleAttendanceWorkbook(sheet, employeeName, attendance);
 }
 
@@ -451,6 +497,7 @@ const previousDate = (date: string) => {
 export async function downloadPayrollAttendanceWorkbook(
   employees: SupabaseEmployee[], start: string, end: string, team: string,
   onProgress: (done: number, total: number) => void,
+  adjustmentsByEmployee?: Map<string, AttendanceAdjustments>,
 ) {
   if (!employees.length || !start || !end || start > end) throw new Error("Select employees and a valid period to export.");
   const people = [...new Map(employees.map((employee) => [employee.id, employee])).values()];
@@ -521,7 +568,7 @@ export async function downloadPayrollAttendanceWorkbook(
         pay.set(row.date, { companyRate, effectiveRate: companyRate > 0 ? Math.max(companyRate, floor) : 0 });
       }
       const sheet = workbook.addWorksheet(uniqueAttendanceSheetName(employee.full_name, used));
-      populateAttendanceSheet(sheet, employee.full_name, attendance, hours, pay, states, isPh);
+      populateAttendanceSheet(sheet, employee.full_name, attendance, hours, pay, states, isPh, adjustmentsByEmployee?.get(employee.id));
       onProgress(++done, people.length);
     } catch (error) {
       throw new Error(`Could not export ${employee.full_name}: ${error instanceof Error ? error.message : "Unable to load attendance"}. No partial workbook was downloaded.`);
