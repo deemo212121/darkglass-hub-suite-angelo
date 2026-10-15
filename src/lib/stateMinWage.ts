@@ -23,6 +23,18 @@ export interface StateMinWage {
  *  Add Rate Change guard. */
 export const FEDERAL_MIN_WAGE = 7.25;
 
+/**
+ * Whether a technician's commission (includable pay) counts toward meeting
+ * the state minimum wage, checked per workweek — the payroll workbook's
+ * Weekly Calculations method, adopted for now (2026-10-15) to match
+ * Finance's sheet. Legal under FLSA/state law, but it means commission
+ * earned in a higher-minimum state partly pays that state's minimum
+ * instead of sitting on top of it (Andre Riddle 9/13–9/26: $181.80 of his
+ * $220 commission). Set false to pay commission on top of the state
+ * minimum again (base pay alone vs. the floor).
+ */
+export const COMMISSION_COUNTS_TOWARD_STATE_MIN = true;
+
 export const STATE_MIN_WAGE_2026: StateMinWage[] = [
   { state: "Alabama", rate: 7.25 },
   { state: "Arizona", rate: 15.15 },

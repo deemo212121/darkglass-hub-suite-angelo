@@ -5,7 +5,7 @@ import { X, Plus, Trash2, Loader2 } from "lucide-react";
 import type { EmployeePayrollRow } from "@/components/AccountingDashboard";
 import { getAttendanceForRange, computeMealTimeCredit, splitRegularOvertimeWeekly, startOfWeekSunday, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
 import { getSalaryHistory, rateEffectiveOn, type SalaryEntryRow } from "@/lib/supabase/salary";
-import { stateMinWageOn } from "@/lib/stateMinWage";
+import { stateMinWageOn, COMMISSION_COUNTS_TOWARD_STATE_MIN } from "@/lib/stateMinWage";
 import { isMealAlwaysPaidRole } from "@/lib/roleLabels";
 import {
   REPAIR_TYPES,
@@ -222,7 +222,45 @@ export function TechActivityReportModal({
   // shortfall. Compare against regular hours only, blended per day
   // (companyRegularPayBlended) instead, same fix as the OT bucket needed in
   // the other direction.
-  const matchMin = Math.max(stateMinFloor - companyRegularPayBlended, 0);
+  const traineeWindow = trainingWindow(employee.hrTrainingStart, employee.hrFieldStart, hireDate, employee.isTrainee);
+  // Per Sunday workweek: the regular-hours state gap (floor - company pay,
+  // can be negative when the company rate is above the floor) and the OT
+  // hours' straight-time gap (their state floor vs. the company rate).
+  // Only needed when commission counts toward the floor — that check is
+  // per week, like the payroll workbook's Weekly Calculations tab.
+  const weeklyIncludable = new Map(techWeeklyOt.map((w) => [w.weekStart, w.includablePay]));
+  const weekKey = (date: string) => (weeklyIncludable.size > 0 ? startOfWeekSunday(date) : "period");
+  if (weeklyIncludable.size === 0) weeklyIncludable.set("period", techIncludablePay);
+  const weeklyStateGaps = new Map<string, { regular: number; otStraight: number }>();
+  for (const d of periodDayInfo) {
+    if (d.date < periodStart || d.date > periodEnd) continue;
+    const split = dailySplit.get(d.date) ?? { regular: 0, overtime: 0 };
+    const companyRate = rateOnDate(d.date);
+    const floor = stateMinWageOn(d.state, d.date) ?? companyRate;
+    const gap = weeklyStateGaps.get(weekKey(d.date)) ?? { regular: 0, otStraight: 0 };
+    gap.regular += split.regular * (floor - companyRate);
+    if (!isTrainingDay(d.date, traineeWindow)) gap.otStraight += split.overtime * (Math.max(floor, companyRate) - companyRate);
+    weeklyStateGaps.set(weekKey(d.date), gap);
+  }
+  // COMMISSION_COUNTS_TOWARD_STATE_MIN (stateMinWage.ts): each week's
+  // commission first covers that week's regular-hours gap; what's left
+  // covers its OT hours' straight-time gap (see stateOtFloorPremium). Off:
+  // the original period-wide check, base pay alone vs. the floor.
+  let matchMin = Math.max(stateMinFloor - companyRegularPayBlended, 0);
+  let commissionAppliedToFloor = 0;
+  let otStraightStateMatch = [...weeklyStateGaps.values()].reduce((sum, g) => sum + g.otStraight, 0);
+  if (COMMISSION_COUNTS_TOWARD_STATE_MIN) {
+    matchMin = 0;
+    otStraightStateMatch = 0;
+    for (const [week, gap] of weeklyStateGaps) {
+      const credit = Math.max(weeklyIncludable.get(week) ?? 0, 0);
+      matchMin += Math.max(gap.regular - credit, 0);
+      commissionAppliedToFloor += Math.min(credit, Math.max(gap.regular, 0));
+      const leftover = Math.max(credit - gap.regular, 0);
+      otStraightStateMatch += Math.max(gap.otStraight - leftover, 0);
+      commissionAppliedToFloor += Math.min(leftover, gap.otStraight);
+    }
+  }
   // After a Min-floor top-up, the regular rate the OT premium is based on
   // has to be recomputed with that extra pay folded in (same weighted-rate
   // principle used everywhere else) — then any INCREMENTAL OT premium that
@@ -233,13 +271,33 @@ export function TechActivityReportModal({
   // already paid) rather than an independent state-OT-floor check.
   const totalHoursForMatch = hoursWorked + overtimeHours;
   const regularRateAfterMinMatch = totalHoursForMatch > 0 ? techWeightedRegularRate + matchMin / totalHoursForMatch : techWeightedRegularRate;
-  const traineeWindow = trainingWindow(employee.hrTrainingStart, employee.hrFieldStart, hireDate, employee.isTrainee);
   const premiumHours = periodDayInfo.reduce((sum, day) => {
     if (day.date < periodStart || day.date > periodEnd || isTrainingDay(day.date, traineeWindow)) return sum;
     return sum + (dailySplit.get(day.date)?.overtime ?? 0);
   }, 0);
   const requiredPremiumAfterMinMatch = premiumHours * regularRateAfterMinMatch * 0.5;
-  const matchOt = Math.max(requiredPremiumAfterMinMatch - techHourlyPayOtPremium, 0);
+  // OT hours belong to the state they were worked in (policy, 2026-10-14):
+  // each day's overtime must be paid at least 1.5x THAT day's state
+  // minimum. The Min match above only covers regular hours, so a day that
+  // is all overtime in a higher-minimum state got no state top-up at all
+  // (Alexander Veil 9/25: 11.281 OT hrs in Arkansas paid $7.25 x 1.5). This
+  // is what those OT hours are owed beyond their straight time at the
+  // company rate (already in Hourly Pay) — the same per-day figure the
+  // Attendance table's Payment column shows for an OT day. Training days
+  // are left out, same as premiumHours (the trainee match covers them).
+  // = the OT hours' straight-time gap (otStraightStateMatch, less any
+  // commission credit above) + 0.5x the state floor on every OT hour.
+  const stateOtHalfFloor = periodDayInfo.reduce((sum, day) => {
+    if (day.date < periodStart || day.date > periodEnd || isTrainingDay(day.date, traineeWindow)) return sum;
+    const overtime = dailySplit.get(day.date)?.overtime ?? 0;
+    if (overtime <= 0) return sum;
+    const companyRate = rateOnDate(day.date);
+    const floor = Math.max(stateMinWageOn(day.state, day.date) ?? companyRate, companyRate);
+    return sum + overtime * floor * 0.5;
+  }, 0);
+  const stateOtFloorPremium = otStraightStateMatch + stateOtHalfFloor;
+  const requiredOtPremium = Math.max(requiredPremiumAfterMinMatch, stateOtFloorPremium);
+  const matchOt = Math.max(requiredOtPremium - techHourlyPayOtPremium, 0);
   const stateHourlyOtTotal = companyHourlyOtTotal + matchMin + matchOt;
   // Whether the saved payroll_hourly_ot_overrides row (techHourlyPay, from
   // the parent) is currently a State-mode override rather than the flat
@@ -1148,19 +1206,29 @@ export function TechActivityReportModal({
                         <span className="text-slate-400">Company PD Min</span>
                         <span className="text-slate-200">{fmt(companyRegularPayBlended)}</span>
                       </div>
+                      {COMMISSION_COUNTS_TOWARD_STATE_MIN && commissionAppliedToFloor > 0.005 && (
+                        <div className="flex items-center justify-between text-xs mt-0.5" title="Commission counts toward the state minimum, checked per week (payroll workbook method — COMMISSION_COUNTS_TOWARD_STATE_MIN in stateMinWage.ts). This much of it went to covering the state floor instead of being topped up.">
+                          <span className="text-slate-400">Commission Counted</span>
+                          <span className="text-slate-200">{fmt(commissionAppliedToFloor)}</span>
+                        </div>
+                      )}
                       <div className="flex items-center justify-between text-xs mt-1 pt-1 border-t border-white/10">
                         <span className="text-slate-400">Match to pay</span>
                         <span className={matchMin > 0.005 ? "text-amber-300 font-semibold" : "text-slate-200"}>{fmt(matchMin)}</span>
                       </div>
                     </div>
 
-                    <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="Once the Min-floor match above adds pay, the regular rate the OT premium is based on has to be recomputed with it folded in — this is the required premium at that recomputed rate, vs. what's already been paid. Not an independent state-OT-floor check; a cascade off the Min match.">
+                    <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="Two checks, the higher one is owed: (1) once the Min-floor match above adds pay, the regular rate the OT premium is based on is recomputed with it folded in; (2) every OT hour is paid at least 1.5x the minimum wage of the state it was worked in (beyond its straight time at the company rate). Match to pay is the higher of the two minus the OT premium already paid.">
                       <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5">
                         OT Match After Min{loadingStateComparison ? " (loading…)" : ""}
                       </p>
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-slate-400">Required Premium After Match</span>
                         <span className="text-slate-200">{fmt(requiredPremiumAfterMinMatch)}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs mt-0.5">
+                        <span className="text-slate-400">OT at 1.5× State Min</span>
+                        <span className="text-slate-200">{fmt(stateOtFloorPremium)}</span>
                       </div>
                       <div className="flex items-center justify-between text-xs mt-0.5">
                         <span className="text-slate-400">Company PD OT</span>
