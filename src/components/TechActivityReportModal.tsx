@@ -5,7 +5,7 @@ import { X, Plus, Trash2, Loader2 } from "lucide-react";
 import type { EmployeePayrollRow } from "@/components/AccountingDashboard";
 import { getAttendanceForRange, computeMealTimeCredit, splitRegularOvertimeWeekly, startOfWeekSunday, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
 import { getSalaryHistory, rateEffectiveOn, type SalaryEntryRow } from "@/lib/supabase/salary";
-import { stateMinWageOn, COMMISSION_COUNTS_TOWARD_STATE_MIN } from "@/lib/stateMinWage";
+import { stateMinWageOn, COMMISSION_COUNTS_TOWARD_STATE_MIN, OT_MATCH_ADDS_TRUE_UP_AND_FLOOR } from "@/lib/stateMinWage";
 import { isMealAlwaysPaidRole } from "@/lib/roleLabels";
 import {
   REPAIR_TYPES,
@@ -310,7 +310,16 @@ export function TechActivityReportModal({
     return sum + overtime * floor * 0.5;
   }, 0);
   let stateOtFloorPremium = otStraightStateMatch + stateOtHalfFloorPeriod;
-  let matchOt = Math.max(Math.max(requiredPremiumAfterMinMatch, stateOtFloorPremium) - techHourlyPayOtPremium, 0);
+  // OT_MATCH_ADDS_TRUE_UP_AND_FLOOR (stateMinWage.ts): add both checks
+  // (Finance's sheet) or pay only the higher one.
+  const combineOtChecks = (trueUp: number, floorShortfall: number) =>
+    OT_MATCH_ADDS_TRUE_UP_AND_FLOOR
+      ? Math.max(trueUp, 0) + Math.max(floorShortfall, 0)
+      : Math.max(trueUp, floorShortfall, 0);
+  let matchOt = otStraightStateMatch + combineOtChecks(
+    requiredPremiumAfterMinMatch - techHourlyPayOtPremium,
+    stateOtHalfFloorPeriod - techHourlyPayOtPremium
+  );
   // Checked PER WORKWEEK when the weekly breakdown is available (FLSA
   // measures overtime per week): each week's OT is owed the higher of
   // (a) its premium at that week's regular rate after its state matches and
@@ -331,7 +340,7 @@ export function TechActivityReportModal({
       const cascade = w.premiumHours * rateAfter * 0.5;
       requiredPremiumAfterMinMatch += cascade;
       stateOtFloorPremium += otStraightW + gap.otHalf;
-      matchOt += otStraightW + Math.max(cascade - w.premium, gap.otHalf - w.premium, 0);
+      matchOt += otStraightW + combineOtChecks(cascade - w.premium, gap.otHalf - w.premium);
     }
   }
   const stateHourlyOtTotal = companyHourlyOtTotal + matchMin + matchOt;
