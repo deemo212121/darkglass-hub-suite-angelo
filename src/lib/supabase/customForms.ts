@@ -92,8 +92,9 @@ function formFromRow(r: any): CustomForm {
     fields: (r.fields ?? []) as CustomFormField[],
     // An empty design ({ blocks: [] }, what the builder used to save for a
     // form nobody designed) is no template — otherwise its PDF is a blank
-    // page instead of the automatic layout.
-    documentTemplate: r.document_template?.blocks?.length ? (r.document_template as DocumentTemplate) : null,
+    // page instead of the automatic layout. A source PDF to stamp
+    // (sourcePdf, no blocks) is a template.
+    documentTemplate: r.document_template?.blocks?.length || r.document_template?.sourcePdf ? (r.document_template as DocumentTemplate) : null,
     driveUploadEnabled: r.drive_upload_enabled ?? true,
     notifyFirebaseUids: (r.notify_firebase_uids ?? []) as string[],
     discordWebhookUrl: r.discord_webhook_url ?? null,
