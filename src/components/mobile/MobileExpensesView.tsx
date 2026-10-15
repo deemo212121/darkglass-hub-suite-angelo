@@ -11,7 +11,7 @@ import {
   type ExpenseRow,
   type ExpenseCategory,
 } from "@/lib/supabase/expenses";
-import { EXPENSE_CATEGORIES } from "@/components/ExpenseFormModal";
+import { EMPLOYEE_EXPENSE_CATEGORY } from "@/components/ExpenseFormModal";
 import { ReceiptLightbox } from "@/components/ReceiptLightbox";
 
 /**
@@ -33,7 +33,7 @@ const STATUS_PILL: Record<ExpenseRow["status"], { bg: string; fg: string; label:
 const fmtMoney = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const emptyForm = () => ({
-  category: "Travel" as ExpenseCategory,
+  category: EMPLOYEE_EXPENSE_CATEGORY as ExpenseCategory,
   expenseDate: todayISO(),
   amount: "",
   orNumber: "",
@@ -96,7 +96,7 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
   const startEdit = (e: ExpenseRow) => {
     setEditing(e);
     setForm({
-      category: e.category,
+      category: EMPLOYEE_EXPENSE_CATEGORY,
       expenseDate: e.expenseDate,
       amount: String(e.amount),
       orNumber: e.orNumber || "",
@@ -206,9 +206,8 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
         <div style={{ fontWeight: 800, fontSize: "0.95rem", color: "#f1f5f9" }}>{editing ? "Edit Expense" : "Expense Request"}</div>
 
         <div className="mtech-section-title">Category</div>
-        <select className="mtech-bill-input full" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value as ExpenseCategory })}>
-          {EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-        </select>
+        {/* Sent by the employee — always a Reimbursement Form (migration 0378). */}
+        <div className="mtech-bill-input full" style={{ opacity: 0.8 }}>{EMPLOYEE_EXPENSE_CATEGORY}</div>
 
         <div className="mtech-section-title">Date</div>
         <input className="mtech-bill-input full" type="date" value={form.expenseDate} onChange={(e) => setForm({ ...form, expenseDate: e.target.value })} />

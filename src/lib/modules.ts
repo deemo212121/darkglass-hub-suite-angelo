@@ -2232,7 +2232,28 @@ const guidesMod: ModuleDef = {
   ],
 };
 
-export const MODULES: ModuleDef[] = [dashboardMod, csrMod, ticketsMod, partsMod, reportMod, claimsMod, accountingMod, hrMod, branchTechMod, triageMod, bizOpsMod, adminMod, guidesMod];
+// AHS Server Status — SuperAdmin only (roleLabels.ts SUPERADMIN_ONLY_MODULES).
+// Live status + uptime history of the databases, the hosting and the outside
+// services the app depends on (src/lib/server/serverStatus.ts, migration 0377).
+const serverStatusMod: ModuleDef = {
+  slug: "server-status",
+  label: "AHS Server Status",
+  tagline: "Databases, hosting and outside services — live status and uptime",
+  accent: "#22c55e",
+  submodules: [
+    {
+      slug: "status",
+      title: "Server Status",
+      description: "Supabase, Firebase, Cloudflare hosting, scheduled jobs and outside services — live checks, uptime % and 30-day history.",
+      custom: "server-status" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+  ],
+};
+
+export const MODULES: ModuleDef[] = [dashboardMod, csrMod, ticketsMod, partsMod, reportMod, claimsMod, accountingMod, hrMod, branchTechMod, triageMod, bizOpsMod, adminMod, guidesMod, serverStatusMod];
 
 export function getModule(slug: string) {
   return MODULES.find((m) => m.slug === slug);

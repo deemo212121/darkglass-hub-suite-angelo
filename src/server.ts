@@ -25,6 +25,7 @@ import { handleDefaultPasswordRequest } from "./lib/server/defaultPasswordBridge
 import { handleLoginLockoutRequest } from "./lib/server/loginLockoutBridge";
 import { handlePasswordResetRequest } from "./lib/server/passwordResetRequestBridge";
 import { handleItBypassLoginRequest } from "./lib/server/itBypassLoginBridge";
+import { handleServerStatusRequest } from "./lib/server/serverStatus";
 
 const CANONICAL_ORIGIN = "https://adminhubsolution.com";
 
@@ -229,6 +230,10 @@ export default {
       const merged = await resolveServerEnv(env);
       return await handleItBypassLoginRequest(request, merged);
     }
+    if (url.pathname === "/api/server-status") {
+      const merged = await resolveServerEnv(env);
+      return await handleServerStatusRequest(request, merged);
+    }
 
     try {
       const handler = await getServerEntry();
@@ -247,7 +252,24 @@ export default {
   async scheduled(event: { cron?: string }, env: unknown, ctx: { waitUntil: (p: Promise<unknown>) => void }) {
     const merged = await resolveServerEnv(env);
 
+    // AHS Server Status (migration 0377): when each schedule last ran.
+    ctx.waitUntil(
+      import("./lib/server/serverStatus").then(({ readStatusEnv, recordCronHeartbeat }) => {
+        const statusEnv = readStatusEnv(merged);
+        return statusEnv ? recordCronHeartbeat(statusEnv, event?.cron === "*/5 * * * *" ? "every-5-min" : "hourly") : undefined;
+      }).catch((error) => console.error("cron heartbeat failed:", error)),
+    );
+
     if (event?.cron === "*/5 * * * *") {
+      // Check every service and save it to the Server Status history.
+      ctx.waitUntil(
+        import("./lib/server/serverStatus").then(
+          ({ runAndRecordServerStatus }) => runAndRecordServerStatus(merged),
+        ).then(
+          (result) => { if (result.down.length) console.log("serverStatus:", JSON.stringify(result)); },
+          (error) => console.error("serverStatus failed:", error),
+        ),
+      );
       ctx.waitUntil(
         import("./lib/server/attendanceAlerts").then(
           ({ runAttendanceAlertCheck }) => runAttendanceAlertCheck(merged),

@@ -103,6 +103,7 @@ import { ClockInCodesTab } from "@/components/ClockInCodesTab";
 import { TicketGuidesPage } from "@/components/TicketGuidesPage";
 import { SelfServiceGuidePage } from "@/components/SelfServiceGuidePage";
 import { GettingStartedGuidePage } from "@/components/GettingStartedGuidePage";
+import { ServerStatusPage } from "@/components/ServerStatusPage";
 import { ApproverGuidePage } from "@/components/ApproverGuidePage";
 import { TrainingListPage } from "@/components/TrainingListPage";
 import { AbsentListPage } from "@/components/AbsentListPage";
@@ -608,6 +609,8 @@ function SubModule() {
         ? <SelfServiceGuidePage />
         : (sub as any).custom === "getting-started-guide"
         ? <GettingStartedGuidePage />
+        : (sub as any).custom === "server-status"
+        ? <ServerStatusPage />
         : (sub as any).custom === "approver-guide"
         ? <ApproverGuidePage />
         : (sub as any).custom === "clock-in-codes"

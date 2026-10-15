@@ -16,6 +16,7 @@ import {
 import { localISODate, todayISO } from "@/lib/localDate";
 import { ExpenseFormModal, EXPENSE_CATEGORIES } from "@/components/ExpenseFormModal";
 import { ReceiptLightbox, isPdfReceipt } from "@/components/ReceiptLightbox";
+import { getFlashTechTripReceipts } from "@/lib/supabase/flashTechTrips";
 
 function expenseStatusColor(status: ExpenseStatus): string {
   switch (status) {
@@ -77,6 +78,8 @@ export function ExpenseTrackingPage({
   const [filterEmployee, setFilterEmployee] = useState("all");
   const [filterCategory, setFilterCategory] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all");
+  /** "YYYY-MM" — Monthly summary: limits the cards and the list to that month. "" = all months. */
+  const [filterMonth, setFilterMonth] = useState("");
 
   // null = closed; { editing: null } = Add; { editing: row } = Edit.
   const [formState, setFormState] = useState<{ editing: ExpenseRow | null } | null>(null);
@@ -85,19 +88,23 @@ export function ExpenseTrackingPage({
   // Receipt clicked in the table's dedicated Receipt column — shown in a
   // lightbox instead of navigating away.
   const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null);
+  /** Flash Tech trip id → receipts uploaded on the trip, for its expense lines with no receipt of their own. */
+  const [tripReceipts, setTripReceipts] = useState<Map<string, string[]>>(new Map());
 
   const load = useCallback(async () => {
     if (!ready || !uid) { setLoading(false); return; }
     setLoading(true);
     try {
-      const [profileId, profileRows, expenseRows] = await Promise.all([
+      const [profileId, profileRows, expenseRows, tripReceiptMap] = await Promise.all([
         getMyProfileId(uid),
         getCompanyUsers(),
         getCompanyExpenses(),
+        getFlashTechTripReceipts().catch(() => new Map<string, string[]>()),
       ]);
       setMyProfileId(profileId);
       setProfiles(profileRows);
       setExpenses(expenseRows);
+      setTripReceipts(tripReceiptMap);
     } catch (error) {
       console.error("Failed to load expenses:", error);
     } finally {
@@ -118,8 +125,20 @@ export function ExpenseTrackingPage({
     return expenses;
   }, [expenses, flashTechOnly, selfFiledOnly]);
 
+  // Category filter: the current categories, plus any old category still on rows (pre-0378).
+  const categoryOptions = useMemo(() => {
+    const extra = Array.from(new Set(scopedExpenses.map((e) => e.category).filter((c) => c && !EXPENSE_CATEGORIES.includes(c)))).sort();
+    return [...EXPENSE_CATEGORIES, ...extra];
+  }, [scopedExpenses]);
+
+  // Month filter applies to the summary cards and the list alike.
+  const monthExpenses = useMemo(
+    () => (filterMonth ? scopedExpenses.filter((e) => (e.expenseDate || "").startsWith(filterMonth)) : scopedExpenses),
+    [scopedExpenses, filterMonth]
+  );
+
   const filtered = useMemo(() => {
-    return scopedExpenses.filter((e) => {
+    return monthExpenses.filter((e) => {
       if (filterEmployee !== "all" && e.profileId !== filterEmployee) return false;
       if (filterCategory !== "all" && e.category !== filterCategory) return false;
       if (filterStatus !== "all" && e.status !== filterStatus) return false;
@@ -129,16 +148,19 @@ export function ExpenseTrackingPage({
       }
       return true;
     });
-  }, [scopedExpenses, filterEmployee, filterCategory, filterStatus, search, profileById]);
+  }, [monthExpenses, filterEmployee, filterCategory, filterStatus, search, profileById]);
 
-  const totalPending = scopedExpenses.filter((e) => e.status === "Pending");
-  const totalApproved = scopedExpenses.filter((e) => e.status === "Approved");
-  const totalReimbursed = scopedExpenses.filter((e) => e.status === "Reimbursed");
+  const totalPending = monthExpenses.filter((e) => e.status === "Pending");
+  const totalApproved = monthExpenses.filter((e) => e.status === "Approved");
+  const totalReimbursed = monthExpenses.filter((e) => e.status === "Reimbursed");
   const sum = (rows: ExpenseRow[]) => rows.reduce((s, r) => s + r.amount, 0);
   const monthStart = new Date();
   monthStart.setDate(1);
   const monthStartISO = localISODate(monthStart);
-  const thisMonthTotal = sum(scopedExpenses.filter((e) => e.expenseDate >= monthStartISO));
+  const thisMonthTotal = filterMonth ? sum(monthExpenses) : sum(scopedExpenses.filter((e) => e.expenseDate >= monthStartISO));
+  const monthLabel = filterMonth
+    ? new Date(`${filterMonth}-01T00:00:00`).toLocaleDateString(undefined, { month: "long", year: "numeric" })
+    : "This Month";
 
   const fmtMoney = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -273,7 +295,7 @@ export function ExpenseTrackingPage({
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-slate-400 uppercase">This Month</p>
+                  <p className="text-xs text-slate-400 uppercase">{monthLabel}</p>
                   <p className="text-2xl font-bold text-white mt-2">{loading ? "…" : fmtMoney(thisMonthTotal)}</p>
                   <p className="text-xs text-slate-500 mt-1">all statuses</p>
                 </div>
@@ -284,7 +306,7 @@ export function ExpenseTrackingPage({
 
           {/* Filters */}
           <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-            <div className="grid gap-3 md:grid-cols-4">
+            <div className="grid gap-3 md:grid-cols-5">
               <input
                 type="text"
                 placeholder="Search employee, sender or description..."
@@ -298,8 +320,22 @@ export function ExpenseTrackingPage({
               </select>
               <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none">
                 <option value="all">All Categories</option>
-                {EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                {categoryOptions.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
+              <div className="flex gap-1">
+                <input
+                  type="month"
+                  value={filterMonth}
+                  onChange={(e) => setFilterMonth(e.target.value)}
+                  title="Monthly summary — limits the cards and the list to this month"
+                  className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none [color-scheme:dark]"
+                />
+                {filterMonth && (
+                  <button type="button" onClick={() => setFilterMonth("")} className="shrink-0 rounded-lg bg-slate-800 px-2 text-xs text-slate-300 hover:bg-slate-700" title="All months">
+                    All
+                  </button>
+                )}
+              </div>
               <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none">
                 <option value="all">All Statuses</option>
                 <option value="Pending">Pending</option>
@@ -371,24 +407,33 @@ export function ExpenseTrackingPage({
                       )}
                     </td>
                     <td className="px-3 py-3">
-                      {e.receiptUrl ? (
-                        <button
-                          type="button"
-                          onClick={() => e.receiptUrl && setPreviewReceiptUrl(e.receiptUrl)}
-                          title="View receipt"
-                          className="block h-10 w-10 overflow-hidden rounded border border-white/10 bg-slate-800 hover:border-blue-500 transition"
-                        >
-                          {isPdfReceipt(e.receiptUrl) ? (
-                            <span className="flex h-full w-full items-center justify-center text-slate-400">
-                              <Paperclip className="h-4 w-4" />
-                            </span>
-                          ) : (
-                            <img src={e.receiptUrl} alt="Receipt thumbnail" className="h-full w-full object-cover" />
-                          )}
-                        </button>
-                      ) : (
-                        <span className="text-slate-600 text-xs">—</span>
-                      )}
+                      {(() => {
+                        // Its own receipt, else the receipts uploaded on its Flash Tech trip.
+                        const urls = e.receiptUrl ? [e.receiptUrl] : e.flashTechTripId ? tripReceipts.get(e.flashTechTripId) ?? [] : [];
+                        if (urls.length === 0) return <span className="text-slate-600 text-xs">—</span>;
+                        return (
+                          <div className="flex items-center gap-1">
+                            {urls.slice(0, 2).map((url) => (
+                              <button
+                                key={url}
+                                type="button"
+                                onClick={() => setPreviewReceiptUrl(url)}
+                                title={e.receiptUrl ? "View receipt" : "View receipt (uploaded on the Flash Tech trip)"}
+                                className="block h-10 w-10 overflow-hidden rounded border border-white/10 bg-slate-800 hover:border-blue-500 transition"
+                              >
+                                {isPdfReceipt(url) ? (
+                                  <span className="flex h-full w-full items-center justify-center text-slate-400">
+                                    <Paperclip className="h-4 w-4" />
+                                  </span>
+                                ) : (
+                                  <img src={url} alt="Receipt thumbnail" className="h-full w-full object-cover" />
+                                )}
+                              </button>
+                            ))}
+                            {urls.length > 2 && <span className="text-[11px] text-slate-400">+{urls.length - 2}</span>}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex flex-wrap gap-1">
