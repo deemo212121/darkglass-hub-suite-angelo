@@ -52,24 +52,40 @@ export function ReviewedPeriodsTab({
   people,
   myProfileId,
   myName,
+  actualTotals,
+  actualTotalsLoading,
+  onPeriodChange,
 }: {
   periodStart: string;
   periodEnd: string;
   people: ReviewedPeriodPerson[];
   myProfileId: string | null;
   myName: string | null;
+  /** Each technician's actual Gross Pay from the Payroll page, for the dashboard's current period. */
+  actualTotals: Map<string, number>;
+  actualTotalsLoading: boolean;
+  /** Switches the dashboard's period so actualTotals covers the period picked here. */
+  onPeriodChange: (start: string, end: string) => void;
 }) {
   // Periods that have saved rows, plus the dashboard's current period —
   // picked here so a reviewed period is reachable without changing the
   // Payroll tab's own period.
   const [periods, setPeriods] = useState<{ periodStart: string; periodEnd: string; count: number }[]>([]);
   const [selected, setSelected] = useState<string>("");
+  const selectedRef = useRef("");
+  useEffect(() => { selectedRef.current = selected; }, [selected]);
   const dashboardKey = dashboardStart && dashboardEnd ? `${dashboardStart}|${dashboardEnd}` : "";
   const loadPeriods = useCallback(async () => {
     try {
       const list = await getPayrollReviewPeriods();
       setPeriods(list);
-      setSelected((cur) => cur || (list.some((p) => `${p.periodStart}|${p.periodEnd}` === dashboardKey) ? dashboardKey : list[0] ? `${list[0].periodStart}|${list[0].periodEnd}` : dashboardKey));
+      if (!selectedRef.current) {
+        const pick = list.some((p) => `${p.periodStart}|${p.periodEnd}` === dashboardKey) ? dashboardKey : list[0] ? `${list[0].periodStart}|${list[0].periodEnd}` : dashboardKey;
+        selectedRef.current = pick;
+        setSelected(pick);
+        // Bring the Payroll page to the same period so its actual totals load.
+        if (pick && pick !== dashboardKey) { const [s0, e0] = pick.split("|"); onPeriodChange(s0, e0); }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load reviewed periods.");
       setSelected((cur) => cur || dashboardKey);
@@ -82,6 +98,15 @@ export function ReviewedPeriodsTab({
     return opts;
   }, [periods, dashboardKey, dashboardStart, dashboardEnd]);
   const [periodStart, periodEnd] = (selected || dashboardKey || "|").split("|");
+  // Total = the technician's ACTUAL pay (Payroll page Gross Pay), not just
+  // the sum of the summary columns — available once the dashboard is on the
+  // same period and finished loading. Until then the columns' sum is shown.
+  const actualReady = !!selected && selected === dashboardKey && !actualTotalsLoading;
+  const totalOf = (r: PayrollReviewBreakdown) => {
+    const actual = actualReady ? actualTotals.get(r.profileId) : undefined;
+    return actual ?? reviewBreakdownTotal(r);
+  };
+  const isActual = (r: PayrollReviewBreakdown) => actualReady && actualTotals.has(r.profileId);
 
   const [rows, setRows] = useState<PayrollReviewBreakdown[]>([]);
   const [loading, setLoading] = useState(false);
@@ -228,9 +253,8 @@ export function ReviewedPeriodsTab({
     visible.forEach((r, i) => {
       const n = first + i;
       const row = ws.getRow(n);
-      row.values = [nameOf(r), r.branch ?? "", ...COLUMNS.map((c) => r[c.key]), null];
-      // Total = earnings + reimbursements − deductions − pre-tax insurance (C..K → L)
-      ws.getCell(`L${n}`).value = { formula: `C${n}+D${n}+E${n}+F${n}+G${n}-H${n}+I${n}-J${n}+K${n}`, result: reviewBreakdownTotal(r) };
+      // Total = the technician's actual pay (Payroll Gross Pay), as on the tab.
+      row.values = [nameOf(r), r.branch ?? "", ...COLUMNS.map((c) => r[c.key]), Math.round(totalOf(r) * 100) / 100];
       row.height = 18;
       for (let c = 1; c <= lastCol; c++) {
         const cell = row.getCell(c);
@@ -317,7 +341,11 @@ export function ReviewedPeriodsTab({
             <h3 className="text-base font-semibold text-white">Reviewed Period</h3>
             <select
               value={selected}
-              onChange={(e) => setSelected(e.target.value)}
+              onChange={(e) => {
+                setSelected(e.target.value);
+                const [s0, e0] = e.target.value.split("|");
+                if (s0 && e0) onPeriodChange(s0, e0);
+              }}
               className="glass-input text-sm py-1 px-2 rounded-md"
               title="Pay periods with saved rows, plus the period picked on the Payroll tab"
             >
@@ -421,7 +449,26 @@ export function ReviewedPeriodsTab({
                     />
                   </td>
                 ))}
-                <td className="px-2 py-1 text-right font-semibold tabular-nums text-emerald-300 whitespace-nowrap">{money(reviewBreakdownTotal(r))}</td>
+                {(() => {
+                  const total = totalOf(r);
+                  const sum = reviewBreakdownTotal(r);
+                  const off = isActual(r) && Math.abs(total - sum) > 0.01;
+                  return (
+                    <td
+                      className={`px-2 py-1 text-right font-semibold tabular-nums whitespace-nowrap ${isActual(r) ? "text-emerald-300" : "text-slate-400 italic"}`}
+                      title={
+                        !isActual(r)
+                          ? "Sum of the columns — the actual Payroll total loads once this period finishes loading on the Payroll page."
+                          : off
+                          ? `Actual pay (Payroll Gross Pay). The columns add up to ${money(sum)} — ${money(total - sum)} isn't in any column.`
+                          : "Actual pay (Payroll Gross Pay)."
+                      }
+                    >
+                      {off && <span className="mr-1 text-amber-400">⚠</span>}
+                      {money(total)}
+                    </td>
+                  );
+                })()}
                 <td className="px-1 py-1 text-right">
                   <button
                     type="button"
@@ -442,7 +489,7 @@ export function ReviewedPeriodsTab({
                 <td className="sticky left-0 z-10 bg-slate-900 px-2 py-1.5">Total ({visible.length})</td>
                 <td className="bg-slate-900" />
                 {COLUMNS.map((c) => <td key={c.key} className="bg-slate-900 px-1 py-1.5 text-right tabular-nums whitespace-nowrap">{money(totals[c.key])}</td>)}
-                <td className="bg-slate-900 px-2 py-1.5 text-right tabular-nums text-emerald-300 whitespace-nowrap">{money(reviewBreakdownTotal(totals))}</td>
+                <td className="bg-slate-900 px-2 py-1.5 text-right tabular-nums text-emerald-300 whitespace-nowrap">{money(visible.reduce((s0, r) => s0 + totalOf(r), 0))}</td>
                 <td className="bg-slate-900" />
               </tr>
             </tfoot>

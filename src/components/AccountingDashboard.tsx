@@ -5986,6 +5986,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               .map((r) => ({ id: r.employee.id, name: r.employee.full_name, branch: r.employee.assigned_branch || "" }))}
             myProfileId={myProfileId}
             myName={displayName || email || null}
+            actualTotals={new Map(payrollRows.filter((r) => r.isTechPortion).map((r) => [r.employee.id, r.grossPay]))}
+            actualTotalsLoading={periodDataLoading > 0 || loading}
+            onPeriodChange={(start, end) => { setGenStart(start); setGenEnd(end); }}
           />
         )}
 
