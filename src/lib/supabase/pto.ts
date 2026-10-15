@@ -14,7 +14,7 @@
 
 import { requireRejectReason, requireApproveNote, RejectCancelledError, APPROVE_CANCELLED_MESSAGE } from "@/lib/rejectReason";
 import { askAccountingSignature } from "@/lib/accountingSignature";
-import { chainCanApproveCorrection, isRequesterDepartmentManager } from "@/lib/approvalDirectory";
+import { chainCanApprovePto, isRequesterDepartmentManager } from "@/lib/approvalDirectory";
 import { supabase } from "./client";
 import { createNotification } from "./notifications";
 import { getCompanyUsers } from "./users";
@@ -523,12 +523,11 @@ export function canReviewPtoStage(
   const has = (r: string) => heldRoles.includes(r);
   if (has("SUPERADMIN") || has("SUPERSUPERADMIN")) return true;
   if (stage === "manager") {
-    // Non-PH field staff (Technician → Branch Manager → Senior Branch
-    // Manager → Admin / Directors) and Logistics (Parts → their branch's
-    // Parts Manager, or HR / Admin): the Approval Chain decides, each
-    // department approving only its own people — the same rule as Time
-    // Corrections; migration 0384 enforces it in the database.
-    const chain = chainCanApproveCorrection(viewerProfileId, request.profileId);
+    // The tech line (Tech Director > Tech Asst. Director > SBM > BM >
+    // Technician) and the Parts line (Parts head > Parts Manager > Parts):
+    // each approves only its own people — chainCanApprovePto; migration 0384
+    // enforces the same rule in the database.
+    const chain = chainCanApprovePto(viewerProfileId, request.profileId);
     if (chain !== null) return chain;
     if (request.managerId === viewerProfileId) return true;
     // request.managerId is resolved ONCE, at submission time, from
