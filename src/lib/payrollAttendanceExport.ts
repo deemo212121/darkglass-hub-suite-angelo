@@ -9,7 +9,7 @@ import { getCompanyHolidaysInRange } from "./supabase/companyHolidays";
 import { getPendingCorrectionsInRange } from "./supabase/timecardCorrections";
 import { isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold } from "./roleLabels";
 import { payGraceMinutesFor } from "./attendanceGrace";
-import { normalizeStateName, highestRateAmong, STATE_MIN_WAGE_2026, stateMinWageOn, stateRateChangeInfo } from "./stateMinWage";
+import { normalizeStateName, highestRateAmong, STATE_MIN_WAGE_2026, stateMinWageOn, stateRateChangeInfo, COMMISSION_COUNTS_TOWARD_STATE_MIN } from "./stateMinWage";
 
 export const attendanceExportHeaders = ["Date", "States Worked", "Check In", "Check Out", "Regular Hr", "Meal Time", "Over Time", "Total Hours", "Rate", "State Floor Min", "State OT Floor Min"];
 /**
@@ -200,7 +200,13 @@ export function addAttendancePayBreakdown(sheet: Worksheet, attendanceCount: num
   const minMatch = isPh ? 0 : Math.max(0, stateRegular - companyRegular);
   const afterRate = hours > 0 ? (straight + minMatch) / hours : 0;
   const requiredPremium = otHours * afterRate * premiumFactor;
-  const otMatch = Math.max(0, requiredPremium - premium);
+  // OT hours are owed at least 1.5x the minimum of the state they were worked
+  // in: K (OT hours x applied rate x 1.5) minus their straight time at the
+  // company rate (G x M). Same check as the Tech Activity Report.
+  let otStateFloor = 0;
+  for (let row = 2; row <= end; row++) otStateFloor += amount(`K${row}`) - amount(`G${row}`) * amount(`M${row}`);
+  const otFloorFormula = attendanceCount ? `SUM(K2:K${end})-SUMPRODUCT(G2:G${end},M2:M${end})` : "0";
+  const otMatch = isPh ? 0 : Math.max(0, Math.max(requiredPremium, otStateFloor) - premium);
   const inputs = [
     ["Pay mode", "State"],
     ["Holiday premium ($)", 0],
@@ -254,10 +260,12 @@ export function addAttendancePayBreakdown(sheet: Worksheet, attendanceCount: num
     ["Corrected OT Premium", "OT Hours × Step 4 × OT Premium Factor", `G${total}*AL6*$AP$6`, premium, "Only the extra premium; the straight-time portion of OT is already in Step 2."],
     ["Holiday Premium", "Holiday premium input", "$AP$3", 0, "Enter any applicable holiday premium in AP3; default zero."],
     ["Wages Before State Match", "Step 3 + Step 5 + Step 6", "AL5+AL7+AL8", straight + premium, "Includable pay is already included; do not add it again."],
-    ["State Regular-Pay Match", "MAX(State regular floor − Company regular pay, 0)", isPh ? "0" : `MAX(0,${sum("J")}-${companyRegularFormula})`, minMatch, "Regular hours only, including paid meal credit. Recalculates from States Worked and state rates."],
+    COMMISSION_COUNTS_TOWARD_STATE_MIN
+      ? ["State Regular-Pay Match", "MAX(State regular floor − Company regular pay − Step 1, 0)", isPh ? "0" : `MAX(0,${sum("J")}-${companyRegularFormula}-AL3)`, minMatch, "Regular hours only, including paid meal credit. Includable pay (commission) counts toward the state floor. Recalculates from States Worked and state rates."]
+      : ["State Regular-Pay Match", "MAX(State regular floor − Company regular pay, 0)", isPh ? "0" : `MAX(0,${sum("J")}-${companyRegularFormula})`, minMatch, "Regular hours only, including paid meal credit. Recalculates from States Worked and state rates."],
     ["Regular Rate After Match", "(Step 3 + Step 8) ÷ Total Hours", `IFERROR((AL5+AL10)/H${total},0)`, afterRate, "Includes the regular-pay shortfall before recalculating overtime."],
     ["Required OT Premium After Match", "OT Hours × Step 9 × OT Premium Factor", `G${total}*AL11*$AP$6`, requiredPremium, "Recomputed premium after the state regular-pay match."],
-    ["Additional OT Match", "MAX(Step 10 − Step 5, 0)", "MAX(AL12-AL7,0)", otMatch, "Only incremental overtime; avoids counting the original premium twice."],
+    ["Additional OT Match", "MAX(MAX(Step 10, OT at 1.5× state min) − Step 5, 0)", isPh ? "0" : `MAX(MAX(AL12,${otFloorFormula})-AL7,0)`, otMatch, "OT hours are owed at least 1.5× the minimum of the state they were worked in (column K less their straight time at the company rate). Only incremental overtime; avoids counting the original premium twice."],
     ["Applied Total State Match", "State mode: Step 8 + Step 11; Company mode: 0", 'IF($AP$2="State",AL10+AL13,0)', minMatch + otMatch, "Choose Company or State in AP2. State adjustments are separate from reimbursements."],
     ["Earned Before Match / Deductions", "Step 7 + Reimbursements + Other Additions", `AL9+SUMPRODUCT(Reimbursements_${sheet.id}[Rate],Reimbursements_${sheet.id}[Quantity])+$AP$4`, straight + premium, "Reimbursements are added after the weighted-rate and OT calculation."],
     ["Total Deductions", "Deductions input", "$AP$5", 0, "Enter deductions as a positive amount in AP5. Do not repeat negative includable entries here."],
