@@ -97,6 +97,8 @@ import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
 import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
 import { TicketTimeDisputesTab } from "@/components/TicketTimeDisputesTab";
 import { BranchManagerCommissionTab } from "@/components/BranchManagerCommissionTab";
+import { ReviewedPeriodsTab } from "@/components/ReviewedPeriodsTab";
+import { upsertPayrollReviewBreakdown } from "@/lib/supabase/payrollReviewBreakdowns";
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, linkPayrollDisputeCustomPayItem, modifyPayrollDispute, restorePayrollDisputeOriginal, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
@@ -969,7 +971,7 @@ function parseGmailRegionParam(value: string | null): GmailRegion {
   return value === "PH" ? "PH" : "US";
 }
 
-type AccountingDashboardTabId = "traineeMonitoring" | "overview" | "payroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech" | "ticketAttendance" | "ticketTimeDisputes" | "branchRates" | "carIq" | "branchCommission";
+type AccountingDashboardTabId = "traineeMonitoring" | "overview" | "payroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech" | "ticketAttendance" | "ticketTimeDisputes" | "branchRates" | "carIq" | "branchCommission" | "reviewedPeriods";
 // Shared by the top tab row and the floating left quick-nav so the two
 // never drift out of sync.
 const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; Icon: typeof History }[] = [
@@ -984,6 +986,7 @@ const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; 
   { id: "carIq", label: "Car IQ", Icon: Car },
   { id: "branchCommission", label: "Branch Commission", Icon: TrendingUp },
   { id: "ticketTimeDisputes", label: "Ticket Time Disputes", Icon: Clock },
+  { id: "reviewedPeriods", label: "Reviewed Periods", Icon: Check },
 
 ];
 
@@ -1018,7 +1021,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   };
   const [activeTab, setActiveTab] = usePersistedTab<AccountingDashboardTabId>(
     "ahs:accounting-dashboard-active-tab",
-    ["overview", "payroll", "traineeMonitoring", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes", "branchRates", "branchCommission"],
+    ["overview", "payroll", "traineeMonitoring", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes", "branchRates", "branchCommission", "reviewedPeriods"],
     "overview",
   );
   // Deep link from a bell-icon notification straight into the Payroll
@@ -3946,6 +3949,41 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       )
     : visibleRowsUnsorted;
   const checkedVisibleRows = visibleRows.filter(row => !row.employee.payrollExcluded);
+  // Each technician's pay beyond hours, for the attendance workbook's
+  // Includable / Reimbursements tables — so its 15-step calc comes up with
+  // the total instead of leaving them blank. Custom lines keep their week
+  // in the label; ticket/category pay the app computed itself is one line.
+  const buildAttendanceAdjustments = (rows: EmployeePayrollRow[]) => {
+    const fmtWeek = (w: string) => `Wk ${Number(w.slice(5, 7))}/${Number(w.slice(8, 10))}`;
+    const byEmployee = new Map<string, { includable: { type: string; rate: number; quantity: number }[]; reimbursements: { type: string; rate: number; quantity: number }[]; holidayPremium: number; otherAdditions: number }>();
+    for (const row of rows) {
+      if (!row.isTechPortion) continue;
+      const id = row.employee.id;
+      const lines = techCustomPayItemsAll.filter((i) => i.profileId === id && i.value * i.rate !== 0);
+      const includable = lines.filter((i) => i.isWageIncludable).map((i) => ({
+        type: `${i.label || "(custom line)"}${i.workWeekStart ? ` (${fmtWeek(i.workWeekStart)})` : ""}`, rate: i.rate, quantity: i.value,
+      }));
+      const reimbursements = lines.filter((i) => !i.isWageIncludable).map((i) => ({
+        type: `${i.label || "(custom line)"}${i.workWeekStart ? ` (${fmtWeek(i.workWeekStart)})` : ""}`, rate: i.rate, quantity: i.value,
+      }));
+      const customIncludable = includable.reduce((s, l) => s + l.rate * l.quantity, 0);
+      const ticketPay = row.techIncludablePay - customIncludable;
+      if (Math.abs(ticketPay) > 0.005) includable.unshift({ type: "Ticket / category pay (app)", rate: Math.round(ticketPay * 100) / 100, quantity: 1 });
+      if (Math.abs(row.techManual.mileagePay) > 0.005) {
+        const miles = row.techManual.mileage;
+        reimbursements.unshift(miles > 0
+          ? { type: "Mileage (field)", rate: row.techManual.mileagePay / miles, quantity: miles }
+          : { type: "Mileage (field)", rate: row.techManual.mileagePay, quantity: 1 });
+      }
+      byEmployee.set(id, {
+        includable,
+        reimbursements,
+        holidayPremium: row.techHolidayPremium,
+        otherAdditions: row.techTraineeMatch + row.techGuaranteedSalaryMatch,
+      });
+    }
+    return byEmployee;
+  };
   const downloadFilteredAttendance = async () => {
     if (attendanceExportProgress || checkedVisibleRows.length === 0) return;
     const people = [...new Map(checkedVisibleRows.map(row => [row.employee.id, row.employee])).values()];
@@ -3956,7 +3994,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // before initialization"), and the Worker failed to start.
       const { downloadPayrollAttendanceWorkbook } = await import("@/lib/payrollAttendanceExport");
       await downloadPayrollAttendanceWorkbook(people, genStart, genEnd, effectiveCurrency === "USD" ? "US" : "PH",
-        (done, total) => setAttendanceExportProgress({ done, total }));
+        (done, total) => setAttendanceExportProgress({ done, total }), buildAttendanceAdjustments(checkedVisibleRows));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Attendance download failed.");
     } finally {
@@ -5939,6 +5977,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             (src/components/TicketTimeDisputesTab.tsx) so it can also be
             rendered from Absent List's tab of the same name. */}
         {activeTab === "ticketTimeDisputes" && <TicketTimeDisputesTab />}
+        {activeTab === "reviewedPeriods" && (
+          <ReviewedPeriodsTab
+            periodStart={genStart}
+            periodEnd={genEnd}
+            people={payrollRows
+              .filter((r) => r.isTechPortion)
+              .map((r) => ({ id: r.employee.id, name: r.employee.full_name, branch: r.employee.assigned_branch || "" }))}
+            myProfileId={myProfileId}
+            myName={displayName || email || null}
+          />
+        )}
 
         {/* ── Flash Tech Tab ───────────────────────────────────────────────── */}
         {/* Moved here from its old standalone page (reached via a button on
@@ -6685,7 +6734,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             }
             hourlyOtModeBusy={nextBusy}
             doneBusy={reviewBusy}
-            onDone={async () => {
+            onDone={async (breakdown) => {
               // Same guard as the office path above and generatePayroll()
               // itself — see that comment for why this matters.
               if (!genStart || !genEnd || genStart > genEnd) {
@@ -6695,6 +6744,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               setReviewBusy(true);
               try {
                 await markPayrollReviewed(detailEmployee.id, genStart, genEnd, myProfileId, displayName || email || null);
+                // Reviewed Periods tab (migration 0374): this report's pay in
+                // Finance's summary columns. Doesn't block the review mark —
+                // just warn if it can't be saved (e.g. migration not run).
+                try {
+                  await upsertPayrollReviewBreakdown(detailEmployee.id, genStart, genEnd, breakdown, {
+                    branch: detailEmployee.assigned_branch || null,
+                    source: "review",
+                    updatedBy: myProfileId,
+                    updatedByName: displayName || email || null,
+                  });
+                } catch (err) {
+                  toast.error(`Reviewed, but the Reviewed Periods summary wasn't saved: ${err instanceof Error ? err.message : "Unknown error"}`);
+                }
                 await loadReviewMarks();
                 setDetailEmployee(null);
                 setWizardStep("detail");
