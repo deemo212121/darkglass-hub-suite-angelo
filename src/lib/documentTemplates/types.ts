@@ -45,8 +45,42 @@ export interface DocumentBlock {
   position?: DocumentBlockPosition;
 }
 
+/**
+ * One answer stamped onto a page of a source PDF — a signature image fitted
+ * into the box, or the answer as text. Box in PDF points from the page's
+ * top-left corner.
+ */
+export interface DocumentSourcePdfStamp {
+  /** The form field (Unique Field Name) whose answer goes here. */
+  fieldName: string;
+  /** 1-based page number. */
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Text answers only: font size in points (default 11). */
+  fontSize?: number;
+  /** Date answers only: "MM/DD", "MM/DD/YYYY" (default), "YYYY-MM-DD"… — e.g. "MM/DD" when the paper already prints ", 2026" after the line. */
+  dateFormat?: string;
+}
+
+/**
+ * "Sign the PDF itself": the document is an existing PDF (e.g. a scanned
+ * agreement the other party already signed on paper) with the form's
+ * answers stamped onto it, instead of a page built from blocks. See
+ * generateStampedSourcePdf in generate.ts.
+ */
+export interface DocumentSourcePdf {
+  /** Firebase Storage download URL of the PDF. */
+  url: string;
+  stamps: DocumentSourcePdfStamp[];
+}
+
 export interface DocumentTemplate {
   blocks: DocumentBlock[];
+  /** When set, the document is this PDF with the answers stamped on — the blocks are not used. */
+  sourcePdf?: DocumentSourcePdf;
 }
 
 /** US Letter page, matching the warningFormStyles/Certificate-of-Employment convention used elsewhere in the app. */
