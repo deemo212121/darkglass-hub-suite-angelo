@@ -100,7 +100,7 @@ import { BranchManagerCommissionTab } from "@/components/BranchManagerCommission
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, linkPayrollDisputeCustomPayItem, modifyPayrollDispute, restorePayrollDisputeOriginal, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
-import { perCutoffSalary } from "@/lib/supabase/salary";
+import { perCutoffSalary, getSalaryHistory } from "@/lib/supabase/salary";
 import { getPayrollReviewMarks, markPayrollReviewed, clearPayrollReviewMark, type PayrollReviewMark } from "@/lib/supabase/payrollReviewMarks";
 import { getHourlyOtOverrides, setHourlyOtOverride, clearHourlyOtOverride, type HourlyOtOverride } from "@/lib/supabase/payrollHourlyOtOverrides";
 import { useAuth } from "@/lib/auth";
@@ -1339,6 +1339,36 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // (stamps a payroll_review_marks row, closes to the table).
   const [detailEmployee, setDetailEmployee] = useState<SupabaseEmployee | null>(null);
   const [wizardStep, setWizardStep] = useState<"detail" | "activity">("detail");
+  // salaryEntries is loaded once with the page, so a rate change someone
+  // else saved since then (e.g. Darius Brown, 10/15: $9.25 from 9/13 added
+  // in another session) never reached the payroll calc — the detail modal
+  // showed $9.25 (it loads its own history) while the Tech Activity Report
+  // still paid $7.25. Re-read this employee's rate history whenever their
+  // payroll detail opens and swap it in if it changed.
+  useEffect(() => {
+    const profileId = detailEmployee?.id;
+    if (!profileId) return;
+    let cancelled = false;
+    void getSalaryHistory(profileId).then((rows) => {
+      // An empty result is also what a failed read returns — keep what's loaded.
+      if (cancelled || rows.length === 0) return;
+      const fresh: SalaryEntry[] = rows.map((r) => ({
+        profile_id: r.profileId,
+        effective_date: r.effectiveDate,
+        compensation_type: r.compensationType,
+        hourly_rate: r.hourlyRate,
+        annual_salary: r.annualSalary,
+        created_at: r.createdAt,
+      }));
+      const key = (se: SalaryEntry) => `${se.effective_date}|${se.created_at}|${se.compensation_type}|${se.hourly_rate}|${se.annual_salary}`;
+      setSalaryEntries((prev) => {
+        const mine = prev.filter((se) => se.profile_id === profileId).map(key).sort().join(",");
+        if (mine === fresh.map(key).sort().join(",")) return prev;
+        return [...prev.filter((se) => se.profile_id !== profileId), ...fresh];
+      });
+    });
+    return () => { cancelled = true; };
+  }, [detailEmployee?.id]);
   const [reviewMarks, setReviewMarks] = useState<Map<string, PayrollReviewMark>>(new Map());
   const [reviewBusy, setReviewBusy] = useState(false);
   // Per-employee "has a payslip actually gone out for THIS period" — reviewed
@@ -1944,6 +1974,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // inside the Tech Activity Report modal, or auto-created/removed by a
   // Payroll Dispute approve/revert (handlePayrollDisputeAction), is
   // reflected in the real payrollRows calculation right away.
+  const customPayRefreshSeq = useRef(0);
   const refreshTechCustomPayItems = useCallback(async () => {
     if (!genStart || !genEnd || genStart > genEnd) return;
     // Fires on every custom-line add/edit/delete inside an open Tech
@@ -1959,9 +1990,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // Hourly+OT override fired off a stale weighted rate, then overwritten
     // again moments later once this settles, looking like the total kept
     // "randomly" changing on its own.
+    // Several edits in a row (label, qty, Includable→Reimbursement, week,
+    // rate) each fire a refetch; responses can land out of order, and an
+    // older one landing last overwrote newer data — Darius Brown 9/27–10/10:
+    // two lines already switched to Reimbursement stayed Includable here,
+    // inflating wk 10/4's OT rate ($22.31 vs $18.40). Only the newest
+    // request's response is applied.
+    const requestId = ++customPayRefreshSeq.current;
     beginPeriodLoad();
     try {
-      setTechCustomPayItemsAll(await getAllTechCustomPayItemsForPeriod(genStart, genEnd));
+      const items = await getAllTechCustomPayItemsForPeriod(genStart, genEnd);
+      if (requestId === customPayRefreshSeq.current) setTechCustomPayItemsAll(items);
     } catch (err) {
       console.error("Failed to refresh tech custom pay items:", err);
     } finally {
@@ -2154,9 +2193,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       return;
     }
     let cancelled = false;
+    // A new period supersedes any refresh still in flight for the old one.
+    const requestId = ++customPayRefreshSeq.current;
     beginPeriodLoad();
     getAllTechCustomPayItemsForPeriod(genStart, genEnd)
-      .then((items) => { if (!cancelled) setTechCustomPayItemsAll(items); })
+      .then((items) => { if (!cancelled && requestId === customPayRefreshSeq.current) setTechCustomPayItemsAll(items); })
       .catch((err) => {
         console.error("Failed to load tech custom pay items:", err);
         if (!cancelled) setTechCustomPayItemsAll([]);
