@@ -327,7 +327,7 @@ export async function generateSubmissionPdf(template: DocumentTemplate, form: Pi
 // ---------- Automatic document (no Document Template designed) ----------
 
 /** Never part of the document: page/section markers, the submit button, and anti-bot checks. */
-export const SKIPPED_IN_DOCUMENT = new Set(["pageBreak", "sectionCollapse", "submitButton", "captcha"]);
+export const SKIPPED_IN_DOCUMENT = new Set(["pageBreak", "sectionCollapse", "submitButton", "captcha", "pdfDocument"]);
 const FOOTER_SPACE = 30;
 /** Top/bottom page margin for automatic documents (0.625in) — left/right stay PAGE_PADDING so the content width is unchanged. */
 const AUTO_PAD_Y = 60;
