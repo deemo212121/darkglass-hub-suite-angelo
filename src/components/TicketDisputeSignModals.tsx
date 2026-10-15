@@ -32,6 +32,7 @@ import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { resetMileageRouteConfirmation } from "@/lib/supabase/mileage";
 import { buildTicketDisputeManagerSignaturePdf, buildTicketDisputeHrSignaturePdf, type TicketDisputeEmployeeInfo } from "@/lib/ticketDisputeReportPdf";
 import { todayISO } from "@/lib/localDate";
+import { logAppError } from "@/lib/appErrorLog";
 
 export async function resolveEmployeeInfo(request: EmployeeRequestRow, profiles: ProfileRow[]): Promise<TicketDisputeEmployeeInfo> {
   const p = profiles.find((x) => x.id === request.profileId) ?? null;
@@ -89,6 +90,7 @@ export function TicketDisputeManagerSignModal({ request, companyId, profiles, re
       await signTicketDisputeManager(request.id, reviewerId, { url: managerSignatureUrl, name: reviewerName, comments, pdfUrl });
       onSigned();
     } catch (err) {
+      logAppError("signing", "Signing Ticket Time Dispute exception report (Manager)", err);
       setError(err instanceof Error ? err.message : "Failed to submit signature.");
     } finally {
       setSubmitting(false);
@@ -164,6 +166,7 @@ export function TicketDisputeHrSignModal({ request, companyId, profiles, reviewe
       await signTicketDisputeHrPaperwork(request.id, reviewerName, { url: hrSignatureUrl, name: reviewerName }, receivedDate, actionStatus, pdfUrl, hrNotes.trim());
       onSigned();
     } catch (err) {
+      logAppError("signing", "Signing Ticket Time Dispute exception report (HR)", err);
       setError(err instanceof Error ? err.message : "Failed to submit signature.");
     } finally {
       setSubmitting(false);

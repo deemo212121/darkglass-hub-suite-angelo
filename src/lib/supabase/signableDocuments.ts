@@ -1,4 +1,5 @@
 import { supabase } from "./client";
+import { logAppError } from "@/lib/appErrorLog";
 import { deleteAgentNote } from "./csrAgentNotes";
 import { getTechnicianFormExemptions } from "./technicianFormExemptions";
 import { setProfileFrozen } from "./users";
@@ -446,6 +447,16 @@ async function maybeAutoUnfreezeTechnician(profileId: string): Promise<void> {
  * and the recipient only signs.
  */
 export async function signDocument(id: string, slot: SignatureSlot, entry: SignatureEntry, pdfUrl: string, formData?: Record<string, any>): Promise<void> {
+  // Failures are saved to the app error log for AHS Server Status (migration 0387).
+  try {
+    await signDocumentInner(id, slot, entry, pdfUrl, formData);
+  } catch (err) {
+    logAppError("signing", `Saving the ${slot.replace(/_/g, " ")} signature on an HR paper`, err);
+    throw err;
+  }
+}
+
+async function signDocumentInner(id: string, slot: SignatureSlot, entry: SignatureEntry, pdfUrl: string, formData?: Record<string, any>): Promise<void> {
   const doc = await getSignableDocument(id);
   if (!doc) throw new Error("Document not found.");
   const signatures = { ...doc.signatures, [slot]: entry };

@@ -16,8 +16,10 @@
  * and the 30-day history. The page calls POST /api/server-status.
  */
 import { verifyFirebaseToken } from "./supabaseTokenBridge";
+import { getGoogleAccessToken, uploadFileToStorage } from "./jotformBridge";
+import { handleImageProxyRequest } from "./imageProxyBridge";
 
-export type ServiceGroup = "database" | "hosting" | "provider" | "integration";
+export type ServiceGroup = "database" | "documents" | "hosting" | "provider" | "integration";
 export type ServiceState = "up" | "slow" | "down";
 
 export interface ServiceCheck {
@@ -39,6 +41,9 @@ interface StatusEnv {
   firebaseProjectId?: string;
   firebaseApiKey?: string;
   firebaseStorageBucket?: string;
+  /** Service account for the upload test (the same one the external-signing bridge uploads with). */
+  serviceAccountEmail?: string;
+  privateKey?: string;
 }
 
 /** Slower than this (ms) reads as "Slow" instead of "Operational". */
@@ -69,7 +74,9 @@ export function readStatusEnv(rawEnv?: Record<string, string | undefined>): Stat
     supabaseAnonKey: getEnvValue(rawEnv, "VITE_SUPABASE_ANON_KEY") ?? viteEnv("VITE_SUPABASE_ANON_KEY"),
     firebaseProjectId: (g.__FIREBASE_PROJECT_ID__ || undefined) ?? getEnvValue(rawEnv, "VITE_FIREBASE_PROJECT_ID") ?? viteEnv("VITE_FIREBASE_PROJECT_ID"),
     firebaseApiKey: getEnvValue(rawEnv, "VITE_FIREBASE_API_KEY") ?? viteEnv("VITE_FIREBASE_API_KEY"),
-    firebaseStorageBucket: getEnvValue(rawEnv, "VITE_FIREBASE_STORAGE_BUCKET") ?? viteEnv("VITE_FIREBASE_STORAGE_BUCKET"),
+    firebaseStorageBucket: (g.__FIREBASE_STORAGE_BUCKET__ || undefined) ?? getEnvValue(rawEnv, "VITE_FIREBASE_STORAGE_BUCKET") ?? viteEnv("VITE_FIREBASE_STORAGE_BUCKET"),
+    serviceAccountEmail: (g.__FIREBASE_SA_EMAIL__ || undefined) ?? getEnvValue(rawEnv, "FIREBASE_SERVICE_ACCOUNT_EMAIL"),
+    privateKey: (g.__FIREBASE_SA_PRIVATE_KEY__ || undefined) ?? getEnvValue(rawEnv, "FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY"),
   };
 }
 
@@ -228,6 +235,10 @@ export async function runServerStatusChecks(env: StatusEnv, opts: { colo?: strin
     probe("geoapify", "Geoapify", "integration", "https://api.geoapify.com/v1/geocode/search?text=status"),
   ]);
 
+  // --- Uploads & signing papers ---
+  const [uploadChecks, signingActivity] = await Promise.all([uploadRoundTrip(env), signingPapersActivity(env)]);
+  checks.push(...uploadChecks, signingActivity);
+
   // Hosting: this code running on the Worker is the check.
   const hosting: ServiceCheck = {
     key: "hosting",
@@ -241,6 +252,125 @@ export async function runServerStatusChecks(env: StatusEnv, opts: { colo?: strin
   return [hosting, ...checks];
 }
 
+// A 1×1 transparent PNG — the same kind of file a signature image is.
+const TINY_PNG = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="), (c) => c.charCodeAt(0));
+
+/**
+ * Real upload test: upload a tiny image to Firebase Storage (status-checks/,
+ * outside every company folder), read it back, send it through the image
+ * proxy the signing flow uses to put earlier signatures into a PDF, then
+ * delete it. Two checks: "File uploads" and "Signature → PDF step".
+ */
+async function uploadRoundTrip(env: StatusEnv): Promise<ServiceCheck[]> {
+  const checkedAt = new Date().toISOString();
+  const upload = (status: ServiceState, ms: number | null, detail: string): ServiceCheck => ({
+    key: "file-upload", label: "File uploads (photos, receipts, signatures, PDFs)", group: "documents", status, ms, detail, checkedAt,
+  });
+  const proxy = (status: ServiceState, ms: number | null, detail: string): ServiceCheck => ({
+    key: "signature-pdf", label: "Signature → PDF step (image proxy)", group: "documents", status, ms, detail, checkedAt,
+  });
+  if (!env.firebaseStorageBucket || !env.serviceAccountEmail || !env.privateKey) {
+    const missing = "Not configured on the server (Firebase service account / storage bucket)";
+    return [upload("down", null, missing), proxy("down", null, missing)];
+  }
+  const bucket = env.firebaseStorageBucket;
+  const objectPath = `status-checks/ping-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.png`;
+  let token: string;
+  let url: string;
+  const t0 = Date.now();
+  try {
+    token = await getGoogleAccessToken(env.serviceAccountEmail, env.privateKey);
+    url = await uploadFileToStorage(bucket, token, objectPath, "image/png", TINY_PNG);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message.slice(0, 160) : "Upload failed";
+    return [upload("down", Date.now() - t0, `Upload failed — ${msg}`), proxy("down", null, "Skipped — the upload failed")];
+  }
+  const uploadMs = Date.now() - t0;
+
+  // Read it back (what every "view photo / receipt / PDF" does).
+  const t1 = Date.now();
+  let readOk = false;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+    readOk = res.ok && (await res.arrayBuffer()).byteLength === TINY_PNG.byteLength;
+  } catch {
+    readOk = false;
+  }
+  const readMs = Date.now() - t1;
+
+  // The signing flow's image proxy (earlier signers' signatures → the new PDF).
+  const t2 = Date.now();
+  let proxyCheck: ServiceCheck;
+  try {
+    const res = await handleImageProxyRequest(new Request(`https://status.local/api/image-proxy?url=${encodeURIComponent(url)}`));
+    const ok = res.ok && (await res.arrayBuffer()).byteLength === TINY_PNG.byteLength;
+    const ms = Date.now() - t2;
+    proxyCheck = ok ? proxy(ms > SLOW_MS ? "slow" : "up", ms, "Signature image fetched for the PDF") : proxy("down", ms, `Proxy answered HTTP ${res.status}`);
+  } catch (err) {
+    proxyCheck = proxy("down", Date.now() - t2, err instanceof Error ? err.message.slice(0, 160) : "Proxy failed");
+  }
+
+  // Clean up — best effort.
+  let cleaned = false;
+  try {
+    const del = await fetch(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectPath)}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    cleaned = del.ok || del.status === 404;
+  } catch {
+    cleaned = false;
+  }
+
+  const total = uploadMs + readMs;
+  const detail = `Upload ${uploadMs} ms · download ${readOk ? `${readMs} ms` : "failed"}${cleaned ? " · test file removed" : " · test file not removed"}`;
+  const uploadCheck = !readOk ? upload("down", total, detail) : upload(total > SLOW_MS * 2 ? "slow" : "up", total, detail);
+  return [uploadCheck, proxyCheck];
+}
+
+/**
+ * Signing papers (hr_signable_documents): when the last one was signed and
+ * how many are waiting. Informational — "down" only if the table can't be
+ * read; "slow" (needs attention) when papers are waiting but nothing has
+ * been signed in 3 days.
+ */
+async function signingPapersActivity(env: StatusEnv): Promise<ServiceCheck> {
+  const key = "signing-papers";
+  const label = "Signing papers";
+  const checkedAt = new Date().toISOString();
+  const t0 = Date.now();
+  const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+  const dayAgo = new Date(Date.now() - 86400000).toISOString();
+  const count = async (filter: string): Promise<number | null> => {
+    const res = await sb(env, `hr_signable_documents?select=id&${filter}`, { method: "HEAD", headers: { Prefer: "count=exact", Range: "0-0" } });
+    if (!res.ok && res.status !== 206) return null;
+    const total = res.headers.get("content-range")?.split("/")[1];
+    return total && total !== "*" ? Number(total) : null;
+  };
+  try {
+    const [waiting, stuck, signed24h, lastRes] = await Promise.all([
+      count("status=eq.pending_signature"),
+      count(`status=eq.pending_signature&created_at=lt.${encodeURIComponent(weekAgo)}`),
+      count(`signed_at=gte.${encodeURIComponent(dayAgo)}`),
+      sb(env, "hr_signable_documents?select=signed_at&signed_at=not.is.null&order=signed_at.desc&limit=1"),
+    ]);
+    const ms = Date.now() - t0;
+    if (waiting == null || !lastRes.ok) return { key, label, group: "documents", status: "down", ms, detail: "Couldn't read the signing papers", checkedAt };
+    const last = ((await lastRes.json()) as { signed_at: string }[])[0]?.signed_at;
+    const hours = last ? Math.round((Date.now() - new Date(last).getTime()) / 3600000) : null;
+    const lastText =
+      hours == null ? "Nothing signed yet" : hours < 1 ? "Last signed under an hour ago" : hours < 48 ? `Last signed ${hours} h ago` : `Last signed ${Math.round(hours / 24)} days ago`;
+    const parts = [lastText, `${signed24h ?? 0} signed in the last 24 h`, `${waiting} waiting for a signature${stuck ? ` (${stuck} over 7 days)` : ""}`];
+    // Old unsigned papers are a backlog, not an outage — only flag it when
+    // papers are waiting but nothing at all has been signed in 3 days.
+    const stalled = waiting > 0 && (hours == null || hours > 72);
+    return { key, label, group: "documents", status: stalled ? "slow" : "up", ms, detail: parts.join(" · "), checkedAt };
+  } catch (err) {
+    return { key, label, group: "documents", status: "down", ms: Date.now() - t0, detail: err instanceof Error ? err.message.slice(0, 160) : "Check failed", checkedAt };
+  }
+}
+
 /** Saves one row per service and prunes rows older than HISTORY_DAYS. Errors are logged, never thrown (0385 may not be run yet). */
 export async function recordServerStatusChecks(env: StatusEnv, checks: ServiceCheck[]): Promise<void> {
   const rows = checks.map((c) => ({ checked_at: c.checkedAt, service: c.key, status: c.status, response_ms: c.ms, detail: c.detail.slice(0, 300) }));
@@ -251,6 +381,8 @@ export async function recordServerStatusChecks(env: StatusEnv, checks: ServiceCh
   }
   const cutoff = new Date(Date.now() - HISTORY_DAYS * 86400000).toISOString();
   await sb(env, `server_status_checks?checked_at=lt.${encodeURIComponent(cutoff)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } }).catch(() => undefined);
+  // Upload / signing errors (migration 0387) are kept 30 days too.
+  await sb(env, `app_error_log?created_at=lt.${encodeURIComponent(cutoff)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } }).catch(() => undefined);
 }
 
 /** "When did this cron schedule last run" — upserted at the start of every scheduled tick. */
@@ -293,7 +425,7 @@ export async function handleServerStatusRequest(request: Request, rawEnv?: Recor
   if (!env || !env.firebaseProjectId) return json({ error: "Server not configured" }, 500);
 
   try {
-    const payload = (await request.json().catch(() => ({}))) as { idToken?: string };
+    const payload = (await request.json().catch(() => ({}))) as { idToken?: string; action?: string; path?: string };
     if (!payload.idToken) return json({ error: "Not signed in." }, 401);
     const claims = await verifyFirebaseToken(payload.idToken, env.firebaseProjectId);
     const meRes = await sb(env, `profiles?firebase_uid=eq.${encodeURIComponent(claims.sub)}&select=id,role,extra_roles&limit=1`);
@@ -301,17 +433,35 @@ export async function handleServerStatusRequest(request: Request, rawEnv?: Recor
     const held = me ? [me.role, ...(me.extra_roles ?? [])].map((r) => String(r ?? "").trim().toUpperCase()) : [];
     if (!held.includes("SUPERADMIN") && !held.includes("SUPERSUPERADMIN")) return json({ error: "Only SuperAdmin can view the server status." }, 403);
 
+    // The page's "Upload from your browser" test file — the browser can't
+    // delete it (storage.rules' size check also applies to deletes), so the
+    // server removes it. Only ever that test's own files.
+    if (payload.action === "cleanup-browser-test") {
+      const path = String(payload.path ?? "");
+      if (!/^companies\/[^/]+\/status-checks\/browser-\d+\.txt$/.test(path)) return json({ error: "Not a status test file." }, 400);
+      if (!env.firebaseStorageBucket || !env.serviceAccountEmail || !env.privateKey) return json({ removed: false });
+      const token = await getGoogleAccessToken(env.serviceAccountEmail, env.privateKey);
+      const del = await fetch(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(env.firebaseStorageBucket)}/o/${encodeURIComponent(path)}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return json({ removed: del.ok || del.status === 404 });
+    }
+
     const colo = (request as any).cf?.colo as string | undefined;
     const checks = await runServerStatusChecks(env, { colo });
     await recordServerStatusChecks(env, checks);
 
-    const [daily, up24, up7, up30, problemsRes, beatsRes] = await Promise.all([
+    const errorsSince = new Date(Date.now() - HISTORY_DAYS * 86400000).toISOString();
+    const [daily, up24, up7, up30, problemsRes, beatsRes, errorsRes] = await Promise.all([
       rpc<DailyRow>(env, "server_status_daily", { p_days: HISTORY_DAYS }),
       rpc<UptimeRow>(env, "server_status_uptime", { p_hours: 24 }),
       rpc<UptimeRow>(env, "server_status_uptime", { p_hours: 24 * 7 }),
       rpc<UptimeRow>(env, "server_status_uptime", { p_hours: 24 * HISTORY_DAYS }),
       sb(env, `server_status_checks?status=neq.up&select=checked_at,service,status,response_ms,detail&order=checked_at.desc&limit=150`),
       sb(env, "server_cron_heartbeats?select=job,last_run_at,ok,detail"),
+      // Upload / signing errors per person (migration 0387), newest first.
+      sb(env, `app_error_log?select=id,created_at,profile_id,user_name,area,action,message,device,page&created_at=gte.${encodeURIComponent(errorsSince)}&order=created_at.desc&limit=1000`),
     ]);
     const pct = (rows: UptimeRow[] | null) =>
       Object.fromEntries((rows ?? []).map((r) => [r.service, Number(r.total) > 0 ? (Number(r.reachable) / Number(r.total)) * 100 : null]));
@@ -324,6 +474,8 @@ export async function handleServerStatusRequest(request: Request, rawEnv?: Recor
       daily: (daily ?? []).map((r) => ({ ...r, total: Number(r.total), up: Number(r.up), slow: Number(r.slow), down: Number(r.down) })),
       problems: problemsRes.ok ? await problemsRes.json() : [],
       heartbeats: beatsRes.ok ? await beatsRes.json() : [],
+      errorsEnabled: errorsRes.ok,
+      errors: errorsRes.ok ? await errorsRes.json() : [],
     });
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : "Server status check failed" }, 500);

@@ -9,7 +9,7 @@
 import {
   ref,
   uploadBytes as sdkUploadBytes,
-  uploadBytesResumable,
+  uploadBytesResumable as sdkUploadBytesResumable,
   getDownloadURL as sdkGetDownloadURL,
   listAll,
   deleteObject,
@@ -18,6 +18,16 @@ import {
   type UploadMetadata,
 } from "firebase/storage";
 import { storage, auth, isFirebaseReady } from "./config";
+import { describeStoragePath, logAppError } from "@/lib/appErrorLog";
+
+// A failed upload is saved to the app error log (migration 0387) for AHS
+// Server Status — what the person was uploading, the error, their device —
+// then rethrown unchanged so each caller's own error handling still runs.
+function logUploadFailure(objectRef: StorageReference, err: unknown) {
+  if (objectRef.fullPath.includes("/status-checks/")) return; // Server Status's own test
+  const { area, action } = describeStoragePath(objectRef.fullPath);
+  logAppError(area, action, err);
+}
 
 /*
  * Same-origin upload fallback. Some networks / browsers can't reach
@@ -31,9 +41,11 @@ import { storage, auth, isFirebaseReady } from "./config";
  * with the service account and returns the same kind of download URL. After
  * one fallback succeeds, the rest of the session goes straight there.
  *
- * Every upload in this file goes through the uploadBytes / getDownloadURL
- * wrappers below (same names and call shape as the SDK's), so all of them
- * get the fallback.
+ * Every upload in this file goes through uploadWithFallback (via the
+ * uploadBytes / getDownloadURL wrappers below — same names and call shape as
+ * the SDK's — or uploadTicketPhoto), so all of them get the fallback and the
+ * error log. The switch to the app server is logged too, so Server Status
+ * shows whose device can't reach Storage even though their upload worked.
  */
 let preferServerUpload = false;
 const serverUploadUrls = new WeakMap<StorageReference, string>();
@@ -74,20 +86,46 @@ async function uploadViaServer(objectRef: StorageReference, data: Blob | Uint8Ar
   }
 }
 
-/** The SDK's uploadBytes, falling back to the same-origin upload when Storage can't be reached. */
-async function uploadBytes(objectRef: StorageReference, data: Blob | Uint8Array | ArrayBuffer, metadata?: UploadMetadata): Promise<{ ref: StorageReference }> {
+/**
+ * Runs `direct` (the SDK upload); if Storage can't be reached, sends the file
+ * through the app server instead. Returns the server's download URL when the
+ * fallback was used, null when the direct upload worked. Failures (and the
+ * first switch to the app server) go to the app error log.
+ */
+async function uploadWithFallback(objectRef: StorageReference, data: Blob | Uint8Array | ArrayBuffer, metadata: UploadMetadata | undefined, direct: () => Promise<void>): Promise<string | null> {
+  let switching = false;
   if (!preferServerUpload) {
     try {
-      return await sdkUploadBytes(objectRef, data, metadata);
+      await direct();
+      return null;
     } catch (err) {
-      if (!isStorageUnreachable(err)) throw err;
+      if (!isStorageUnreachable(err)) {
+        logUploadFailure(objectRef, err);
+        throw err;
+      }
       console.warn("Firebase Storage unreachable — uploading through the app server instead:", err);
-      serverUploadUrls.set(objectRef, await uploadViaServer(objectRef, data, metadata));
-      preferServerUpload = true;
-      return { ref: objectRef };
+      switching = true;
     }
   }
-  serverUploadUrls.set(objectRef, await uploadViaServer(objectRef, data, metadata));
+  try {
+    const url = await uploadViaServer(objectRef, data, metadata);
+    if (switching) {
+      preferServerUpload = true;
+      logUploadFailure(objectRef, new Error("Couldn't reach Firebase Storage from this device (storage/retry-limit-exceeded) — saved through the app server instead; the rest of this session uploads that way."));
+    }
+    return url;
+  } catch (err) {
+    logUploadFailure(objectRef, err);
+    throw err;
+  }
+}
+
+/** The SDK's uploadBytes, with the app-server fallback and the error log. */
+async function uploadBytes(objectRef: StorageReference, data: Blob | Uint8Array | ArrayBuffer, metadata?: UploadMetadata): Promise<{ ref: StorageReference }> {
+  const url = await uploadWithFallback(objectRef, data, metadata, async () => {
+    await sdkUploadBytes(objectRef, data, metadata);
+  });
+  if (url) serverUploadUrls.set(objectRef, url);
   return { ref: objectRef };
 }
 
@@ -194,33 +232,23 @@ export async function uploadTicketPhoto(
   if (meta?.originalSize) customMetadata.originalSize = String(meta.originalSize);
 
   const metadata: UploadMetadata = { contentType: blob.type || "application/octet-stream", customMetadata };
-  let url: string;
-  if (preferServerUpload) {
-    url = await uploadViaServer(objectRef, blob, metadata);
-    onProgress?.(100);
-  } else {
-    try {
-      const task = uploadBytesResumable(objectRef, blob, metadata);
-      await new Promise<void>((resolve, reject) => {
-        task.on(
-          "state_changed",
-          (snapshot) => {
-            if (onProgress) onProgress(Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100));
-          },
-          reject,
-          () => resolve(),
-        );
-      });
-      url = await sdkGetDownloadURL(task.snapshot.ref);
-    } catch (err) {
-      // Storage unreachable from here — same-origin fallback (see the top of this file).
-      if (!isStorageUnreachable(err)) throw err;
-      console.warn("Firebase Storage unreachable — uploading the photo through the app server instead:", err);
-      url = await uploadViaServer(objectRef, blob, metadata);
-      preferServerUpload = true;
-      onProgress?.(100);
-    }
-  }
+  let directUrl = "";
+  const serverUrl = await uploadWithFallback(objectRef, blob, metadata, async () => {
+    const task = sdkUploadBytesResumable(objectRef, blob, metadata);
+    await new Promise<void>((resolve, reject) => {
+      task.on(
+        "state_changed",
+        (snapshot) => {
+          if (onProgress) onProgress(Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100));
+        },
+        reject,
+        () => resolve(),
+      );
+    });
+    directUrl = await sdkGetDownloadURL(task.snapshot.ref);
+  });
+  if (serverUrl) onProgress?.(100);
+  const url = serverUrl ?? directUrl;
 
   return {
     name: objectName,
@@ -1135,4 +1163,27 @@ export async function uploadPerformanceBonusPolicyForm(companyId: string, employ
   const objectRef = ref(storage, `${folder}/${objectName}`);
   const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
   return getDownloadURL(snapshot.ref);
+}
+
+/**
+ * AHS Server Status — upload test from the signed-in browser: the same
+ * Firebase Storage path, sign-in and storage rules every real upload uses
+ * (photos, receipts, signatures, PDFs). Uploads a tiny file under the
+ * company folder, gets its link, then deletes it. Returns the timings.
+ */
+export async function runBrowserUploadTest(companyId: string): Promise<{ uploadMs: number; linkMs: number; removed: boolean; path: string }> {
+  if (!isFirebaseReady() || !storage) throw new Error("Firebase Storage not configured");
+  const objectRef = ref(storage, `companies/${companyId}/status-checks/browser-${Date.now()}.txt`);
+  const t0 = performance.now();
+  // Straight to Firebase (no app-server fallback) — this tests that route.
+  const snapshot = await sdkUploadBytes(objectRef, new Blob(["status check"], { type: "text/plain" }), { contentType: "text/plain" });
+  const uploadMs = Math.round(performance.now() - t0);
+  const t1 = performance.now();
+  await sdkGetDownloadURL(snapshot.ref);
+  const linkMs = Math.round(performance.now() - t1);
+  // storage.rules' company-folder rule checks the upload size on every write,
+  // deletes included (a delete has no size), so the browser usually can't
+  // remove it — the page then asks the server to (cleanup-browser-test).
+  const removed = await deleteObject(snapshot.ref).then(() => true, () => false);
+  return { uploadMs, linkMs, removed, path: snapshot.ref.fullPath };
 }

@@ -24,6 +24,7 @@ import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { reviewCorrectionStage, signCorrectionHrPaperwork, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { buildCorrectionManagerSignaturePdf, buildCorrectionHrSignaturePdf } from "@/lib/timecardCorrectionPdf";
 import { todayISO } from "@/lib/localDate";
+import { logAppError } from "@/lib/appErrorLog";
 
 /**
  * Deliberately narrower than the full ProfileRow — some callers (e.g.
@@ -107,6 +108,7 @@ export function CorrectionManagerSignModal({
       });
       onSigned();
     } catch (err) {
+      logAppError("signing", "Signing Time Correction exception report (Manager)", err);
       setError(err instanceof Error ? err.message : "Failed to submit signature.");
     } finally {
       setSubmitting(false);
@@ -180,6 +182,7 @@ export function CorrectionHrSignModal({ correction, companyId, profiles, reviewe
       }
       onSigned();
     } catch (err) {
+      logAppError("signing", "Signing Time Correction exception report (HR)", err);
       setError(err instanceof Error ? err.message : "Failed to submit signature.");
     } finally {
       setSubmitting(false);
