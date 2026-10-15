@@ -527,8 +527,7 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
           "",
           `Please find attached your payslip for the period ${periodStart} to ${periodEnd}.`,
           "",
-          "This is a test email sent as part of setting up automated payslip delivery.",
-          "If anything here looks incorrect, please contact HR or Finance.",
+          "If you have any questions about your payslip, please contact HR or Finance.",
         ].join("\n");
         const filename = `Payslip-${periodStart}-to-${periodEnd}.pdf`;
         await sendGmailMessageWithAttachment(accessToken, fromEmail, target.email, subject, body, {
@@ -548,8 +547,7 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
           `Hourly Rate: ${fmtMoney(hourlyRate)}`,
           `Gross Pay: ${fmtMoney(grossPay)}`,
           "",
-          "This is a test email sent as part of setting up automated payslip delivery.",
-          "If anything here looks incorrect, please contact HR or Finance.",
+          "If you have any questions about your payslip, please contact HR or Finance.",
         ].join("\n");
         await sendGmailMessage(accessToken, fromEmail, target.email, subject, body);
       }

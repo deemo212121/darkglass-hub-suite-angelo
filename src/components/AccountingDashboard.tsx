@@ -1233,6 +1233,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [connectingGmailRegion, setConnectingGmailRegion] = useState<GmailRegion | null>(null);
   const [disconnectingGmailRegion, setDisconnectingGmailRegion] = useState<GmailRegion | null>(null);
   const [sendingPayslipId, setSendingPayslipId] = useState<string | null>(null);
+  /** "Email All" payslips in progress — done / total. */
+  const [emailAllProgress, setEmailAllProgress] = useState<{ done: number; total: number } | null>(null);
+  /** "Are you sure?" window for Email All — who will / won't get an email. */
+  const [emailAllConfirm, setEmailAllConfirm] = useState<{ targets: EmployeePayrollRow[]; skipped: EmployeePayrollRow[] } | null>(null);
   // Styled in-app replacement for a native confirm()/error banner — shown
   // every time Generate Payroll finishes (see generatePayroll), split first
   // by Technician vs Office staff (paid completely differently — piece-rate
@@ -2984,10 +2988,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // failure only shows a toast and reverts that row — it used to go through
   // setError, which replaced the whole dashboard with "Error loading data".
   const handleTogglePayrollExcluded = async (employeeId: string, excluded: boolean) => {
-    if (employeeId === myProfileId) {
-      toast.error("You can't change your own payroll inclusion — ask HR or an Admin.");
-      return;
-    }
     setEmployees((prev) => prev.map((e) => (e.id === employeeId ? { ...e, payrollExcluded: excluded } : e)));
     const { error } = await supabase.from("profiles").update({ payroll_excluded: excluded }).eq("id", employeeId);
     if (error) {
@@ -3504,6 +3504,54 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     } finally {
       setSendingPayslipId(null);
     }
+  };
+
+  // "Email All" — the per-row Send above, for every checked employee in the
+  // table (current filters) one after another. Skips $0 payslips and anyone
+  // with no email; shows progress, then one summary of what failed.
+  // Step 1: work out who gets an email and open the "Are you sure?" window.
+  const handleEmailAllPayslips = (rows: EmployeePayrollRow[]) => {
+    if (!genStart || !genEnd) return;
+    const targets = rows.filter((r) => r.grossPayUSD > 0 && r.employee.email);
+    const skipped = rows.filter((r) => !(r.grossPayUSD > 0 && r.employee.email));
+    if (targets.length === 0) {
+      alert("No checked employee has a payslip to email (gross pay above $0 and an email on file).");
+      return;
+    }
+    setEmailAllConfirm({ targets, skipped });
+  };
+
+  // Step 2: after "Yes, send" in that window — email them one by one.
+  const runEmailAllPayslips = async (targets: EmployeePayrollRow[]) => {
+    if (!genStart || !genEnd) return;
+    setEmailAllConfirm(null);
+    setEmailAllProgress({ done: 0, total: targets.length });
+    const failed: string[] = [];
+    let sent = 0;
+    for (const row of targets) {
+      try {
+        const pdfBase64 = await buildPayslipPdfBase64(row);
+        await sendPayslipEmail({
+          profileId: row.employee.id,
+          periodStart: genStart,
+          periodEnd: genEnd,
+          hoursWorked: row.hoursWorked,
+          overtimeHours: row.overtimeHours,
+          hourlyRate: row.hourlyRateUSD,
+          grossPay: row.grossPayUSD,
+          pdfBase64,
+        });
+        sent++;
+      } catch (err) {
+        failed.push(`${row.employee.full_name}: ${err instanceof Error ? err.message.slice(0, 160) : "Unknown error"}`);
+      }
+      setEmailAllProgress((p) => (p ? { ...p, done: p.done + 1 } : p));
+    }
+    setEmailAllProgress(null);
+    alert(
+      `Payslips emailed: ${sent} of ${targets.length}.` +
+        (failed.length ? `\n\nNot sent (${failed.length}):\n${failed.slice(0, 15).join("\n")}${failed.length > 15 ? `\n…and ${failed.length - 15} more` : ""}` : "")
+    );
   };
 
   // The real "release to the employee" action — offered automatically once
@@ -4616,6 +4664,68 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     {attendanceExportProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                     <span aria-live="polite">{attendanceExportProgress ? `Exporting ${attendanceExportProgress.done}/${attendanceExportProgress.total}` : "Download Excel"}</span>
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => handleEmailAllPayslips(checkedVisibleRows)}
+                    disabled={emailAllProgress !== null || sendingPayslipId !== null || !gmailStatus?.connected || checkedVisibleRows.length === 0 || !genStart || !genEnd || genStart > genEnd}
+                    title={gmailStatus?.connected ? "Email the payslip to every checked employee shown (current filters)" : "Connect Gmail above first"}
+                    className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded font-semibold transition flex items-center gap-2"
+                  >
+                    {emailAllProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                    <span aria-live="polite">
+                      {emailAllProgress ? `Emailing ${emailAllProgress.done}/${emailAllProgress.total}` : `Email All Payslips (${checkedVisibleRows.filter((r) => r.grossPayUSD > 0).length})`}
+                    </span>
+                  </button>
+                  {emailAllConfirm && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setEmailAllConfirm(null)}>
+                      <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="email-all-title"
+                        className="w-full max-w-lg rounded-xl border border-white/10 bg-slate-900 p-5 text-left shadow-2xl"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <h3 id="email-all-title" className="text-lg font-bold text-white">Send payslip emails?</h3>
+                        <p className="mt-1 text-sm text-slate-300">
+                          This emails <span className="font-semibold text-white">{emailAllConfirm.targets.length}</span> employee{emailAllConfirm.targets.length === 1 ? "" : "s"} their payslip for{" "}
+                          <span className="font-semibold text-white">{genStart} to {genEnd}</span>
+                          {gmailStatus?.connectedEmail ? <> from <span className="font-semibold text-white">{gmailStatus.connectedEmail}</span></> : null}.
+                          {" "}Emails can't be taken back once sent.
+                        </p>
+                        <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Will receive an email</p>
+                        <ul className="mt-1 max-h-56 divide-y divide-white/5 overflow-y-auto rounded-lg border border-white/10 bg-slate-950/40 text-sm">
+                          {emailAllConfirm.targets.map((r) => (
+                            <li key={r.employee.id} className="flex items-center justify-between gap-3 px-3 py-1.5">
+                              <span className="min-w-0 truncate text-slate-200">
+                                {r.employee.full_name} <span className="text-slate-500">· {r.employee.email}</span>
+                              </span>
+                              <span className="shrink-0 tabular-nums text-green-300">{fmt(r.grossPayUSD)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                        {emailAllConfirm.skipped.length > 0 && (
+                          <p className="mt-2 text-xs text-amber-300">
+                            Skipped ({emailAllConfirm.skipped.length}) — $0 gross pay or no email on file:{" "}
+                            {emailAllConfirm.skipped.slice(0, 8).map((r) => r.employee.full_name).join(", ")}
+                            {emailAllConfirm.skipped.length > 8 ? `, +${emailAllConfirm.skipped.length - 8} more` : ""}
+                          </p>
+                        )}
+                        <div className="mt-4 flex justify-end gap-2">
+                          <button type="button" onClick={() => setEmailAllConfirm(null)} className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600">
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            autoFocus
+                            onClick={() => void runEmailAllPayslips(emailAllConfirm.targets)}
+                            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                          >
+                            <Send className="h-4 w-4" /> Yes, send {emailAllConfirm.targets.length} email{emailAllConfirm.targets.length === 1 ? "" : "s"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 <button
                   type="button"
                   onClick={generatePayroll}
@@ -4658,16 +4768,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           checked={visibleRows.length > 0 && visibleRows.every((r) => !r.employee.payrollExcluded)}
                           onChange={() => {
                             const nextIncluded = !(visibleRows.length > 0 && visibleRows.every((r) => !r.employee.payrollExcluded));
-                            let skippedSelf = false;
                             visibleRows.forEach((r) => {
                               if (r.employee.payrollExcluded !== nextIncluded) return;
-                              if (r.employee.id === myProfileId) {
-                                skippedSelf = true; // can't change your own (see handleTogglePayrollExcluded)
-                                return;
-                              }
                               void handleTogglePayrollExcluded(r.employee.id, !nextIncluded);
                             });
-                            if (skippedSelf) toast.info("Your own row was left as is — only HR or an Admin can change your payroll inclusion.");
                           }}
                           className="h-4 w-4 accent-blue-600 cursor-pointer"
                         />
@@ -4748,7 +4852,29 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                       visibleRowsByDepartment.map((group) => (
                         <Fragment key={group.department}>
                           <tr className="bg-white/[0.03]">
-                            <td colSpan={payrollColCount} className="px-3 py-1.5 text-xs text-xs font-bold text-blue-300 uppercase tracking-wide">
+                            {/* Check / uncheck everyone in this department — same as the header checkbox, for one department. */}
+                            <td className="px-3 py-1.5 text-center">
+                              <input
+                                type="checkbox"
+                                title={`Include/exclude everyone in ${group.department}`}
+                                checked={group.rows.length > 0 && group.rows.every((r) => !r.employee.payrollExcluded)}
+                                ref={(el) => {
+                                  if (el) {
+                                    const included = group.rows.filter((r) => !r.employee.payrollExcluded).length;
+                                    el.indeterminate = included > 0 && included < group.rows.length;
+                                  }
+                                }}
+                                onChange={() => {
+                                  const nextIncluded = !(group.rows.length > 0 && group.rows.every((r) => !r.employee.payrollExcluded));
+                                  group.rows.forEach((r) => {
+                                    if (r.employee.payrollExcluded !== nextIncluded) return;
+                                    void handleTogglePayrollExcluded(r.employee.id, !nextIncluded);
+                                  });
+                                }}
+                                className="h-4 w-4 accent-blue-600 cursor-pointer"
+                              />
+                            </td>
+                            <td colSpan={payrollColCount - 1} className="px-3 py-1.5 text-xs text-xs font-bold text-blue-300 uppercase tracking-wide">
                               {group.department} <span className="text-slate-500 font-normal normal-case">({group.rows.length})</span>
                             </td>
                           </tr>
@@ -4760,9 +4886,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               <td className="px-3 py-2 text-center">
                                 <input
                                   type="checkbox"
-                                  title={row.employee.id === myProfileId ? "You can't change your own payroll inclusion — ask HR or an Admin" : "Include in payroll generation"}
+                                  title="Include in payroll generation"
                                   checked={!row.employee.payrollExcluded}
-                                  disabled={row.employee.id === myProfileId}
                                   onChange={(e) => handleTogglePayrollExcluded(row.employee.id, !e.target.checked)}
                                   className="h-4 w-4 accent-blue-600 cursor-pointer"
                                 />
