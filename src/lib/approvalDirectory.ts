@@ -229,7 +229,8 @@ function isLogisticsStaff(p: Pick<ProfileRow, "role" | "extra_roles">): boolean 
 }
 
 /**
- * Manager step of a Time In / Time Out CORRECTION (PTO keeps chainCanApproveWith).
+ * Manager step of a Time In / Time Out CORRECTION and of a PTO / leave
+ * request (migration 0384) — each department approves only its own people.
  * Mirrors SQL chain_can_approve_correction (migration 0366):
  *  - a Parts Manager's correction: HR, Admin, SuperAdmin only;
  *  - Parts / Parts Team Leader / Parts Order: their branch's Parts Manager, or HR / Admin / SuperAdmin;
@@ -259,6 +260,23 @@ export function chainCanApproveCorrectionWith(data: ChainData, viewerId: string 
 
 export function chainCanApproveCorrection(viewerId: string | null | undefined, requesterId: string | null | undefined): boolean | null {
   return chainCanApproveCorrectionWith(registry, viewerId, requesterId);
+}
+
+/**
+ * For a request with no manager on it (staff outside the approval chain):
+ * does the viewer manage the requester's own department? Department by the
+ * requester's primary role, managers by that department's manager roles —
+ * the same mapping the Philippines chain uses (e.g. a CSR Manager for CSR,
+ * a Claims Manager for Claims, a BizOps manager for BizOps). Never any
+ * manager company-wide. null = the requester isn't in the loaded directory.
+ */
+export function isRequesterDepartmentManager(viewerId: string | null | undefined, requesterId: string | null | undefined): boolean | null {
+  const r = requesterId ? registry.byId.get(requesterId) : undefined;
+  if (!r) return null;
+  const v = viewerId ? registry.byId.get(viewerId) : undefined;
+  if (!v || v.id === r.id) return false;
+  const mgrRoles = PH_DEPT_MANAGER_ROLES[phDepartmentOf(r)] ?? [];
+  return heldRoles(v).some((x) => mgrRoles.includes(x));
 }
 
 export function chainCanClockIn(viewerId: string | null | undefined, targetId: string | null | undefined): boolean | null {
