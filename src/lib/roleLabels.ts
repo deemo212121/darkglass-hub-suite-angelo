@@ -355,6 +355,13 @@ export function isCsrRestrictedRole(role: string | null | undefined, extraRoles?
   return everyHeldRoleIn(CSR_RESTRICTED_ROLES, role, extraRoles);
 }
 
+/** Modules only SuperAdmin (primary or extra role) can open — no Accessibility override applies. */
+export const SUPERADMIN_ONLY_MODULES = new Set(["server-status"]);
+
+export function isSuperAdminHolder(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return allHeldRoles(role, extraRoles).some((r) => r === "SUPERADMIN" || r === "SUPERSUPERADMIN");
+}
+
 /**
  * Whether this role may open the module AT ALL — the module tile/route
  * itself, before ever getting to any individual submodule inside it.
@@ -366,6 +373,8 @@ export function isCsrRestrictedRole(role: string | null | undefined, extraRoles?
  * SUPERADMIN always passes regardless of either check.
  */
 export function isModuleAllowed(role: string | null | undefined, moduleSlug: string, extraRoles?: string[] | null): boolean {
+  // SuperAdmin-only modules (e.g. AHS Server Status) — never opened up by an override.
+  if (SUPERADMIN_ONLY_MODULES.has(moduleSlug)) return isSuperAdminHolder(role, extraRoles);
   if (normalizeRole(role) !== "SUPERADMIN") {
     const moduleLevelOverride = getModuleRoleGate(moduleSlug, MODULE_LEVEL_GATE_SLUG);
     if (moduleLevelOverride) {

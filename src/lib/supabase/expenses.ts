@@ -5,7 +5,13 @@
 
 import { supabase } from "./client";
 
-export type ExpenseCategory = "Travel" | "Supplies" | "Meals" | "Other";
+/**
+ * Hotel / Car Rental / Office Supply — entered by Accounting (Add Expense;
+ * Flash Tech trips create Hotel + Car Rental lines). Reimbursement Form —
+ * sent by the employee themselves. Travel / Supplies / Meals / Other are
+ * the old categories, kept for rows from before migration 0386.
+ */
+export type ExpenseCategory = "Hotel" | "Car Rental" | "Office Supply" | "Reimbursement Form" | "Travel" | "Supplies" | "Meals" | "Other";
 export type ExpenseStatus = "Pending" | "Approved" | "Reimbursed" | "Rejected";
 
 export interface ExpenseRow {

@@ -6,7 +6,12 @@ import { uploadExpenseReceipt, deleteExpenseReceiptFile } from "@/lib/firebase/s
 import { createExpense, updateExpense, type ExpenseRow, type ExpenseCategory } from "@/lib/supabase/expenses";
 import { todayISO } from "@/lib/localDate";
 
-export const EXPENSE_CATEGORIES: ExpenseCategory[] = ["Travel", "Supplies", "Meals", "Other"];
+/** What Accounting picks from on Add Expense. */
+export const ACCOUNTING_EXPENSE_CATEGORIES: ExpenseCategory[] = ["Hotel", "Car Rental", "Office Supply"];
+/** Sent by the employee themselves (Self-Service / mobile) — always this category. */
+export const EMPLOYEE_EXPENSE_CATEGORY: ExpenseCategory = "Reimbursement Form";
+/** Every current category — the Category filter (old rows' categories are added from the data). */
+export const EXPENSE_CATEGORIES: ExpenseCategory[] = [...ACCOUNTING_EXPENSE_CATEGORIES, EMPLOYEE_EXPENSE_CATEGORY];
 
 /**
  * Add / Edit Expense dialog, shared by Accounting → Expenses (files for any
@@ -36,7 +41,7 @@ export function ExpenseFormModal({
 }) {
   const [form, setForm] = useState(() => ({
     profileId: editing?.profileId ?? fixedProfileId ?? "",
-    category: editing?.category ?? ("Travel" as ExpenseCategory),
+    category: fixedProfileId ? EMPLOYEE_EXPENSE_CATEGORY : editing?.category ?? ("Hotel" as ExpenseCategory),
     expenseDate: editing?.expenseDate ?? todayISO(),
     amount: editing ? String(editing.amount) : "",
     description: editing?.description ?? "",
@@ -150,9 +155,14 @@ export function ExpenseFormModal({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs text-slate-400 uppercase mb-1">Category</label>
-              <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value as ExpenseCategory })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none">
-                {EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
+              {fixedProfileId ? (
+                // An employee sending their own expense — always a Reimbursement Form.
+                <p className="w-full rounded-lg border border-white/10 bg-slate-800/30 p-2 text-sm text-slate-300">{EMPLOYEE_EXPENSE_CATEGORY}</p>
+              ) : (
+                <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value as ExpenseCategory })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none">
+                  {(ACCOUNTING_EXPENSE_CATEGORIES.includes(form.category) ? ACCOUNTING_EXPENSE_CATEGORIES : [...ACCOUNTING_EXPENSE_CATEGORIES, form.category]).map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              )}
             </div>
             <div>
               <label className="block text-xs text-slate-400 uppercase mb-1">Date</label>
