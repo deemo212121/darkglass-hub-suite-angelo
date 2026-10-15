@@ -26,6 +26,7 @@ import { handleLoginLockoutRequest } from "./lib/server/loginLockoutBridge";
 import { handlePasswordResetRequest } from "./lib/server/passwordResetRequestBridge";
 import { handleItBypassLoginRequest } from "./lib/server/itBypassLoginBridge";
 import { handleServerStatusRequest } from "./lib/server/serverStatus";
+import { handleStorageUploadRequest } from "./lib/server/storageUploadBridge";
 
 const CANONICAL_ORIGIN = "https://adminhubsolution.com";
 
@@ -233,6 +234,10 @@ export default {
     if (url.pathname === "/api/server-status") {
       const merged = await resolveServerEnv(env);
       return await handleServerStatusRequest(request, merged);
+    }
+    if (url.pathname === "/api/storage-upload") {
+      const merged = await resolveServerEnv(env);
+      return await handleStorageUploadRequest(request, merged);
     }
 
     try {

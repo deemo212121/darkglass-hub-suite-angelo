@@ -8,14 +8,94 @@
 
 import {
   ref,
-  uploadBytes,
+  uploadBytes as sdkUploadBytes,
   uploadBytesResumable,
-  getDownloadURL,
+  getDownloadURL as sdkGetDownloadURL,
   listAll,
   deleteObject,
   getMetadata,
+  type StorageReference,
+  type UploadMetadata,
 } from "firebase/storage";
 import { storage, auth, isFirebaseReady } from "./config";
+
+/*
+ * Same-origin upload fallback. Some networks / browsers can't reach
+ * firebasestorage.googleapis.com at all (an office web filter, a carrier, a
+ * privacy extension): the SDK retries until it gives up with
+ * storage/retry-limit-exceeded — signing pages failed with "Couldn't reach the
+ * file storage service" and mobile ticket photos sat on "Waiting to sync"
+ * forever, while everyone else's uploads went through. When that happens the
+ * same bytes go to /api/storage-upload on the app's own domain instead
+ * (src/lib/server/storageUploadBridge.ts), which writes the same object path
+ * with the service account and returns the same kind of download URL. After
+ * one fallback succeeds, the rest of the session goes straight there.
+ *
+ * Every upload in this file goes through the uploadBytes / getDownloadURL
+ * wrappers below (same names and call shape as the SDK's), so all of them
+ * get the fallback.
+ */
+let preferServerUpload = false;
+const serverUploadUrls = new WeakMap<StorageReference, string>();
+
+function isStorageUnreachable(err: unknown): boolean {
+  return (err as { code?: string } | null)?.code === "storage/retry-limit-exceeded";
+}
+
+async function uploadViaServer(objectRef: StorageReference, data: Blob | Uint8Array | ArrayBuffer, metadata?: UploadMetadata): Promise<string> {
+  const user = auth?.currentUser;
+  if (!user) throw Object.assign(new Error("Not signed in"), { code: "storage/unauthenticated" });
+  const token = await user.getIdToken();
+  const body = data instanceof Blob ? data : new Blob([data as BlobPart]);
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": metadata?.contentType || body.type || "application/octet-stream",
+  };
+  if (metadata?.customMetadata && Object.keys(metadata.customMetadata).length) {
+    headers["X-Custom-Metadata"] = encodeURIComponent(JSON.stringify(metadata.customMetadata));
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 120_000);
+  try {
+    let res: Response;
+    try {
+      res = await fetch(`/api/storage-upload?path=${encodeURIComponent(objectRef.fullPath)}`, { method: "POST", headers, body, signal: controller.signal });
+    } catch {
+      // The app's own server is unreachable too — genuinely offline.
+      throw Object.assign(new Error("Couldn't reach the file storage service or the app server."), { code: "storage/retry-limit-exceeded" });
+    }
+    const out = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+    if (!res.ok || !out.url) {
+      throw Object.assign(new Error(out.error || `Upload failed (HTTP ${res.status})`), { code: res.status === 401 ? "storage/unauthenticated" : undefined });
+    }
+    return out.url;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** The SDK's uploadBytes, falling back to the same-origin upload when Storage can't be reached. */
+async function uploadBytes(objectRef: StorageReference, data: Blob | Uint8Array | ArrayBuffer, metadata?: UploadMetadata): Promise<{ ref: StorageReference }> {
+  if (!preferServerUpload) {
+    try {
+      return await sdkUploadBytes(objectRef, data, metadata);
+    } catch (err) {
+      if (!isStorageUnreachable(err)) throw err;
+      console.warn("Firebase Storage unreachable — uploading through the app server instead:", err);
+      serverUploadUrls.set(objectRef, await uploadViaServer(objectRef, data, metadata));
+      preferServerUpload = true;
+      return { ref: objectRef };
+    }
+  }
+  serverUploadUrls.set(objectRef, await uploadViaServer(objectRef, data, metadata));
+  return { ref: objectRef };
+}
+
+/** The SDK's getDownloadURL — for a file that went through the fallback, the URL the server already returned (asking Storage for it would hit the same unreachable host). */
+function getDownloadURL(objectRef: StorageReference): Promise<string> {
+  const url = serverUploadUrls.get(objectRef);
+  return url ? Promise.resolve(url) : sdkGetDownloadURL(objectRef);
+}
 
 /**
  * Force-refreshes the signed-in user's Firebase ID token before a batch of
@@ -113,26 +193,38 @@ export async function uploadTicketPhoto(
   if (meta?.height) customMetadata.height = String(meta.height);
   if (meta?.originalSize) customMetadata.originalSize = String(meta.originalSize);
 
-  const task = uploadBytesResumable(objectRef, blob, {
-    contentType: blob.type || "application/octet-stream",
-    customMetadata,
-  });
+  const metadata: UploadMetadata = { contentType: blob.type || "application/octet-stream", customMetadata };
+  let url: string;
+  if (preferServerUpload) {
+    url = await uploadViaServer(objectRef, blob, metadata);
+    onProgress?.(100);
+  } else {
+    try {
+      const task = uploadBytesResumable(objectRef, blob, metadata);
+      await new Promise<void>((resolve, reject) => {
+        task.on(
+          "state_changed",
+          (snapshot) => {
+            if (onProgress) onProgress(Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100));
+          },
+          reject,
+          () => resolve(),
+        );
+      });
+      url = await sdkGetDownloadURL(task.snapshot.ref);
+    } catch (err) {
+      // Storage unreachable from here — same-origin fallback (see the top of this file).
+      if (!isStorageUnreachable(err)) throw err;
+      console.warn("Firebase Storage unreachable — uploading the photo through the app server instead:", err);
+      url = await uploadViaServer(objectRef, blob, metadata);
+      preferServerUpload = true;
+      onProgress?.(100);
+    }
+  }
 
-  await new Promise<void>((resolve, reject) => {
-    task.on(
-      "state_changed",
-      (snapshot) => {
-        if (onProgress) onProgress(Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100));
-      },
-      reject,
-      () => resolve(),
-    );
-  });
-
-  const url = await getDownloadURL(task.snapshot.ref);
   return {
     name: objectName,
-    fullPath: task.snapshot.ref.fullPath,
+    fullPath: objectRef.fullPath,
     url,
     uploadedAt,
     size: blob.size,

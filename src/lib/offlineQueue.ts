@@ -67,7 +67,15 @@ export interface VisitSavePayload {
 export interface PhotoUploadPayload {
   companyId: string;
   ticketPath: string;
-  blob: Blob;
+  /**
+   * The photo's bytes. Stored as a plain ArrayBuffer (+ contentType), not a
+   * Blob: Safari/iOS can lose a Blob kept in IndexedDB (reading it later
+   * fails), which would leave the photo "Waiting to sync" forever. Rows
+   * queued before this change have `blob` instead.
+   */
+  bytes?: ArrayBuffer;
+  contentType?: string;
+  blob?: Blob;
   fileName: string;
   uploadedBy?: string;
   visitNo?: string;
@@ -184,13 +192,26 @@ export async function enqueueVisitSave(payload: VisitSavePayload): Promise<void>
   });
 }
 
-export async function enqueuePhotoUpload(payload: PhotoUploadPayload): Promise<void> {
-  await db.queuedActions.add({
+/** Queues a photo; returns the queue row id (TicketPhotos tracks its placeholder by it). */
+export async function enqueuePhotoUpload(payload: Omit<PhotoUploadPayload, "bytes" | "contentType" | "blob"> & { blob: Blob }): Promise<number> {
+  const { blob, ...rest } = payload;
+  const bytes = await blob.arrayBuffer();
+  return db.queuedActions.add({
     type: "photo_upload",
-    payload,
+    payload: { ...rest, bytes, contentType: blob.type || "image/jpeg" },
     createdAt: new Date().toISOString(),
     status: "pending",
   });
+}
+
+/** Where queued rows stand: missing from the map = already synced (deleted from the queue). */
+export async function getQueuedActionStates(ids: number[]): Promise<Map<number, { status: QueuedAction["status"]; lastError?: string }>> {
+  const rows = await db.queuedActions.bulkGet(ids);
+  const out = new Map<number, { status: QueuedAction["status"]; lastError?: string }>();
+  rows.forEach((row, i) => {
+    if (row) out.set(ids[i], { status: row.status, lastError: row.lastError });
+  });
+  return out;
 }
 
 export async function enqueueTicketComment(payload: TicketCommentPayload): Promise<void> {
@@ -251,7 +272,13 @@ async function replay(action: QueuedAction): Promise<void> {
     await updateTicketVisit(p.visitId, p.visit);
   } else if (action.type === "photo_upload") {
     const p = action.payload as PhotoUploadPayload;
-    await uploadTicketPhoto(p.companyId, p.ticketPath, p.blob, p.fileName, {
+    let blob: Blob;
+    try {
+      blob = p.bytes ? new Blob([p.bytes], { type: p.contentType || "image/jpeg" }) : new Blob([await p.blob!.arrayBuffer()], { type: p.blob!.type || "image/jpeg" });
+    } catch {
+      throw new Error("The photo saved on this phone can no longer be read — please upload it again.");
+    }
+    await uploadTicketPhoto(p.companyId, p.ticketPath, blob, p.fileName, {
       uploadedBy: p.uploadedBy,
       visitNo: p.visitNo,
       width: p.width,
