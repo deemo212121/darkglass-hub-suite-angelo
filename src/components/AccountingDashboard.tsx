@@ -3357,16 +3357,36 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // ── Generate Payroll ─────────────────────────────────────────────────────────
   // Finance picks the period via genStart/genEnd (the date inputs on the
   // Payroll tab) rather than an auto-computed range. If the picked dates
-  // exactly match an existing run, this recomputes and replaces that run's
-  // line items in place (what "Regenerate" used to do) instead of creating
-  // a duplicate — so a rate fix or corrected timecard can be re-applied to
-  // the same payslip just by re-picking its dates and generating again.
-  const generatePayroll = async () => {
+  // exactly match an existing run, this recomputes the TICKED employees'
+  // line items in that run in place (what "Regenerate" used to do) instead
+  // of creating a duplicate — so a rate fix or corrected timecard can be
+  // re-applied to the same payslip just by re-picking its dates and
+  // generating again.
+  //
+  // Everyone else's saved payslip in the run is kept. Regenerating used to
+  // clear every employee of the nation and save only the ticked ones, so
+  // fixing one or two people wiped the rest (9/27–10/10 PH: 72 saved
+  // payslips, already emailed, went down to 2). If some unticked employees
+  // already have a saved payslip, the "Keep the other saved payslips?"
+  // window asks first: keep them (default) or remove them from the run.
+  const [regenUntickedConfirm, setRegenUntickedConfirm] = useState<{ names: string[] } | null>(null);
+  const generatePayroll = async (untickedChoice?: "keep" | "remove") => {
     if (nationIncludedPayrollRows.length === 0) return;
     if (!genStart || !genEnd || genStart > genEnd) {
       toast.error("Pick a valid start and end date before generating payroll.");
       return;
     }
+    const runForDates = payrollRuns.find((r) => r.period_start === genStart && r.period_end === genEnd);
+    const includedIds = new Set(nationIncludedPayrollRows.map((r) => r.employee.id));
+    // This nation's employees who are NOT ticked but already have a saved payslip in that run.
+    const untickedSaved = runForDates
+      ? nationPayrollRows.filter((r) => !includedIds.has(r.employee.id) && payrollLineItems.some((li) => li.payroll_run_id === runForDates.id && li.profile_id === r.employee.id))
+      : [];
+    if (untickedSaved.length > 0 && !untickedChoice) {
+      setRegenUntickedConfirm({ names: untickedSaved.map((r) => r.employee.full_name) });
+      return;
+    }
+    setRegenUntickedConfirm(null);
     setGenerating(true);
     try {
       // Timecard completeness (missing clock-outs, pending time corrections)
@@ -3388,17 +3408,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       let runId: string;
       if (existingRun) {
         runId = existingRun.id;
-        // Only this nation's line items get cleared — the other nation's
-        // (generated separately, from its own tab) are left untouched. Uses
-        // every employee in this nation, not just the currently-included
-        // ones, so someone excluded after their last payslip was generated
-        // has that stale line item cleaned up instead of left orphaned.
-        const nationProfileIds = nationPayrollRows.map((r) => r.employee.id);
+        // Only the ticked employees' line items are replaced — everyone
+        // else's saved payslip in the run (unticked people of this nation,
+        // and the other nation's, generated from its own tab) is kept,
+        // unless Finance chose "Remove them from this run" in the window
+        // above.
+        const replaceIds = [...includedIds, ...(untickedChoice === "remove" ? untickedSaved.map((r) => r.employee.id) : [])];
         const { error: deleteErr } = await supabase
           .from("payroll_line_items")
           .delete()
           .eq("payroll_run_id", runId)
-          .in("profile_id", nationProfileIds);
+          .in("profile_id", replaceIds);
         if (deleteErr) throw new Error(deleteErr.message);
         await supabase.from("payroll_runs").update({ generated_at: new Date().toISOString() }).eq("id", runId);
       } else {
@@ -3477,7 +3497,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       await supabase.from("payroll_audit_log").insert({
         action: nationHasExistingLineItems ? "edit" : "generate",
         employee_name: "All Employees",
-        details: `${nationHasExistingLineItems ? "Regenerated" : "Generated"} ${nationLabel} payroll for ${genStart} – ${genEnd}. ${nationIncludedPayrollRows.length} employees. Total: $${nationTotalUSD.toFixed(2)}`,
+        details: `${nationHasExistingLineItems ? "Regenerated" : "Generated"} ${nationLabel} payroll for ${genStart} – ${genEnd}. ${nationIncludedPayrollRows.length} employees. Total: $${nationTotalUSD.toFixed(2)}${untickedSaved.length ? (untickedChoice === "remove" ? `. Removed ${untickedSaved.length} unticked employees' payslips` : `. Kept ${untickedSaved.length} unticked employees' saved payslips`) : ""}`,
         amount: Math.round(nationTotalUSD * 100) / 100,
       });
       void logModuleActivity({
@@ -5055,9 +5075,44 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                       </div>
                     </div>
                   )}
+                {regenUntickedConfirm && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setRegenUntickedConfirm(null)}>
+                    <div
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="regen-unticked-title"
+                      className="w-full max-w-lg rounded-xl border border-white/10 bg-slate-900 p-5 text-left shadow-2xl"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <h3 id="regen-unticked-title" className="text-lg font-bold text-white">Keep the other saved payslips?</h3>
+                      <p className="mt-1 text-sm text-slate-300">
+                        <span className="font-semibold text-white">{regenUntickedConfirm.names.length}</span> employee{regenUntickedConfirm.names.length === 1 ? " who isn't" : "s who aren't"} ticked already {regenUntickedConfirm.names.length === 1 ? "has" : "have"} a saved payslip in the{" "}
+                        <span className="font-semibold text-white">{genStart} to {genEnd}</span> run. Generating only recomputes the{" "}
+                        <span className="font-semibold text-white">{nationIncludedPayrollRows.length}</span> ticked employee{nationIncludedPayrollRows.length === 1 ? "" : "s"}.
+                      </p>
+                      <ul className="mt-3 max-h-48 divide-y divide-white/5 overflow-y-auto rounded-lg border border-white/10 bg-slate-950/40 text-sm">
+                        {regenUntickedConfirm.names.map((n, i) => (
+                          <li key={`${n}-${i}`} className="px-3 py-1.5 text-slate-200">{n}</li>
+                        ))}
+                      </ul>
+                      <p className="mt-2 text-xs text-amber-300">Removing deletes their payslips from this run — anyone already sent theirs will no longer see it in Self-Service.</p>
+                      <div className="mt-4 flex flex-wrap justify-end gap-2">
+                        <button type="button" onClick={() => setRegenUntickedConfirm(null)} className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600">
+                          Cancel
+                        </button>
+                        <button type="button" onClick={() => void generatePayroll("remove")} className="rounded-lg border border-red-500/50 px-4 py-2 text-sm font-semibold text-red-300 hover:bg-red-500/10">
+                          Remove them from this run
+                        </button>
+                        <button type="button" autoFocus onClick={() => void generatePayroll("keep")} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
+                          Keep their payslips
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <button
                   type="button"
-                  onClick={generatePayroll}
+                  onClick={() => void generatePayroll()}
                   disabled={
                     generating ||
                     nationIncludedPayrollRows.length === 0 ||
@@ -5067,7 +5122,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   }
                   title={
                     matchesExistingRun
-                      ? "A payroll run already exists for these dates — this will recompute and replace it"
+                      ? "A payroll run already exists for these dates — this recomputes the ticked employees' payslips in it; everyone else's saved payslip is kept"
                       : undefined
                   }
                   className="px-3 py-1.5 text-xs bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded font-semibold transition flex items-center gap-2 shrink-0"
