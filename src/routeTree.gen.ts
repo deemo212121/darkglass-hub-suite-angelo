@@ -105,6 +105,7 @@ import { Route as FillCarIqAgreementDocIdRouteImport } from './routes/fill-car-i
 import { Route as FillCarIqAgreementExternalDocIdRouteImport } from './routes/fill-car-iq-agreement-external.$docId'
 import { Route as EmployeeEmployeeIdRouteImport } from './routes/employee.$employeeId'
 import { Route as CsrAgentAgentIdRouteImport } from './routes/csr-agent.$agentId'
+import { Route as CompleteFormSubmissionIdRouteImport } from './routes/complete-form.$submissionId'
 import { Route as ApplySlugRouteImport } from './routes/apply.$slug'
 import { Route as AdminUsersRouteImport } from './routes/admin.users'
 import { Route as SuperadminCompanyCompanyIdRouteImport } from './routes/superadmin.company.$companyId'
@@ -632,6 +633,12 @@ const CsrAgentAgentIdRoute = CsrAgentAgentIdRouteImport.update({
   path: '/csr-agent/$agentId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CompleteFormSubmissionIdRoute =
+  CompleteFormSubmissionIdRouteImport.update({
+    id: '/complete-form/$submissionId',
+    path: '/complete-form/$submissionId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApplySlugRoute = ApplySlugRouteImport.update({
   id: '/apply/$slug',
   path: '/apply/$slug',
@@ -680,6 +687,7 @@ export interface FileRoutesByFullPath {
   '/timecard': typeof TimecardRoute
   '/admin/users': typeof AdminUsersRoute
   '/apply/$slug': typeof ApplySlugRoute
+  '/complete-form/$submissionId': typeof CompleteFormSubmissionIdRoute
   '/csr-agent/$agentId': typeof CsrAgentAgentIdRoute
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/fill-car-iq-agreement-external/$docId': typeof FillCarIqAgreementExternalDocIdRoute
@@ -783,6 +791,7 @@ export interface FileRoutesByTo {
   '/timecard': typeof TimecardRoute
   '/admin/users': typeof AdminUsersRoute
   '/apply/$slug': typeof ApplySlugRoute
+  '/complete-form/$submissionId': typeof CompleteFormSubmissionIdRoute
   '/csr-agent/$agentId': typeof CsrAgentAgentIdRoute
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/fill-car-iq-agreement-external/$docId': typeof FillCarIqAgreementExternalDocIdRoute
@@ -887,6 +896,7 @@ export interface FileRoutesById {
   '/timecard': typeof TimecardRoute
   '/admin/users': typeof AdminUsersRoute
   '/apply/$slug': typeof ApplySlugRoute
+  '/complete-form/$submissionId': typeof CompleteFormSubmissionIdRoute
   '/csr-agent/$agentId': typeof CsrAgentAgentIdRoute
   '/employee/$employeeId': typeof EmployeeEmployeeIdRoute
   '/fill-car-iq-agreement-external/$docId': typeof FillCarIqAgreementExternalDocIdRoute
@@ -992,6 +1002,7 @@ export interface FileRouteTypes {
     | '/timecard'
     | '/admin/users'
     | '/apply/$slug'
+    | '/complete-form/$submissionId'
     | '/csr-agent/$agentId'
     | '/employee/$employeeId'
     | '/fill-car-iq-agreement-external/$docId'
@@ -1095,6 +1106,7 @@ export interface FileRouteTypes {
     | '/timecard'
     | '/admin/users'
     | '/apply/$slug'
+    | '/complete-form/$submissionId'
     | '/csr-agent/$agentId'
     | '/employee/$employeeId'
     | '/fill-car-iq-agreement-external/$docId'
@@ -1198,6 +1210,7 @@ export interface FileRouteTypes {
     | '/timecard'
     | '/admin/users'
     | '/apply/$slug'
+    | '/complete-form/$submissionId'
     | '/csr-agent/$agentId'
     | '/employee/$employeeId'
     | '/fill-car-iq-agreement-external/$docId'
@@ -1302,6 +1315,7 @@ export interface RootRouteChildren {
   TimecardRoute: typeof TimecardRoute
   AdminUsersRoute: typeof AdminUsersRoute
   ApplySlugRoute: typeof ApplySlugRoute
+  CompleteFormSubmissionIdRoute: typeof CompleteFormSubmissionIdRoute
   CsrAgentAgentIdRoute: typeof CsrAgentAgentIdRoute
   EmployeeEmployeeIdRoute: typeof EmployeeEmployeeIdRoute
   FillCarIqAgreementExternalDocIdRoute: typeof FillCarIqAgreementExternalDocIdRoute
@@ -2056,6 +2070,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CsrAgentAgentIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/complete-form/$submissionId': {
+      id: '/complete-form/$submissionId'
+      path: '/complete-form/$submissionId'
+      fullPath: '/complete-form/$submissionId'
+      preLoaderRoute: typeof CompleteFormSubmissionIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/apply/$slug': {
       id: '/apply/$slug'
       path: '/apply/$slug'
@@ -2149,6 +2170,7 @@ const rootRouteChildren: RootRouteChildren = {
   TimecardRoute: TimecardRoute,
   AdminUsersRoute: AdminUsersRoute,
   ApplySlugRoute: ApplySlugRoute,
+  CompleteFormSubmissionIdRoute: CompleteFormSubmissionIdRoute,
   CsrAgentAgentIdRoute: CsrAgentAgentIdRoute,
   EmployeeEmployeeIdRoute: EmployeeEmployeeIdRoute,
   FillCarIqAgreementExternalDocIdRoute: FillCarIqAgreementExternalDocIdRoute,

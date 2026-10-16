@@ -318,14 +318,18 @@ function renderAnswerHtml(field: CustomFormField, value: CustomFormResponseValue
 /** The form itself laid out as a document, in field order: its own headings and paragraphs as written, every answer, signatures on signing lines. */
 function buildAutoDocumentBlocks(form: Pick<CustomForm, "title" | "fields">, valuesByName: Record<string, CustomFormResponseValue>, fieldsByName: Record<string, CustomFormField>, logoDataUrl: string): string[] {
   const blocks: string[] = [];
-  if (logoDataUrl) blocks.push(`<div class="doc-blk full text" style="width:100%;text-align:center;"><img src="${logoDataUrl}" style="width:60px;height:60px;" /></div>`);
+  if (logoDataUrl) blocks.push(`<div class="doc-blk full text" style="width:100%;text-align:center;"><img src="${logoDataUrl}" style="width:100px;height:100px;" /></div>`);
   const fields = form.fields.filter((f) => !f.hidden && !SKIPPED_IN_DOCUMENT.has(f.type));
   if (!fields.some((f) => f.type === "heading")) {
     blocks.push(`<div class="doc-blk full" style="width:100%;font-size:16px;font-weight:700;text-align:center;">${escapeHtml(form.title)}</div>`);
   }
   for (const field of fields) {
     if (DISPLAY_TYPES.has(field.type)) {
-      for (const html of renderDisplayFieldHtml(field, valuesByName, fieldsByName)) blocks.push(`<div class="doc-blk full text" style="width:100%;">${html}</div>`);
+      for (const html of renderDisplayFieldHtml(field, valuesByName, fieldsByName)) {
+        // Headings, and a paragraph that's only a bold title (e.g. "2.1 …"), stay on the page with what follows — see paginateBlocks.
+        const keep = field.type === "heading" || /^<div class="doc-rich"[^>]*><p><strong>[^<]*<\/strong><\/p><\/div>$/.test(html);
+        blocks.push(`<div class="doc-blk full text${keep ? " doc-keep" : ""}" style="width:100%;">${html}</div>`);
+      }
       continue;
     }
     const width = field.width ?? 100;
@@ -336,8 +340,12 @@ function buildAutoDocumentBlocks(form: Pick<CustomForm, "title" | "fields">, val
 
 /**
  * Splits blocks across Letter pages: lays them all out once in a hidden
- * iframe at the real content width, groups blocks sharing a line (side-by-
- * side fields) into rows, then fills each page with whole rows.
+ * iframe at the real content width (inside a .doc-page, so the font and line
+ * height match the captured page), groups blocks sharing a line (side-by-
+ * side fields) into rows, then fills each page with whole rows. A heading
+ * (or bold title paragraph) is never left at the foot of a page: it moves
+ * with the answer rows under it — a whole signing block (Signature/Date,
+ * Name/Title) — or with the next row.
  */
 async function paginateBlocks(blocks: string[]): Promise<string[][]> {
   const iframe = document.createElement("iframe");
@@ -350,17 +358,20 @@ async function paginateBlocks(blocks: string[]): Promise<string[][]> {
   try {
     await new Promise<void>((resolve) => {
       iframe.onload = () => resolve();
-      iframe.srcdoc = `<!DOCTYPE html><html><head><style>body{margin:0;}${AUTO_DOC_STYLES}</style></head><body><div class="doc-flow">${blocks.join("")}</div></body></html>`;
+      iframe.srcdoc = `<!DOCTYPE html><html><head><style>body{margin:0;}${AUTO_DOC_STYLES}</style></head><body><div class="doc-page" style="height:auto;padding:0;"><div class="doc-flow">${blocks.join("")}</div></div></body></html>`;
     });
     const els = Array.from(iframe.contentDocument?.querySelectorAll<HTMLElement>(".doc-flow > .doc-blk") ?? []);
     if (els.length !== blocks.length) return [blocks];
     const win = iframe.contentWindow!;
     // contentBottom = the blocks' own bottom edge; margin = the gap after them.
-    const rows: { top: number; contentBottom: number; margin: number; items: string[] }[] = [];
+    // keep = a heading/title that stays with what follows; answer = a field's answer (not text).
+    const rows: { top: number; contentBottom: number; margin: number; items: string[]; keep: boolean; answer: boolean }[] = [];
     els.forEach((el, i) => {
       const top = el.offsetTop;
       const contentBottom = top + el.offsetHeight;
       const margin = parseFloat(win.getComputedStyle(el).marginBottom) || 0;
+      const keep = el.classList.contains("doc-keep");
+      const answer = !el.classList.contains("text");
       const row = rows[rows.length - 1];
       // Bottom-aligned, so blocks on one line can start at different heights —
       // same row = starts before the current row's blocks end.
@@ -369,8 +380,10 @@ async function paginateBlocks(blocks: string[]): Promise<string[][]> {
         row.top = Math.min(row.top, top);
         row.contentBottom = Math.max(row.contentBottom, contentBottom);
         row.margin = Math.max(row.margin, margin);
+        row.keep ||= keep;
+        row.answer &&= answer;
       } else {
-        rows.push({ top, contentBottom, margin, items: [blocks[i]] });
+        rows.push({ top, contentBottom, margin, items: [blocks[i]], keep, answer });
       }
     });
     // A one-page document has no "Page 1 of 1" footer, so it may use that space too.
@@ -378,18 +391,28 @@ async function paginateBlocks(blocks: string[]): Promise<string[][]> {
     const total = rows.reduce((sum, r) => sum + r.contentBottom - r.top + r.margin, 0) - (rows[rows.length - 1]?.margin ?? 0);
     if (total <= fullPage) return [rows.flatMap((r) => r.items)];
     const capacity = fullPage - FOOTER_SPACE;
+    const height = (r: (typeof rows)[number]) => r.contentBottom - r.top + r.margin;
     const pages: string[][] = [[]];
     let used = 0;
-    for (const row of rows) {
-      const h = row.contentBottom - row.top + row.margin;
+    rows.forEach((row, i) => {
+      const h = height(row);
+      // What has to land on the same page as this row: a heading takes the
+      // answer rows under it (a signing block), or else the next row.
+      let last = i;
+      if (row.keep && i + 1 < rows.length) {
+        last = i + 1;
+        if (rows[last].answer) while (last + 1 < rows.length && rows[last + 1].answer) last++;
+      }
+      let need = rows.slice(i, last + 1).reduce((sum, r) => sum + height(r), 0) - rows[last].margin;
+      if (need > capacity) need = h - row.margin; // too big to keep together — place it row by row
       // A row's trailing gap doesn't need to fit — it's just space before the next row.
-      if (used > 0 && used + h - row.margin > capacity) {
+      if (used > 0 && used + need > capacity) {
         pages.push([]);
         used = 0;
       }
       pages[pages.length - 1].push(...row.items);
       used += h;
-    }
+    });
     return pages;
   } finally {
     document.body.removeChild(iframe);

@@ -175,7 +175,7 @@ import { fillPartsResponsibilityPdf } from "@/lib/partsResponsibilityPdfFill";
 import { MILEAGE_FUEL_BRANCHES, type MileageFuelFormData } from "@/lib/mileageFuelFormTemplate";
 import { fillMileageFuelPdf } from "@/lib/mileageFuelPdfFill";
 import type { FlashTechnicianTravelFormData } from "@/lib/flashTechnicianTravelFormTemplate";
-import { fillFlashTechnicianTravelPdf, FLASH_TRAVEL_CURRENT_VERSION } from "@/lib/flashTechnicianTravelPdfFill";
+import { fillFlashTechnicianTravelPdf, FLASH_TRAVEL_CURRENT_VERSION, canRegenerateFlashTravelPdf } from "@/lib/flashTechnicianTravelPdfFill";
 import type { LocationConsentFormData } from "@/lib/locationConsentFormTemplate";
 import { fillLocationConsentPdf } from "@/lib/locationConsentPdfFill";
 import type { DamageFormData } from "@/lib/damageFormTemplate";
@@ -3308,8 +3308,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Office Use box signer is any manager (Branch, CSR, Parts, BizOps, etc.
   // — anything with "MANAGER" in the role code) as well as Admin/HR/BizOps,
   // since a branch-level manager like the reference's "CSR Manager" isn't
-  // covered by COE_OFFICE_USE_ROLES's fixed BizOps-only list above.
-  const isCoeOfficeUseEligible = (role: string) => role.includes("MANAGER") || role === "ADMIN" || role === "SUPERADMIN" || role === "HR" || role.includes("BIZOPS");
+  // covered by COE_OFFICE_USE_ROLES's fixed BizOps-only list above. BizOps
+  // Team Leader / Associate aren't signers — only the BizOps managers are.
+  const isCoeOfficeUseEligible = (role: string) => role.includes("MANAGER") || role === "ADMIN" || role === "SUPERADMIN" || role === "HR" || COE_OFFICE_USE_ROLES.has(role);
   const [coeOfficeUseNameDropdownOpen, setCoeOfficeUseNameDropdownOpen] = useState(false);
   // Held roles pile up: a secondary Manager/Admin/HR/BizOps role makes
   // someone just as eligible a signer as if it were their primary position.
@@ -10655,6 +10656,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
     if (!data?.employeeSignatureDataUrl) {
       setFlashTechnicianTravelActionError("This agreement has no saved signature to rebuild from.");
+      return;
+    }
+    if (!canRegenerateFlashTravelPdf(data)) {
+      setFlashTechnicianTravelActionError("This agreement was signed under the earlier wording — regenerating would put today's text above their signature. Send them the current agreement to sign instead.");
       return;
     }
     setFlashTechnicianTravelActionBusyId(doc.id);
@@ -31259,7 +31264,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Download PDF
                             </button>
                           )}
-                          {doc.pdfUrl && data.employeeSignatureDataUrl && (
+                          {doc.pdfUrl && data.employeeSignatureDataUrl && canRegenerateFlashTravelPdf(data) && (
                             <button type="button" disabled={busy} onClick={() => void handleRegenerateFlashTechnicianTravelPdf(doc)} title="Re-render this PDF from its saved data with the current layout (letterhead, watermark, wording) — nobody re-signs" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
                               {busy ? "Regenerating…" : "Regenerate PDF"}
                             </button>

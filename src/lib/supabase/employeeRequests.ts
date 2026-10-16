@@ -102,6 +102,15 @@ export interface EmployeeRequestRow {
   pdfUrl: string | null;
   /** HR's note on its sign-off (migration 0376). The decision's own note is reviewNote. */
   hrNote: string | null;
+  /** payroll_dispute only (migration 0382) — set when Accounting approved it
+   *  with changed amounts ("Modify"): the employee's own figures as submitted.
+   *  totalReceived / totalExpected / missingAmount above then hold the
+   *  approved (modified) values. All null for a dispute never modified. */
+  originalTotalReceived: number | null;
+  originalTotalExpected: number | null;
+  originalMissingAmount: number | null;
+  modifiedBy: string | null;
+  modifiedAt: string | null;
 }
 
 function mapRow(row: any): EmployeeRequestRow {
@@ -151,11 +160,20 @@ function mapRow(row: any): EmployeeRequestRow {
     hrReviewerName: row.hr_reviewer_name ?? null,
     pdfUrl: row.pdf_url ?? null,
     hrNote: row.hr_note ?? null,
+    originalTotalReceived: row.original_total_received == null ? null : Number(row.original_total_received),
+    originalTotalExpected: row.original_total_expected == null ? null : Number(row.original_total_expected),
+    originalMissingAmount: row.original_missing_amount == null ? null : Number(row.original_missing_amount),
+    modifiedBy: row.modified_by ?? null,
+    modifiedAt: row.modified_at ?? null,
   };
 }
 
 const SELECT_COLUMNS =
   "id, profile_id, request_type, details, status, requested_by, reviewed_by, reviewed_at, review_note, created_at, pay_period, total_received, total_expected, missing_amount, dispute_reason, attachments, ticket_no, period_start, period_end, custom_pay_item_id, disputed_start_time, disputed_end_time, dispute_mode, reschedule_actual_day, reschedule_date, exception_type, other_description, exception_customer_name, exception_scheduled_time, exception_action_taken, employee_signature_url, employee_signature_name, employee_signed_at, manager_comments, manager_signature_url, manager_signature_name, manager_signed_at, hr_paperwork_status, hr_signature_url, hr_signature_name, hr_signed_at, hr_received_date, hr_reviewer_name, pdf_url";
+// Migration 0382's Modify columns — selected separately so request screens
+// keep working (without the Modify details) until that migration is run.
+const MODIFY_COLUMNS = ", original_total_received, original_total_expected, original_missing_amount, modified_by, modified_at";
+let modifyColumnsMissing = false;
 
 // Supabase caps an unbounded select at 1000 rows — a company's full request
 // history can exceed that. Page through in chunks of 1000.
@@ -166,17 +184,21 @@ let hrNoteMissing = false;
 export async function getCompanyEmployeeRequests(): Promise<EmployeeRequestRow[]> {
   const all: EmployeeRequestRow[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
-    const runQuery = (cols: string) =>
+    // Optional column groups: hr_note (migration 0376) and the payroll-dispute
+    // Modify columns (MODIFY_COLUMNS) — a database missing either still loads,
+    // just without those details.
+    const runQuery = () =>
       supabase
         .from("employee_requests")
-        .select(cols)
+        .select(SELECT_COLUMNS + (hrNoteMissing ? "" : ", hr_note") + (modifyColumnsMissing ? "" : MODIFY_COLUMNS))
         .order("created_at", { ascending: false })
         .range(from, from + PAGE_SIZE - 1);
-    // hr_note only exists after migration 0376.
-    let { data, error } = await runQuery(hrNoteMissing ? SELECT_COLUMNS : SELECT_COLUMNS + ", hr_note");
-    if (error && !hrNoteMissing && /hr_note/.test(error.message)) {
-      hrNoteMissing = true;
-      ({ data, error } = await runQuery(SELECT_COLUMNS));
+    let { data, error } = await runQuery();
+    for (let retry = 0; error && retry < 2; retry++) {
+      if (!hrNoteMissing && /hr_note/.test(error.message)) hrNoteMissing = true;
+      else if (!modifyColumnsMissing && /original_total_received|original_total_expected|original_missing_amount|modified_by|modified_at/.test(error.message)) modifyColumnsMissing = true;
+      else break;
+      ({ data, error } = await runQuery());
     }
     if (error) {
       console.error("getCompanyEmployeeRequests error:", error.message);
@@ -411,6 +433,82 @@ export async function linkPayrollDisputeCustomPayItem(disputeId: string, customP
     .eq("id", disputeId);
   if (error) {
     console.error("linkPayrollDisputeCustomPayItem error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Approve a payroll_dispute with corrected amounts ("Modify", migration
+ * 0382). The employee's submitted figures are kept in original_* (only the
+ * first time — modifying again keeps their true originals), the corrected
+ * ones replace total_received / total_expected / missing_amount, and the
+ * comment is required so the employee knows why it changed. The caller adds
+ * the payroll line for the new missing amount, same as a plain Approve.
+ */
+export async function modifyPayrollDispute(
+  dispute: Pick<EmployeeRequestRow, "id" | "profileId" | "totalReceived" | "totalExpected" | "missingAmount" | "originalTotalReceived" | "originalTotalExpected" | "originalMissingAmount" | "modifiedAt">,
+  amounts: { totalReceived: number; totalExpected: number; missingAmount: number },
+  reviewedBy: string | null,
+  note: string,
+  reviewerName?: string
+): Promise<void> {
+  const comment = note.trim();
+  if (!comment) throw new Error("Add a comment explaining the change — the employee sees it.");
+  const firstModify = !dispute.modifiedAt;
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from("employee_requests")
+    .update({
+      original_total_received: firstModify ? dispute.totalReceived : dispute.originalTotalReceived,
+      original_total_expected: firstModify ? dispute.totalExpected : dispute.originalTotalExpected,
+      original_missing_amount: firstModify ? dispute.missingAmount : dispute.originalMissingAmount,
+      total_received: amounts.totalReceived,
+      total_expected: amounts.totalExpected,
+      missing_amount: amounts.missingAmount,
+      modified_by: reviewedBy,
+      modified_at: now,
+      status: "approved",
+      reviewed_by: reviewedBy,
+      reviewed_at: now,
+      review_note: comment,
+    })
+    .eq("id", dispute.id);
+  if (error) {
+    console.error("modifyPayrollDispute error:", error.message);
+    throw new Error(/original_total_received|modified_at/.test(error.message)
+      ? "Modify needs database migration 0382 — ask an admin to run it."
+      : error.message);
+  }
+  const requested = firstModify ? dispute.missingAmount : dispute.originalMissingAmount;
+  await createNotification({
+    recipientId: dispute.profileId,
+    senderId: reviewedBy,
+    senderName: reviewerName || "Accounting",
+    body: `✏️ YOUR PAYROLL DISPUTE HAS BEEN MODIFIED by ${reviewerName || "Accounting"} — you requested $${(requested ?? 0).toFixed(2)}, approved amount is $${amounts.missingAmount.toFixed(2)}. Comment: ${comment}`,
+    linkTo: "/m/dashboard/employee-self-service?tab=requests",
+  }).catch((err) => console.error("Failed to notify payroll dispute modification:", err));
+}
+
+/** Revert-to-Pending for a modified dispute: put the employee's original figures back and clear the Modify fields. */
+export async function restorePayrollDisputeOriginal(
+  dispute: Pick<EmployeeRequestRow, "id" | "originalTotalReceived" | "originalTotalExpected" | "originalMissingAmount" | "modifiedAt">
+): Promise<void> {
+  if (!dispute.modifiedAt) return;
+  const { error } = await supabase
+    .from("employee_requests")
+    .update({
+      total_received: dispute.originalTotalReceived,
+      total_expected: dispute.originalTotalExpected,
+      missing_amount: dispute.originalMissingAmount,
+      original_total_received: null,
+      original_total_expected: null,
+      original_missing_amount: null,
+      modified_by: null,
+      modified_at: null,
+    })
+    .eq("id", dispute.id);
+  if (error) {
+    console.error("restorePayrollDisputeOriginal error:", error.message);
     throw new Error(error.message);
   }
 }

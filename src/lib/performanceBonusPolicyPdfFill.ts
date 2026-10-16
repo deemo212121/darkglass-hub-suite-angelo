@@ -3,9 +3,9 @@
  * (Staff Form Checklist, New Technician tier). Fills the REAL PDF HR
  * supplied (src/assets/Performance Bonus Policy & Acknowledgment Form.pdf —
  * US Letter, 2 pages, no AcroForm fields) the same way the Flash travel
- * agreement does, with the company logo stamped on page 1 only
- * (addLogoHeader — the title sits at y=695.5, same clearance as the other
- * forms that use it).
+ * agreement does, on the company letterhead (logo top-left, ribbon
+ * top-right, contact footer — addLetterhead) with a faint logo watermark;
+ * see loadBlankPerformanceBonusPolicyBytes.
  *
  * Technician-only: the signature block on the last page (index 1) is
  *   Technician Name (Print): ____   (line x 196.8–412.0, y 251.0)

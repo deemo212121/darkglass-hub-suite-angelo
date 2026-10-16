@@ -47,6 +47,17 @@ export async function getTopApproverIds(): Promise<string[]> {
   return (data ?? []).map((r: any) => r.profile_id as string);
 }
 
+/**
+ * Head(s) of Logistics / Parts (migration 0384) — the top of the Parts line
+ * for PTO approvals (Parts head > Parts Manager > Parts). Returns [] when the
+ * migration hasn't been run yet.
+ */
+export async function getPartsHeadIds(): Promise<string[]> {
+  const { data, error } = await supabase.from("approval_chain_parts_heads").select("profile_id");
+  if (error) return [];
+  return (data ?? []).map((r: any) => r.profile_id as string);
+}
+
 /** Replaces the whole top-level list. Pass [] to go back to the role-based default. */
 export async function setTopApproverIds(profileIds: string[]): Promise<void> {
   const { error: delError } = await supabase.from("approval_chain_top_approvers").delete().not("id", "is", null);

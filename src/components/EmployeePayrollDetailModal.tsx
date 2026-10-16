@@ -19,7 +19,7 @@ import { getTicketAttendanceForTechnician, slotSortKey, type TicketAttendanceRow
 import { getCompanyEmployeeRequests } from "@/lib/supabase/employeeRequests";
 import { getVisitDiagnosisByTicketIds } from "@/lib/supabase/tickets";
 import { getMileageEntries, setMileageEstimateTime, setMileageLegMileage, type MileageEntry } from "@/lib/supabase/mileage";
-import { STATE_MIN_WAGE_2026, normalizeStateName, highestRateAmong, FEDERAL_MIN_WAGE } from "@/lib/stateMinWage";
+import { STATE_MIN_WAGE_2026, normalizeStateName, highestRateAmong, stateMinWageOn, FEDERAL_MIN_WAGE } from "@/lib/stateMinWage";
 import {
   getSalaryHistory,
   addSalaryEntry,
@@ -33,7 +33,8 @@ import {
   type SalaryChangeReason,
   type CompensationType,
 } from "@/lib/supabase/salary";
-import { todayISO as userTodayISO } from "@/lib/localDate";
+import { todayISO as userTodayISO, formatTimeInZone, timeZoneLabel } from "@/lib/localDate";
+import { technicianTimeZone, timeZoneForState } from "@/lib/attendanceGrace";
 
 interface Props {
   profileId: string;
@@ -227,6 +228,25 @@ export function EmployeePayrollDetailModal({
   const actorName = displayName || email || "Unknown";
   const todayISO = useMemo(() => userTodayISO(), []);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
+  // The employee's own time zone (Master List time zone, else branch). Their
+  // Check In/Out are already stored in it; ticket Arrived/Done are converted
+  // to it so both line up (not the viewer's computer zone).
+  const [zoneSource, setZoneSource] = useState<{ scheduleTimezone: string | null; branch: string | null }>({ scheduleTimezone: null, branch: null });
+  const employeeTimeZone = technicianTimeZone(zoneSource.scheduleTimezone, zoneSource.branch);
+  const employeeZoneLabel = timeZoneLabel(employeeTimeZone);
+  useEffect(() => {
+    void supabase
+      .from("profiles")
+      .select("schedule_timezone, assigned_branch")
+      .eq("id", profileId)
+      .maybeSingle()
+      .then(({ data }) =>
+        setZoneSource({
+          scheduleTimezone: (data?.schedule_timezone as string | null) ?? null,
+          branch: (data?.assigned_branch as string | null) ?? null,
+        })
+      );
+  }, [profileId]);
   const fallbackMonth = currentMonthBounds();
   const [rangeStart, setRangeStart] = useState(initialStart || fallbackMonth.start);
   const [rangeEnd, setRangeEnd] = useState(initialEnd || fallbackMonth.end);
@@ -587,6 +607,21 @@ export function EmployeePayrollDetailModal({
   // "#" column reads as the real visit sequence. Stops with no Arrived
   // stamp (Missing / DID NOT GO / cancelled) sort to the bottom, keeping
   // their scheduled time-slot order.
+  // Per day: the zones of the states that day's tickets were in, when they
+  // differ from the employee's own zone (which their Check In/Out are
+  // recorded in) — e.g. a Central tech who worked Georgia tickets that day.
+  // Shown next to that day's zone badge so the hour difference is explained.
+  const otherWorkZonesByDate = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const r of ticketRows) {
+      const z = timeZoneForState(r.state);
+      if (!z || z === employeeTimeZone) continue;
+      const list = map.get(r.scheduleDate) ?? [];
+      if (!list.includes(z)) list.push(z);
+      map.set(r.scheduleDate, list);
+    }
+    return map;
+  }, [ticketRows, employeeTimeZone]);
   const ticketRowsByDate = useMemo(() => {
     const map = new Map<string, TicketAttendanceRow[]>();
     for (const r of ticketRows) {
@@ -626,7 +661,7 @@ export function EmployeePayrollDetailModal({
             .filter((s): s is string => s != null)
         )
       );
-      map.set(date, { bestState: highestRateAmong(states), states });
+      map.set(date, { bestState: highestRateAmong(states, date), states });
     }
     return map;
   }, [ticketRowsByDate]);
@@ -843,7 +878,7 @@ export function EmployeePayrollDetailModal({
         map.set(row.date, { companyRate: 0, effectiveRate: 0, isMatched: false, calculatedPay: 0, compliantPay: 0 });
         continue;
       }
-      const stateFloor = row.state ? STATE_MIN_WAGE_2026.find((s) => s.state === row.state)?.rate ?? null : null;
+      const stateFloor = stateMinWageOn(row.state, row.date);
       const isMatched = stateFloor != null && stateFloor > companyRate;
       const effectiveRate = isMatched ? (stateFloor as number) : companyRate;
       const dayOtMultiplier = isTrainingDay(row.date, traineeWindow) ? 1 : otMultiplier;
@@ -1506,7 +1541,9 @@ export function EmployeePayrollDetailModal({
           {/* Attendance table */}
           <div className="bg-slate-800/30 border border-white/10 rounded-lg p-3">
             <div className="flex items-center justify-between mb-1">
-              <h3 className="text-sm font-semibold text-white">Attendance — {rangeStart} to {rangeEnd}</h3>
+              <h3 className="text-sm font-semibold text-white">
+                Attendance — {rangeStart} to {rangeEnd}
+              </h3>
               <div className="flex items-center gap-2">
                 {pendingRateChanges.length > 0 && (
                   <button
@@ -1575,6 +1612,7 @@ export function EmployeePayrollDetailModal({
                       <th className="text-left py-1.5">Meal In</th>
                       <th className="text-left py-1.5">Meal Out</th>
                       <th className="text-left py-1.5">Check Out</th>
+                      <th className="py-1.5" title="Time zone the Check In / Meal / Check Out times are recorded in"></th>
                       <th className="text-right py-1.5">Regular Hour(s)</th>
                       <th
                         className="text-right py-1.5"
@@ -1725,6 +1763,25 @@ export function EmployeePayrollDetailModal({
                             <td className={`py-1.5 ${row.clockOut ? "text-red-300" : "text-slate-500"}`}>{row.clockOut || "—"}</td>
                           </>
                         )}
+                        <td className="py-1.5 pr-2 whitespace-nowrap">
+                          {(row.clockIn || row.clockOut) && employeeZoneLabel && (
+                            <span
+                              title={`Times recorded in ${employeeZoneLabel} — ${employeeName}'s Master List time zone`}
+                              className="inline-block px-1.5 py-px rounded text-[10px] font-bold border border-sky-500/40 bg-sky-500/10 text-sky-300 align-middle"
+                            >
+                              {employeeZoneLabel}
+                            </span>
+                          )}
+                          {(otherWorkZonesByDate.get(row.date) ?? []).map((z) => (
+                            <span
+                              key={z}
+                              title={`Tickets this day were in ${timeZoneLabel(z)}. Times are still recorded in ${employeeZoneLabel}.`}
+                              className="ml-1 inline-block px-1.5 py-px rounded text-[10px] font-bold border border-amber-500/40 bg-amber-500/10 text-amber-300 align-middle"
+                            >
+                              {timeZoneLabel(z)}
+                            </span>
+                          ))}
+                        </td>
                         <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? fmtDecimal(regularHours) : "—"}</td>
                         <td
                           className={`py-1.5 text-right ${mealOverPolicy ? "text-red-400 font-semibold" : "text-sky-300"}`}
@@ -1885,7 +1942,7 @@ export function EmployeePayrollDetailModal({
                       </tr>
                       {isExpanded && (
                         <tr>
-                          <td colSpan={16} className="px-2 py-3 bg-white/[0.02] border-b border-white/5">
+                          <td colSpan={17} className="px-2 py-3 bg-white/[0.02] border-b border-white/5">
                             {dayTicketRows.length === 0 ? (
                               <p className="text-[11px] text-slate-500 text-center py-2">No tickets scheduled this day.</p>
                             ) : (
@@ -1963,7 +2020,7 @@ export function EmployeePayrollDetailModal({
                                         </td>
                                         <td className="px-2 py-1.5">
                                           {r.arrivedAt ? (
-                                            <span className="text-emerald-300">{new Date(r.arrivedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                                            <span className="text-emerald-300">{formatTimeInZone(r.arrivedAt, employeeTimeZone)}</span>
                                           ) : isDisputed ? (
                                             <span className="text-blue-300">Fixed via dispute</span>
                                           ) : r.statusGroup === "cancelled" ? (
@@ -1974,7 +2031,7 @@ export function EmployeePayrollDetailModal({
                                         </td>
                                         <td className="px-2 py-1.5">
                                           {r.doneAt ? (
-                                            <span className="text-emerald-300">{new Date(r.doneAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                                            <span className="text-emerald-300">{formatTimeInZone(r.doneAt, employeeTimeZone)}</span>
                                           ) : isDisputed ? (
                                             <span className="text-blue-300">Fixed via dispute</span>
                                           ) : !r.arrivedAt || r.statusGroup === "cancelled" ? (

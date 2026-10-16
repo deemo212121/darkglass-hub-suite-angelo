@@ -4377,6 +4377,8 @@ const MOBILE_CHAT_ROLE_ALLOW = new Set(
     "SENIOR_BRANCH_MANAGER",
     "BIZOPS_MANAGER",
     "BIZOPS_SENIOR_MANAGER",
+    "BIZOPS_TEAM_LEADER",
+    "BIZOPS_ASSOCIATE",
     "CSR",
     "CSR_AGENT",
     "CSR_TEAM_LEADER",
@@ -4403,6 +4405,8 @@ function readableRoleLabel(role: string): string {
     SENIOR_BRANCH_MANAGER: "Senior Branch Manager",
     BIZOPS_MANAGER: "BizOps Manager",
     BIZOPS_SENIOR_MANAGER: "BizOps Senior Manager",
+    BIZOPS_TEAM_LEADER: "BizOps Team Leader",
+    BIZOPS_ASSOCIATE: "BizOps Associate",
     CSR: "CSR Associate",
     CSR_AGENT: "CSR Associate",
     CSR_TEAM_LEADER: "CSR Team Leader",
@@ -8751,14 +8755,23 @@ function MobilePayrollDisputeView({
             <div key={r.id} className="mtech-payroll-row">
               <div className="mtech-payroll-row-head">
                 <div className="mtech-payroll-row-date">{r.payPeriod || new Date(r.createdAt).toLocaleDateString()}</div>
-                <div className="mtech-payroll-status" style={{ background: PAYROLL_DISPUTE_STATUS_COLORS[r.status].bg, color: PAYROLL_DISPUTE_STATUS_COLORS[r.status].fg }}>
-                  {PAYROLL_DISPUTE_STATUS_LABELS[r.status]}
+                <div className="mtech-payroll-status" style={r.modifiedAt && r.status === "approved" ? { background: "rgba(14,165,233,0.18)", color: "#7dd3fc" } : { background: PAYROLL_DISPUTE_STATUS_COLORS[r.status].bg, color: PAYROLL_DISPUTE_STATUS_COLORS[r.status].fg }}>
+                  {r.modifiedAt && r.status === "approved" ? "Modified" : PAYROLL_DISPUTE_STATUS_LABELS[r.status]}
                 </div>
               </div>
               <div className="mtech-payroll-row-body" style={{ display: "block", padding: "0.4rem 0.85rem 0.7rem" }}>
                 {r.ticketNo && <p className="mtech-muted" style={{ padding: "0.25rem 0", fontWeight: 600, color: "#93c5fd" }}>Ticket {r.ticketNo}</p>}
                 {r.disputeReason && <p className="mtech-muted" style={{ padding: "0.25rem 0", fontWeight: 600 }}>{r.disputeReason}</p>}
-                {(r.totalReceived !== null || r.totalExpected !== null) && (
+                {r.modifiedAt ? (
+                  <>
+                    <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>
+                      You requested: Received ${(r.originalTotalReceived ?? 0).toFixed(2)} · Expected ${(r.originalTotalExpected ?? 0).toFixed(2)} · Missing <span style={{ textDecoration: "line-through" }}>${(r.originalMissingAmount ?? 0).toFixed(2)}</span>
+                    </p>
+                    <p className="mtech-muted" style={{ padding: "0.25rem 0", color: "#0284c7", fontWeight: 600 }}>
+                      Modified by Accounting: Received ${(r.totalReceived ?? 0).toFixed(2)} · Expected ${(r.totalExpected ?? 0).toFixed(2)} · Missing ${(r.missingAmount ?? 0).toFixed(2)}
+                    </p>
+                  </>
+                ) : (r.totalReceived !== null || r.totalExpected !== null) && (
                   <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>
                     Received ${(r.totalReceived ?? 0).toFixed(2)} · Expected ${(r.totalExpected ?? 0).toFixed(2)} · Missing ${(r.missingAmount ?? 0).toFixed(2)}
                   </p>
@@ -8774,7 +8787,7 @@ function MobilePayrollDisputeView({
                   </p>
                 )}
                 {r.reviewNote && (
-                  <p className="mtech-muted" style={{ color: r.status === "rejected" || (r.status as string) === "denied" ? "#dc2626" : "#16a34a", fontWeight: 600, padding: "0.25rem 0", whiteSpace: "pre-line" }}>{r.status === "rejected" || (r.status as string) === "denied" ? "Reason rejected: " : "Response: "}{r.reviewNote}</p>
+                  <p className="mtech-muted" style={{ color: r.status === "rejected" || (r.status as string) === "denied" ? "#dc2626" : "#16a34a", fontWeight: 600, padding: "0.25rem 0", whiteSpace: "pre-line" }}>{r.status === "rejected" || (r.status as string) === "denied" ? "Reason rejected: " : r.modifiedAt ? "Accounting’s comment: " : "Response: "}{r.reviewNote}</p>
                 )}
               </div>
             </div>
@@ -9992,10 +10005,10 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
           onClick={openNativePicker}
         />
 
-        <div className="mtech-section-title">Corrected Check In <span style={{ color: "#f87171" }}>*</span></div>
+        <div className="mtech-section-title">Corrected Check In</div>
         <input className="mtech-bill-input full" type="time" value={correctedCheckIn} onChange={(e) => setCorrectedCheckIn(e.target.value)} onClick={openNativePicker} />
 
-        <div className="mtech-section-title">Corrected Check Out <span style={{ color: "#f87171" }}>*</span></div>
+        <div className="mtech-section-title">Corrected Check Out</div>
         <input className="mtech-bill-input full" type="time" value={correctedCheckOut} onChange={(e) => setCorrectedCheckOut(e.target.value)} onClick={openNativePicker} />
 
         <div className="mtech-section-title">Corrected Meal Start {mealRequired && <span style={{ color: "#f87171" }}>*</span>}</div>
@@ -10006,7 +10019,7 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
 
         <p className="mtech-muted" style={{ padding: "0.25rem 0", color: mealRequired ? "#fcd34d" : undefined }}>
           {shiftMinutes === null
-            ? "Check in and check out are required. Meal start/end are required only when the shift is over 6 hours."
+            ? "Fill in only the punch(es) you need corrected — a blank one keeps what's on your timecard. Meal start/end are required only when the shift is over 6 hours."
             : mealRequired
             ? `Shift is ${formatShift(shiftMinutes)} — over 6 hours, so meal start and end are required.`
             : `Shift is ${formatShift(shiftMinutes)} — meal break optional (required only over 6 hours).`}

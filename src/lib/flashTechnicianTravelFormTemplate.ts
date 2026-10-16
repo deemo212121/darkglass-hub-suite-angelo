@@ -12,6 +12,15 @@ export interface FlashTechnicianTravelFormData {
    * signature, date) — see FLASH_TRAVEL_CURRENT_VERSION.
    */
   templateVersion?: number;
+  /**
+   * Version 2 only: which wording the technician signed. Missing = the first
+   * v2 text (ineligible items were deducted from the receipt); 2 = the Oct 13
+   * 2026 text ("Ineligible Purchases and Reimbursement Limitations" — the
+   * whole receipt's claim is denied). Regenerate PDF only rebuilds an
+   * agreement signed under the current wording (FLASH_V2_WORDING_REVISION),
+   * so a signature never ends up under text the person didn't see.
+   */
+  wordingRevision?: number;
 }
 
 export interface FlashTechnicianTravelSignature {

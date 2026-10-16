@@ -78,6 +78,8 @@ const LIVE_CHAT_ELIGIBLE_ROLES = new Set([
   "CSR_MANAGER",
   "BIZOPS_MANAGER",
   "BIZOPS_SENIOR_MANAGER",
+  "BIZOPS_TEAM_LEADER",
+  "BIZOPS_ASSOCIATE",
   "CSR_AGENT",
   "CSR_TEAM_LEADER",
 ]);
@@ -163,7 +165,7 @@ interface Props {
 
 // Same tier as is_csr_wide_visibility() in migration 0093 — full,
 // unrestricted company-wide visibility instead of just "mine"/"my team".
-const WIDE_VISIBILITY_ROLES = ["ADMIN", "SUPERADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"];
+const WIDE_VISIBILITY_ROLES = ["ADMIN", "SUPERADMIN", "CSR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "BIZOPS_TEAM_LEADER", "BIZOPS_ASSOCIATE"];
 
 type ViewTab = "queue" | "mine" | "team" | "all" | "escalated" | "transferred";
 

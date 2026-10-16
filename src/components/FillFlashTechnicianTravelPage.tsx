@@ -26,7 +26,7 @@ import { FillFormSignInRequired } from "@/components/FillFormSignInRequired";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { confirmSignableDocument, getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
 import { uploadSignableDocumentSignature, uploadFlashTechnicianTravelForm } from "@/lib/firebase/storage";
-import { fillFlashTechnicianTravelPdf, flashTravelLayout, loadBlankFlashTechnicianTravelBytes, FLASH_TRAVEL_CURRENT_VERSION, FLASH_TRAVEL_TITLE } from "@/lib/flashTechnicianTravelPdfFill";
+import { fillFlashTechnicianTravelPdf, flashTravelLayout, loadBlankFlashTechnicianTravelBytes, FLASH_TRAVEL_CURRENT_VERSION, FLASH_TRAVEL_TITLE, FLASH_V2_WORDING_REVISION } from "@/lib/flashTechnicianTravelPdfFill";
 import type { FlashTechnicianTravelFormData } from "@/lib/flashTechnicianTravelFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
@@ -180,6 +180,8 @@ export function FillFlashTechnicianTravelPage({ docId }: Props) {
         employeeName,
         employeeDateSigned: signedAt,
         employeeSignatureDataUrl: dataUrl,
+        // The v2 wording they're signing (see FLASH_V2_WORDING_REVISION).
+        ...(isV2 ? { wordingRevision: FLASH_V2_WORDING_REVISION } : {}),
       };
       const entry = { name: employeeName, url: signatureUrl, signedAt };
 

@@ -23,6 +23,8 @@ import { saveSubmissionDocument, submissionDocumentFileName } from "@/lib/docume
 import { uploadCustomFormFile } from "@/lib/firebase/storage";
 import { uploadSubmissionToDriveIfConfigured } from "@/lib/documentTemplates/driveUpload";
 import { ELEMENT_REGISTRY } from "@/lib/formElements";
+import { getMyProfileId } from "@/lib/supabase/users";
+import { companySignerNames, notifyCustomFormSigned } from "@/lib/customFormCompletion";
 import { CustomFormRenderer, type CustomFormRendererValue } from "@/components/CustomFormRenderer";
 import usihsLogo from "@/assets/us-in-home-services-logo.png";
 
@@ -31,7 +33,7 @@ interface Props {
 }
 
 export function FillCustomFormPage({ formId }: Props) {
-  const { ready, uid, companyId } = useAuth();
+  const { ready, uid, companyId, displayName } = useAuth();
   const [form, setForm] = useState<CustomForm | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -90,12 +92,22 @@ export function FillCustomFormPage({ formId }: Props) {
     // over, so both are fire-and-forget.
     notifyInternalSubmission(submissionId).catch((err) => console.error("[fill-form] HR notify failed (submission was still saved):", err));
     void uploadSubmissionToDriveIfConfigured(form.documentTemplate, form, { id: submissionId, responses, submittedAt });
+    // Team Messenger reply to the form's creator (and HR), like the other
+    // HR forms — who signed, and who's still to sign; see notifyCustomFormSigned.
+    const myProfileId = uid ? await getMyProfileId(uid).catch(() => null) : null;
+    const signerName = submitterName || displayName || "Someone";
+    const submission = { id: submissionId, formTitle: form.title, submitterName, responses, submittedAt };
     // One-party form: it's done now, so file its document. A form with
     // "Filled in by: Company" fields is filed when HR completes it instead.
     if (companyFields(form).length === 0) {
-      saveSubmissionDocument(form, { id: submissionId, responses, submittedAt, submitterName }).catch((err) =>
-        console.error("[fill-form] Saving the document failed (submission was still saved — HR can open it from Custom Forms):", err)
-      );
+      saveSubmissionDocument(form, { id: submissionId, responses, submittedAt, submitterName })
+        .then(({ url }) => { if (myProfileId) void notifyCustomFormSigned({ form, submission, signerProfileId: myProfileId, signerName, waitingOn: [], pdfUrl: url }); })
+        .catch((err) => {
+          console.error("[fill-form] Saving the document failed (submission was still saved — HR can open it from Custom Forms):", err);
+          if (myProfileId) void notifyCustomFormSigned({ form, submission, signerProfileId: myProfileId, signerName, waitingOn: [] });
+        });
+    } else if (myProfileId) {
+      void notifyCustomFormSigned({ form, submission, signerProfileId: myProfileId, signerName, waitingOn: companySignerNames(form) });
     }
   };
 
@@ -123,7 +135,7 @@ export function FillCustomFormPage({ formId }: Props) {
   return (
     <div className="min-h-screen bg-background">
       <AppHeader />
-      <main className="max-w-2xl mx-auto p-4">
+      <main className="max-w-4xl mx-auto p-4">
         <Link to="/home" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 w-fit mb-4">
           <ChevronLeft className="h-3.5 w-3.5" /> Home
         </Link>
@@ -151,11 +163,23 @@ export function FillCustomFormPage({ formId }: Props) {
             )}
           </div>
         ) : (
-          <div className="panel p-5">
-            <img src={usihsLogo} alt="US In Home Services" className="h-16 w-16 mx-auto mb-3" />
+          <div className="panel p-4 sm:p-5">
             <h1 className="text-lg font-bold mb-1">{form.title}</h1>
             {form.description && <p className="text-sm text-muted-foreground mb-4">{form.description}</p>}
-            <CustomFormRenderer fields={form.fields} onSubmit={handleSubmit} />
+            {/* Paper view — the form as the document it becomes (same logo and layout as its PDF). */}
+            <CustomFormRenderer
+              fields={form.fields}
+              onSubmit={handleSubmit}
+              paper={{
+                header: (
+                  <>
+                    <img src={usihsLogo} alt="US In Home Services" className="h-[100px] w-[100px] mx-auto mb-5" />
+                    {/* The PDF prints the form's title only when the form has no heading of its own. */}
+                    {!form.fields.some((f) => f.type === "heading" && !f.hidden) && <h2 className="text-center mb-4">{form.title}</h2>}
+                  </>
+                ),
+              }}
+            />
           </div>
         )}
       </main>

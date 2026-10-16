@@ -36,6 +36,20 @@ export { FLASH_TRAVEL_CURRENT_VERSION };
 /** Version 2's title — the label every new send and signature uses. */
 export const FLASH_TRAVEL_TITLE = "Flash Tech Travel & Expense Policy Agreement";
 
+/**
+ * The version 2 wording the blank form renders today (2 = the Oct 13 2026
+ * "Ineligible Purchases and Reimbursement Limitations" rewrite — see
+ * V2_INELIGIBLE). Saved on each signature as form_data.wordingRevision; bump
+ * it whenever the v2 text changes, so Regenerate PDF won't re-word older
+ * signed agreements.
+ */
+export const FLASH_V2_WORDING_REVISION = 2;
+
+/** Whether a signed agreement can be re-rendered without changing the text its signer saw. */
+export function canRegenerateFlashTravelPdf(data: Pick<FlashTechnicianTravelFormData, "templateVersion" | "wordingRevision">): boolean {
+  return (data.templateVersion ?? 1) < 2 || (data.wordingRevision ?? 1) === FLASH_V2_WORDING_REVISION;
+}
+
 export interface FlashTravelRect { x: number; y: number; w: number; h: number }
 
 /** Page size and the signing page's field boxes (PDF units, origin bottom-left) for a document's version. */

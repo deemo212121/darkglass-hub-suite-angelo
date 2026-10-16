@@ -41,17 +41,47 @@ import {
 } from "@/lib/supabase/csrGhTracker";
 import { todayIso } from "@/components/CSRTeamDailyReport";
 import { addDaysISO } from "@/lib/localDate";
+import { getServerNow } from "@/lib/serverTime";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
 const phoneKey = (phone: string) => normalizeGhPhone(phone) || phone.trim().toLowerCase();
 
+/**
+ * "Today" (Central) from the server's clock, not the computer's. Some CSR
+ * PCs show Central wall time with the Philippine time zone setting, which
+ * puts the real clock 13 hours behind: numbers logged before 1 PM Central
+ * were filed under the previous day, and after logging back in the list
+ * looked empty. The offset is measured on load and again whenever the tab
+ * regains focus; if the server can't be reached it falls back to the
+ * computer's clock so logging still works. `ready` is false until the
+ * first measurement is in.
+ */
+function useServerToday(): { ready: boolean; today: () => string } {
+  const [offsetMs, setOffsetMs] = useState<number | null>(null);
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const measure = () => {
+      getServerNow()
+        .then((d) => { if (!cancelled) setOffsetMs(d.getTime() - Date.now()); })
+        .catch(() => { if (!cancelled) setOffsetMs((o) => o ?? 0); });
+    };
+    measure();
+    window.addEventListener("focus", measure);
+    // Re-render every minute so the date rolls over at midnight on a page left open.
+    const timer = window.setInterval(() => setTick((t) => t + 1), 60_000);
+    return () => { cancelled = true; window.removeEventListener("focus", measure); window.clearInterval(timer); };
+  }, []);
+  return { ready: offsetMs !== null, today: () => todayIso(new Date(Date.now() + (offsetMs ?? 0))) };
+}
 
 
 function AgentView({ mod, sub, profileId }: { mod: ModuleDef; sub: SubModuleDef; profileId: string }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
-  const today = todayIso();
+  const clock = useServerToday();
+  const today = clock.today();
   const [entries, setEntries] = useState<CsrGhTrackerEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,7 +105,8 @@ function AgentView({ mod, sub, profileId }: { mod: ModuleDef; sub: SubModuleDef;
     }
   }, [profileId, today]);
 
-  useEffect(() => { void load(); }, [load]);
+  // Wait for the server clock so the first load is already the right day.
+  useEffect(() => { if (clock.ready) void load(); }, [load, clock.ready]);
 
   // How many times each number appears in today's list (2+ = duplicate).
   const keyCounts = useMemo(() => {
@@ -91,8 +122,11 @@ function AgentView({ mod, sub, profileId }: { mod: ModuleDef; sub: SubModuleDef;
     setAdding(true);
     setError(null);
     try {
-      const created = await addGhTrackerEntry(profileId, today, trimmed, note.trim() || null);
-      setEntries((prev) => [...prev, created]);
+      // The date at the moment of adding (server clock), not when the page last drew.
+      const entryDate = clock.today();
+      const created = await addGhTrackerEntry(profileId, entryDate, trimmed, note.trim() || null);
+      if (entryDate === today) setEntries((prev) => [...prev, created]);
+      else void load();
       setPhone("");
       setNote("");
     } catch (err) {
@@ -239,7 +273,12 @@ function AgentView({ mod, sub, profileId }: { mod: ModuleDef; sub: SubModuleDef;
 function ManagerView({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
+  const clock = useServerToday();
   const [date, setDate] = useState(todayIso());
+  // Once the server clock is in, open on the server's "today" (unless the
+  // manager already picked a date).
+  const [datePicked, setDatePicked] = useState(false);
+  useEffect(() => { if (clock.ready && !datePicked) setDate(clock.today()); }, [clock.ready]); // eslint-disable-line react-hooks/exhaustive-deps
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [entries, setEntries] = useState<CsrGhTrackerEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -310,14 +349,14 @@ function ManagerView({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
         <button type="button" onClick={goBack} className="btn"><ChevronLeft className="h-4 w-4" /></button>
         <h1 className="text-xl font-bold">GH Tracker</h1>
         <div className="ml-auto flex items-center gap-2">
-          <button type="button" onClick={() => setDate((d) => addDaysISO(d, -1))} className="btn" title="Previous day">
+          <button type="button" onClick={() => { setDatePicked(true); setDate((d) => addDaysISO(d, -1)); }} className="btn" title="Previous day">
             <ChevronLeftNav className="h-4 w-4" />
           </button>
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="glass-input text-sm py-1.5 px-2 rounded-md" />
-          <button type="button" onClick={() => setDate((d) => addDaysISO(d, 1))} className="btn" title="Next day">
+          <input type="date" value={date} onChange={(e) => { setDatePicked(true); setDate(e.target.value); }} className="glass-input text-sm py-1.5 px-2 rounded-md" />
+          <button type="button" onClick={() => { setDatePicked(true); setDate((d) => addDaysISO(d, 1)); }} className="btn" title="Next day">
             <ChevronRight className="h-4 w-4" />
           </button>
-          <button type="button" onClick={() => setDate(todayIso())} className="btn text-sm">Today</button>
+          <button type="button" onClick={() => setDate(clock.today())} className="btn text-sm">Today</button>
         </div>
       </div>
       <div className="mb-3 ml-[52px] flex flex-wrap items-center gap-3 text-xs">

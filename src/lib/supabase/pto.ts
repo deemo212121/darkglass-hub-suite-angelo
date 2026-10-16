@@ -14,7 +14,7 @@
 
 import { requireRejectReason, requireApproveNote, RejectCancelledError, APPROVE_CANCELLED_MESSAGE } from "@/lib/rejectReason";
 import { askAccountingSignature } from "@/lib/accountingSignature";
-import { chainCanApprove } from "@/lib/approvalDirectory";
+import { chainCanApprovePto, isRequesterDepartmentManager } from "@/lib/approvalDirectory";
 import { supabase } from "./client";
 import { createNotification } from "./notifications";
 import { getCompanyUsers } from "./users";
@@ -523,10 +523,11 @@ export function canReviewPtoStage(
   const has = (r: string) => heldRoles.includes(r);
   if (has("SUPERADMIN") || has("SUPERSUPERADMIN")) return true;
   if (stage === "manager") {
-    // Non-PH field staff (Technician → Branch / Parts Manager → Senior Branch
-    // Manager → Admin / Directors): the Approval Chain decides, by role +
-    // branch + area — migration 0332 enforces the same rule in the database.
-    const chain = chainCanApprove(viewerProfileId, request.profileId);
+    // The tech line (Tech Director > Tech Asst. Director > SBM > BM >
+    // Technician) and the Parts line (Parts head > Parts Manager > Parts):
+    // each approves only its own people — chainCanApprovePto; migration 0384
+    // enforces the same rule in the database.
+    const chain = chainCanApprovePto(viewerProfileId, request.profileId);
     if (chain !== null) return chain;
     if (request.managerId === viewerProfileId) return true;
     // request.managerId is resolved ONCE, at submission time, from
@@ -547,7 +548,10 @@ export function canReviewPtoStage(
     // in general.
     if (managersManagerName && viewerName && managersManagerName === viewerName) return true;
     if (request.managerId) return false;
-    return has("MANAGER");
+    // No manager on the request: a manager of the requester's own
+    // department — not any manager company-wide. (HR + Accounting still
+    // decide it between them if no such manager acts.)
+    return isRequesterDepartmentManager(viewerProfileId, request.profileId) ?? has("MANAGER");
   }
   // HR and Accounting no longer wait for the manager — any 2 of the 3 stages
   // decide a leave request, in any order (migration 0335).

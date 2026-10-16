@@ -559,7 +559,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
   const [corrections, setCorrections] = useState<TimecardCorrectionRow[]>([]);
   const [correctionHistory, setCorrectionHistory] = useState<TimecardCorrectionHistoryRow[]>([]);
-  const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "ticket-attendance", "ticket-dispute", "trainee-attendance", "settings"] as const;
+  const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "ticket-attendance", "off-techs", "ticket-dispute", "trainee-attendance", "settings"] as const;
   const [activeTab, setActiveTab] = usePersistedTab<typeof ATTENDANCE_TABS[number]>(
     "ahs:attendance-monitoring-active-tab",
     ATTENDANCE_TABS,
@@ -1878,7 +1878,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     // Leading BOM — without it, Excel (unlike most other CSV readers)
     // ignores the charset=utf-8 above and mis-decodes any non-ASCII
     // character (the "—" placeholder below included) as Windows-1252,
-    // turning it into "â€”" on open.
+    // turning it into "—" on open.
     element.setAttribute("href", "data:text/csv;charset=utf-8," + encodeURIComponent(String.fromCharCode(0xfeff) + csvContent));
     const filenameDate = dateRangeActive ? `${filterDateFrom}_to_${filterDateTo}` : dailyDate;
     element.setAttribute("download", `attendance-summary-${filenameDate}.csv`);
@@ -2176,7 +2176,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     allProfileById,
     myProfileId,
   ]);
+  // Pending first (they still need someone to act), then everything already
+  // decided; each group by work date in the chosen direction.
   const sortedCorrections = useMemo(() => [...filteredCorrections].sort((a, b) => {
+      const pendingFirst = Number(b.status === "pending") - Number(a.status === "pending");
+      if (pendingFirst !== 0) return pendingFirst;
       const d = a.workDate.localeCompare(b.workDate) || (a.createdAt ?? "").localeCompare(b.createdAt ?? "");
       return workDateSort === "desc" ? -d : d;
     }), [filteredCorrections, workDateSort]);
@@ -2244,6 +2248,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     { id: "daily-attendance", label: "Daily Attendance", Icon: Clock },
     { id: "pto-management", label: "Time-Off Management", Icon: Calendar },
     { id: "ticket-attendance", label: "Ticket Attendance", Icon: FileText },
+    { id: "off-techs", label: "Off Techs with Tickets", Icon: UserX },
     { id: "ticket-dispute", label: "Ticket Dispute", Icon: AlertTriangle },
     { id: "trainee-attendance", label: "Trainee Attendance", Icon: Clock },
     ...(isSuperAdmin ? [{ id: "settings", label: "Settings", Icon: Settings }] : []),
@@ -2442,12 +2447,12 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
           </div>
 
           {/* Tabs */}
-          <div className="flex gap-2 border-b border-white/10 overflow-x-auto">
+          <div className="flex gap-0.5 border-b border-white/10 overflow-x-auto">
             {tabConfig.map(tab => {
               const Icon = tab.Icon;
               return (
-                <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`px-4 py-2 border-b-2 transition whitespace-nowrap flex items-center gap-2 ${activeTab === tab.id ? "border-blue-500 text-blue-300" : "border-transparent text-slate-400 hover:text-slate-300"}`}>
-                  <Icon className="h-4 w-4" />
+                <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`px-2.5 py-1.5 border-b-2 text-[13px] transition whitespace-nowrap flex items-center gap-1.5 ${activeTab === tab.id ? "border-blue-500 text-blue-300" : "border-transparent text-slate-400 hover:text-slate-300"}`}>
+                  <Icon className="h-3.5 w-3.5" />
                   {tab.label}
                   {tabBadge(tab.id) > 0 && (
                     <span className="home-badge home-badge--sm" title={`${tabBadge(tab.id)} waiting on you`}>{badgeText(tabBadge(tab.id))}</span>
@@ -3522,7 +3527,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 <button
                   type="button"
                   onClick={() => setWorkDateSort((d) => (d === "desc" ? "asc" : "desc"))}
-                  title={workDateSort === "desc" ? "Newest first — click for oldest first" : "Oldest first — click for newest first"}
+                  title={workDateSort === "desc" ? "Pending first, then newest first — click for oldest first" : "Pending first, then oldest first — click for newest first"}
                   className="inline-flex items-center gap-1 uppercase hover:text-white"
                 >
                   Work Date <span className="text-[10px]">{workDateSort === "desc" ? "▼" : "▲"}</span>
@@ -3627,6 +3632,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
           )}
 
           {activeTab === "ticket-attendance" && <TicketAttendanceTab />}
+          {activeTab === "off-techs" && <TicketAttendanceTab key="off-techs" offTechsOnly />}
 
           {activeTab === "ticket-dispute" && (
             <div data-tour="am-ticket-dispute">

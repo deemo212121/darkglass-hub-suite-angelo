@@ -21,7 +21,7 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 import { getExternalSignableDocument, submitExternalSignature, type ExternalSignableDocument } from "@/lib/supabase/externalSignableDocuments";
-import { fillFlashTechnicianTravelPdf, flashTravelLayout, loadBlankFlashTechnicianTravelBytes, FLASH_TRAVEL_CURRENT_VERSION, FLASH_TRAVEL_TITLE } from "@/lib/flashTechnicianTravelPdfFill";
+import { fillFlashTechnicianTravelPdf, flashTravelLayout, loadBlankFlashTechnicianTravelBytes, FLASH_TRAVEL_CURRENT_VERSION, FLASH_TRAVEL_TITLE, FLASH_V2_WORDING_REVISION } from "@/lib/flashTechnicianTravelPdfFill";
 import type { FlashTechnicianTravelFormData } from "@/lib/flashTechnicianTravelFormTemplate";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
@@ -158,7 +158,11 @@ export function ExternalFillFlashTechnicianTravelPage({ docId }: Props) {
       const employeeName = doc.recipientName || "Employee";
       const signatureBlob = await (await fetch(dataUrl)).blob();
       const signedAt = new Date().toISOString();
-      const finalData: FlashTechnicianTravelFormData = { ...form, employeeName, employeeDateSigned: signedAt, employeeSignatureDataUrl: dataUrl };
+      const finalData: FlashTechnicianTravelFormData = {
+        ...form, employeeName, employeeDateSigned: signedAt, employeeSignatureDataUrl: dataUrl,
+        // The v2 wording they're signing (see FLASH_V2_WORDING_REVISION).
+        ...(isV2 ? { wordingRevision: FLASH_V2_WORDING_REVISION } : {}),
+      };
 
       const sigBytes = new Uint8Array(await signatureBlob.arrayBuffer());
       const pdfBytes = await fillFlashTechnicianTravelPdf(finalData, sigBytes);

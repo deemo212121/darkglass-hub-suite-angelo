@@ -90,7 +90,7 @@ interface LoginLogoutRecord {
 interface Request {
   id: string;
   type: string;
-  status: "pending" | "approved" | "rejected" | "closed";
+  status: "pending" | "approved" | "rejected" | "closed" | "modified";
   submittedDate: string;
   details: string;
   /** Why it was rejected — "Rejected by <name> (<step>): <reason>" lines, shown in a red box. */
@@ -487,13 +487,24 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         rejectionReason: r.status === "rejected" ? r.reviewNote : null,
       });
     }
+    const money = (n: number | null) => `$${(n ?? 0).toFixed(2)}`;
     for (const r of myEmployeeRequests) {
+      // Payroll dispute amounts — when Accounting approved it with changes
+      // ("Modify", migration 0382) show what was asked next to what was approved.
+      const amounts =
+        r.requestType !== "payroll_dispute" || (r.totalReceived === null && r.totalExpected === null)
+          ? ""
+          : r.modifiedAt
+          ? `\nYou requested: Received ${money(r.originalTotalReceived)} · Expected ${money(r.originalTotalExpected)} · Missing ${money(r.originalMissingAmount)}` +
+            `\n✏️ Modified by Accounting: Received ${money(r.totalReceived)} · Expected ${money(r.totalExpected)} · Missing ${money(r.missingAmount)}`
+          : `\nReceived ${money(r.totalReceived)} · Expected ${money(r.totalExpected)} · Missing ${money(r.missingAmount)}`;
       items.push({
         id: `req-${r.id}`,
-        type: r.requestType === "attendance_dispute" ? "Attendance Dispute" : "Payroll Inquiry",
-        status: r.status,
+        type: r.requestType === "attendance_dispute" ? "Attendance Dispute" : r.requestType === "payroll_dispute" ? "Payroll Dispute" : "Payroll Inquiry",
+        // A payroll dispute Accounting changed before approving reads "Modified".
+        status: r.status === "approved" && r.modifiedAt ? "modified" : r.status,
         submittedDate: r.createdAt.slice(0, 10),
-        details: r.details + (r.reviewNote && r.status !== "rejected" ? `\n\nResponse: ${r.reviewNote}` : ""),
+        details: r.details + amounts + (r.reviewNote && r.status !== "rejected" ? `\n\n${r.modifiedAt ? "Accounting's comment" : "Response"}: ${r.reviewNote}` : ""),
         rejectionReason: r.status === "rejected" ? r.reviewNote || null : null,
       });
     }
@@ -570,6 +581,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     switch (status) {
       case "pending": return "bg-yellow-500/20 text-yellow-300";
       case "approved": return "bg-green-500/20 text-green-300";
+      case "modified": return "bg-sky-500/20 text-sky-300";
       case "rejected": return "bg-red-500/20 text-red-300";
       case "closed": return "bg-slate-500/20 text-slate-300";
       default: return "bg-slate-500/20 text-slate-300";
@@ -580,6 +592,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     switch (status) {
       case "pending": return "⏳";
       case "approved": return "✓";
+      case "modified": return "✏️";
       case "rejected": return "✕";
       case "closed": return "—";
       default: return "—";
@@ -2028,7 +2041,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       </div>
                       <div data-tour="ess-form-corr-times" className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="text-xs font-semibold text-white block mb-1">Corrected Check In <span className="text-red-400">*</span></label>
+                          <label className="text-xs font-semibold text-white block mb-1">Corrected Check In</label>
                           <input
                             type="time"
                             step="1"
@@ -2039,7 +2052,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           />
                         </div>
                         <div>
-                          <label className="text-xs font-semibold text-white block mb-1">Corrected Check Out <span className="text-red-400">*</span></label>
+                          <label className="text-xs font-semibold text-white block mb-1">Corrected Check Out</label>
                           <input
                             type="time"
                             step="1"
@@ -2076,7 +2089,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       </div>
                       <p className={`text-[10px] ${correctionMealRequired ? "text-amber-300" : "text-slate-500"}`}>
                         {correctionShift === null
-                          ? "Check in and check out are required. Meal start/end are required only when the shift is over 6 hours."
+                          ? "Fill in only the punch(es) you need corrected — a blank one keeps what's on your timecard. Meal start/end are required only when the shift is over 6 hours."
                           : correctionMealRequired
                           ? `Shift is ${formatShift(correctionShift)} — over 6 hours, so meal start and end are required.`
                           : `Shift is ${formatShift(correctionShift)} — meal break optional (required only over 6 hours).`}

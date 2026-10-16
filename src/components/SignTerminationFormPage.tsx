@@ -1,8 +1,8 @@
 /**
- * Sign Termination Form â the Notice of Termination equivalent of
+ * Sign Termination Form — the Notice of Termination equivalent of
  * SignPromotionFormPage.tsx, opened from the deep link a Team Messenger
  * message sends. HR pre-fills every field (unlike SignActionPlanFormPage.tsx),
- * so this is a pure review-and-sign page â no editable content.
+ * so this is a pure review-and-sign page — no editable content.
  */
 import { InlinePdfLink } from "@/components/InlinePdfViewer";
 import { useEffect, useState } from "react";
@@ -101,7 +101,7 @@ export function SignTerminationFormPage({ docId }: Props) {
 
       const formData = doc.formData as unknown as TerminationFormData;
       // Persisted signatures use the durable Firebase URL, but for THIS
-      // capture we use the local canvas data: URL instead â Firebase
+      // capture we use the local canvas data: URL instead — Firebase
       // Storage doesn't serve CORS headers by default, so html2canvas can
       // read pixels from a data: URL but silently fails to draw a
       // cross-origin firebasestorage.googleapis.com URL.
@@ -124,18 +124,18 @@ export function SignTerminationFormPage({ docId }: Props) {
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "Employee",
-          body: `â Notice of Termination for ${formData.employeeName} has been signed: [${filename}](${pdfUrl})`,
+          body: `✅ Notice of Termination for ${formData.employeeName} has been signed: [${filename}](${pdfUrl})`,
         });
       }
 
-      // Opt-in broadcast â reuses the Warning Form's notify toggle (see
+      // Opt-in broadcast — reuses the Warning Form's notify toggle (see
       // Notifications Settings, migration 0090) since there's no dedicated
       // termination-form setting yet.
       getHrNotificationSettings()
         .then(({ warningForm }) => {
           if (!warningForm) return;
           const excludeIds = doc.createdBy ? [doc.createdBy] : [];
-          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `â Notice of Termination for ${formData.employeeName} has been signed.`);
+          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `✅ Notice of Termination for ${formData.employeeName} has been signed.`);
         })
         .catch((err) => console.error("[termination-form] hr notify check failed:", err));
 
@@ -150,7 +150,7 @@ export function SignTerminationFormPage({ docId }: Props) {
   };
 
   const isRecipient = !!doc && !!myProfileId && doc.recipientId === myProfileId;
-  // Platform-level SUPERSUPERADMIN only â the per-company SUPERADMIN role
+  // Platform-level SUPERSUPERADMIN only — the per-company SUPERADMIN role
   // should NOT see every employee's private documents, just its own like ADMIN.
   const isSuperadmin = role === "SUPERSUPERADMIN";
 
@@ -166,7 +166,7 @@ export function SignTerminationFormPage({ docId }: Props) {
           <FillFormSignInRequired />
         ) : loading ? (
           <div className="panel p-8 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading documentâ¦
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading document…
           </div>
         ) : error && !doc ? (
           <div className="panel p-6 text-sm text-red-300">{error}</div>
@@ -174,7 +174,7 @@ export function SignTerminationFormPage({ docId }: Props) {
           <div className="panel p-6 text-sm text-muted-foreground">This document isn't addressed to your account.</div>
         ) : signed || doc.status === "signed" ? (
           <div className="panel p-6 text-center">
-            <p className="text-sm font-semibold mb-2">â Signed{signed ? " and sent back to HR" : ""}.</p>
+            <p className="text-sm font-semibold mb-2">✅ Signed{signed ? " and sent back to HR" : ""}.</p>
             {doc.pdfUrl && (
               <InlinePdfLink url={doc.pdfUrl} label="View the signed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
             )}
@@ -182,7 +182,7 @@ export function SignTerminationFormPage({ docId }: Props) {
         ) : (
           <div className="panel p-0 overflow-hidden">
             <div className="px-4 py-4 border-b border-white/10">
-              <h2 className="font-semibold text-sm">Notice of Termination â Signature Requested</h2>
+              <h2 className="font-semibold text-sm">Notice of Termination — Signature Requested</h2>
               <p className="text-[10px] text-muted-foreground mt-0.5">Review the notice below, then sign as {SLOT_LABEL[doc.recipientSlot] ?? doc.recipientSlot}.</p>
             </div>
 
@@ -212,7 +212,7 @@ export function SignTerminationFormPage({ docId }: Props) {
                 disabled={signing}
                 className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white mt-3 disabled:opacity-50"
               >
-                {signing ? "Submittingâ¦" : "Confirm & Sign"}
+                {signing ? "Submitting…" : "Confirm & Sign"}
               </button>
             </div>
           </div>

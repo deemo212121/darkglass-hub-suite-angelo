@@ -965,9 +965,29 @@ export interface TechCustomPayItem {
    *  (AccountingDashboard.tsx's techIncludablePay) — see migration 0291.
    *  Explicitly set by whoever enters the line, not guessed from the label. */
   isWageIncludable: boolean;
+  /** Sunday of the workweek this line was earned in (migration 0383), or
+   *  null when it isn't tied to one week. An includable line with a week
+   *  feeds THAT week's FLSA regular rate; null ones are spread over the
+   *  period's weeks by hours (AccountingDashboard.tsx's weekly OT premium). */
+  workWeekStart: string | null;
 }
 
-const CUSTOM_PAY_ITEM_COLUMNS = "id, profile_id, period_start, period_end, label, value, rate, is_wage_includable";
+const CUSTOM_PAY_ITEM_COLUMNS_BASE = "id, profile_id, period_start, period_end, label, value, rate, is_wage_includable";
+// work_week_start is selected separately so custom lines keep loading
+// (without week tags) until migration 0383 is run.
+let workWeekColumnMissing = false;
+const customPayItemColumns = () => (workWeekColumnMissing ? CUSTOM_PAY_ITEM_COLUMNS_BASE : CUSTOM_PAY_ITEM_COLUMNS_BASE + ", work_week_start");
+const isMissingWorkWeekColumn = (message: string) => /work_week_start/i.test(message);
+
+/** Runs a custom-pay-item query, retrying once without work_week_start if migration 0383 hasn't been run. */
+async function withWorkWeekFallback<T>(run: (columns: string) => PromiseLike<{ data: T; error: { message: string } | null }>) {
+  let result = await run(customPayItemColumns());
+  if (result.error && !workWeekColumnMissing && isMissingWorkWeekColumn(result.error.message)) {
+    workWeekColumnMissing = true;
+    result = await run(customPayItemColumns());
+  }
+  return result;
+}
 
 function mapCustomPayItem(r: any): TechCustomPayItem {
   return {
@@ -979,6 +999,7 @@ function mapCustomPayItem(r: any): TechCustomPayItem {
     value: Number(r.value) || 0,
     rate: Number(r.rate) || 0,
     isWageIncludable: r.is_wage_includable ?? true,
+    workWeekStart: r.work_week_start ?? null,
   };
 }
 
@@ -989,13 +1010,15 @@ export async function getTechCustomPayItems(
   periodEnd: string
 ): Promise<TechCustomPayItem[]> {
   if (!profileId || !periodStart || !periodEnd) return [];
-  const { data, error } = await supabase
-    .from("tech_custom_pay_items")
-    .select(CUSTOM_PAY_ITEM_COLUMNS)
-    .eq("profile_id", profileId)
-    .eq("period_start", periodStart)
-    .eq("period_end", periodEnd)
-    .order("sort_order", { ascending: true });
+  const { data, error } = await withWorkWeekFallback((columns) =>
+    supabase
+      .from("tech_custom_pay_items")
+      .select(columns)
+      .eq("profile_id", profileId)
+      .eq("period_start", periodStart)
+      .eq("period_end", periodEnd)
+      .order("sort_order", { ascending: true })
+  );
   if (error) {
     console.error("getTechCustomPayItems error:", error.message);
     return [];
@@ -1014,11 +1037,13 @@ export async function getTechCustomPayItems(
  */
 export async function getAllTechCustomPayItemsForPeriod(periodStart: string, periodEnd: string): Promise<TechCustomPayItem[]> {
   if (!periodStart || !periodEnd) return [];
-  const { data, error } = await supabase
-    .from("tech_custom_pay_items")
-    .select(CUSTOM_PAY_ITEM_COLUMNS)
-    .eq("period_start", periodStart)
-    .eq("period_end", periodEnd);
+  const { data, error } = await withWorkWeekFallback((columns) =>
+    supabase
+      .from("tech_custom_pay_items")
+      .select(columns)
+      .eq("period_start", periodStart)
+      .eq("period_end", periodEnd)
+  );
   if (error) {
     console.error("getAllTechCustomPayItemsForPeriod error:", error.message);
     return [];
@@ -1033,28 +1058,35 @@ export async function addTechCustomPayItem(
   periodEnd: string,
   sortOrder: number
 ): Promise<TechCustomPayItem> {
-  const { data, error } = await supabase
-    .from("tech_custom_pay_items")
-    .insert({ profile_id: profileId, period_start: periodStart, period_end: periodEnd, sort_order: sortOrder })
-    .select(CUSTOM_PAY_ITEM_COLUMNS)
-    .single();
+  const { data, error } = await withWorkWeekFallback((columns) =>
+    supabase
+      .from("tech_custom_pay_items")
+      .insert({ profile_id: profileId, period_start: periodStart, period_end: periodEnd, sort_order: sortOrder })
+      .select(columns)
+      .single()
+  );
   if (error) throw new Error(error.message);
   return mapCustomPayItem(data);
 }
 
-/** Update one custom pay line's label/value/rate/wage-includable flag. */
+/** Update one custom pay line's label/value/rate/wage-includable flag/workweek. */
 export async function updateTechCustomPayItem(
   id: string,
-  fields: { label?: string; value?: number; rate?: number; isWageIncludable?: boolean }
+  fields: { label?: string; value?: number; rate?: number; isWageIncludable?: boolean; workWeekStart?: string | null }
 ): Promise<void> {
   const update: Record<string, unknown> = {};
   if (fields.label !== undefined) update.label = fields.label;
   if (fields.value !== undefined) update.value = fields.value;
   if (fields.rate !== undefined) update.rate = fields.rate;
   if (fields.isWageIncludable !== undefined) update.is_wage_includable = fields.isWageIncludable;
+  if (fields.workWeekStart !== undefined) update.work_week_start = fields.workWeekStart;
   if (Object.keys(update).length === 0) return;
   const { error } = await supabase.from("tech_custom_pay_items").update(update).eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) {
+    throw new Error(isMissingWorkWeekColumn(error.message)
+      ? "Setting a week needs database migration 0383 — ask an admin to run it."
+      : error.message);
+  }
 }
 
 /** Remove one custom pay line. */
