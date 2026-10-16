@@ -102,6 +102,7 @@ import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { perCutoffSalary } from "@/lib/supabase/salary";
 import { getPayrollReviewMarks, markPayrollReviewed, clearPayrollReviewMark, type PayrollReviewMark } from "@/lib/supabase/payrollReviewMarks";
+import { getPayrollAdjustmentsForPeriod, payrollAdjustmentsEligible, sumPayrollAdjustments, type PayrollAdjustment } from "@/lib/supabase/payrollAdjustments";
 import { getHourlyOtOverrides, setHourlyOtOverride, clearHourlyOtOverride, type HourlyOtOverride } from "@/lib/supabase/payrollHourlyOtOverrides";
 import { useAuth } from "@/lib/auth";
 import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
@@ -2286,6 +2287,22 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   }, [genStart, genEnd]);
   useEffect(() => { void loadReviewMarks(); }, [loadReviewMarks]);
 
+  // Reimbursements / deductions for the picked period (migration 0386),
+  // per employee — PH payroll and US Office staff only (see
+  // payrollAdjustmentsEligible); technicians have their own custom lines.
+  const [adjustmentsByProfile, setAdjustmentsByProfile] = useState<Map<string, PayrollAdjustment[]>>(new Map());
+  const loadAdjustments = useCallback(async () => {
+    if (!genStart || !genEnd || genStart > genEnd) {
+      setAdjustmentsByProfile(new Map());
+      return;
+    }
+    const list = await getPayrollAdjustmentsForPeriod(genStart, genEnd);
+    const map = new Map<string, PayrollAdjustment[]>();
+    for (const a of list) map.set(a.profileId, [...(map.get(a.profileId) ?? []), a]);
+    setAdjustmentsByProfile(map);
+  }, [genStart, genEnd]);
+  useEffect(() => { void loadAdjustments(); }, [loadAdjustments]);
+
   // Per-employee "sent" marks for the picked period — same targetLabel
   // "(periodStart – periodEnd)" suffix handleSendPayslip/handleSendAllPayslips
   // already stamp on every payslip_sent entry, matched against the current
@@ -2498,6 +2515,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // hourly treatment instead of silently falling through to a plain
   // office hourly row.
   const isTechRole = (emp: SupabaseEmployee) => TECHNICIAN_PAY_ROLES.has(normalizeRole(emp.role));
+
+  /** Can this employee have reimbursements / deductions? PH payroll + US Office staff; never technicians. */
+  const adjustmentsEnabledFor = (emp: SupabaseEmployee, isTechPortion = false) => payrollAdjustmentsEligible(emp, isTechPortion || isTechRole(emp));
+  /** This employee's adjustment lines for the picked period (empty when not eligible). */
+  const adjustmentsFor = (emp: SupabaseEmployee, isTechPortion = false): PayrollAdjustment[] =>
+    adjustmentsEnabledFor(emp, isTechPortion) ? adjustmentsByProfile.get(emp.id) ?? [] : [];
 
   // Suggested rate for Branch Rates' "Prefill from State Minimum Wage"
   // button — straight from the STATE_MIN_WAGE_2026 reference table. States
@@ -3354,7 +3377,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         // itself already straightAllHours for PH; see officeGrossPay above).
         overtime_pay: r.compensationType === "fixed" ? 0 : r.overtimeHours * r.hourlyRateUSD * (r.employee.country === "PH" ? 1 : 1.5),
         gross_pay: r.grossPayUSD,
-        net_pay: r.grossPayUSD, // simplified — no deductions model
+        // Reimbursements / deductions (migration 0386): net = gross + reimbursements − deductions;
+        // the lines themselves go in breakdown.adjustments for the payslip.
+        ...(() => {
+          const lines = adjustmentsFor(r.employee, r.isTechPortion);
+          const sums = sumPayrollAdjustments(lines);
+          return {
+            deductions: Math.round(sums.deductions * 100) / 100,
+            net_pay: Math.round((r.grossPayUSD + sums.net) * 100) / 100,
+            ...(lines.length ? { breakdown: { adjustments: lines.map((l) => ({ kind: l.kind, description: l.description, amount: l.amount })) } } : {}),
+          };
+        })(),
         currency: "USD",
         compensation_type: r.compensationType,
         annual_salary: r.compensationType === "fixed" ? r.annualSalary : null,
@@ -3612,10 +3645,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       generatedDate: new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
       dailyRows,
       grossPay: row.grossPayUSD,
-      // No deductions concept in this live-preview flow (unlike a finalized
-      // payroll_line_items row, which has its own stored net_pay) — gross
-      // and net are the same until a real run tracks that separately.
-      netPay: row.grossPayUSD,
+      // Net = gross + reimbursements − deductions (migration 0386); each
+      // line is listed on the payslip above the Grand Total.
+      netPay: row.grossPayUSD + sumPayrollAdjustments(adjustmentsFor(row.employee, row.isTechPortion)).net,
+      adjustments: adjustmentsFor(row.employee, row.isTechPortion).map((a) => ({ kind: a.kind, description: a.description, amount: a.amount })),
       email: row.employee.email || "—",
       hireDate: employeeInfoByProfileId.get(row.employee.id)?.hireDate || "—",
       workingHoursLabel,
@@ -5215,7 +5248,26 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 {rateLabel(row)}
                               </td>
                               <td className="px-3 py-2 text-right font-semibold text-green-300">
-                                {fmt(row.grossPayUSD)}
+                                {/* With adjustments the Net (below) is the payout, so it's the green one and gross is muted. */}
+                                <span className={adjustmentsFor(row.employee, row.isTechPortion).length ? "font-normal text-slate-400" : undefined}>
+                                  {fmt(row.grossPayUSD)}
+                                </span>
+                                {(() => {
+                                  const lines = adjustmentsFor(row.employee, row.isTechPortion);
+                                  if (!lines.length) return null;
+                                  const sums = sumPayrollAdjustments(lines);
+                                  return (
+                                    <div
+                                      className="text-[10px] font-normal leading-tight"
+                                      title={lines.map((l) => `${l.kind === "deduction" ? "−" : "+"}${fmt(l.amount)} ${l.description}`).join("\n")}
+                                    >
+                                      <span className={sums.net < 0 ? "text-red-300" : "text-emerald-300"}>
+                                        {sums.net < 0 ? "−" : "+"}{fmt(Math.abs(sums.net))} adj.
+                                      </span>
+                                      <span className="block text-xs font-bold text-green-300">Net {fmt(row.grossPayUSD + sums.net)}</span>
+                                    </div>
+                                  );
+                                })()}
                               </td>
                               <td className="px-3 py-2 text-right">
                                 <button
@@ -6632,6 +6684,38 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
       {detailEmployee && wizardStep === "detail" && (
         <EmployeePayrollDetailModal
+          key={detailEmployee.id}
+          employeeNav={(() => {
+            // Same order as the payroll table (departments, current filters).
+            const order: SupabaseEmployee[] = [];
+            const seen = new Set<string>();
+            for (const g of visibleRowsByDepartment) for (const r of g.rows) {
+              if (seen.has(r.employee.id)) continue;
+              seen.add(r.employee.id);
+              order.push(r.employee);
+            }
+            const i = order.findIndex((e) => e.id === detailEmployee.id);
+            if (i < 0 || order.length < 2) return undefined;
+            const go = (e: SupabaseEmployee) => { setDetailEmployee(e); setWizardStep("detail"); };
+            return {
+              position: i + 1,
+              total: order.length,
+              onPrev: i > 0 ? () => go(order[i - 1]) : undefined,
+              onNext: i < order.length - 1 ? () => go(order[i + 1]) : undefined,
+            };
+          })()}
+          adjustments={
+            adjustmentsEnabledFor(detailEmployee) && genStart && genEnd && genStart <= genEnd
+              ? {
+                  periodStart: genStart,
+                  periodEnd: genEnd,
+                  items: adjustmentsByProfile.get(detailEmployee.id) ?? [],
+                  grossPay: payrollRows.find((r) => r.employee.id === detailEmployee.id && !r.isTechPortion)?.grossPayUSD ?? null,
+                  createdByName: displayName || email || null,
+                  onChanged: loadAdjustments,
+                }
+              : undefined
+          }
           profileId={detailEmployee.id}
           employeeName={detailEmployee.full_name}
           department={detailEmployee.department ?? undefined}

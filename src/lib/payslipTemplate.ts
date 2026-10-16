@@ -61,6 +61,8 @@ export interface EmployeePayslipData {
   extraPay: number;
   /** Finance-entered note for this specific payslip — see migration 0111. */
   notes: string;
+  /** Reimbursements (+) / deductions (−) for this period (migration 0386) — listed above the Grand Total. */
+  adjustments?: { kind: "reimbursement" | "deduction"; description: string; amount: number }[];
   /**
    * True when a technician's Tech Activity Report breakdown is being
    * rendered as a second PDF page (see renderTechActivitySummaryPageHtml
@@ -307,7 +309,10 @@ export const PAYSLIP_STYLES = `
 /** The <body> markup only — see this file's header comment for why it's split from PAYSLIP_STYLES. */
 export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
   const currentDate = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
-  const grandTotal = employee.grossPay + employee.extraPay;
+  const adjustments = employee.adjustments ?? [];
+  const adjustmentsNet = adjustments.reduce((s, a) => s + (a.kind === "deduction" ? -a.amount : a.amount), 0);
+  const grandTotal = employee.grossPay + employee.extraPay + adjustmentsNet;
+  const escapeText = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
   return `
   <div class="container">
@@ -441,6 +446,15 @@ export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
         <div>Extra</div>
         <div class="amount">$${employee.extraPay.toFixed(2)}</div>
       </div>
+      ${adjustments
+        .map(
+          (a) => `
+      <div class="summary-row" style="border: none; grid-template-columns: 2fr 1fr;">
+        <div>${a.kind === "deduction" ? "Deduction" : "Reimbursement"}${a.description ? ` — ${escapeText(a.description)}` : ""}</div>
+        <div class="amount" style="color: ${a.kind === "deduction" ? "#b91c1c" : "#15803d"};">${a.kind === "deduction" ? "−" : "+"}$${a.amount.toFixed(2)}</div>
+      </div>`
+        )
+        .join("")}
 
       <div class="summary-row total" style="border: none; grid-template-columns: 2fr 1fr;">
         <div>GRAND TOTAL</div>

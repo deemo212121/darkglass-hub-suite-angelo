@@ -1,4 +1,6 @@
 import { getTrainingDates } from "@/lib/supabase/trainingDates";
+import { PayrollAdjustmentsSection } from "@/components/PayrollAdjustmentsSection";
+import type { PayrollAdjustment } from "@/lib/supabase/payrollAdjustments";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2, StickyNote, Download } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -90,6 +92,18 @@ interface Props {
   reviewPeriodEnd?: string;
   /** Sets the page's own Period (genStart/genEnd) to match whatever this modal's own rangeStart/rangeEnd currently show — an explicit, one-click fix so a wrong page period can be corrected without leaving this modal, without silently auto-syncing on every keystroke (which would shift the payroll period for every OTHER employee on the page too, not just the one being viewed here). */
   onSyncReviewPeriod?: (start: string, end: string) => void;
+  /** Prev / Next employee in the payroll table's order — "3 of 25" in the header. */
+  employeeNav?: { position: number; total: number; onPrev?: () => void; onNext?: () => void };
+  /** Reimbursements / deductions for the page's pay period (migration 0386) — PH payroll and US Office staff only; omitted for everyone else. */
+  adjustments?: {
+    periodStart: string;
+    periodEnd: string;
+    items: PayrollAdjustment[];
+    /** The payroll table's gross pay for this employee and period. */
+    grossPay: number | null;
+    createdByName?: string | null;
+    onChanged: () => void | Promise<void>;
+  };
 }
 
 function addDaysISO(dateStr: string, days: number): string {
@@ -214,6 +228,8 @@ export function EmployeePayrollDetailModal({
   reviewPeriodStart,
   reviewPeriodEnd,
   onSyncReviewPeriod,
+  employeeNav,
+  adjustments,
 }: Props) {
   // PH staff work out of one office, not deployed across US states/field
   // sites — no state-minimum-wage concept applies, meal breaks are unpaid
@@ -1239,9 +1255,36 @@ export function EmployeePayrollDetailModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-slate-950 rounded-t-xl">
-          <div>
-            <p className="font-semibold text-white">{employeeName}</p>
-            {department && <p className="text-xs text-slate-400">{department}</p>}
+          <div className="flex items-center gap-3">
+            {employeeNav && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={employeeNav.onPrev}
+                  disabled={!employeeNav.onPrev}
+                  title="Previous employee"
+                  className="inline-flex h-8 items-center rounded-lg border border-white/15 bg-white/5 px-2 text-xs font-semibold text-slate-200 hover:bg-white/10 disabled:opacity-30"
+                >
+                  ‹ Prev
+                </button>
+                <span className="px-1 text-xs tabular-nums text-slate-400">
+                  {employeeNav.position} of {employeeNav.total}
+                </span>
+                <button
+                  type="button"
+                  onClick={employeeNav.onNext}
+                  disabled={!employeeNav.onNext}
+                  title="Next employee"
+                  className="inline-flex h-8 items-center rounded-lg border border-white/15 bg-white/5 px-2 text-xs font-semibold text-slate-200 hover:bg-white/10 disabled:opacity-30"
+                >
+                  Next ›
+                </button>
+              </div>
+            )}
+            <div>
+              <p className="font-semibold text-white">{employeeName}</p>
+              {department && <p className="text-xs text-slate-400">{department}</p>}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -1536,6 +1579,19 @@ export function EmployeePayrollDetailModal({
             </div>
           )}
           </div>
+          )}
+
+          {/* Reimbursements / deductions (PH payroll + US Office staff) */}
+          {adjustments && (
+            <PayrollAdjustmentsSection
+              profileId={profileId}
+              periodStart={adjustments.periodStart}
+              periodEnd={adjustments.periodEnd}
+              items={adjustments.items}
+              grossPay={adjustments.grossPay}
+              createdByName={adjustments.createdByName}
+              onChanged={adjustments.onChanged}
+            />
           )}
 
           {/* Attendance table */}

@@ -43,6 +43,8 @@ export interface MyPayslipRow {
   compensationType: "hourly" | "fixed";
   /** Only set when compensationType is "fixed". */
   annualSalary: number | null;
+  /** Reimbursements / deductions saved with the run (payroll_line_items.breakdown.adjustments, migration 0386). */
+  adjustments: { kind: "reimbursement" | "deduction"; description: string; amount: number }[];
 }
 
 /** All payslips generated for this employee (profileId), newest first. */
@@ -50,7 +52,7 @@ export async function getMyPayslips(profileId: string): Promise<MyPayslipRow[]> 
   if (!profileId) return [];
   const { data: lineItems, error: liErr } = await supabase
     .from("payroll_line_items")
-    .select("payroll_run_id, hours_worked, overtime_hours, hourly_rate, regular_pay, overtime_pay, gross_pay, net_pay, currency, extra_pay, notes, compensation_type, annual_salary")
+    .select("payroll_run_id, hours_worked, overtime_hours, hourly_rate, regular_pay, overtime_pay, gross_pay, net_pay, currency, extra_pay, notes, compensation_type, annual_salary, breakdown")
     .eq("profile_id", profileId);
   if (liErr) {
     console.error("getMyPayslips error:", liErr.message);
@@ -108,6 +110,9 @@ export async function getMyPayslips(profileId: string): Promise<MyPayslipRow[]> 
         notes: li.notes ?? null,
         compensationType: li.compensation_type === "fixed" ? "fixed" : "hourly",
         annualSalary: li.annual_salary != null ? Number(li.annual_salary) || 0 : null,
+        adjustments: Array.isArray(li.breakdown?.adjustments)
+          ? li.breakdown.adjustments.map((a: any) => ({ kind: a.kind === "deduction" ? "deduction" : "reimbursement", description: String(a.description ?? ""), amount: Number(a.amount) || 0 }))
+          : [],
       };
     })
     .filter((r): r is MyPayslipRow => r !== null)
