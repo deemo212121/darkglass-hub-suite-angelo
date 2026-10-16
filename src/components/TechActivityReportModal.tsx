@@ -18,6 +18,7 @@ import {
   addTechCustomPayItem,
   updateTechCustomPayItem,
   deleteTechCustomPayItem,
+  looksLikeReimbursementLabel,
   upsertResolvedTechRepairRate,
   type TechRepairRate,
   type TechRedoTicket,
@@ -28,6 +29,7 @@ import {
 import { getCompanyEmployeeRequests, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { getMileageEntries, mileageEffectiveTotal } from "@/lib/supabase/mileage";
 import type { PayrollReviewAmounts } from "@/lib/supabase/payrollReviewBreakdowns";
+import { toast } from "sonner";
 
 interface Props {
   row: EmployeePayrollRow;
@@ -501,6 +503,20 @@ export function TechActivityReportModal({
         setAssistedTickets(assistedByTech.get(nameKey) ?? []);
         setSecondTechTickets(secondTechByTech.get(nameKey) ?? []);
         setCustomItems(custom);
+        // Existing lines whose label says reimbursement/deduction but are
+        // still Includable get corrected (see looksLikeReimbursementLabel).
+        const misflagged = custom.filter((i) => i.isWageIncludable && looksLikeReimbursementLabel(i.label));
+        if (misflagged.length > 0) {
+          void Promise.all(misflagged.map((i) => updateTechCustomPayItem(i.id, { isWageIncludable: false })))
+            .then(() => {
+              if (cancelled) return;
+              const ids = new Set(misflagged.map((i) => i.id));
+              setCustomItems((prev) => prev.map((i) => (ids.has(i.id) ? { ...i, isWageIncludable: false } : i)));
+              onCustomItemsChanged();
+              toast.info(`Switched ${misflagged.length} line${misflagged.length === 1 ? "" : "s"} to Reimbursement: ${misflagged.map((i) => i.label).join(", ")}`);
+            })
+            .catch((err) => console.error("Failed to correct reimbursement lines:", err));
+        }
         const totalByDate = new Map<string, number>();
         for (const e of mileageEntries) {
           if (e.deletedAt) continue;
@@ -603,6 +619,11 @@ export function TechActivityReportModal({
   }, [periodStart, periodEnd]);
   const weekLabel = (weekStart: string) => `Wk ${Number(weekStart.slice(5, 7))}/${Number(weekStart.slice(8, 10))}`;
   const handleCustomLineBlur = async (item: TechCustomPayItem, fields: { label?: string; value?: number; rate?: number; isWageIncludable?: boolean; workWeekStart?: string | null }) => {
+    // Typing a reimbursement/deduction label switches the line to
+    // Reimbursement (unless the type was picked in this same edit).
+    if (fields.label !== undefined && fields.isWageIncludable === undefined && item.isWageIncludable && looksLikeReimbursementLabel(fields.label)) {
+      fields = { ...fields, isWageIncludable: false };
+    }
     setSavingCustomId(item.id);
     try {
       await updateTechCustomPayItem(item.id, fields);
