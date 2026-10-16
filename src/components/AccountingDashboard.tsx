@@ -102,7 +102,7 @@ import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { perCutoffSalary } from "@/lib/supabase/salary";
 import { getPayrollReviewMarks, markPayrollReviewed, clearPayrollReviewMark, type PayrollReviewMark } from "@/lib/supabase/payrollReviewMarks";
-import { getPayrollAdjustmentsForPeriod, payrollAdjustmentsEligible, sumPayrollAdjustments, type PayrollAdjustment } from "@/lib/supabase/payrollAdjustments";
+import { getPayrollAdjustmentsForPeriod, payrollAdjustmentsEligible, resolveAdjustmentLines, sumPayrollAdjustments, type PayrollAdjustment } from "@/lib/supabase/payrollAdjustments";
 import { getHourlyOtOverrides, setHourlyOtOverride, clearHourlyOtOverride, type HourlyOtOverride } from "@/lib/supabase/payrollHourlyOtOverrides";
 import { useAuth } from "@/lib/auth";
 import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
@@ -3380,12 +3380,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         // Reimbursements / deductions (migration 0386): net = gross + reimbursements − deductions;
         // the lines themselves go in breakdown.adjustments for the payslip.
         ...(() => {
-          const lines = adjustmentsFor(r.employee, r.isTechPortion);
+          // Tax lines are worked out from this gross (gross × percent).
+          const lines = resolveAdjustmentLines(adjustmentsFor(r.employee, r.isTechPortion), r.grossPayUSD);
           const sums = sumPayrollAdjustments(lines);
           return {
-            deductions: Math.round(sums.deductions * 100) / 100,
+            deductions: Math.round((sums.deductions + sums.tax) * 100) / 100,
             net_pay: Math.round((r.grossPayUSD + sums.net) * 100) / 100,
-            ...(lines.length ? { breakdown: { adjustments: lines.map((l) => ({ kind: l.kind, description: l.description, amount: l.amount })) } } : {}),
+            ...(lines.length ? { breakdown: { adjustments: lines.map((l) => ({ kind: l.kind, description: l.description, amount: l.amount, percent: l.percent ?? null })) } } : {}),
           };
         })(),
         currency: "USD",
@@ -3647,8 +3648,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       grossPay: row.grossPayUSD,
       // Net = gross + reimbursements − deductions (migration 0386); each
       // line is listed on the payslip above the Grand Total.
-      netPay: row.grossPayUSD + sumPayrollAdjustments(adjustmentsFor(row.employee, row.isTechPortion)).net,
-      adjustments: adjustmentsFor(row.employee, row.isTechPortion).map((a) => ({ kind: a.kind, description: a.description, amount: a.amount })),
+      netPay: row.grossPayUSD + sumPayrollAdjustments(adjustmentsFor(row.employee, row.isTechPortion), row.grossPayUSD).net,
+      adjustments: resolveAdjustmentLines(adjustmentsFor(row.employee, row.isTechPortion), row.grossPayUSD).map((a) => ({ kind: a.kind, description: a.description, amount: a.amount, percent: a.percent })),
       email: row.employee.email || "—",
       hireDate: employeeInfoByProfileId.get(row.employee.id)?.hireDate || "—",
       workingHoursLabel,
@@ -5253,13 +5254,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                   {fmt(row.grossPayUSD)}
                                 </span>
                                 {(() => {
-                                  const lines = adjustmentsFor(row.employee, row.isTechPortion);
+                                  const lines = resolveAdjustmentLines(adjustmentsFor(row.employee, row.isTechPortion), row.grossPayUSD);
                                   if (!lines.length) return null;
                                   const sums = sumPayrollAdjustments(lines);
                                   return (
                                     <div
                                       className="text-[10px] font-normal leading-tight"
-                                      title={lines.map((l) => `${l.kind === "deduction" ? "−" : "+"}${fmt(l.amount)} ${l.description}`).join("\n")}
+                                      title={lines.map((l) => `${l.kind === "reimbursement" ? "+" : "−"}${fmt(l.amount)} ${l.kind === "tax" ? `Tax ${l.percent ?? 0}%` : ""}${l.description ? ` ${l.description}` : ""}`).join("\n")}
                                     >
                                       <span className={sums.net < 0 ? "text-red-300" : "text-emerald-300"}>
                                         {sums.net < 0 ? "−" : "+"}{fmt(Math.abs(sums.net))} adj.
