@@ -820,7 +820,9 @@ async function signCorrectionAsAccounting(correctionId: string, reviewerName: st
 export async function rejectCorrectionAsHr(
   c: Pick<
     TimecardCorrectionRow,
-    "id" | "profileId" | "workDate" | "managerId" | "status" | "originalCheckIn" | "originalCheckOut" | "originalMealStart" | "originalMealEnd" | "correctedMealStart" | "correctedMealEnd"
+    | "id" | "profileId" | "workDate" | "managerId" | "status"
+    | "originalCheckIn" | "originalCheckOut" | "originalMealStart" | "originalMealEnd"
+    | "correctedCheckIn" | "correctedCheckOut" | "correctedMealStart" | "correctedMealEnd"
   >,
   reviewerId: string,
   reviewerName: string,
@@ -830,9 +832,12 @@ export async function rejectCorrectionAsHr(
   await reviewCorrectionStage(c, "hr", "rejected", reviewerId, reviewerName, undefined, undefined, reason);
   if (!wasApproved) return;
 
+  // Undo only what this correction changed. A punch it didn't touch keeps
+  // what's on the timecard now — e.g. a Time Out punched after the request
+  // was sent (its "original" was still blank then) is never erased.
   const { data: existing } = await supabase
     .from("timecard_entries")
-    .select("meal_start, meal_end, notes")
+    .select("check_in, check_out, meal_start, meal_end, notes")
     .eq("profile_id", c.profileId)
     .eq("work_date", c.workDate)
     .maybeSingle();
@@ -841,8 +846,8 @@ export async function rejectCorrectionAsHr(
     {
       profile_id: c.profileId,
       work_date: c.workDate,
-      check_in: c.originalCheckIn || null,
-      check_out: c.originalCheckOut || null,
+      check_in: c.correctedCheckIn ? c.originalCheckIn || null : existing?.check_in ?? null,
+      check_out: c.correctedCheckOut ? c.originalCheckOut || null : existing?.check_out ?? null,
       meal_start: mealWasCorrected ? c.originalMealStart || null : existing?.meal_start ?? null,
       meal_end: mealWasCorrected ? c.originalMealEnd || null : existing?.meal_end ?? null,
       notes: existing?.notes ?? null,

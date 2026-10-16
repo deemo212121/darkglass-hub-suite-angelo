@@ -44,7 +44,7 @@ export interface MyPayslipRow {
   /** Only set when compensationType is "fixed". */
   annualSalary: number | null;
   /** Reimbursements / deductions saved with the run (payroll_line_items.breakdown.adjustments, migration 0393). */
-  adjustments: { kind: "reimbursement" | "deduction"; description: string; amount: number }[];
+  adjustments: { kind: "reimbursement" | "deduction" | "tax"; description: string; amount: number; percent?: number | null }[];
 }
 
 /** All payslips generated for this employee (profileId), newest first. */
@@ -111,7 +111,7 @@ export async function getMyPayslips(profileId: string): Promise<MyPayslipRow[]> 
         compensationType: li.compensation_type === "fixed" ? "fixed" : "hourly",
         annualSalary: li.annual_salary != null ? Number(li.annual_salary) || 0 : null,
         adjustments: Array.isArray(li.breakdown?.adjustments)
-          ? li.breakdown.adjustments.map((a: any) => ({ kind: a.kind === "deduction" ? "deduction" : "reimbursement", description: String(a.description ?? ""), amount: Number(a.amount) || 0 }))
+          ? li.breakdown.adjustments.map((a: any) => ({ kind: a.kind === "deduction" ? "deduction" : a.kind === "tax" ? "tax" : "reimbursement", description: String(a.description ?? ""), amount: Number(a.amount) || 0, percent: a.percent != null ? Number(a.percent) : null }))
           : [],
       };
     })
