@@ -9819,17 +9819,20 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
 
   const shiftMinutes = correctionShiftMinutes(correctedCheckIn, correctedCheckOut);
   const mealRequired = shiftMinutes !== null && shiftMinutes > CORRECTION_MEAL_REQUIRED_AFTER_MINUTES;
-  // Pre-fill the meal fields with the meal actually punched on the picked
-  // date (only while they're still blank), so the tech only adjusts what's
-  // wrong or fills in a meal they forgot to punch.
+  // Pre-fill all four fields with what's on the timecard for the picked
+  // date (Check In, Check Out, Meal Start, Meal End) — re-filled whenever
+  // the date changes — so nothing gets missed: the tech only changes what's
+  // wrong. A punch that isn't on the timecard stays blank.
   useEffect(() => {
     if (!profileId || !correctionDate) return;
     let cancelled = false;
     getEntryForDate(profileId, correctionDate)
       .then((e) => {
-        if (cancelled || !(e?.mealStart || e?.mealEnd)) return;
-        setCorrectedMealStart((prev) => prev || e?.mealStart || "");
-        setCorrectedMealEnd((prev) => prev || e?.mealEnd || "");
+        if (cancelled) return;
+        setCorrectedCheckIn(e?.checkIn || "");
+        setCorrectedCheckOut(e?.checkOut || "");
+        setCorrectedMealStart(e?.mealStart || "");
+        setCorrectedMealEnd(e?.mealEnd || "");
       })
       .catch(() => {});
     return () => { cancelled = true; };
