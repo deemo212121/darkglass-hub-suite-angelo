@@ -10,11 +10,13 @@ import {
   getCompanyExpenses,
   updateExpenseStatus,
   deleteExpense,
+  type ExpenseCategory,
   type ExpenseRow,
   type ExpenseStatus,
 } from "@/lib/supabase/expenses";
 import { localISODate, todayISO } from "@/lib/localDate";
-import { ExpenseFormModal, EXPENSE_CATEGORIES } from "@/components/ExpenseFormModal";
+import { ExpenseFormModal } from "@/components/ExpenseFormModal";
+import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { ReceiptLightbox, isPdfReceipt } from "@/components/ReceiptLightbox";
 import { getFlashTechTripReceipts } from "@/lib/supabase/flashTechTrips";
 
@@ -49,6 +51,7 @@ export function ExpenseTrackingPage({
   embedded,
   flashTechOnly,
   selfFiledOnly,
+  categoryOnly,
 }: {
   mod: ModuleDef;
   sub: SubModuleDef;
@@ -65,6 +68,8 @@ export function ExpenseTrackingPage({
    *  Accounting "Expenses" module's Employee Requests tab. Add Expense is
    *  hidden here: an expense Accounting files for someone isn't a request. */
   selfFiledOnly?: boolean;
+  /** Scopes the page to one category — the Expenses module's Hotel / Car Rental tabs. Add Expense starts on that category. */
+  categoryOnly?: ExpenseCategory;
 }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
@@ -75,11 +80,11 @@ export function ExpenseTrackingPage({
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
 
   const [search, setSearch] = useState("");
-  const [filterEmployee, setFilterEmployee] = useState("all");
-  const [filterCategory, setFilterCategory] = useState("all");
-  const [filterStatus, setFilterStatus] = useState("all");
-  /** "YYYY-MM" — Monthly summary: limits the cards and the list to that month. "" = all months. */
-  const [filterMonth, setFilterMonth] = useState("");
+  /** Date range (YYYY-MM-DD, inclusive) — limits the summary cards, the totals and the list. Blank = all dates. */
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  /** One funnel filter per column (TicketColumnFilter): column key → selected values; empty = no filter. */
+  const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
 
   // null = closed; { editing: null } = Add; { editing: row } = Edit.
   const [formState, setFormState] = useState<{ editing: ExpenseRow | null } | null>(null);
@@ -122,50 +127,67 @@ export function ExpenseTrackingPage({
   const scopedExpenses = useMemo(() => {
     if (flashTechOnly) return expenses.filter((e) => e.flashTechTripId);
     if (selfFiledOnly) return expenses.filter(isSelfFiledExpense);
+    if (categoryOnly) return expenses.filter((e) => e.category === categoryOnly);
     return expenses;
-  }, [expenses, flashTechOnly, selfFiledOnly]);
+  }, [expenses, flashTechOnly, selfFiledOnly, categoryOnly]);
 
-  // Category filter: the current categories, plus any old category still on rows (pre-0378).
-  const categoryOptions = useMemo(() => {
-    const extra = Array.from(new Set(scopedExpenses.map((e) => e.category).filter((c) => c && !EXPENSE_CATEGORIES.includes(c)))).sort();
-    return [...EXPENSE_CATEGORIES, ...extra];
-  }, [scopedExpenses]);
-
-  // Month filter applies to the summary cards and the list alike.
-  const monthExpenses = useMemo(
-    () => (filterMonth ? scopedExpenses.filter((e) => (e.expenseDate || "").startsWith(filterMonth)) : scopedExpenses),
-    [scopedExpenses, filterMonth]
+  // The date range applies to the summary cards, the totals and the list alike.
+  const rangeExpenses = useMemo(
+    () => scopedExpenses.filter((e) => (!dateFrom || (e.expenseDate || "") >= dateFrom) && (!dateTo || (e.expenseDate || "") <= dateTo)),
+    [scopedExpenses, dateFrom, dateTo]
   );
-
-  const filtered = useMemo(() => {
-    return monthExpenses.filter((e) => {
-      if (filterEmployee !== "all" && e.profileId !== filterEmployee) return false;
-      if (filterCategory !== "all" && e.category !== filterCategory) return false;
-      if (filterStatus !== "all" && e.status !== filterStatus) return false;
-      if (search) {
-        const blob = `${profileName(e.profileId)} ${e.createdBy ? profileName(e.createdBy) : ""} ${e.description}`.toLowerCase();
-        if (!blob.includes(search.toLowerCase())) return false;
-      }
-      return true;
-    });
-  }, [monthExpenses, filterEmployee, filterCategory, filterStatus, search, profileById]);
-
-  const totalPending = monthExpenses.filter((e) => e.status === "Pending");
-  const totalApproved = monthExpenses.filter((e) => e.status === "Approved");
-  const totalReimbursed = monthExpenses.filter((e) => e.status === "Reimbursed");
-  const sum = (rows: ExpenseRow[]) => rows.reduce((s, r) => s + r.amount, 0);
-  const monthStart = new Date();
-  monthStart.setDate(1);
-  const monthStartISO = localISODate(monthStart);
-  const thisMonthTotal = filterMonth ? sum(monthExpenses) : sum(scopedExpenses.filter((e) => e.expenseDate >= monthStartISO));
-  const monthLabel = filterMonth
-    ? new Date(`${filterMonth}-01T00:00:00`).toLocaleDateString(undefined, { month: "long", year: "numeric" })
-    : "This Month";
 
   const fmtMoney = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   /** "Approved / Rejected By" — who approved or rejected it; blank while Pending. */
   const reviewerName = (e: ExpenseRow) => (e.status !== "Pending" && e.reviewedBy ? profileName(e.reviewedBy) : "");
+  const receiptCount = (e: ExpenseRow) => (e.receiptUrl ? 1 : e.flashTechTripId ? tripReceipts.get(e.flashTechTripId)?.length ?? 0 : 0);
+
+  // Every column's value as its funnel filter sees it.
+  const COLUMNS: { key: string; label: string; value: (e: ExpenseRow) => string }[] = [
+    { key: "employee", label: "Employee", value: (e) => profileName(e.profileId) },
+    { key: "category", label: "Category", value: (e) => e.category || "" },
+    { key: "date", label: "Date", value: (e) => e.expenseDate || "" },
+    { key: "amount", label: "Amount", value: (e) => fmtMoney(e.amount) },
+    { key: "description", label: "Description", value: (e) => e.description || "" },
+    { key: "sentBy", label: "Sent By", value: (e) => (e.createdBy ? profileName(e.createdBy) : "") },
+    { key: "status", label: "Status", value: (e) => e.status },
+    { key: "reviewer", label: "Approved / Rejected By", value: (e) => reviewerName(e) },
+    { key: "receipt", label: "Receipt", value: (e) => (receiptCount(e) ? "Has receipt" : "No receipt") },
+  ];
+  const matchesSearch = (e: ExpenseRow) =>
+    !search || `${profileName(e.profileId)} ${e.createdBy ? profileName(e.createdBy) : ""} ${e.description}`.toLowerCase().includes(search.toLowerCase());
+  const matchesColumns = (e: ExpenseRow, skipKey?: string) =>
+    COLUMNS.every((c) => c.key === skipKey || !colFilters[c.key]?.size || colFilters[c.key].has(c.value(e)));
+
+  const filtered = rangeExpenses.filter((e) => matchesSearch(e) && matchesColumns(e));
+  /** A column's funnel options: its distinct values after every OTHER filter. */
+  const columnOptions = (key: string) => {
+    const col = COLUMNS.find((c) => c.key === key)!;
+    const list = Array.from(new Set(rangeExpenses.filter((e) => matchesSearch(e) && matchesColumns(e, key)).map(col.value)));
+    if (key === "date") return list.sort().reverse();
+    if (key === "amount") return list.sort((a, b) => Number(a.replace(/[$,]/g, "")) - Number(b.replace(/[$,]/g, "")));
+    return list.sort((a, b) => a.localeCompare(b));
+  };
+  const setColFilter = (key: string, next: Set<string>) => setColFilters((prev) => ({ ...prev, [key]: next }));
+  const anyColumnFilter = Object.values(colFilters).some((v) => v.size > 0);
+
+  // Summary cards + total follow the date range and the column filters.
+  const totalPending = filtered.filter((e) => e.status === "Pending");
+  const totalApproved = filtered.filter((e) => e.status === "Approved");
+  const totalReimbursed = filtered.filter((e) => e.status === "Reimbursed");
+  const sum = (rows: ExpenseRow[]) => rows.reduce((s, r) => s + r.amount, 0);
+  const fmtRangeDate = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  const rangeLabel =
+    dateFrom && dateTo ? `${fmtRangeDate(dateFrom)} – ${fmtRangeDate(dateTo)}` : dateFrom ? `From ${fmtRangeDate(dateFrom)}` : dateTo ? `Until ${fmtRangeDate(dateTo)}` : "All dates";
+  const setRangePreset = (preset: "thisMonth" | "lastMonth" | "all") => {
+    if (preset === "all") { setDateFrom(""); setDateTo(""); return; }
+    const now = new Date();
+    const first = new Date(now.getFullYear(), now.getMonth() - (preset === "lastMonth" ? 1 : 0), 1);
+    const last = new Date(first.getFullYear(), first.getMonth() + 1, 0);
+    setDateFrom(localISODate(first));
+    setDateTo(localISODate(last));
+  };
 
   const handleStatusChange = async (id: string, status: ExpenseStatus, rejectionReason?: string): Promise<boolean> => {
     setStatusChangingId(id);
@@ -260,6 +282,34 @@ export function ExpenseTrackingPage({
         )}
 
         <div className="space-y-6">
+          {/* Date range — drives the summary cards, the totals and the list below. */}
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-slate-900/50 px-4 py-3">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Date</span>
+            <input
+              type="date"
+              value={dateFrom}
+              max={dateTo || undefined}
+              onChange={(e) => setDateFrom(e.target.value)}
+              aria-label="From date"
+              className="rounded-lg border border-white/10 bg-slate-800/50 px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none [color-scheme:dark]"
+            />
+            <span className="text-xs text-slate-500">to</span>
+            <input
+              type="date"
+              value={dateTo}
+              min={dateFrom || undefined}
+              onChange={(e) => setDateTo(e.target.value)}
+              aria-label="To date"
+              className="rounded-lg border border-white/10 bg-slate-800/50 px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none [color-scheme:dark]"
+            />
+            <div className="flex gap-1">
+              <button type="button" onClick={() => setRangePreset("thisMonth")} className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-slate-700">This month</button>
+              <button type="button" onClick={() => setRangePreset("lastMonth")} className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-slate-700">Last month</button>
+              <button type="button" onClick={() => setRangePreset("all")} className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-slate-700">All dates</button>
+            </div>
+            <span className="ml-auto text-xs text-slate-400">Showing: <span className="font-semibold text-white">{rangeLabel}</span></span>
+          </div>
+
           {/* KPI Cards */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
@@ -295,9 +345,9 @@ export function ExpenseTrackingPage({
             <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-slate-400 uppercase">{monthLabel}</p>
-                  <p className="text-2xl font-bold text-white mt-2">{loading ? "…" : fmtMoney(thisMonthTotal)}</p>
-                  <p className="text-xs text-slate-500 mt-1">all statuses</p>
+                  <p className="text-xs text-slate-400 uppercase">Total</p>
+                  <p className="text-2xl font-bold text-white mt-2">{loading ? "…" : fmtMoney(sum(filtered))}</p>
+                  <p className="text-xs text-slate-500 mt-1">{filtered.length} record{filtered.length === 1 ? "" : "s"} · {rangeLabel}</p>
                 </div>
                 <DollarSign className="h-8 w-8 text-purple-400 opacity-50" />
               </div>
@@ -306,43 +356,19 @@ export function ExpenseTrackingPage({
 
           {/* Filters */}
           <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-            <div className="grid gap-3 md:grid-cols-5">
+            <div className="flex flex-wrap items-center gap-2">
               <input
                 type="text"
                 placeholder="Search employee, sender or description..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none"
+                className="min-w-[260px] flex-1 bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none"
               />
-              <select value={filterEmployee} onChange={(e) => setFilterEmployee(e.target.value)} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none">
-                <option value="all">All Employees</option>
-                {profiles.filter((p) => p.is_active).map((p) => <option key={p.id} value={p.id}>{p.display_name || p.email}</option>)}
-              </select>
-              <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none">
-                <option value="all">All Categories</option>
-                {categoryOptions.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-              <div className="flex gap-1">
-                <input
-                  type="month"
-                  value={filterMonth}
-                  onChange={(e) => setFilterMonth(e.target.value)}
-                  title="Monthly summary — limits the cards and the list to this month"
-                  className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none [color-scheme:dark]"
-                />
-                {filterMonth && (
-                  <button type="button" onClick={() => setFilterMonth("")} className="shrink-0 rounded-lg bg-slate-800 px-2 text-xs text-slate-300 hover:bg-slate-700" title="All months">
-                    All
-                  </button>
-                )}
-              </div>
-              <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none">
-                <option value="all">All Statuses</option>
-                <option value="Pending">Pending</option>
-                <option value="Approved">Approved</option>
-                <option value="Reimbursed">Reimbursed</option>
-                <option value="Rejected">Rejected</option>
-              </select>
+              {anyColumnFilter && (
+                <button type="button" onClick={() => setColFilters({})} className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700">
+                  Clear column filters
+                </button>
+              )}
             </div>
             <div className="flex justify-end gap-2 mt-3">
               <button onClick={handleDownload} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm font-semibold transition inline-flex items-center gap-2">
@@ -362,15 +388,19 @@ export function ExpenseTrackingPage({
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-white/10">
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Employee</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Category</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Date</th>
-                  <th className="px-3 py-3 text-right text-xs font-semibold text-slate-400 uppercase">Amount</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Description</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Sent By</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Approved / Rejected By</th>
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Receipt</th>
+                  {COLUMNS.map((c) => (
+                    <th key={c.key} className={`px-3 py-3 text-xs font-semibold text-slate-400 uppercase ${c.key === "amount" ? "text-right" : "text-left"}`}>
+                      <span className={`inline-flex items-center ${c.key === "amount" ? "justify-end" : ""}`}>
+                        {c.label}
+                        <TicketColumnFilter
+                          options={columnOptions(c.key)}
+                          selected={colFilters[c.key] ?? new Set()}
+                          onChange={(next) => setColFilter(c.key, next)}
+                          label={`Filter by ${c.label}`}
+                        />
+                      </span>
+                    </th>
+                  ))}
                   <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Actions</th>
                 </tr>
               </thead>
@@ -513,6 +543,7 @@ export function ExpenseTrackingPage({
           profiles={profiles}
           createdBy={myProfileId}
           companyId={companyId}
+          defaultCategory={categoryOnly}
           onClose={() => setFormState(null)}
           onSaved={async () => setExpenses(await getCompanyExpenses())}
         />
