@@ -47,6 +47,19 @@ export interface MyPayslipRow {
   adjustments: { kind: "reimbursement" | "deduction" | "tax"; description: string; amount: number; percent?: number | null }[];
 }
 
+/**
+ * A payslip's reimbursement / deduction / tax lines as text, the same way
+ * the payslip PDF lists them — "+ $60.00 Reimbursement — Mileage",
+ * "− $35.10 Tax (13%)". Used by the mobile app's payslip pop-ups.
+ */
+export function payslipAdjustmentTextLines(p: Pick<MyPayslipRow, "adjustments">): string[] {
+  return p.adjustments.map((a) => {
+    const sign = a.kind === "reimbursement" ? "+" : "−";
+    const what = a.kind === "tax" ? `Tax${a.percent != null ? ` (${a.percent}%)` : ""}` : a.kind === "deduction" ? "Deduction" : "Reimbursement";
+    return `${sign} $${a.amount.toFixed(2)} ${what}${a.description ? ` — ${a.description}` : ""}`;
+  });
+}
+
 /** All payslips generated for this employee (profileId), newest first. */
 export async function getMyPayslips(profileId: string): Promise<MyPayslipRow[]> {
   if (!profileId) return [];
