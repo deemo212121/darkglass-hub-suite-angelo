@@ -1003,6 +1003,20 @@ function mapCustomPayItem(r: any): TechCustomPayItem {
   };
 }
 
+/**
+ * A custom line whose label says it's a reimbursement or a deduction —
+ * mileage, reimbursements, deductions, insurance / pre-tax, Mobile Device,
+ * Cx Check, Lost Part, hotel. Those aren't wages, so they must be
+ * "Reimbursement" (not Includable): an Includable mileage line inflates the
+ * weekly OT rate and gets absorbed by a salary guarantee (Alexxis Henry
+ * 9/27–10/10: $1,175.13 of mileage counted as earnings). Mileage *bonuses*
+ * ("Mileage >200") and Flash Tech Allowance are commission and don't match.
+ */
+export function looksLikeReimbursementLabel(label: string): boolean {
+  if (/mileage\s*>/i.test(label)) return false;
+  return /mileage|reimburs|deduct|insur|pre-?tax|mobile device|cx check|lost part|hotel/i.test(label);
+}
+
 /** All custom pay lines for one technician's period (RLS-scoped), in display order. */
 export async function getTechCustomPayItems(
   profileId: string,

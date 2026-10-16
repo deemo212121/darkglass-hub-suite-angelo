@@ -2975,8 +2975,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // override saved back when this technician was still hourly stays
     // stuck applying its old (now meaningless) dollar amount on top of it.
     // Fixed Salary always wins here, same as it already does for officeGrossPay.
+    //
+    // A technician on Fixed Salary gets the HIGHER of the salary or their
+    // commission (includable pay), same as Finance's workbook for salaried
+    // techs — the salary isn't paid on top of commission. Commission is
+    // still paid through its own lines, so this pays the rest of the salary.
+    // (With no hourly rate on file their hours can't be priced; add an
+    // Hourly rate + keep the Fixed Salary entry for the full workbook check
+    // of hours + OT + commission against the salary.)
     const techHourlyPay = isFixed && annualSalary
-      ? perCutoffSalary(annualSalary)
+      ? (isTechRole(emp) ? Math.max(perCutoffSalary(annualSalary) - techIncludablePay, 0) : perCutoffSalary(annualSalary))
       : hourlyOtOverrides.get(emp.id)?.amount ?? techHourlyPayCompanyOnly;
     // Extra 0.5x bonus for hours actually worked on a recognized company
     // holiday — see holidayPremiumFor above. Paid on top of techHourlyPay
@@ -3029,6 +3037,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // of the already-topped-up target — a flat overpayment equal to the
     // holiday premium any time the guarantee triggers for a technician who
     // also worked a recognized holiday.
+    // Straight wage + OT premium + commission (includable) + holiday premium
+    // all count toward the guaranteed salary — Finance's payroll workbook
+    // ("Earnings before reimbursements", confirmed 2026-10-16 on Daven Hodge:
+    // $2,574.41 vs $4,615.38). Reimbursements are paid on top.
     const techEarnedBeforeReimbursements = techHourlyPayCompanyOnly + techIncludablePay + techHolidayPremium;
     const techGuaranteedSalaryTarget = guaranteedAnnualSalary ? perCutoffSalary(guaranteedAnnualSalary) : 0;
     const techGuaranteedSalaryMatch = guaranteedAnnualSalary
