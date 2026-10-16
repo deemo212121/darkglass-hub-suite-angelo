@@ -1184,6 +1184,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
       totalDays: offDays + ptoUsed,
       extraPay: selectedPayslip.extraPay,
       notes: selectedPayslip.notes || "",
+      adjustments: selectedPayslip.adjustments,
       isUS,
     };
   })() : null;
