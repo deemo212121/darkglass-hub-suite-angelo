@@ -426,13 +426,8 @@ export function formatShift(minutes: number): string {
 export function validateCorrectionTimes(t: { checkIn: string; checkOut: string; mealStart: string; mealEnd: string }): string | null {
   const hasMealStart = Boolean(t.mealStart);
   const hasMealEnd = Boolean(t.mealEnd);
-  // Check In and Check Out are always required; the meal break too once the shift is over 6 hours (below).
-  if (!t.checkIn || !t.checkOut) {
-    return !t.checkIn && !t.checkOut
-      ? "Corrected Check In and Corrected Check Out are both required."
-      : !t.checkIn
-        ? "Corrected Check In is required."
-        : "Corrected Check Out is required.";
+  if (!t.checkIn && !t.checkOut && !hasMealStart && !hasMealEnd) {
+    return "Enter at least one corrected time (Check In, Check Out, or the meal break).";
   }
   const shift = t.checkIn && t.checkOut ? correctionShiftMinutes(t.checkIn, t.checkOut) : null;
   if (t.checkIn && t.checkOut && shift === null) {
