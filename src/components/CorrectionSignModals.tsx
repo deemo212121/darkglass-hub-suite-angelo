@@ -24,6 +24,7 @@ import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { reviewCorrectionStage, signCorrectionHrPaperwork, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { buildCorrectionManagerSignaturePdf, buildCorrectionHrSignaturePdf } from "@/lib/timecardCorrectionPdf";
 import { todayISO } from "@/lib/localDate";
+import { logAppError } from "@/lib/appErrorLog";
 
 /**
  * Deliberately narrower than the full ProfileRow — some callers (e.g.
@@ -90,6 +91,8 @@ export function CorrectionManagerSignModal({
 
   const handleSubmit = async () => {
     if (!reviewerId || !companyId) { setError("Missing your profile/company — try again in a moment."); return; }
+    const managerComments = comments.trim();
+    if (!managerComments) { setError("Please add your manager comments first."); return; }
     if (!sigPad.hasContent()) { setError("Please add your signature first."); return; }
     const dataUrl = sigPad.toDataURL();
     if (!dataUrl) { setError("Please add your signature first."); return; }
@@ -98,13 +101,14 @@ export function CorrectionManagerSignModal({
     try {
       const employeeInfo = employeeInfoFor(correction, profiles);
       const { pdfUrl, managerSignatureUrl } = await buildCorrectionManagerSignaturePdf({
-        correction, companyId, employeeInfo, managerName: reviewerName, managerComments: comments, managerSignatureDataUrl: dataUrl,
+        correction, companyId, employeeInfo, managerName: reviewerName, managerComments, managerSignatureDataUrl: dataUrl,
       });
       await reviewCorrectionStage(correction, "manager", "approved", reviewerId, reviewerName, correctedOverride, {
-        url: managerSignatureUrl, name: reviewerName, comments, pdfUrl,
+        url: managerSignatureUrl, name: reviewerName, comments: managerComments, pdfUrl,
       });
       onSigned();
     } catch (err) {
+      logAppError("signing", "Signing Time Correction exception report (Manager)", err);
       setError(err instanceof Error ? err.message : "Failed to submit signature.");
     } finally {
       setSubmitting(false);
@@ -121,8 +125,10 @@ export function CorrectionManagerSignModal({
         <p className="text-xs text-slate-400 mb-3">Signing approves this correction as the manager stage.</p>
         <div className="space-y-3 mb-4">
           <div>
-            <label className="block text-xs text-slate-400 uppercase mb-1">Manager Comments</label>
-            <textarea value={comments} onChange={(e) => setComments(e.target.value)} rows={3} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none resize-none" />
+            <label className="block text-xs text-slate-400 uppercase mb-1">
+              Manager Comments <span className="text-red-400 normal-case">* required</span>
+            </label>
+            <textarea value={comments} onChange={(e) => { setComments(e.target.value); if (error && e.target.value.trim()) setError(null); }} rows={3} placeholder="Why are you approving this correction?" className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none resize-none" />
           </div>
           <div>
             <label className="block text-xs text-slate-400 uppercase mb-2">Your Signature</label>
@@ -146,12 +152,14 @@ export function CorrectionManagerSignModal({
 export function CorrectionHrSignModal({ correction, companyId, profiles, reviewerId, reviewerName, onClose, onSigned, finalize }: SignModalBaseProps) {
   const [receivedDate, setReceivedDate] = useState(todayISO());
   const [actionStatus, setActionStatus] = useState<"approved" | "additional_review_required">("approved");
+  const [hrNotes, setHrNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sigPad = useSignaturePad({ width: 400, height: 110, defaultName: reviewerName });
 
   const handleSubmit = async () => {
     if (!reviewerId || !companyId) { setError("Missing your profile/company — try again in a moment."); return; }
+    if (!hrNotes.trim()) { setError("Please add your HR notes first."); return; }
     if (!sigPad.hasContent()) { setError("Please add your signature first."); return; }
     const dataUrl = sigPad.toDataURL();
     if (!dataUrl) { setError("Please add your signature first."); return; }
@@ -162,7 +170,7 @@ export function CorrectionHrSignModal({ correction, companyId, profiles, reviewe
       const { pdfUrl, hrSignatureUrl } = await buildCorrectionHrSignaturePdf({
         correction, companyId, employeeInfo, hrReviewerName: reviewerName, hrReceivedDate: receivedDate, hrActionStatus: actionStatus, hrSignatureDataUrl: dataUrl,
       });
-      await signCorrectionHrPaperwork(correction.id, reviewerId, reviewerName, { url: hrSignatureUrl, name: reviewerName }, receivedDate, actionStatus, pdfUrl);
+      await signCorrectionHrPaperwork(correction.id, reviewerId, reviewerName, { url: hrSignatureUrl, name: reviewerName }, receivedDate, actionStatus, pdfUrl, hrNotes.trim());
       // Signing the paperwork as "Approved" also casts the HR quorum vote
       // (if nobody already has) — this is now the ONLY way to approve as HR
       // on an exception-report row; the plain one-click "Approve (HR)"
@@ -170,10 +178,11 @@ export function CorrectionHrSignModal({ correction, companyId, profiles, reviewe
       // without this signature. "Additional Review Required" intentionally
       // does NOT vote — the request stays exactly as undecided as it was.
       if (actionStatus === "approved" && correction.hrStatus === "pending") {
-        await reviewCorrectionStage(correction, "hr", "approved", reviewerId, reviewerName);
+        await reviewCorrectionStage(correction, "hr", "approved", reviewerId, reviewerName, undefined, undefined, hrNotes.trim());
       }
       onSigned();
     } catch (err) {
+      logAppError("signing", "Signing Time Correction exception report (HR)", err);
       setError(err instanceof Error ? err.message : "Failed to submit signature.");
     } finally {
       setSubmitting(false);
@@ -209,6 +218,12 @@ export function CorrectionHrSignModal({ correction, companyId, profiles, reviewe
             {actionStatus === "approved" && correction.hrStatus === "pending" && (
               <p className="text-[11px] text-slate-500 mt-1.5">Signing as Approved also casts your HR approval on this request.</p>
             )}
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 uppercase mb-1">
+              HR Notes <span className="text-red-400 normal-case">* required</span>
+            </label>
+            <textarea value={hrNotes} onChange={(e) => { setHrNotes(e.target.value); if (error && e.target.value.trim()) setError(null); }} rows={3} placeholder="e.g. Proof received and verified." className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none resize-none" />
           </div>
           <div>
             <label className="block text-xs text-slate-400 uppercase mb-2">Your Signature</label>

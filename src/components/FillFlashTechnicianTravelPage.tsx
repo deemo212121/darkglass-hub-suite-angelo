@@ -1,25 +1,20 @@
 /**
- * Fill Flash Technician Travel & Out-of-State Policy — opened from the
- * deep link a Team Messenger message sends (see ReportHRDaily.tsx's
- * "Flash Technician Travel" tab "Send Request" flow). Same architecture as
- * FillMileageFuelPage.tsx: renders the REAL official PDF's pages to
- * canvases via pdf.js, with an input overlay at each blank's own
- * coordinates — no redrawn lookalike. Submitting draws the collected
- * values directly onto that same real PDF via fillFlashTechnicianTravelPdf
- * (this PDF has no AcroForm fields either) and sends the result back to HR.
+ * Fill the Flash travel form — opened from the deep link a Team Messenger
+ * message sends (see ReportHRDaily.tsx's Flash travel tab "Send Request"
+ * flow). Same architecture as FillMileageFuelPage.tsx: renders the REAL
+ * official PDF's pages to canvases via pdf.js, with an overlay at each
+ * blank's own coordinates — no redrawn lookalike. Submitting draws the
+ * collected values directly onto that same real PDF via
+ * fillFlashTechnicianTravelPdf (no AcroForm fields) and sends it back to HR.
  *
- * Simpler than most of this family: the source document collects no name/
- * branch/etc. anywhere — just a plain acknowledgment paragraph followed by
- * the signature block on the last page — so this page only needs a
- * signature pad and a date, both there. The "Employer Representative
- * Signature" line lives right underneath on that same page, completed
- * separately afterward by HR inside ReportHRDaily.tsx's "Complete Employer
- * Signature" dialog — shown here read-only (the blank PDF page underneath,
- * no overlay).
- *
- * This source PDF is A4 (595.56 x 842.04pt), not the US Letter size most
- * of this app's other HR PDFs use — PAGE_WIDTH/PAGE_HEIGHT below reflect
- * that; don't copy the 612x792 constants from a Letter-sized sibling.
+ * Two documents, by form_data.templateVersion (see flashTechnicianTravelPdfFill.ts):
+ *   - Version 2, "Flash Tech Travel & Expense Policy Agreement" (every
+ *     unsigned document is signed in this one): printed name, Employee ID
+ *     (pre-filled from the profile's technician ID, editable), signature and
+ *     date. No employer line, so it's marked complete as soon as it's signed.
+ *   - Version 1, "Flash Technician Travel & Out-of-State Policy" (A4): only
+ *     ever shown here already signed; its employer signature is added
+ *     separately by HR.
  */
 import { InlinePdfLink } from "@/components/InlinePdfViewer";
 import { useEffect, useRef, useState } from "react";
@@ -29,9 +24,9 @@ import { AppHeader } from "@/components/Header";
 import { useAuth } from "@/lib/auth";
 import { FillFormSignInRequired } from "@/components/FillFormSignInRequired";
 import { getMyProfileId } from "@/lib/supabase/users";
-import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
+import { confirmSignableDocument, getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
 import { uploadSignableDocumentSignature, uploadFlashTechnicianTravelForm } from "@/lib/firebase/storage";
-import { fillFlashTechnicianTravelPdf, loadBlankFlashTechnicianTravelBytes } from "@/lib/flashTechnicianTravelPdfFill";
+import { fillFlashTechnicianTravelPdf, flashTravelLayout, loadBlankFlashTechnicianTravelBytes, FLASH_TRAVEL_CURRENT_VERSION, FLASH_TRAVEL_TITLE, FLASH_V2_WORDING_REVISION } from "@/lib/flashTechnicianTravelPdfFill";
 import type { FlashTechnicianTravelFormData } from "@/lib/flashTechnicianTravelFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
@@ -45,18 +40,7 @@ interface Props {
   docId: string;
 }
 
-const PAGE_WIDTH = 595.56;
-const PAGE_HEIGHT = 842.04;
-
-// Field rectangles (PDF user-space units, origin bottom-left), calibrated
-// against src/assets/Flash Technician Travel & Out-of-State Policy 1.pdf
-// via pdfjs-dist text-item positions + pdf-lib Helvetica width metrics —
-// see flashTechnicianTravelPdfFill.ts's header comment. Both signature
-// lines live on the last page (index 2 / page 3).
-const PAGE3_RECT = {
-  signature: { x: 183, y: 716, w: 200, h: 26 },
-  dateSigned: { x: 424, y: 716, w: 90, h: 14 },
-} as const;
+const OLD_TITLE = "Flash Technician Travel & Out-of-State Policy";
 
 const fmtDateSignedDisplay = (d: Date) => d.toLocaleDateString("en-US");
 
@@ -85,6 +69,10 @@ export function FillFlashTechnicianTravelPage({ docId }: Props) {
   const pageCanvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
 
   const [form, setForm] = useState<FlashTechnicianTravelFormData>({ ...BLANK_FORM });
+  const version = form.templateVersion ?? 1;
+  const isV2 = version >= 2;
+  const layout = flashTravelLayout(version);
+  const title = isV2 ? FLASH_TRAVEL_TITLE : OLD_TITLE;
 
   const sigPad = useSignaturePad({ width: 440, height: 100 });
 
@@ -103,7 +91,14 @@ export function FillFlashTechnicianTravelPage({ docId }: Props) {
         } else {
           setDoc(document);
           const existing = document.formData as Partial<FlashTechnicianTravelFormData>;
-          setForm((prev) => ({ ...prev, ...existing }));
+          // Not signed yet: signed in the current agreement. Already signed:
+          // keep the version it was signed in.
+          const unsigned = document.status === "pending_signature" && document.recipientSlot === "employee";
+          setForm((prev) => ({
+            ...prev,
+            ...existing,
+            ...(unsigned ? { templateVersion: FLASH_TRAVEL_CURRENT_VERSION } : {}),
+          }));
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load document.");
@@ -119,7 +114,7 @@ export function FillFlashTechnicianTravelPage({ docId }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const [pdfjsLib, bytes] = await Promise.all([import("pdfjs-dist/legacy/build/pdf.mjs"), loadBlankFlashTechnicianTravelBytes()]);
+        const [pdfjsLib, bytes] = await Promise.all([import("pdfjs-dist/legacy/build/pdf.mjs"), loadBlankFlashTechnicianTravelBytes(version)]);
         pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
         const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
         if (cancelled) return;
@@ -130,7 +125,7 @@ export function FillFlashTechnicianTravelPage({ docId }: Props) {
       }
     })();
     return () => { cancelled = true; };
-  }, [loading, error, submitted]);
+  }, [loading, error, submitted, version]);
 
   useEffect(() => {
     if (!numPages || !pdfDocRef.current) return;
@@ -180,22 +175,33 @@ export function FillFlashTechnicianTravelPage({ docId }: Props) {
       const sigBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, "employee", dataUrl);
       const signedAt = new Date().toISOString();
-      const finalData: FlashTechnicianTravelFormData = { ...form, employeeName, employeeDateSigned: signedAt, employeeSignatureDataUrl: dataUrl };
+      const finalData: FlashTechnicianTravelFormData = {
+        ...form,
+        employeeName,
+        employeeDateSigned: signedAt,
+        employeeSignatureDataUrl: dataUrl,
+        // The v2 wording they're signing (see FLASH_V2_WORDING_REVISION).
+        ...(isV2 ? { wordingRevision: FLASH_V2_WORDING_REVISION } : {}),
+      };
       const entry = { name: employeeName, url: signatureUrl, signedAt };
 
       const pdfBytes = await fillFlashTechnicianTravelPdf(finalData, sigBytes);
       const pdfUrl = await uploadFlashTechnicianTravelForm(companyId, employeeName, new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
 
       await signDocument(doc.id, "employee", entry, pdfUrl, finalData as unknown as Record<string, any>);
+      // The agreement has no employer line — signing it completes it.
+      if (isV2) await confirmSignableDocument(doc.id, null);
 
+      const filename = `${title} - ${employeeName}.pdf`;
       if (doc.createdBy) {
         const thread = await getOrCreateDmThread(myProfileId, doc.createdBy);
-        const filename = `Flash Technician Travel & Out-of-State Policy - ${employeeName}.pdf`;
         await sendMessage({
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "Employee",
-          body: `📄 Flash Technician Travel & Out-of-State Policy for ${employeeName} has been signed, and is ready for the employer/representative signature: [${filename}](${pdfUrl})`,
+          body: isV2
+            ? `📄 ${title} for ${employeeName} has been signed: [${filename}](${pdfUrl})`
+            : `📄 ${title} for ${employeeName} has been signed, and is ready for the employer/representative signature: [${filename}](${pdfUrl})`,
         });
       }
 
@@ -203,11 +209,16 @@ export function FillFlashTechnicianTravelPage({ docId }: Props) {
         .then(({ taxForms }) => {
           if (!taxForms) return;
           const excludeIds = doc.createdBy ? [doc.createdBy] : [];
-          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📄 Flash Technician Travel & Out-of-State Policy for ${employeeName} has been signed — the employer/representative signature is ready to be added.`);
+          void notifyHrRoleUsers(
+            myProfileId,
+            displayName || "Employee",
+            excludeIds,
+            isV2 ? `📄 ${title} for ${employeeName} has been signed.` : `📄 ${title} for ${employeeName} has been signed — the employer/representative signature is ready to be added.`
+          );
         })
         .catch((err) => console.error("[flash-technician-travel] hr notify check failed:", err));
 
-      setDoc({ ...doc, status: "signed", pdfUrl, formData: finalData as unknown as Record<string, any>, signatures: { employee: entry }, signedAt });
+      setDoc({ ...doc, status: isV2 ? "confirmed" : "signed", pdfUrl, formData: finalData as unknown as Record<string, any>, signatures: { employee: entry }, signedAt });
       void logActivity({ action: "flash_technician_travel_signed", targetType: "employee", targetLabel: employeeName });
       setSubmitted(true);
     } catch (err) {
@@ -223,7 +234,7 @@ export function FillFlashTechnicianTravelPage({ docId }: Props) {
   const overlayStyle = (r: { x: number; y: number; w: number; h: number }): React.CSSProperties => ({
     position: "absolute",
     left: r.x * scale,
-    top: (PAGE_HEIGHT - r.y - r.h) * scale,
+    top: (layout.pageHeight - r.y - r.h) * scale,
     width: r.w * scale,
     height: r.h * scale,
     fontSize: `${9 * scale}px`,
@@ -250,20 +261,21 @@ export function FillFlashTechnicianTravelPage({ docId }: Props) {
         ) : submitted || doc.status === "signed" || doc.status === "confirmed" ? (
           <div className="panel p-6 text-center">
             <p className="text-sm font-semibold mb-2">✅ Submitted{submitted ? " and sent back to HR" : ""}.</p>
-            <p className="text-xs text-muted-foreground mb-2">HR will add the employer/representative signature separately.</p>
+            {!isV2 && <p className="text-xs text-muted-foreground mb-2">HR will add the employer/representative signature separately.</p>}
             {doc.pdfUrl && (
               <InlinePdfLink url={doc.pdfUrl} label="View the completed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
             )}
           </div>
         ) : (
           <div className="panel p-4">
+            <h1 className="text-lg font-bold mb-1">{title}</h1>
             <p className="text-xs text-muted-foreground mb-3">
-              Read the Flash Technician Travel & Out-of-State Policy below, add your signature at the bottom, then submit.
+              Read the agreement below{isV2 ? ", check your Employee ID" : ""}, add your signature at the bottom, then submit.
             </p>
 
             <div className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
               {Array.from({ length: numPages || 1 }, (_, i) => i + 1).map((pageNum) => (
-                <div key={pageNum} className="relative bg-white shadow-lg" style={{ width: PAGE_WIDTH * scale, height: PAGE_HEIGHT * scale }}>
+                <div key={pageNum} className="relative bg-white shadow-lg" style={{ width: layout.pageWidth * scale, height: layout.pageHeight * scale }}>
                   <canvas ref={(el) => { pageCanvasRefs.current[pageNum - 1] = el; }} className="absolute inset-0" />
                   {pageLoading && (
                     <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-muted-foreground gap-2">
@@ -272,19 +284,23 @@ export function FillFlashTechnicianTravelPage({ docId }: Props) {
                   )}
 
                   {!pageLoading && pageNum === numPages && (
-                    <div style={overlayStyle(PAGE3_RECT.dateSigned)} className="flex items-center font-bold text-[#00008B]">
-                      {fmtDateSignedDisplay(new Date())}
-                    </div>
+                    <>
+                      {isV2 && layout.rects.name && (
+                        <div style={overlayStyle(layout.rects.name)} className="flex items-center font-bold text-[#00008B]">{displayName || doc.recipientName || ""}</div>
+                      )}
+                      <div style={overlayStyle(layout.rects.dateSigned)} className="flex items-center font-bold text-[#00008B]">
+                        {fmtDateSignedDisplay(new Date())}
+                      </div>
+                    </>
                   )}
                 </div>
               ))}
             </div>
 
             {/* Signed at full size here (not squeezed into the printed
-                blank's tiny 200x26pt line) — fillFlashTechnicianTravelPdf
-                places the captured image into PAGE3_RECT.signature on the
-                real PDF regardless of how large it was drawn on screen, so
-                this is purely a "make it easy to actually sign" change. */}
+                blank's small signature line) — fillFlashTechnicianTravelPdf
+                places the captured image into the layout's signature box on
+                the real PDF regardless of how large it was drawn on screen. */}
             <div className="mt-3">
               <label className="block text-xs font-semibold text-muted-foreground mb-1">Your Signature</label>
               <canvas

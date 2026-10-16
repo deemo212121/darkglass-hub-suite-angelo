@@ -1,9 +1,9 @@
 /**
- * Fill W-4R â opened from the deep link a Team Messenger message sends (see
+ * Fill W-4R — opened from the deep link a Team Messenger message sends (see
  * ReportHRDaily.tsx's "W-8/W-9/W-4/W-4R Forms" tab "Send W-4R Request"
  * flow). Same architecture as FillW4Page.tsx: renders the REAL official
  * PDF's pages to canvases via pdf.js, with input overlays at each field's
- * own coordinates â no redrawn lookalike. Submitting fills that same real
+ * own coordinates — no redrawn lookalike. Submitting fills that same real
  * PDF's own fields via fillW4RPdf and sends the result back to HR.
  *
  * Only page 1 (the actual submittable Withholding Certificate) has real
@@ -41,9 +41,9 @@ const PAGE_HEIGHT = 792;
 
 // Field rectangles (PDF user-space units, origin bottom-left), extracted via
 // pdf-lib's acroField.getWidgets()[0].getRectangle() on src/assets/fw4r.pdf
-// â same technique w4FormTemplate.ts's rects were derived from. The
+// — same technique w4FormTemplate.ts's rects were derived from. The
 // signature/date row has no real field (see w4rPdfFill.ts's header comment)
-// â those coordinates are estimated from the actual "Your signature"/"Date"
+// — those coordinates are estimated from the actual "Your signature"/"Date"
 // caption text positions instead.
 const PAGE1_RECT = {
   firstNameMiddleInitial: { x: 36, y: 684, w: 215, h: 14 },
@@ -212,7 +212,7 @@ export function FillW4RPage({ docId }: Props) {
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "Employee",
-          body: `ð W-4R form for ${employeeName} has been completed and submitted: [${filename}](${pdfUrl})`,
+          body: `📄 W-4R form for ${employeeName} has been completed and submitted: [${filename}](${pdfUrl})`,
         });
       }
 
@@ -221,7 +221,7 @@ export function FillW4RPage({ docId }: Props) {
           if (!taxForms) return;
           const excludeIds = doc.createdBy ? [doc.createdBy] : [];
           const employeeName = `${finalData.firstNameMiddleInitial} ${finalData.lastName}`.trim();
-          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `ð W-4R form for ${employeeName} has been completed and submitted.`);
+          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📄 W-4R form for ${employeeName} has been completed and submitted.`);
         })
         .catch((err) => console.error("[w4r] hr notify check failed:", err));
 
@@ -236,7 +236,7 @@ export function FillW4RPage({ docId }: Props) {
   };
 
   const isRecipient = !!doc && !!myProfileId && doc.recipientId === myProfileId;
-  // Platform-level SUPERSUPERADMIN only â the per-company SUPERADMIN role
+  // Platform-level SUPERSUPERADMIN only — the per-company SUPERADMIN role
   // should NOT see every employee's private documents, just its own like ADMIN.
   const isSuperadmin = role === "SUPERSUPERADMIN";
 
@@ -277,7 +277,7 @@ export function FillW4RPage({ docId }: Props) {
           <FillFormSignInRequired />
         ) : loading ? (
           <div className="panel p-8 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading documentâ¦
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading document…
           </div>
         ) : error && !doc ? (
           <div className="panel p-6 text-sm text-red-300">{error}</div>
@@ -285,7 +285,7 @@ export function FillW4RPage({ docId }: Props) {
           <div className="panel p-6 text-sm text-muted-foreground">This document isn't addressed to your account.</div>
         ) : submitted || doc.status === "signed" ? (
           <div className="panel p-6 text-center">
-            <p className="text-sm font-semibold mb-2">â Submitted{submitted ? " and sent back to HR" : ""}.</p>
+            <p className="text-sm font-semibold mb-2">✅ Submitted{submitted ? " and sent back to HR" : ""}.</p>
             {doc.pdfUrl && (
               <InlinePdfLink url={doc.pdfUrl} label="View the completed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
             )}
@@ -293,7 +293,7 @@ export function FillW4RPage({ docId }: Props) {
         ) : (
           <div className="panel p-4">
             <p className="text-xs text-muted-foreground mb-3">
-              Fill in your information directly on the form below, add your signature, then submit. Line 2 (withholding rate) is optional â leave it blank to use the default rate. Pages 2-3 are shown for reference.
+              Fill in your information directly on the form below, add your signature, then submit. Line 2 (withholding rate) is optional — leave it blank to use the default rate. Pages 2-3 are shown for reference.
             </p>
 
             <div ref={containerRef} className="overflow-x-auto flex flex-col items-center bg-white/5 rounded-md p-4 gap-4">
@@ -302,7 +302,7 @@ export function FillW4RPage({ docId }: Props) {
                   <canvas ref={(el) => { pageCanvasRefs.current[pageNum - 1] = el; }} className="absolute inset-0" />
                   {pageLoading && (
                     <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-muted-foreground gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" /> Loading formâ¦
+                      <Loader2 className="h-4 w-4 animate-spin" /> Loading form…
                     </div>
                   )}
 
@@ -347,7 +347,7 @@ export function FillW4RPage({ docId }: Props) {
               disabled={submitting}
               className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white mt-3 disabled:opacity-50"
             >
-              {submitting ? "Submittingâ¦" : "Submit to HR"}
+              {submitting ? "Submitting…" : "Submit to HR"}
             </button>
           </div>
         )}

@@ -1,3 +1,5 @@
+import { logAppError } from "@/lib/appErrorLog";
+
 /**
  * Renders arbitrary HTML (body markup + styles) into an isolated, blank
  * iframe — no host app stylesheet loaded at all — then rasterizes it via
@@ -9,6 +11,21 @@
  * applies to literally every element). Returns a ready-to-upload PDF Blob.
  */
 export async function captureHtmlToPdfBlob(
+  bodyHtml: string,
+  styles: string,
+  opts?: { width?: number; height?: number; beforeCapture?: (doc: Document) => void }
+): Promise<Blob> {
+  // A failure here (building a signed paper's PDF) is saved to the app error
+  // log for AHS Server Status (migration 0387), then rethrown unchanged.
+  try {
+    return await captureHtmlToPdfBlobInner(bodyHtml, styles, opts);
+  } catch (err) {
+    logAppError("signing", "Building the signed PDF", err);
+    throw err;
+  }
+}
+
+async function captureHtmlToPdfBlobInner(
   bodyHtml: string,
   styles: string,
   opts?: { width?: number; height?: number; beforeCapture?: (doc: Document) => void }
@@ -92,6 +109,19 @@ export async function captureHtmlToPdfBlob(
  * single-page form keeps using captureHtmlToPdfBlob unchanged.
  */
 export async function captureHtmlPagesToPdfBlob(
+  bodyHtmlPages: string[],
+  styles: string,
+  opts?: { width?: number; height?: number }
+): Promise<Blob> {
+  try {
+    return await captureHtmlPagesToPdfBlobInner(bodyHtmlPages, styles, opts);
+  } catch (err) {
+    logAppError("signing", "Building the signed PDF", err);
+    throw err;
+  }
+}
+
+async function captureHtmlPagesToPdfBlobInner(
   bodyHtmlPages: string[],
   styles: string,
   opts?: { width?: number; height?: number }

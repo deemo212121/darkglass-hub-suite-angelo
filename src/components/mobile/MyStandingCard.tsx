@@ -113,7 +113,7 @@ export function MyStandingCard({ profileId, today }: { profileId: string; today:
           {points} point{points === 1 ? "" : "s"}
         </div>
       </div>
-      <div className={`mh-metric rounded-2xl px-3 py-1.5 text-center ${errors > 0 ? "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30" : "bg-white/5 text-slate-300"}`}>
+      <div className={`mh-metric rounded-2xl px-3 py-1.5 text-center ring-1 ring-inset ${GRADE_META[GRADERS.errorCount(errors)].pill}`} title={GRADE_META[GRADERS.errorCount(errors)].label}>
         <div className="text-base font-bold tabular-nums leading-tight">{errors}</div>
         <div className="text-[9px] uppercase tracking-wide">Errors</div>
       </div>

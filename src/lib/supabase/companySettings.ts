@@ -232,7 +232,7 @@ export async function getCarIqMileageRates(): Promise<CarIqMileageRates> {
 }
 
 /**
- * Effective-dated Car IQ mileage rates (migration 0371) — each change applies
+ * Effective-dated Car IQ mileage rates (migration 0381) — each change applies
  * from its effectiveDate onward, so a new rate never re-prices past periods.
  * A company with no history yet gets one synthesized "since the start" entry
  * from its flat 0324 rates (or the code defaults), matching what it paid.

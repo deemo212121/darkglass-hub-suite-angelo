@@ -21,6 +21,7 @@
  * each row's measured midpoint.
  */
 import { useRef, useState } from "react";
+import usihsLogo from "@/assets/us-in-home-services-logo.png";
 import { DndContext, useDraggable, type DragEndEvent, type DragMoveEvent, type DragStartEvent } from "@dnd-kit/core";
 import { GripVertical, Trash2, Loader2, Plus, Search, ChevronDown, ChevronRight, EyeOff, Zap, Sigma } from "lucide-react";
 import {
@@ -436,7 +437,7 @@ export function CustomFormBuilder({ initial, onSaved, onCancel }: Props) {
 
     setSaving(publish ? "publish" : "draft");
     try {
-      const input = { title: title.trim(), description: description.trim(), access, fields, documentTemplate: documentBlocks.length > 0 ? { blocks: documentBlocks } : null, notifyFirebaseUids, discordWebhookUrl: discordWebhookUrl.trim() || null };
+      const input = { title: title.trim(), description: description.trim(), access, fields, documentTemplate: initial?.documentTemplate?.sourcePdf ? { blocks: documentBlocks, sourcePdf: initial.documentTemplate.sourcePdf } : documentBlocks.length > 0 ? { blocks: documentBlocks } : null, notifyFirebaseUids, discordWebhookUrl: discordWebhookUrl.trim() || null };
       let form: CustomForm;
       if (initial) {
         form = await updateCustomForm(initial.id, { ...input, currentPublicSlug: initial.publicSlug });
@@ -538,6 +539,8 @@ export function CustomFormBuilder({ initial, onSaved, onCancel }: Props) {
 
             {/* Represents the actual fill-out page, always on a white background — text must stay dark regardless of the app's own light/dark theme rather than inheriting its (theme-dependent) foreground color. */}
             <div className="flex-1 min-w-0 bg-white rounded-lg shadow-xl p-6" style={{ color: "#111827" }} onClick={() => setSelectedId(null)}>
+              {/* Same logo the fill pages show above the title (FillCustomFormPage / ApplyFormPage). */}
+              <img src={usihsLogo} alt="US In Home Services" className="h-16 w-16 mx-auto mb-3" />
               <h2 className="text-lg font-bold text-slate-900">{title || "Untitled Form"}</h2>
               {description && <p className="text-sm text-slate-500 mt-1">{description}</p>}
 

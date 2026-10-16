@@ -17,6 +17,9 @@ import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
+import { RestDayHistoryBox } from "@/components/RestDayHistoryBox";
+import { setProfileSchedule } from "@/lib/supabase/restDayHistory";
+import { zonedDateKey } from "@/lib/serverTime";
 
 const TABS = [
   "General Information",
@@ -366,11 +369,16 @@ function RoleMultiSelect({
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
-  const labelByValue = useMemo(() => {
-    const m: Record<string, string> = {};
-    for (const o of options) m[normalizeRole(o.value)] = o.label;
-    return m;
-  }, [options]);
+  // A role the person still holds that the list no longer offers (e.g. the
+  // retired plain "CSR") — listed first so it can be unticked; otherwise it
+  // stayed on their account with no way to remove it here.
+  const shownOptions = useMemo(() => {
+    const offered = new Set(options.map((o) => normalizeRole(o.value)));
+    const held = values
+      .filter((v) => v && !offered.has(normalizeRole(v)))
+      .map((v) => ({ value: v, label: `${v} (old role — no longer offered)` }));
+    return [...held, ...options];
+  }, [options, values]);
   // Some profiles still carry a legacy free-text role (e.g. "CSR Manager"
   // instead of the canonical "CSR_MANAGER") — compared by exact string, that
   // value would match none of this list's option values, so its checkbox
@@ -399,7 +407,7 @@ function RoleMultiSelect({
     onChange(next);
   };
   const summary = values.length
-    ? `${values.length} selected: ${values.map((v) => labelByValue[normalizeRole(v)] || v).join(", ")}`
+    ? `${values.length} selected: ${values.map((v) => options.find((o) => normalizeRole(o.value) === normalizeRole(v))?.label || v).join(", ")}`
     : placeholder;
   return (
     <div className="relative" ref={ref}>
@@ -413,7 +421,7 @@ function RoleMultiSelect({
       </button>
       {open && (
         <div className="absolute z-50 mt-1 w-full max-h-64 overflow-y-auto rounded-lg border border-white/10 bg-slate-900 shadow-xl">
-          {options.map((opt) => {
+          {shownOptions.map((opt) => {
             const checked = values.some((v) => normalizeRole(v) === normalizeRole(opt.value));
             const isPrimary = values.length > 0 && normalizeRole(values[0]) === normalizeRole(opt.value);
             return (
@@ -497,6 +505,14 @@ function UserDetailsPage() {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string>("");
+  const [profileCompanyId, setProfileCompanyId] = useState<string | null>(null);
+  // Rest days + Time In / Time Out Required as loaded — a change to them is
+  // saved with an "Effective from" date (rest_day_history, migrations 0373 +
+  // 0375), so past days keep the old schedule.
+  const [originalOffDays, setOriginalOffDays] = useState<number[]>([]);
+  const [originalTimes, setOriginalTimes] = useState({ checkIn: "", checkOut: "" });
+  const [restEffectiveFrom, setRestEffectiveFrom] = useState(() => zonedDateKey(new Date(), "CST"));
+  const [restHistoryKey, setRestHistoryKey] = useState(0);
   // The email as loaded from the server — compared against form.email in
   // handleSave to know whether the Firebase Auth update call is needed at all.
   const [originalEmail, setOriginalEmail] = useState<string>("");
@@ -551,6 +567,9 @@ function UserDetailsPage() {
           return;
         }
         setProfileId(p.id);
+        setProfileCompanyId((p as any).company_id ?? null);
+        setOriginalOffDays(Array.isArray(p.off_days) ? p.off_days : []);
+        setOriginalTimes({ checkIn: p.required_check_in || "", checkOut: p.required_check_out || "" });
         setOriginalEmail(p.email || "");
         try {
           const all = await getCompanyUsers();
@@ -628,6 +647,11 @@ function UserDetailsPage() {
     return () => { cancelled = true; };
   }, [ready, userId]);
 
+  const scheduleDirty =
+    [...form.offDays].sort().join(",") !== [...originalOffDays].sort().join(",") ||
+    form.requiredCheckIn !== originalTimes.checkIn ||
+    form.requiredCheckOut !== originalTimes.checkOut;
+
   const update = (field: keyof typeof form, value: any) =>
     setForm((prev) => ({ ...prev, [field]: value }));
 
@@ -697,6 +721,14 @@ function UserDetailsPage() {
         if (!res.ok) throw new Error(body.error || "Failed to update login email");
       }
 
+      // Rest days / required times changed → saved with the chosen "Effective
+      // from" date first, so days before it keep the old schedule (not
+      // re-judged against the new times).
+      const scheduleChanged = scheduleDirty;
+      if (scheduleChanged) {
+        await setProfileSchedule(profileId, form.offDays, form.requiredCheckIn, form.requiredCheckOut, restEffectiveFrom);
+      }
+
       await updateCompanyUser(profileId, {
         username: newUsername,
         displayName: form.displayName,
@@ -711,15 +743,19 @@ function UserDetailsPage() {
         technicianId: form.technicianId,
         poInitials: form.poInitials,
         smsStatus: form.smsStatus,
-        offDays: form.offDays,
+        // Saved above (with its effective date) when the schedule changed.
+        ...(scheduleChanged ? {} : { offDays: form.offDays, requiredCheckIn: form.requiredCheckIn, requiredCheckOut: form.requiredCheckOut }),
         workPlan: workPlan,
         isActive: form.isActive,
-        requiredCheckIn: form.requiredCheckIn,
-        requiredCheckOut: form.requiredCheckOut,
         workingHours: form.workingHours.trim() ? Number(form.workingHours) : null,
         mealMinutes: form.mealMinutes.trim() ? Number(form.mealMinutes) : null,
       });
       if (emailChanged) setOriginalEmail(form.email.trim());
+      if (scheduleChanged) {
+        setOriginalOffDays(form.offDays);
+        setOriginalTimes({ checkIn: form.requiredCheckIn, checkOut: form.requiredCheckOut });
+        setRestHistoryKey((k) => k + 1);
+      }
       // Persist Employee Information (powers Work Map house pins).
       try {
         const { saveProfileEmployeeInfo } = await import("@/lib/supabase/users");
@@ -949,6 +985,19 @@ function UserDetailsPage() {
                           );
                         })}
                       </div>
+                      {scheduleDirty && (
+                        <label className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                          <span className="font-semibold">Effective from</span>
+                          <input
+                            type="date"
+                            value={restEffectiveFrom}
+                            onChange={(e) => setRestEffectiveFrom(e.target.value)}
+                            className="rounded border border-white/10 bg-slate-800 px-2 py-1 text-xs text-white [color-scheme:dark]"
+                          />
+                          <span className="text-amber-200/80">Days before this keep the old rest days and Time In / Time Out Required (no new lates for past days). Saved when you press Save.</span>
+                        </label>
+                      )}
+                      {profileId && <RestDayHistoryBox profileId={profileId} companyId={profileCompanyId} reloadKey={restHistoryKey} currentCheckIn={originalTimes.checkIn} currentCheckOut={originalTimes.checkOut} />}
                     </div>
 
                     <div className="rounded-lg border border-white/10 bg-slate-900/40 p-4 text-xs text-slate-400">

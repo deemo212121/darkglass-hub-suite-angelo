@@ -32,6 +32,7 @@ import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { resetMileageRouteConfirmation } from "@/lib/supabase/mileage";
 import { buildTicketDisputeManagerSignaturePdf, buildTicketDisputeHrSignaturePdf, type TicketDisputeEmployeeInfo } from "@/lib/ticketDisputeReportPdf";
 import { todayISO } from "@/lib/localDate";
+import { logAppError } from "@/lib/appErrorLog";
 
 export async function resolveEmployeeInfo(request: EmployeeRequestRow, profiles: ProfileRow[]): Promise<TicketDisputeEmployeeInfo> {
   const p = profiles.find((x) => x.id === request.profileId) ?? null;
@@ -67,6 +68,7 @@ export function TicketDisputeManagerSignModal({ request, companyId, profiles, re
 
   const handleSubmit = async () => {
     if (!reviewerId || !companyId) { setError("Missing your profile/company — try again in a moment."); return; }
+    if (!comments.trim()) { setError("Please add your manager comments first."); return; }
     if (!sigPad.hasContent()) { setError("Please add your signature first."); return; }
     const dataUrl = sigPad.toDataURL();
     if (!dataUrl) { setError("Please add your signature first."); return; }
@@ -88,6 +90,7 @@ export function TicketDisputeManagerSignModal({ request, companyId, profiles, re
       await signTicketDisputeManager(request.id, reviewerId, { url: managerSignatureUrl, name: reviewerName, comments, pdfUrl });
       onSigned();
     } catch (err) {
+      logAppError("signing", "Signing Ticket Time Dispute exception report (Manager)", err);
       setError(err instanceof Error ? err.message : "Failed to submit signature.");
     } finally {
       setSubmitting(false);
@@ -104,7 +107,9 @@ export function TicketDisputeManagerSignModal({ request, companyId, profiles, re
         <p className="text-xs text-slate-400 mb-3">Signing approves this dispute and writes the claimed time onto the ticket.</p>
         <div className="space-y-3 mb-4">
           <div>
-            <label className="block text-xs text-slate-400 uppercase mb-1">Manager Comments</label>
+            <label className="block text-xs text-slate-400 uppercase mb-1">
+              Manager Comments <span className="text-red-400 normal-case">* required</span>
+            </label>
             <textarea value={comments} onChange={(e) => setComments(e.target.value)} rows={3} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none resize-none" />
           </div>
           <div>
@@ -129,12 +134,14 @@ export function TicketDisputeManagerSignModal({ request, companyId, profiles, re
 export function TicketDisputeHrSignModal({ request, companyId, profiles, reviewerId, reviewerName, onClose, onSigned, finalize }: SignModalBaseProps) {
   const [receivedDate, setReceivedDate] = useState(todayISO());
   const [actionStatus, setActionStatus] = useState<"approved" | "additional_review_required">("approved");
+  const [hrNotes, setHrNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sigPad = useSignaturePad({ width: 400, height: 110, defaultName: reviewerName });
 
   const handleSubmit = async () => {
     if (!reviewerId || !companyId) { setError("Missing your profile/company — try again in a moment."); return; }
+    if (!hrNotes.trim()) { setError("Please add your HR notes first."); return; }
     if (!sigPad.hasContent()) { setError("Please add your signature first."); return; }
     const dataUrl = sigPad.toDataURL();
     if (!dataUrl) { setError("Please add your signature first."); return; }
@@ -154,11 +161,12 @@ export function TicketDisputeHrSignModal({ request, companyId, profiles, reviewe
           await setTicketOnsiteCheckIn(request.ticketNo, "done", request.disputedEndTime);
           await resetMileageRouteConfirmation(request.ticketNo).catch((err) => console.error("Failed to invalidate mileage route order after dispute approval:", err));
         }
-        await updateEmployeeRequestStatus(request.id, "approved", reviewerId);
+        await updateEmployeeRequestStatus(request.id, "approved", reviewerId, hrNotes.trim());
       }
-      await signTicketDisputeHrPaperwork(request.id, reviewerName, { url: hrSignatureUrl, name: reviewerName }, receivedDate, actionStatus, pdfUrl);
+      await signTicketDisputeHrPaperwork(request.id, reviewerName, { url: hrSignatureUrl, name: reviewerName }, receivedDate, actionStatus, pdfUrl, hrNotes.trim());
       onSigned();
     } catch (err) {
+      logAppError("signing", "Signing Ticket Time Dispute exception report (HR)", err);
       setError(err instanceof Error ? err.message : "Failed to submit signature.");
     } finally {
       setSubmitting(false);
@@ -191,6 +199,12 @@ export function TicketDisputeHrSignModal({ request, companyId, profiles, reviewe
                 </label>
               )}
             </div>
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 uppercase mb-1">
+              HR Notes <span className="text-red-400 normal-case">* required</span>
+            </label>
+            <textarea value={hrNotes} onChange={(e) => { setHrNotes(e.target.value); if (error && e.target.value.trim()) setError(null); }} rows={3} placeholder="e.g. Proof received and verified." className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none resize-none" />
           </div>
           <div>
             <label className="block text-xs text-slate-400 uppercase mb-2">Your Signature</label>

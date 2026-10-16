@@ -1,6 +1,6 @@
 /**
  * Finance's per-technician payroll summary for one pay period — the
- * Accounting Dashboard's "Reviewed Periods" tab (migration 0374).
+ * Accounting Dashboard's "Reviewed Periods" tab (migration 0392).
  * Snapshotted from the Tech Activity Report when Finance clicks Done
  * (source "review"), editable afterwards, or added by hand ("manual").
  */
@@ -58,7 +58,7 @@ export function reviewBreakdownTotal(a: PayrollReviewAmounts): number {
 const COLUMNS = "id, profile_id, period_start, period_end, branch, regular_pay, ot_pay, bonus, commission, pto_pay, deduction, mileage_other_reimb, pretax_insurance, salary_match, source, updated_by_name, updated_at, technician:profiles!payroll_review_breakdowns_profile_id_fkey(display_name)";
 
 const missingTable = (message: string) => /payroll_review_breakdowns/i.test(message) && /does not exist|schema cache|not find/i.test(message);
-const friendly = (message: string) => (missingTable(message) ? "Reviewed Periods needs database migration 0374 — ask an admin to run it." : message);
+const friendly = (message: string) => (missingTable(message) ? "Reviewed Periods needs database migration 0392 — ask an admin to run it." : message);
 
 function mapRow(r: any): PayrollReviewBreakdown {
   return {

@@ -21,7 +21,7 @@ export async function uploadSubmissionToDriveIfConfigured(
   form: { fields: CustomFormField[]; driveUploadEnabled?: boolean },
   submission: { id: string; responses: Record<string, CustomFormResponseValue>; submittedAt: string }
 ): Promise<void> {
-  if (!documentTemplate || documentTemplate.blocks.length === 0) return;
+  if (!documentTemplate || (documentTemplate.blocks.length === 0 && !documentTemplate.sourcePdf)) return;
   // driveUploadEnabled defaults true for any caller that doesn't pass it (older shape), so this is purely additive — see CustomFormsPanel.tsx's per-form "Drive" toggle.
   if (form.driveUploadEnabled === false) return;
   try {

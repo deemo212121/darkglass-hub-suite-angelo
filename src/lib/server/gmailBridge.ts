@@ -131,7 +131,7 @@ const PAYSLIP_SENDER_ROLES = new Set(["ADMIN", "SUPERADMIN", "FINANCE"]);
 const DROPSHIP_SENDER_ROLES = new Set([
   "PARTS", "PARTS_MANAGER", "PARTS_TEAM_LEADER", "CLAIMS", "CLAIMS_MANAGER",
   "MANAGER", "SENIOR_MANAGER", "BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER",
-  "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "TRIAGE_USER", "TRIAGE_MANAGER",
+  "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "BIZOPS_TEAM_LEADER", "BIZOPS_ASSOCIATE", "TRIAGE_USER", "TRIAGE_MANAGER",
   "ADMIN", "SUPERADMIN",
 ]);
 
@@ -527,8 +527,7 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
           "",
           `Please find attached your payslip for the period ${periodStart} to ${periodEnd}.`,
           "",
-          "This is a test email sent as part of setting up automated payslip delivery.",
-          "If anything here looks incorrect, please contact HR or Finance.",
+          "If you have any questions about your payslip, please contact HR or Finance.",
         ].join("\n");
         const filename = `Payslip-${periodStart}-to-${periodEnd}.pdf`;
         await sendGmailMessageWithAttachment(accessToken, fromEmail, target.email, subject, body, {
@@ -548,8 +547,7 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
           `Hourly Rate: ${fmtMoney(hourlyRate)}`,
           `Gross Pay: ${fmtMoney(grossPay)}`,
           "",
-          "This is a test email sent as part of setting up automated payslip delivery.",
-          "If anything here looks incorrect, please contact HR or Finance.",
+          "If you have any questions about your payslip, please contact HR or Finance.",
         ].join("\n");
         await sendGmailMessage(accessToken, fromEmail, target.email, subject, body);
       }

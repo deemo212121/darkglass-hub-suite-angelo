@@ -1,9 +1,9 @@
 /**
- * Fill W-9 â opened from the deep link a Team Messenger message sends (see
+ * Fill W-9 — opened from the deep link a Team Messenger message sends (see
  * ReportHRDaily.tsx's "W-8/W-9/W-4 Forms" tab "Send W-9 Request" flow).
  * Same architecture as FillW4Page.tsx: renders the REAL official PDF's
  * pages to canvases via pdf.js, with input overlays at each field's own
- * coordinates on page 1 (the only page with real fields) â no redrawn
+ * coordinates on page 1 (the only page with real fields) — no redrawn
  * lookalike. Submitting fills that same real PDF's own fields via
  * fillW9Pdf and sends the result back to HR. All 6 pages are shown so the
  * person filling it in can reference the IRS's own instructions (pages
@@ -39,9 +39,9 @@ const PAGE_HEIGHT = 792;
 
 // Field rectangles (PDF user-space units, origin bottom-left), extracted
 // via pdf-lib's acroField.getWidgets()[0].getRectangle() on
-// src/assets/w9-blank.pdf page 1 â the exact numbers w9PdfFill.ts's field
+// src/assets/w9-blank.pdf page 1 — the exact numbers w9PdfFill.ts's field
 // mapping was derived from. The signature/date row has no real field (see
-// w9PdfFill.ts's header comment) â those coordinates are estimated from
+// w9PdfFill.ts's header comment) — those coordinates are estimated from
 // the actual "Signature of / U.S. person"/"Date" caption text positions.
 const RECT = {
   name: { x: 59, y: 660, w: 517, h: 14 },
@@ -240,16 +240,16 @@ export function FillW9Page({ docId }: Props) {
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "Employee",
-          body: `ð W-9 form for ${finalData.name} has been completed and submitted: [${filename}](${pdfUrl})`,
+          body: `📄 W-9 form for ${finalData.name} has been completed and submitted: [${filename}](${pdfUrl})`,
         });
       }
 
-      // Opt-in broadcast â see Notifications Settings (migration 0090).
+      // Opt-in broadcast — see Notifications Settings (migration 0090).
       getHrNotificationSettings()
         .then(({ taxForms }) => {
           if (!taxForms) return;
           const excludeIds = doc.createdBy ? [doc.createdBy] : [];
-          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `ð W-9 form for ${finalData.name} has been completed and submitted.`);
+          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📄 W-9 form for ${finalData.name} has been completed and submitted.`);
         })
         .catch((err) => console.error("[w9] hr notify check failed:", err));
 
@@ -264,7 +264,7 @@ export function FillW9Page({ docId }: Props) {
   };
 
   const isRecipient = !!doc && !!myProfileId && doc.recipientId === myProfileId;
-  // Platform-level SUPERSUPERADMIN only â the per-company SUPERADMIN role
+  // Platform-level SUPERSUPERADMIN only — the per-company SUPERADMIN role
   // should NOT see every employee's private documents, just its own like ADMIN.
   const isSuperadmin = role === "SUPERSUPERADMIN";
 
@@ -349,7 +349,7 @@ export function FillW9Page({ docId }: Props) {
           <FillFormSignInRequired />
         ) : loading ? (
           <div className="panel p-8 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading documentâ¦
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading document…
           </div>
         ) : error && !doc ? (
           <div className="panel p-6 text-sm text-red-300">{error}</div>
@@ -357,7 +357,7 @@ export function FillW9Page({ docId }: Props) {
           <div className="panel p-6 text-sm text-muted-foreground">This document isn't addressed to your account.</div>
         ) : submitted || doc.status === "signed" ? (
           <div className="panel p-6 text-center">
-            <p className="text-sm font-semibold mb-2">â Submitted{submitted ? " and sent back to HR" : ""}.</p>
+            <p className="text-sm font-semibold mb-2">✅ Submitted{submitted ? " and sent back to HR" : ""}.</p>
             {doc.pdfUrl && (
               <InlinePdfLink url={doc.pdfUrl} label="View the completed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
             )}
@@ -372,7 +372,7 @@ export function FillW9Page({ docId }: Props) {
                   <canvas ref={(el) => { pageCanvasRefs.current[pageNum - 1] = el; }} className="absolute inset-0" />
                   {pageLoading && (
                     <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-muted-foreground gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" /> Loading formâ¦
+                      <Loader2 className="h-4 w-4 animate-spin" /> Loading form…
                     </div>
                   )}
 
@@ -381,20 +381,20 @@ export function FillW9Page({ docId }: Props) {
                       {singleLineInput("name", RECT.name)}
                       {singleLineInput("businessName", RECT.businessName)}
 
-                      <button type="button" style={overlayStyle(RECT.classIndividual)} onClick={() => setClassification("individual")} className={checkboxCls}>{form.taxClassification === "individual" ? "â" : ""}</button>
-                      <button type="button" style={overlayStyle(RECT.classCCorp)} onClick={() => setClassification("c_corp")} className={checkboxCls}>{form.taxClassification === "c_corp" ? "â" : ""}</button>
-                      <button type="button" style={overlayStyle(RECT.classSCorp)} onClick={() => setClassification("s_corp")} className={checkboxCls}>{form.taxClassification === "s_corp" ? "â" : ""}</button>
-                      <button type="button" style={overlayStyle(RECT.classPartnership)} onClick={() => setClassification("partnership")} className={checkboxCls}>{form.taxClassification === "partnership" ? "â" : ""}</button>
-                      <button type="button" style={overlayStyle(RECT.classTrustEstate)} onClick={() => setClassification("trust_estate")} className={checkboxCls}>{form.taxClassification === "trust_estate" ? "â" : ""}</button>
-                      <button type="button" style={overlayStyle(RECT.classLlc)} onClick={() => setClassification("llc")} className={checkboxCls}>{form.taxClassification === "llc" ? "â" : ""}</button>
+                      <button type="button" style={overlayStyle(RECT.classIndividual)} onClick={() => setClassification("individual")} className={checkboxCls}>{form.taxClassification === "individual" ? "✔" : ""}</button>
+                      <button type="button" style={overlayStyle(RECT.classCCorp)} onClick={() => setClassification("c_corp")} className={checkboxCls}>{form.taxClassification === "c_corp" ? "✔" : ""}</button>
+                      <button type="button" style={overlayStyle(RECT.classSCorp)} onClick={() => setClassification("s_corp")} className={checkboxCls}>{form.taxClassification === "s_corp" ? "✔" : ""}</button>
+                      <button type="button" style={overlayStyle(RECT.classPartnership)} onClick={() => setClassification("partnership")} className={checkboxCls}>{form.taxClassification === "partnership" ? "✔" : ""}</button>
+                      <button type="button" style={overlayStyle(RECT.classTrustEstate)} onClick={() => setClassification("trust_estate")} className={checkboxCls}>{form.taxClassification === "trust_estate" ? "✔" : ""}</button>
+                      <button type="button" style={overlayStyle(RECT.classLlc)} onClick={() => setClassification("llc")} className={checkboxCls}>{form.taxClassification === "llc" ? "✔" : ""}</button>
                       {singleLineInput("llcTaxClassificationCode", RECT.llcCode, form.taxClassification !== "llc")}
-                      <button type="button" style={overlayStyle(RECT.classOther)} onClick={() => setClassification("other")} className={checkboxCls}>{form.taxClassification === "other" ? "â" : ""}</button>
+                      <button type="button" style={overlayStyle(RECT.classOther)} onClick={() => setClassification("other")} className={checkboxCls}>{form.taxClassification === "other" ? "✔" : ""}</button>
                       {singleLineInput("otherClassificationText", RECT.otherText, form.taxClassification !== "other")}
 
                       {singleLineInput("exemptPayeeCode", RECT.exemptPayeeCode)}
                       {singleLineInput("fatcaExemptionCode", RECT.fatcaCode)}
 
-                      <button type="button" style={overlayStyle(RECT.foreignPartners)} onClick={() => updateField("foreignPartnersCheckbox", !form.foreignPartnersCheckbox)} className={checkboxCls}>{form.foreignPartnersCheckbox ? "â" : ""}</button>
+                      <button type="button" style={overlayStyle(RECT.foreignPartners)} onClick={() => updateField("foreignPartnersCheckbox", !form.foreignPartnersCheckbox)} className={checkboxCls}>{form.foreignPartnersCheckbox ? "✔" : ""}</button>
 
                       {singleLineInput("address", RECT.address)}
                       {singleLineInput("cityStateZip", RECT.cityStateZip)}
@@ -439,7 +439,7 @@ export function FillW9Page({ docId }: Props) {
               disabled={submitting}
               className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white mt-3 disabled:opacity-50"
             >
-              {submitting ? "Submittingâ¦" : "Submit to HR"}
+              {submitting ? "Submitting…" : "Submit to HR"}
             </button>
           </div>
         )}

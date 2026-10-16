@@ -158,6 +158,7 @@ import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { FrozenAccountModal } from "@/components/FrozenAccountModal";
 import { TraineeAttendanceMobileModal } from "@/components/mobile/TraineeAttendanceMobileModal";
 import { MobileTicketAttendanceView } from "@/components/mobile/MobileTicketAttendanceView";
+import { MobileExpensesView } from "@/components/mobile/MobileExpensesView";
 import { AnnouncementsPage } from "@/components/AnnouncementsPage";
 import { ClockCircle, HomeHero, SectionHead, ShortcutCircle } from "@/components/mobile/homeKit";
 import { isTabVisible, onTabVisible } from "@/lib/pageVisibility";
@@ -201,6 +202,7 @@ type View =
   | "itsupport"
   | "payrolldispute"
   | "timeoff"
+  | "expenses"
   | "tickettimedispute"
   | "correction"
   | "notifications"
@@ -619,6 +621,7 @@ export function MobileTechApp() {
       "itsupport",
       "payrolldispute",
       "timeoff",
+      "expenses",
       "tickettimedispute",
       "correction",
     ];
@@ -1453,6 +1456,7 @@ export function MobileTechApp() {
         effectiveView === "itsupport" ||
         effectiveView === "payrolldispute" ||
         effectiveView === "timeoff" ||
+        effectiveView === "expenses" ||
         effectiveView === "tickettimedispute" ||
         effectiveView === "correction" ||
         effectiveView === "notifications" ||
@@ -1721,6 +1725,10 @@ export function MobileTechApp() {
           <MobileTimeOffView userName={headerName} profileId={profileId} companyId={companyId} role={role} />
         )}
 
+        {effectiveView === "expenses" && (
+          <MobileExpensesView profileId={profileId} companyId={companyId} />
+        )}
+
         {effectiveView === "tickettimedispute" && (
           <MobileTicketTimeDisputeView
             userName={headerName}
@@ -1775,6 +1783,7 @@ export function MobileTechApp() {
             onOpenItSupport={() => setView("itsupport")}
             onOpenPayrollDispute={() => { setPayrollDisputePrefill(null); setView("payrolldispute"); }}
             onOpenTimeOff={() => setView("timeoff")}
+            onOpenExpenses={() => setView("expenses")}
             onOpenTicketTimeDispute={() => setView("tickettimedispute")}
             onOpenCorrection={() => { setCorrectionPrefillDate(null); setView("correction"); }}
             onFixTimeOut={(date) => { setCorrectionPrefillDate(date); setView("correction"); }}
@@ -4368,6 +4377,8 @@ const MOBILE_CHAT_ROLE_ALLOW = new Set(
     "SENIOR_BRANCH_MANAGER",
     "BIZOPS_MANAGER",
     "BIZOPS_SENIOR_MANAGER",
+    "BIZOPS_TEAM_LEADER",
+    "BIZOPS_ASSOCIATE",
     "CSR",
     "CSR_AGENT",
     "CSR_TEAM_LEADER",
@@ -4394,6 +4405,8 @@ function readableRoleLabel(role: string): string {
     SENIOR_BRANCH_MANAGER: "Senior Branch Manager",
     BIZOPS_MANAGER: "BizOps Manager",
     BIZOPS_SENIOR_MANAGER: "BizOps Senior Manager",
+    BIZOPS_TEAM_LEADER: "BizOps Team Leader",
+    BIZOPS_ASSOCIATE: "BizOps Associate",
     CSR: "CSR Associate",
     CSR_AGENT: "CSR Associate",
     CSR_TEAM_LEADER: "CSR Team Leader",
@@ -6169,6 +6182,7 @@ function MobileHomeView({
   onOpenItSupport,
   onOpenPayrollDispute,
   onOpenTimeOff,
+  onOpenExpenses,
   onOpenTicketTimeDispute,
   onOpenCorrection,
   onFixTimeOut,
@@ -6206,6 +6220,7 @@ function MobileHomeView({
   onOpenItSupport: () => void;
   onOpenPayrollDispute: () => void;
   onOpenTimeOff: () => void;
+  onOpenExpenses: () => void;
   onOpenTicketTimeDispute: () => void;
   onOpenCorrection: () => void;
   /** Open Time Correction pre-filled with this date (missed Time Out banner). */
@@ -6528,6 +6543,11 @@ function MobileHomeView({
       key: "timeoff", label: "File PTO or Leave",
       description: "Request PTO, sick leave, or unpaid time off",
       onClick: onOpenTimeOff, show: true,
+    },
+    {
+      key: "expenses", label: "My Expenses",
+      description: "Send an expense with its receipt and track your reimbursement",
+      onClick: onOpenExpenses, show: true,
     },
     {
       key: "tickettimedispute", label: "Ticket Time Dispute",
@@ -9049,11 +9069,15 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
         )}
 
         <div className="mtech-section-title">Position</div>
-        <select className="mtech-bill-input full" value={position} onChange={(e) => setPosition(e.target.value)}>
-          {Object.entries(ROLE_LABELS).map(([code, label]) => (
-            <option key={code} value={code}>{label}</option>
-          ))}
-        </select>
+        {/* Always their primary position — not editable. */}
+        <input
+          className="mtech-bill-input full"
+          type="text"
+          readOnly
+          value={position ? ROLE_LABELS[position] || position : "Loading…"}
+          title="Your primary position (from your profile)"
+          style={{ opacity: 0.75 }}
+        />
 
         <div className="mtech-section-title">Branch</div>
         <select className="mtech-bill-input full" value={branch} onChange={(e) => setBranch(e.target.value)}>

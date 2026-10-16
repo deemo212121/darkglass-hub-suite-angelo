@@ -179,6 +179,8 @@ function mapExpenseRow(row: any): ExpenseRow {
     fromLocation: row.from_location ?? null,
     toLocation: row.to_location ?? null,
     flashTechTripId: row.flash_tech_trip_id ?? null,
+    expenseSubtype: row.expense_subtype ?? null,
+    reviewNote: row.review_note ?? null,
     createdAt: row.created_at,
   };
 }
@@ -367,9 +369,10 @@ export async function createFlashTechTrip(input: {
     try {
       await createExpense({
         profileId: tripProfileId,
-        category: "Travel",
-        expenseDate: input.startDate,
-        amount: 0,
+        category: subtype === "hotel" ? "Hotel" : "Car Rental",
+        expenseDate: (subtype === "hotel" ? input.lodgingStartDate : input.rentalStartDate) || input.startDate,
+        // The Hotel / Rental Rate HR entered on the trip (the stay's cost), 0 until known.
+        amount: (subtype === "hotel" ? input.hotelRate : input.rentalRate) ?? 0,
         description,
         createdBy: input.createdBy,
         fromLocation: input.originLocation,
@@ -524,6 +527,46 @@ export async function updateFlashTechTripTrackerFields(
   if (error) {
     console.error("updateFlashTechTripTrackerFields error:", error.message);
     throw new Error(error.message);
+  }
+  if ("hotelRate" in fields || "rentalRate" in fields || "lodgingStartDate" in fields || "rentalStartDate" in fields) {
+    await syncFlashTechTripExpenses(id).catch((err) => console.error("Couldn't update the trip's expense lines:", err));
+  }
+}
+
+/** tripId → the receipts uploaded on the trip (receipt_paths are download URLs) — shown on its expense lines that have no receipt of their own. */
+export async function getFlashTechTripReceipts(): Promise<Map<string, string[]>> {
+  const { data, error } = await supabase.from("flash_tech_trips").select("id, receipt_paths").not("receipt_paths", "is", null);
+  if (error) return new Map();
+  return new Map(((data ?? []) as { id: string; receipt_paths: string[] | null }[]).filter((t) => (t.receipt_paths ?? []).length > 0).map((t) => [t.id, t.receipt_paths ?? []]));
+}
+
+/**
+ * Copies the trip's Hotel Rate / Rental Rate (the stay's cost, as HR enters
+ * it on the trip) onto its linked Hotel / Car Rental expense lines, with the
+ * lodging / rental start date — they used to stay at $0 forever. Only lines
+ * still Pending are changed; an Approved / Reimbursed / Rejected line keeps
+ * what Accounting decided on.
+ */
+export async function syncFlashTechTripExpenses(tripId: string): Promise<void> {
+  const { data: trip, error } = await supabase
+    .from("flash_tech_trips")
+    .select("start_date, hotel_rate, rental_rate, lodging_start_date, rental_start_date")
+    .eq("id", tripId)
+    .maybeSingle();
+  if (error || !trip) return;
+  const { data: lines } = await supabase
+    .from("expenses")
+    .select("id, amount, expense_date, expense_subtype, status")
+    .eq("flash_tech_trip_id", tripId)
+    .eq("status", "Pending");
+  for (const line of lines ?? []) {
+    const hotel = line.expense_subtype === "hotel";
+    if (!hotel && line.expense_subtype !== "transportation") continue;
+    const rate = hotel ? trip.hotel_rate : trip.rental_rate;
+    const amount = rate != null ? Number(rate) : Number(line.amount) || 0;
+    const date = (hotel ? trip.lodging_start_date : trip.rental_start_date) || trip.start_date || line.expense_date;
+    if (amount === Number(line.amount) && date === line.expense_date) continue;
+    await supabase.from("expenses").update({ amount, expense_date: date }).eq("id", line.id);
   }
 }
 

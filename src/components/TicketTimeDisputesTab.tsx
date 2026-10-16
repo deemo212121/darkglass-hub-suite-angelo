@@ -20,6 +20,7 @@ import { useAuth } from "@/lib/auth";
 import { normalizeRole, isAttendanceManagerTierRole } from "@/lib/roleLabels";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getProfileIdByFirebaseUid } from "@/lib/supabase/timecards";
+import { StageNote } from "@/components/StageNote";
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, canReviewTicketDispute, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { resetMileageRouteConfirmation } from "@/lib/supabase/mileage";
@@ -247,7 +248,7 @@ export function TicketTimeDisputesTab() {
                   </div>
                 )}
                 <textarea
-                  placeholder="Optional response note (visible to the employee)..."
+                  placeholder="Notes — required to approve or reject (visible to the employee)..."
                   value={ticketTimeDisputeNote[r.id] || ""}
                   onChange={(e) => setTicketTimeDisputeNote({ ...ticketTimeDisputeNote, [r.id]: e.target.value })}
                   rows={2}
@@ -364,7 +365,18 @@ export function TicketTimeDisputesTab() {
                   </div>
                 )}
                 {r.reviewNote && (
-                  <p className="text-sm text-emerald-300 font-semibold mt-2">Response: {r.reviewNote}</p>
+                  <p className={`text-sm font-semibold mt-2 whitespace-pre-line ${r.status === "approved" ? "text-emerald-300" : "text-red-200"}`}>
+                    {r.status === "approved" ? "Approval notes" : "Response"}{r.reviewedBy ? ` (${profileName(r.reviewedBy)})` : ""}: {r.reviewNote}
+                  </p>
+                )}
+                {r.hrPaperworkStatus !== "pending" && (
+                  <div className="mt-2 space-y-1">
+                    <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${r.hrPaperworkStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30" : "bg-amber-500/20 text-amber-300 border-amber-500/30"}`}>
+                      HR: {r.hrPaperworkStatus === "approved" ? "Approved" : "Additional Review Required"}
+                      {r.hrReviewerName ? ` — ${r.hrReviewerName}` : ""}
+                    </span>
+                    <StageNote note={r.hrNote} />
+                  </div>
                 )}
                 {isFullRequestsAdmin && r.exceptionType !== null && r.hrPaperworkStatus === "pending" && (
                     <button

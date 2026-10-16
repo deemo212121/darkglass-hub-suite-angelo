@@ -14,7 +14,7 @@
  */
 import type { ProfileRow } from "@/lib/supabase/users";
 import { getSeniorBranchManagerAssignments, type SbmBranchAssignment } from "@/lib/supabase/seniorBranchManagerAssignments";
-import { getTopApproverIds, getPhDepartmentManagers, type PhDepartmentManagerRow } from "@/lib/supabase/approvalAreas";
+import { getTopApproverIds, getPhDepartmentManagers, getPartsHeadIds, type PhDepartmentManagerRow } from "@/lib/supabase/approvalAreas";
 
 export type ChainLevel = "tech" | "branch" | "sbm" | "atd" | "td";
 
@@ -73,6 +73,8 @@ export interface ChainData {
   topApproverIds?: string[];
   /** PH department manager lists (migration 0337) — a department with none uses the role default. */
   phDeptManagers?: PhDepartmentManagerRow[];
+  /** Head(s) of Logistics / Parts (migration 0384) — top of the Parts line for PTO. */
+  partsHeadIds?: string[];
 }
 
 // ---- Philippines (migration 0337): department managers, no branches ----------
@@ -80,7 +82,7 @@ const PH_DEPT_BY_ROLE: Record<string, string> = {
   CSR: "CSR", CSR_AGENT: "CSR", CSR_TEAM_LEADER: "CSR", CSR_MANAGER: "CSR",
   CLAIMS: "Claims", CLAIMS_TEAM_LEADER: "Claims", CLAIMS_MANAGER: "Claims",
   PARTS: "Parts", PARTS_ORDER: "Parts", PARTS_TEAM_LEADER: "Parts", PARTS_MANAGER: "Parts",
-  BIZOPS_MANAGER: "BizOps", BIZOPS_SENIOR_MANAGER: "BizOps",
+  BIZOPS_ASSOCIATE: "BizOps", BIZOPS_TEAM_LEADER: "BizOps", BIZOPS_MANAGER: "BizOps", BIZOPS_SENIOR_MANAGER: "BizOps",
   TRIAGE_USER: "Triage", TRIAGE_MANAGER: "Triage",
   MANAGER: "Management", SENIOR_MANAGER: "Management",
   FINANCE: "Accounting", HR: "HR", IT: "IT", DISPATCHER: "Dispatch",
@@ -122,7 +124,7 @@ export function phDepartmentManagers(data: ChainData, department: string): Profi
   return [...data.byId.values()].filter((p) => isPhDepartmentManager(data, p, department));
 }
 
-let registry: ChainData = { byId: new Map(), sbmBranches: [], topApproverIds: [], phDeptManagers: [] };
+let registry: ChainData = { byId: new Map(), sbmBranches: [], topApproverIds: [], phDeptManagers: [], partsHeadIds: [] };
 
 /** Top level: on the explicit list when it has anyone, else holds Admin / Technical Director / Asst. Director. Mirrors SQL chain_is_top. */
 export function isTopApprover(data: ChainData, p: Pick<ProfileRow, "id" | "role" | "extra_roles">): boolean {
@@ -134,8 +136,8 @@ export function isTopApprover(data: ChainData, p: Pick<ProfileRow, "id" | "role"
 export async function registerApprovalDirectory(profiles: ProfileRow[]): Promise<void> {
   registry = { ...registry, byId: new Map(profiles.map((p) => [p.id, p])) };
   try {
-    const [sbmBranches, topApproverIds, phDeptManagers] = await Promise.all([getSeniorBranchManagerAssignments(), getTopApproverIds(), getPhDepartmentManagers()]);
-    registry = { ...registry, sbmBranches, topApproverIds, phDeptManagers };
+    const [sbmBranches, topApproverIds, phDeptManagers, partsHeadIds] = await Promise.all([getSeniorBranchManagerAssignments(), getTopApproverIds(), getPhDepartmentManagers(), getPartsHeadIds()]);
+    registry = { ...registry, sbmBranches, topApproverIds, phDeptManagers, partsHeadIds };
   } catch (err) {
     console.error("Approval chain: couldn't load Senior Branch Manager branches:", err);
   }
@@ -229,7 +231,7 @@ function isLogisticsStaff(p: Pick<ProfileRow, "role" | "extra_roles">): boolean 
 }
 
 /**
- * Manager step of a Time In / Time Out CORRECTION (PTO keeps chainCanApproveWith).
+ * Manager step of a Time In / Time Out CORRECTION (PTO has its own lines — chainCanApprovePtoWith).
  * Mirrors SQL chain_can_approve_correction (migration 0366):
  *  - a Parts Manager's correction: HR, Admin, SuperAdmin only;
  *  - Parts / Parts Team Leader / Parts Order: their branch's Parts Manager, or HR / Admin / SuperAdmin;
@@ -259,6 +261,79 @@ export function chainCanApproveCorrectionWith(data: ChainData, viewerId: string 
 
 export function chainCanApproveCorrection(viewerId: string | null | undefined, requesterId: string | null | undefined): boolean | null {
   return chainCanApproveCorrectionWith(registry, viewerId, requesterId);
+}
+
+/**
+ * Manager step of a PTO / leave request — the company's two lines, each
+ * approving only its own people. Mirrors SQL chain_can_approve_pto (0384):
+ *
+ *   Tech side:  Tech Director > Tech Asst. Director > SBM > BM > Technician
+ *     Technician          -> BM of the same branch, the SBM owning the branch, Asst. Director, Director
+ *     Branch Manager      -> owning SBM, Asst. Director, Director
+ *     Senior Branch Mgr   -> Asst. Director, Director
+ *     Tech Asst. Director -> Director
+ *     Tech Director       -> (SuperAdmin only)
+ *   Parts side: Parts head (partsHeadIds) > Parts Manager > Parts
+ *     Parts / Team Leader / Order -> their branch's Parts Manager, or a Parts head
+ *     Parts Manager               -> a Parts head
+ *
+ * Admin / HR / the top-approver list don't approve on these lines (HR has its
+ * own stage); SuperAdmin always can. Philippines: the PH chain, unchanged.
+ * null = not on either line (the caller's own rules apply).
+ */
+export function chainCanApprovePtoWith(data: ChainData, viewerId: string | null | undefined, requesterId: string | null | undefined): boolean | null {
+  const r = requesterId ? data.byId.get(requesterId) : undefined;
+  if (!r) return null;
+  if (normBranch(r.assigned_branch) === "philippines") return chainCanApproveWith(data, viewerId, requesterId);
+  const logistics = isLogisticsStaff(r);
+  const level = logistics ? null : chainLevelOf(r);
+  if (!logistics && !level) return null;
+  const v = viewerId ? data.byId.get(viewerId) : undefined;
+  if (!v || v.id === r.id) return false;
+  const roles = heldRoles(v);
+  if (roles.some((x) => x === "SUPERADMIN" || x === "SUPERSUPERADMIN")) return true;
+  const sameBranch = !!normBranch(v.assigned_branch) && normBranch(v.assigned_branch) === normBranch(r.assigned_branch);
+  if (logistics) {
+    const heads = data.partsHeadIds ?? [];
+    if (heads.includes(v.id)) return !heads.includes(r.id);
+    if (heldRoles(r).includes("PARTS_MANAGER")) return false;
+    return roles.includes("PARTS_MANAGER") && sameBranch;
+  }
+  const td = roles.includes("TECHNICAL_DIRECTOR");
+  const atd = roles.includes("TECHNICAL_ASSISTANT_DIRECTOR");
+  switch (level) {
+    case "tech":
+      return td || atd || ownsBranch(data, v.id, r.assigned_branch) || (roles.includes("BRANCH_MANAGER") && sameBranch);
+    case "branch":
+      return td || atd || ownsBranch(data, v.id, r.assigned_branch);
+    case "sbm":
+      return td || atd;
+    case "atd":
+      return td;
+    default: // td
+      return false;
+  }
+}
+
+export function chainCanApprovePto(viewerId: string | null | undefined, requesterId: string | null | undefined): boolean | null {
+  return chainCanApprovePtoWith(registry, viewerId, requesterId);
+}
+
+/**
+ * For a request with no manager on it (staff outside the approval chain):
+ * does the viewer manage the requester's own department? Department by the
+ * requester's primary role, managers by that department's manager roles —
+ * the same mapping the Philippines chain uses (e.g. a CSR Manager for CSR,
+ * a Claims Manager for Claims, a BizOps manager for BizOps). Never any
+ * manager company-wide. null = the requester isn't in the loaded directory.
+ */
+export function isRequesterDepartmentManager(viewerId: string | null | undefined, requesterId: string | null | undefined): boolean | null {
+  const r = requesterId ? registry.byId.get(requesterId) : undefined;
+  if (!r) return null;
+  const v = viewerId ? registry.byId.get(viewerId) : undefined;
+  if (!v || v.id === r.id) return false;
+  const mgrRoles = PH_DEPT_MANAGER_ROLES[phDepartmentOf(r)] ?? [];
+  return heldRoles(v).some((x) => mgrRoles.includes(x));
 }
 
 export function chainCanClockIn(viewerId: string | null | undefined, targetId: string | null | undefined): boolean | null {

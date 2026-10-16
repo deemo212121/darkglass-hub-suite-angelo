@@ -44,7 +44,7 @@ const money = (n: number) => n.toLocaleString("en-US", { style: "currency", curr
  * Accounting Dashboard → Reviewed Periods: one row per technician for the
  * selected pay period, in Finance's summary format. Rows are snapshotted
  * when Finance clicks Done in the Tech Activity Report; every amount is
- * editable, and technicians can be added by hand (migration 0374).
+ * editable, and technicians can be added by hand (migration 0392).
  */
 export function ReviewedPeriodsTab({
   periodStart: dashboardStart,

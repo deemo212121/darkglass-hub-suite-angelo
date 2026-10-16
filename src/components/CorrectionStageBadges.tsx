@@ -48,3 +48,69 @@ export function CorrectionStageBadges({ row }: { row: StageRow }) {
     </div>
   );
 }
+
+type CommentsRow = {
+  managerComments: string;
+  managerSignatureName: string | null;
+  reviewNote: string | null;
+  managerStatus?: CorrectionStatus;
+  hrStatus?: CorrectionStatus;
+  accountingStatus?: CorrectionStatus;
+  managerReviewedBy?: string | null;
+  hrReviewedBy?: string | null;
+  accountingReviewedBy?: string | null;
+  hrReviewerName?: string | null;
+  /** Each stage's note (migration 0376). */
+  managerNote?: string | null;
+  hrNote?: string | null;
+  accountingNote?: string | null;
+};
+
+/**
+ * Comments column: one line per step that left a note —
+ *   Manager (name): note
+ *   HR (name): note
+ *   Accounting (name): note
+ * (migration 0376 notes; the manager's signature comment for older rows).
+ * A rejected step's line is red. Rejection reasons from before 0376 come
+ * from review_note ("Rejected by <name> (<step>): <reason>" per line) for
+ * any step without its own note. "—" when there are none.
+ */
+export function CorrectionComments({ row, nameOf }: { row: CommentsRow; nameOf?: (profileId: string | null) => string }) {
+  const who = (id: string | null | undefined, fallback?: string | null) => (id && nameOf ? nameOf(id) : "") || fallback || "";
+  const steps = [
+    { label: "Manager", note: (row.managerNote ?? row.managerComments ?? "").trim(), status: row.managerStatus, name: who(row.managerReviewedBy, row.managerSignatureName) },
+    { label: "HR", note: (row.hrNote ?? "").trim(), status: row.hrStatus, name: who(row.hrReviewedBy, row.hrReviewerName) },
+    { label: "Accounting", note: (row.accountingNote ?? "").trim(), status: row.accountingStatus, name: who(row.accountingReviewedBy) },
+  ];
+  const withNote = new Set(steps.filter((s) => s.note).map((s) => s.label));
+  const legacyRejections = (row.reviewNote ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((line) => ({ line, m: /^Rejected by (.+?) \(([^)]+)\): ([\s\S]*)$/.exec(line) }))
+    .filter(({ m }) => !m || !withNote.has(m[2]));
+  if (withNote.size === 0 && legacyRejections.length === 0) return <span className="text-slate-600">—</span>;
+  return (
+    <div className="space-y-1.5 text-xs">
+      {steps
+        .filter((s) => s.note)
+        .map((s) => {
+          const rejected = s.status === "rejected";
+          return (
+            <p key={s.label} className={`whitespace-pre-line break-words ${rejected ? "text-red-100" : "text-slate-300"}`}>
+              <span className={`font-semibold ${rejected ? "text-red-300" : "text-green-300"}`}>
+                {s.label}{s.name ? ` (${s.name})` : ""}{rejected ? " — rejected" : ""}:
+              </span>{" "}
+              {s.note}
+            </p>
+          );
+        })}
+      {legacyRejections.map(({ line, m }, i) => (
+        <p key={i} className="text-red-100 whitespace-pre-line break-words">
+          {m ? <><span className="font-semibold text-red-300">{m[2]} ({m[1]}) — rejected:</span> {m[3]}</> : line}
+        </p>
+      ))}
+    </div>
+  );
+}

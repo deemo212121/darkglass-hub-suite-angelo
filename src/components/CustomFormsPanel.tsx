@@ -6,7 +6,8 @@
  * Documents (Jotform) tab, since this is the self-built equivalent of it.
  */
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Pencil, Trash2, Copy, Search, FileText, ExternalLink, X, FileDown, Loader2, HardDrive, Download, FileSpreadsheet, PenLine, CheckCircle2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Copy, Search, FileText, ExternalLink, X, FileDown, Loader2, HardDrive, Download, FileSpreadsheet, PenLine, CheckCircle2, Link2, Eye } from "lucide-react";
+import { CustomFormSignersModal } from "./CustomFormSignersModal";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
@@ -18,8 +19,9 @@ import { saveSubmissionDocument, submissionDocumentFileName } from "@/lib/docume
 import { generateSubmissionDocx } from "@/lib/documentTemplates/docx";
 import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
 import { downloadStyledReport, type ReportSheet } from "@/lib/styledReportExport";
-import { uploadCustomFormFile } from "@/lib/firebase/storage";
-import { ELEMENT_REGISTRY, type CustomFormField } from "@/lib/formElements";
+import type { CustomFormField } from "@/lib/formElements";
+import { saveCompanyPart } from "@/lib/customFormCompletion";
+import { canSignSection, inSigningOrder, isSectionsTurn, isSignerSectionComplete, sectionSigner, signerSectionName, splitSignerSections, type CurrentSigner } from "@/lib/customFormSections";
 import {
   getCustomForms,
   getCustomFormSubmissions,
@@ -35,7 +37,6 @@ import {
   disconnectGoogleDrive,
   companyFields,
   isAwaitingCompany,
-  completeCustomFormSubmission,
   type CustomForm,
   type CustomFormSubmission,
   type CustomFormSubmissionStatus,
@@ -52,6 +53,13 @@ const STATUS_BADGE: Record<string, string> = {
   published: "bg-green-500/20 text-green-300",
   archived: "bg-slate-700 text-slate-400",
 };
+
+/** A form with several company signers: the parts not signed yet (e.g. "HUMAN RESOURCES"). Empty for a single company part. */
+function pendingSignerNames(form: CustomForm | undefined, submission: CustomFormSubmission): string {
+  if (!form) return "";
+  const sections = splitSignerSections(companyFields(form));
+  return sections.length > 1 ? inSigningOrder(sections).filter((s) => !isSignerSectionComplete(s, submission.responses)).map(signerSectionName).join(", ") : "";
+}
 
 /** Fields that carry an answer (not headings/paragraphs/page markers) — the columns of an export. */
 const NON_ANSWER_TYPES = new Set(["heading", "paragraph", "divider", "pageBreak", "sectionCollapse", "submitButton", "captcha", "image"]);
@@ -71,7 +79,27 @@ function exportCellText(value: CustomFormResponseValue | undefined, field: Custo
 }
 
 export function CustomFormsPanel() {
-  const { uid } = useAuth();
+  const { uid, realRole, extraRoles, viewAsRole, displayName } = useAuth();
+
+  // Who's signed in, for forms whose company parts name their signer (e.g.
+  // only Justin Lee signs the CEO part, only HR the HR part). The real role —
+  // a "View as" preview doesn't let anyone sign as another role.
+  const [myProfileId, setMyProfileId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!uid) return;
+    getMyProfileId(uid).then(setMyProfileId).catch(() => setMyProfileId(null));
+  }, [uid]);
+  const me = useMemo<CurrentSigner>(
+    () => ({ profileId: myProfileId, roles: [realRole, ...(viewAsRole ? [] : extraRoles)].filter((r): r is string => !!r) }),
+    [myProfileId, realRole, extraRoles, viewAsRole]
+  );
+  /** Awaiting the company's part AND there's a part left that's this person's to sign. */
+  const canComplete = (form: CustomForm | undefined, submission: CustomFormSubmission): boolean => {
+    if (!form || !isAwaitingCompany(form, submission)) return false;
+    const sections = splitSignerSections(companyFields(form));
+    if (!sections.some(sectionSigner)) return true;
+    return sections.some((sec) => !isSignerSectionComplete(sec, submission.responses) && canSignSection(sec, me) && isSectionsTurn(sec, sections, submission.responses));
+  };
 
   const [forms, setForms] = useState<CustomForm[]>([]);
   const [formsLoading, setFormsLoading] = useState(true);
@@ -293,6 +321,7 @@ export function CustomFormsPanel() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
 
   const revokeIfBlob = (url: string | null) => { if (url?.startsWith("blob:")) URL.revokeObjectURL(url); };
 
@@ -412,31 +441,25 @@ export function CustomFormsPanel() {
     const submission = completing;
     const form = submission ? formsById.get(submission.formId) : undefined;
     if (!submission || !form || !uid) return;
-    const me = await getMyProfileId(uid);
-    if (!me) throw new Error("Couldn't identify your account — refresh and try again.");
-    const responses: Record<string, CustomFormResponseValue> = { ...submission.responses };
-    for (const field of companyFields(form)) {
-      const v = values[field.id];
-      if (ELEMENT_REGISTRY[field.type]?.isFileField) {
-        if (v instanceof File) {
-          const { url, fullPath } = await uploadCustomFormFile(form.companyId, form.id, submission.id, v);
-          responses[field.id] = { url, path: fullPath, fileName: v.name, mimeType: v.type, size: v.size };
-        }
-      } else if (v !== undefined) {
-        responses[field.id] = v;
-      }
-    }
-    await completeCustomFormSubmission(submission.id, responses, me);
-    const completed: CustomFormSubmission = { ...submission, responses, completedAt: new Date().toISOString(), pdfUrl: null };
-    setSubmissions((prev) => prev.map((s) => (s.id === submission.id ? completed : s)));
+    const myId = await getMyProfileId(uid);
+    if (!myId) throw new Error("Couldn't identify your account — refresh and try again.");
+    setActionNotice(null);
+    const result = await saveCompanyPart(form, submission, values, myId, displayName || "Someone");
+    setSubmissions((prev) => prev.map((s) => (s.id === submission.id ? result.submission : s)));
     setCompleting(null);
-    try {
-      const { url } = await saveSubmissionDocument(form, completed);
-      setSubmissions((prev) => prev.map((s) => (s.id === submission.id ? { ...s, pdfUrl: url, pdfGeneratedAt: new Date().toISOString() } : s)));
-    } catch (err) {
-      console.error("Completed, but saving the document failed:", err);
-      setActionError("Completed — but the document couldn't be saved yet. Open it with View PDF to try again.");
-    }
+    if (result.waitingOn.length) setActionNotice(`Saved your part of "${submission.formTitle || "the form"}". Still waiting on: ${result.waitingOn.join(", ")}.`);
+    else if (result.documentError) setActionError("Completed — but the document couldn't be saved yet. Open it with View PDF to try again.");
+  };
+
+  // ── Signing link — /complete-form/<id>, sent to whoever signs for the
+  // company (e.g. the CEO) so they sign without opening HR Paperworks. ──
+  const [copiedSignId, setCopiedSignId] = useState<string | null>(null);
+  // ── View — who has signed a form's submissions (CustomFormSignersModal). ──
+  const [viewingSignersFormId, setViewingSignersFormId] = useState<string | null>(null);
+  const copySigningLink = (submission: CustomFormSubmission) => {
+    navigator.clipboard.writeText(`${getAppUrl()}/complete-form/${submission.id}`);
+    setCopiedSignId(submission.id);
+    setTimeout(() => setCopiedSignId((id) => (id === submission.id ? null : id)), 1500);
   };
 
   // ── Export — the filtered submissions as a styled Excel workbook, one
@@ -596,6 +619,9 @@ export function CustomFormsPanel() {
                             <Switch checked={f.driveUploadEnabled} onCheckedChange={(checked) => void handleToggleDriveUpload(f, checked)} />
                           </div>
                         )}
+                        <button type="button" onClick={() => setViewingSignersFormId(f.id)} title="Who has signed this form" className="btn text-[10px] px-2 py-1 flex items-center gap-1">
+                          <Eye className="h-3 w-3" /> View
+                        </button>
                         <button type="button" onClick={() => void handleExportBlank(f, "pdf")} disabled={!!exportingFormId} title="Export this form (blank) as PDF" className="btn text-[10px] px-2 py-1 flex items-center gap-1 disabled:opacity-50">
                           {exportingFormId === `${f.id}:pdf` ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileDown className="h-3 w-3" />} PDF
                         </button>
@@ -635,6 +661,7 @@ export function CustomFormsPanel() {
           </button>
         </div>
         {actionError && <p className="px-4 py-2 text-xs text-red-300 bg-red-500/10 border-b border-red-500/20">{actionError}</p>}
+        {actionNotice && <p className="px-4 py-2 text-xs text-green-300 bg-green-500/10 border-b border-green-500/20">{actionNotice}</p>}
         <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
@@ -696,14 +723,21 @@ export function CustomFormsPanel() {
                         <option value="archived">Archived</option>
                       </select>
                       {isAwaitingCompany(formsById.get(s.formId), s) && (
-                        <span className="block mt-1 text-[10px] font-semibold text-orange-300" title="The company's part (e.g. Authorized Representative signature) isn't filled in yet — use Complete.">Awaiting company signature</span>
+                        <span className="block mt-1 text-[10px] font-semibold text-orange-300" title="The company's part (e.g. Authorized Representative signature) isn't filled in yet — use Complete.">
+                          Awaiting company signature{pendingSignerNames(formsById.get(s.formId), s) ? ` — ${pendingSignerNames(formsById.get(s.formId), s)}` : ""}
+                        </span>
                       )}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        {isAwaitingCompany(formsById.get(s.formId), s) && (
+                        {canComplete(formsById.get(s.formId), s) && (
                           <button type="button" onClick={() => setCompleting(s)} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white" title="Fill in the company's part — e.g. the Authorized Representative signature">
                             <PenLine className="h-3 w-3" /> Complete
+                          </button>
+                        )}
+                        {isAwaitingCompany(formsById.get(s.formId), s) && (
+                          <button type="button" onClick={() => copySigningLink(s)} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1" title="Copy a link to send to whoever signs for the company (e.g. the CEO) — they sign their part from it, logged in, without opening HR Paperworks">
+                            {copiedSignId === s.id ? <><CheckCircle2 className="h-3 w-3 text-green-400" /> Copied</> : <><Link2 className="h-3 w-3" /> Copy signing link</>}
                           </button>
                         )}
                         <button type="button" onClick={() => void openPreview(s)} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1">
@@ -792,7 +826,7 @@ export function CustomFormsPanel() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  {awaiting && (
+                  {canComplete(formsById.get(live.formId), live) && (
                     <button type="button" onClick={() => { closePreview(); setCompleting(live); }} className="btn text-xs px-2.5 py-1.5 flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white">
                       <PenLine className="h-3 w-3" /> Complete
                     </button>
@@ -825,6 +859,17 @@ export function CustomFormsPanel() {
         );
       })()}
 
+      {viewingSignersFormId && formsById.get(viewingSignersFormId) && (
+        <CustomFormSignersModal
+          form={formsById.get(viewingSignersFormId)!}
+          submissions={submissions.filter((s) => s.formId === viewingSignersFormId)}
+          onClose={() => setViewingSignersFormId(null)}
+          onViewPdf={(s) => { setViewingSignersFormId(null); void openPreview(s); }}
+          onCopySigningLink={copySigningLink}
+          copiedSigningLinkId={copiedSignId}
+        />
+      )}
+
       {/* ── Complete — the company's part of a two-party form ── */}
       {completing && (() => {
         const form = formsById.get(completing.formId);
@@ -840,7 +885,7 @@ export function CustomFormsPanel() {
               </div>
               <div className="p-4 overflow-y-auto">
                 {form ? (
-                  <CustomFormRenderer key={completing.id} fields={form.fields} mode="company" initialValues={completing.responses} onSubmit={(values) => handleComplete(values)} />
+                  <CustomFormRenderer key={completing.id} fields={form.fields} mode="company" showSubmitterPart={form.fields.some((f) => f.type === "pdfDocument")} initialValues={completing.responses} signer={me} onSubmit={(values) => handleComplete(values)} />
                 ) : (
                   <p className="text-sm text-red-300">This submission's form was deleted.</p>
                 )}

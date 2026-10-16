@@ -1,12 +1,12 @@
 /**
- * Sign Manager's Action Plan Form â the 4th Warning Action Plan equivalent
+ * Sign Manager's Action Plan Form — the 4th Warning Action Plan equivalent
  * of SignDocumentPage.tsx/SignPromotionFormPage.tsx, opened from the deep
  * link a Team Messenger message sends. Unlike those two (HR pre-fills
  * every field, recipients only sign), the "manager" slot ALSO fills in the
  * 5 numbered plan sections and Manager Comments here, right alongside
- * signing â see actionPlanFormTemplate.ts's header comment. Senior Manager
+ * signing — see actionPlanFormTemplate.ts's header comment. Senior Manager
  * and HR, further down the chain, only review the already-filled plan and
- * countersign â no editing.
+ * countersign — no editing.
  */
 import { InlinePdfLink } from "@/components/InlinePdfViewer";
 import { useEffect, useState } from "react";
@@ -17,7 +17,7 @@ import { useAuth } from "@/lib/auth";
 import { FillFormSignInRequired } from "@/components/FillFormSignInRequired";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
-import { uploadSignableDocumentSignature, uploadActionPlanForm, refreshStorageAuthToken } from "@/lib/firebase/storage";
+import { uploadSignableDocumentSignature, uploadActionPlanForm, refreshStorageAuthToken, describeStorageError } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, loadAssetDataUrl, resolveSignaturesForCapture } from "@/lib/pdfCapture";
 import { buildActionPlanFormBodyMarkup, actionPlanFormStyles, type ActionPlanFormData } from "@/lib/actionPlanFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
@@ -55,9 +55,12 @@ export function SignActionPlanFormPage({ docId }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [signing, setSigning] = useState(false);
+  // Which part of submitting is running — shown on the button, and named in
+  // the error if it fails, so a stalled submit says where it stalled.
+  const [step, setStep] = useState<string | null>(null);
   const [signed, setSigned] = useState(false);
 
-  // Only used/shown when this recipient is the "manager" slot â see this
+  // Only used/shown when this recipient is the "manager" slot — see this
   // file's header comment. Seeded from doc.formData once it loads, so a
   // reload mid-fill doesn't lose anything already saved by a previous
   // (interrupted) submit attempt.
@@ -139,16 +142,20 @@ export function SignActionPlanFormPage({ docId }: Props) {
     }
     setSigning(true);
     setError(null);
+    let current = "Preparing";
+    const begin = (label: string) => { current = label; setStep(`${label}…`); };
     try {
       const companyId = doc.companyId;
+      begin("Preparing");
       // Force a fresh ID token before this upload sequence — see
       // refreshStorageAuthToken's doc comment (a slow connection can let
       // it go stale between signing in and finally submitting).
       await refreshStorageAuthToken();
+      begin("Uploading your signature");
       const signatureUrl = await uploadSignableDocumentSignature(companyId, doc.id, doc.recipientSlot, dataUrl);
       const entry = { name: displayName || "Signed", url: signatureUrl, signedAt: new Date().toISOString() };
 
-      // Only the Manager slot's typed-in plan actually changes form_data â
+      // Only the Manager slot's typed-in plan actually changes form_data —
       // Senior Manager/HR sign what's already there, unmodified.
       // Only a slot with edit rights on at least one field actually changes
       // form_data — planFields is seeded from doc.formData for every
@@ -165,9 +172,12 @@ export function SignActionPlanFormPage({ docId }: Props) {
       // why an earlier signer's already-uploaded Firebase URL alone
       // silently fails to render into the composited PDF even though it
       // displays fine in the live browser preview.
+      begin("Creating the signed PDF");
       const captureSignatures = await resolveSignaturesForCapture(signatures, doc.recipientSlot, dataUrl);
       const pdfBlob = await captureHtmlToPdfBlob(buildActionPlanFormBodyMarkup(formData, images.logo, images.ribbon, images.footer, captureSignatures), actionPlanFormStyles);
+      begin("Uploading the signed PDF");
       const pdfUrl = await uploadActionPlanForm(companyId, formData.employeeName, pdfBlob);
+      begin("Saving your signature");
 
       await signDocument(doc.id, doc.recipientSlot, entry, pdfUrl, canEditAnything ? (formData as unknown as Record<string, any>) : undefined);
 
@@ -178,18 +188,18 @@ export function SignActionPlanFormPage({ docId }: Props) {
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "Manager",
-          body: `â Manager's Action Plan Form for ${formData.employeeName} has been signed: [${filename}](${pdfUrl})`,
+          body: `✅ Manager's Action Plan Form for ${formData.employeeName} has been signed: [${filename}](${pdfUrl})`,
         });
       }
 
-      // Opt-in broadcast â reuses the Warning Form's notify toggle (see
+      // Opt-in broadcast — reuses the Warning Form's notify toggle (see
       // Notifications Settings, migration 0090) since there's no dedicated
       // action-plan-form setting yet.
       getHrNotificationSettings()
         .then(({ warningForm }) => {
           if (!warningForm) return;
           const excludeIds = doc.createdBy ? [doc.createdBy] : [];
-          void notifyHrRoleUsers(myProfileId, displayName || "Manager", excludeIds, `â Manager's Action Plan Form for ${formData.employeeName} has been signed.`);
+          void notifyHrRoleUsers(myProfileId, displayName || "Manager", excludeIds, `✅ Manager's Action Plan Form for ${formData.employeeName} has been signed.`);
         })
         .catch((err) => console.error("[action-plan-form] hr notify check failed:", err));
 
@@ -197,14 +207,15 @@ export function SignActionPlanFormPage({ docId }: Props) {
       void logActivity({ action: "action_plan_form_signed", targetType: "employee", targetLabel: formData.employeeName, details: { slot: doc.recipientSlot } });
       setSigned(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to submit signature.");
+      setError(`${current} failed — ${describeStorageError(err)}`);
     } finally {
       setSigning(false);
+      setStep(null);
     }
   };
 
   const isRecipient = !!doc && !!myProfileId && doc.recipientId === myProfileId;
-  // Platform-level SUPERSUPERADMIN only â the per-company SUPERADMIN role
+  // Platform-level SUPERSUPERADMIN only — the per-company SUPERADMIN role
   // should NOT see every employee's private documents, just its own like ADMIN.
   const isSuperadmin = role === "SUPERSUPERADMIN";
 
@@ -220,7 +231,7 @@ export function SignActionPlanFormPage({ docId }: Props) {
           <FillFormSignInRequired />
         ) : loading ? (
           <div className="panel p-8 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading documentâ¦
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading document…
           </div>
         ) : error && !doc ? (
           <div className="panel p-6 text-sm text-red-300">{error}</div>
@@ -228,7 +239,7 @@ export function SignActionPlanFormPage({ docId }: Props) {
           <div className="panel p-6 text-sm text-muted-foreground">This document isn't addressed to your account.</div>
         ) : signed || doc.status === "signed" ? (
           <div className="panel p-6 text-center">
-            <p className="text-sm font-semibold mb-2">â Signed{signed ? " and sent back to HR" : ""}.</p>
+            <p className="text-sm font-semibold mb-2">✅ Signed{signed ? " and sent back to HR" : ""}.</p>
             {doc.pdfUrl && (
               <InlinePdfLink url={doc.pdfUrl} label="View the signed PDF" className="text-blue-300 hover:text-blue-200 underline text-sm" />
             )}
@@ -310,7 +321,7 @@ export function SignActionPlanFormPage({ docId }: Props) {
                 disabled={signing}
                 className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white mt-3 disabled:opacity-50"
               >
-                {signing ? "Submittingâ¦" : "Confirm & Sign"}
+                {signing ? step ?? "Submitting…" : "Confirm & Sign"}
               </button>
             </div>
           </div>

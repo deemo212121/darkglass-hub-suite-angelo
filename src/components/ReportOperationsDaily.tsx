@@ -23,7 +23,7 @@ import { todayISO } from "@/lib/localDate";
 // extra_roles, migration 0020) — this app supports dual-role users (e.g. a
 // CSR Agent who is also a BizOps Manager), and every comparable roster
 // elsewhere (CSR Team Leader Dashboard, CSR Dashboard, HR) ORs both fields.
-const BIZOPS_ROLES = new Set(["BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"]);
+const BIZOPS_ROLES = new Set(["BIZOPS_ASSOCIATE", "BIZOPS_TEAM_LEADER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"]);
 
 function isBizOpsProfile(p: ProfileRow): boolean {
   if (BIZOPS_ROLES.has(normalizeRole(p.role))) return true;

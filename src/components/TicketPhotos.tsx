@@ -8,7 +8,7 @@ import {
   type TicketPhoto,
 } from "@/lib/firebase/storage";
 import { compressImage, validateImageFile, formatBytes } from "@/lib/imageCompression";
-import { enqueuePhotoUpload, pendingQueueCount } from "@/lib/offlineQueue";
+import { enqueuePhotoUpload, getQueuedActionStates } from "@/lib/offlineQueue";
 import { isTabVisible, onTabVisible } from "@/lib/pageVisibility";
 
 const MAX_PHOTOS = 20;
@@ -23,6 +23,8 @@ interface UploadQueueItem {
   compressedSize?: number;
   compressedDims?: { width: number; height: number };
   error?: string;
+  /** Offline-queue row id while "queued". */
+  queueId?: number;
 }
 
 /**
@@ -88,28 +90,29 @@ export function TicketPhotos({
     return () => { cancelled = true; };
   }, [ready, cid, ticketPath]);
 
-  // Reconciles "queued" placeholders once OfflineQueueBadge's background
-  // drain (elsewhere in the app) actually uploads them — this component has
-  // no direct signal for that, so it polls the same pending count the badge
-  // does. A drop means at least one queued item (not necessarily one of
-  // THIS ticket's, but this is the only cheap signal available) finished,
-  // so re-list this ticket's real photos and drop any "queued" placeholders
-  // that are presumably now among them.
+  // Reconciles "queued" placeholders with OfflineQueueBadge's background
+  // drain (elsewhere in the app) by their queue row ids: a row that's gone
+  // has synced — re-list this ticket's real photos and drop its placeholder;
+  // a row whose last try failed shows that error under its placeholder.
+  const queuedIdsKey = uploadQueue.filter((q) => q.status === "queued" && q.queueId != null).map((q) => q.queueId).join(",");
   useEffect(() => {
-    if (!uploadQueue.some((q) => q.status === "queued")) return;
+    if (!queuedIdsKey) return;
+    const ids = queuedIdsKey.split(",").map(Number);
     let cancelled = false;
-    let lastCount: number | null = null;
     const check = async () => {
       if (cancelled || !isTabVisible()) return;
-      const n = await pendingQueueCount().catch(() => null);
-      if (cancelled || n === null) return;
-      if (lastCount !== null && n < lastCount) {
+      const states = await getQueuedActionStates(ids).catch(() => null);
+      if (cancelled || !states) return;
+      if (ids.some((id) => !states.has(id))) {
         const list = await listTicketPhotos(cid, ticketPath).catch(() => null);
         if (cancelled) return;
         if (list) setPhotos(list);
-        setUploadQueue((prev) => prev.filter((q) => q.status !== "queued"));
       }
-      lastCount = n;
+      setUploadQueue((prev) =>
+        prev
+          .filter((q) => q.status !== "queued" || q.queueId == null || states.has(q.queueId))
+          .map((q) => (q.status === "queued" && q.queueId != null ? { ...q, error: states.get(q.queueId)?.lastError } : q)),
+      );
     };
     check();
     const interval = window.setInterval(check, 15_000);
@@ -121,7 +124,7 @@ export function TicketPhotos({
       window.clearInterval(interval);
       unsubVisible();
     };
-  }, [uploadQueue, cid, ticketPath]);
+  }, [queuedIdsKey, cid, ticketPath]);
 
   const isImage = (name: string) => /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i.test(name);
 
@@ -226,7 +229,7 @@ export function TicketPhotos({
             // only falls back to the raw file if the failure happened
             // during compression itself.
             try {
-              await enqueuePhotoUpload({
+              const queueId = await enqueuePhotoUpload({
                 companyId: cid,
                 ticketPath,
                 blob: compressed?.blob ?? file,
@@ -237,7 +240,7 @@ export function TicketPhotos({
                 height: compressed?.height,
                 originalSize: compressed?.originalSize ?? file.size,
               });
-              updateQueueItem(id, { status: "queued", progress: 100 });
+              updateQueueItem(id, { status: "queued", progress: 100, queueId });
               return;
             } catch (queueErr) {
               console.error(`Failed to queue "${file.name}" for offline sync:`, queueErr);
@@ -347,6 +350,9 @@ export function TicketPhotos({
                 ) : null}
                 {item.status === "error" && item.error && (
                   <div className="mt-1 text-red-400">{item.error}</div>
+                )}
+                {item.status === "queued" && item.error && (
+                  <div className="mt-1 text-amber-300/80">Still trying — last attempt: {item.error}</div>
                 )}
               </div>
             );

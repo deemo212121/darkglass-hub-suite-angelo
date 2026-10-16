@@ -277,7 +277,9 @@ export function makeDisplayElement(opts: {
     // formatting or need re-editing just because this shipped.
     if (config.html) {
       const substituted = substituteMergeTokens(config.html, valuesByName);
-      const clean = DOMPurify.sanitize(substituted);
+      // target kept so a link (e.g. "open the signed paper copy") can open
+      // in a new tab instead of leaving a half-signed form.
+      const clean = DOMPurify.sanitize(substituted, { ADD_ATTR: ["target"] });
       return (
         <>
           <RichTextStyleTag />

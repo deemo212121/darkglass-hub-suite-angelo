@@ -42,6 +42,23 @@ export function setUserScheduleTimezone(tz: string | null | undefined): void {
   userTimeZone = SCHEDULE_ZONES[String(tz ?? "").trim().toUpperCase()] ?? "America/Chicago";
 }
 
+// Same CST / EST labels as the header clock (timestampParts below).
+const SCHEDULE_ZONE_LABELS: Record<string, string> = { "America/Chicago": "CST", "America/New_York": "EST" };
+
+/**
+ * A stored timestamp as date + time in the signed-in person's assigned time
+ * zone, labelled the same way as the header clock (CST / EST):
+ * { date: "Oct 12, 2026", time: "3:42 PM CST" }. null when there's no valid timestamp.
+ */
+export function timestampParts(iso: string | null | undefined): { date: string; time: string } | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const date = new Intl.DateTimeFormat("en-US", { timeZone: userTimeZone, month: "short", day: "numeric", year: "numeric" }).format(d);
+  const time = new Intl.DateTimeFormat("en-US", { timeZone: userTimeZone, hour: "numeric", minute: "2-digit" }).format(d);
+  return { date, time: `${time} ${SCHEDULE_ZONE_LABELS[userTimeZone] ?? ""}`.trim() };
+}
+
 /** Today's date ("YYYY-MM-DD") in the signed-in person's assigned time zone. */
 export function todayISO(now: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: userTimeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);

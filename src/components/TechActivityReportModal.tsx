@@ -55,7 +55,7 @@ interface Props {
   onClose: () => void;
   /** Office Payroll review wizard only — when set, a footer with "← Prev" / "Done" replaces the bare close. `onPrev` returns to the attendance detail step; `onDone` records the review mark and closes back to the Office Payroll table. */
   onPrev?: () => void;
-  /** Receives this report's pay broken into Finance's summary columns (Reviewed Periods tab, migration 0374). */
+  /** Receives this report's pay broken into Finance's summary columns (Reviewed Periods tab, migration 0392). */
   onDone?: (breakdown: PayrollReviewAmounts) => void;
   doneBusy?: boolean;
   /** Saves ("state") or clears ("company") this technician/period's Hourly + OT pay-mode override — see payroll_hourly_ot_overrides. When omitted, the Company/State comparison box shows read-only totals with no switch. */
@@ -593,7 +593,7 @@ export function TechActivityReportModal({
     }
   };
   // Sunday workweeks this period touches — a custom line can be tagged
-  // with the one it was earned in (migration 0373) so it feeds that week's
+  // with the one it was earned in (migration 0383) so it feeds that week's
   // own FLSA regular rate instead of being spread over the period.
   const periodWeeks = useMemo(() => {
     const weeks: string[] = [];

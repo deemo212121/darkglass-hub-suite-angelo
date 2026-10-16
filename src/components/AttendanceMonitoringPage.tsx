@@ -1,4 +1,6 @@
 import { getAttendanceStartByProfile } from "@/lib/supabase/attendanceStart";
+import { getRestDayHistory } from "@/lib/supabase/restDayHistory";
+import { isRestDayOn, requiredTimesOn, type RestDayHistory } from "@/lib/restDays";
 import { AlertCircle, AlertTriangle, Compass, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, ChevronRight, ChevronDown, Download, Calendar, FileText, CheckCircle, XCircle, Loader2, Settings } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
 import { toast } from "sonner";
@@ -43,7 +45,8 @@ import { resolveTeamLeadOrManager, visibleAttendanceProfileIds } from "@/lib/not
 import { correctionIssueLabel, correctionIssueKey, correctionIssueOptions } from "@/lib/exceptionVisitReportTemplate";
 import { chainCanClockIn } from "@/lib/approvalDirectory";
 import { ClockInCodePrompt } from "@/components/ClockInCodePrompt";
-import { CorrectionStageBadges, CorrectionOverallBadge } from "@/components/CorrectionStageBadges";
+import { CorrectionStageBadges, CorrectionOverallBadge, CorrectionComments } from "@/components/CorrectionStageBadges";
+import { timestampParts } from "@/lib/localDate";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { ATTENDANCE_GRACE_MINUTES, addMinutesToHHMM, nowInTimezone, timezoneForBranch, DEFAULT_ATTENDANCE_TIMEZONE, payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule, toSeconds, ON_TIME_BUFFER_SECONDS } from "@/lib/attendanceGrace";
 import { getServerNow } from "@/lib/serverTime";
@@ -73,6 +76,7 @@ import {
   type CorrectionStatus,
 } from "@/lib/supabase/timecardCorrections";
 import { CorrectionManagerSignModal, CorrectionHrSignModal } from "@/components/CorrectionSignModals";
+import { StageNote } from "@/components/StageNote";
 import { useAttention, badgeText } from "@/lib/attention";
 
 /** A pending trainee punch shown as a regular timecard entry (approved days are already copied to timecard_entries). */
@@ -492,6 +496,7 @@ const TOUR_SAMPLE_PTO: PtoRequestRow = {
   exceptionType: "missed_workday", otherDescription: "", employeeSignatureUrl: null, employeeSignatureName: "Sample Employee", employeeSignedAt: null,
   managerComments: "", managerSignatureUrl: null, managerSignatureName: null, managerSignedAt: null, hrPaperworkStatus: "pending",
   hrSignatureUrl: null, hrSignatureName: null, hrSignedAt: null, hrReceivedDate: null, hrReviewerName: null, pdfUrl: null,
+  managerNote: null, hrNote: null, accountingNote: null, accountingSignatureUrl: null, accountingSignatureName: null, accountingSignedAt: null,
 };
 
 export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
@@ -1242,6 +1247,27 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // A date before this profile's own hireDate (employee_info.hireDate) —
   // no hire date on file falls back to "always counts" (false), same as
   // before this existed, rather than guessing.
+  // Rest days with an effective-from date (rest_day_history, 0373) — each
+  // date checked against the rest days in force THAT day, so a change in
+  // October doesn't turn September's rest days into absences.
+  const [restHistory, setRestHistory] = useState<RestDayHistory>(new Map());
+  useEffect(() => {
+    getRestDayHistory().then(setRestHistory).catch(() => {});
+  }, []);
+  const isRestDayFor = useCallback(
+    (p: ProfileRow, dateISO: string): boolean => isRestDayOn(restHistory, p.id, dateISO, p.off_days),
+    [restHistory]
+  );
+  // Time In / Time Out Required in force on that day (migration 0375) — a
+  // later change to someone's times doesn't re-judge earlier days as late.
+  const requiredFor = useCallback(
+    (p: ProfileRow, dateISO: string): [string, string] => {
+      const t = requiredTimesOn(restHistory, p.id, dateISO, { checkIn: p.required_check_in, checkOut: p.required_check_out });
+      return [t.checkIn, t.checkOut];
+    },
+    [restHistory]
+  );
+
   const isBeforeHireFor = useCallback(
     (profileId: string, dateISO: string): boolean => {
       const hireDate = hireDateByProfileId.get(profileId);
@@ -1289,10 +1315,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const buildDailyRecord = useCallback(
     (p: ProfileRow, dateISO: string, entry: CompanyTimecardEntry | undefined, isToday: boolean): DailyRecord => {
       const dow = new Date(dateISO + "T00:00:00").getDay();
-      const offDays = new Set<number>(p.off_days ?? []);
       // A company holiday suppresses "missing clock-in"/etc. alerts exactly
       // like a scheduled rest day — see isCompanyHolidayFor above.
-      const isOffDay = offDays.has(dow) || isCompanyHolidayFor(dateISO) || isBeforeHireFor(p.id, dateISO) || isOnLeaveFor(p.id, dateISO);
+      const isOffDay = isRestDayFor(p, dateISO) || isCompanyHolidayFor(dateISO) || isBeforeHireFor(p.id, dateISO) || isOnLeaveFor(p.id, dateISO);
       const checkIn = entry?.checkIn || "";
       const checkOut = entry?.checkOut || "";
       const mealIn = entry?.mealStart || "";
@@ -1305,7 +1330,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const country = p.assigned_branch === "Philippines" ? "PH" : "US";
       const graceMinutes = payGraceMinutesFor(country);
       const hasPendingCorrection = hasPendingCorrectionFor(p.id, dateISO);
-      const alerts = computeAlerts(checkIn, checkOut, mealIn, mealOut, p.required_check_in || "", p.required_check_out || "", isOffDay, rowNowHHMM, graceMinutes, p.working_hours, hasPendingCorrection);
+      const alerts = computeAlerts(checkIn, checkOut, mealIn, mealOut, ...requiredFor(p, dateISO), isOffDay, rowNowHHMM, graceMinutes, p.working_hours, hasPendingCorrection);
       const clockedInByName = entry?.clockedInBy ? allProfileById.get(entry.clockedInBy)?.display_name || null : null;
       return {
         profileId: p.id,
@@ -1324,14 +1349,14 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         alerts,
         isOffDay,
         clockedInBy: clockedInByName,
-        requiredCheckIn: p.required_check_in || "",
-        requiredCheckOut: p.required_check_out || "",
+        requiredCheckIn: requiredFor(p, dateISO)[0],
+        requiredCheckOut: requiredFor(p, dateISO)[1],
         checkoutProposal: checkOut ? null : checkoutProposalsByKey.get(`${p.id}|${dateISO}`) ?? null,
         lastTicketUpdate: lastTicketUpdateByProfile.get(p.id) ?? null,
         tickets: ticketsByNameAndDate.get(`${(p.display_name || p.email || "").trim().toLowerCase()}|${dateISO}`) ?? [],
       };
     },
-    [nowByTimezone, allProfileById, checkoutProposalsByKey, lastTicketUpdateByProfile, ticketsByNameAndDate, isCompanyHolidayFor, hasPendingCorrectionFor, isBeforeHireFor, isOnLeaveFor]
+    [nowByTimezone, allProfileById, checkoutProposalsByKey, lastTicketUpdateByProfile, ticketsByNameAndDate, isCompanyHolidayFor, hasPendingCorrectionFor, isBeforeHireFor, isOnLeaveFor, isRestDayFor, requiredFor]
   );
 
   const dailyRecords: DailyRecord[] = useMemo(
@@ -1473,12 +1498,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
 
   const weeklySummary = useMemo(() => {
     return summaryProfiles.map((p) => {
-      const offDays = new Set<number>(p.off_days ?? []);
       let presentCount = 0;
       let workingDays = 0;
       const cells = weekDates.map((iso) => {
         const dow = new Date(iso + "T00:00:00").getDay();
-        if (offDays.has(dow)) return "off" as const;
+        if (isRestDayFor(p, iso)) return "off" as const;
         // Not hired yet as of this date — treated like "future" (a plain
         // "—", not counted toward workingDays/pct) rather than "off" (which
         // would read as a scheduled rest day for someone already employed).
@@ -1494,7 +1518,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const pct = workingDays > 0 ? Math.round((presentCount / workingDays) * 100) : 100;
       return { profileId: p.id, name: p.display_name || p.email, cells, presentCount, workingDays, pct };
     });
-  }, [summaryProfiles, weekDates, entriesByKey, traineePendingByKey, todayISO, isBeforeHireFor]);
+  }, [summaryProfiles, weekDates, entriesByKey, traineePendingByKey, todayISO, isBeforeHireFor, isRestDayFor, requiredFor]);
 
   // Narrows weeklySummary to rows matching the selected day + status (e.g.
   // "who was absent on Wednesday") — "all" for either just shows everyone,
@@ -1509,14 +1533,13 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     const today = new Date();
     const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
     return summaryProfiles.map((p) => {
-      const offDays = new Set<number>(p.off_days ?? []);
       let workingDays = 0;
       let present = 0;
       let late = 0;
       for (let d = new Date(monthStart); d <= today; d.setDate(d.getDate() + 1)) {
         const iso = toISODate(d);
         const dow = d.getDay();
-        if (offDays.has(dow) || isBeforeHireFor(p.id, iso)) continue;
+        if (isRestDayFor(p, iso) || isBeforeHireFor(p.id, iso)) continue;
         workingDays++;
         const entry = entriesByKey.get(`${p.id}|${iso}`);
         const checkIn = entry?.checkIn || "";
@@ -1524,7 +1547,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         if (checkIn) present++;
         const monthlyCountry = p.assigned_branch === "Philippines" ? "PH" : "US";
         const monthlyGraceMinutes = payGraceMinutesFor(monthlyCountry);
-        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", p.required_check_in || "", p.required_check_out || "", false, null, monthlyGraceMinutes, p.working_hours);
+        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", ...requiredFor(p, iso), false, null, monthlyGraceMinutes, p.working_hours);
         if (alerts.some(isPenalizedLateAlert)) late++;
       }
       const absent = Math.max(0, workingDays - present);
@@ -1532,7 +1555,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const status = pct >= 90 ? "Good" : pct >= 70 ? "Warning" : "Poor";
       return { profileId: p.id, name: p.display_name || p.email, workingDays, present, absent, late, pct, status };
     });
-  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor]);
+  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor, isRestDayFor, requiredFor]);
 
   // ---- Custom-range summary — same shape as monthlySummary above, just
   // over whatever [customRangeStart, customRangeEnd] the user picked instead
@@ -1542,7 +1565,6 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     const start = new Date(customRangeStart + "T00:00:00");
     const end = new Date(customRangeEnd + "T00:00:00");
     return summaryProfiles.map((p) => {
-      const offDays = new Set<number>(p.off_days ?? []);
       let workingDays = 0;
       let present = 0;
       let late = 0;
@@ -1550,13 +1572,13 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         const iso = toISODate(d);
         if (iso > todayISO) break; // don't count days that haven't happened yet as absences
         const dow = d.getDay();
-        if (offDays.has(dow) || isBeforeHireFor(p.id, iso)) continue;
+        if (isRestDayFor(p, iso) || isBeforeHireFor(p.id, iso)) continue;
         workingDays++;
         const entry = customEntriesByKey.get(`${p.id}|${iso}`);
         const checkIn = entry?.checkIn || "";
         const checkOut = entry?.checkOut || "";
         if (checkIn) present++;
-        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", p.required_check_in || "", p.required_check_out || "", false, null, ATTENDANCE_GRACE_MINUTES, p.working_hours);
+        const alerts = computeAlerts(checkIn, checkOut, entry?.mealStart || "", entry?.mealEnd || "", ...requiredFor(p, iso), false, null, ATTENDANCE_GRACE_MINUTES, p.working_hours);
         if (alerts.some((a) => a.includes("Late"))) late++;
       }
       const absent = Math.max(0, workingDays - present);
@@ -1564,7 +1586,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const status = pct >= 90 ? "Good" : pct >= 70 ? "Warning" : "Poor";
       return { profileId: p.id, name: p.display_name || p.email, workingDays, present, absent, late, pct, status };
     });
-  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor]);
+  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor, isRestDayFor, requiredFor]);
 
   // Day-by-day breakdown behind the Custom Attendance Summary's Present/
   // Absent/Late numbers — same day-iteration/off-day rules as customSummary
@@ -1582,20 +1604,19 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const buildCustomDayDetails = (profileId: string): CustomDayDetail[] => {
     const p = summaryProfiles.find((pr) => pr.id === profileId);
     if (!p || !customRangeStart || !customRangeEnd || customRangeStart > customRangeEnd) return [];
-    const offDays = new Set<number>(p.off_days ?? []);
     const start = new Date(customRangeStart + "T00:00:00");
     const end = new Date(customRangeEnd + "T00:00:00");
     const days: CustomDayDetail[] = [];
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       const iso = toISODate(d);
       if (iso > todayISO) break;
-      if (offDays.has(d.getDay()) || isBeforeHireFor(p.id, iso)) continue;
+      if (isRestDayFor(p, iso) || isBeforeHireFor(p.id, iso)) continue;
       const entry = customEntriesByKey.get(`${p.id}|${iso}`);
       const checkIn = entry?.checkIn || "";
       const checkOut = entry?.checkOut || "";
       const mealStart = entry?.mealStart || "";
       const mealEnd = entry?.mealEnd || "";
-      const alerts = computeAlerts(checkIn, checkOut, mealStart, mealEnd, p.required_check_in || "", p.required_check_out || "", false, null, ATTENDANCE_GRACE_MINUTES, p.working_hours);
+      const alerts = computeAlerts(checkIn, checkOut, mealStart, mealEnd, ...requiredFor(p, iso), false, null, ATTENDANCE_GRACE_MINUTES, p.working_hours);
       days.push({ date: iso, checkIn, mealStart, mealEnd, checkOut, isLate: alerts.some((a) => a.includes("Late")) });
     }
     return days;
@@ -1857,7 +1878,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     // Leading BOM — without it, Excel (unlike most other CSV readers)
     // ignores the charset=utf-8 above and mis-decodes any non-ASCII
     // character (the "—" placeholder below included) as Windows-1252,
-    // turning it into "â€”" on open.
+    // turning it into "—" on open.
     element.setAttribute("href", "data:text/csv;charset=utf-8," + encodeURIComponent(String.fromCharCode(0xfeff) + csvContent));
     const filenameDate = dateRangeActive ? `${filterDateFrom}_to_${filterDateTo}` : dailyDate;
     element.setAttribute("download", `attendance-summary-${filenameDate}.csv`);
@@ -2155,7 +2176,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     allProfileById,
     myProfileId,
   ]);
+  // Pending first (they still need someone to act), then everything already
+  // decided; each group by work date in the chosen direction.
   const sortedCorrections = useMemo(() => [...filteredCorrections].sort((a, b) => {
+      const pendingFirst = Number(b.status === "pending") - Number(a.status === "pending");
+      if (pendingFirst !== 0) return pendingFirst;
       const d = a.workDate.localeCompare(b.workDate) || (a.createdAt ?? "").localeCompare(b.createdAt ?? "");
       return workDateSort === "desc" ? -d : d;
     }), [filteredCorrections, workDateSort]);
@@ -3203,6 +3228,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               Manager: {request.managerStatus.charAt(0).toUpperCase() + request.managerStatus.slice(1)}
                               {request.managerReviewedBy ? ` — ${profileName(request.managerReviewedBy)}` : ""}
                             </span>
+                            <StageNote note={request.managerNote} status={request.managerStatus} />
                             <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
                               request.hrStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
                               : request.hrStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
@@ -3211,6 +3237,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               HR: {request.hrStatus.charAt(0).toUpperCase() + request.hrStatus.slice(1)}
                               {request.hrReviewedBy ? ` — ${profileName(request.hrReviewedBy)}` : ""}
                             </span>
+                            <StageNote note={request.hrNote} status={request.hrStatus === "pending" && request.hrNote ? "signed" : request.hrStatus} />
                             <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
                               request.accountingStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30"
                               : request.accountingStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30"
@@ -3219,6 +3246,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               Accounting: {request.accountingStatus.charAt(0).toUpperCase() + request.accountingStatus.slice(1)}
                               {request.accountingReviewedBy ? ` — ${profileName(request.accountingReviewedBy)}` : ""}
                             </span>
+                            <StageNote note={request.accountingNote} status={request.accountingStatus} />
                           </div>
                         </td>
                         <td className="px-3 py-3">
@@ -3343,12 +3371,15 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           <p className="text-xs text-slate-500 mt-1">
                             Manager: {request.managerStatus}{request.managerReviewedBy ? ` by ${profileName(request.managerReviewedBy)}` : ""}{request.managerReviewedAt ? ` on ${request.managerReviewedAt.slice(0, 10)}` : ""}
                           </p>
+                          <StageNote note={request.managerNote} status={request.managerStatus} />
                           <p className="text-xs text-slate-500">
                             HR: {request.hrStatus}{request.hrReviewedBy ? ` by ${profileName(request.hrReviewedBy)}` : ""}{request.hrReviewedAt ? ` on ${request.hrReviewedAt.slice(0, 10)}` : ""}
                           </p>
+                          <StageNote note={request.hrNote} status={request.hrStatus === "pending" && request.hrNote ? "signed" : request.hrStatus} />
                           <p className="text-xs text-slate-500">
                             Accounting: {request.accountingStatus}{request.accountingReviewedBy ? ` by ${profileName(request.accountingReviewedBy)}` : ""}{request.accountingReviewedAt ? ` on ${request.accountingReviewedAt.slice(0, 10)}` : ""}
                           </p>
+                          <StageNote note={request.accountingNote} status={request.accountingStatus} />
                         </div>
                       </div>
                     </div>
@@ -3496,25 +3527,27 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 <button
                   type="button"
                   onClick={() => setWorkDateSort((d) => (d === "desc" ? "asc" : "desc"))}
-                  title={workDateSort === "desc" ? "Newest first — click for oldest first" : "Oldest first — click for newest first"}
+                  title={workDateSort === "desc" ? "Pending first, then newest first — click for oldest first" : "Pending first, then oldest first — click for newest first"}
                   className="inline-flex items-center gap-1 uppercase hover:text-white"
                 >
                   Work Date <span className="text-[10px]">{workDateSort === "desc" ? "▼" : "▲"}</span>
                 </button>
               </th>
+              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Submitted</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Issue</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Original Time</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Requested Time</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Reason</th>
+                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Comments</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {loading ? (
-                      <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
+                      <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
                     ) : filteredCorrections.length === 0 ? (
-                      <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" || correctionIssueFilter !== "all" || correctionDepartmentFilter !== "all" || correctionBranchFilter !== "all" || correctionWorkDateFrom || correctionWorkDateTo ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
+                      <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-400">{correctionSearch.trim() || correctionStatusFilter !== "all" || correctionIssueFilter !== "all" || correctionDepartmentFilter !== "all" || correctionBranchFilter !== "all" || correctionWorkDateFrom || correctionWorkDateTo ? "No correction requests match your search/filter." : "No correction requests yet."}</td></tr>
                     ) : sortedCorrections.map((correction) => (
                       <tr key={correction.id} className="border-b border-white/5 hover:bg-white/5 transition">
                         <td className="px-3 py-3 text-white font-medium">
@@ -3523,12 +3556,21 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           </a>
                         </td>
                         <td className="px-3 py-3 text-slate-300">{correction.workDate}</td>
+                        <td className="px-3 py-3 text-slate-300 whitespace-nowrap">
+                          {(() => {
+                            const submitted = timestampParts(correction.createdAt);
+                            return submitted ? <>{submitted.date}<div className="text-xs text-slate-500">{submitted.time}</div></> : "—";
+                          })()}
+                        </td>
                         <td className="px-3 py-3 text-slate-300">{correctionIssueLabel(correction.exceptionType, correction.otherDescription)}</td>
                         <td className="px-3 py-3 text-slate-300">{correction.originalCheckIn || "—"} → {correction.originalCheckOut || "—"}</td>
                         <td className="px-3 py-3 text-amber-200">
                           <RequestedTime c={correction} />
                         </td>
                         <td className="px-3 py-3 text-slate-300">{correction.reason || "—"}</td>
+                        <td className="px-3 py-3 max-w-xs">
+                          <CorrectionComments row={correction} nameOf={profileName} />
+                        </td>
                         <td className="px-3 py-3">
                           <CorrectionStageBadges row={correction} />
                         </td>
@@ -3773,7 +3815,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 <h3 className="text-sm font-bold text-white mb-4">Correction Details</h3>
                 <div className="space-y-2">
                   <p className="text-sm text-slate-300"><span className="text-slate-400">Reason:</span> {selectedCorrection.reason || "—"}</p>
-                  <p className="text-sm text-slate-300"><span className="text-slate-400">Requested:</span> {new Date(selectedCorrection.createdAt).toLocaleString()}</p>
+                  <p className="text-sm text-slate-300"><span className="text-slate-400">Requested:</span> {(() => { const t = timestampParts(selectedCorrection.createdAt); return t ? `${t.date}, ${t.time}` : "—"; })()}</p>
                   <div className="flex flex-wrap gap-2 mt-2">
                     <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold border ${selectedCorrection.managerStatus === "approved" ? "bg-green-500/20 text-green-300 border-green-500/30" : selectedCorrection.managerStatus === "rejected" ? "bg-red-500/20 text-red-300 border-red-500/30" : "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"}`}>
                       Manager: {selectedCorrection.managerStatus}
@@ -3804,6 +3846,22 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       </span>
                     )}
                   </div>
+                  {(selectedCorrection.managerNote || selectedCorrection.hrNote || selectedCorrection.accountingNote) && (
+                    <div className="mt-2 space-y-1.5">
+                      {([
+                        ["Manager", selectedCorrection.managerNote],
+                        ["HR", selectedCorrection.hrNote],
+                        ["Accounting", selectedCorrection.accountingNote],
+                      ] as const).map(([label, note]) =>
+                        note ? (
+                          <div key={label}>
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label} notes</p>
+                            <StageNote note={note} />
+                          </div>
+                        ) : null
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 

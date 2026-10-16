@@ -92,8 +92,9 @@ function formFromRow(r: any): CustomForm {
     fields: (r.fields ?? []) as CustomFormField[],
     // An empty design ({ blocks: [] }, what the builder used to save for a
     // form nobody designed) is no template — otherwise its PDF is a blank
-    // page instead of the automatic layout.
-    documentTemplate: r.document_template?.blocks?.length ? (r.document_template as DocumentTemplate) : null,
+    // page instead of the automatic layout. A source PDF to stamp
+    // (sourcePdf, no blocks) is a template.
+    documentTemplate: r.document_template?.blocks?.length || r.document_template?.sourcePdf ? (r.document_template as DocumentTemplate) : null,
     driveUploadEnabled: r.drive_upload_enabled ?? true,
     notifyFirebaseUids: (r.notify_firebase_uids ?? []) as string[],
     discordWebhookUrl: r.discord_webhook_url ?? null,
@@ -255,6 +256,15 @@ export async function getCustomFormSubmissions(): Promise<CustomFormSubmission[]
   return all;
 }
 
+/** One submission (not deleted), e.g. for a signer's direct /complete-form/<id> link — null if it's gone or not this company's. */
+export async function getCustomFormSubmission(id: string): Promise<CustomFormSubmission | null> {
+  const query = (cols: string) => supabase.from("hr_custom_form_submissions").select(cols).eq("id", id).is("deleted_at", null).maybeSingle();
+  let { data, error } = await query(SUBMISSION_SELECT);
+  if (isMissingColumnError(error)) ({ data, error } = await query(SUBMISSION_SELECT_BASE));
+  if (error) throw error;
+  return data ? submissionFromRow(data) : null;
+}
+
 /** Soft-deleted submissions still within the 30-day restore window, most recently deleted first. */
 export async function getDeletedCustomFormSubmissions(): Promise<CustomFormSubmission[]> {
   const cutoff = new Date(Date.now() - RESTORE_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -377,6 +387,12 @@ export async function saveCustomFormSubmissionPdf(id: string, pdfUrl: string): P
 }
 
 /** HR's half of a two-party form: merges the company fields' answers into the submission and stamps who completed it. */
+/** One signer's part of a form with several company signers (see customFormSections.ts) — saved, but the submission isn't complete until the last part is in. */
+export async function saveCustomFormCompanyPart(id: string, responses: Record<string, CustomFormResponseValue>): Promise<void> {
+  const { error } = await supabase.from("hr_custom_form_submissions").update({ responses }).eq("id", id);
+  if (error) throw error;
+}
+
 export async function completeCustomFormSubmission(id: string, responses: Record<string, CustomFormResponseValue>, completedBy: string): Promise<void> {
   const { error } = await supabase
     .from("hr_custom_form_submissions")

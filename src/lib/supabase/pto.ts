@@ -12,8 +12,9 @@
  * at any stage immediately denies the whole request).
  */
 
-import { requireRejectReason } from "@/lib/rejectReason";
-import { chainCanApprove } from "@/lib/approvalDirectory";
+import { requireRejectReason, requireApproveNote, RejectCancelledError, APPROVE_CANCELLED_MESSAGE } from "@/lib/rejectReason";
+import { askAccountingSignature } from "@/lib/accountingSignature";
+import { chainCanApprovePto, isRequesterDepartmentManager } from "@/lib/approvalDirectory";
 import { supabase } from "./client";
 import { createNotification } from "./notifications";
 import { getCompanyUsers } from "./users";
@@ -280,6 +281,14 @@ export interface PtoRequestRow {
   hrReceivedDate: string | null;
   hrReviewerName: string | null;
   pdfUrl: string | null;
+  /** Each stage's required note on its decision (migration 0376) — shown under that stage's status. */
+  managerNote: string | null;
+  hrNote: string | null;
+  accountingNote: string | null;
+  /** Accounting's signature on an exception-report approval (migration 0376). */
+  accountingSignatureUrl: string | null;
+  accountingSignatureName: string | null;
+  accountingSignedAt: string | null;
 }
 
 const SELECT_COLUMNS =
@@ -287,6 +296,14 @@ const SELECT_COLUMNS =
 
 // Falls back to this if attachment_added_by/etc. don't exist yet — i.e.
 // 0246_attachment_added_removed_by.sql hasn't been run against this database.
+// Stage notes (migration 0376) — dropped when that hasn't been run yet.
+const SELECT_COLUMNS_WITH_NOTES = SELECT_COLUMNS + ", manager_note, hr_note, accounting_note, accounting_signature_url, accounting_signature_name, accounting_signed_at";
+
+/** True when an error is about the 0376 note columns not existing yet. */
+function isNoteColumnError(error: { code?: string; message?: string } | null): boolean {
+  return !!error && /manager_note|hr_note|accounting_note|accounting_sign/.test(error.message ?? "");
+}
+
 const SELECT_COLUMNS_NO_ATTACHMENT_META =
   "id, profile_id, pto_type, start_date, end_date, hours_requested, reason, status, requested_by, manager_id, manager_status, manager_reviewed_by, manager_reviewed_at, hr_status, hr_reviewed_by, hr_reviewed_at, accounting_status, accounting_reviewed_by, accounting_reviewed_at, reviewed_by, reviewed_at, review_note, created_at, attachment_path";
 
@@ -346,6 +363,12 @@ function mapRow(row: any): PtoRequestRow {
     hrReceivedDate: row.hr_received_date ?? null,
     hrReviewerName: row.hr_reviewer_name ?? null,
     pdfUrl: row.pdf_url ?? null,
+    managerNote: row.manager_note ?? (row.manager_comments || null),
+    hrNote: row.hr_note ?? null,
+    accountingNote: row.accounting_note ?? null,
+    accountingSignatureUrl: row.accounting_signature_url ?? null,
+    accountingSignatureName: row.accounting_signature_name ?? null,
+    accountingSignedAt: row.accounting_signed_at ?? null,
   };
 }
 
@@ -356,7 +379,7 @@ const PAGE_SIZE = 1000;
 /** All PTO requests for the caller's company (RLS-scoped), newest first. */
 export async function getCompanyPtoRequests(): Promise<PtoRequestRow[]> {
   const all: PtoRequestRow[] = [];
-  let select = SELECT_COLUMNS;
+  let select = SELECT_COLUMNS_WITH_NOTES;
   for (let from = 0; ; from += PAGE_SIZE) {
     const runQuery = (cols: string) =>
       supabase
@@ -366,6 +389,10 @@ export async function getCompanyPtoRequests(): Promise<PtoRequestRow[]> {
         .order("created_at", { ascending: false })
         .range(from, from + PAGE_SIZE - 1);
     let { data, error } = await runQuery(select);
+    if (isMissingColumnError(error) && select === SELECT_COLUMNS_WITH_NOTES) {
+      select = SELECT_COLUMNS;
+      ({ data, error } = await runQuery(select));
+    }
     if (isMissingColumnError(error) && select === SELECT_COLUMNS) {
       select = SELECT_COLUMNS_NO_ATTACHMENT_META;
       ({ data, error } = await runQuery(select));
@@ -496,10 +523,11 @@ export function canReviewPtoStage(
   const has = (r: string) => heldRoles.includes(r);
   if (has("SUPERADMIN") || has("SUPERSUPERADMIN")) return true;
   if (stage === "manager") {
-    // Non-PH field staff (Technician → Branch / Parts Manager → Senior Branch
-    // Manager → Admin / Directors): the Approval Chain decides, by role +
-    // branch + area — migration 0332 enforces the same rule in the database.
-    const chain = chainCanApprove(viewerProfileId, request.profileId);
+    // The tech line (Tech Director > Tech Asst. Director > SBM > BM >
+    // Technician) and the Parts line (Parts head > Parts Manager > Parts):
+    // each approves only its own people — chainCanApprovePto; migration 0384
+    // enforces the same rule in the database.
+    const chain = chainCanApprovePto(viewerProfileId, request.profileId);
     if (chain !== null) return chain;
     if (request.managerId === viewerProfileId) return true;
     // request.managerId is resolved ONCE, at submission time, from
@@ -520,7 +548,10 @@ export function canReviewPtoStage(
     // in general.
     if (managersManagerName && viewerName && managersManagerName === viewerName) return true;
     if (request.managerId) return false;
-    return has("MANAGER");
+    // No manager on the request: a manager of the requester's own
+    // department — not any manager company-wide. (HR + Accounting still
+    // decide it between them if no such manager acts.)
+    return isRequesterDepartmentManager(viewerProfileId, request.profileId) ?? has("MANAGER");
   }
   // HR and Accounting no longer wait for the manager — any 2 of the 3 stages
   // decide a leave request, in any order (migration 0335).
@@ -723,18 +754,39 @@ export async function reviewPtoStage(
    * rendered-and-uploaded PDF with this signature stamped on.
    */
   signature?: { url: string; name: string; comments: string; pdfUrl: string },
-  /** Why it's rejected — asked for with the shared popup when not given (throws RejectCancelledError if the reviewer cancels). */
-  rejectReason?: string
+  /**
+   * This stage's note (migration 0376) — the rejection reason, or the
+   * approval note. Required either way: asked for with the shared popup
+   * when not given (throws RejectCancelledError if the reviewer cancels).
+   * A manager's signed approval uses its comments when this is empty.
+   */
+  stageNote?: string
 ): Promise<void> {
   const nowIso = new Date().toISOString();
   const stepLabel = stage === "manager" ? "Manager" : stage === "hr" ? "HR" : "Accounting";
-  const reason = decision === "rejected" ? await requireRejectReason(rejectReason, `Reject this leave request (${stepLabel})`) : "";
+  const reason = decision === "rejected" ? await requireRejectReason(stageNote, `Reject this leave request (${stepLabel})`) : "";
+  // Accounting approving an exception-report request signs like the
+  // Manager does — comments + signature stamped in the PDF (migration 0376).
+  const accountingSigned = stage === "accounting" && decision === "approved" && !signature ? await signPtoAsAccounting(request.id, reviewerName) : null;
+  const note =
+    decision === "rejected"
+      ? reason
+      : accountingSigned
+        ? accountingSigned.comments
+        : await requireApproveNote(stageNote || signature?.comments, `Approve this leave request (${stepLabel}) — notes`);
   const payload: Record<string, unknown> =
     stage === "manager"
       ? { manager_status: decision, manager_reviewed_by: reviewerId, manager_reviewed_at: nowIso }
       : stage === "hr"
         ? { hr_status: decision, hr_reviewed_by: reviewerId, hr_reviewed_at: nowIso }
         : { accounting_status: decision, accounting_reviewed_by: reviewerId, accounting_reviewed_at: nowIso };
+  payload[`${stage}_note`] = note;
+  if (accountingSigned) {
+    payload.accounting_signature_url = accountingSigned.url;
+    payload.accounting_signature_name = reviewerName;
+    payload.accounting_signed_at = nowIso;
+    payload.pdf_url = accountingSigned.pdfUrl;
+  }
 
   if (stage === "manager" && decision === "approved" && signature) {
     payload.manager_signature_url = signature.url;
@@ -758,6 +810,14 @@ ${line}` : line;
     .eq("id", request.id)
     .select(SELECT_COLUMNS)
     .single();
+  if (isNoteColumnError(error)) {
+    // 0376 not run yet — save the decision without the note column.
+    delete payload[`${stage}_note`];
+    delete payload.accounting_signature_url;
+    delete payload.accounting_signature_name;
+    delete payload.accounting_signed_at;
+    ({ data, error } = await supabase.from("pto_requests").update(payload).eq("id", request.id).select(SELECT_COLUMNS).single());
+  }
   if (isMissingColumnError(error)) {
     // attachment_path (0240) not applied yet — the update itself never
     // referenced it, only the RETURNING select did.
@@ -771,7 +831,7 @@ ${line}` : line;
 
   // Accounting approves with a click, not a signature — rebuild the Exception
   // Report PDF so its "7. Accounting Approval" section shows who and when.
-  if (stage === "accounting" && decision === "approved" && updated.exceptionType !== null) {
+  if (stage === "accounting" && decision === "approved" && updated.exceptionType !== null && !accountingSigned) {
     void (async () => {
       const [{ regeneratePtoExceptionReportPdf }, { employeeInfoForPto }, { getCompanyUsers }] = await Promise.all([
         import("@/lib/ptoExceptionReportPdf"),
@@ -843,6 +903,38 @@ ${line}` : line;
 }
 
 /**
+ * Accounting's sign popup for an exception-report (Sick / Unpaid) request —
+ * returns null for a request with no Exception Report (those just take the
+ * notes popup). Cancelling throws RejectCancelledError (nothing saved).
+ * Renders and uploads the PDF with the new signature before the approval
+ * is saved.
+ */
+async function signPtoAsAccounting(requestId: string, reviewerName: string): Promise<{ url: string; pdfUrl: string; comments: string } | null> {
+  let { data, error } = await supabase.from("pto_requests").select(SELECT_COLUMNS_WITH_NOTES).eq("id", requestId).maybeSingle();
+  if (isMissingColumnError(error)) ({ data, error } = await supabase.from("pto_requests").select(SELECT_COLUMNS).eq("id", requestId).maybeSingle());
+  if (error || !data || (data as any).exception_type == null) return null;
+  const full = mapRow(data);
+  const signed = await askAccountingSignature(`Signing approves this leave request as the Accounting stage (${full.startDate} to ${full.endDate}).`, reviewerName);
+  if (!signed) throw new RejectCancelledError(APPROVE_CANCELLED_MESSAGE);
+  const [{ buildPtoAccountingSignaturePdf }, { employeeInfoForPto }] = await Promise.all([
+    import("@/lib/ptoExceptionReportPdf"),
+    import("@/components/PtoSignModals"),
+  ]);
+  const profiles = await getCompanyUsers();
+  const companyId = profiles.find((p) => p.id === full.profileId)?.company_id;
+  if (!companyId) throw new Error("Couldn't find this employee's company — try again in a moment.");
+  const { pdfUrl, accountingSignatureUrl } = await buildPtoAccountingSignaturePdf({
+    request: full,
+    companyId,
+    employeeInfo: employeeInfoForPto(full, profiles),
+    accountingName: reviewerName,
+    accountingComments: signed.comments,
+    accountingSignatureDataUrl: signed.dataUrl,
+  });
+  return { url: accountingSignatureUrl, pdfUrl, comments: signed.comments };
+}
+
+/**
  * Resets one stage's review back to "pending" so it can be re-decided —
  * the review buttons in PtoManagementTab.tsx only render while a stage is
  * still "pending" (canReviewPtoStage(..., "pending" check ...)), so once a
@@ -892,20 +984,25 @@ export async function signPtoHrPaperwork(
   signature: { url: string; name: string },
   hrReceivedDate: string,
   hrActionStatus: Exclude<PtoHrPaperworkStatus, "pending">,
-  pdfUrl: string
+  pdfUrl: string,
+  /** HR's note (migration 0376), shown under the HR status. */
+  hrNote?: string
 ): Promise<void> {
-  const { error } = await supabase
-    .from("pto_requests")
-    .update({
-      hr_paperwork_status: hrActionStatus,
-      hr_signature_url: signature.url,
-      hr_signature_name: signature.name,
-      hr_signed_at: new Date().toISOString(),
-      hr_received_date: hrReceivedDate || null,
-      hr_reviewer_name: reviewerName,
-      pdf_url: pdfUrl,
-    })
-    .eq("id", id);
+  const payload: Record<string, unknown> = {
+    hr_paperwork_status: hrActionStatus,
+    hr_signature_url: signature.url,
+    hr_signature_name: signature.name,
+    hr_signed_at: new Date().toISOString(),
+    hr_received_date: hrReceivedDate || null,
+    hr_reviewer_name: reviewerName,
+    pdf_url: pdfUrl,
+  };
+  if (hrNote?.trim()) payload.hr_note = hrNote.trim();
+  let { error } = await supabase.from("pto_requests").update(payload).eq("id", id);
+  if (isNoteColumnError(error)) {
+    delete payload.hr_note;
+    ({ error } = await supabase.from("pto_requests").update(payload).eq("id", id));
+  }
   if (error) {
     console.error("signPtoHrPaperwork error:", error.message);
     throw new Error(error.message);

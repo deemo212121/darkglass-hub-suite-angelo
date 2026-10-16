@@ -15136,3 +15136,62 @@ button.home-attn:focus-visible { outline: 2px solid var(--tone); outline-offset:
 .hm-row-toggle:focus-visible { opacity: 1; }
 .hm-row-toggle:hover { color: var(--color-foreground); background: color-mix(in oklab, var(--color-foreground) 10%, transparent); }
 @media (hover: none) { .hm-row-toggle { opacity: 1; } }
+
+/* ─── Paper view — custom forms' fill page (CustomFormRenderer `paper`) ────
+   The form as a white document page, like the HR forms that are signed on
+   the real PDF: dark text in either theme, and answers written on a line
+   with their label underneath — the same layout as the generated PDF. Kept
+   last in the file so it wins over the light theme's !important inputs. */
+.paper-sheet {
+  --foreground: #111827; --color-foreground: #111827;
+  --muted-foreground: #4b5563; --color-muted-foreground: #4b5563;
+  --panel-border: rgba(15, 23, 42, 0.2); --color-panel-border: rgba(15, 23, 42, 0.2);
+  --border: rgba(15, 23, 42, 0.15); --color-border: rgba(15, 23, 42, 0.15);
+  width: 100%;
+  max-width: 816px;
+  margin: 0 auto;
+  padding: 56px 64px;
+  background: #fff;
+  color: #111827;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  border-radius: 2px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+@media (max-width: 640px) { .paper-sheet { padding: 28px 18px; } }
+.paper-sheet h1, .paper-sheet h2, .paper-sheet h3, .paper-sheet h4, .paper-sheet h5, .paper-sheet h6 { font-family: Arial, Helvetica, sans-serif; line-height: 1.3; color: #111827; }
+/* Body text in print black, not the app's dimmed foreground. */
+.paper-sheet .text-foreground\/85 { color: #1f2937 !important; }
+.paper-sheet h1 { font-size: 26px; }
+.paper-sheet h2 { font-size: 22px; }
+.paper-sheet h3 { font-size: 18px; }
+.paper-sheet h4 { font-size: 16px; }
+.paper-sheet h5 { font-size: 15px; }
+.paper-sheet h6 { font-size: 14px; }
+.paper-sheet .glass-input { background-color: #fff !important; border-color: rgba(15, 23, 42, 0.25) !important; color: #111827 !important; }
+.paper-sheet .glass-input::placeholder { color: #9ca3af !important; }
+.paper-sheet .btn { background: #fff; color: #334155; border-color: rgba(15, 23, 42, 0.25); }
+/* An answer on its line: the input is borderless and sits on the rule. */
+.paper-sheet .paper-line .glass-input { background-color: transparent !important; border: 0 !important; border-radius: 0; padding: 2px 2px 4px; font-size: 14px; box-shadow: none; }
+.paper-sheet .paper-line .glass-input:focus { background-color: #eff6ff !important; }
+.paper-sheet .paper-line .glass-input[readonly] { cursor: default; }
+.paper-sheet .paper-line .glass-input[readonly]:focus { background-color: transparent !important; }
+.paper-sheet .paper-gutter { padding-right: 1.5rem; }
+/* Phones: each answer line takes the full width (side-by-side halves are too narrow to sign or read). */
+@media (max-width: 640px) {
+  .paper-sheet .paper-line-row { flex-basis: 100% !important; max-width: 100% !important; }
+  .paper-sheet .paper-gutter { padding-right: 0; }
+}
+.paper-rule { border-top: 1px solid #111827; }
+.paper-label { font-size: 12px; color: #4b5563; margin-top: 3px; }
+/* Signature: a light "sign here" area on the line, then its Type/Draw controls
+   (SignaturePadControls, styled for the white page). */
+.paper-sig canvas { max-width: 100% !important; border: 0 !important; border-radius: 0 !important; background-color: #f1f6ff !important; }
+.paper-sheet .sig-controls { margin-bottom: 6px; }
+.paper-sheet .sig-controls .bg-white\/5 { background-color: #f1f5f9 !important; }
+.paper-sheet .sig-controls .border-white\/10 { border-color: rgba(15, 23, 42, 0.15) !important; }
+.paper-sheet .sig-controls .text-slate-300 { color: #334155 !important; }
+.paper-sheet .sig-controls .bg-blue-500\/10.text-white { color: #111827 !important; }
+.paper-sheet .sig-controls .hover\:text-white:hover { color: #111827 !important; }
+.paper-sheet .sig-controls .text-red-300 { color: #b91c1c !important; }

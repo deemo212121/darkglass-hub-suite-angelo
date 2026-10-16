@@ -962,10 +962,10 @@ export interface TechCustomPayItem {
   value: number;
   rate: number;
   /** Whether this line counts toward the FLSA weighted-regular-rate calc
-   *  (AccountingDashboard.tsx's techIncludablePay) — see migration 0290.
+   *  (AccountingDashboard.tsx's techIncludablePay) — see migration 0291.
    *  Explicitly set by whoever enters the line, not guessed from the label. */
   isWageIncludable: boolean;
-  /** Sunday of the workweek this line was earned in (migration 0373), or
+  /** Sunday of the workweek this line was earned in (migration 0383), or
    *  null when it isn't tied to one week. An includable line with a week
    *  feeds THAT week's FLSA regular rate; null ones are spread over the
    *  period's weeks by hours (AccountingDashboard.tsx's weekly OT premium). */
@@ -974,12 +974,12 @@ export interface TechCustomPayItem {
 
 const CUSTOM_PAY_ITEM_COLUMNS_BASE = "id, profile_id, period_start, period_end, label, value, rate, is_wage_includable";
 // work_week_start is selected separately so custom lines keep loading
-// (without week tags) until migration 0373 is run.
+// (without week tags) until migration 0383 is run.
 let workWeekColumnMissing = false;
 const customPayItemColumns = () => (workWeekColumnMissing ? CUSTOM_PAY_ITEM_COLUMNS_BASE : CUSTOM_PAY_ITEM_COLUMNS_BASE + ", work_week_start");
 const isMissingWorkWeekColumn = (message: string) => /work_week_start/i.test(message);
 
-/** Runs a custom-pay-item query, retrying once without work_week_start if migration 0373 hasn't been run. */
+/** Runs a custom-pay-item query, retrying once without work_week_start if migration 0383 hasn't been run. */
 async function withWorkWeekFallback<T>(run: (columns: string) => PromiseLike<{ data: T; error: { message: string } | null }>) {
   let result = await run(customPayItemColumns());
   if (result.error && !workWeekColumnMissing && isMissingWorkWeekColumn(result.error.message)) {
@@ -1084,7 +1084,7 @@ export async function updateTechCustomPayItem(
   const { error } = await supabase.from("tech_custom_pay_items").update(update).eq("id", id);
   if (error) {
     throw new Error(isMissingWorkWeekColumn(error.message)
-      ? "Setting a week needs database migration 0373 — ask an admin to run it."
+      ? "Setting a week needs database migration 0383 — ask an admin to run it."
       : error.message);
   }
 }

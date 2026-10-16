@@ -18,6 +18,7 @@ const CLAIMED_SESSION_KEY = "ahs:deviceSessionId";
 // into a different login on the same device.
 const VIEW_AS_ROLE_KEY = "ahs:viewAsRole";
 const SUPER_ROLES = new Set(["SUPERADMIN", "SUPERSUPERADMIN"]);
+const NO_EXTRA_ROLES: string[] = [];
 
 // Startup/auth-flow tracing — genuinely useful when debugging a real login
 // issue locally (see the token-bridge hang fix, root-caused this way), but
@@ -857,7 +858,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Simulate holding ONLY the previewed role — a real holder of that role
   // may also have extra_roles layered on top, but the point of the preview
   // is to see that one role's own access, not some blend.
-  const effectiveExtraRoles = effectiveViewAsRole ? [] : extraRoles;
+  // A shared empty array, not a fresh [] per render — pages key effects on
+  // extraRoles (e.g. User Management reloads on it).
+  const effectiveExtraRoles = effectiveViewAsRole ? NO_EXTRA_ROLES : extraRoles;
 
   return (
     <AuthContext.Provider value={{

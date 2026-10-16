@@ -58,6 +58,14 @@ if (isConfigured) {
     auth = getAuth(app);
     db = getFirestore(app);
     storage = getStorage(app);
+    // When the browser can't reach Storage (a network filter, an extension,
+    // a dropped connection), the SDK otherwise retries silently for 10
+    // minutes — signing pages sat on "Submitting…" with no error. Give up
+    // after ~20s of failed retries: storage.ts then sends the file through
+    // the app's own server instead (/api/storage-upload). Only failed
+    // attempts count — an upload that's moving, however slowly, isn't cut off.
+    storage.maxUploadRetryTime = 20_000;
+    storage.maxOperationRetryTime = 30_000;
   } catch (error) {
     console.error("❌ Firebase initialization failed:", error);
   }
