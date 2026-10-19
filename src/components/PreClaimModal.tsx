@@ -9,6 +9,8 @@ import {
   type TicketClaimDetails,
 } from "@/lib/supabase/claimDetails";
 import { TicketPhotos } from "@/components/TicketPhotos";
+import { PhotoSidePreview } from "@/components/PhotoSidePreview";
+import type { TicketPhoto } from "@/lib/firebase/storage";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { buildServicePowerClaimPayload, isClaimablePart } from "@/lib/servicePowerClaimPayload";
@@ -72,6 +74,9 @@ const emptyForm = (): FormState => ({
   spClaimStatusDescription: "", spSubmittedAt: "", spLastResponse: null, updatedAt: "",
 });
 
+/** ServicePower rejecting the manufacturer / service center number pair — shown in plain words. The usual cause is the wrong service center number (our SP login GSL00002 instead of the call's own Service Center), not a locked account — see buildServicePowerClaimPayload. */
+const SP_ACCOUNT_REJECTION = /invalid manufacturerName\s*\/\s*serviceCenterNumber/i;
+
 /**
  * The "Pre-Claim Information" modal — opened from Need Claim List's Action
  * column. Modeled on the legacy EarlyRepair system's own Pre-Claim modal.
@@ -92,6 +97,9 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
     return () => { cancelled = true; };
   }, [uid]);
   const [form, setForm] = useState<FormState>(emptyForm());
+  /** Photo shown in the right-side preview panel (opened by clicking a picture); closed when the ticket changes. */
+  const [sidePreview, setSidePreview] = useState<{ photos: TicketPhoto[]; index: number } | null>(null);
+  useEffect(() => { setSidePreview(null); }, [ticket.ticketNo]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [customerComplaint, setCustomerComplaint] = useState("");
@@ -354,7 +362,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div
-        className="bg-slate-900 border border-white/15 rounded-xl w-full max-w-[1400px] max-h-[92vh] flex flex-col shadow-2xl"
+        className={`bg-slate-900 border border-white/15 rounded-xl w-full ${sidePreview ? "max-w-[98vw]" : "max-w-[1400px]"} max-h-[92vh] flex flex-col shadow-2xl transition-[max-width] duration-200`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-slate-950 rounded-t-xl">
@@ -394,6 +402,8 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
           </div>
         </div>
 
+        {/* Form on the left; a clicked photo opens in the preview panel on the right. */}
+        <div className="flex min-h-0 flex-1">
         {loading ? (
           <div className="flex-1 flex items-center justify-center py-20">
             <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
@@ -408,7 +418,15 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
                     : "text-red-300 bg-red-500/10 border-red-500/30"
                 }`}
               >
-                {spMessage.text}
+                {/* ServicePower's account-pair rejection, in plain words; its original text stays below, small. */}
+                {spMessage.type === "error" && SP_ACCOUNT_REJECTION.test(spMessage.text) ? (
+                  <>
+                    <span className="font-semibold">ServicePower didn't accept the service center number sent with this claim. Try Submit to ServicePower again — if it keeps happening, contact the person responsible for ServicePower.</span>
+                    <span className="mt-1 block text-[11px] text-red-300/70">SP: {spMessage.text}</span>
+                  </>
+                ) : (
+                  spMessage.text
+                )}
               </div>
             )}
             {!spMessage && form.spClaimBatchNumber && (
@@ -483,7 +501,13 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
                     separate "claim" category, so Pre-Claim always shows the
                     exact same photos already on the ticket instead of an
                     empty, disconnected gallery. */}
-                <TicketPhotos ticketNo={ticket.ticketNo} category="service" title="" uploadedBy={displayName || email || undefined} />
+                <TicketPhotos
+                  ticketNo={ticket.ticketNo}
+                  category="service"
+                  title=""
+                  uploadedBy={displayName || email || undefined}
+                  onPhotoClick={(photo, all) => setSidePreview({ photos: all, index: Math.max(0, all.findIndex((p) => p.fullPath === photo.fullPath)) })}
+                />
               </div>
             </div>
 
@@ -763,6 +787,15 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
             </div>
           </div>
         )}
+        {sidePreview && (
+          <PhotoSidePreview
+            photos={sidePreview.photos}
+            index={sidePreview.index}
+            onIndexChange={(i) => setSidePreview((prev) => (prev ? { ...prev, index: i } : prev))}
+            onClose={() => setSidePreview(null)}
+          />
+        )}
+        </div>
       </div>
     </div>
   );
