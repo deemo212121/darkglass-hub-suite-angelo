@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from "react";
+import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { ChevronLeft, Save, Check } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -94,12 +95,47 @@ function PortalDropdown({label,options,value,onChange}:{label:string;options:str
   );
 }
 
+/** Checkbox version of PortalDropdown — pick any number of values; none ticked = all. */
+function PortalMultiDropdown({label,options,selected,onChange}:{label:string;options:string[];selected:Set<string>;onChange:(next:Set<string>)=>void}) {
+  const [open,setOpen]=useState(false);
+  const [q,setQ]=useState("");
+  const d=usePortal(open);
+  const listRef=useRef<HTMLDivElement>(null);
+  useEffect(()=>{ const fn=(e:MouseEvent)=>{ const t=e.target as Node; if(open&&!d.ref.current?.contains(t)&&!listRef.current?.contains(t))setOpen(false); }; document.addEventListener("mousedown",fn); return()=>document.removeEventListener("mousedown",fn); },[open]);
+  const shown=options.filter(o=>o.toLowerCase().includes(q.toLowerCase()));
+  const toggle=(o:string)=>{ const n=new Set(selected); n.has(o)?n.delete(o):n.add(o); onChange(n); };
+  const summary=selected.size===0?`All ${label}`:selected.size===1?Array.from(selected)[0]:`${selected.size} ${label}s selected`;
+  return(
+    <>
+      <button ref={d.ref} onClick={()=>setOpen(o=>!o)} className="glass-input w-full text-sm py-1.5 px-3 rounded-md flex items-center justify-between gap-2">
+        <span className={selected.size?"":"text-muted-foreground"}>{summary}</span><Chev o={open}/>
+      </button>
+      {open&&d.pos&&createPortal(<div ref={listRef} style={{...DS,top:d.pos.top,left:d.pos.left,width:Math.max(d.pos.width,220)}}>
+        <div className="p-2 border-b border-white/10">
+          <input autoFocus value={q} onChange={e=>setQ(e.target.value)} placeholder={`Search ${label}…`} className="glass-input w-full text-xs py-1 px-2 rounded"/>
+        </div>
+        <div className="flex items-center justify-between px-3 py-1.5 text-xs border-b border-white/10">
+          <button onClick={()=>onChange(new Set(options))} className="text-blue-400 hover:text-blue-300">Select all</button>
+          <button onClick={()=>onChange(new Set())} className="text-slate-400 hover:text-white">Clear (show all)</button>
+        </div>
+        {shown.length===0?<p className="px-3 py-2 text-xs text-slate-500">No matches.</p>:shown.map(o=>(
+          <label key={o} className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-white/5 cursor-pointer">
+            <input type="checkbox" checked={selected.has(o)} onChange={()=>toggle(o)} className="accent-blue-500"/>{o}
+          </label>
+        ))}
+      </div>,document.body)}
+    </>
+  );
+}
+
 export function ClaimList({ mod, sub }: Props) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const [location, setLocation] = useState(""); const [locOpen, setLocOpen] = useState(false);
-  const [account, setAccount] = useState("");
+  const [accounts, setAccounts] = useState<Set<string>>(new Set());
+  /** One funnel filter per column (TicketColumnFilter): column key → selected values; empty = no filter. */
+  const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
   const [ticketNo, setTicketNo] = useState("");
   const [claimNo, setClaimNo] = useState("");
   const [claimStatus, setClaimStatus] = useState("");
@@ -161,10 +197,23 @@ export function ClaimList({ mod, sub }: Props) {
   const locD = usePortal(locOpen); const locL = useRef<HTMLDivElement>(null);
   useEffect(()=>{ const fn=(e:MouseEvent)=>{ const t=e.target as Node; if(locOpen&&!locD.ref.current?.contains(t)&&!locL.current?.contains(t))setLocOpen(false); }; document.addEventListener("mousedown",fn); return()=>document.removeEventListener("mousedown",fn); },[locOpen]);
 
-  const filtered = useMemo(()=>{
+  type Row = (typeof ALL_ROWS)[number];
+  const money = (n:number) => n>0?`$${n.toFixed(2)}`:"$0.00";
+  // Every filterable column's value as its funnel sees it.
+  const COLS: Record<string, (r: Row) => string> = {
+    ticketNo: r=>r.ticketNo, srcBrand: r=>r.srcBrand, state: r=>r.state, location: r=>r.location,
+    completed: r=>r.completed, wty: r=>r.wty, ccPaid: r=>r.ccPaid, claimTo: r=>r.claimTo, claimed: r=>r.claimed,
+    by: r=>r.by, claimNo: r=>r.claimNo, total: r=>money(r.total), aTotal: r=>money(r.aTotal), status: r=>r.status,
+    paymentReceived: r=>r.paymentReceived, internalNote: r=>r.internalNote, triageNote: r=>r.triageNote,
+    claimNote: r=>r.claimNote, paidNote: r=>r.paidNote, cAging: r=>String(r.cAging), image: r=>r.image>0?"Has image":"No image",
+  };
+  const matchesCols = (r: Row, skip?: string) =>
+    Object.entries(COLS).every(([k, fn]) => k===skip || !colFilters[k]?.size || colFilters[k].has(fn(r)));
+
+  const baseFiltered = useMemo(()=>{
     let r=rows;
     if(location) r=r.filter(x=>x.location===location);
-    if(account) r=r.filter(x=>x.claimNo.includes(account));
+    if(accounts.size) r=r.filter(x=>Array.from(accounts).some(a=>x.claimNo.includes(a)));
     if(ticketNo) r=r.filter(x=>x.ticketNo.toLowerCase().includes(ticketNo.toLowerCase()));
     if(claimNo) r=r.filter(x=>x.claimNo.toLowerCase().includes(claimNo.toLowerCase()));
     if(claimStatus) r=r.filter(x=>x.status===claimStatus);
@@ -172,7 +221,21 @@ export function ClaimList({ mod, sub }: Props) {
     if(endDate) r=r.filter(x=>x.completed<=endDate);
     if(search) r=r.filter(x=>x.ticketNo.toLowerCase().includes(search.toLowerCase())||x.location.toLowerCase().includes(search.toLowerCase())||x.claimNo.toLowerCase().includes(search.toLowerCase()));
     return r;
-  },[rows,location,account,ticketNo,claimNo,claimStatus,startDate,endDate,search]);
+  },[rows,location,accounts,ticketNo,claimNo,claimStatus,startDate,endDate,search]);
+  const filtered = baseFiltered.filter(r=>matchesCols(r));
+  /** A column's funnel options: its distinct values after every OTHER filter. */
+  const colOptions = (key: string) => {
+    const list = Array.from(new Set(baseFiltered.filter(r=>matchesCols(r,key)).map(COLS[key])));
+    return list.sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+  };
+  const anyColFilter = Object.values(colFilters).some(v=>v.size>0);
+  /** Header label + funnel for one column. */
+  const colHeader = (k:string,label:string) => (
+    <span className="inline-flex items-center">
+      {label}
+      <TicketColumnFilter options={colOptions(k)} selected={colFilters[k]??new Set()} onChange={(next)=>setColFilters(prev=>({...prev,[k]:next}))} label={`Filter by ${label}`}/>
+    </span>
+  );
 
   const toggleRow=(id:number)=>setSelectedRows(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
   const toggleAll=()=>setSelectedRows(selectedRows.size===filtered.length?new Set():new Set(filtered.map(r=>r.id)));
@@ -223,7 +286,7 @@ export function ClaimList({ mod, sub }: Props) {
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1 min-w-[160px] flex-1">
               <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Account</label>
-              <PortalDropdown label="Account" options={ACCOUNTS} value={account} onChange={setAccount}/>
+              <PortalMultiDropdown label="Account" options={ACCOUNTS} selected={accounts} onChange={setAccounts}/>
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date Range</label>
@@ -270,6 +333,9 @@ export function ClaimList({ mod, sub }: Props) {
           >
             Open All Filtered ({filtered.length})
           </button>
+          {anyColFilter && (
+            <button onClick={()=>setColFilters({})} className="px-3 py-1 rounded text-xs font-medium bg-slate-700 hover:bg-slate-600 text-white">Clear column filters</button>
+          )}
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="search in result" className="glass-input text-xs py-1 px-2 rounded-md w-36"/>
         </div>
       </div>
@@ -282,34 +348,34 @@ export function ClaimList({ mod, sub }: Props) {
             {/* Header row 1 */}
             <tr className="border-b border-white/10 bg-white/5">
               <th className="px-2 py-2 w-8" rowSpan={2}><input type="checkbox" checked={selectedRows.size===filtered.length&&filtered.length>0} onChange={toggleAll} className="accent-blue-500"/></th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>Ticket No</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>Src/Brand</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase" rowSpan={2}>State</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>Location</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>Completed</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase" rowSpan={2}>Wty</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>CC Paid</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>Claim To</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>Claimed</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase" rowSpan={2}>By</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>Claim #</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>{colHeader("ticketNo","Ticket No")}</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>{colHeader("srcBrand","Src/Brand")}</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase" rowSpan={2}>{colHeader("state","State")}</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>{colHeader("location","Location")}</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>{colHeader("completed","Completed")}</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase" rowSpan={2}>{colHeader("wty","Wty")}</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>{colHeader("ccPaid","CC Paid")}</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>{colHeader("claimTo","Claim To")}</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>{colHeader("claimed","Claimed")}</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase" rowSpan={2}>{colHeader("by","By")}</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>{colHeader("claimNo","Claim #")}</th>
               {/* Amount group headers */}
-              <th className="px-2 py-1 text-center text-xs font-semibold text-muted-foreground uppercase border-l border-white/10" colSpan={8}>Labor / Part / Diag / Ship / Mile / Other / Tax / Total</th>
+              <th className="px-2 py-1 text-center text-xs font-semibold text-muted-foreground uppercase border-l border-white/10" colSpan={8}>Labor / Part / Diag / Ship / Mile / Other / Tax / {colHeader("total","Total")}</th>
               <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>Received Amt</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase" rowSpan={2}>Status</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>Payment Received</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>Internal Note</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>Triage Note</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>Claim Note</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>Paid Note</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>C.Aging</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase" rowSpan={2}>Image</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase" rowSpan={2}>{colHeader("status","Status")}</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>{colHeader("paymentReceived","Payment Received")}</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>{colHeader("internalNote","Internal Note")}</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>{colHeader("triageNote","Triage Note")}</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>{colHeader("claimNote","Claim Note")}</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>{colHeader("paidNote","Paid Note")}</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap" rowSpan={2}>{colHeader("cAging","C.Aging")}</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase" rowSpan={2}>{colHeader("image","Image")}</th>
               <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground uppercase" rowSpan={2}>Actions</th>
             </tr>
             {/* Sub-header for amount cols */}
             <tr className="border-b border-white/10 bg-white/3">
               {["A. Labor","A. Part","A. Diag","A. Ship","A. Mile","A. Other","A. Tax","A. Total"].map(h=>(
-                <th key={h} className="px-2 py-1 text-center text-xs text-muted-foreground border-l border-white/5">{h}</th>
+                <th key={h} className="px-2 py-1 text-center text-xs text-muted-foreground border-l border-white/5">{h==="A. Total"?colHeader("aTotal","A. Total"):h}</th>
               ))}
             </tr>
           </thead>
