@@ -50,9 +50,19 @@ export interface BuildClaimPayloadResult {
 }
 
 /**
+ * Part statuses that go on a claim: "Used", and "Claimed" — a part already
+ * marked as claimed was used too (SA-5382504's two parts were switched to
+ * Claimed while the claim was prepared and dropped out of Part Fee).
+ */
+export const CLAIMABLE_PART_STATUSES = new Set(["Used", "Claimed"]);
+export function isClaimablePart(p: { status?: string | null }): boolean {
+  return CLAIMABLE_PART_STATUSES.has(String(p.status ?? "").trim());
+}
+
+/**
  * Assembles one ClaimSubmissionClaim from a ticket's already-saved data.
  * `partFee` should be the same figure the Pre-Claim modal displays/sums as
- * "Part Fee" (sum of markup price across parts with status "Used") — passed
+ * "Part Fee" (sum of markup price across parts marked Used or Claimed) — passed
  * in rather than recomputed here so the submitted partsAmount always
  * matches exactly what Claims saw on screen.
  */
@@ -63,6 +73,15 @@ export function buildServicePowerClaimPayload(
   customerComplaint: string,
   servicePerformed: string,
   partFee: number,
+  /**
+   * The call's own ServiceCenter on ServicePower (getCallInfo's
+   * <ServiceCenter>, e.g. "108501359") — the servicer number the
+   * manufacturer issued us. ServicePower rejects a claim whose
+   * serviceCenterNumber is the SP login (ticket.accountNo, e.g. "GSL00002")
+   * with "Invalid manufacturerName/serviceCenterNumber"; that login is only
+   * the fallback when the call couldn't be read.
+   */
+  spServiceCenter?: string,
 ): BuildClaimPayloadResult {
   const warnings: string[] = [];
 
@@ -71,22 +90,27 @@ export function buildServicePowerClaimPayload(
     return { claim: null, warnings, error: "This ticket has no Manufacturer set — ServicePower requires one to submit a claim." };
   }
 
-  if (!ticket.accountNo) {
-    warnings.push("No ServicePower servicer number (S/P account) on this ticket — serviceCenterNumber will be left blank.");
+  const serviceCenterNumber = (spServiceCenter ?? "").trim() || ticket.accountNo || "";
+  if (!(spServiceCenter ?? "").trim()) {
+    warnings.push(
+      ticket.accountNo
+        ? `Couldn't read this call's Service Center from ServicePower — sent the S/P account (${ticket.accountNo}) instead, which ServicePower may reject.`
+        : "No ServicePower service center number for this call — serviceCenterNumber will be left blank.",
+    );
   }
   if (!ticket.firstName && !ticket.lastName) {
     warnings.push("No customer name on this ticket.");
   }
 
-  const usedParts = parts.filter((p) => p.status === "Used");
+  const usedParts = parts.filter(isClaimablePart);
   if (usedParts.length > 25) {
-    warnings.push(`${usedParts.length} parts are marked Used, but ServicePower accepts at most 25 per claim — only the first 25 will be sent.`);
+    warnings.push(`${usedParts.length} parts are marked Used/Claimed, but ServicePower accepts at most 25 per claim — only the first 25 will be sent.`);
   }
   const spParts: ClaimSubmissionPart[] = usedParts.slice(0, 25).map((p) => ({
     number: p.partNo,
     quantity: Number(p.quantity) || undefined,
     description: clip(p.partDesc, 30),
-    priceRequested: markupPriceFor(p) || undefined,
+    priceRequested: Math.round(markupPriceFor(p) * 100) / 100 || undefined,
     distributorNumber: clip(p.distributorNo, 12),
     jobCode: clip(p.jobCode, 4),
   }));
@@ -99,7 +123,7 @@ export function buildServicePowerClaimPayload(
 
   const claim: ClaimSubmissionClaim = {
     manufacturerName,
-    serviceCenterNumber: ticket.accountNo || undefined,
+    serviceCenterNumber: serviceCenterNumber || undefined,
     claimNumber: ticket.ticketNo,
     callNumber: ticket.ticketNo,
 
@@ -134,7 +158,8 @@ export function buildServicePowerClaimPayload(
     dateCompleted: toSpDate(claimDetails.completeDate),
 
     laborAmount: claimDetails.laborFee || undefined,
-    partsAmount: partFee || undefined,
+    // Rounded to cents — summed part prices carry float noise (68.92999…).
+    partsAmount: Math.round(partFee * 100) / 100 || undefined,
     otherAmount: claimDetails.otherFee || undefined,
     shippingChargeAmount: claimDetails.shippingFee || undefined,
     travelChargeAmount: claimDetails.extraMileFee || undefined,

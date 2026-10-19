@@ -11,7 +11,7 @@ import {
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
-import { buildServicePowerClaimPayload } from "@/lib/servicePowerClaimPayload";
+import { buildServicePowerClaimPayload, isClaimablePart } from "@/lib/servicePowerClaimPayload";
 
 interface Props {
   ticket: Ticket;
@@ -214,18 +214,19 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
     const pct = Number(p.markup) || 0;
     return price * (1 + pct / 100);
   };
-  // Part Fee counts every part actually marked "Used" for the claim,
-  // independent of the checkbox column below (which is just this table's
-  // own local "included in the subtotal I'm looking at" toggle).
+  // Part Fee counts every part marked "Used" or "Claimed" for the claim
+  // (isClaimablePart), independent of the checkbox column below (which is
+  // just this table's own local "included in the subtotal I'm looking at"
+  // toggle).
   const partFee = useMemo(
-    () => parts.filter((p) => p.status === "Used").reduce((s, p) => s + markupPriceFor(p), 0),
+    () => parts.filter(isClaimablePart).reduce((s, p) => s + markupPriceFor(p), 0),
     [parts]
   );
   const checkedTotal = useMemo(
     () => parts.filter((p) => checkedPartIds.has(p.id)).reduce((s, p) => s + markupPriceFor(p), 0),
     [parts, checkedPartIds]
   );
-  const usedCount = parts.filter((p) => p.status === "Used").length;
+  const usedCount = parts.filter(isClaimablePart).length;
   const claimTotal = form.laborFee + partFee + form.otherFee + form.shippingFee + form.extraMileFee + form.mileageFee;
 
   const setField = <K extends keyof FormState>(key: K, value: FormState[K]) =>
@@ -258,8 +259,21 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
       setForm((prev) => ({ ...prev, ...saved }));
       onSaved(ticket.ticketNo, saved);
 
+      // The claim's serviceCenterNumber is the call's own ServiceCenter on
+      // ServicePower (the servicer number the manufacturer issued us), read
+      // fresh from the call — see buildServicePowerClaimPayload.
+      let spServiceCenter = "";
+      try {
+        const { fetchServicePowerCalls } = await import("@/lib/servicePowerSync");
+        const res = await fetchServicePowerCalls({ callNo: ticket.ticketNo });
+        const call = (res.calls ?? []).find((c: any) => String(c?.callNumber ?? "").trim() === ticket.ticketNo) ?? res.calls?.[0];
+        spServiceCenter = String(call?.serviceCenter ?? "").trim();
+      } catch (err) {
+        console.warn("[PreClaim] couldn't read the call's Service Center from ServicePower:", err);
+      }
+
       const { claim, warnings, error } = buildServicePowerClaimPayload(
-        ticket, saved, parts, customerComplaint, servicePerformed, partFee,
+        ticket, saved, parts, customerComplaint, servicePerformed, partFee, spServiceCenter,
       );
       if (error || !claim) {
         setSpMessage({ type: "error", text: error || "Could not build a claim from this ticket's data." });
@@ -620,7 +634,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
             {/* Parts Used */}
             <div>
               <h3 className="text-center text-lg font-semibold text-white mb-1">Parts Used</h3>
-              <p className="text-center text-xs text-slate-500 mb-3">Part Fee (Claim Amount, below) totals every part marked "Used" regardless of the checkboxes here — the checkboxes only control this table's own subtotal row.</p>
+              <p className="text-center text-xs text-slate-500 mb-3">Part Fee (Claim Amount, below) totals every part marked "Used" or "Claimed" regardless of the checkboxes here — the checkboxes only control this table's own subtotal row.</p>
               <div className="overflow-x-auto rounded-lg border border-white/10">
                 <table className="w-full text-xs min-w-[1100px]">
                   <thead>
@@ -647,7 +661,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
                       parts.map((p) => {
                         const saving = savingPartId === p.id;
                         return (
-                          <tr key={p.id} className={p.status === "Used" ? "" : "opacity-80"}>
+                          <tr key={p.id} className={isClaimablePart(p) ? "" : "opacity-80"}>
                             <td className="px-2 py-1.5 text-center">
                               <input type="checkbox" checked={checkedPartIds.has(p.id)} onChange={() => togglePartChecked(p.id)} className="accent-blue-500" />
                             </td>
@@ -705,7 +719,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
                       <tr className="border-t border-white/20 bg-white/5 font-semibold">
                         <td colSpan={3} className="px-2 py-2 text-slate-300">TOTAL</td>
                         <td className="px-2 py-2 text-slate-300">{parts.length}</td>
-                        <td className="px-2 py-2 text-slate-300">{usedCount} Used</td>
+                        <td className="px-2 py-2 text-slate-300">{usedCount} Used/Claimed</td>
                         <td colSpan={4} />
                         <td className="px-2 py-2 text-right text-green-300">{fmt(checkedTotal)}</td>
                         <td colSpan={3} />
