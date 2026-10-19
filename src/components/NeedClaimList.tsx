@@ -275,21 +275,40 @@ export function NeedClaimList({ mod, sub }: Props) {
       if (ticketIds.length === 0) {
         setPartCounts({});
       } else {
-        const { data: partRows, error: partsError } = await supabase
-          .from("parts")
-          .select("ticket_id")
-          .in("ticket_id", ticketIds);
-        if (partsError) {
-          console.warn("[NeedClaimList] part count fetch failed:", partsError.message);
-          setPartCounts({});
-        } else {
+        // In batches of 200 ticket ids (a few at a time), each paged by
+        // 1,000 rows: thousands of ids in one ?ticket_id=in.(…) made a URL
+        // too long for the server — the request was refused before
+        // Supabase answered, which the browser reports as a CORS error —
+        // and one response stops at 1,000 rows anyway.
+        const BATCH = 200;
+        const PAGE = 1000;
+        const CONCURRENCY = 4;
+        const batches: string[][] = [];
+        for (let i = 0; i < ticketIds.length; i += BATCH) batches.push(ticketIds.slice(i, i + BATCH));
+        const fetchBatch = async (batch: string[]) => {
+          const rows: Array<{ ticket_id: string | null }> = [];
+          for (let from = 0; ; from += PAGE) {
+            const { data, error } = await supabase.from("parts").select("ticket_id").in("ticket_id", batch).range(from, from + PAGE - 1);
+            if (error) throw error;
+            rows.push(...((data ?? []) as Array<{ ticket_id: string | null }>));
+            if (!data || data.length < PAGE) break;
+          }
+          return rows;
+        };
+        try {
           const counts: Record<string, number> = {};
-          for (const row of partRows ?? []) {
-            const tid = String((row as any).ticket_id ?? "");
-            if (!tid) continue;
-            counts[tid] = (counts[tid] ?? 0) + 1;
+          for (let i = 0; i < batches.length; i += CONCURRENCY) {
+            const results = await Promise.all(batches.slice(i, i + CONCURRENCY).map(fetchBatch));
+            for (const row of results.flat()) {
+              const tid = String(row.ticket_id ?? "");
+              if (!tid) continue;
+              counts[tid] = (counts[tid] ?? 0) + 1;
+            }
           }
           setPartCounts(counts);
+        } catch (partsError) {
+          console.warn("[NeedClaimList] part count fetch failed:", partsError instanceof Error ? partsError.message : partsError);
+          setPartCounts({});
         }
       }
     } catch (err) {
