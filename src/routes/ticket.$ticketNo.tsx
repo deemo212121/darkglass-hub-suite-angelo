@@ -11,7 +11,7 @@ import type { EncompassPartInfo } from "@/lib/encompassApi";
 import { savePartOrder, createPartOrderFromTicket, placeMarconeOrder, isMarconeDist, placeEncompassOrder, isEncompassDist, type MarconeOrderPayload, type ShipToAddress } from "@/lib/supabase/partOrders";
 import { getPartAddresses, getLocations } from "@/lib/supabase/locationManagement";
 import { PART_STATUS_OPTIONS } from "@/lib/partStatuses";
-import { Copy, Compass, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone, ClipboardCheck, ChevronDown, X, Search, Settings } from "lucide-react";
+import { Copy, Compass, Map as MapIcon, CalendarDays, Send, ExternalLink, Pencil, Lock, Smartphone, ClipboardCheck, RotateCcw, ChevronDown, X, Search, Settings } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { isFirebaseReady, auth as firebaseAuth } from "@/lib/firebase/config";
 import { getGmailConnectionStatus, getGmailConnectRoles, disconnectGmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
@@ -6127,6 +6127,28 @@ function TicketDetailsPage() {
                   )}
                 </div>
               )}
+
+              {/* Redo — same compact badge as Claims Readiness, only on a
+                  redo (Repeat Call YES or a Redo Ticket # on file). Opens the
+                  original ticket in a new tab when its number is known. */}
+              {ticket && (ticket.repeatCall === "YES" || String(ticket.redoTicketNo ?? "").trim() !== "") && (() => {
+                const original = String(ticket.redoTicketNo ?? "").trim();
+                const cls = "inline-flex items-center gap-1.5 rounded border border-rose-400/40 bg-rose-500/15 p-2 text-xs font-semibold text-rose-200";
+                const label = (<><RotateCcw className="h-4 w-4" />REDO{original ? <span className="font-mono font-normal text-rose-200/80">· {original}</span> : null}</>);
+                return original ? (
+                  <a
+                    href={`/ticket/${encodeURIComponent(original)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={`Redo of ticket ${original} — open the original ticket`}
+                    className={`${cls} transition hover:bg-rose-500/25`}
+                  >
+                    {label}
+                  </a>
+                ) : (
+                  <span title="This ticket is a redo (repeat call)" className={cls}>{label}</span>
+                );
+              })()}
 
               {/* Alert Messages Display - Inline beside controls. Only
                   alerts flagged "Show internally" clutter this view — a
