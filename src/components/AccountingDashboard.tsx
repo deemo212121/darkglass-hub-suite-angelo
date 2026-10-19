@@ -5134,11 +5134,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   ) : (
                     <DollarSign className="h-4 w-4" />
                   )}
-                  {generating
-                    ? "Generating…"
-                    : matchesExistingRun
-                      ? `Regenerate ${effectiveCurrency === "USD" ? "Office" : "PH"} Payroll`
-                      : `Generate ${effectiveCurrency === "USD" ? "Office" : "PH"} Payroll`}
+                  {generating ? "Generating…" : "Generate Payroll"}
                 </button>
                 </div>
               </div>

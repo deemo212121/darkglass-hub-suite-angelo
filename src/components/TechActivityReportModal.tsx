@@ -29,6 +29,7 @@ import {
 import { getCompanyEmployeeRequests, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { getMileageEntries, mileageEffectiveTotal } from "@/lib/supabase/mileage";
 import type { PayrollReviewAmounts } from "@/lib/supabase/payrollReviewBreakdowns";
+import { getTechTaxLines, addTechTaxLine, updateTechTaxLine, deleteTechTaxLine, taxLineAmount, type TechTaxLine, type TechTaxMode } from "@/lib/supabase/techTaxLines";
 import { toast } from "sonner";
 
 interface Props {
@@ -647,6 +648,51 @@ export function TechActivityReportModal({
     }
   };
 
+  // Tax lines (migration 0395) — below Total Payment, display-only: they
+  // give Net Pay After Tax and never change Total Payment or anything above.
+  const [taxLines, setTaxLines] = useState<TechTaxLine[]>([]);
+  const [savingTaxId, setSavingTaxId] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setTaxLines([]);
+    getTechTaxLines(employee.id, periodStart, periodEnd).then((lines) => {
+      if (!cancelled) setTaxLines(lines);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [employee.id, periodStart, periodEnd]);
+  const handleAddTaxLine = async () => {
+    try {
+      const created = await addTechTaxLine(employee.id, periodStart, periodEnd, taxLines.length);
+      setTaxLines((prev) => [...prev, created]);
+    } catch (err) {
+      alert(`Failed to add tax line: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  };
+  const handleTaxLineChange = async (line: TechTaxLine, fields: { label?: string; mode?: TechTaxMode; amount?: number }) => {
+    setSavingTaxId(line.id);
+    try {
+      await updateTechTaxLine(line.id, fields);
+      setTaxLines((prev) => prev.map((l) => (l.id === line.id ? { ...l, ...fields } : l)));
+    } catch (err) {
+      alert(`Failed to save tax line: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingTaxId(null);
+    }
+  };
+  const handleDeleteTaxLine = async (line: TechTaxLine) => {
+    setSavingTaxId(line.id);
+    try {
+      await deleteTechTaxLine(line.id);
+      setTaxLines((prev) => prev.filter((l) => l.id !== line.id));
+    } catch (err) {
+      alert(`Failed to remove tax line: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setSavingTaxId(null);
+    }
+  };
+
   // Includes DEFAULT_REPAIR_TYPE so its $ still counts toward the totals below
   // (it was already part of Total Net before this report existed) — just not
   // rendered as its own row, since almost every completed ticket falls into
@@ -1177,6 +1223,74 @@ export function TechActivityReportModal({
                     <td colSpan={3} className="px-3 py-3 text-sm font-semibold text-slate-200">Total Payment</td>
                     <td className="px-3 py-3 text-right text-base font-bold text-green-300">{fmt(totalPayment)}</td>
                   </tr>
+                  {taxLines.map((line) => (
+                    <tr key={line.id}>
+                      <td className="px-3 py-2">
+                        <input
+                          key={`taxLabel:${line.id}:${line.label}`}
+                          type="text"
+                          defaultValue={line.label}
+                          placeholder="Tax"
+                          disabled={savingTaxId === line.id}
+                          onBlur={(e) => e.target.value !== line.label && handleTaxLineChange(line, { label: e.target.value })}
+                          className="w-full bg-slate-800/50 border border-white/10 rounded px-2 py-1 text-xs text-white placeholder:text-slate-500 focus:border-blue-500 focus:outline-none disabled:opacity-50"
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-right text-xs text-slate-500">
+                        {line.mode === "percent" ? `${line.amount}% of ${fmt(totalPayment)}` : "fixed"}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <select
+                            title="Percent of Total Payment, or a fixed dollar amount"
+                            value={line.mode}
+                            disabled={savingTaxId === line.id}
+                            onChange={(e) => handleTaxLineChange(line, { mode: e.target.value as TechTaxMode })}
+                            className="bg-slate-800/50 border border-white/10 rounded px-1 py-1 text-[10px] text-slate-300 focus:border-blue-500 focus:outline-none disabled:opacity-50"
+                          >
+                            <option value="percent">%</option>
+                            <option value="fixed">$ Fixed</option>
+                          </select>
+                          <input
+                            key={`taxAmount:${line.id}:${line.amount}`}
+                            type="number" min={0} step={0.01}
+                            defaultValue={line.amount || ""}
+                            placeholder="0"
+                            disabled={savingTaxId === line.id}
+                            onBlur={(e) => (Number(e.target.value) || 0) !== line.amount && handleTaxLineChange(line, { amount: Number(e.target.value) || 0 })}
+                            className={rateCellClass}
+                          />
+                          <button
+                            onClick={() => handleDeleteTaxLine(line)}
+                            disabled={savingTaxId === line.id}
+                            title="Remove tax line"
+                            className="text-red-400 hover:text-red-300 disabled:opacity-40"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-right text-red-300">{fmt(-taxLineAmount(line, totalPayment))}</td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td colSpan={4} className="px-3 py-2">
+                      <button
+                        onClick={handleAddTaxLine}
+                        className="inline-flex items-center gap-1 text-xs font-medium text-blue-400 hover:text-blue-300"
+                      >
+                        <Plus className="h-3.5 w-3.5" /> Add tax line
+                      </button>
+                    </td>
+                  </tr>
+                  {taxLines.length > 0 && (
+                    <tr className="border-t border-white/20 bg-white/5">
+                      <td colSpan={3} className="px-3 py-3 text-sm font-semibold text-slate-200">Net Pay After Tax</td>
+                      <td className="px-3 py-3 text-right text-base font-bold text-emerald-300">
+                        {fmt(totalPayment - taxLines.reduce((sum, l) => sum + taxLineAmount(l, totalPayment), 0))}
+                      </td>
+                    </tr>
+                  )}
                 </tfoot>
               </table>
             </div>
