@@ -15,6 +15,7 @@ import { defaultEmptyCheck, type ElementDefinition } from "./types";
 import { makeOptionsElement, makeDisplayElement } from "./factories";
 import { uploadCustomFormAsset } from "@/lib/firebase/storage";
 import { useAuth } from "@/lib/auth";
+import { pdfDocumentElement } from "./pdfDocument";
 
 export const shortTextElement: ElementDefinition = {
   type: "shortText",
@@ -424,6 +425,7 @@ export const BASIC_INPUTS_ELEMENTS: ElementDefinition[] = [
   multipleChoiceElement,
   numberElement,
   imageElement,
+  pdfDocumentElement,
   fileUploadElement,
   timeElement,
   captchaElement,

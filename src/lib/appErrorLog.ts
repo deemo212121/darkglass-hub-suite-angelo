@@ -1,5 +1,5 @@
 /**
- * App error log (migration 0379) — saves a failed upload or signing step
+ * App error log (migration 0387) — saves a failed upload or signing step
  * for the AHS Server Status page, so a SuperAdmin can see what went wrong
  * for a specific person. Who it was is filled in by the database from the
  * session; this only sends what they were doing, the error, their device

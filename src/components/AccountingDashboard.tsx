@@ -1,5 +1,5 @@
 import { TraineeMonitoringTab } from "@/components/TraineeMonitoringTab";
-import { resolveTrainingRecord, trainingWindow, isTrainingDay } from "@/lib/fieldStartDate";
+import { resolveTrainingRecord, trainingWindow } from "@/lib/fieldStartDate";
 import { getTrainingDates } from "@/lib/supabase/trainingDates";
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
@@ -97,10 +97,12 @@ import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
 import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
 import { TicketTimeDisputesTab } from "@/components/TicketTimeDisputesTab";
 import { BranchManagerCommissionTab } from "@/components/BranchManagerCommissionTab";
+import { ReviewedPeriodsTab } from "@/components/ReviewedPeriodsTab";
+import { upsertPayrollReviewBreakdown } from "@/lib/supabase/payrollReviewBreakdowns";
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, linkPayrollDisputeCustomPayItem, modifyPayrollDispute, restorePayrollDisputeOriginal, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
-import { perCutoffSalary } from "@/lib/supabase/salary";
+import { perCutoffSalary, getSalaryHistory } from "@/lib/supabase/salary";
 import { getPayrollReviewMarks, markPayrollReviewed, clearPayrollReviewMark, type PayrollReviewMark } from "@/lib/supabase/payrollReviewMarks";
 import { getPayrollAdjustmentsForPeriod, payrollAdjustmentsEligible, resolveAdjustmentLines, sumPayrollAdjustments, type PayrollAdjustment } from "@/lib/supabase/payrollAdjustments";
 import { getHourlyOtOverrides, setHourlyOtOverride, clearHourlyOtOverride, type HourlyOtOverride } from "@/lib/supabase/payrollHourlyOtOverrides";
@@ -970,7 +972,7 @@ function parseGmailRegionParam(value: string | null): GmailRegion {
   return value === "PH" ? "PH" : "US";
 }
 
-type AccountingDashboardTabId = "traineeMonitoring" | "overview" | "payroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech" | "ticketAttendance" | "ticketTimeDisputes" | "branchRates" | "carIq" | "branchCommission";
+type AccountingDashboardTabId = "traineeMonitoring" | "overview" | "payroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech" | "ticketAttendance" | "ticketTimeDisputes" | "branchRates" | "carIq" | "branchCommission" | "reviewedPeriods";
 // Shared by the top tab row and the floating left quick-nav so the two
 // never drift out of sync.
 const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; Icon: typeof History }[] = [
@@ -985,6 +987,7 @@ const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; 
   { id: "carIq", label: "Car IQ", Icon: Car },
   { id: "branchCommission", label: "Branch Commission", Icon: TrendingUp },
   { id: "ticketTimeDisputes", label: "Ticket Time Disputes", Icon: Clock },
+  { id: "reviewedPeriods", label: "Reviewed Periods", Icon: Check },
 
 ];
 
@@ -1019,7 +1022,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   };
   const [activeTab, setActiveTab] = usePersistedTab<AccountingDashboardTabId>(
     "ahs:accounting-dashboard-active-tab",
-    ["overview", "payroll", "traineeMonitoring", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes", "branchRates", "branchCommission"],
+    ["overview", "payroll", "traineeMonitoring", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes", "branchRates", "branchCommission", "reviewedPeriods"],
     "overview",
   );
   // Deep link from a bell-icon notification straight into the Payroll
@@ -1340,6 +1343,36 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // (stamps a payroll_review_marks row, closes to the table).
   const [detailEmployee, setDetailEmployee] = useState<SupabaseEmployee | null>(null);
   const [wizardStep, setWizardStep] = useState<"detail" | "activity">("detail");
+  // salaryEntries is loaded once with the page, so a rate change someone
+  // else saved since then (e.g. Darius Brown, 10/15: $9.25 from 9/13 added
+  // in another session) never reached the payroll calc — the detail modal
+  // showed $9.25 (it loads its own history) while the Tech Activity Report
+  // still paid $7.25. Re-read this employee's rate history whenever their
+  // payroll detail opens and swap it in if it changed.
+  useEffect(() => {
+    const profileId = detailEmployee?.id;
+    if (!profileId) return;
+    let cancelled = false;
+    void getSalaryHistory(profileId).then((rows) => {
+      // An empty result is also what a failed read returns — keep what's loaded.
+      if (cancelled || rows.length === 0) return;
+      const fresh: SalaryEntry[] = rows.map((r) => ({
+        profile_id: r.profileId,
+        effective_date: r.effectiveDate,
+        compensation_type: r.compensationType,
+        hourly_rate: r.hourlyRate,
+        annual_salary: r.annualSalary,
+        created_at: r.createdAt,
+      }));
+      const key = (se: SalaryEntry) => `${se.effective_date}|${se.created_at}|${se.compensation_type}|${se.hourly_rate}|${se.annual_salary}`;
+      setSalaryEntries((prev) => {
+        const mine = prev.filter((se) => se.profile_id === profileId).map(key).sort().join(",");
+        if (mine === fresh.map(key).sort().join(",")) return prev;
+        return [...prev.filter((se) => se.profile_id !== profileId), ...fresh];
+      });
+    });
+    return () => { cancelled = true; };
+  }, [detailEmployee?.id]);
   const [reviewMarks, setReviewMarks] = useState<Map<string, PayrollReviewMark>>(new Map());
   const [reviewBusy, setReviewBusy] = useState(false);
   // Per-employee "has a payslip actually gone out for THIS period" — reviewed
@@ -1949,6 +1982,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // inside the Tech Activity Report modal, or auto-created/removed by a
   // Payroll Dispute approve/revert (handlePayrollDisputeAction), is
   // reflected in the real payrollRows calculation right away.
+  const customPayRefreshSeq = useRef(0);
   const refreshTechCustomPayItems = useCallback(async () => {
     if (!genStart || !genEnd || genStart > genEnd) return;
     // Fires on every custom-line add/edit/delete inside an open Tech
@@ -1964,9 +1998,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // Hourly+OT override fired off a stale weighted rate, then overwritten
     // again moments later once this settles, looking like the total kept
     // "randomly" changing on its own.
+    // Several edits in a row (label, qty, Includable→Reimbursement, week,
+    // rate) each fire a refetch; responses can land out of order, and an
+    // older one landing last overwrote newer data — Darius Brown 9/27–10/10:
+    // two lines already switched to Reimbursement stayed Includable here,
+    // inflating wk 10/4's OT rate ($22.31 vs $18.40). Only the newest
+    // request's response is applied.
+    const requestId = ++customPayRefreshSeq.current;
     beginPeriodLoad();
     try {
-      setTechCustomPayItemsAll(await getAllTechCustomPayItemsForPeriod(genStart, genEnd));
+      const items = await getAllTechCustomPayItemsForPeriod(genStart, genEnd);
+      if (requestId === customPayRefreshSeq.current) setTechCustomPayItemsAll(items);
     } catch (err) {
       console.error("Failed to refresh tech custom pay items:", err);
     } finally {
@@ -2159,9 +2201,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       return;
     }
     let cancelled = false;
+    // A new period supersedes any refresh still in flight for the old one.
+    const requestId = ++customPayRefreshSeq.current;
     beginPeriodLoad();
     getAllTechCustomPayItemsForPeriod(genStart, genEnd)
-      .then((items) => { if (!cancelled) setTechCustomPayItemsAll(items); })
+      .then((items) => { if (!cancelled && requestId === customPayRefreshSeq.current) setTechCustomPayItemsAll(items); })
       .catch((err) => {
         console.error("Failed to load tech custom pay items:", err);
         if (!cancelled) setTechCustomPayItemsAll([]);
@@ -2478,9 +2522,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     return premium;
   }
 
-  // Eligible trainee worked days receive max(straight-time pay, $100).
-  // Their overtime hours are already included in straight-time pay and
-  // do not also receive the separate OT premium.
+  // Eligible trainee worked days receive max(that day's pay, $100) — the
+  // company's $100/day training guarantee. Overtime on a training day is
+  // still overtime (FLSA/state law covers trainees): it earns the OT premium
+  // like any other day (techHourlyPayOtPremium), so the day's pay checked
+  // against $100 includes that premium too — otherwise the guarantee would
+  // top up pay the premium already covers.
   const TRAINEE_DAILY_MATCH_TARGET = 100;
   function traineeDailyMatchFor(
     profileId: string,
@@ -2498,7 +2545,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       const dayHours = day.regular + day.overtime;
       if (dayHours <= 0) continue;
       const rate = hourlyRateOnDate(profileId, day.date, fallbackRate);
-      const actualDailyPay = dayHours * rate;
+      const actualDailyPay = dayHours * rate + day.overtime * weightedRate * 0.5;
       if (actualDailyPay < TRAINEE_DAILY_MATCH_TARGET) {
         match += TRAINEE_DAILY_MATCH_TARGET - actualDailyPay;
       }
@@ -2909,7 +2956,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     const traineeWindow = trainingWindow(emp.hrTrainingStart, emp.hrFieldStart,
       employeeInfoByProfileId.get(emp.id)?.hireDate, emp.isTrainee);
     const techDailyHours = dailyHoursByEmployeeId.get(emp.id) ?? [];
-    const premiumHours = techDailyHours.reduce((sum, day) => sum + (isTrainingDay(day.date, traineeWindow) ? 0 : day.overtime), 0);
+    // Training days included: overtime during training is still overtime
+    // (Vincent Pullens 9/28–10/2: 12.838 OT hrs had been paid flat $7.25).
+    const premiumHours = techDailyHours.reduce((sum, day) => sum + day.overtime, 0);
     // FLSA: the regular rate — and so the OT premium — is set per WORKWEEK
     // even on a biweekly payroll, matching the reference workbook's Weekly
     // Calculations tab (see weeklyOtPremium). Without a daily breakdown
@@ -2921,7 +2970,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       ? weeklyOtPremium(
           techDailyHours,
           (date) => hourlyRateOnDate(emp.id, date, hourlyRate),
-          (date) => !isTrainingDay(date, traineeWindow),
+          () => true,
           taggedIncludable,
           techIncludablePay - taggedIncludableTotal
         )
@@ -3982,6 +4031,41 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       )
     : visibleRowsUnsorted;
   const checkedVisibleRows = visibleRows.filter(row => !row.employee.payrollExcluded);
+  // Each technician's pay beyond hours, for the attendance workbook's
+  // Includable / Reimbursements tables — so its 15-step calc comes up with
+  // the total instead of leaving them blank. Custom lines keep their week
+  // in the label; ticket/category pay the app computed itself is one line.
+  const buildAttendanceAdjustments = (rows: EmployeePayrollRow[]) => {
+    const fmtWeek = (w: string) => `Wk ${Number(w.slice(5, 7))}/${Number(w.slice(8, 10))}`;
+    const byEmployee = new Map<string, { includable: { type: string; rate: number; quantity: number }[]; reimbursements: { type: string; rate: number; quantity: number }[]; holidayPremium: number; otherAdditions: number }>();
+    for (const row of rows) {
+      if (!row.isTechPortion) continue;
+      const id = row.employee.id;
+      const lines = techCustomPayItemsAll.filter((i) => i.profileId === id && i.value * i.rate !== 0);
+      const includable = lines.filter((i) => i.isWageIncludable).map((i) => ({
+        type: `${i.label || "(custom line)"}${i.workWeekStart ? ` (${fmtWeek(i.workWeekStart)})` : ""}`, rate: i.rate, quantity: i.value,
+      }));
+      const reimbursements = lines.filter((i) => !i.isWageIncludable).map((i) => ({
+        type: `${i.label || "(custom line)"}${i.workWeekStart ? ` (${fmtWeek(i.workWeekStart)})` : ""}`, rate: i.rate, quantity: i.value,
+      }));
+      const customIncludable = includable.reduce((s, l) => s + l.rate * l.quantity, 0);
+      const ticketPay = row.techIncludablePay - customIncludable;
+      if (Math.abs(ticketPay) > 0.005) includable.unshift({ type: "Ticket / category pay (app)", rate: Math.round(ticketPay * 100) / 100, quantity: 1 });
+      if (Math.abs(row.techManual.mileagePay) > 0.005) {
+        const miles = row.techManual.mileage;
+        reimbursements.unshift(miles > 0
+          ? { type: "Mileage (field)", rate: row.techManual.mileagePay / miles, quantity: miles }
+          : { type: "Mileage (field)", rate: row.techManual.mileagePay, quantity: 1 });
+      }
+      byEmployee.set(id, {
+        includable,
+        reimbursements,
+        holidayPremium: row.techHolidayPremium,
+        otherAdditions: row.techTraineeMatch + row.techGuaranteedSalaryMatch,
+      });
+    }
+    return byEmployee;
+  };
   const downloadFilteredAttendance = async () => {
     if (attendanceExportProgress || checkedVisibleRows.length === 0) return;
     const people = [...new Map(checkedVisibleRows.map(row => [row.employee.id, row.employee])).values()];
@@ -3992,7 +4076,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // before initialization"), and the Worker failed to start.
       const { downloadPayrollAttendanceWorkbook } = await import("@/lib/payrollAttendanceExport");
       await downloadPayrollAttendanceWorkbook(people, genStart, genEnd, effectiveCurrency === "USD" ? "US" : "PH",
-        (done, total) => setAttendanceExportProgress({ done, total }));
+        (done, total) => setAttendanceExportProgress({ done, total }), buildAttendanceAdjustments(checkedVisibleRows));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Attendance download failed.");
     } finally {
@@ -6071,6 +6155,20 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             (src/components/TicketTimeDisputesTab.tsx) so it can also be
             rendered from Absent List's tab of the same name. */}
         {activeTab === "ticketTimeDisputes" && <TicketTimeDisputesTab />}
+        {activeTab === "reviewedPeriods" && (
+          <ReviewedPeriodsTab
+            periodStart={genStart}
+            periodEnd={genEnd}
+            people={payrollRows
+              .filter((r) => r.isTechPortion)
+              .map((r) => ({ id: r.employee.id, name: r.employee.full_name, branch: r.employee.assigned_branch || "" }))}
+            myProfileId={myProfileId}
+            myName={displayName || email || null}
+            actualTotals={new Map(payrollRows.filter((r) => r.isTechPortion).map((r) => [r.employee.id, r.grossPay]))}
+            actualTotalsLoading={periodDataLoading > 0 || loading}
+            onPeriodChange={(start, end) => { setGenStart(start); setGenEnd(end); }}
+          />
+        )}
 
         {/* ── Flash Tech Tab ───────────────────────────────────────────────── */}
         {/* Moved here from its old standalone page (reached via a button on
@@ -6849,7 +6947,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             }
             hourlyOtModeBusy={nextBusy}
             doneBusy={reviewBusy}
-            onDone={async () => {
+            onDone={async (breakdown) => {
               // Same guard as the office path above and generatePayroll()
               // itself — see that comment for why this matters.
               if (!genStart || !genEnd || genStart > genEnd) {
@@ -6859,6 +6957,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               setReviewBusy(true);
               try {
                 await markPayrollReviewed(detailEmployee.id, genStart, genEnd, myProfileId, displayName || email || null);
+                // Reviewed Periods tab (migration 0392): this report's pay in
+                // Finance's summary columns. Doesn't block the review mark —
+                // just warn if it can't be saved (e.g. migration not run).
+                try {
+                  await upsertPayrollReviewBreakdown(detailEmployee.id, genStart, genEnd, breakdown, {
+                    branch: detailEmployee.assigned_branch || null,
+                    source: "review",
+                    updatedBy: myProfileId,
+                    updatedByName: displayName || email || null,
+                  });
+                } catch (err) {
+                  toast.error(`Reviewed, but the Reviewed Periods summary wasn't saved: ${err instanceof Error ? err.message : "Unknown error"}`);
+                }
                 await loadReviewMarks();
                 setDetailEmployee(null);
                 setWizardStep("detail");

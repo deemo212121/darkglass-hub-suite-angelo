@@ -8,13 +8,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { Download, Loader2, X } from "lucide-react";
-import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
-
-async function fetchPdfBytes(url: string): Promise<Uint8Array> {
-  const res = await fetch(`/api/image-proxy?url=${encodeURIComponent(url)}`);
-  if (!res.ok) throw new Error(`Couldn't load the PDF (${res.status}).`);
-  return new Uint8Array(await res.arrayBuffer());
-}
+import { renderPdfPages } from "@/lib/pdfPages";
 
 /** "…/o/companies%2F…%2F1760000000000-Kyong-Shin.pdf?alt=media…" → "Kyong-Shin.pdf" (the stored file's own name, minus its upload-time prefix). */
 function fileNameFromUrl(url: string): string {
@@ -53,51 +47,24 @@ export function InlinePdfModal({ url, title, fileName, onClose }: { url: string;
   }, [onClose]);
 
   useEffect(() => {
+    const holder = holderRef.current;
+    if (!holder) return;
     let cancelled = false;
-    const tasks: { cancel: () => void }[] = [];
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const [pdfjs, bytes] = await Promise.all([import("pdfjs-dist/legacy/build/pdf.mjs"), fetchPdfBytes(url)]);
-        if (cancelled) return;
-        bytesRef.current = bytes;
-        pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-        // pdf.js takes ownership of the buffer it's given — hand it a copy so Download still has the bytes.
-        const pdf = await pdfjs.getDocument({ data: bytes.slice() }).promise;
-        const holder = holderRef.current;
-        if (cancelled || !holder) return;
-        holder.replaceChildren();
-        const width = Math.min(holder.clientWidth - 16, 900);
-        const dpr = window.devicePixelRatio || 1;
-        for (let i = 1; i <= pdf.numPages; i++) {
-          const page = await pdf.getPage(i);
-          if (cancelled) return;
-          const viewport = page.getViewport({ scale: width / page.getViewport({ scale: 1 }).width });
-          const canvas = document.createElement("canvas");
-          canvas.width = viewport.width * dpr;
-          canvas.height = viewport.height * dpr;
-          canvas.style.width = `${viewport.width}px`;
-          canvas.style.height = `${viewport.height}px`;
-          canvas.className = "block mx-auto mb-3 bg-white rounded-sm shadow-lg";
-          holder.appendChild(canvas);
-          const ctx = canvas.getContext("2d")!;
-          ctx.scale(dpr, dpr);
-          const task = page.render({ canvas, canvasContext: ctx, viewport });
-          tasks.push(task);
-          await task.promise;
-          if (i === 1 && !cancelled) setLoading(false);
-        }
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Couldn't load the PDF.");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+    setLoading(true);
+    setError(null);
+    const run = renderPdfPages(url, holder, {
+      width: (h) => Math.min(h.clientWidth - 16, 900),
+      pageClassName: "block mx-auto mb-3 bg-white rounded-sm shadow-lg",
+      onFirstPage: () => setLoading(false),
+    });
+    run.done
+      .then((bytes) => { if (bytes && !cancelled) bytesRef.current = bytes; })
+      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Couldn't load the PDF."); })
+      .finally(() => { if (!cancelled) setLoading(false); });
     return () => {
       cancelled = true;
-      for (const t of tasks) t.cancel();
-      holderRef.current?.replaceChildren();
+      run.cancel();
+      holder.replaceChildren();
     };
   }, [url]);
 

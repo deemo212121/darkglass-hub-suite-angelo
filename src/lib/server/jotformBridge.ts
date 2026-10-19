@@ -533,7 +533,10 @@ export async function uploadFileToStorage(
   accessToken: string,
   objectPath: string,
   contentType: string,
-  bytes: Uint8Array
+  bytes: Uint8Array,
+  // Firebase "customMetadata" (uploadedBy, visitNo, …) — the same GCS
+  // metadata map the download token lives in. Used by storageUploadBridge.ts.
+  customMetadata?: Record<string, string>
 ): Promise<string> {
   const boundary = `jotform_${crypto.randomUUID()}`;
   const downloadToken = crypto.randomUUID();
@@ -541,7 +544,7 @@ export async function uploadFileToStorage(
   const metadataJson = JSON.stringify({
     name: objectPath,
     contentType,
-    metadata: { firebaseStorageDownloadTokens: downloadToken },
+    metadata: { ...(customMetadata ?? {}), firebaseStorageDownloadTokens: downloadToken },
   });
   const body = concatUint8Arrays([
     enc.encode(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadataJson}\r\n--${boundary}\r\nContent-Type: ${contentType}\r\n\r\n`),

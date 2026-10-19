@@ -885,7 +885,7 @@ export function CustomFormsPanel() {
               </div>
               <div className="p-4 overflow-y-auto">
                 {form ? (
-                  <CustomFormRenderer key={completing.id} fields={form.fields} mode="company" initialValues={completing.responses} signer={me} onSubmit={(values) => handleComplete(values)} />
+                  <CustomFormRenderer key={completing.id} fields={form.fields} mode="company" showSubmitterPart={form.fields.some((f) => f.type === "pdfDocument")} initialValues={completing.responses} signer={me} onSubmit={(values) => handleComplete(values)} />
                 ) : (
                   <p className="text-sm text-red-300">This submission's form was deleted.</p>
                 )}

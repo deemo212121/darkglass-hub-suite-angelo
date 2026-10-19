@@ -2234,7 +2234,7 @@ const guidesMod: ModuleDef = {
 
 // AHS Server Status — SuperAdmin only (roleLabels.ts SUPERADMIN_ONLY_MODULES).
 // Live status + uptime history of the databases, the hosting and the outside
-// services the app depends on (src/lib/server/serverStatus.ts, migration 0377).
+// services the app depends on (src/lib/server/serverStatus.ts, migration 0385).
 const serverStatusMod: ModuleDef = {
   slug: "server-status",
   label: "AHS Server Status",

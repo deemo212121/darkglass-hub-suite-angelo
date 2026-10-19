@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0379 — App error log (uploads & signing papers), for AHS Server Status.
+-- 0387 — App error log (uploads & signing papers), for AHS Server Status.
 --
 -- When a file upload or a signing step fails for someone, the app saves
 -- who, when, what they were doing, the error message and their device.
@@ -15,6 +15,9 @@
 --  * Rows older than 30 days are pruned by the 5-minute status cron.
 --
 -- Run once in the Supabase SQL Editor.
+-- (Numbered 0379 in Angelo's repo — renumbered here past this repo's own
+-- 0379-0386; already applied to the shared database 2026-10-15. Safe to
+-- run again.)
 -- =====================================================================
 
 create table if not exists app_error_log (

@@ -271,7 +271,55 @@ export async function renderDocumentTemplateHtml(template: DocumentTemplate, for
   return { html: `<div class="doc-page"><div class="doc-flow">${flowHtml}</div>${pinnedHtml}</div>`, styles };
 }
 
+/** Bytes of a Firebase Storage file (or data: URL) — through /api/image-proxy, since the bucket sends no CORS headers (see toDataUrl). */
+async function fetchStorageBytes(url: string): Promise<Uint8Array> {
+  const res = url.startsWith("data:") ? await fetch(url) : await fetch(`/api/image-proxy?url=${encodeURIComponent(url)}`);
+  if (!res.ok) throw new Error(`Couldn't load ${url.startsWith("data:") ? "the image" : "the document"} (HTTP ${res.status})`);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+/** "MM/DD", "MM/DD/YYYY", "YYYY-MM-DD"… from a stored YYYY-MM-DD date. */
+function formatStampDate(value: string, format: string): string {
+  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? format.replace("YYYY", m[1]).replace("MM", m[2]).replace("DD", m[3]) : value;
+}
+
+/**
+ * The document is an existing PDF (DocumentTemplate.sourcePdf — e.g. the
+ * scanned agreement the other party already signed on paper) with this
+ * submission's answers stamped on: a signature fitted into its box, bottom
+ * left, so it sits on the signature line; anything else as text. pdf-lib
+ * draws from the bottom-left, so the stamps' top-left boxes are flipped.
+ */
+export async function generateStampedSourcePdf(sourcePdf: NonNullable<DocumentTemplate["sourcePdf"]>, form: Pick<CustomForm, "fields">, submission: Pick<CustomFormSubmission, "responses">): Promise<Blob> {
+  const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
+  const doc = await PDFDocument.load(await fetchStorageBytes(sourcePdf.url));
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const ink = rgb(0.06, 0.09, 0.16);
+  for (const stamp of sourcePdf.stamps) {
+    const field = form.fields.find((f) => f.name === stamp.fieldName);
+    const value = field ? submission.responses[field.id] : undefined;
+    if (!field || value == null || value === "") continue;
+    const page = doc.getPage(stamp.page - 1);
+    const bottom = page.getHeight() - stamp.y - stamp.height;
+    if (typeof value === "object" && !Array.isArray(value) && "url" in value) {
+      const bytes = await fetchStorageBytes((value as { url: string }).url);
+      const isPng = bytes[0] === 0x89 && bytes[1] === 0x50;
+      const image = isPng ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
+      const scale = Math.min(stamp.width / image.width, stamp.height / image.height);
+      page.drawImage(image, { x: stamp.x, y: bottom, width: image.width * scale, height: image.height * scale });
+    } else {
+      const text = field.type === "datePicker" && typeof value === "string" ? formatStampDate(value, stamp.dateFormat ?? "MM/DD/YYYY") : formatFieldValue(value, field);
+      let size = stamp.fontSize ?? 11;
+      while (size > 6 && font.widthOfTextAtSize(text, size) > stamp.width) size -= 0.5;
+      page.drawText(text, { x: stamp.x, y: bottom + (stamp.height - size) / 2 + 1, size, font, color: ink });
+    }
+  }
+  return new Blob([(await doc.save()) as BlobPart], { type: "application/pdf" });
+}
+
 export async function generateSubmissionPdf(template: DocumentTemplate, form: Pick<CustomForm, "fields">, submission: Pick<CustomFormSubmission, "responses" | "submittedAt">): Promise<Blob> {
+  if (template.sourcePdf) return generateStampedSourcePdf(template.sourcePdf, form, submission);
   const { html, styles } = await renderDocumentTemplateHtml(template, form, submission);
   return captureHtmlToPdfBlob(html, styles, { beforeCapture: reflowFlowContentBelowPinnedBlocks });
 }
@@ -279,7 +327,7 @@ export async function generateSubmissionPdf(template: DocumentTemplate, form: Pi
 // ---------- Automatic document (no Document Template designed) ----------
 
 /** Never part of the document: page/section markers, the submit button, and anti-bot checks. */
-export const SKIPPED_IN_DOCUMENT = new Set(["pageBreak", "sectionCollapse", "submitButton", "captcha"]);
+export const SKIPPED_IN_DOCUMENT = new Set(["pageBreak", "sectionCollapse", "submitButton", "captcha", "pdfDocument"]);
 const FOOTER_SPACE = 30;
 /** Top/bottom page margin for automatic documents (0.625in) — left/right stay PAGE_PADDING so the content width is unchanged. */
 const AUTO_PAD_Y = 60;

@@ -3,7 +3,7 @@
  * app depends on, with uptime % and a 30-day history. Each load (and every
  * 60 seconds while the page is open) runs the checks live through
  * POST /api/server-status (src/lib/server/serverStatus.ts); the Worker's
- * 5-minute cron fills the history in between (migration 0377).
+ * 5-minute cron fills the history in between (migration 0385).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
@@ -29,7 +29,7 @@ interface Check {
 interface DailyRow { service: string; day: string; total: number; up: number; slow: number; down: number }
 interface Problem { checked_at: string; service: string; status: State; response_ms: number | null; detail: string | null }
 interface Heartbeat { job: string; last_run_at: string; ok: boolean; detail: string | null }
-/** A failed upload / signing step for one person (app_error_log, migration 0379). */
+/** A failed upload / signing step for one person (app_error_log, migration 0387). */
 interface AppError {
   id: number;
   created_at: string;
@@ -53,7 +53,7 @@ interface StatusResponse {
   daily: DailyRow[];
   problems: Problem[];
   heartbeats: Heartbeat[];
-  /** False until migration 0379 (app_error_log) is run. */
+  /** False until migration 0387 (app_error_log) is run. */
   errorsEnabled?: boolean;
   errors?: AppError[];
 }
@@ -298,13 +298,13 @@ export function ServerStatusPage() {
       {error && <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>}
       {data && !data.historyEnabled && (
         <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-          Uptime history is off — run migration <span className="font-mono">0377_server_status.sql</span> in Supabase. Live checks still work.
+          Uptime history is off — run migration <span className="font-mono">0385_server_status.sql</span> in Supabase. Live checks still work.
         </p>
       )}
 
       {data && data.errorsEnabled === false && (
         <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-          Upload and signing errors per person are off — run migration <span className="font-mono">0379_app_error_log.sql</span> in Supabase.
+          Upload and signing errors per person are off — run migration <span className="font-mono">0387_app_error_log.sql</span> in Supabase.
         </p>
       )}
 
@@ -363,7 +363,7 @@ export function ServerStatusPage() {
                             <p className="text-slate-500">Last ran {fmtAgo(hb.last_run_at, now)} · {fmtTime(hb.last_run_at)}</p>
                           </>
                         ) : (
-                          <p className="text-slate-500">No runs recorded yet{data?.historyEnabled ? " — the next tick will show here" : " (needs migration 0377)"}</p>
+                          <p className="text-slate-500">No runs recorded yet{data?.historyEnabled ? " — the next tick will show here" : " (needs migration 0385)"}</p>
                         )}
                       </div>
                     </div>

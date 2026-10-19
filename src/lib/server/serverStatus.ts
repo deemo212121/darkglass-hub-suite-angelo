@@ -12,7 +12,7 @@
  *    billed: each probe is a plain request any public client could make.
  *
  * The 5-minute cron (src/server.ts) runs runServerStatusChecks and saves
- * one row per service (server_status_checks, migration 0377) for uptime %
+ * one row per service (server_status_checks, migration 0385) for uptime %
  * and the 30-day history. The page calls POST /api/server-status.
  */
 import { verifyFirebaseToken } from "./supabaseTokenBridge";
@@ -371,7 +371,7 @@ async function signingPapersActivity(env: StatusEnv): Promise<ServiceCheck> {
   }
 }
 
-/** Saves one row per service and prunes rows older than HISTORY_DAYS. Errors are logged, never thrown (0377 may not be run yet). */
+/** Saves one row per service and prunes rows older than HISTORY_DAYS. Errors are logged, never thrown (0385 may not be run yet). */
 export async function recordServerStatusChecks(env: StatusEnv, checks: ServiceCheck[]): Promise<void> {
   const rows = checks.map((c) => ({ checked_at: c.checkedAt, service: c.key, status: c.status, response_ms: c.ms, detail: c.detail.slice(0, 300) }));
   const res = await sb(env, "server_status_checks", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(rows) });
@@ -381,7 +381,7 @@ export async function recordServerStatusChecks(env: StatusEnv, checks: ServiceCh
   }
   const cutoff = new Date(Date.now() - HISTORY_DAYS * 86400000).toISOString();
   await sb(env, `server_status_checks?checked_at=lt.${encodeURIComponent(cutoff)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } }).catch(() => undefined);
-  // Upload / signing errors (migration 0379) are kept 30 days too.
+  // Upload / signing errors (migration 0387) are kept 30 days too.
   await sb(env, `app_error_log?created_at=lt.${encodeURIComponent(cutoff)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } }).catch(() => undefined);
 }
 
@@ -460,7 +460,7 @@ export async function handleServerStatusRequest(request: Request, rawEnv?: Recor
       rpc<UptimeRow>(env, "server_status_uptime", { p_hours: 24 * HISTORY_DAYS }),
       sb(env, `server_status_checks?status=neq.up&select=checked_at,service,status,response_ms,detail&order=checked_at.desc&limit=150`),
       sb(env, "server_cron_heartbeats?select=job,last_run_at,ok,detail"),
-      // Upload / signing errors per person (migration 0379), newest first.
+      // Upload / signing errors per person (migration 0387), newest first.
       sb(env, `app_error_log?select=id,created_at,profile_id,user_name,area,action,message,device,page&created_at=gte.${encodeURIComponent(errorsSince)}&order=created_at.desc&limit=1000`),
     ]);
     const pct = (rows: UptimeRow[] | null) =>

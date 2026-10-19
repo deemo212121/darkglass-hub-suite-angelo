@@ -23,6 +23,32 @@ export interface StateMinWage {
  *  Add Rate Change guard. */
 export const FEDERAL_MIN_WAGE = 7.25;
 
+/**
+ * Whether a technician's commission (includable pay) counts toward meeting
+ * the state minimum wage, checked per workweek — the payroll workbook's
+ * Weekly Calculations method, adopted for now (2026-10-15) to match
+ * Finance's sheet. Legal under FLSA/state law, but it means commission
+ * earned in a higher-minimum state partly pays that state's minimum
+ * instead of sitting on top of it (Andre Riddle 9/13–9/26: $181.80 of his
+ * $220 commission). Set false to pay commission on top of the state
+ * minimum again (base pay alone vs. the floor).
+ */
+export const COMMISSION_COUNTS_TOWARD_STATE_MIN = true;
+
+/**
+ * How a week's two OT state checks combine — (a) the "regular-rate
+ * true-up" (premium at the regular rate after the state matches, minus the
+ * premium already paid) and (b) the "state OT premium shortfall" (0.5x the
+ * state floor on the OT hours, minus the premium already paid).
+ * true = pay BOTH, added together — Finance's manual two-week payroll sheet,
+ * adopted for now (2026-10-15) to match it. Overpays vs. the legal minimum
+ * (both checks target the same OT rate), e.g. Vincent Pullens wk 9/27:
+ * $49.75 + $47.09 instead of $49.75.
+ * false = pay only the HIGHER of the two (the older Tech Payroll Final
+ * workbook's "FINAL OT Match Due"; OT lands at exactly state x 1.5).
+ */
+export const OT_MATCH_ADDS_TRUE_UP_AND_FLOOR = true;
+
 export const STATE_MIN_WAGE_2026: StateMinWage[] = [
   { state: "Alabama", rate: 7.25 },
   { state: "Arizona", rate: 15.15 },

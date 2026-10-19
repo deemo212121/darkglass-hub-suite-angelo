@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0385 — Payroll: Finance / Admin / SuperAdmin can include or exclude
+-- 0390 — Payroll: Finance / Admin / SuperAdmin can include or exclude
 -- their OWN row on Accounting → Payroll.
 --
 -- 0225/0301 blocked every self-edit of profiles.payroll_excluded, so the
@@ -8,7 +8,9 @@
 -- or extra role) may change their own; everyone else is still blocked.
 --
 -- Same function as 0301 otherwise, unchanged.
--- Run once in the Supabase SQL Editor.
+-- Run once in the Supabase SQL Editor. Safe to run twice.
+-- (Numbered 0385 in Angelo's repo — renumbered here past this repo's own
+-- 0385-0389.)
 -- =====================================================================
 
 create or replace function restrict_profile_self_edit_columns()
@@ -72,7 +74,7 @@ begin
   end if;
 
   -- payroll_excluded (Accounting → Payroll's include checkbox) — whoever runs
-  -- payroll may include / exclude their own row too (0385). Primary or extra role.
+  -- payroll may include / exclude their own row too (0390). Primary or extra role.
   if new.payroll_excluded is distinct from old.payroll_excluded
      and not exists (
        select 1 from unnest(array_append(coalesce(old.extra_roles, '{}'), old.role)) r

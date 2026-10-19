@@ -178,7 +178,7 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
   const envResult = readEnv(env);
   if ("error" in envResult) return json(envResult, 500);
   const envBag = envResult;
-  // For the app error log if signing fails (AHS Server Status, migration 0379).
+  // For the app error log if signing fails (AHS Server Status, migration 0387).
   let docForLog: { company_id: string; document_type: string; recipient_name: string | null } | null = null;
 
   try {

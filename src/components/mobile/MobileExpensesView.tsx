@@ -206,7 +206,7 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
         <div style={{ fontWeight: 800, fontSize: "0.95rem", color: "#f1f5f9" }}>{editing ? "Edit Expense" : "Expense Request"}</div>
 
         <div className="mtech-section-title">Category</div>
-        {/* Sent by the employee — always a Reimbursement Form (migration 0378). */}
+        {/* Sent by the employee — always a Reimbursement Form (migration 0386). */}
         <div className="mtech-bill-input full" style={{ opacity: 0.8 }}>{EMPLOYEE_EXPENSE_CATEGORY}</div>
 
         <div className="mtech-section-title">Date</div>

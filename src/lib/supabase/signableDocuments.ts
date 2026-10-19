@@ -447,7 +447,7 @@ async function maybeAutoUnfreezeTechnician(profileId: string): Promise<void> {
  * and the recipient only signs.
  */
 export async function signDocument(id: string, slot: SignatureSlot, entry: SignatureEntry, pdfUrl: string, formData?: Record<string, any>): Promise<void> {
-  // Failures are saved to the app error log for AHS Server Status (migration 0379).
+  // Failures are saved to the app error log for AHS Server Status (migration 0387).
   try {
     await signDocumentInner(id, slot, entry, pdfUrl, formData);
   } catch (err) {

@@ -16,7 +16,7 @@ export async function captureHtmlToPdfBlob(
   opts?: { width?: number; height?: number; beforeCapture?: (doc: Document) => void }
 ): Promise<Blob> {
   // A failure here (building a signed paper's PDF) is saved to the app error
-  // log for AHS Server Status (migration 0379), then rethrown unchanged.
+  // log for AHS Server Status (migration 0387), then rethrown unchanged.
   try {
     return await captureHtmlToPdfBlobInner(bodyHtml, styles, opts);
   } catch (err) {

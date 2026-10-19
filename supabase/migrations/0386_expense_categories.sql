@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0378 — Expense categories: Hotel / Car Rental / Office Supply /
+-- 0386 — Expense categories: Hotel / Car Rental / Office Supply /
 -- Reimbursement Form.
 --
 --   Hotel, Car Rental, Office Supply — entered by Accounting (Add Expense);
@@ -18,6 +18,8 @@
 -- Hotel Rate / Rental Rate (see the bottom of this file).
 --
 -- Run once in the Supabase SQL Editor.
+-- (Numbered 0378 in Angelo's repo — renumbered here past this repo's own
+-- 0377-0384; already applied to the shared database 2026-10-15.)
 -- =====================================================================
 
 alter table expenses drop constraint if exists expenses_category_check;

@@ -26,6 +26,7 @@ import { handleLoginLockoutRequest } from "./lib/server/loginLockoutBridge";
 import { handlePasswordResetRequest } from "./lib/server/passwordResetRequestBridge";
 import { handleItBypassLoginRequest } from "./lib/server/itBypassLoginBridge";
 import { handleServerStatusRequest } from "./lib/server/serverStatus";
+import { handleStorageUploadRequest } from "./lib/server/storageUploadBridge";
 
 const CANONICAL_ORIGIN = "https://adminhubsolution.com";
 
@@ -234,6 +235,10 @@ export default {
       const merged = await resolveServerEnv(env);
       return await handleServerStatusRequest(request, merged);
     }
+    if (url.pathname === "/api/storage-upload") {
+      const merged = await resolveServerEnv(env);
+      return await handleStorageUploadRequest(request, merged);
+    }
 
     try {
       const handler = await getServerEntry();
@@ -252,7 +257,7 @@ export default {
   async scheduled(event: { cron?: string }, env: unknown, ctx: { waitUntil: (p: Promise<unknown>) => void }) {
     const merged = await resolveServerEnv(env);
 
-    // AHS Server Status (migration 0377): when each schedule last ran.
+    // AHS Server Status (migration 0385): when each schedule last ran.
     ctx.waitUntil(
       import("./lib/server/serverStatus").then(({ readStatusEnv, recordCronHeartbeat }) => {
         const statusEnv = readStatusEnv(merged);

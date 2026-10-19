@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0377 — AHS Server Status (SuperAdmin module).
+-- 0385 — AHS Server Status (SuperAdmin module).
 --
 -- The Worker's 5-minute cron checks every service the app depends on
 -- (Supabase, Firebase, the Cloudflare hosting, the providers' own status
@@ -13,6 +13,8 @@
 -- Rows older than 30 days are pruned by the cron.
 --
 -- Run once in the Supabase SQL Editor.
+-- (Numbered 0377 in Angelo's repo — renumbered here past this repo's own
+-- 0377-0384; already applied to the shared database 2026-10-15.)
 -- =====================================================================
 
 create table if not exists server_status_checks (
