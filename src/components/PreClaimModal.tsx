@@ -74,7 +74,9 @@ const emptyForm = (): FormState => ({
   partsOnlyWarranty: false, failureDefectCode: "", resolutionCode: "", laborFee: 0,
   otherFee: 0, shippingFee: 0, extraMileFee: 0, mileageFee: 0, poAmount: 0,
   spClaimBatchNumber: "", spClaimSequenceNumber: "", spClaimStatusCode: "",
-  spClaimStatusDescription: "", spSubmittedAt: "", spLastResponse: null, updatedAt: "",
+  spClaimStatusDescription: "", spSubmittedAt: "", spLastResponse: null,
+  spPaidTotal: null, spPaidLabor: null, spPaidParts: null, spPaidShipping: null, spPaidMileage: null,
+  spPaidOther: null, spPaidTax: null, spPaymentDate: "", spReceivedDate: "", spClaimCheckedAt: "", updatedAt: "",
 });
 
 /** ServicePower rejecting the manufacturer / service center number pair — shown in plain words. The usual cause is the wrong service center number (our SP login GSL00002 instead of the call's own Service Center), not a locked account — see buildServicePowerClaimPayload. */
@@ -212,7 +214,14 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
   // from the visit's own text (or clears a previous edit) — an unedited
   // claim never writes that column, so saving works before migration 0330.
   const claimFieldsToSave = (): Partial<FormState> => {
-    const { servicePerformed: savedEdit, ...rest } = form;
+    // What ServicePower paid (migration 0397) is read back by the paid-claim
+    // check / Claim List Sync Status, never edited here — left out of the save.
+    const {
+      servicePerformed: savedEdit,
+      spPaidTotal: _pt, spPaidLabor: _pl, spPaidParts: _pp, spPaidShipping: _ps, spPaidMileage: _pm,
+      spPaidOther: _po, spPaidTax: _tx, spPaymentDate: _pd, spReceivedDate: _rd, spClaimCheckedAt: _ca,
+      ...rest
+    } = form;
     const edited = servicePerformed.trim() !== visitServicePerformed.trim() ? servicePerformed : "";
     if (edited || savedEdit) return { ...rest, servicePerformed: edited };
     return rest;

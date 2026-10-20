@@ -14,19 +14,30 @@
  * Pre-Claim fees — their parts alone aren't what was claimed), so "paid"
  * alone decides for them (Claims' call, 2026-10-20).
  *
+ * Every claim found also has what ServicePower paid saved onto its claim
+ * details (migration 0397) for the Claim List — closed or not.
+ *
  * The status change is a plain tickets update with the service key, so
  * trg_ticket_audit logs it as a system change (changed_by NULL), the same as
  * the ServicePower/NSA syncs, and stamps status_changed_at.
  *
  * Looking a claim up needs the call's own ServiceCenter (getCallInfo) and
- * the name ServicePower files the claim under — the claim company from the
- * call's MfgId (e.g. I565 → "SQUARE TRADE" for a GE-brand Square Trade
- * claim), else the ticket's manufacturer, else the brand. Any other pair is
- * refused with "Invalid manufacturerName/serviceCenterNumber".
+ * the name ServicePower files the claim under — see spClaimLookup.ts, which
+ * the Claim List's Sync Status shares.
  */
 import { handleServicePowerRequest } from "./servicePowerBridge";
-import { mapSource } from "../mfgSource";
 import { isClaimablePart } from "../servicePowerClaimPayload";
+import {
+  isShortPaid,
+  isSpClaimPaid,
+  isWrongManufacturerName,
+  latestSpClaim,
+  SP_PAID_COLUMNS_0397,
+  spClaimDetailsColumns,
+  spClaimLookupNames,
+  spClaimPaid,
+  type SpRetrievedClaim,
+} from "../spClaimLookup";
 
 export const SP_PAID_CLOSED_STATUS = "CL-Data-Closed";
 const CLAIMED_STATUS = "CL-Claimed";
@@ -72,17 +83,6 @@ interface TicketRow {
   manufacturer: string | null;
 }
 
-interface SpClaim {
-  claimStatusCode?: string;
-  claimStatusDescription?: string;
-  claimBatchNumber?: number;
-  claimSequenceNumber?: number;
-  paidTotal?: number;
-  paymentDate?: number | string;
-  receivedDate?: number | string;
-  editedDate?: number | string;
-}
-
 function resolveCreds(env: Record<string, string | undefined>) {
   const g = globalThis as any;
   const supabaseUrl =
@@ -120,14 +120,7 @@ async function sp(ctx: Ctx, action: "getCallInfo" | "retrieveClaim", params: Rec
 const xmlTag = (xml: string, name: string) =>
   (xml.match(new RegExp(`<${name}>([^<]*)</${name}>`, "i"))?.[1] ?? "").trim();
 
-/** 20260915 → "2026-09-15"; 0 / blank → null. */
-function spDate(v: number | string | undefined): string | null {
-  const s = String(v ?? "").trim();
-  return /^\d{8}$/.test(s) ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}` : null;
-}
-
 const money = (n: number) => `$${n.toFixed(2)}`;
-const usDate = (iso: string | null) => (iso ? `${iso.slice(5, 7)}/${iso.slice(8, 10)}/${iso.slice(0, 4)}` : "");
 
 /** The company's CL-Claimed tickets that came from ServicePower (SP login account, or a GE / SP source). */
 async function claimedSpTickets(ctx: Ctx): Promise<TicketRow[]> {
@@ -176,22 +169,15 @@ async function preClaimTotals(ctx: Ctx, ticketIds: string[]): Promise<Map<string
 }
 
 /** Looks the ticket's claim up on ServicePower and decides what should happen — no writes. */
-async function decide(ctx: Ctx, t: TicketRow, claimTotal: number | null): Promise<SpClaimDecision & { claim?: SpClaim }> {
+async function decide(ctx: Ctx, t: TicketRow, claimTotal: number | null): Promise<SpClaimDecision & { claim?: SpRetrievedClaim }> {
   const base = { ticketNo: t.ticket_no, ticketId: t.id, spStatus: "", paidTotal: null, paymentDate: null, claimTotal, applied: false };
   const call = await sp(ctx, "getCallInfo", { callNo: t.ticket_no });
   const xml = String(call?.xml ?? "");
   const center = xmlTag(xml, "ServiceCenter");
   if (!center) return { ...base, outcome: "not-found", detail: "Call not found on ServicePower" };
-  const mfgId = xmlTag(xml, "MfgId");
-  const names = Array.from(
-    new Set(
-      [mapSource(mfgId, null, t.ticket_no), mapSource(mfgId), t.manufacturer, xmlTag(xml, "SPBrandDesc")]
-        .map((n) => String(n ?? "").trim().toUpperCase())
-        .filter(Boolean),
-    ),
-  );
+  const names = spClaimLookupNames(xmlTag(xml, "MfgId"), t.ticket_no, t.manufacturer, xmlTag(xml, "SPBrandDesc"));
 
-  let claims: SpClaim[] = [];
+  let claims: SpRetrievedClaim[] = [];
   let lastMessage = "";
   for (const manufacturerName of names) {
     const r = await sp(ctx, "retrieveClaim", { manufacturerName, serviceCenterNumber: center, claimNumber: t.ticket_no });
@@ -200,51 +186,46 @@ async function decide(ctx: Ctx, t: TicketRow, claimTotal: number | null): Promis
       break;
     }
     lastMessage = (r?.messages ?? []).map((m: { message: string }) => m.message).join("; ") || String(r?.error ?? "");
-    if (!/invalid manufacturer/i.test(lastMessage)) break;
+    if (!isWrongManufacturerName(lastMessage)) break;
   }
-  if (claims.length === 0) return { ...base, outcome: "not-found", detail: lastMessage || "No claim on ServicePower" };
+  const claim = latestSpClaim(claims);
+  if (!claim) return { ...base, outcome: "not-found", detail: lastMessage || "No claim on ServicePower" };
 
-  // Resubmissions can leave more than one claim under the number — the latest received one counts.
-  const claim = [...claims].sort(
-    (a, b) => String(b.receivedDate ?? "").localeCompare(String(a.receivedDate ?? "")) || String(b.editedDate ?? "").localeCompare(String(a.editedDate ?? "")),
-  )[0];
   const spStatus = `${claim.claimStatusCode ?? ""} ${claim.claimStatusDescription ?? ""}`.trim();
-  const paidTotal = Number(claim.paidTotal) || 0;
-  const paymentDate = spDate(claim.paymentDate);
-  const found = { ...base, spStatus, paidTotal, paymentDate, claim };
+  const paid = spClaimPaid(claim);
+  const found = { ...base, spStatus, paidTotal: paid.total, paymentDate: paid.paymentDate, claim };
 
-  if (claim.claimStatusCode !== "P" || paidTotal <= 0) return { ...found, outcome: "not-paid", detail: "Not paid yet" };
-  if (claimTotal != null && paidTotal + 0.005 < claimTotal) {
-    return { ...found, outcome: "short-paid", detail: `ServicePower paid ${money(paidTotal)} of ${money(claimTotal)} claimed` };
+  if (!isSpClaimPaid(claim)) return { ...found, outcome: "not-paid", detail: "Not paid yet" };
+  if (isShortPaid(paid.total, claimTotal)) {
+    return { ...found, outcome: "short-paid", detail: `ServicePower paid ${money(paid.total)} of ${money(claimTotal ?? 0)} claimed` };
   }
   return {
     ...found,
     outcome: "close",
-    detail: claimTotal != null ? `Paid ${money(paidTotal)} = Claim Total ${money(claimTotal)}` : `Paid ${money(paidTotal)} (no Pre-Claim Claim Total to compare)`,
+    detail: claimTotal != null ? `Paid ${money(paid.total)} = Claim Total ${money(claimTotal)}` : `Paid ${money(paid.total)} (no Pre-Claim Claim Total to compare)`,
   };
 }
 
-/** Writes a decision: status → CL-Data-Closed for "close" (only if still CL-Claimed), and the payment onto the claim details. */
-async function apply(ctx: Ctx, d: SpClaimDecision & { claim?: SpClaim }): Promise<void> {
-  if (!d.claim || (d.outcome !== "close" && d.outcome !== "short-paid")) return;
-  const description =
-    d.outcome === "short-paid"
-      ? `Short-paid: ServicePower paid ${money(d.paidTotal ?? 0)} of ${money(d.claimTotal ?? 0)} claimed${d.paymentDate ? ` (${usDate(d.paymentDate)})` : ""}`
-      : `${d.claim.claimStatusDescription ?? "Paid"} — ${money(d.paidTotal ?? 0)} paid${d.paymentDate ? ` ${usDate(d.paymentDate)}` : ""}`;
-  await rest(ctx, `ticket_claim_details?on_conflict=ticket_id`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify({
-      ticket_id: d.ticketId,
-      company_id: ctx.companyId,
-      sp_claim_status_code: d.claim.claimStatusCode ?? null,
-      sp_claim_status_description: description,
-      sp_claim_batch_number: d.claim.claimBatchNumber != null ? String(d.claim.claimBatchNumber) : null,
-      sp_claim_sequence_number: d.claim.claimSequenceNumber != null ? String(d.claim.claimSequenceNumber) : null,
-    }),
-  });
+/** Saves what ServicePower has on the claim; moves "close" decisions to CL-Data-Closed (only if still CL-Claimed). */
+async function apply(ctx: Ctx, d: SpClaimDecision & { claim?: SpRetrievedClaim }): Promise<void> {
+  if (!d.claim) return;
+  const columns: Record<string, unknown> = { ticket_id: d.ticketId, company_id: ctx.companyId, ...spClaimDetailsColumns(d.claim, new Date().toISOString()) };
+  const write = (body: Record<string, unknown>) =>
+    rest(ctx, `ticket_claim_details?on_conflict=ticket_id`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify(body),
+    });
+  try {
+    await write(columns);
+  } catch (err) {
+    // Migration 0397 not run yet: keep the status/batch columns, drop the paid amounts.
+    if (!/sp_paid_|sp_payment_date|sp_received_date|sp_claim_checked_at/.test(String(err))) throw err;
+    for (const c of SP_PAID_COLUMNS_0397) delete columns[c];
+    await write(columns);
+  }
   if (d.outcome !== "close") {
-    d.applied = true;
+    if (d.outcome === "short-paid") d.applied = true;
     return;
   }
   const updated = await rest<any[]>(
