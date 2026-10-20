@@ -255,10 +255,10 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
 
   // Checked in the "Submit this claim to ServicePower?" window before
   // anything is sent. `required` = what ServicePower has sent claims back
-  // for: "Blank/Invalid Defect code" and "Blank Request Date" on any claim,
-  // "Blank Parts Invoice Number" / "Blank Job Code" on GE claims (a
-  // Frigidaire claim went through without a job code) — the submit waits
-  // until they're filled.
+  // for: "Blank Request Date" on any claim; "Blank Parts Invoice Number" /
+  // "Blank Job Code" on GE claims; "Blank/Invalid Defect code" on non-GE
+  // claims (a Frigidaire claim was sent back for it, two GE claims without
+  // one weren't) — the submit waits until they're filled.
   // `blank` = anything else the claim would carry empty — listed, and the
   // person has to choose "Submit anyway". `rejectedParts` = parts
   // ServicePower refused on the last submission that are still on the claim.
@@ -266,11 +266,13 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
     const isBlank = (v: unknown) => !String(v ?? "").trim();
     const required: string[] = [];
     const blank: string[] = [];
-    const code = form.failureDefectCode.trim();
-    if (!code) required.push("Failure/Defect Code (Claim section) — ServicePower sends a claim back without one.");
-    else if (code.length > 4) required.push(`Failure/Defect Code "${code}" — enter the code itself (4 characters at most).`);
-    const claimable = parts.filter(isClaimablePart);
     const isGe = !!jobCodesFor(ticket.manufacturer, (ticket as { brand?: string | null }).brand);
+    const code = form.failureDefectCode.trim();
+    if (!code) {
+      if (isGe) blank.push("Failure/Defect Code");
+      else required.push("Failure/Defect Code (Claim section) — ServicePower sends a claim back without one.");
+    } else if (code.length > 4) required.push(`Failure/Defect Code "${code}" — enter the code itself (4 characters at most).`);
+    const claimable = parts.filter(isClaimablePart);
     const noInvoice = claimable.filter((p) => isBlank(p.invoiceNo)).map((p) => p.partNo || "(no part #)");
     if (noInvoice.length) {
       if (isGe) required.push(`Invoice # on part ${noInvoice.join(", ")} — ServicePower needs one on every part.`);

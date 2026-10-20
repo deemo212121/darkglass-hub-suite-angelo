@@ -152,6 +152,9 @@ export function buildServicePowerClaimPayload(
     eiaRepairCode1: clip(claimDetails.resolutionCode, 4),
 
     repairCategory: clip(claimDetails.repairCategory, 2),
+    // The Claim section's Job Code, else the first part's — sent on the claim
+    // itself so a labor-only claim (no part lines) still has one.
+    jobCode: clip(claimDetails.jobCode || spParts.find((p) => p.jobCode)?.jobCode, 4),
     stockRepairFlag: claimDetails.dealerStockRepair ? "Y" : "N",
 
     existingClaimBatchNumber,
