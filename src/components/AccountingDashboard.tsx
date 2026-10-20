@@ -45,7 +45,7 @@ import { supabase } from "@/lib/supabase/client";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
-import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, isCarIqEligible, mileageRateForCarIq, CAR_IQ_MILEAGE_RATE_WITH, CAR_IQ_MILEAGE_RATE_WITHOUT } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, hasAnyTechnicianPayRole, isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, isCarIqEligible, mileageRateForCarIq, CAR_IQ_MILEAGE_RATE_WITH, CAR_IQ_MILEAGE_RATE_WITHOUT } from "@/lib/roleLabels";
 import { getCompanyCarIqHistory, addCarIqHistoryEntry, updateCarIqHistoryEffectiveDate, carIqEntryEffectiveOn, carIqSwitchDatesInRange, type CarIqHistoryEntry } from "@/lib/supabase/carIqHistory";
 import { getCarIqMileageRateHistory, addCarIqMileageRate, deleteCarIqMileageRate, carIqRatesOn, carIqRateChangeDatesInRange, CAR_IQ_RATE_HISTORY_START, type CarIqMileageRateEntry } from "@/lib/supabase/companySettings";
 import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, computeMealTimeCredit, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
@@ -392,10 +392,10 @@ export interface EmployeePayrollRow {
    */
   techWeeklyOt: TechWeeklyOt[];
   /**
-   * Guaranteed-minimum-salary match — see latestFixedSalaryByProfile in
-   * payrollRows. techGuaranteedSalaryTarget is that salary's per-cutoff
-   * equivalent (0 when no fixed-salary entry exists, or when this period
-   * is already being paid fixed salary); techGuaranteedSalaryMatch is the
+   * Guaranteed-minimum-salary match — see latestGuaranteeByProfile in
+   * payrollRows. techGuaranteedSalaryTarget is that guarantee's per-cutoff
+   * equivalent (0 when no Guaranteed Minimum is in effect, or when this
+   * period is being paid fixed salary); techGuaranteedSalaryMatch is the
    * shortfall already folded into grossPay, kept separate for display.
    */
   techGuaranteedSalaryTarget: number;
@@ -2372,8 +2372,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // Payroll for a past/current period would silently start using a future
   // rate/compensation type the moment that future entry gets saved, same
   // as rateEffectiveOn/entryEffectiveOn already do for per-day lookups.
+  // Technician-tier staff (primary or secondary role) with an hourly rate on
+  // file: their Fixed Salary entries are a guaranteed minimum, not their pay
+  // (fixedSalaryIsGuarantee in salary.ts) — so those entries never decide
+  // the rate or the hourly/fixed split, whatever their date.
+  const hasHourlyEntry = new Set(salaryEntries.filter((se) => se.compensation_type === "hourly").map((se) => se.profile_id));
+  const fixedIsGuaranteeFor = new Set(
+    employees.filter((e) => hasHourlyEntry.has(e.id) && hasAnyTechnicianPayRole(e.role, e.extraRoles)).map((e) => e.id)
+  );
+  const rateEntries = salaryEntries.filter((se) => !(se.compensation_type === "fixed" && fixedIsGuaranteeFor.has(se.profile_id)));
   const latestCompMap = new Map<string, SalaryEntry>();
-  for (const se of salaryEntries) {
+  for (const se of rateEntries) {
     if (genEnd && se.effective_date > genEnd) continue;
     const existing = latestCompMap.get(se.profile_id);
     if (
@@ -2385,24 +2394,27 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
   }
 
-  // Latest fixed-salary entry ever recorded per employee, regardless of
-  // period — unlike latestCompMap above, this is NOT filtered to entries
-  // effective by genEnd. Some technicians have a fixed annual salary on
-  // file (e.g. an upcoming switch to salary, effective next cutoff) that
-  // Finance wants treated as an ongoing guaranteed-minimum floor under
-  // their hourly + incentive pay for THIS period too, even though that
-  // period is still correctly being paid hourly per latestCompMap. See
+  // Guaranteed minimum in effect for this period per employee — the latest
+  // Fixed Salary entry dated on or before genEnd, for those whose fixed
+  // salary is a guarantee (fixedIsGuaranteeFor above). They keep their $/hr
+  // base (hours, OT, state matches) and get topped up to annual / 26 per
+  // cutoff when earnings fall short. A guarantee starting any day up to
+  // genEnd covers the whole period at the full per-cutoff amount.
+  // Previously the Fixed entry only counted as a guarantee while an hourly
+  // entry was dated after it, so dating it later silently switched the
+  // person to salaried at $0/hr (Darius Brown, 2026-10-20). See
   // techGuaranteedSalaryMatch below.
-  const latestFixedSalaryByProfile = new Map<string, SalaryEntry>();
+  const latestGuaranteeByProfile = new Map<string, SalaryEntry>();
   for (const se of salaryEntries) {
-    if (se.compensation_type !== "fixed" || !se.annual_salary) continue;
-    const existing = latestFixedSalaryByProfile.get(se.profile_id);
+    if (se.compensation_type !== "fixed" || !se.annual_salary || !fixedIsGuaranteeFor.has(se.profile_id)) continue;
+    if (genEnd && se.effective_date > genEnd) continue;
+    const existing = latestGuaranteeByProfile.get(se.profile_id);
     if (
       !existing ||
       se.effective_date > existing.effective_date ||
       (se.effective_date === existing.effective_date && se.created_at > existing.created_at)
     ) {
-      latestFixedSalaryByProfile.set(se.profile_id, se);
+      latestGuaranteeByProfile.set(se.profile_id, se);
     }
   }
 
@@ -2419,7 +2431,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // latest as of genEnd. Same tie-break as entryEffectiveOn/latestCompMap:
   // latest effective_date wins, ties broken by latest created_at.
   const salaryEntriesByProfile = new Map<string, SalaryEntry[]>();
-  for (const se of salaryEntries) {
+  for (const se of rateEntries) {
     const list = salaryEntriesByProfile.get(se.profile_id);
     if (list) list.push(se);
     else salaryEntriesByProfile.set(se.profile_id, [se]);
@@ -2919,13 +2931,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           techWeightedRegularRate
         )
       : 0;
-    // Guaranteed-minimum-salary match: some technicians have a fixed
-    // annual salary on file (see latestFixedSalaryByProfile) that acts as
-    // an ongoing floor under their hourly + incentive pay even while a
-    // period is still correctly being paid hourly (isFixed false — see
-    // latestCompMap, which only looks at entries effective by genEnd — an
-    // upcoming switch to salary doesn't retroactively apply, but Finance
-    // still wants it treated as a floor going forward). If actual earned
+    // Guaranteed-minimum-salary match: a technician with a Guaranteed
+    // Minimum in effect (see latestGuaranteeByProfile) keeps being paid on
+    // their hourly rate, with that guarantee as a floor under their hourly +
+    // incentive pay. If actual earned
     // compensation this period (Hourly + OT as ACTUALLY applied, plus
     // includable incentive pay) falls short of that salary's per-cutoff
     // equivalent, the shortfall is topped up here.
@@ -2942,8 +2951,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // state match would count toward the guarantee — reversed per direct
     // instruction; see Matthew Nichols, where a $199.88 state-floor match
     // was decided to stack on top of the guarantee rather than closing it.)
-    const guaranteedAnnualSalary = includeTech && isTechRole(emp) && !isFixed
-      ? latestFixedSalaryByProfile.get(emp.id)?.annual_salary ?? null
+    const guaranteedAnnualSalary = includeTech && !isFixed
+      ? latestGuaranteeByProfile.get(emp.id)?.annual_salary ?? null
       : null;
     // techHolidayPremium is folded in too, for the same double-counting
     // reason as techHourlyPayCompanyOnly above — see Daven Hodge, where the

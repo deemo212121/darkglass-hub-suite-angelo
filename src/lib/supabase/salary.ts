@@ -182,3 +182,32 @@ export function perCutoffSalary(annualSalary: number, isPH: boolean = false): nu
 export function monthlySalary(annualSalary: number): number {
   return annualSalary / MONTHS_PER_YEAR;
 }
+
+/**
+ * Technician-tier staff with an hourly rate on file are paid hourly, and any
+ * Fixed Salary entry on their history is a GUARANTEED MINIMUM rather than
+ * their pay: annual / 26 per cutoff, topped up when hourly + incentive pay
+ * falls short, from its effective date on. Their $/hr keeps coming from the
+ * hourly entries whatever the dates — so declaring a fixed salary never
+ * switches a technician to $0/hr (Darius Brown, 2026-10-20). Anyone without
+ * an hourly entry (or not technician-tier) is genuinely salaried.
+ */
+export function fixedSalaryIsGuarantee(history: SalaryEntryRow[], isTechnicianTier: boolean): boolean {
+  return isTechnicianTier && history.some((h) => h.compensationType === "hourly");
+}
+
+/** The history to read the pay RATE from — Fixed entries dropped when they're a guarantee (see fixedSalaryIsGuarantee). */
+export function payRateHistory(history: SalaryEntryRow[], isTechnicianTier: boolean): SalaryEntryRow[] {
+  return fixedSalaryIsGuarantee(history, isTechnicianTier) ? history.filter((h) => h.compensationType !== "fixed") : history;
+}
+
+/** The guaranteed-minimum Fixed entry in effect on a date (latest dated on or before it), or null when there's none or fixed salary isn't a guarantee for this person. */
+export function guaranteeEffectiveOn(history: SalaryEntryRow[], isTechnicianTier: boolean, date: string): SalaryEntryRow | null {
+  if (!fixedSalaryIsGuarantee(history, isTechnicianTier)) return null;
+  let best: SalaryEntryRow | null = null;
+  for (const entry of history) {
+    if (entry.compensationType !== "fixed" || !entry.annualSalary || entry.effectiveDate > date) continue;
+    if (!best || entry.effectiveDate > best.effectiveDate || (entry.effectiveDate === best.effectiveDate && entry.createdAt > best.createdAt)) best = entry;
+  }
+  return best;
+}

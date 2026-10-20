@@ -931,7 +931,7 @@ export function TechActivityReportModal({
                     </>
                   )}
                   {techGuaranteedSalaryMatch > 0.005 && (
-                    <tr title="A fixed annual salary on file for this technician (even if not yet effective this period) acts as an ongoing floor under their hourly + incentive pay — the shortfall between that salary's per-cutoff equivalent and their actual earned compensation (excluding reimbursements) this period, checked against the state-matched total (see the Guaranteed Minimum Salary Match box).">
+                    <tr title="A Guaranteed Minimum in Salary History (in effect by the end of this period) acts as a floor under their hourly + incentive pay — the shortfall between that salary's per-cutoff equivalent and their actual earned compensation (excluding reimbursements) this period, checked against the state-matched total (see the Guaranteed Minimum Salary Match box).">
                       <td className="px-3 py-2 text-slate-300">Guaranteed Minimum Salary Match</td>
                       <td className="px-3 py-2 text-right text-slate-300">—</td>
                       <td className="px-3 py-2 text-right text-slate-300">{fmt(techGuaranteedSalaryTarget)}/cutoff</td>
@@ -1518,7 +1518,7 @@ export function TechActivityReportModal({
               })()}
 
               {techGuaranteedSalaryTarget > 0 && (
-                <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="A fixed annual salary on file for this technician (even if not yet effective this period) acts as an ongoing floor under their hourly + incentive pay — if actual earned compensation (excluding reimbursements and any state minimum-wage floor match) falls short of that salary's per-cutoff equivalent, the shortfall is added on top, already folded into grossPay/Total Payment below. Earned Toward Minimum = Company Hourly/OT + Includable + Holiday Premium — company-rate earnings before any state floor match, which is paid separately and doesn't count toward this guarantee.">
+                <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="A Guaranteed Minimum in Salary History (in effect by the end of this period) acts as a floor under their hourly + incentive pay — if actual earned compensation (excluding reimbursements and any state minimum-wage floor match) falls short of that salary's per-cutoff equivalent, the shortfall is added on top, already folded into grossPay/Total Payment below. Earned Toward Minimum = Company Hourly/OT + Includable + Holiday Premium — company-rate earnings before any state floor match, which is paid separately and doesn't count toward this guarantee.">
                   <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5">Guaranteed Minimum Salary Match</p>
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-slate-400">Earned Toward Minimum</span>
