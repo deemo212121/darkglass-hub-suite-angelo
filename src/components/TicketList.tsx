@@ -1,6 +1,8 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
 import { lookupZip } from "@/lib/zipCoverage";
+import { runTour, takeQueuedTour } from "@/lib/tours/runTour";
+import { BIZOPS_QUEUE_TOUR, TICKET_LIST_TOUR_TARGET } from "@/lib/tours/bizopsTours";
 import { useAuth } from "@/lib/auth";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -364,6 +366,15 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   // Load tickets from Supabase (company-scoped via RLS).
   const [tickets, setTickets] = useState<TicketItem[]>([]);
   const [ticketsLoading, setTicketsLoading] = useState(true);
+  // BizOps "Working the OP queues" tour, handed over from Guides — starts once the list has loaded. Look-only.
+  const listTourStartedRef = useRef(false);
+  useEffect(() => {
+    if (ticketsLoading || listTourStartedRef.current) return;
+    const tourId = takeQueuedTour(TICKET_LIST_TOUR_TARGET);
+    if (tourId !== BIZOPS_QUEUE_TOUR.id) return;
+    listTourStartedRef.current = true;
+    window.setTimeout(() => void runTour(BIZOPS_QUEUE_TOUR), 700);
+  }, [ticketsLoading]);
 
   // Default view only loads recent history — the full unbounded fetch was
   // the single biggest cause of this page feeling slow to open. Every OTHER
@@ -1440,7 +1451,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
 
           {/* Ticket Table */}
           <div ref={tableScrollRef} className="overflow-x-auto border border-white/10 rounded-lg">
-            <table className="w-full min-w-max text-xs leading-tight">
+            <table data-tour="ticket-list-table" className="w-full min-w-max text-xs leading-tight">
               <thead>
                 <tr className="bg-blue-900/50 border-b border-blue-500/30">
                   <th className="px-2 py-1.5 text-center font-semibold text-blue-300 w-12">✓</th>

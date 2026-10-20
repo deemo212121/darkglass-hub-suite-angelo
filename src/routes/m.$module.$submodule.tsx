@@ -105,6 +105,7 @@ import { SelfServiceGuidePage } from "@/components/SelfServiceGuidePage";
 import { GettingStartedGuidePage } from "@/components/GettingStartedGuidePage";
 import { ServerStatusPage } from "@/components/ServerStatusPage";
 import { ApproverGuidePage } from "@/components/ApproverGuidePage";
+import { BizOpsGuidePage } from "@/components/BizOpsGuidePage";
 import { TrainingListPage } from "@/components/TrainingListPage";
 import { AbsentListPage } from "@/components/AbsentListPage";
 import { RepairKnowledgeBase } from "@/components/RepairKnowledgeBase";
@@ -613,6 +614,8 @@ function SubModule() {
         ? <ServerStatusPage />
         : (sub as any).custom === "approver-guide"
         ? <ApproverGuidePage />
+        : (sub as any).custom === "bizops-guide"
+        ? <BizOpsGuidePage />
         : (sub as any).custom === "clock-in-codes"
         ? <ClockInCodesTab standalone backModule={mod.slug} />
         : (sub as any).custom === "absent-list"

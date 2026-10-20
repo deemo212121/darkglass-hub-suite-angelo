@@ -1,3 +1,4 @@
+import { BIZOPS_TICKET_TOURS } from "./bizopsTours";
 /**
  * Tours of the ticket page, one per department (Guides module). Text lives
  * here so it can be reworded without touching the page. Selectors point at
@@ -310,6 +311,7 @@ export const TICKET_TOUR_ROLES: Record<string, string[]> = {
   triage: ["TRIAGE_USER", "TRIAGE_MANAGER"],
   parts: ["PARTS", "PARTS_TEAM_LEADER", "PARTS_MANAGER", "PARTS_ORDER"],
   claims: ["CLAIMS", "CLAIMS_TEAM_LEADER", "CLAIMS_MANAGER"],
+  bizops: ["BIZOPS_ASSOCIATE", "BIZOPS_TEAM_LEADER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"],
 };
 const SEE_ALL_TOURS = ["ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"];
 
@@ -325,9 +327,11 @@ export const TICKET_TOUR_DEPARTMENT: Record<string, string> = {
   "ticket-csr": "csr",
   "ticket-triage": "triage",
   "ticket-parts": "parts",
+  "bizops-parts-shipments": "bizops",
+  "bizops-need-cancel": "bizops",
 };
 
 /** Every ticket tour, in the order the Tour menu lists them. */
-export const ALL_TICKET_TOURS: TourDef[] = [CSR_TICKET_TOUR, TRIAGE_TICKET_TOUR, PARTS_TICKET_TOUR];
+export const ALL_TICKET_TOURS: TourDef[] = [CSR_TICKET_TOUR, TRIAGE_TICKET_TOUR, PARTS_TICKET_TOUR, ...BIZOPS_TICKET_TOURS];
 
 export const TICKET_TOURS: Record<string, TourDef> = Object.fromEntries(ALL_TICKET_TOURS.map((t) => [t.id, t]));
