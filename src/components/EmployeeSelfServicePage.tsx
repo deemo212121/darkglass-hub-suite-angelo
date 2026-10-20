@@ -59,6 +59,8 @@ import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/
 import { createNotification } from "@/lib/supabase/notifications";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { getMyPayslips, type MyPayslipRow } from "@/lib/supabase/payslips";
+import { getMyPayrollNotes, acknowledgePayrollNote, type PayrollNote } from "@/lib/supabase/payrollNotes";
+import { MyPayDetails } from "@/components/MyPayDetails";
 import { getProfileExpenses, deleteExpense, type ExpenseRow } from "@/lib/supabase/expenses";
 import { ExpenseFormModal } from "@/components/ExpenseFormModal";
 import { ReceiptLightbox } from "@/components/ReceiptLightbox";
@@ -198,6 +200,12 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [companyProfiles, setCompanyProfiles] = useState<ProfileRow[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(true);
   const [myPayslips, setMyPayslips] = useState<MyPayslipRow[]>([]);
+  // Notes from Payroll (migration 0399) — unread ones show as a banner above
+  // the tabs until "I've read this" is clicked.
+  const [myPayrollNotes, setMyPayrollNotes] = useState<PayrollNote[]>([]);
+  const [ackingNoteId, setAckingNoteId] = useState<string | null>(null);
+  // Which payslip periods have their pay details expanded (runId).
+  const [openPayDetails, setOpenPayDetails] = useState<Set<string>>(new Set());
   const [payslipDailyRows, setPayslipDailyRows] = useState<PayslipDailyRow[]>([]);
   const [payslipDailyLoading, setPayslipDailyLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -383,6 +391,38 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     })();
     return () => { cancelled = true; };
   }, [myProfileId]);
+
+  // Separate from the load above so a missing migration (0399) can't blank
+  // the payslips.
+  useEffect(() => {
+    if (!myProfileId) return;
+    let cancelled = false;
+    getMyPayrollNotes(myProfileId)
+      .then((rows) => { if (!cancelled) setMyPayrollNotes(rows); })
+      .catch((err) => console.error("Failed to load payroll notes:", err));
+    return () => { cancelled = true; };
+  }, [myProfileId]);
+  const handleAcknowledgeNote = async (note: PayrollNote) => {
+    setAckingNoteId(note.id);
+    try {
+      await acknowledgePayrollNote(note.id);
+      const now = new Date().toISOString();
+      setMyPayrollNotes((prev) => prev.map((n) => (n.id === note.id ? { ...n, acknowledgedAt: now } : n)));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Couldn't save that — please try again.");
+    } finally {
+      setAckingNoteId(null);
+    }
+  };
+  const unreadPayrollNotes = myPayrollNotes.filter((n) => !n.acknowledgedAt);
+  const noteForPeriod = (start: string, end: string) => myPayrollNotes.find((n) => n.periodStart === start && n.periodEnd === end) ?? null;
+  const togglePayDetails = (runId: string) =>
+    setOpenPayDetails((prev) => {
+      const next = new Set(prev);
+      if (next.has(runId)) next.delete(runId);
+      else next.add(runId);
+      return next;
+    });
 
   // Separate from the load above so a failure here can't blank the other
   // request types. Flash Tech trip expenses (company-booked hotel/travel —
@@ -1190,7 +1230,11 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
       sickLeave,
       totalDays: offDays + ptoUsed,
       extraPay: selectedPayslip.extraPay,
-      notes: selectedPayslip.notes || "",
+      // Payroll's note for this period (migration 0399) first, then the run line's own note.
+      notes: [noteForPeriod(selectedPayslip.periodStart, selectedPayslip.periodEnd)?.body, selectedPayslip.notes]
+        .filter(Boolean)
+        .map((t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"))
+        .join("\n\n"),
       adjustments: selectedPayslip.adjustments,
       isUS,
     };
@@ -1236,6 +1280,33 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             <Compass className="h-4 w-4" /> Tour
           </button>
         </div>
+
+        {/* Notes from Payroll — above the tabs so they can't be missed; each
+            stays until the employee clicks "I've read this". */}
+        {unreadPayrollNotes.length > 0 && (
+          <div className="mb-6 space-y-3">
+            {unreadPayrollNotes.map((note) => (
+              <div key={note.id} className="bg-amber-500/15 border-2 border-amber-400/60 rounded-lg p-4 flex items-start gap-3">
+                <AlertCircle className="h-5 w-5 text-amber-300 mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-amber-200">
+                    Note from Payroll · {note.periodStart} to {note.periodEnd} pay
+                  </div>
+                  <div className="mt-1 text-sm text-amber-50 whitespace-pre-wrap">{note.body}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleAcknowledgeNote(note)}
+                  disabled={ackingNoteId === note.id}
+                  className="shrink-0 px-3 py-1.5 rounded bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-900 text-xs font-bold inline-flex items-center gap-1.5"
+                >
+                  {ackingNoteId === note.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+                  I've read this
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Tabs */}
         <div data-tour="ess-tabs" className="flex gap-2 mb-8 border-b border-white/10 overflow-x-auto">
@@ -1367,15 +1438,42 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       <p className="text-lg font-semibold text-amber-300">${myPayslips[0].overtimePay.toFixed(2)}</p>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    data-tour="ess-view-payslip"
-                    onClick={() => handleViewPayslip(myPayslips[0].runId)}
-                    className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition flex items-center justify-center gap-2"
-                  >
-                    <FileText className="h-3 w-3" />
-                    View Payslip
-                  </button>
+                  {(() => {
+                    const note = noteForPeriod(myPayslips[0].periodStart, myPayslips[0].periodEnd);
+                    return note?.acknowledgedAt ? (
+                      <div className="mb-4 border border-amber-400/30 bg-amber-500/5 rounded-lg px-3 py-2 text-xs text-amber-100 whitespace-pre-wrap">
+                        <span className="font-semibold text-amber-200">Note from Payroll: </span>{note.body}
+                      </div>
+                    ) : null;
+                  })()}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      data-tour="ess-view-payslip"
+                      onClick={() => handleViewPayslip(myPayslips[0].runId)}
+                      className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition flex items-center justify-center gap-2"
+                    >
+                      <FileText className="h-3 w-3" />
+                      View Payslip
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => togglePayDetails(myPayslips[0].runId)}
+                      className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs font-semibold transition"
+                    >
+                      {openPayDetails.has(myPayslips[0].runId) ? "Hide pay details" : "Pay details"}
+                    </button>
+                  </div>
+                  {openPayDetails.has(myPayslips[0].runId) && myProfileId && (
+                    <div className="mt-4">
+                      <MyPayDetails
+                        profileId={myProfileId}
+                        periodStart={myPayslips[0].periodStart}
+                        periodEnd={myPayslips[0].periodEnd}
+                        fallbackHours={{ regular: myPayslips[0].hoursWorked, overtime: myPayslips[0].overtimeHours }}
+                      />
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -1401,6 +1499,13 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           </div>
                           <button
                             type="button"
+                            onClick={() => togglePayDetails(payroll.runId)}
+                            className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs font-semibold transition"
+                          >
+                            {openPayDetails.has(payroll.runId) ? "Hide details" : "Details"}
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => handleViewPayslip(payroll.runId)}
                             className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs font-semibold transition"
                           >
@@ -1408,6 +1513,24 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           </button>
                         </div>
                       </div>
+                      {(() => {
+                        const note = noteForPeriod(payroll.periodStart, payroll.periodEnd);
+                        return note?.acknowledgedAt ? (
+                          <div className="mt-2 text-xs text-amber-100/90 whitespace-pre-wrap">
+                            <span className="font-semibold text-amber-200">Note from Payroll: </span>{note.body}
+                          </div>
+                        ) : null;
+                      })()}
+                      {openPayDetails.has(payroll.runId) && myProfileId && (
+                        <div className="mt-3">
+                          <MyPayDetails
+                            profileId={myProfileId}
+                            periodStart={payroll.periodStart}
+                            periodEnd={payroll.periodEnd}
+                            fallbackHours={{ regular: payroll.hoursWorked, overtime: payroll.overtimeHours }}
+                          />
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

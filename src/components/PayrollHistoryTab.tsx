@@ -1,7 +1,11 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2, MessageSquareWarning } from "lucide-react";
+import { toast } from "sonner";
 import { getPayrollReviewBreakdowns, getPayrollReviewPeriods, reviewBreakdownTotal, type PayrollReviewAmounts, type PayrollReviewBreakdown } from "@/lib/supabase/payrollReviewBreakdowns";
 import { getPayrollReviewDatesByPeriod, getPayrollReviewMarks, type PayrollReviewMark } from "@/lib/supabase/payrollReviewMarks";
+import { getTechCustomPayItems, type TechCustomPayItem } from "@/lib/supabase/techPayroll";
+import { getPayrollNotesForPeriod, savePayrollNote, type PayrollNote } from "@/lib/supabase/payrollNotes";
+import { createNotification } from "@/lib/supabase/notifications";
 
 export interface PayrollHistoryRun {
   id: string;
@@ -101,6 +105,8 @@ export function PayrollHistoryTab({
   employees,
   currentPeriodStart,
   exchangeRate,
+  myProfileId,
+  myName,
 }: {
   runs: PayrollHistoryRun[];
   lineItems: PayrollHistoryLineItem[];
@@ -110,6 +116,9 @@ export function PayrollHistoryTab({
   currentPeriodStart: string;
   /** For old line items recorded in PHP. */
   exchangeRate: number;
+  /** Who's writing notes to employees (author + notification sender). */
+  myProfileId: string | null;
+  myName: string | null;
 }) {
   const [reviewDates, setReviewDates] = useState<Map<string, { lastReviewedAt: string; count: number }>>(new Map());
   const [breakdownPeriods, setBreakdownPeriods] = useState<string[]>([]);
@@ -168,10 +177,14 @@ export function PayrollHistoryTab({
   // saved category breakdown for reviewed technicians.
   const [marks, setMarks] = useState<Map<string, PayrollReviewMark>>(new Map());
   const [breakdowns, setBreakdowns] = useState<Map<string, PayrollReviewBreakdown>>(new Map());
+  const [notes, setNotes] = useState<Map<string, PayrollNote>>(new Map());
+  const [notesError, setNotesError] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   useEffect(() => {
     setMarks(new Map());
     setBreakdowns(new Map());
+    setNotes(new Map());
+    setNotesError(null);
     if (!periodStart || !periodEnd) return;
     let cancelled = false;
     setDetailLoading(true);
@@ -184,10 +197,15 @@ export function PayrollHistoryTab({
         console.error("Failed to load payroll review breakdowns:", err);
         return [] as PayrollReviewBreakdown[];
       }),
+      getPayrollNotesForPeriod(periodStart, periodEnd).catch((err) => {
+        if (!cancelled) setNotesError(err instanceof Error ? err.message : "Failed to load notes.");
+        return new Map<string, PayrollNote>();
+      }),
     ])
-      .then(([m, b]) => {
+      .then(([m, b, n]) => {
         if (cancelled) return;
         setMarks(m);
+        setNotes(n);
         setBreakdowns(new Map(b.map((r) => [r.profileId, r])));
       })
       .finally(() => { if (!cancelled) setDetailLoading(false); });
@@ -335,12 +353,13 @@ export function PayrollHistoryTab({
               <th className="px-3 py-2 text-left text-xs text-slate-400 uppercase">Reviewed</th>
               <th className="px-3 py-2 text-right text-xs text-slate-400 uppercase">Gross Pay</th>
               <th className="px-3 py-2 text-right text-xs text-slate-400 uppercase">Total Pay</th>
+              <th className="px-3 py-2 text-left text-xs text-slate-400 uppercase">Note</th>
             </tr>
           </thead>
           <tbody>
             {visible.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-slate-500 text-sm">
+                <td colSpan={8} className="px-4 py-8 text-center text-slate-500 text-sm">
                   {periodKeys.length === 0 ? "No pay periods yet. Generate or review payroll from the Payroll tab." : detailLoading ? "Loading…" : "No one matches these filters for this period."}
                 </td>
               </tr>
@@ -350,6 +369,7 @@ export function PayrollHistoryTab({
               const open = expanded.has(id);
               const mark = marks.get(id);
               const review = breakdowns.get(id);
+              const note = notes.get(id) ?? null;
               return (
                 <Fragment key={id}>
                   <tr className="border-b border-white/5 hover:bg-white/5 cursor-pointer" onClick={() => toggle(id)}>
@@ -366,11 +386,40 @@ export function PayrollHistoryTab({
                     </td>
                     <td className="px-3 py-2.5 text-right text-slate-300">{r.grossPay != null ? money(r.grossPay) : "—"}</td>
                     <td className="px-3 py-2.5 text-right font-semibold text-green-300">{r.totalPay != null ? money(r.totalPay) : <span className="text-slate-500 font-normal">—</span>}</td>
+                    <td className="px-3 py-2.5 text-xs whitespace-nowrap">
+                      {note ? (
+                        <span className={`inline-flex items-center gap-1 ${note.acknowledgedAt ? "text-green-300" : "text-amber-300"}`} title={note.body}>
+                          <MessageSquareWarning className="h-3.5 w-3.5" />
+                          {note.acknowledgedAt ? `Read ${fmtStamp(note.acknowledgedAt)}` : "Not read yet"}
+                        </span>
+                      ) : (
+                        <span className="text-slate-600">—</span>
+                      )}
+                    </td>
                   </tr>
                   {open && (
                     <tr className="border-b border-white/5">
-                      <td colSpan={7} className="bg-slate-800/60 px-6 py-4">
+                      <td colSpan={8} className="bg-slate-800/60 px-6 py-4">
                         <PayBreakdown row={r} mark={mark} review={review} />
+                        <NoteToEmployee
+                          key={`${id}|${selectedKey}`}
+                          row={r}
+                          note={note}
+                          disabledReason={notesError}
+                          periodStart={periodStart}
+                          periodEnd={periodEnd}
+                          myProfileId={myProfileId}
+                          myName={myName}
+                          onSaved={(saved) =>
+                            setNotes((prev) => {
+                              const next = new Map(prev);
+                              if (saved) next.set(id, saved);
+                              else next.delete(id);
+                              return next;
+                            })
+                          }
+                        />
+                        <PayQuantities row={r} review={review} periodStart={periodStart} periodEnd={periodEnd} />
                       </td>
                     </tr>
                   )}
@@ -474,6 +523,205 @@ function PayBreakdown({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// How a custom pay line reads in Payroll History's quantities view.
+type LineKind = "tickets" | "bonus" | "mileage" | "reimbursement" | "deduction";
+function lineKind(item: TechCustomPayItem): LineKind {
+  const amount = item.value * item.rate;
+  if (/bonus|ltp|performance|incentive/i.test(item.label)) return "bonus";
+  if (/deduct|insur|pre-?tax|overpaid/i.test(item.label) || (!item.isWageIncludable && amount < 0)) return "deduction";
+  if (/mileage/i.test(item.label)) return "mileage";
+  if (!item.isWageIncludable) return "reimbursement";
+  return "tickets";
+}
+const KIND_LABELS: Record<LineKind, string> = {
+  tickets: "Tickets / commission",
+  bonus: "Bonuses",
+  mileage: "Mileage",
+  reimbursement: "Other reimbursements",
+  deduction: "Deductions",
+};
+const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
+const weekLabel = (iso: string | null) => (iso ? `Wk ${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}` : "");
+
+/**
+ * Quantities behind the dollars (Finance, 2026-10-20): hours and OT hours,
+ * tickets, miles driven and each bonus by category — from the hours
+ * snapshotted at Done (else the payroll run line) and the technician's
+ * custom pay lines for the period.
+ */
+function PayQuantities({ row: r, review, periodStart, periodEnd }: { row: HistoryRow; review: PayrollReviewBreakdown | undefined; periodStart: string; periodEnd: string }) {
+  const [items, setItems] = useState<TechCustomPayItem[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setItems(null);
+    getTechCustomPayItems(r.id, periodStart, periodEnd)
+      .then((rows) => { if (!cancelled) setItems(rows); })
+      .catch((err) => { console.error("Failed to load custom pay lines:", err); if (!cancelled) setItems([]); });
+    return () => { cancelled = true; };
+  }, [r.id, periodStart, periodEnd]);
+
+  const regularHours = review?.regularHours ?? r.li?.hours_worked ?? null;
+  const otHours = review?.otHours ?? r.li?.overtime_hours ?? null;
+  const groups = useMemo(() => {
+    const m = new Map<LineKind, TechCustomPayItem[]>();
+    for (const item of items ?? []) {
+      const k = lineKind(item);
+      m.set(k, [...(m.get(k) ?? []), item]);
+    }
+    return m;
+  }, [items]);
+  // Ticket lines with a positive per-ticket rate (Redo reductions aren't extra tickets).
+  const tickets = (groups.get("tickets") ?? []).filter((i) => i.rate > 0).reduce((sum, i) => sum + i.value, 0);
+  // Per-mile lines only (value = miles at e.g. $0.20–$0.50/mi) — a line entered as dollars × $1, or a lump sum, has no mile count.
+  const mileageLines = groups.get("mileage") ?? [];
+  const perMile = mileageLines.filter((i) => i.rate > 0 && i.rate < 1);
+  const miles = perMile.reduce((sum, i) => sum + i.value, 0);
+  const lumpMileage = mileageLines.length > perMile.length;
+  const bonuses = groups.get("bonus") ?? [];
+
+  const Stat = ({ label, value, sub }: { label: string; value: string; sub?: string }) => (
+    <div className="bg-slate-900/60 border border-white/10 rounded-lg px-3 py-2 min-w-[8rem]">
+      <div className="text-[10px] uppercase tracking-wide text-slate-400">{label}</div>
+      <div className="text-white font-semibold">{value}</div>
+      {sub && <div className="text-[10px] text-slate-500">{sub}</div>}
+    </div>
+  );
+
+  return (
+    <div className="mt-5 pt-4 border-t border-white/10 text-sm">
+      <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-2">Quantities</div>
+      <div className="flex flex-wrap gap-2 mb-3">
+        <Stat label="Regular hours" value={regularHours != null ? hrs(regularHours) : "—"} sub={regularHours == null ? "not saved — re-click Done to record" : undefined} />
+        <Stat label="OT hours" value={otHours != null ? hrs(otHours) : "—"} />
+        <Stat label="Tickets" value={items == null ? "…" : fmtQty(tickets)} />
+        <Stat label="Miles driven" value={items == null ? "…" : miles > 0 ? `${fmtQty(miles)} mi` : "—"} sub={lumpMileage ? "some mileage entered as a $ amount" : undefined} />
+        <Stat label="Bonuses" value={items == null ? "…" : bonuses.length ? money(bonuses.reduce((s, i) => s + i.value * i.rate, 0)) : "—"} sub={bonuses.length ? [...new Set(bonuses.map((b) => b.label.trim()))].join(", ") : undefined} />
+      </div>
+      {items == null ? (
+        <div className="text-xs text-slate-500 flex items-center gap-2"><Loader2 className="h-3 w-3 animate-spin" /> Loading pay lines…</div>
+      ) : items.length === 0 ? (
+        <div className="text-xs text-slate-500">No ticket, bonus or mileage lines recorded for this period.</div>
+      ) : (
+        <div className="grid gap-x-6 gap-y-3 md:grid-cols-2">
+          {(Object.keys(KIND_LABELS) as LineKind[]).filter((k) => groups.has(k)).map((k) => (
+            <div key={k}>
+              <div className="text-xs text-slate-400 mb-1">{KIND_LABELS[k]}</div>
+              <table className="w-full text-xs">
+                <tbody>
+                  {groups.get(k)!.map((i) => {
+                    const amount = i.value * i.rate;
+                    return (
+                      <tr key={i.id} className="border-b border-white/5">
+                        <td className="py-1 text-slate-200">{i.label.trim() || "—"}</td>
+                        <td className="py-1 text-slate-500">{weekLabel(i.workWeekStart)}</td>
+                        <td className="py-1 text-right text-slate-400 tabular-nums">{fmtQty(i.value)} × {money(i.rate)}</td>
+                        <td className={`py-1 text-right tabular-nums ${amount < 0 ? "text-red-300" : "text-slate-200"}`}>{amount < 0 ? `−${money(-amount)}` : money(amount)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Note to the employee for this period (migration 0399) — shown to them in
+ * Self-Service → My Payroll as a banner and on their payslip until they
+ * click "I've read this". Saving also sends them a bell notification.
+ */
+function NoteToEmployee({
+  row: r,
+  note,
+  disabledReason,
+  periodStart,
+  periodEnd,
+  myProfileId,
+  myName,
+  onSaved,
+}: {
+  row: HistoryRow;
+  note: PayrollNote | null;
+  disabledReason: string | null;
+  periodStart: string;
+  periodEnd: string;
+  myProfileId: string | null;
+  myName: string | null;
+  onSaved: (note: PayrollNote | null) => void;
+}) {
+  const [text, setText] = useState(note?.body ?? "");
+  const [saving, setSaving] = useState(false);
+  const dirty = text.trim() !== (note?.body ?? "");
+  const save = async () => {
+    setSaving(true);
+    try {
+      const saved = await savePayrollNote(r.id, periodStart, periodEnd, text, { id: myProfileId, name: myName });
+      onSaved(saved);
+      if (saved) {
+        void createNotification({
+          recipientId: r.id,
+          senderId: myProfileId,
+          senderName: "Payroll",
+          body: `📌 Payroll left you a note about your ${periodStart} – ${periodEnd} pay. Please read it.`,
+          linkTo: "/m/dashboard/employee-self-service?tab=payroll",
+        }).catch((err) => console.error("Failed to notify", r.id, err));
+        toast.success(`Note saved — ${r.name} has been notified.`);
+      } else {
+        toast.success("Note removed.");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save the note.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mt-5 pt-4 border-t border-white/10 text-sm">
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-[10px] uppercase tracking-wide text-slate-400">Note to {r.name}</span>
+        {note && (
+          <span className={`text-[10px] ${note.acknowledgedAt ? "text-green-300" : "text-amber-300"}`}>
+            {note.acknowledgedAt ? `Read ${fmtStamp(note.acknowledgedAt)}` : "Not read yet"}
+            {note.createdByName ? ` · by ${note.createdByName}` : ""}
+          </span>
+        )}
+      </div>
+      {disabledReason ? (
+        <div className="text-xs text-amber-300/80">{disabledReason}</div>
+      ) : (
+        <>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={2}
+            placeholder="e.g. You were overpaid by $138.79. It will be deducted from your next pay."
+            className="w-full bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-600"
+          />
+          <div className="mt-1 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => void save()}
+              disabled={saving || !dirty}
+              className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white text-xs font-semibold inline-flex items-center gap-1.5"
+            >
+              {saving && <Loader2 className="h-3 w-3 animate-spin" />}
+              {note && !text.trim() ? "Remove note" : note ? "Update note" : "Save & notify"}
+            </button>
+            <span className="text-[11px] text-slate-500">
+              Shows at the top of their My Payroll and on their payslip until they click "I've read this". Changing it asks them to read it again.
+            </span>
+          </div>
+        </>
+      )}
     </div>
   );
 }

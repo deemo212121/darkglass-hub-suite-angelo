@@ -6142,6 +6142,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             employees={employees}
             currentPeriodStart={genStart}
             exchangeRate={EXCHANGE_RATE}
+            myProfileId={myProfileId}
+            myName={displayName || email || null}
           />
         )}
 
@@ -6832,6 +6834,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     source: "review",
                     updatedBy: myProfileId,
                     updatedByName: displayName || email || null,
+                    hours: { regular: activityRow.hoursWorked, ot: activityRow.overtimeHours },
                   });
                 } catch (err) {
                   toast.error(`Reviewed, but the Reviewed Periods summary wasn't saved: ${err instanceof Error ? err.message : "Unknown error"}`);

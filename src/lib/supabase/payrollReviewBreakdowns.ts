@@ -36,6 +36,9 @@ export interface PayrollReviewBreakdown extends PayrollReviewAmounts {
   source: "review" | "manual";
   updatedByName: string | null;
   updatedAt: string;
+  /** Snapshotted at Done (migration 0398); null for older/manual rows or before the migration. */
+  regularHours: number | null;
+  otHours: number | null;
 }
 
 export const REVIEW_AMOUNT_FIELDS: { key: keyof PayrollReviewAmounts; column: string }[] = [
@@ -55,7 +58,11 @@ export function reviewBreakdownTotal(a: PayrollReviewAmounts): number {
   return a.regularPay + a.otPay + a.bonus + a.commission + a.ptoPay + a.mileageOtherReimb + a.salaryMatch - a.deduction - a.pretaxInsurance;
 }
 
-const COLUMNS = "id, profile_id, period_start, period_end, branch, regular_pay, ot_pay, bonus, commission, pto_pay, deduction, mileage_other_reimb, pretax_insurance, salary_match, source, updated_by_name, updated_at, technician:profiles!payroll_review_breakdowns_profile_id_fkey(display_name)";
+const BASE_COLUMNS = "id, profile_id, period_start, period_end, branch, regular_pay, ot_pay, bonus, commission, pto_pay, deduction, mileage_other_reimb, pretax_insurance, salary_match, source, updated_by_name, updated_at, technician:profiles!payroll_review_breakdowns_profile_id_fkey(display_name)";
+
+const COLUMNS = `${BASE_COLUMNS}, regular_hours, ot_hours`;
+/** True when the hours columns (migration 0398) don't exist yet — callers retry without them. */
+const missingHours = (message: string) => /regular_hours|ot_hours/i.test(message);
 
 const missingTable = (message: string) => /payroll_review_breakdowns/i.test(message) && /does not exist|schema cache|not find/i.test(message);
 const friendly = (message: string) => (missingTable(message) ? "Reviewed Periods needs database migration 0392 — ask an admin to run it." : message);
@@ -80,6 +87,8 @@ function mapRow(r: any): PayrollReviewBreakdown {
     source: r.source === "review" ? "review" : "manual",
     updatedByName: r.updated_by_name ?? null,
     updatedAt: r.updated_at,
+    regularHours: r.regular_hours != null ? Number(r.regular_hours) : null,
+    otHours: r.ot_hours != null ? Number(r.ot_hours) : null,
   };
 }
 
@@ -92,12 +101,14 @@ const toColumns = (a: Partial<PayrollReviewAmounts>) => {
   return out;
 };
 
-export async function getPayrollReviewBreakdowns(periodStart: string, periodEnd: string): Promise<PayrollReviewBreakdown[]> {
-  const { data, error } = await supabase
-    .from("payroll_review_breakdowns")
-    .select(COLUMNS)
-    .eq("period_start", periodStart)
-    .eq("period_end", periodEnd);
+/** Every row for a period — or just one person's when profileId is given (Self-Service). */
+export async function getPayrollReviewBreakdowns(periodStart: string, periodEnd: string, profileId?: string): Promise<PayrollReviewBreakdown[]> {
+  const query = (columns: string) => {
+    const q = supabase.from("payroll_review_breakdowns").select(columns).eq("period_start", periodStart).eq("period_end", periodEnd);
+    return profileId ? q.eq("profile_id", profileId) : q;
+  };
+  let { data, error } = await query(COLUMNS);
+  if (error && missingHours(error.message)) ({ data, error } = await query(BASE_COLUMNS));
   if (error) throw new Error(friendly(error.message));
   return (data ?? []).map(mapRow);
 }
@@ -134,21 +145,31 @@ export async function upsertPayrollReviewBreakdown(
   periodStart: string,
   periodEnd: string,
   amounts: PayrollReviewAmounts,
-  opts: { branch: string | null; source: "review" | "manual"; updatedBy: string | null; updatedByName: string | null }
+  opts: {
+    branch: string | null;
+    source: "review" | "manual";
+    updatedBy: string | null;
+    updatedByName: string | null;
+    /** Regular / OT hours to snapshot (migration 0398) — skipped if that migration hasn't run. */
+    hours?: { regular: number; ot: number };
+  }
 ): Promise<void> {
-  const { error } = await supabase.from("payroll_review_breakdowns").upsert(
-    {
-      profile_id: profileId,
-      period_start: periodStart,
-      period_end: periodEnd,
-      branch: opts.branch,
-      source: opts.source,
-      updated_by: opts.updatedBy,
-      updated_by_name: opts.updatedByName,
-      ...toColumns(amounts),
-    },
-    { onConflict: "company_id,profile_id,period_start,period_end" }
+  const row = {
+    profile_id: profileId,
+    period_start: periodStart,
+    period_end: periodEnd,
+    branch: opts.branch,
+    source: opts.source,
+    updated_by: opts.updatedBy,
+    updated_by_name: opts.updatedByName,
+    ...toColumns(amounts),
+  };
+  const upsert = (r: Record<string, unknown>) =>
+    supabase.from("payroll_review_breakdowns").upsert(r, { onConflict: "company_id,profile_id,period_start,period_end" });
+  let { error } = await upsert(
+    opts.hours ? { ...row, regular_hours: Math.round(opts.hours.regular * 1000) / 1000, ot_hours: Math.round(opts.hours.ot * 1000) / 1000 } : row
   );
+  if (error && opts.hours && missingHours(error.message)) ({ error } = await upsert(row));
   if (error) throw new Error(friendly(error.message));
 }
 
