@@ -1,3 +1,4 @@
+import { claimToColor, OTHER_CLAIM_TO, type ClaimToColor } from "@/lib/claimToColors";
 /**
  * Claims Dashboard — overview for the Claims team, structured the same
  * way as CSRDashboard.tsx / ReportCSRDaily.tsx (filters, KPI tiles, a
@@ -99,6 +100,8 @@ export function ClaimsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
   const [dateTo, setDateTo] = useState("");
   const [companyFilter, setCompanyFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  /** Company chips (same colours as Need Claim List) — click to show only those companies; none = all. */
+  const [claimToPicked, setClaimToPicked] = useState<Set<string>>(new Set());
   const [showStatusPct, setShowStatusPct] = useState(true);
 
   useEffect(() => {
@@ -132,7 +135,8 @@ export function ClaimsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
   const companyOptions = useMemo(() => Array.from(new Set(tickets.map((t) => t.claimCompany).filter((b): b is string => !!b))).sort(), [tickets]);
   const statusOptions = useMemo(() => Array.from(new Set(tickets.map((t) => t.status).filter((s): s is string => !!s))).sort(), [tickets]);
 
-  const filteredTickets = useMemo(() => {
+  // Everything except the company chips — the chips' counts come from this.
+  const baseTickets = useMemo(() => {
     return tickets.filter((t) => {
       if (dateFrom && t.created && t.created < dateFrom) return false;
       if (dateTo && t.created && t.created > dateTo) return false;
@@ -141,6 +145,21 @@ export function ClaimsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
       return true;
     });
   }, [tickets, dateFrom, dateTo, companyFilter, statusFilter]);
+  const filteredTickets = useMemo(
+    () => (claimToPicked.size === 0 ? baseTickets : baseTickets.filter((t) => claimToPicked.has(claimToColor(t.claimCompany || "").label))),
+    [baseTickets, claimToPicked]
+  );
+  const claimToKey = useMemo(() => {
+    const counts = new Map<string, { color: ClaimToColor; count: number }>();
+    for (const t of baseTickets) {
+      if (!t.claimCompany?.trim()) continue;
+      const color = claimToColor(t.claimCompany);
+      const e = counts.get(color.label) ?? { color, count: 0 };
+      e.count++;
+      counts.set(color.label, e);
+    }
+    return Array.from(counts.values()).sort((a, b) => (a.color === OTHER_CLAIM_TO ? 1 : b.color === OTHER_CLAIM_TO ? -1 : b.count - a.count));
+  }, [baseTickets]);
 
   const kpi = useMemo(() => {
     let pendingPreAuth = 0, awaitingAction = 0, closed = 0;
@@ -346,6 +365,42 @@ export function ClaimsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
               <Download className="h-3.5 w-3.5" /> Download XLSX
             </button>
           </div>
+          {/* Company chips — same colours as Need Claim List; click to filter the whole dashboard. */}
+          {claimToKey.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-white/10 pt-3 text-[11px] text-muted-foreground">
+              <span className="mr-1 uppercase tracking-[0.16em] text-[10px]">Companies</span>
+              {claimToKey.map(({ color, count }) => {
+                const on = claimToPicked.has(color.label);
+                return (
+                  <button
+                    key={color.label}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() =>
+                      setClaimToPicked((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(color.label)) next.delete(color.label);
+                        else next.add(color.label);
+                        return next;
+                      })
+                    }
+                    title={on ? `Showing ${color.label} — click to remove` : `Show only ${color.label} (${count} claim${count === 1 ? "" : "s"})`}
+                    className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 transition ${
+                      on ? `${color.pill} font-semibold ring-1 ring-current` : "border-white/10 bg-white/[0.03] hover:bg-white/10 hover:text-white"
+                    }`}
+                  >
+                    <span className={`inline-block h-2 w-2 rounded-sm ${color.dot}`} />
+                    {color.label} <span className="tabular-nums opacity-70">{count}</span>
+                  </button>
+                );
+              })}
+              {claimToPicked.size > 0 && (
+                <button type="button" onClick={() => setClaimToPicked(new Set())} className="rounded-md px-1.5 py-0.5 text-slate-400 hover:text-white">
+                  Clear
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {error && (
@@ -387,7 +442,9 @@ export function ClaimsDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModuleDe
                   <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 10 }} angle={-25} textAnchor="end" height={50} />
                   <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
                   <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--foreground)", fontSize: 12 }} />
-                  <Bar dataKey="value" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Claims" />
+                  <Bar dataKey="value" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Claims">
+                    {companyBreakdown.map((c) => <Cell key={c.name} fill={claimToColor(c.name).hex} />)}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             )}

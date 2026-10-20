@@ -10,6 +10,7 @@ import {
 } from "@/lib/supabase/claimDetails";
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { PhotoSidePreview } from "@/components/PhotoSidePreview";
+import { jobCodesFor } from "@/lib/jobCodes";
 import type { TicketPhoto } from "@/lib/firebase/storage";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
@@ -590,9 +591,32 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
               <Field label="Service Type">
                 <input value={form.serviceType} onChange={(e) => setField("serviceType", e.target.value)} className={inputCls} />
               </Field>
-              <Field label="Job Code">
-                <input value={form.jobCode} onChange={(e) => setField("jobCode", e.target.value)} className={inputCls} />
-              </Field>
+              {(() => {
+                // A dropdown of that manufacturer's job codes when we have a list (GE for now — see lib/jobCodes.ts).
+                const list = jobCodesFor(ticket.manufacturer, (ticket as { brand?: string | null }).brand);
+                if (!list) {
+                  return (
+                    <Field label="Job Code">
+                      <input value={form.jobCode} onChange={(e) => setField("jobCode", e.target.value)} className={inputCls} />
+                    </Field>
+                  );
+                }
+                const options = form.jobCode && !list.codes.includes(form.jobCode) ? [...list.codes, form.jobCode] : list.codes;
+                return (
+                  <div>
+                    {/* Same label line as every other field — the green note sits beside it so the grid stays aligned. */}
+                    <label className={labelCls}>
+                      Job Code <span className="ml-1 normal-case tracking-normal font-semibold text-emerald-400">· {list.label} job code</span>
+                    </label>
+                    <select value={form.jobCode} onChange={(e) => setField("jobCode", e.target.value)} className={inputCls}>
+                      <option value="">— select —</option>
+                      {options.map((c) => (
+                        <option key={c} value={c}>{list.codes.includes(c) ? c : `${c} (not a ${list.label} code)`}</option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })()}
               <Field label="Repair Type">
                 <input value={form.repairType} onChange={(e) => setField("repairType", e.target.value)} className={inputCls} />
               </Field>
