@@ -1,3 +1,4 @@
+import { claimToColor, OTHER_CLAIM_TO, type ClaimToColor } from "@/lib/claimToColors";
 import {
   useCallback,
   useEffect,
@@ -387,7 +388,7 @@ export function NeedClaimList({ mod, sub }: Props) {
   };
 
   // ── Filtered view ──
-  const filtered = useMemo(() => {
+  const filteredBase = useMemo(() => {
     return rows.filter((row) => {
       const t = row.ticket;
       const compCancelIso = row.compCancelIso;
@@ -457,6 +458,20 @@ export function NeedClaimList({ mod, sub }: Props) {
     columnFilters,
     mileageByTicket,
   ]);
+
+  // Company chips in the colour key (above the table): click to show only
+  // those companies' tickets; none picked = everyone.
+  const [claimToPicked, setClaimToPicked] = useState<Set<string>>(new Set());
+  const filtered = useMemo(
+    () =>
+      claimToPicked.size === 0
+        ? filteredBase
+        : filteredBase.filter((r) => {
+            const v = r.ticket.account || r.ticket.claimCompany;
+            return !!v && claimToPicked.has(claimToColor(v).label);
+          }),
+    [filteredBase, claimToPicked]
+  );
 
   // Build option lists per column from the full row set **before** that
   // column's own filter is applied (but after every other active filter) —
@@ -607,6 +622,20 @@ export function NeedClaimList({ mod, sub }: Props) {
 
   // ── Status-dot helper ──
   const dotColor = (d: 0 | 1 | 2) => (d === 0 ? "" : d === 1 ? "bg-orange-400" : "bg-red-500");
+
+  // Claim To colour key: companies in the current list, most tickets first ("Other" last).
+  const claimToKey = (() => {
+    const counts = new Map<string, { color: ClaimToColor; count: number }>();
+    for (const r of filteredBase) {
+      const v = r.ticket.account || r.ticket.claimCompany;
+      if (!v) continue;
+      const color = claimToColor(v);
+      const e = counts.get(color.label) ?? { color, count: 0 };
+      e.count++;
+      counts.set(color.label, e);
+    }
+    return Array.from(counts.values()).sort((a, b) => (a.color === OTHER_CLAIM_TO ? 1 : b.color === OTHER_CLAIM_TO ? -1 : b.count - a.count));
+  })();
 
   // ── Open every currently-filtered ticket in its own tab ── e.g. filter to
   // "7 days" then open all of them at once instead of clicking each row.
@@ -851,6 +880,43 @@ export function NeedClaimList({ mod, sub }: Props) {
           {loading ? " · loading…" : null}
           {error ? <span className="text-red-300 ml-3">⚠ {error}</span> : null}
         </span>
+        {/* Colour key — what the dots, the REDO pill and the Claim To colours mean (companies shown with their count in this list). */}
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 px-4 text-[11px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-orange-400" />14+ days / back ordered</span>
+          <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-red-500" />30+ days</span>
+          <span className="inline-flex items-center gap-1"><span className="inline-block rounded border border-rose-400/40 bg-rose-500/15 px-1 font-bold text-rose-200">Y</span>Redo</span>
+          <span className="h-3 w-px bg-white/10" />
+          {claimToKey.map(({ color, count }) => {
+            const on = claimToPicked.has(color.label);
+            return (
+              <button
+                key={color.label}
+                type="button"
+                aria-pressed={on}
+                onClick={() =>
+                  setClaimToPicked((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(color.label)) next.delete(color.label);
+                    else next.add(color.label);
+                    return next;
+                  })
+                }
+                title={on ? `Showing ${color.label} — click to remove` : `Show only ${color.label} (${count} ticket${count === 1 ? "" : "s"})`}
+                className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 transition ${
+                  on ? `${color.pill} font-semibold ring-1 ring-current` : "border-white/10 bg-white/[0.03] hover:bg-white/10 hover:text-white"
+                }`}
+              >
+                <span className={`inline-block h-2 w-2 rounded-sm ${color.dot}`} />
+                {color.label} <span className="tabular-nums opacity-70">{count}</span>
+              </button>
+            );
+          })}
+          {claimToPicked.size > 0 && (
+            <button type="button" onClick={() => setClaimToPicked(new Set())} className="rounded-md px-1.5 py-0.5 text-slate-400 hover:text-white">
+              Clear
+            </button>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <input
             type="text"
@@ -988,9 +1054,21 @@ export function NeedClaimList({ mod, sub }: Props) {
                         ""
                       )}
                     </td>
-                    <td className="px-1 py-1 text-center">{t.redo || ""}</td>
-                    <td className="px-1 py-1 max-w-[80px] truncate text-xs" title={t.account || t.claimCompany || undefined}>
-                      {t.account || t.claimCompany || "—"}
+                    <td className="px-1 py-1 text-center">
+                      {/^y/i.test(String(t.redo || "")) ? (
+                        <span className="inline-block rounded border border-rose-400/40 bg-rose-500/15 px-1.5 text-[11px] font-bold text-rose-200" title="Redo">Y</span>
+                      ) : (
+                        <span className="text-slate-500">{t.redo || ""}</span>
+                      )}
+                    </td>
+                    <td className="px-1 py-1 max-w-[110px] text-xs" title={t.account || t.claimCompany || undefined}>
+                      {t.account || t.claimCompany ? (
+                        <span className={`inline-block max-w-full truncate rounded border px-1.5 align-middle ${claimToColor(t.account || t.claimCompany).pill}`}>
+                          {t.account || t.claimCompany}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     <td className="px-1 py-1 whitespace-nowrap text-xs">{tierCodeForTicket(t)}</td>
                     <td className="px-1 py-1 whitespace-nowrap text-xs">—</td>
