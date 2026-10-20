@@ -92,7 +92,7 @@ import { useModuleRoleGate, useModuleRoleGateOverrides } from "@/lib/moduleAcces
 // e.g. a Parts Manager who's also been given Admin as a secondary role.
 // Shared with submoduleAccess.ts (used by home.tsx/ModuleNavigator.tsx to
 // decide what to even list) so both surfaces can never drift apart.
-import { ADMIN_MODULE_ROLES, USER_MANAGEMENT_DEFAULT_ROLES, ACTIVITY_LOG_DEFAULT_ROLES, WHEREABOUTS_DEFAULT_ROLES, resolveSubmoduleAllowedRoles, passesModuleLevelGate } from "@/lib/submoduleAccess";
+import { ADMIN_MODULE_ROLES, USER_MANAGEMENT_DEFAULT_ROLES, ACTIVITY_LOG_DEFAULT_ROLES, WHEREABOUTS_DEFAULT_ROLES, BIZOPS_GUIDE_DEFAULT_ROLES, resolveSubmoduleAllowedRoles, passesModuleLevelGate } from "@/lib/submoduleAccess";
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import { ReportHRDaily } from "@/components/ReportHRDaily";
 import { HrOnboardingChecklistPage } from "@/components/HrOnboardingChecklistPage";
@@ -407,6 +407,11 @@ function SubModule() {
   const hasCompanySettingsAccess = isCompanySuperAdminRole(role, extraRoles);
 
   if (sub.custom === "company-settings" && !hasCompanySettingsAccess) {
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
+  }
+
+  // Guides → BizOps Operations: BizOps roles plus Admin / SuperAdmin only.
+  if ((sub as any).custom === "bizops-guide" && !hasDashboardAccess(explicitModuleOverride ?? BIZOPS_GUIDE_DEFAULT_ROLES, role, extraRoles)) {
     return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
