@@ -28,6 +28,10 @@ export interface TourStep {
    */
   panel?: string;
   side?: "top" | "bottom" | "left" | "right";
+  /** Shows a value from the page (an input's value or an element's text) with a Copy button — e.g. the PO number to search on a portal. */
+  copy?: { label: string; selector: string };
+  /** Buttons that open a page in a new tab — e.g. an outside portal the tour can't go into. */
+  links?: { label: string; href: string }[];
 }
 
 export interface TourDef {
@@ -117,7 +121,13 @@ export function runTour(
       disableActiveInteraction: true,
       steps: steps.map((s) => ({
         element: () => document.querySelector(s.selector) as Element,
-        popover: { title: s.title, description: s.text, side: s.side ?? "bottom", align: "start" },
+        popover: {
+          title: s.title,
+          description: s.text + extrasHtml(s),
+          side: s.side ?? "bottom",
+          align: "start",
+          onPopoverRender: (popover) => wireExtras(popover.description, s),
+        },
       })),
       onNextClick: async (_el, _step, { driver: drv }) => {
         const next = await findStep((drv.getActiveIndex() ?? 0) + 1, 1);
@@ -152,6 +162,44 @@ export function runTour(
       d.drive(first);
     })();
   }));
+}
+
+// ---- Copy value + outside links on a step ------------------------------------
+
+const escapeHtml = (v: string) => v.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+function extrasHtml(s: TourStep): string {
+  let html = "";
+  if (s.copy) {
+    html += `<div class="ahs-tour-copy"><span class="ahs-tour-copy-label">${escapeHtml(s.copy.label)}</span><code data-ahs-copy-value>—</code><button type="button" data-ahs-copy>Copy</button></div>`;
+  }
+  if (s.links?.length) {
+    html += `<div class="ahs-tour-links">${s.links
+      .map((l) => `<a href="${escapeHtml(l.href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(l.label)}</a>`)
+      .join("")}</div>`;
+  }
+  return html;
+}
+
+/** Fills the copy value from the page and wires the Copy button (links work on their own). */
+function wireExtras(container: HTMLElement, s: TourStep): void {
+  if (!s.copy) return;
+  const el = document.querySelector(s.copy.selector) as HTMLInputElement | HTMLElement | null;
+  const value = (el && "value" in el && typeof el.value === "string" ? el.value : el?.textContent ?? "").trim();
+  const code = container.querySelector("[data-ahs-copy-value]");
+  const btn = container.querySelector("[data-ahs-copy]") as HTMLButtonElement | null;
+  if (code) code.textContent = value || "— (none on this ticket)";
+  if (!btn) return;
+  if (!value) { btn.disabled = true; return; }
+  btn.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      btn.textContent = "Copied ✓";
+    } catch {
+      btn.textContent = "Select it and copy";
+    }
+    setTimeout(() => { btn.textContent = "Copy"; }, 1500);
+  };
 }
 
 let driverModule: Promise<typeof import("driver.js")> | null = null;
