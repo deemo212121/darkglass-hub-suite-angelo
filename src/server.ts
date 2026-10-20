@@ -252,8 +252,9 @@ export default {
 
   // Cron Trigger (see wrangler.jsonc "triggers.crons") — dispatches on which
   // schedule fired: hourly runs the NSA parts pull, the Flash Tech
-  // "trip turned Open" alert check, and (once a week) the password reset
-  // check below; every 5 minutes runs the attendance grace-period check.
+  // "trip turned Open" alert check, the ServicePower paid-claim check, and
+  // (once a week) the password reset check below; every 5 minutes runs the
+  // attendance grace-period check.
   async scheduled(event: { cron?: string }, env: unknown, ctx: { waitUntil: (p: Promise<unknown>) => void }) {
     const merged = await resolveServerEnv(env);
 
@@ -358,6 +359,23 @@ export default {
       ).then(
         (result) => { if (result.newMeetings || result.errors.length) console.log("missedTimeOutMeetings:", JSON.stringify(result)); },
         (error) => console.error("missedTimeOutMeetings failed:", error),
+      ),
+    );
+
+    // CL-Claimed tickets whose claim ServicePower shows paid -> CL-Data-Closed
+    // (short-paid ones stay and are flagged) — only for companies that turned
+    // it on (companies.settings.spClaimAutoDataClose); see spClaimPaymentSync.ts.
+    ctx.waitUntil(
+      import("./lib/server/spClaimPaymentSync").then(
+        ({ runSpClaimPaymentSync }) => runSpClaimPaymentSync(merged, { apply: true }),
+      ).then(
+        (result) => {
+          if (result.checked || result.errors.length) {
+            const { decisions, ...counts } = result;
+            console.log("spClaimPaymentSync:", JSON.stringify({ ...counts, closedTickets: decisions.filter((d) => d.outcome === "close" && d.applied).map((d) => d.ticketNo) }));
+          }
+        },
+        (error) => console.error("spClaimPaymentSync failed:", error),
       ),
     );
 
