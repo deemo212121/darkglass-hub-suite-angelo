@@ -57,3 +57,24 @@ export async function clearPayrollReviewMark(profileId: string, periodStart: str
     .eq("period_end", periodEnd);
   if (error) throw new Error(error.message);
 }
+
+/** Latest review date and reviewed count per pay period, keyed "start|end" — Payroll History's period dropdown. */
+export async function getPayrollReviewDatesByPeriod(): Promise<Map<string, { lastReviewedAt: string; count: number }>> {
+  const { data, error } = await supabase
+    .from("payroll_review_marks")
+    .select("period_start, period_end, reviewed_at")
+    .order("period_start", { ascending: false })
+    .limit(10000);
+  if (error) throw new Error(error.message);
+  const out = new Map<string, { lastReviewedAt: string; count: number }>();
+  for (const r of (data ?? []) as Array<{ period_start: string; period_end: string; reviewed_at: string }>) {
+    const key = `${r.period_start}|${r.period_end}`;
+    const prev = out.get(key);
+    if (!prev) out.set(key, { lastReviewedAt: r.reviewed_at, count: 1 });
+    else {
+      prev.count += 1;
+      if (r.reviewed_at > prev.lastReviewedAt) prev.lastReviewedAt = r.reviewed_at;
+    }
+  }
+  return out;
+}
