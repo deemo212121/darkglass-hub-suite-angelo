@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { X, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import type { Ticket } from "@/lib/ticketData";
-import { getTicketVisits, getTicketParts, updateTicketPart, type UIPartRow } from "@/lib/supabase/tickets";
+import { getTicketVisits, getTicketParts, updateTicketPart, updateTicketStatus, type UIPartRow } from "@/lib/supabase/tickets";
 import {
   getTicketClaimDetails,
   getReadyToCompleteDate,
@@ -21,6 +21,8 @@ interface Props {
   ticketNumbers: string[];
   /** Called with the saved row so the parent's bulk claim-details map (Pre-Claim Status column) stays in sync without a full refetch. */
   onSaved: (ticketNo: string, details: TicketClaimDetails) => void;
+  /** The ticket's status changed here (a clean ServicePower submission sets CL-Claimed) — lets the list update its row. */
+  onStatusChanged?: (ticketNo: string, status: string) => void;
   onNavigate: (ticketNo: string) => void;
   onClose: () => void;
 }
@@ -83,7 +85,7 @@ const SP_ACCOUNT_REJECTION = /invalid manufacturerName\s*\/\s*serviceCenterNumbe
  * See src/lib/supabase/claimDetails.ts and migration 0135 for which fields
  * are newly persisted vs. read from the ticket/parts data that already existed.
  */
-export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onClose }: Props) {
+export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged, onNavigate, onClose }: Props) {
   const { uid, displayName, email } = useAuth();
   // ticket_claim_details.updated_by is a uuid FK into profiles(id) — NOT
   // the caller's email/display name (those are plain text and Postgres
@@ -318,11 +320,25 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
       const warnText = warnings.length > 0 ? ` (${warnings.join(" ")})` : "";
 
       if (result.claimResponseCode === "OK") {
+        // Filed with nothing to correct → the ticket is claimed in AHS too.
+        // A claim ServicePower sends back for correction ("Servicer to
+        // Correct") keeps its status until a clean resubmission.
+        let statusNote = "";
+        if (errorTexts.length === 0) {
+          try {
+            await updateTicketStatus(ticket.ticketNo, "CL-Claimed");
+            onStatusChanged?.(ticket.ticketNo, "CL-Claimed");
+            statusNote = " Ticket status set to CL-Claimed.";
+          } catch (statusErr) {
+            statusNote = ` (Couldn't set the ticket to CL-Claimed: ${statusErr instanceof Error ? statusErr.message : "unknown error"} — set it on the ticket page.)`;
+          }
+        }
         setSpMessage({
           type: errorTexts.length > 0 ? "error" : "success",
           text:
             `Submitted — ServicePower status: ${result.claimStatusDescription || result.claimStatusCode || "OK"}` +
-            (errorTexts.length > 0 ? `. Needs correction: ${errorTexts.join("; ")}` : "") +
+            (errorTexts.length > 0 ? `. Needs correction: ${errorTexts.join("; ")}` : ".") +
+            statusNote +
             warnText,
         });
       } else {
