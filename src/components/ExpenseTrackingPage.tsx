@@ -73,7 +73,12 @@ export function ExpenseTrackingPage({
 }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
-  const { uid, ready, companyId } = useAuth();
+  const { uid, ready, companyId, role, extraRoles } = useAuth();
+  // Approve / Reject / Mark Reimbursed are Accounting's call (Admin / SuperAdmin too) — primary or extra role.
+  // The database enforces the same rule (migration 0393).
+  const canReviewExpenses = [role, ...(extraRoles ?? [])].some((r) =>
+    ["FINANCE", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(String(r || "").trim().toUpperCase().replace(/\s+/g, "_"))
+  );
   const [loading, setLoading] = useState(true);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
@@ -467,7 +472,10 @@ export function ExpenseTrackingPage({
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex flex-wrap gap-1">
-                        {e.status === "Pending" && (
+                        {e.status === "Pending" && !canReviewExpenses && (
+                          <span className="text-[11px] text-slate-500" title="Only Accounting can approve or reject expenses">Awaiting Accounting</span>
+                        )}
+                        {e.status === "Pending" && canReviewExpenses && (
                           <>
                             <button onClick={() => handleStatusChange(e.id, "Approved")} disabled={statusChangingId === e.id} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
                               {statusChangingId === e.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />} Approve
@@ -478,7 +486,7 @@ export function ExpenseTrackingPage({
                           </>
                         )}
                         {/* Flash Tech-linked expenses stop at Approved/Rejected — no Reimbursed stage. */}
-                        {e.status === "Approved" && !e.flashTechTripId && (
+                        {e.status === "Approved" && !e.flashTechTripId && canReviewExpenses && (
                           <button onClick={() => handleStatusChange(e.id, "Reimbursed")} disabled={statusChangingId === e.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
                             {statusChangingId === e.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wallet className="h-3 w-3" />} Mark Reimbursed
                           </button>
