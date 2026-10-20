@@ -14,6 +14,7 @@ import { createPortal } from "react-dom";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS } from "@/lib/locations";
 import { useAuth } from "@/lib/auth";
+import { getMyProfileId } from "@/lib/supabase/users";
 import { supabase } from "@/lib/supabase/client";
 import { getCompanyTicketsWithStatuses } from "@/lib/supabase/tickets";
 import type { Ticket } from "@/lib/ticketData";
@@ -722,6 +723,12 @@ export function NeedClaimList({ mod, sub }: Props) {
   // optimistic local update first (keyed by ticket UUID, same as the bulk
   // fetch) so the row reflects the edit immediately, then persist.
   const [savingClaimRowTicketNo, setSavingClaimRowTicketNo] = useState<string | null>(null);
+  // ticket_claim_details.updated_by is a profile id — the email that used
+  // to be passed here was refused by the database, so the save never stuck.
+  const [myProfileId, setMyProfileId] = useState<string | null>(null);
+  useEffect(() => {
+    if (auth.uid) void getMyProfileId(auth.uid).then(setMyProfileId);
+  }, [auth.uid]);
   const updateClaimDetails = async (ticketNo: string, patch: { preClaimStatus?: string }) => {
     const tid = (tickets.find((t) => t.ticketNo === ticketNo) as any)?._id as string | undefined;
     if (!tid) return;
@@ -733,7 +740,7 @@ export function NeedClaimList({ mod, sub }: Props) {
     });
     setSavingClaimRowTicketNo(ticketNo);
     try {
-      const saved = await upsertTicketClaimDetails(ticketNo, patch, auth.email || auth.displayName || null);
+      const saved = await upsertTicketClaimDetails(ticketNo, patch, myProfileId);
       setClaimDetailsByTicketId((prev) => new Map(prev).set(tid, saved));
     } catch (err) {
       console.error("Failed to save claim details:", err);
