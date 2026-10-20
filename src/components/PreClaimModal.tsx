@@ -197,7 +197,9 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
         setSpDefect({ state: "none", text: auto ? "" : "Not found on ServicePower." });
         return;
       }
-      const problemType = String(call.problemType ?? "").trim();
+      // ServicePower writes "None" when the call has no problem type — not a code to offer.
+      const rawProblemType = String(call.problemType ?? "").trim();
+      const problemType = /^none$/i.test(rawProblemType) ? "" : rawProblemType;
       const problemDesc = String(call.problemDesc ?? "").trim();
       if (!problemType && !problemDesc) {
         setSpDefect({ state: "none", text: auto ? "" : "ServicePower has no problem type on this call." });
@@ -251,6 +253,60 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
   const usedCount = parts.filter(isClaimablePart).length;
   const claimTotal = form.laborFee + partFee + form.otherFee + form.shippingFee + form.extraMileFee + form.mileageFee;
 
+  // Checked in the "Submit this claim to ServicePower?" window before
+  // anything is sent. `required` = what ServicePower has sent claims back
+  // for: "Blank/Invalid Defect code" and "Blank Request Date" on any claim,
+  // "Blank Parts Invoice Number" / "Blank Job Code" on GE claims (a
+  // Frigidaire claim went through without a job code) — the submit waits
+  // until they're filled.
+  // `blank` = anything else the claim would carry empty — listed, and the
+  // person has to choose "Submit anyway". `rejectedParts` = parts
+  // ServicePower refused on the last submission that are still on the claim.
+  const spChecks = useMemo(() => {
+    const isBlank = (v: unknown) => !String(v ?? "").trim();
+    const required: string[] = [];
+    const blank: string[] = [];
+    const code = form.failureDefectCode.trim();
+    if (!code) required.push("Failure/Defect Code (Claim section) — ServicePower sends a claim back without one.");
+    else if (code.length > 4) required.push(`Failure/Defect Code "${code}" — enter the code itself (4 characters at most).`);
+    const claimable = parts.filter(isClaimablePart);
+    const isGe = !!jobCodesFor(ticket.manufacturer, (ticket as { brand?: string | null }).brand);
+    const noInvoice = claimable.filter((p) => isBlank(p.invoiceNo)).map((p) => p.partNo || "(no part #)");
+    if (noInvoice.length) {
+      if (isGe) required.push(`Invoice # on part ${noInvoice.join(", ")} — ServicePower needs one on every part.`);
+      else blank.push(`Invoice # on part ${noInvoice.join(", ")}`);
+    }
+    const noJobCode = claimable.filter((p) => isBlank(p.jobCode)).map((p) => p.partNo || "(no part #)");
+    if (isBlank(form.jobCode) && (noJobCode.length || claimable.length === 0)) {
+      if (isGe) required.push(`Job Code (Claim section)${noJobCode.length ? ` — none on part ${noJobCode.join(", ")} either` : ""}.`);
+      else blank.push("Job Code");
+    }
+    if (isBlank(ticket.callReceivedDate)) required.push("Call received date on the ticket — it's sent as the request date.");
+
+    if (isBlank(form.resolutionCode)) blank.push("Resolution/Repair Code");
+    if (isBlank(form.repairCategory)) blank.push("Repair Category");
+    if (isBlank(form.startDate)) blank.push("Start Date");
+    if (isBlank(form.completeDate)) blank.push("Complete Date");
+    if (isBlank(customerComplaint)) blank.push("Customer complaint (defect description)");
+    if (isBlank(servicePerformed)) blank.push("Service Performed");
+    if (!form.laborFee) blank.push("Labor Fee ($0)");
+    if (isBlank(ticket.model)) blank.push("Model");
+    if (isBlank(ticket.serial)) blank.push("Serial #");
+    if (isBlank(ticket.purchaseDate)) blank.push("Purchase Date");
+    if (isBlank(ticket.firstName) && isBlank(ticket.lastName)) blank.push("Customer name");
+    const noAddress = [["address", "address"], ["city", "city"], ["state", "state"], ["zip", "ZIP"], ["phone", "phone"]]
+      .filter(([k]) => isBlank((ticket as any)[k]))
+      .map(([, label]) => label);
+    if (noAddress.length) blank.push(`Customer ${noAddress.join(", ")}`);
+
+    const lastErrors: Array<{ partNumber?: string; errorDescription?: string }> =
+      ((form.spLastResponse as any)?.claims?.[0]?.errors as any[]) ?? [];
+    const rejectedParts = lastErrors
+      .filter((e) => e.partNumber && claimable.some((p) => p.partNo === e.partNumber))
+      .map((e) => `Part ${e.partNumber}: "${e.errorDescription}"`);
+    return { required, blank, rejectedParts };
+  }, [form, parts, ticket, customerComplaint, servicePerformed]);
+
   const setField = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
 
@@ -274,6 +330,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
   // onto this ticket's claim details so a later resubmission updates the
   // same claim instead of creating a duplicate.
   const handleSubmitToServicePower = async () => {
+    if (spChecks.required.length > 0) return;
     setConfirmSpSubmit(false);
     setSubmittingToSP(true);
     setSpMessage(null);
@@ -327,17 +384,20 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
       onSaved(ticket.ticketNo, updated);
 
       const errorTexts = [
-        ...(result.errors?.map((e) => e.errorDescription) ?? []),
+        ...(result.errors?.map((e) => (e.partNumber ? `${e.errorDescription} (part ${e.partNumber})` : e.errorDescription)) ?? []),
         ...(result.messages?.map((m) => m.message) ?? []),
       ];
       const warnText = warnings.length > 0 ? ` (${warnings.join(" ")})` : "";
 
       if (result.claimResponseCode === "OK") {
-        // Filed with nothing to correct → the ticket is claimed in AHS too.
-        // A claim ServicePower sends back for correction ("Servicer to
-        // Correct") keeps its status until a clean resubmission.
+        // ServicePower has the claim → the ticket is CL-Claimed in AHS too,
+        // even when it comes back needing corrections ("Incomplete",
+        // "Servicer to Correct") — ServicePower marks the call CLAIMED the
+        // same way, and the corrections are resubmitted onto the same claim.
+        // A ticket already CL-Claimed, or closed after payment, stays as is.
         let statusNote = "";
-        if (errorTexts.length === 0) {
+        const currentStatus = String(ticket.status ?? "").trim().toLowerCase();
+        if (currentStatus !== "cl-claimed" && currentStatus !== "cl-data-closed" && currentStatus !== "cl-data closed") {
           try {
             await updateTicketStatus(ticket.ticketNo, "CL-Claimed");
             onStatusChanged?.(ticket.ticketNo, "CL-Claimed");
@@ -350,7 +410,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
           type: errorTexts.length > 0 ? "error" : "success",
           text:
             `Submitted — ServicePower status: ${result.claimStatusDescription || result.claimStatusCode || "OK"}` +
-            (errorTexts.length > 0 ? `. Needs correction: ${errorTexts.join("; ")}` : ".") +
+            (errorTexts.length > 0 ? `. Needs correction: ${errorTexts.join("; ")}.` : ".") +
             statusNote +
             warnText,
         });
@@ -437,7 +497,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
               role="dialog"
               aria-modal="true"
               aria-labelledby="sp-submit-confirm-title"
-              className="w-full max-w-md rounded-xl border border-white/10 bg-slate-900 p-5 text-left shadow-2xl"
+              className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border border-white/10 bg-slate-900 p-5 text-left shadow-2xl"
               onClick={(e) => e.stopPropagation()}
               onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); setConfirmSpSubmit(false); } }}
             >
@@ -457,13 +517,42 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
                 <dt className="text-slate-400">Claim Total</dt>
                 <dd className="font-semibold text-green-300">{fmt(claimTotal)}</dd>
               </dl>
-              <p className="mt-2 text-xs text-amber-300">Any changes on this form are saved first. If ServicePower accepts the claim with nothing to correct, the ticket is set to CL-Claimed.</p>
+              {spChecks.required.length > 0 && (
+                <div className="mt-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+                  <p className="font-semibold">ServicePower will send this claim back — fill these in first:</p>
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                    {spChecks.required.map((m) => <li key={m}>{m}</li>)}
+                  </ul>
+                </div>
+              )}
+              {spChecks.rejectedParts.length > 0 && (
+                <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                  <p className="font-semibold">ServicePower refused these on the last submission:</p>
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                    {spChecks.rejectedParts.map((m) => <li key={m}>{m}</li>)}
+                  </ul>
+                  <p className="mt-1">Check the part number and the full model number (with its version digit) before sending again.</p>
+                </div>
+              )}
+              {spChecks.blank.length > 0 && (
+                <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                  <p className="font-semibold">These would go to ServicePower blank:</p>
+                  <p className="mt-1">{spChecks.blank.join(" · ")}</p>
+                </div>
+              )}
+              <p className="mt-2 text-xs text-amber-300">Any changes on this form are saved first. Once ServicePower has the claim, the ticket is set to CL-Claimed (corrections go back onto the same claim).</p>
               <div className="mt-4 flex flex-wrap justify-end gap-2">
                 <button type="button" autoFocus onClick={() => setConfirmSpSubmit(false)} className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600">
-                  Cancel
+                  {spChecks.required.length > 0 ? "Go back and fill them in" : "Cancel"}
                 </button>
-                <button type="button" onClick={() => void handleSubmitToServicePower()} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
-                  Yes, submit to ServicePower
+                <button
+                  type="button"
+                  onClick={() => void handleSubmitToServicePower()}
+                  disabled={spChecks.required.length > 0}
+                  title={spChecks.required.length > 0 ? "Fill in the fields listed in red first" : undefined}
+                  className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {spChecks.blank.length > 0 || spChecks.rejectedParts.length > 0 ? "Submit anyway" : "Yes, submit to ServicePower"}
                 </button>
               </div>
             </div>
