@@ -104,14 +104,22 @@ export async function getPayrollReviewBreakdowns(periodStart: string, periodEnd:
 
 /** Every pay period that has at least one row, newest first — the tab's period dropdown. */
 export async function getPayrollReviewPeriods(): Promise<{ periodStart: string; periodEnd: string; count: number }[]> {
-  const { data, error } = await supabase
-    .from("payroll_review_breakdowns")
-    .select("period_start, period_end")
-    .order("period_start", { ascending: false })
-    .limit(5000);
-  if (error) throw new Error(friendly(error.message));
+  // Paged: one answer stops at 1,000 rows, which would drop the oldest periods.
+  const PAGE = 1000;
+  const rows: { period_start: string; period_end: string }[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("payroll_review_breakdowns")
+      .select("period_start, period_end")
+      .order("period_start", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(friendly(error.message));
+    rows.push(...((data ?? []) as typeof rows));
+    if (!data || data.length < PAGE) break;
+  }
   const byKey = new Map<string, { periodStart: string; periodEnd: string; count: number }>();
-  for (const r of (data ?? []) as { period_start: string; period_end: string }[]) {
+  for (const r of rows) {
     const key = `${r.period_start}|${r.period_end}`;
     const prev = byKey.get(key);
     if (prev) prev.count += 1;
