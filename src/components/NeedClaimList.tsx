@@ -176,7 +176,10 @@ interface ClaimRow {
   aging: number;
   /** UI-only locally-edited values. */
   preClaimStatus: string;
-  claimNote: string;
+  /** The ticket's Internal Note (tickets.internal_note). */
+  internalNote: string;
+  /** The latest Visit Log entry's Triage Note — same source as the Ticket List's Triage Notes column. */
+  triageNote: string;
   claimVerified: boolean;
 }
 
@@ -188,6 +191,8 @@ export function NeedClaimList({ mod, sub }: Props) {
   // ── Server state ──
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [partCounts, setPartCounts] = useState<Record<string, number>>({});
+  /** Latest visit Triage Note per ticket UUID. */
+  const [triageNotes, setTriageNotes] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -274,6 +279,7 @@ export function NeedClaimList({ mod, sub }: Props) {
         .filter((id): id is string => !!id);
       if (ticketIds.length === 0) {
         setPartCounts({});
+        setTriageNotes({});
       } else {
         // In batches of 200 ticket ids (a few at a time), each paged by
         // 1,000 rows: thousands of ids in one ?ticket_id=in.(…) made a URL
@@ -295,6 +301,46 @@ export function NeedClaimList({ mod, sub }: Props) {
           }
           return rows;
         };
+        // Fire-and-forget like the claim details: the latest visit's Triage
+        // Note per ticket (newest visit first, so the first note seen per
+        // ticket wins) — the table shows while these arrive.
+        const fetchTriageBatch = async (batch: string[]) => {
+          const rows: Array<{ ticket_id: string | null; triage_note: string | null }> = [];
+          for (let from = 0; ; from += PAGE) {
+            const { data, error } = await supabase
+              .from("visits")
+              .select("ticket_id, triage_note")
+              .in("ticket_id", batch)
+              .not("triage_note", "is", null)
+              .neq("triage_note", "")
+              .order("created_at", { ascending: false })
+              .order("id", { ascending: false })
+              .range(from, from + PAGE - 1);
+            if (error) throw error;
+            rows.push(...((data ?? []) as Array<{ ticket_id: string | null; triage_note: string | null }>));
+            if (!data || data.length < PAGE) break;
+          }
+          return rows;
+        };
+        void (async () => {
+          try {
+            const notes: Record<string, string> = {};
+            for (let i = 0; i < batches.length; i += CONCURRENCY) {
+              const results = await Promise.all(batches.slice(i, i + CONCURRENCY).map(fetchTriageBatch));
+              for (const row of results.flat()) {
+                const tid = String(row.ticket_id ?? "");
+                const note = String(row.triage_note ?? "").trim();
+                if (!tid || !note || tid in notes) continue;
+                notes[tid] = note;
+              }
+            }
+            setTriageNotes(notes);
+          } catch (triageError) {
+            console.warn("[NeedClaimList] triage note fetch failed:", triageError instanceof Error ? triageError.message : triageError);
+            setTriageNotes({});
+          }
+        })();
+
         try {
           const counts: Record<string, number> = {};
           for (let i = 0; i < batches.length; i += CONCURRENCY) {
@@ -355,11 +401,12 @@ export function NeedClaimList({ mod, sub }: Props) {
         compCancelDate: date,
         aging,
         preClaimStatus: saved?.preClaimStatus || defaultPreClaim,
-        claimNote: saved?.claimNote ?? "",
+        internalNote: String(t.internalNote ?? "").trim(),
+        triageNote: tid ? triageNotes[tid] ?? "" : "",
         claimVerified: override.claimVerified ?? false,
       };
     });
-  }, [tickets, partCounts, rowOverrides, claimDetailsByTicketId]);
+  }, [tickets, partCounts, triageNotes, rowOverrides, claimDetailsByTicketId]);
 
   // Declared here (rather than down with the rest of the mileage-fetch
   // logic below) so columnValueGetters/filtered above can reference it —
@@ -372,7 +419,7 @@ export function NeedClaimList({ mod, sub }: Props) {
   // the verify checkbox, and Actions don't since there's nothing to filter.
   const COLUMN_FILTER_KEYS = [
     "location", "ticketNo", "wty", "status", "technician", "product", "compCancel",
-    "mileage", "parts", "redo", "claimTo", "tierCode", "preClaimStatus", "claimNote", "tat",
+    "mileage", "parts", "redo", "claimTo", "tierCode", "preClaimStatus", "triageNote", "internalNote", "tat",
   ] as const;
   type ColumnFilterKey = (typeof COLUMN_FILTER_KEYS)[number];
 
@@ -401,7 +448,8 @@ export function NeedClaimList({ mod, sub }: Props) {
     claimTo: (r) => r.ticket.account || r.ticket.claimCompany || "",
     tierCode: (r) => tierCodeForTicket(r.ticket),
     preClaimStatus: (r) => r.preClaimStatus || "",
-    claimNote: (r) => r.claimNote || "",
+    triageNote: (r) => r.triageNote || "",
+    internalNote: (r) => r.internalNote || "",
     tat: (r) => `${r.aging} d`,
   };
 
@@ -446,6 +494,8 @@ export function NeedClaimList({ mod, sub }: Props) {
           t.productType,
           t.account,
           t.claimCompany,
+          row.triageNote,
+          row.internalNote,
         ]
           .filter(Boolean)
           .join(" ")
@@ -599,11 +649,11 @@ export function NeedClaimList({ mod, sub }: Props) {
     patch: { claimVerified?: boolean },
   ) => setRowOverrides((prev) => ({ ...prev, [ticketNo]: { ...prev[ticketNo], ...patch } }));
 
-  // Pre-Claim Status / Claim Note save straight to ticket_claim_details —
+  // Pre-Claim Status saves straight to ticket_claim_details —
   // optimistic local update first (keyed by ticket UUID, same as the bulk
   // fetch) so the row reflects the edit immediately, then persist.
   const [savingClaimRowTicketNo, setSavingClaimRowTicketNo] = useState<string | null>(null);
-  const updateClaimDetails = async (ticketNo: string, patch: { preClaimStatus?: string; claimNote?: string }) => {
+  const updateClaimDetails = async (ticketNo: string, patch: { preClaimStatus?: string }) => {
     const tid = (tickets.find((t) => t.ticketNo === ticketNo) as any)?._id as string | undefined;
     if (!tid) return;
     const prevSaved = claimDetailsByTicketId.get(tid);
@@ -911,7 +961,8 @@ export function NeedClaimList({ mod, sub }: Props) {
                 ["Claim #", null],
                 ["", null],
                 ["Pre-Claim Status", "preClaimStatus"],
-                ["Claim Note", "claimNote"],
+                ["Triage Note", "triageNote"],
+                ["Internal Note", "internalNote"],
                 ["TAT", "tat"],
                 ["Actions", null],
               ] as [string, ColumnFilterKey | null][]).map(([h, key], i) => (
@@ -930,7 +981,7 @@ export function NeedClaimList({ mod, sub }: Props) {
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={19} className="px-4 py-12 text-center text-muted-foreground">
+                <td colSpan={20} className="px-4 py-12 text-center text-muted-foreground">
                   {loading
                     ? "Loading tickets…"
                     : tickets.length === 0
@@ -1036,17 +1087,11 @@ export function NeedClaimList({ mod, sub }: Props) {
                         ))}
                       </select>
                     </td>
-                    <td className="px-1 py-1">
-                      <input
-                        key={`note:${t.ticketNo}:${r.claimNote}`}
-                        type="text"
-                        defaultValue={r.claimNote}
-                        disabled={savingClaimRowTicketNo === t.ticketNo}
-                        onBlur={(e) => void updateClaimDetails(t.ticketNo, { claimNote: e.target.value })}
-                        className="glass-input text-[10px] py-0.5 px-1 rounded w-20 disabled:opacity-50"
-                        placeholder="Note"
-                        title={r.claimNote || undefined}
-                      />
+                    <td className="px-1 py-1 max-w-[160px] truncate text-muted-foreground" title={r.triageNote || undefined}>
+                      {r.triageNote || "—"}
+                    </td>
+                    <td className="px-1 py-1 max-w-[160px] truncate text-muted-foreground" title={r.internalNote || undefined}>
+                      {r.internalNote || "—"}
                     </td>
                     <td className="px-1 py-1 text-center">{r.aging} d</td>
                     <td className="px-1 py-1 whitespace-nowrap">
@@ -1083,6 +1128,7 @@ export function NeedClaimList({ mod, sub }: Props) {
               const tid = (tickets.find((t) => t.ticketNo === ticketNo) as any)?._id as string | undefined;
               if (tid) setClaimDetailsByTicketId((prev) => new Map(prev).set(tid, details));
             }}
+            onStatusChanged={(ticketNo, status) => setTickets((prev) => prev.map((t) => (t.ticketNo === ticketNo ? { ...t, status } : t)))}
             onClose={() => setPreClaimTicketNo(null)}
           />
         );
