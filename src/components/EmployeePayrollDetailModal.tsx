@@ -27,6 +27,9 @@ import {
   rateEffectiveOn,
   entryEffectiveOn,
   currentRate,
+  payRateHistory,
+  guaranteeEffectiveOn,
+  fixedSalaryIsGuarantee,
   perCutoffSalary,
   monthlySalary,
   type SalaryEntryRow,
@@ -775,7 +778,14 @@ export function EmployeePayrollDetailModal({
   // The entry effective as of the end of the viewed period — used to decide
   // whether this employee is currently paid hourly or a fixed salary, and
   // to show the right numbers for whichever it is.
-  const currentEntry = useMemo(() => entryEffectiveOn(history, rangeEnd), [history, rangeEnd]);
+  // Technician-tier with an hourly rate on file: a Fixed Salary entry is a
+  // guaranteed minimum, not their pay (fixedSalaryIsGuarantee, salary.ts) —
+  // every rate lookup reads rateHistory, which leaves those entries out.
+  const isTechnicianTier = hasAnyTechnicianPayRole(role, extraRoles);
+  const fixedIsGuarantee = useMemo(() => fixedSalaryIsGuarantee(history, isTechnicianTier), [history, isTechnicianTier]);
+  const rateHistory = useMemo(() => payRateHistory(history, isTechnicianTier), [history, isTechnicianTier]);
+  const currentGuarantee = useMemo(() => guaranteeEffectiveOn(history, isTechnicianTier, rangeEnd), [history, isTechnicianTier, rangeEnd]);
+  const currentEntry = useMemo(() => entryEffectiveOn(rateHistory, rangeEnd), [rateHistory, rangeEnd]);
   const isCurrentlyFixed = currentEntry?.compensationType === "fixed";
 
   // Regular vs overtime per day, reset every calendar week (Sunday-Saturday)
@@ -872,7 +882,7 @@ export function EmployeePayrollDetailModal({
   const dailyPayByDate = useMemo(() => {
     const map = new Map<string, { companyRate: number; effectiveRate: number; isMatched: boolean; calculatedPay: number; compliantPay: number }>();
     for (const row of attendance) {
-      const companyRate = rateEffectiveOn(history, row.date);
+      const companyRate = rateEffectiveOn(rateHistory, row.date);
       const folded = dailyHoursSplitByDate.get(row.date) ?? { regular: 0, overtime: 0 };
       if (companyRate <= 0) {
         map.set(row.date, { companyRate: 0, effectiveRate: 0, isMatched: false, calculatedPay: 0, compliantPay: 0 });
@@ -891,7 +901,7 @@ export function EmployeePayrollDetailModal({
       });
     }
     return map;
-  }, [attendance, history, dailyHoursSplitByDate, otMultiplier, traineeWindow.start, traineeWindow.end]);
+  }, [attendance, rateHistory, dailyHoursSplitByDate, otMultiplier, traineeWindow.start, traineeWindow.end]);
 
   const payViewTotals = useMemo(() => {
     if (isCurrentlyFixed && currentEntry?.annualSalary) {
@@ -911,7 +921,7 @@ export function EmployeePayrollDetailModal({
       compliant: { regularPay: 0, overtimePay: 0, total: 0 },
     };
     for (const row of attendance) {
-      const rate = rateEffectiveOn(history, row.date);
+      const rate = rateEffectiveOn(rateHistory, row.date);
       const { regular, overtime } = dailyHoursSplitByDate.get(row.date) ?? { regular: 0, overtime: 0 };
       const effectiveRate = dailyPayByDate.get(row.date)?.effectiveRate ?? rate;
       totals.calculated.regularPay += regular * rate;
@@ -922,7 +932,7 @@ export function EmployeePayrollDetailModal({
     totals.calculated.total = totals.calculated.regularPay + totals.calculated.overtimePay;
     totals.compliant.total = totals.compliant.regularPay + totals.compliant.overtimePay;
     return totals;
-  }, [attendance, history, dailyHoursSplitByDate, dailyPayByDate, isCurrentlyFixed, currentEntry, otMultiplier, isPhPayroll]);
+  }, [attendance, rateHistory, dailyHoursSplitByDate, dailyPayByDate, isCurrentlyFixed, currentEntry, otMultiplier, isPhPayroll]);
   const downloadAttendanceExcel = async () => {
     if (downloadingAttendance || loading || attendance.length === 0 || attendanceEditing || savingRates || pendingRateChanges.length > 0) return;
     setDownloadingAttendance(true);
@@ -1016,7 +1026,7 @@ export function EmployeePayrollDetailModal({
     }
     return map;
   }, [attendance, dailyHoursSplitByDate]);
-  const rateNow = useMemo(() => currentRate(history), [history]);
+  const rateNow = useMemo(() => currentRate(rateHistory), [rateHistory]);
 
   const submitRateChange = async () => {
     if (!rateForm.effectiveDate) {
@@ -1024,7 +1034,7 @@ export function EmployeePayrollDetailModal({
       return;
     }
     const isFixed = rateForm.compensationType === "fixed";
-    const rate = Number(rateForm.hourlyRate);
+    const rate = isFixed ? 0 : Number(rateForm.hourlyRate);
     const annual = Number(rateForm.annualSalary);
     if (isFixed ? !Number.isFinite(annual) || annual <= 0 : !Number.isFinite(rate) || rate <= 0) {
       alert(isFixed ? "Please enter a valid annual salary." : "Please enter a valid hourly rate.");
@@ -1094,10 +1104,10 @@ export function EmployeePayrollDetailModal({
   const pendingRateChanges = useMemo(() => {
     const changes: Array<{ date: string; rate: number }> = [];
     for (const [date, value] of Object.entries(rateEdits)) {
-      if (entryEffectiveOn(history, date)?.compensationType === "fixed") continue;
+      if (entryEffectiveOn(rateHistory, date)?.compensationType === "fixed") continue;
       const parsed = Number(value);
       if (!Number.isFinite(parsed) || parsed < 0) continue;
-      if (parsed !== rateEffectiveOn(history, date)) changes.push({ date, rate: parsed });
+      if (parsed !== rateEffectiveOn(rateHistory, date)) changes.push({ date, rate: parsed });
     }
     return changes;
   }, [rateEdits, history]);
@@ -1286,6 +1296,11 @@ export function EmployeePayrollDetailModal({
                   ) : (
                     <p className="text-lg font-bold text-white mt-1">${rateNow.toFixed(2)}/hr</p>
                   )}
+                  {currentGuarantee?.annualSalary ? (
+                    <p className="text-[11px] text-amber-300/90 mt-0.5" title="Guaranteed minimum: if hourly + incentive pay falls short of this per cutoff, the difference is paid as a salary match. The hourly rate above still drives hours, OT and state matches.">
+                      Guaranteed ${perCutoffSalary(currentGuarantee.annualSalary, isPhPayroll).toFixed(2)}/cutoff · from {currentGuarantee.effectiveDate}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="border-l border-white/10 pl-3">
                   <p className="text-xs text-slate-400 uppercase">Tier Level</p>
@@ -1419,6 +1434,11 @@ export function EmployeePayrollDetailModal({
                     = ${monthlySalary(Number(rateForm.annualSalary)).toFixed(2)}/month · ${perCutoffSalary(Number(rateForm.annualSalary), isPhPayroll).toFixed(2)}/cutoff (bi-weekly)
                   </p>
                 )}
+                {rateForm.compensationType === "fixed" && fixedIsGuarantee && (
+                  <p className="text-[11px] text-amber-300/90">
+                    For a technician with an hourly rate, this is a guaranteed minimum: they stay at ${rateNow.toFixed(2)}/hr for hours, OT and state matches, and get topped up to this per cutoff from the effective date on.
+                  </p>
+                )}
                 <div className="flex justify-end">
                   <button
                     onClick={submitRateChange}
@@ -1449,7 +1469,7 @@ export function EmployeePayrollDetailModal({
                   {history.map((h) => (
                     <tr key={h.id} className="border-b border-white/5">
                       <td className="py-1.5 text-slate-200">{h.effectiveDate}</td>
-                      <td className="py-1.5 text-slate-300">{h.compensationType === "fixed" ? "Fixed Salary" : "Hourly"}</td>
+                      <td className="py-1.5 text-slate-300">{h.compensationType === "fixed" ? (fixedIsGuarantee ? <span className="text-amber-300" title="Technician with an hourly rate: this fixed salary is a guaranteed minimum, not their pay">Fixed Salary · guaranteed minimum</span> : "Fixed Salary") : "Hourly"}</td>
                       <td className="py-1.5 text-slate-300">{SALARY_REASON_LABELS[h.reason] ?? h.reason}</td>
                       <td className="py-1.5 text-slate-300">{h.createdByName || "—"}</td>
                       <td className="py-1.5 text-slate-300" title="When this entry was actually recorded, as opposed to the date it takes effect from">
@@ -1642,7 +1662,7 @@ export function EmployeePayrollDetailModal({
                   </thead>
                   <tbody>
                     {attendance.map((row) => {
-                      const dayIsFixed = entryEffectiveOn(history, row.date)?.compensationType === "fixed";
+                      const dayIsFixed = entryEffectiveOn(rateHistory, row.date)?.compensationType === "fixed";
                       const dayNote = notesByDate.get(row.date);
                       const edit = attendanceEdits[row.date];
                       const isRestDay = row.status === "day-off" || row.status === "holiday";
@@ -1871,7 +1891,7 @@ export function EmployeePayrollDetailModal({
                                 step="0.01"
                                 min="0"
                                 title={`Rate effective ${row.date}`}
-                                value={rateEdits[row.date] ?? rateEffectiveOn(history, row.date).toFixed(2)}
+                                value={rateEdits[row.date] ?? rateEffectiveOn(rateHistory, row.date).toFixed(2)}
                                 onChange={(e) => handleRateEdit(row.date, e.target.value)}
                                 className="w-16 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-right text-slate-100 focus:outline-none focus:border-blue-500"
                               />
