@@ -37,14 +37,11 @@ import {
   ExternalLink,
   History,
   Search,
-  Building2,
   Car,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { supabase } from "@/lib/supabase/client";
-import { getBranchRates, upsertBranchRate, type BranchRate } from "@/lib/supabase/branchRates";
-import { STATE_MIN_WAGE_2026, stateMinWageOn } from "@/lib/stateMinWage";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
@@ -98,6 +95,7 @@ import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
 import { TicketTimeDisputesTab } from "@/components/TicketTimeDisputesTab";
 import { BranchManagerCommissionTab } from "@/components/BranchManagerCommissionTab";
 import { ReviewedPeriodsTab } from "@/components/ReviewedPeriodsTab";
+import { PayrollHistoryTab } from "@/components/PayrollHistoryTab";
 import { upsertPayrollReviewBreakdown } from "@/lib/supabase/payrollReviewBreakdowns";
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, linkPayrollDisputeCustomPayItem, modifyPayrollDispute, restorePayrollDisputeOriginal, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
@@ -322,7 +320,7 @@ export interface EmployeePayrollRow {
    * Car IQ tab (2026-09-24) — when this technician has a Car IQ status set
    * (employee_info.hasCarIq, true or false), their Mileage rate is locked
    * to $0.20/mi (with) or $0.40/mi (without) instead of the branch's shared
-   * Branch Rates figure, and the Tech Activity Report's Mileage rate cell
+   * branch rate, and the Tech Activity Report's Mileage rate cell
    * is disabled so it can't be typed over. null = no Car IQ status set yet
    * — Mileage rate stays branch-driven and editable, unchanged from before.
    */
@@ -971,7 +969,7 @@ function parseGmailRegionParam(value: string | null): GmailRegion {
   return value === "PH" ? "PH" : "US";
 }
 
-type AccountingDashboardTabId = "traineeMonitoring" | "overview" | "payroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech" | "ticketAttendance" | "ticketTimeDisputes" | "branchRates" | "carIq" | "branchCommission" | "reviewedPeriods";
+type AccountingDashboardTabId = "traineeMonitoring" | "overview" | "payroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech" | "ticketAttendance" | "ticketTimeDisputes" | "carIq" | "branchCommission" | "reviewedPeriods" | "payrollHistory";
 // Shared by the top tab row and the floating left quick-nav so the two
 // never drift out of sync.
 const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; Icon: typeof History }[] = [
@@ -982,11 +980,11 @@ const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; 
   { id: "payrollDisputes", label: "Payroll Disputes", Icon: AlertCircle },
   { id: "reports", label: "Reports", Icon: FileText },
   { id: "ticketAttendance", label: "Ticket Attendance", Icon: FileText },
-  { id: "branchRates", label: "Branch Rates", Icon: Building2 },
   { id: "carIq", label: "Car IQ", Icon: Car },
   { id: "branchCommission", label: "Branch Commission", Icon: TrendingUp },
   { id: "ticketTimeDisputes", label: "Ticket Time Disputes", Icon: Clock },
   { id: "reviewedPeriods", label: "Reviewed Periods", Icon: Check },
+  { id: "payrollHistory", label: "Payroll History", Icon: History },
 
 ];
 
@@ -1021,7 +1019,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   };
   const [activeTab, setActiveTab] = usePersistedTab<AccountingDashboardTabId>(
     "ahs:accounting-dashboard-active-tab",
-    ["overview", "payroll", "traineeMonitoring", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes", "branchRates", "branchCommission", "reviewedPeriods"],
+    ["overview", "payroll", "traineeMonitoring", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes", "branchCommission", "reviewedPeriods", "payrollHistory"],
     "overview",
   );
   // Deep link from a bell-icon notification straight into the Payroll
@@ -1076,66 +1074,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [activityLogActionFilter, setActivityLogActionFilter] = useState("");
   const [activityLogFrom, setActivityLogFrom] = useState("");
   const [activityLogTo, setActivityLogTo] = useState("");
-
-  // Branch Rates tab — one reference $ rate per row (migration 0245),
-  // seeded from the full STATE_MIN_WAGE_2026 reference table rather than
-  // only states with a saved row yet, so every state shows up even before
-  // Finance has touched it. Lazy-loaded only once the tab is opened.
-  const [branchRatesByName, setBranchRatesByName] = useState<Map<string, BranchRate>>(new Map());
-  const [branchRatesLoading, setBranchRatesLoading] = useState(false);
-  const [branchRatesLoaded, setBranchRatesLoaded] = useState(false);
-  const [branchRateSaving, setBranchRateSaving] = useState<string | null>(null);
-  const [branchRateSearch, setBranchRateSearch] = useState("");
-  useEffect(() => {
-    if (activeTab !== "branchRates" || branchRatesLoaded) return;
-    setBranchRatesLoading(true);
-    getBranchRates()
-      .then((rows) => {
-        setBranchRatesByName(new Map(rows.map((r) => [r.branch, r])));
-        setBranchRatesLoaded(true);
-      })
-      .catch((err) => console.error("Failed to load branch rates:", err))
-      .finally(() => setBranchRatesLoading(false));
-  }, [activeTab, branchRatesLoaded]);
-  const handleBranchRateBlur = async (branch: string, value: string) => {
-    const rate = Number(value.replace(/[^\d.]/g, "")) || 0;
-    if ((branchRatesByName.get(branch)?.rate ?? 0) === rate) return;
-    setBranchRateSaving(branch);
-    try {
-      await upsertBranchRate(branch, rate);
-      setBranchRatesByName((prev) => {
-        const next = new Map(prev);
-        const existing = next.get(branch);
-        next.set(branch, { id: existing?.id ?? branch, branch, rate, updatedAt: new Date().toISOString() });
-        return next;
-      });
-      void logModuleActivity({
-        module: "accounting",
-        actorName: displayName || email || "Admin",
-        action: "branch_rate_saved",
-        targetType: "branch",
-        targetLabel: branch,
-        details: { rate },
-      });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : `Failed to save the rate for ${branch}.`);
-    } finally {
-      setBranchRateSaving(null);
-    }
-  };
-  // Rows are US states (from the state-minimum-wage reference table), not
-  // company branches — despite the tab/table still being called "Branch
-  // Rates" (the `branch_rates` table itself is just a generic label+$rate
-  // store, so a state name works as the "branch" value with no schema
-  // change needed).
-  const branchRateStateNames = STATE_MIN_WAGE_2026.map((s) => s.state);
-  const branchRateFilteredLocations = branchRateSearch.trim()
-    ? branchRateStateNames.filter((s) => s.toLowerCase().includes(branchRateSearch.trim().toLowerCase()))
-    : branchRateStateNames;
-  // "Prefill from State Minimum Wage" state — the derived count and the
-  // handler itself live further down (see suggestedBranchRateByName's own
-  // comment), since they depend on data derived later in this component.
-  const [branchRatePrefilling, setBranchRatePrefilling] = useState(false);
 
   const pendingPayrollDisputes = payrollDisputes.filter((r) => r.status === "pending");
   // Approved disputes stay visible (not just pending ones) so an accidental
@@ -2546,50 +2484,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // office hourly row.
   const isTechRole = (emp: SupabaseEmployee) => TECHNICIAN_PAY_ROLES.has(normalizeRole(emp.role));
 
-  // Suggested rate for Branch Rates' "Prefill from State Minimum Wage"
-  // button — straight from the STATE_MIN_WAGE_2026 reference table. States
-  // whose minimum wage is set by county rather than statewide (rate: null —
-  // New York, Oregon) have no suggestion; Finance enters the correct
-  // county-specific number by hand for those.
-  const suggestedBranchRateByName = new Map<string, number>();
-  for (const { state } of STATE_MIN_WAGE_2026) {
-    const rate = stateMinWageOn(state); // today's rate (Florida: $15 from 2026-09-30)
-    if (rate != null) suggestedBranchRateByName.set(state, rate);
-  }
-  // "Prefill from State Minimum Wage" — fills every state that (a) doesn't
-  // already have a saved rate (never overwrites a value Finance already set,
-  // even $0) and (b) has a numeric rate in the reference table above.
-  // States failing either check are left alone — "skip those data not
-  // available" — rather than guessed at.
-  const branchRatePrefillCount = branchRateStateNames.filter((s) => !branchRatesByName.has(s) && suggestedBranchRateByName.has(s)).length;
-  const handlePrefillBranchRates = async () => {
-    const toFill = branchRateStateNames.filter((s) => !branchRatesByName.has(s) && suggestedBranchRateByName.has(s));
-    if (toFill.length === 0) return;
-    setBranchRatePrefilling(true);
-    try {
-      for (const state of toFill) {
-        const rate = suggestedBranchRateByName.get(state)!;
-        await upsertBranchRate(state, rate);
-        setBranchRatesByName((prev) => {
-          const next = new Map(prev);
-          next.set(state, { id: state, branch: state, rate, updatedAt: new Date().toISOString() });
-          return next;
-        });
-      }
-      void logModuleActivity({
-        module: "accounting",
-        actorName: displayName || email || "Admin",
-        action: "branch_rate_saved",
-        targetType: "branch",
-        targetLabel: `${toFill.length} state${toFill.length === 1 ? "" : "s"} (prefilled from state minimum wage)`,
-        details: { states: toFill },
-      });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to prefill state minimum wage rates.");
-    } finally {
-      setBranchRatePrefilling(false);
-    }
-  };
   // Holds a technician-tier role as a secondary/extra role while their
   // primary role is something else (e.g. a CSR Agent who also picks up
   // technician work) — gets an ADDITIONAL tech-portion payroll row
@@ -6124,6 +6018,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             onPeriodChange={(start, end) => { setGenStart(start); setGenEnd(end); }}
           />
         )}
+        {activeTab === "payrollHistory" && (
+          <PayrollHistoryTab
+            runs={payrollRuns}
+            lineItems={payrollLineItems}
+            employees={employees}
+            currentPeriodStart={genStart}
+            exchangeRate={EXCHANGE_RATE}
+          />
+        )}
+
 
         {/* ── Flash Tech Tab ───────────────────────────────────────────────── */}
         {/* Moved here from its old standalone page (reached via a button on
@@ -6362,116 +6266,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         )}
                       </Fragment>
                     ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* ── Branch Rates Tab ─────────────────────────────────────────────── */}
-        {activeTab === "branchRates" && (
-          <div className="panel p-0 overflow-hidden">
-            <div className="px-4 py-4 border-b border-white/10 flex items-center justify-between gap-3">
-              <div>
-                <h2 className="font-semibold text-sm">Branch Rates</h2>
-                <p className="text-[10px] text-muted-foreground mt-0.5">State minimum wage reference (2026) — for Finance's own use, not tied to any payroll calculation.</p>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {branchRatesLoading && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
-                <button
-                  type="button"
-                  onClick={() => void handlePrefillBranchRates()}
-                  disabled={branchRatePrefilling || branchRatePrefillCount === 0}
-                  title={
-                    branchRatePrefillCount === 0
-                      ? "No state has an unset rate left to prefill"
-                      : `Fills the ${branchRatePrefillCount} state${branchRatePrefillCount === 1 ? "" : "s"} with no rate saved yet from the state minimum wage table — states set by county (New York, Oregon) are left as-is`
-                  }
-                  className="text-xs px-3 py-1.5 rounded-md border border-white/10 text-slate-300 hover:text-white hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
-                >
-                  {branchRatePrefilling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                  Prefill from State Minimum Wage{branchRatePrefillCount > 0 ? ` (${branchRatePrefillCount})` : ""}
-                </button>
-              </div>
-            </div>
-
-            <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex items-center gap-3">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-                <input
-                  type="text"
-                  value={branchRateSearch}
-                  onChange={(e) => setBranchRateSearch(e.target.value)}
-                  placeholder="State…"
-                  className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
-                />
-              </div>
-              <span className="ml-auto text-[10px] text-muted-foreground">{branchRateFilteredLocations.length} state{branchRateFilteredLocations.length === 1 ? "" : "s"}</span>
-            </div>
-
-            {error && (
-              <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{error}</p>
-            )}
-
-            <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0">
-                  <tr className="border-b border-white/10 bg-slate-900">
-                    <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">State</th>
-                    <th className="px-4 py-3 text-right text-xs text-muted-foreground uppercase">Rate</th>
-                    <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Last Updated</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {branchRateFilteredLocations.length === 0 ? (
-                    <tr><td colSpan={3} className="px-4 py-8 text-center text-muted-foreground text-sm">No state matches "{branchRateSearch}".</td></tr>
-                  ) : (
-                    branchRateFilteredLocations.map((state) => {
-                      const existing = branchRatesByName.get(state);
-                      const saving = branchRateSaving === state;
-                      const suggested = suggestedBranchRateByName.get(state);
-                      // The two states set by county rather than a single
-                      // statewide number (rate: null in STATE_MIN_WAGE_2026)
-                      // have no numeric suggestion — Finance has to look up
-                      // and enter the right county's figure by hand.
-                      const isCountyBased = !suggested && !existing;
-                      return (
-                        <tr key={state} className="border-b border-white/5 hover:bg-white/5">
-                          <td className="px-4 py-3 font-medium whitespace-nowrap">{state}</td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="flex items-center justify-end gap-1.5">
-                              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />}
-                              <span className="text-muted-foreground">$</span>
-                              <input
-                                // Keyed on the saved rate (not just state) so
-                                // this uncontrolled input remounts and picks
-                                // up the new defaultValue after "Prefill from
-                                // State Minimum Wage" updates it out from
-                                // under an already-mounted row.
-                                key={`${state}:${existing?.rate ?? 0}`}
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                defaultValue={existing?.rate ?? 0}
-                                onBlur={(e) => void handleBranchRateBlur(state, e.target.value)}
-                                disabled={saving}
-                                className="glass-input text-sm py-1 px-2 rounded-md w-28 text-right disabled:opacity-50"
-                              />
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
-                            {existing?.updatedAt
-                              ? new Date(existing.updatedAt).toLocaleString()
-                              : suggested
-                              ? <span className="text-slate-500 italic">Suggested: ${suggested.toFixed(2)}</span>
-                              : isCountyBased
-                              ? <span className="text-slate-600 italic">Based on county — enter manually</span>
-                              : <span className="text-slate-600 italic">No rate on file</span>}
-                          </td>
-                        </tr>
-                      );
-                    })
                   )}
                 </tbody>
               </table>
