@@ -101,7 +101,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
   const [form, setForm] = useState<FormState>(emptyForm());
   /** Photo shown in the right-side preview panel (opened by clicking a picture); closed when the ticket changes. */
   const [sidePreview, setSidePreview] = useState<{ photos: TicketPhoto[]; index: number } | null>(null);
-  useEffect(() => { setSidePreview(null); }, [ticket.ticketNo]);
+  useEffect(() => { setSidePreview(null); setConfirmSpSubmit(false); }, [ticket.ticketNo]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [customerComplaint, setCustomerComplaint] = useState("");
@@ -117,6 +117,8 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
   const [checkedPartIds, setCheckedPartIds] = useState<Set<string>>(new Set());
   const [savingPartId, setSavingPartId] = useState<string | null>(null);
   const [submittingToSP, setSubmittingToSP] = useState(false);
+  // "Are you sure?" step before a claim is filed with ServicePower.
+  const [confirmSpSubmit, setConfirmSpSubmit] = useState(false);
   const [spMessage, setSpMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const currentTicketRef = useRef(ticket.ticketNo);
@@ -262,6 +264,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
   // onto this ticket's claim details so a later resubmission updates the
   // same claim instead of creating a duplicate.
   const handleSubmitToServicePower = async () => {
+    setConfirmSpSubmit(false);
     setSubmittingToSP(true);
     setSpMessage(null);
     try {
@@ -404,7 +407,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
               Submit Pre-Claim
             </button>
             <button
-              onClick={handleSubmitToServicePower}
+              onClick={() => setConfirmSpSubmit(true)}
               disabled={submittingToSP || loading}
               title="Builds the claim from this ticket's own data (no retyping) and files it with ServicePower"
               className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-sm font-semibold transition"
@@ -417,6 +420,45 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
             </button>
           </div>
         </div>
+
+        {confirmSpSubmit && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" onClick={() => setConfirmSpSubmit(false)}>
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="sp-submit-confirm-title"
+              className="w-full max-w-md rounded-xl border border-white/10 bg-slate-900 p-5 text-left shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); setConfirmSpSubmit(false); } }}
+            >
+              <h3 id="sp-submit-confirm-title" className="text-lg font-bold text-white">Submit this claim to ServicePower?</h3>
+              <p className="mt-1 text-sm text-slate-300">
+                {form.spClaimBatchNumber
+                  ? <>This updates the claim already on ServicePower (Batch {form.spClaimBatchNumber} / Seq {form.spClaimSequenceNumber}).</>
+                  : <>This files the claim with ServicePower.</>}
+              </p>
+              <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 rounded-lg border border-white/10 bg-slate-950/40 px-3 py-2 text-sm">
+                <dt className="text-slate-400">Ticket</dt>
+                <dd className="font-mono text-white">{ticket.ticketNo}</dd>
+                <dt className="text-slate-400">Customer</dt>
+                <dd className="text-white">{[ticket.firstName, ticket.lastName].filter(Boolean).join(" ") || "—"}</dd>
+                <dt className="text-slate-400">Manufacturer</dt>
+                <dd className="text-white">{ticket.manufacturer || "—"}</dd>
+                <dt className="text-slate-400">Claim Total</dt>
+                <dd className="font-semibold text-green-300">{fmt(claimTotal)}</dd>
+              </dl>
+              <p className="mt-2 text-xs text-amber-300">Any changes on this form are saved first. If ServicePower accepts the claim with nothing to correct, the ticket is set to CL-Claimed.</p>
+              <div className="mt-4 flex flex-wrap justify-end gap-2">
+                <button type="button" autoFocus onClick={() => setConfirmSpSubmit(false)} className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600">
+                  Cancel
+                </button>
+                <button type="button" onClick={() => void handleSubmitToServicePower()} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
+                  Yes, submit to ServicePower
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Form on the left; a clicked photo opens in the preview panel on the right. */}
         <div className="flex min-h-0 flex-1">
