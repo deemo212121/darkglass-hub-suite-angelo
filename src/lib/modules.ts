@@ -2164,6 +2164,16 @@ const bizOpsMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    // Same page and the same saved Pre-Auths as Claims → Pre-Auth (BizOps
+    // roles were already allowed on it — PRE_AUTH_DEFAULT_ROLES).
+    {
+      slug: "pre-auth",
+      title: "Pre-Auth",
+      description: "ServicePower Call Auth (Request for Authorization) — fill in, save and track pre-auths for tickets in PT-Need PreAuthorization.",
+      custom: "pre-auth" as any,
+      fields: [],
+      seed: () => ({}),
+    },
     // Same shortcut-copy pattern as HR's own Candidate Reviews tile.
     {
       slug: "candidate-reviews",
