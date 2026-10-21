@@ -6,7 +6,7 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
 import { deleteExpenseReceiptFile } from "@/lib/firebase/storage";
-import {
+import { reimbursementTypeLabel,
   getCompanyExpenses,
   updateExpenseStatus,
   deleteExpense,
@@ -152,6 +152,8 @@ export function ExpenseTrackingPage({
   const COLUMNS: { key: string; label: string; value: (e: ExpenseRow) => string }[] = [
     { key: "employee", label: "Employee", value: (e) => profileName(e.profileId) },
     { key: "category", label: "Category", value: (e) => e.category || "" },
+    // Gas / Food / Other on a Reimbursement Form (migration 0401). Every "Other — …" is one filter choice, "Other".
+    { key: "type", label: "Type", value: (e) => e.reimbursementType || "—" },
     { key: "date", label: "Date", value: (e) => e.expenseDate || "" },
     { key: "amount", label: "Amount", value: (e) => fmtMoney(e.amount) },
     { key: "description", label: "Description", value: (e) => e.description || "" },
@@ -411,13 +413,22 @@ export function ExpenseTrackingPage({
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-400">Loading expenses…</td></tr>
+                  <tr><td colSpan={11} className="px-3 py-8 text-center text-slate-400">Loading expenses…</td></tr>
                 ) : filtered.length === 0 ? (
-                  <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-400">{selfFiledOnly && scopedExpenses.length === 0 ? "No employee has sent an expense request yet." : "No expense records match this filter."}</td></tr>
+                  <tr><td colSpan={11} className="px-3 py-8 text-center text-slate-400">{selfFiledOnly && scopedExpenses.length === 0 ? "No employee has sent an expense request yet." : "No expense records match this filter."}</td></tr>
                 ) : filtered.map((e) => (
                   <tr key={e.id} className="border-b border-white/5 hover:bg-white/5 transition">
                     <td className="px-3 py-3 text-white font-medium">{profileName(e.profileId)}</td>
                     <td className="px-3 py-3 text-slate-300">{e.category}</td>
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      {e.reimbursementType ? (
+                        <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium border ${e.reimbursementType === "Gas" ? "border-sky-400/40 bg-sky-500/10 text-sky-200" : e.reimbursementType === "Food" ? "border-amber-400/40 bg-amber-500/10 text-amber-200" : "border-violet-400/40 bg-violet-500/10 text-violet-200"}`} title={reimbursementTypeLabel(e)}>
+                          {reimbursementTypeLabel(e)}
+                        </span>
+                      ) : (
+                        <span className="text-slate-600 text-xs">—</span>
+                      )}
+                    </td>
                     <td className="px-3 py-3 text-slate-300">{e.expenseDate}</td>
                     <td className="px-3 py-3 text-right text-slate-200 font-mono">{fmtMoney(e.amount)}</td>
                     <td className="px-3 py-3 text-slate-400 max-w-xs truncate" title={e.description}>{e.description || "—"}</td>

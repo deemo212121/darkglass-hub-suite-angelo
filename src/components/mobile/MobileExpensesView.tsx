@@ -8,8 +8,11 @@ import {
   createExpense,
   updateExpense,
   deleteExpense,
+  REIMBURSEMENT_TYPES,
+  reimbursementTypeLabel,
   type ExpenseRow,
   type ExpenseCategory,
+  type ReimbursementType,
 } from "@/lib/supabase/expenses";
 import { EMPLOYEE_EXPENSE_CATEGORY } from "@/components/ExpenseFormModal";
 import { ReceiptLightbox } from "@/components/ReceiptLightbox";
@@ -40,6 +43,8 @@ const emptyForm = () => ({
   fromLocation: "",
   toLocation: "",
   description: "",
+  reimbursementType: "" as ReimbursementType | "",
+  reimbursementOther: "",
 });
 
 export function MobileExpensesView({ profileId, companyId }: { profileId: string | null; companyId: string | null }) {
@@ -103,6 +108,8 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
       fromLocation: e.fromLocation || "",
       toLocation: e.toLocation || "",
       description: e.description || "",
+      reimbursementType: e.reimbursementType ?? "",
+      reimbursementOther: e.reimbursementOther || "",
     });
     setReceiptFile(null);
     setExistingReceipt(e.receiptUrl ? { url: e.receiptUrl, path: e.receiptPath } : null);
@@ -116,6 +123,8 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
     const amount = Number(form.amount);
     if (form.amount.trim() === "" || !Number.isFinite(amount) || amount <= 0) { setMsg("Please enter the amount (more than $0)."); return; }
     if (!form.expenseDate) { setMsg("Please pick the date."); return; }
+    if (!form.reimbursementType) { setMsg("Please pick the type of reimbursement (Gas, Food or Other)."); return; }
+    if (form.reimbursementType === "Other" && !form.reimbursementOther.trim()) { setMsg("Please specify what the Other reimbursement is for."); return; }
     if (!receiptFile && !existingReceipt) { setMsg("Please attach a receipt (photo or PDF)."); return; }
     setSubmitting(true);
     try {
@@ -136,6 +145,8 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
         orNumber: form.orNumber,
         fromLocation: form.fromLocation,
         toLocation: form.toLocation,
+        reimbursementType: form.reimbursementType || null,
+        reimbursementOther: form.reimbursementOther,
       };
       if (editing) {
         await updateExpense(editing.id, fields);
@@ -208,6 +219,27 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
         <div className="mtech-section-title">Category</div>
         {/* Sent by the employee — always a Reimbursement Form (migration 0386). */}
         <div className="mtech-bill-input full" style={{ opacity: 0.8 }}>{EMPLOYEE_EXPENSE_CATEGORY}</div>
+
+        <div className="mtech-section-title">Type of Reimbursement *</div>
+        <div style={{ display: "flex", gap: "0.4rem" }}>
+          {REIMBURSEMENT_TYPES.map((t) => {
+            const on = form.reimbursementType === t;
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setForm({ ...form, reimbursementType: t })}
+                className="mtech-bill-input"
+                style={{ flex: 1, textAlign: "center", cursor: "pointer", borderColor: on ? "#3b82f6" : undefined, background: on ? "rgba(59,130,246,0.2)" : undefined, color: on ? "#fff" : undefined, fontWeight: on ? 700 : 500 }}
+              >
+                {t === "Other" ? "Other (specify)" : t}
+              </button>
+            );
+          })}
+        </div>
+        {form.reimbursementType === "Other" && (
+          <input className="mtech-bill-input full" style={{ marginTop: "0.4rem" }} type="text" placeholder="What is it for? e.g. Parking, Tolls" value={form.reimbursementOther} onChange={(e) => setForm({ ...form, reimbursementOther: e.target.value })} />
+        )}
 
         <div className="mtech-section-title">Date</div>
         <input className="mtech-bill-input full" type="date" value={form.expenseDate} onChange={(e) => setForm({ ...form, expenseDate: e.target.value })} />
@@ -294,7 +326,7 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
                   <div className="mtech-payroll-status" style={{ background: pill.bg, color: pill.fg }}>{pill.label}</div>
                 </div>
                 <div className="mtech-payroll-row-body" style={{ display: "block", padding: "0.4rem 0.85rem 0.7rem" }}>
-                  <p className="mtech-muted" style={{ padding: "0.25rem 0", fontWeight: 600 }}>{e.category}{e.description ? ` — ${e.description}` : ""}</p>
+                  <p className="mtech-muted" style={{ padding: "0.25rem 0", fontWeight: 600 }}>{e.category}{reimbursementTypeLabel(e) ? ` · ${reimbursementTypeLabel(e)}` : ""}{e.description ? ` — ${e.description}` : ""}</p>
                   {(route || e.orNumber) && (
                     <p className="mtech-muted" style={{ padding: "0.25rem 0" }}>{[route, e.orNumber ? `OR# ${e.orNumber}` : ""].filter(Boolean).join(" · ")}</p>
                   )}
