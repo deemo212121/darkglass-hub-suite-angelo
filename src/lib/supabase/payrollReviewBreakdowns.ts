@@ -36,7 +36,7 @@ export interface PayrollReviewBreakdown extends PayrollReviewAmounts {
   source: "review" | "manual";
   updatedByName: string | null;
   updatedAt: string;
-  /** Snapshotted at Done (migration 0395); null for older/manual rows or before the migration. */
+  /** Snapshotted at Done (migration 0398); null for older/manual rows or before the migration. */
   regularHours: number | null;
   otHours: number | null;
 }
@@ -61,7 +61,7 @@ export function reviewBreakdownTotal(a: PayrollReviewAmounts): number {
 const BASE_COLUMNS = "id, profile_id, period_start, period_end, branch, regular_pay, ot_pay, bonus, commission, pto_pay, deduction, mileage_other_reimb, pretax_insurance, salary_match, source, updated_by_name, updated_at, technician:profiles!payroll_review_breakdowns_profile_id_fkey(display_name)";
 
 const COLUMNS = `${BASE_COLUMNS}, regular_hours, ot_hours`;
-/** True when the hours columns (migration 0395) don't exist yet — callers retry without them. */
+/** True when the hours columns (migration 0398) don't exist yet — callers retry without them. */
 const missingHours = (message: string) => /regular_hours|ot_hours/i.test(message);
 
 const missingTable = (message: string) => /payroll_review_breakdowns/i.test(message) && /does not exist|schema cache|not find/i.test(message);
@@ -115,14 +115,22 @@ export async function getPayrollReviewBreakdowns(periodStart: string, periodEnd:
 
 /** Every pay period that has at least one row, newest first — the tab's period dropdown. */
 export async function getPayrollReviewPeriods(): Promise<{ periodStart: string; periodEnd: string; count: number }[]> {
-  const { data, error } = await supabase
-    .from("payroll_review_breakdowns")
-    .select("period_start, period_end")
-    .order("period_start", { ascending: false })
-    .limit(5000);
-  if (error) throw new Error(friendly(error.message));
+  // Paged: one answer stops at 1,000 rows, which would drop the oldest periods.
+  const PAGE = 1000;
+  const rows: { period_start: string; period_end: string }[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("payroll_review_breakdowns")
+      .select("period_start, period_end")
+      .order("period_start", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(friendly(error.message));
+    rows.push(...((data ?? []) as typeof rows));
+    if (!data || data.length < PAGE) break;
+  }
   const byKey = new Map<string, { periodStart: string; periodEnd: string; count: number }>();
-  for (const r of (data ?? []) as { period_start: string; period_end: string }[]) {
+  for (const r of rows) {
     const key = `${r.period_start}|${r.period_end}`;
     const prev = byKey.get(key);
     if (prev) prev.count += 1;
@@ -142,7 +150,7 @@ export async function upsertPayrollReviewBreakdown(
     source: "review" | "manual";
     updatedBy: string | null;
     updatedByName: string | null;
-    /** Regular / OT hours to snapshot (migration 0395) — skipped if that migration hasn't run. */
+    /** Regular / OT hours to snapshot (migration 0398) — skipped if that migration hasn't run. */
     hours?: { regular: number; ot: number };
   }
 ): Promise<void> {

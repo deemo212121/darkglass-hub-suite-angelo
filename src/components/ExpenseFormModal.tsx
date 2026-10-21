@@ -28,6 +28,7 @@ export function ExpenseFormModal({
   companyId,
   onClose,
   onSaved,
+  defaultCategory,
 }: {
   editing: ExpenseRow | null;
   profiles?: ProfileRow[];
@@ -38,10 +39,12 @@ export function ExpenseFormModal({
   companyId: string | null;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
+  /** A new expense starts on this category (e.g. the Expenses module's Hotel / Car Rental tab). */
+  defaultCategory?: ExpenseCategory;
 }) {
   const [form, setForm] = useState(() => ({
     profileId: editing?.profileId ?? fixedProfileId ?? "",
-    category: fixedProfileId ? EMPLOYEE_EXPENSE_CATEGORY : editing?.category ?? ("Hotel" as ExpenseCategory),
+    category: fixedProfileId ? EMPLOYEE_EXPENSE_CATEGORY : editing?.category ?? defaultCategory ?? ("Hotel" as ExpenseCategory),
     expenseDate: editing?.expenseDate ?? todayISO(),
     amount: editing ? String(editing.amount) : "",
     description: editing?.description ?? "",

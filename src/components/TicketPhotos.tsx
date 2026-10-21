@@ -45,6 +45,7 @@ export function TicketPhotos({
   uploadedBy,
   visitOptions,
   enableOfflineQueue,
+  onPhotoClick,
 }: {
   ticketNo: string;
   category?: string;
@@ -53,6 +54,8 @@ export function TicketPhotos({
   visitOptions?: string[];
   /** Mobile only — desktop leaves this off, so a failed upload there still just fails outright (unchanged behavior). A failure while offline queues the already-compressed photo instead of erroring; OfflineQueueBadge (mounted in MobileTechApp) drains it once back online. */
   enableOfflineQueue?: boolean;
+  /** When set, clicking a photo calls this (with every image photo, in order) instead of opening the full-screen viewer — e.g. Pre-Claim's side preview. */
+  onPhotoClick?: (photo: TicketPhoto, imagePhotos: TicketPhoto[]) => void;
 }) {
   const { companyId, ready } = useAuth();
   const [photos, setPhotos] = useState<TicketPhoto[]>([]);
@@ -371,7 +374,7 @@ export function TicketPhotos({
               {isImage(photo.name) ? (
                 <button
                   type="button"
-                  onClick={() => openPreview(photo)}
+                  onClick={() => (onPhotoClick ? onPhotoClick(photo, photos.filter((p) => isImage(p.name))) : openPreview(photo))}
                   className="block w-full"
                   title={photo.width && photo.height ? `${formatBytes(photo.size)} · ${photo.width}×${photo.height}` : undefined}
                 >

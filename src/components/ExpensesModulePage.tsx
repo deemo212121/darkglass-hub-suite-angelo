@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, Plane, Receipt } from "lucide-react";
+import { BedDouble, Car, ChevronLeft, Plane, Receipt } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
@@ -15,7 +15,14 @@ import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
  * → My Requests (selfFiledOnly). More expense categories land here
  * as their own tabs later without restructuring this page.
  */
-type ExpensesTab = "flashTech" | "employeeRequests";
+type ExpensesTab = "flashTech" | "employeeRequests" | "hotel" | "carRental";
+
+const TABS: { key: ExpensesTab; label: string; icon: typeof Plane }[] = [
+  { key: "flashTech", label: "Flash Tech", icon: Plane },
+  { key: "employeeRequests", label: "Employee Requests", icon: Receipt },
+  { key: "hotel", label: "Hotel", icon: BedDouble },
+  { key: "carRental", label: "Car Rental", icon: Car },
+];
 
 export function ExpensesModulePage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
@@ -36,25 +43,23 @@ export function ExpensesModulePage({ mod, sub }: { mod: ModuleDef; sub: SubModul
           </div>
         </div>
 
-        <div className="flex gap-1.5 mb-4">
-          <button
-            type="button"
-            onClick={() => setTab("flashTech")}
-            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${tab === "flashTech" ? "bg-primary/20 text-primary" : ""}`}
-          >
-            <Plane className="h-3.5 w-3.5" /> Flash Tech
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab("employeeRequests")}
-            className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${tab === "employeeRequests" ? "bg-primary/20 text-primary" : ""}`}
-          >
-            <Receipt className="h-3.5 w-3.5" /> Employee Requests
-          </button>
+        <div className="flex flex-wrap gap-1.5 mb-4">
+          {TABS.map(({ key, label, icon: Icon }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={`btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 ${tab === key ? "bg-primary/20 text-primary" : ""}`}
+            >
+              <Icon className="h-3.5 w-3.5" /> {label}
+            </button>
+          ))}
         </div>
 
         {tab === "flashTech" && <ExpenseTrackingPage mod={mod} sub={sub} embedded flashTechOnly />}
         {tab === "employeeRequests" && <ExpenseTrackingPage mod={mod} sub={sub} embedded selfFiledOnly />}
+        {tab === "hotel" && <ExpenseTrackingPage mod={mod} sub={sub} embedded categoryOnly="Hotel" />}
+        {tab === "carRental" && <ExpenseTrackingPage mod={mod} sub={sub} embedded categoryOnly="Car Rental" />}
       </div>
     </main>
   );

@@ -1,5 +1,7 @@
 -- =====================================================================
--- 0395 — payroll_review_breakdowns: regular / OT hours
+-- 0398 — payroll_review_breakdowns: regular / OT hours
+-- (janeyyy16's 0395, renumbered — this repo's 0395 is tech_tax_lines.
+--  Already applied on the shared database 2026-10-20.)
 --
 -- Payroll History's per-person breakdown shows quantities, not just
 -- dollars (Finance, 2026-10-20): hours and OT hours alongside tickets,

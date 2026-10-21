@@ -333,6 +333,8 @@ async function fetchTicketPage(
   i: number,
   withCount: boolean,
   sinceDate?: string,
+  /** A PostgREST `or` filter (e.g. statuses) — see getCompanyTicketsWithStatuses. */
+  orFilter?: string,
 ): Promise<{ data: any[] | null; error: { message: string } | null; count?: number | null }> {
   let lastError: { message: string } | null = null;
   for (let attempt = 0; attempt <= PAGE_FETCH_RETRIES; attempt++) {
@@ -342,6 +344,7 @@ async function fetchTicketPage(
       .order("created_at", { ascending: false })
       .order("id", { ascending: false });
     if (sinceDate) query = query.gte("created_at", sinceDate);
+    if (orFilter) query = query.or(orFilter);
     query = query.range(i * PAGE_SIZE, i * PAGE_SIZE + PAGE_SIZE - 1);
     const { data, error, count } = await query;
     if (!error) return { data, error: null, count };
@@ -389,7 +392,23 @@ function cloneTickets(rows: Ticket[]): Ticket[] {
   return rows.map((t) => ({ ...t }));
 }
 
-async function fetchCompanyTicketsUncached(sinceDate?: string): Promise<Ticket[]> {
+/**
+ * The company's tickets whose status contains one of `statuses` (case-
+ * insensitive) — the database does the narrowing, so a page that only needs
+ * a few statuses doesn't download the whole ticket history (Need Claim List:
+ * ~3,200 of 11,000+ tickets, 8 MB instead of 28 MB). "Contains" can return a
+ * few extra rows (e.g. "cancel" also matches "CL-Need Cancel"), so callers
+ * keep their own exact status check. Not cached — unlike getCompanyTickets.
+ */
+export async function getCompanyTicketsWithStatuses(statuses: string[]): Promise<Ticket[]> {
+  const terms = statuses
+    .map((s) => s.trim().replace(/[,()"\\%*_]/g, ""))
+    .filter(Boolean);
+  if (terms.length === 0) return [];
+  return fetchCompanyTicketsUncached(undefined, terms.map((s) => `status.ilike.*${s}*`).join(","));
+}
+
+async function fetchCompanyTicketsUncached(sinceDate?: string, orFilter?: string): Promise<Ticket[]> {
   // created_at is NOT unique — a bulk import can give thousands of rows the
   // same timestamp, and range()-based paging over a non-unique sort key
   // silently drops/duplicates rows across page boundaries. id is the stable
@@ -398,7 +417,7 @@ async function fetchCompanyTicketsUncached(sinceDate?: string): Promise<Ticket[]
   // First page carries an exact count so we know how many more to fetch.
   // Small tenants (<= PAGE_SIZE) are done in this one request; larger ones
   // get the remaining pages concurrently instead of one-after-another.
-  const first = await fetchTicketPage(0, true, sinceDate);
+  const first = await fetchTicketPage(0, true, sinceDate, orFilter);
   if (first.error) {
     console.error("getCompanyTickets error:", first.error.message);
     throw new Error(first.error.message);
@@ -409,7 +428,7 @@ async function fetchCompanyTicketsUncached(sinceDate?: string): Promise<Ticket[]
   if (total <= PAGE_SIZE) return all;
 
   const rest = await Promise.all(
-    Array.from({ length: Math.ceil(total / PAGE_SIZE) - 1 }, (_, k) => fetchTicketPage(k + 1, false, sinceDate)),
+    Array.from({ length: Math.ceil(total / PAGE_SIZE) - 1 }, (_, k) => fetchTicketPage(k + 1, false, sinceDate, orFilter)),
   );
   for (const { data, error } of rest) {
     if (error) {

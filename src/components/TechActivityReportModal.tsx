@@ -648,7 +648,7 @@ export function TechActivityReportModal({
     }
   };
 
-  // Tax lines (migration 0393) — below Total Payment, display-only: they
+  // Tax lines (migration 0395) — below Total Payment, display-only: they
   // give Net Pay After Tax and never change Total Payment or anything above.
   const [taxLines, setTaxLines] = useState<TechTaxLine[]>([]);
   const [savingTaxId, setSavingTaxId] = useState<string | null>(null);

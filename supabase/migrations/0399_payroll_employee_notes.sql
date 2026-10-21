@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0396 — payroll_employee_notes: a note from Payroll to one employee
+-- 0399 — payroll_employee_notes: a note from Payroll to one employee
 --         for one pay period
 --
 -- Finance (2026-10-20) needs to tell an employee things like "You were
@@ -15,7 +15,10 @@
 -- Editing the text clears acknowledged_at, so a changed note has to be
 -- read again.
 --
--- Run once in the Supabase SQL Editor, after 0395.
+-- Run once in the Supabase SQL Editor, after 0398.
+-- (janeyyy16's 0396, renumbered — this repo's 0396 is
+--  expense_review_accounting_only. Already applied on the shared database
+--  2026-10-20.)
 -- =====================================================================
 
 create table if not exists payroll_employee_notes (

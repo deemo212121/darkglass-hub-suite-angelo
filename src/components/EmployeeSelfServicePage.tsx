@@ -200,7 +200,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [companyProfiles, setCompanyProfiles] = useState<ProfileRow[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(true);
   const [myPayslips, setMyPayslips] = useState<MyPayslipRow[]>([]);
-  // Notes from Payroll (migration 0396) — unread ones show as a banner above
+  // Notes from Payroll (migration 0399) — unread ones show as a banner above
   // the tabs until "I've read this" is clicked.
   const [myPayrollNotes, setMyPayrollNotes] = useState<PayrollNote[]>([]);
   const [ackingNoteId, setAckingNoteId] = useState<string | null>(null);
@@ -257,19 +257,26 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   // Over 6 hours: meal fields unlocked and required. 6 hours or less (or
   // not both punches entered yet): locked — a meal on a short shift is unpaid.
   const correctionMealRequired = correctionShift !== null && correctionShift > CORRECTION_MEAL_REQUIRED_AFTER_MINUTES;
-  // Pre-fill the meal fields with the meal actually punched on the picked
-  // date (only while they're still blank), so the employee only adjusts
-  // what's wrong or fills in a meal they forgot to punch.
+  // Pre-fill all four fields with what's on the timecard for the picked
+  // date (Check In, Check Out, Meal Start, Meal End) — re-filled whenever
+  // the date changes — so nothing gets missed: the employee only changes
+  // what's wrong. A punch that isn't on the timecard stays blank.
   useEffect(() => {
     if (!myProfileId || !formData.correctionDate) return;
     let cancelled = false;
     getEntryForDate(myProfileId, formData.correctionDate)
       .then((e) => {
-        if (cancelled || !(e?.mealStart || e?.mealEnd)) return;
+        if (cancelled) return;
         setFormData((prev) =>
-          prev.correctedMealStart || prev.correctedMealEnd
+          prev.correctionDate !== formData.correctionDate
             ? prev
-            : { ...prev, correctedMealStart: e?.mealStart || "", correctedMealEnd: e?.mealEnd || "" }
+            : {
+                ...prev,
+                correctedCheckIn: e?.checkIn || "",
+                correctedCheckOut: e?.checkOut || "",
+                correctedMealStart: e?.mealStart || "",
+                correctedMealEnd: e?.mealEnd || "",
+              }
         );
       })
       .catch(() => {});
@@ -385,7 +392,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     return () => { cancelled = true; };
   }, [myProfileId]);
 
-  // Separate from the load above so a missing migration (0396) can't blank
+  // Separate from the load above so a missing migration (0399) can't blank
   // the payslips.
   useEffect(() => {
     if (!myProfileId) return;
@@ -1223,11 +1230,12 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
       sickLeave,
       totalDays: offDays + ptoUsed,
       extraPay: selectedPayslip.extraPay,
-      // Payroll's note for this period (migration 0396) first, then the run line's own note.
+      // Payroll's note for this period (migration 0399) first, then the run line's own note.
       notes: [noteForPeriod(selectedPayslip.periodStart, selectedPayslip.periodEnd)?.body, selectedPayslip.notes]
         .filter(Boolean)
         .map((t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"))
         .join("\n\n"),
+      adjustments: selectedPayslip.adjustments,
       isUS,
     };
   })() : null;

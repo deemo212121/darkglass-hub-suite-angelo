@@ -1,5 +1,5 @@
 /**
- * A note from Payroll to one employee for one pay period (migration 0396)
+ * A note from Payroll to one employee for one pay period (migration 0399)
  * — e.g. "You were overpaid by $138.79. It will be deducted from your next
  * pay." Written in Accounting Dashboard → Payroll History; shown in
  * Self-Service → My Payroll until the employee clicks "I've read this".
@@ -24,7 +24,7 @@ const COLUMNS = "id, profile_id, period_start, period_end, body, created_by_name
 
 const friendly = (message: string) =>
   /payroll_employee_notes|acknowledge_payroll_note/i.test(message) && /does not exist|schema cache|not find/i.test(message)
-    ? "Payroll notes need database migration 0396 — ask an admin to run it."
+    ? "Payroll notes need database migration 0399 — ask an admin to run it."
     : message;
 
 function mapRow(r: any): PayrollNote {

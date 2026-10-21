@@ -2229,6 +2229,15 @@ const guidesMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    {
+      slug: "bizops-operations",
+      title: "BizOps Operations",
+      description: "For BizOps: working the OP queues, checking parts shipments (Marcone, Encompass, NSA, GE) and Need Cancel — from the Operations Guidelines.",
+      custom: "bizops-guide" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
   ],
 };
 

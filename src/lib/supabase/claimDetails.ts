@@ -48,8 +48,25 @@ export interface TicketClaimDetails {
   spClaimStatusDescription: string;
   spSubmittedAt: string;
   spLastResponse: unknown;
+  // What ServicePower paid on the claim (migration 0397) — saved by the
+  // hourly paid-claim check and the Claim List's Sync Status. null = not
+  // read back from ServicePower yet.
+  spPaidTotal: number | null;
+  spPaidLabor: number | null;
+  spPaidParts: number | null;
+  spPaidShipping: number | null;
+  spPaidMileage: number | null;
+  spPaidOther: number | null;
+  spPaidTax: number | null;
+  /** YYYY-MM-DD */
+  spPaymentDate: string;
+  /** YYYY-MM-DD — when ServicePower received the claim. */
+  spReceivedDate: string;
+  spClaimCheckedAt: string;
   updatedAt: string;
 }
+
+const numOrNull = (v: unknown): number | null => (v == null || v === "" ? null : Number(v));
 
 function rowToClaimDetails(row: any): TicketClaimDetails {
   return {
@@ -85,6 +102,16 @@ function rowToClaimDetails(row: any): TicketClaimDetails {
     spClaimStatusDescription: row.sp_claim_status_description ?? "",
     spSubmittedAt: row.sp_submitted_at ?? "",
     spLastResponse: row.sp_last_response ?? null,
+    spPaidTotal: numOrNull(row.sp_paid_total),
+    spPaidLabor: numOrNull(row.sp_paid_labor),
+    spPaidParts: numOrNull(row.sp_paid_parts),
+    spPaidShipping: numOrNull(row.sp_paid_shipping),
+    spPaidMileage: numOrNull(row.sp_paid_mileage),
+    spPaidOther: numOrNull(row.sp_paid_other),
+    spPaidTax: numOrNull(row.sp_paid_tax),
+    spPaymentDate: row.sp_payment_date ?? "",
+    spReceivedDate: row.sp_received_date ?? "",
+    spClaimCheckedAt: row.sp_claim_checked_at ?? "",
     updatedAt: row.updated_at ?? "",
   };
 }
@@ -168,6 +195,16 @@ export async function upsertTicketClaimDetails(
   if (fields.spClaimStatusDescription !== undefined) payload.sp_claim_status_description = fields.spClaimStatusDescription || null;
   if (fields.spSubmittedAt !== undefined) payload.sp_submitted_at = fields.spSubmittedAt || null;
   if (fields.spLastResponse !== undefined) payload.sp_last_response = fields.spLastResponse;
+  if (fields.spPaidTotal !== undefined) payload.sp_paid_total = fields.spPaidTotal;
+  if (fields.spPaidLabor !== undefined) payload.sp_paid_labor = fields.spPaidLabor;
+  if (fields.spPaidParts !== undefined) payload.sp_paid_parts = fields.spPaidParts;
+  if (fields.spPaidShipping !== undefined) payload.sp_paid_shipping = fields.spPaidShipping;
+  if (fields.spPaidMileage !== undefined) payload.sp_paid_mileage = fields.spPaidMileage;
+  if (fields.spPaidOther !== undefined) payload.sp_paid_other = fields.spPaidOther;
+  if (fields.spPaidTax !== undefined) payload.sp_paid_tax = fields.spPaidTax;
+  if (fields.spPaymentDate !== undefined) payload.sp_payment_date = fields.spPaymentDate || null;
+  if (fields.spReceivedDate !== undefined) payload.sp_received_date = fields.spReceivedDate || null;
+  if (fields.spClaimCheckedAt !== undefined) payload.sp_claim_checked_at = fields.spClaimCheckedAt || null;
 
   const { data, error } = await supabase
     .from("ticket_claim_details")
@@ -176,6 +213,9 @@ export async function upsertTicketClaimDetails(
     .single();
   if (error) {
     console.error("upsertTicketClaimDetails error:", error.message);
+    if (/sp_paid_|sp_payment_date|sp_received_date|sp_claim_checked_at/.test(error.message)) {
+      throw new Error("Saving what ServicePower paid needs migration 0397 (claim details paid amounts) — run it in Supabase first.");
+    }
     if (/service_performed/.test(error.message)) {
       throw new Error("Saving an edited Service Performed needs migration 0330 (ticket_claim_details.service_performed) — run it in Supabase first.");
     }

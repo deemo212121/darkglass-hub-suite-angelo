@@ -72,7 +72,7 @@ import {
   type DmInboxEntry,
 } from "@/lib/supabase/messaging";
 import { getTicketBilling, saveTicketBilling, type TicketBilling } from "@/lib/supabase/billing";
-import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supabase/payslips";
+import { getMyPayslips, payslipStatusLabel, payslipAdjustmentTextLines, type MyPayslipRow } from "@/lib/supabase/payslips";
 import { getMyProfileSchedule, getMonthEntries, getEntryForDate, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, savePunch, clearPunch, canEditPunch, resolveScheduledShiftHours, type UITimeEntry, type CompanyTimecardEntry, type PunchField } from "@/lib/supabase/timecards";
 import {
   getTraineeEntryForDate,
@@ -6861,7 +6861,9 @@ function MobilePayrollView({
                       `Pay period ${row.periodLabel}\nStatus: ${row.status}\n\n` +
                         `Hours: ${p.hoursWorked.toFixed(2)} (+ ${p.overtimeHours.toFixed(2)} OT)\n` +
                         `Regular Pay: $${p.regularPay.toFixed(2)}\nOvertime Pay: $${p.overtimePay.toFixed(2)}\n` +
-                        `Gross Pay: $${p.grossPay.toFixed(2)}\nNet Pay: $${p.netPay.toFixed(2)}`,
+                        `Gross Pay: $${p.grossPay.toFixed(2)}\n` +
+                        payslipAdjustmentTextLines(p).map((l) => `${l}\n`).join("") +
+                        `Net Pay: $${p.netPay.toFixed(2)}`,
                     );
                   }}
                 >
@@ -9819,17 +9821,20 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
 
   const shiftMinutes = correctionShiftMinutes(correctedCheckIn, correctedCheckOut);
   const mealRequired = shiftMinutes !== null && shiftMinutes > CORRECTION_MEAL_REQUIRED_AFTER_MINUTES;
-  // Pre-fill the meal fields with the meal actually punched on the picked
-  // date (only while they're still blank), so the tech only adjusts what's
-  // wrong or fills in a meal they forgot to punch.
+  // Pre-fill all four fields with what's on the timecard for the picked
+  // date (Check In, Check Out, Meal Start, Meal End) — re-filled whenever
+  // the date changes — so nothing gets missed: the tech only changes what's
+  // wrong. A punch that isn't on the timecard stays blank.
   useEffect(() => {
     if (!profileId || !correctionDate) return;
     let cancelled = false;
     getEntryForDate(profileId, correctionDate)
       .then((e) => {
-        if (cancelled || !(e?.mealStart || e?.mealEnd)) return;
-        setCorrectedMealStart((prev) => prev || e?.mealStart || "");
-        setCorrectedMealEnd((prev) => prev || e?.mealEnd || "");
+        if (cancelled) return;
+        setCorrectedCheckIn(e?.checkIn || "");
+        setCorrectedCheckOut(e?.checkOut || "");
+        setCorrectedMealStart(e?.mealStart || "");
+        setCorrectedMealEnd(e?.mealEnd || "");
       })
       .catch(() => {});
     return () => { cancelled = true; };

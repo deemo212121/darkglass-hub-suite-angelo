@@ -92,7 +92,7 @@ import { useModuleRoleGate, useModuleRoleGateOverrides } from "@/lib/moduleAcces
 // e.g. a Parts Manager who's also been given Admin as a secondary role.
 // Shared with submoduleAccess.ts (used by home.tsx/ModuleNavigator.tsx to
 // decide what to even list) so both surfaces can never drift apart.
-import { ADMIN_MODULE_ROLES, USER_MANAGEMENT_DEFAULT_ROLES, ACTIVITY_LOG_DEFAULT_ROLES, WHEREABOUTS_DEFAULT_ROLES, resolveSubmoduleAllowedRoles, passesModuleLevelGate } from "@/lib/submoduleAccess";
+import { ADMIN_MODULE_ROLES, USER_MANAGEMENT_DEFAULT_ROLES, ACTIVITY_LOG_DEFAULT_ROLES, WHEREABOUTS_DEFAULT_ROLES, BIZOPS_GUIDE_DEFAULT_ROLES, resolveSubmoduleAllowedRoles, passesModuleLevelGate } from "@/lib/submoduleAccess";
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import { ReportHRDaily } from "@/components/ReportHRDaily";
 import { HrOnboardingChecklistPage } from "@/components/HrOnboardingChecklistPage";
@@ -105,6 +105,7 @@ import { SelfServiceGuidePage } from "@/components/SelfServiceGuidePage";
 import { GettingStartedGuidePage } from "@/components/GettingStartedGuidePage";
 import { ServerStatusPage } from "@/components/ServerStatusPage";
 import { ApproverGuidePage } from "@/components/ApproverGuidePage";
+import { BizOpsGuidePage } from "@/components/BizOpsGuidePage";
 import { TrainingListPage } from "@/components/TrainingListPage";
 import { AbsentListPage } from "@/components/AbsentListPage";
 import { RepairKnowledgeBase } from "@/components/RepairKnowledgeBase";
@@ -409,6 +410,11 @@ function SubModule() {
     return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
+  // Guides → BizOps Operations: BizOps roles plus Admin / SuperAdmin only.
+  if ((sub as any).custom === "bizops-guide" && !hasDashboardAccess(explicitModuleOverride ?? BIZOPS_GUIDE_DEFAULT_ROLES, role, extraRoles)) {
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
+  }
+
   const hasNestedUserRoute = sub.custom === "user-management" && location.pathname.split("/").filter(Boolean).length > 3;
 
   if (hasNestedUserRoute) {
@@ -613,6 +619,8 @@ function SubModule() {
         ? <ServerStatusPage />
         : (sub as any).custom === "approver-guide"
         ? <ApproverGuidePage />
+        : (sub as any).custom === "bizops-guide"
+        ? <BizOpsGuidePage />
         : (sub as any).custom === "clock-in-codes"
         ? <ClockInCodesTab standalone backModule={mod.slug} />
         : (sub as any).custom === "absent-list"

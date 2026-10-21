@@ -102,6 +102,7 @@ import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { perCutoffSalary, getSalaryHistory } from "@/lib/supabase/salary";
 import { getPayrollReviewMarks, markPayrollReviewed, clearPayrollReviewMark, type PayrollReviewMark } from "@/lib/supabase/payrollReviewMarks";
+import { getPayrollAdjustmentsForPeriod, payrollAdjustmentsEligible, resolveAdjustmentLines, sumPayrollAdjustments, type PayrollAdjustment } from "@/lib/supabase/payrollAdjustments";
 import { getHourlyOtOverrides, setHourlyOtOverride, clearHourlyOtOverride, type HourlyOtOverride } from "@/lib/supabase/payrollHourlyOtOverrides";
 import { useAuth } from "@/lib/auth";
 import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type GmailConnectionStatus, type GmailRegion } from "@/lib/supabase/gmailConnection";
@@ -2268,6 +2269,22 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   }, [genStart, genEnd]);
   useEffect(() => { void loadReviewMarks(); }, [loadReviewMarks]);
 
+  // Reimbursements / deductions for the picked period (migration 0393),
+  // per employee — PH payroll and US Office staff only (see
+  // payrollAdjustmentsEligible); technicians have their own custom lines.
+  const [adjustmentsByProfile, setAdjustmentsByProfile] = useState<Map<string, PayrollAdjustment[]>>(new Map());
+  const loadAdjustments = useCallback(async () => {
+    if (!genStart || !genEnd || genStart > genEnd) {
+      setAdjustmentsByProfile(new Map());
+      return;
+    }
+    const list = await getPayrollAdjustmentsForPeriod(genStart, genEnd);
+    const map = new Map<string, PayrollAdjustment[]>();
+    for (const a of list) map.set(a.profileId, [...(map.get(a.profileId) ?? []), a]);
+    setAdjustmentsByProfile(map);
+  }, [genStart, genEnd]);
+  useEffect(() => { void loadAdjustments(); }, [loadAdjustments]);
+
   // Per-employee "sent" marks for the picked period — same targetLabel
   // "(periodStart – periodEnd)" suffix handleSendPayslip/handleSendAllPayslips
   // already stamp on every payslip_sent entry, matched against the current
@@ -2495,6 +2512,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // hourly treatment instead of silently falling through to a plain
   // office hourly row.
   const isTechRole = (emp: SupabaseEmployee) => TECHNICIAN_PAY_ROLES.has(normalizeRole(emp.role));
+
+  /** Can this employee have reimbursements / deductions? PH payroll + US Office staff; never technicians. */
+  const adjustmentsEnabledFor = (emp: SupabaseEmployee, isTechPortion = false) => payrollAdjustmentsEligible(emp, isTechPortion || isTechRole(emp));
+  /** This employee's adjustment lines for the picked period (empty when not eligible). */
+  const adjustmentsFor = (emp: SupabaseEmployee, isTechPortion = false): PayrollAdjustment[] =>
+    adjustmentsEnabledFor(emp, isTechPortion) ? adjustmentsByProfile.get(emp.id) ?? [] : [];
 
   // Holds a technician-tier role as a secondary/extra role while their
   // primary role is something else (e.g. a CSR Agent who also picks up
@@ -3237,16 +3260,36 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // ── Generate Payroll ─────────────────────────────────────────────────────────
   // Finance picks the period via genStart/genEnd (the date inputs on the
   // Payroll tab) rather than an auto-computed range. If the picked dates
-  // exactly match an existing run, this recomputes and replaces that run's
-  // line items in place (what "Regenerate" used to do) instead of creating
-  // a duplicate — so a rate fix or corrected timecard can be re-applied to
-  // the same payslip just by re-picking its dates and generating again.
-  const generatePayroll = async () => {
+  // exactly match an existing run, this recomputes the TICKED employees'
+  // line items in that run in place (what "Regenerate" used to do) instead
+  // of creating a duplicate — so a rate fix or corrected timecard can be
+  // re-applied to the same payslip just by re-picking its dates and
+  // generating again.
+  //
+  // Everyone else's saved payslip in the run is kept. Regenerating used to
+  // clear every employee of the nation and save only the ticked ones, so
+  // fixing one or two people wiped the rest (9/27–10/10 PH: 72 saved
+  // payslips, already emailed, went down to 2). If some unticked employees
+  // already have a saved payslip, the "Keep the other saved payslips?"
+  // window asks first: keep them (default) or remove them from the run.
+  const [regenUntickedConfirm, setRegenUntickedConfirm] = useState<{ names: string[] } | null>(null);
+  const generatePayroll = async (untickedChoice?: "keep" | "remove") => {
     if (nationIncludedPayrollRows.length === 0) return;
     if (!genStart || !genEnd || genStart > genEnd) {
       toast.error("Pick a valid start and end date before generating payroll.");
       return;
     }
+    const runForDates = payrollRuns.find((r) => r.period_start === genStart && r.period_end === genEnd);
+    const includedIds = new Set(nationIncludedPayrollRows.map((r) => r.employee.id));
+    // This nation's employees who are NOT ticked but already have a saved payslip in that run.
+    const untickedSaved = runForDates
+      ? nationPayrollRows.filter((r) => !includedIds.has(r.employee.id) && payrollLineItems.some((li) => li.payroll_run_id === runForDates.id && li.profile_id === r.employee.id))
+      : [];
+    if (untickedSaved.length > 0 && !untickedChoice) {
+      setRegenUntickedConfirm({ names: untickedSaved.map((r) => r.employee.full_name) });
+      return;
+    }
+    setRegenUntickedConfirm(null);
     setGenerating(true);
     try {
       // Timecard completeness (missing clock-outs, pending time corrections)
@@ -3268,17 +3311,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       let runId: string;
       if (existingRun) {
         runId = existingRun.id;
-        // Only this nation's line items get cleared — the other nation's
-        // (generated separately, from its own tab) are left untouched. Uses
-        // every employee in this nation, not just the currently-included
-        // ones, so someone excluded after their last payslip was generated
-        // has that stale line item cleaned up instead of left orphaned.
-        const nationProfileIds = nationPayrollRows.map((r) => r.employee.id);
+        // Only the ticked employees' line items are replaced — everyone
+        // else's saved payslip in the run (unticked people of this nation,
+        // and the other nation's, generated from its own tab) is kept,
+        // unless Finance chose "Remove them from this run" in the window
+        // above.
+        const replaceIds = [...includedIds, ...(untickedChoice === "remove" ? untickedSaved.map((r) => r.employee.id) : [])];
         const { error: deleteErr } = await supabase
           .from("payroll_line_items")
           .delete()
           .eq("payroll_run_id", runId)
-          .in("profile_id", nationProfileIds);
+          .in("profile_id", replaceIds);
         if (deleteErr) throw new Error(deleteErr.message);
         await supabase.from("payroll_runs").update({ generated_at: new Date().toISOString() }).eq("id", runId);
       } else {
@@ -3318,7 +3361,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         // itself already straightAllHours for PH; see officeGrossPay above).
         overtime_pay: r.compensationType === "fixed" ? 0 : r.overtimeHours * r.hourlyRateUSD * (r.employee.country === "PH" ? 1 : 1.5),
         gross_pay: r.grossPayUSD,
-        net_pay: r.grossPayUSD, // simplified — no deductions model
+        // Reimbursements / deductions (migration 0393): net = gross + reimbursements − deductions;
+        // the lines themselves go in breakdown.adjustments for the payslip.
+        ...(() => {
+          // Tax lines are worked out from this gross (gross × percent).
+          const lines = resolveAdjustmentLines(adjustmentsFor(r.employee, r.isTechPortion), r.grossPayUSD);
+          const sums = sumPayrollAdjustments(lines);
+          return {
+            deductions: Math.round((sums.deductions + sums.tax) * 100) / 100,
+            net_pay: Math.round((r.grossPayUSD + sums.net) * 100) / 100,
+            ...(lines.length ? { breakdown: { adjustments: lines.map((l) => ({ kind: l.kind, description: l.description, amount: l.amount, percent: l.percent ?? null })) } } : {}),
+          };
+        })(),
         currency: "USD",
         compensation_type: r.compensationType,
         annual_salary: r.compensationType === "fixed" ? r.annualSalary : null,
@@ -3346,7 +3400,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       await supabase.from("payroll_audit_log").insert({
         action: nationHasExistingLineItems ? "edit" : "generate",
         employee_name: "All Employees",
-        details: `${nationHasExistingLineItems ? "Regenerated" : "Generated"} ${nationLabel} payroll for ${genStart} – ${genEnd}. ${nationIncludedPayrollRows.length} employees. Total: $${nationTotalUSD.toFixed(2)}`,
+        details: `${nationHasExistingLineItems ? "Regenerated" : "Generated"} ${nationLabel} payroll for ${genStart} – ${genEnd}. ${nationIncludedPayrollRows.length} employees. Total: $${nationTotalUSD.toFixed(2)}${untickedSaved.length ? (untickedChoice === "remove" ? `. Removed ${untickedSaved.length} unticked employees' payslips` : `. Kept ${untickedSaved.length} unticked employees' saved payslips`) : ""}`,
         amount: Math.round(nationTotalUSD * 100) / 100,
       });
       void logModuleActivity({
@@ -3576,10 +3630,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       generatedDate: new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
       dailyRows,
       grossPay: row.grossPayUSD,
-      // No deductions concept in this live-preview flow (unlike a finalized
-      // payroll_line_items row, which has its own stored net_pay) — gross
-      // and net are the same until a real run tracks that separately.
-      netPay: row.grossPayUSD,
+      // Net = gross + reimbursements − deductions (migration 0393); each
+      // line is listed on the payslip above the Grand Total.
+      netPay: row.grossPayUSD + sumPayrollAdjustments(adjustmentsFor(row.employee, row.isTechPortion), row.grossPayUSD).net,
+      adjustments: resolveAdjustmentLines(adjustmentsFor(row.employee, row.isTechPortion), row.grossPayUSD).map((a) => ({ kind: a.kind, description: a.description, amount: a.amount, percent: a.percent })),
       email: row.employee.email || "—",
       hireDate: employeeInfoByProfileId.get(row.employee.id)?.hireDate || "—",
       workingHoursLabel,
@@ -4924,9 +4978,44 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                       </div>
                     </div>
                   )}
+                {regenUntickedConfirm && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setRegenUntickedConfirm(null)}>
+                    <div
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="regen-unticked-title"
+                      className="w-full max-w-lg rounded-xl border border-white/10 bg-slate-900 p-5 text-left shadow-2xl"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <h3 id="regen-unticked-title" className="text-lg font-bold text-white">Keep the other saved payslips?</h3>
+                      <p className="mt-1 text-sm text-slate-300">
+                        <span className="font-semibold text-white">{regenUntickedConfirm.names.length}</span> employee{regenUntickedConfirm.names.length === 1 ? " who isn't" : "s who aren't"} ticked already {regenUntickedConfirm.names.length === 1 ? "has" : "have"} a saved payslip in the{" "}
+                        <span className="font-semibold text-white">{genStart} to {genEnd}</span> run. Generating only recomputes the{" "}
+                        <span className="font-semibold text-white">{nationIncludedPayrollRows.length}</span> ticked employee{nationIncludedPayrollRows.length === 1 ? "" : "s"}.
+                      </p>
+                      <ul className="mt-3 max-h-48 divide-y divide-white/5 overflow-y-auto rounded-lg border border-white/10 bg-slate-950/40 text-sm">
+                        {regenUntickedConfirm.names.map((n, i) => (
+                          <li key={`${n}-${i}`} className="px-3 py-1.5 text-slate-200">{n}</li>
+                        ))}
+                      </ul>
+                      <p className="mt-2 text-xs text-amber-300">Removing deletes their payslips from this run — anyone already sent theirs will no longer see it in Self-Service.</p>
+                      <div className="mt-4 flex flex-wrap justify-end gap-2">
+                        <button type="button" onClick={() => setRegenUntickedConfirm(null)} className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600">
+                          Cancel
+                        </button>
+                        <button type="button" onClick={() => void generatePayroll("remove")} className="rounded-lg border border-red-500/50 px-4 py-2 text-sm font-semibold text-red-300 hover:bg-red-500/10">
+                          Remove them from this run
+                        </button>
+                        <button type="button" autoFocus onClick={() => void generatePayroll("keep")} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
+                          Keep their payslips
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <button
                   type="button"
-                  onClick={generatePayroll}
+                  onClick={() => void generatePayroll()}
                   disabled={
                     generating ||
                     nationIncludedPayrollRows.length === 0 ||
@@ -4936,7 +5025,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   }
                   title={
                     matchesExistingRun
-                      ? "A payroll run already exists for these dates — this will recompute and replace it"
+                      ? "A payroll run already exists for these dates — this recomputes the ticked employees' payslips in it; everyone else's saved payslip is kept"
                       : undefined
                   }
                   className="px-3 py-1.5 text-xs bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded font-semibold transition flex items-center gap-2 shrink-0"
@@ -5210,7 +5299,26 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 {rateLabel(row)}
                               </td>
                               <td className="px-3 py-2 text-right font-semibold text-green-300">
-                                {fmt(row.grossPayUSD)}
+                                {/* With adjustments the Net (below) is the payout, so it's the green one and gross is muted. */}
+                                <span className={adjustmentsFor(row.employee, row.isTechPortion).length ? "font-normal text-slate-400" : undefined}>
+                                  {fmt(row.grossPayUSD)}
+                                </span>
+                                {(() => {
+                                  const lines = resolveAdjustmentLines(adjustmentsFor(row.employee, row.isTechPortion), row.grossPayUSD);
+                                  if (!lines.length) return null;
+                                  const sums = sumPayrollAdjustments(lines);
+                                  return (
+                                    <div
+                                      className="text-[10px] font-normal leading-tight"
+                                      title={lines.map((l) => `${l.kind === "reimbursement" ? "+" : "−"}${fmt(l.amount)} ${l.kind === "tax" ? `Tax ${l.percent ?? 0}%` : ""}${l.description ? ` ${l.description}` : ""}`).join("\n")}
+                                    >
+                                      <span className={sums.net < 0 ? "text-red-300" : "text-emerald-300"}>
+                                        {sums.net < 0 ? "−" : "+"}{fmt(Math.abs(sums.net))} adj.
+                                      </span>
+                                      <span className="block text-xs font-bold text-green-300">Net {fmt(row.grossPayUSD + sums.net)}</span>
+                                    </div>
+                                  );
+                                })()}
                               </td>
                               <td className="px-3 py-2 text-right">
                                 <button
@@ -6543,6 +6651,38 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
       {detailEmployee && wizardStep === "detail" && (
         <EmployeePayrollDetailModal
+          key={detailEmployee.id}
+          employeeNav={(() => {
+            // Same order as the payroll table (departments, current filters).
+            const order: SupabaseEmployee[] = [];
+            const seen = new Set<string>();
+            for (const g of visibleRowsByDepartment) for (const r of g.rows) {
+              if (seen.has(r.employee.id)) continue;
+              seen.add(r.employee.id);
+              order.push(r.employee);
+            }
+            const i = order.findIndex((e) => e.id === detailEmployee.id);
+            if (i < 0 || order.length < 2) return undefined;
+            const go = (e: SupabaseEmployee) => { setDetailEmployee(e); setWizardStep("detail"); };
+            return {
+              position: i + 1,
+              total: order.length,
+              onPrev: i > 0 ? () => go(order[i - 1]) : undefined,
+              onNext: i < order.length - 1 ? () => go(order[i + 1]) : undefined,
+            };
+          })()}
+          adjustments={
+            adjustmentsEnabledFor(detailEmployee) && genStart && genEnd && genStart <= genEnd
+              ? {
+                  periodStart: genStart,
+                  periodEnd: genEnd,
+                  items: adjustmentsByProfile.get(detailEmployee.id) ?? [],
+                  grossPay: payrollRows.find((r) => r.employee.id === detailEmployee.id && !r.isTechPortion)?.grossPayUSD ?? null,
+                  createdByName: displayName || email || null,
+                  onChanged: loadAdjustments,
+                }
+              : undefined
+          }
           profileId={detailEmployee.id}
           employeeName={detailEmployee.full_name}
           department={detailEmployee.department ?? undefined}

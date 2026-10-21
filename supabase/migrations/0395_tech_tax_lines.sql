@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0393 — Tech Activity Report tax lines
+-- 0395 — Tech Activity Report tax lines
 --
 -- Tax lines Finance can add per technician per pay period, shown BELOW
 -- Total Payment on the Tech Activity Report modal. Each line is either a
@@ -8,7 +8,9 @@
 -- Payment, Gross Pay, the OT premium or any guarantee/state match — those
 -- stay exactly as they were.
 --
--- Run once in the Supabase SQL Editor, after 0392.
+-- Run once in the Supabase SQL Editor, after 0394. Safe to run twice.
+-- (Numbered 0393 in janeyyy16's repo — renumbered here past this repo's own
+-- 0393-0394; already applied to the shared database 2026-10-19.)
 -- =====================================================================
 
 create table if not exists tech_tax_lines (

@@ -634,7 +634,7 @@ function PayQuantities({ row: r, review, periodStart, periodEnd }: { row: Histor
 }
 
 /**
- * Note to the employee for this period (migration 0396) — shown to them in
+ * Note to the employee for this period (migration 0399) — shown to them in
  * Self-Service → My Payroll as a banner and on their payslip until they
  * click "I've read this". Saving also sends them a bell notification.
  */

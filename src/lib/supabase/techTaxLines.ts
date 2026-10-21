@@ -1,5 +1,5 @@
 /**
- * Tax lines on the Tech Activity Report (migration 0393) — shown below
+ * Tax lines on the Tech Activity Report (migration 0395) — shown below
  * Total Payment, each a percentage of it or a fixed amount. Display-only
  * for Net Pay After Tax: they never feed Total Payment / Gross Pay.
  */
@@ -19,7 +19,7 @@ export interface TechTaxLine {
 const COLUMNS = "id, label, mode, amount, sort_order";
 
 const missingTableMessage = (message: string) =>
-  /tech_tax_lines/i.test(message) ? "Tax lines need database migration 0393 — ask an admin to run it." : message;
+  /tech_tax_lines/i.test(message) ? "Tax lines need database migration 0395 — ask an admin to run it." : message;
 
 function mapTaxLine(r: any): TechTaxLine {
   return {

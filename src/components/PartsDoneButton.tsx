@@ -254,11 +254,44 @@ export function PartsDoneButton() {
                   {branchProgressLoading || !progress ? (
                     <p className="text-xs text-muted-foreground">Loading progress…</p>
                   ) : (
-                    <ul className="space-y-0.5 mb-2 text-sm tabular-nums">
-                      <li>Collections done {progress.collectionsDone}/{progress.collectionsTotal}</li>
-                      <li>Daily Pickup done {progress.pickupDone}/{progress.pickupTotal}</li>
-                      <li>Parts Received done {progress.receivedDone}/{progress.receivedTotal}</li>
-                    </ul>
+                    <>
+                      <ul className="space-y-0.5 mb-2 text-sm tabular-nums">
+                        <li>Collections done {progress.collectionsDone}/{progress.collectionsTotal}</li>
+                        <li>Daily Pickup done {progress.pickupDone}/{progress.pickupTotal}</li>
+                        <li>Parts Received done {progress.receivedDone}/{progress.receivedTotal}</li>
+                      </ul>
+                      {/* The same counts per day — only days that have parts. */}
+                      {progress.days.length > 0 && (
+                        <div className="mb-2 max-h-48 overflow-y-auto rounded-md border border-[var(--color-panel-border)]">
+                          <table className="w-full text-xs tabular-nums">
+                            <thead className="sticky top-0 bg-[var(--color-panel)] text-muted-foreground">
+                              <tr>
+                                <th className="px-2 py-1 text-left font-semibold">Date</th>
+                                <th className="px-2 py-1 text-right font-semibold" title="By ticket schedule date">Collections</th>
+                                <th className="px-2 py-1 text-right font-semibold" title="Today's pickup list">Pickup</th>
+                                <th className="px-2 py-1 text-right font-semibold" title="By PO date">Received</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {progress.days.map((d) => {
+                                const cell = (done: number, total: number) =>
+                                  total === 0 ? <span className="text-muted-foreground">—</span> : <span className={done < total ? "text-amber-300" : "text-emerald-300"}>{done}/{total}</span>;
+                                return (
+                                  <tr key={d.date || "none"} className="border-t border-[var(--color-panel-border)]">
+                                    <td className="px-2 py-1 whitespace-nowrap">
+                                      {d.date ? new Date(`${d.date}T00:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "No date"}
+                                    </td>
+                                    <td className="px-2 py-1 text-right">{cell(d.collectionsDone, d.collectionsTotal)}</td>
+                                    <td className="px-2 py-1 text-right">{cell(d.pickupDone, d.pickupTotal)}</td>
+                                    <td className="px-2 py-1 text-right">{cell(d.receivedDone, d.receivedTotal)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </>
                   )}
                   {bySource && (
                     <div className="text-xs text-muted-foreground space-y-0.5 border-t border-[var(--color-panel-border)] pt-1.5 mt-1.5">
