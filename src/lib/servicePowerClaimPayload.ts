@@ -114,9 +114,9 @@ export function buildServicePowerClaimPayload(
     distributorNumber: clip(p.distributorNo, 12),
     // ServicePower flags a part with no invoice number ("Blank Parts Invoice Number").
     invoiceNumber: clip(p.invoiceNo, 20),
-    // The part's own Job Code, else the claim's Job Code (Claim section) —
-    // ServicePower rejects a claim with none ("Blank Job Code").
-    jobCode: clip(p.jobCode || claimDetails.jobCode, 4),
+    // The claim's Job Code (Claim section) on every part line, else the
+    // part's own — ServicePower rejects a claim with none ("Blank Job Code").
+    jobCode: clip(claimDetails.jobCode || p.jobCode, 4),
   }));
 
   // Resubmitting a claim SP already has an id for MUST pass these back, or

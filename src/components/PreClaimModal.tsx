@@ -190,6 +190,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
         setVisitServicePerformed(latest?.resolution || "");
         setServicePerformed(details?.servicePerformed || latest?.resolution || "");
         setParts(partRows);
+        partJobCodesToSave.current.clear();
         setCheckedPartIds(new Set(partRows.map((p) => p.id)));
         void pullDefectFromSP(true);
       })
@@ -340,12 +341,37 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
   const setField = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
 
+  // The claim's Job Code is the one ServicePower gets (claim and every part
+  // line — servicePowerClaimPayload.ts), so picking it fills the parts' Job
+  // Code below too. Those parts are saved with Submit Pre-Claim / Submit to
+  // ServicePower, like the rest of the form.
+  const partJobCodesToSave = useRef<Set<string>>(new Set());
+  const setClaimJobCode = (value: string) => {
+    setField("jobCode", value);
+    const code = value.trim();
+    if (!code) return;
+    setParts((prev) =>
+      prev.map((p) => {
+        if ((p.jobCode || "") === code) return p;
+        partJobCodesToSave.current.add(p.id);
+        return { ...p, jobCode: code };
+      }),
+    );
+  };
+  const savePartJobCodes = async () => {
+    const ids = partJobCodesToSave.current;
+    if (ids.size === 0) return;
+    for (const p of parts.filter((x) => ids.has(x.id))) await updateTicketPart(p.id, p);
+    ids.clear();
+  };
+
   const handleSubmit = async () => {
     setSaving(true);
     try {
       const saved = await upsertTicketClaimDetails(ticket.ticketNo, claimFieldsToSave(), myProfileId);
       onSaved(ticket.ticketNo, saved);
       await saveProductEdits();
+      await savePartJobCodes();
       onClose();
     } catch (err) {
       alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -369,6 +395,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
       const saved = await upsertTicketClaimDetails(ticket.ticketNo, claimFieldsToSave(), myProfileId);
       setForm((prev) => ({ ...prev, ...saved }));
       await saveProductEdits();
+      await savePartJobCodes();
       onSaved(ticket.ticketNo, saved);
 
       // The claim's serviceCenterNumber is the call's own ServiceCenter on
@@ -766,7 +793,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
                 if (!list || list.codes.length === 0) {
                   return (
                     <Field label="Job Code">
-                      <input value={form.jobCode} onChange={(e) => setField("jobCode", e.target.value)} className={inputCls} />
+                      <input value={form.jobCode} onChange={(e) => setClaimJobCode(e.target.value)} className={inputCls} />
                     </Field>
                   );
                 }
@@ -785,7 +812,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
                         <span className={form.jobCode ? "" : "text-slate-500"}>{form.jobCode || "— select —"}</span>
                         <span className="text-slate-500 text-[10px]">▼</span>
                       </div>
-                    <select value={form.jobCode} onChange={(e) => setField("jobCode", e.target.value)} className="absolute inset-0 w-full h-full cursor-pointer appearance-none bg-transparent text-transparent [&>option]:bg-slate-900 [&>option]:text-white" title={picked?.note ? `${picked.code} — ${picked.note}` : form.jobCode}>
+                    <select value={form.jobCode} onChange={(e) => setClaimJobCode(e.target.value)} className="absolute inset-0 w-full h-full cursor-pointer appearance-none bg-transparent text-transparent [&>option]:bg-slate-900 [&>option]:text-white" title={picked?.note ? `${picked.code} — ${picked.note}` : form.jobCode}>
                       <option value="">— select —</option>
                       {list.codes.map((c) => (
                         <option key={c.code} value={c.code}>{c.note ? `${c.code} — ${c.note}` : c.code}</option>
