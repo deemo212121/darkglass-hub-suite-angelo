@@ -1308,6 +1308,7 @@ export function NeedClaimList({ mod, sub }: Props) {
               if (tid) setClaimDetailsByTicketId((prev) => new Map(prev).set(tid, details));
             }}
             onStatusChanged={(ticketNo, status) => setTickets((prev) => prev.map((t) => (t.ticketNo === ticketNo ? { ...t, status } : t)))}
+            onTicketUpdated={(ticketNo, patch) => setTickets((prev) => prev.map((t) => (t.ticketNo === ticketNo ? { ...t, ...patch } : t)))}
             onClose={() => setPreClaimTicketNo(null)}
           />
         );

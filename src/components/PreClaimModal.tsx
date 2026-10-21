@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { X, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import type { Ticket } from "@/lib/ticketData";
-import { getTicketVisits, getTicketParts, updateTicketPart, updateTicketStatus, type UIPartRow } from "@/lib/supabase/tickets";
+import { getTicketVisits, getTicketParts, updateTicketFields, updateTicketPart, updateTicketStatus, type UIPartRow } from "@/lib/supabase/tickets";
 import {
   getTicketClaimDetails,
   getReadyToCompleteDate,
@@ -24,6 +24,8 @@ interface Props {
   onSaved: (ticketNo: string, details: TicketClaimDetails) => void;
   /** The ticket's status changed here (a clean ServicePower submission sets CL-Claimed) — lets the list update its row. */
   onStatusChanged?: (ticketNo: string, status: string) => void;
+  /** Model / serial edited here and saved onto the ticket — lets the list update its row. */
+  onTicketUpdated?: (ticketNo: string, patch: { model: string; serial: string }) => void;
   onNavigate: (ticketNo: string) => void;
   onClose: () => void;
 }
@@ -88,7 +90,7 @@ const SP_ACCOUNT_REJECTION = /invalid manufacturerName\s*\/\s*serviceCenterNumbe
  * See src/lib/supabase/claimDetails.ts and migration 0135 for which fields
  * are newly persisted vs. read from the ticket/parts data that already existed.
  */
-export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged, onNavigate, onClose }: Props) {
+export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged, onTicketUpdated, onNavigate, onClose }: Props) {
   const { uid, displayName, email } = useAuth();
   // ticket_claim_details.updated_by is a uuid FK into profiles(id) — NOT
   // the caller's email/display name (those are plain text and Postgres
@@ -122,6 +124,24 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
   const [submittingToSP, setSubmittingToSP] = useState(false);
   // "Are you sure?" step before a claim is filed with ServicePower.
   const [confirmSpSubmit, setConfirmSpSubmit] = useState(false);
+  // Model Code / Serial # — editable here (the rating plate is often in the
+  // photos), saved onto the ticket itself with Submit Pre-Claim / Submit to
+  // ServicePower through the same updateTicketFields the ticket page's Edit
+  // Product Info uses (which also keeps the ServicePower sync from
+  // overwriting them), and sent on the claim.
+  const [modelCode, setModelCode] = useState(ticket.model || "");
+  const [serialNo, setSerialNo] = useState(ticket.serial || "");
+  useEffect(() => {
+    setModelCode(ticket.model || "");
+    setSerialNo(ticket.serial || "");
+  }, [ticket.ticketNo, ticket.model, ticket.serial]);
+  const saveProductEdits = async () => {
+    const model = modelCode.trim();
+    const serial = serialNo.trim();
+    if (model === (ticket.model || "").trim() && serial === (ticket.serial || "").trim()) return;
+    await updateTicketFields(ticket.ticketNo, { model, serial });
+    onTicketUpdated?.(ticket.ticketNo, { model, serial });
+  };
   const [spMessage, setSpMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const currentTicketRef = useRef(ticket.ticketNo);
@@ -300,8 +320,8 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
     if (isBlank(customerComplaint)) blank.push("Customer complaint (defect description)");
     if (isBlank(servicePerformed)) blank.push("Service Performed");
     if (!form.laborFee) blank.push("Labor Fee ($0)");
-    if (isBlank(ticket.model)) blank.push("Model");
-    if (isBlank(ticket.serial)) blank.push("Serial #");
+    if (isBlank(modelCode)) blank.push("Model Code");
+    if (isBlank(serialNo)) blank.push("Serial #");
     if (isBlank(ticket.purchaseDate)) blank.push("Purchase Date");
     if (isBlank(ticket.firstName) && isBlank(ticket.lastName)) blank.push("Customer name");
     const noAddress = [["address", "address"], ["city", "city"], ["state", "state"], ["zip", "ZIP"], ["phone", "phone"]]
@@ -315,7 +335,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
       .filter((e) => e.partNumber && claimable.some((p) => p.partNo === e.partNumber))
       .map((e) => `Part ${e.partNumber}: "${e.errorDescription}"`);
     return { required, blank, rejectedParts };
-  }, [form, parts, ticket, customerComplaint, servicePerformed]);
+  }, [form, parts, ticket, customerComplaint, servicePerformed, modelCode, serialNo]);
 
   const setField = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -325,6 +345,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
     try {
       const saved = await upsertTicketClaimDetails(ticket.ticketNo, claimFieldsToSave(), myProfileId);
       onSaved(ticket.ticketNo, saved);
+      await saveProductEdits();
       onClose();
     } catch (err) {
       alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -347,6 +368,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
     try {
       const saved = await upsertTicketClaimDetails(ticket.ticketNo, claimFieldsToSave(), myProfileId);
       setForm((prev) => ({ ...prev, ...saved }));
+      await saveProductEdits();
       onSaved(ticket.ticketNo, saved);
 
       // The claim's serviceCenterNumber is the call's own ServiceCenter on
@@ -363,7 +385,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
       }
 
       const { claim, warnings, error } = buildServicePowerClaimPayload(
-        ticket, saved, parts, customerComplaint, servicePerformed, partFee, spServiceCenter,
+        { ...ticket, model: modelCode.trim(), serial: serialNo.trim() }, saved, parts, customerComplaint, servicePerformed, partFee, spServiceCenter,
       );
       if (error || !claim) {
         setSpMessage({ type: "error", text: error || "Could not build a claim from this ticket's data." });
@@ -673,8 +695,12 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <ReadOnly label="Manufacture" value={ticket.manufacturer || ""} />
                 <ReadOnly label="Brand" value={ticket.manufacturer || ""} />
-                <ReadOnly label="Model Code" value={ticket.model || ""} />
-                <ReadOnly label="Serial #" value={ticket.serial || ""} />
+                <Field label="Model Code">
+                  <input value={modelCode} onChange={(e) => setModelCode(e.target.value)} className={inputCls} placeholder="Model #" />
+                </Field>
+                <Field label="Serial #">
+                  <input value={serialNo} onChange={(e) => setSerialNo(e.target.value)} className={inputCls} placeholder="Serial #" />
+                </Field>
                 <ReadOnly label="Purchase Date" value={ticket.purchaseDate || ""} />
               </div>
               </div>
