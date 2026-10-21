@@ -147,10 +147,10 @@ async function preClaimTotals(ctx: Ctx, ticketIds: string[]): Promise<Map<string
     const ids = ticketIds.slice(i, i + 100).join(",");
     const details = await rest<any[]>(
       ctx,
-      `ticket_claim_details?select=ticket_id,labor_fee,other_fee,shipping_fee,extra_mile_fee,mileage_fee&ticket_id=in.(${ids})`,
+      `ticket_claim_details?select=ticket_id,labor_fee,other_fee,shipping_fee,extra_mile_fee&ticket_id=in.(${ids})`,
     );
     const withFees = details.filter(
-      (d) => (Number(d.labor_fee) || 0) + (Number(d.other_fee) || 0) + (Number(d.shipping_fee) || 0) + (Number(d.extra_mile_fee) || 0) + (Number(d.mileage_fee) || 0) > 0,
+      (d) => (Number(d.labor_fee) || 0) + (Number(d.other_fee) || 0) + (Number(d.shipping_fee) || 0) + (Number(d.extra_mile_fee) || 0) > 0,
     );
     if (withFees.length === 0) continue;
     const parts = await rest<any[]>(
@@ -161,7 +161,8 @@ async function preClaimTotals(ctx: Ctx, ticketIds: string[]): Promise<Map<string
       const partFee = parts
         .filter((p) => p.ticket_id === d.ticket_id && isClaimablePart(p))
         .reduce((s, p) => s + (Number(p.part_price) || 0) * (1 + (Number(p.markup) || 0) / 100), 0);
-      const fees = (Number(d.labor_fee) || 0) + (Number(d.other_fee) || 0) + (Number(d.shipping_fee) || 0) + (Number(d.extra_mile_fee) || 0) + (Number(d.mileage_fee) || 0);
+      // mileage_fee is the round-trip MILES, not money — not part of the Claim Total.
+      const fees = (Number(d.labor_fee) || 0) + (Number(d.other_fee) || 0) + (Number(d.shipping_fee) || 0) + (Number(d.extra_mile_fee) || 0);
       totals.set(d.ticket_id, Math.round((fees + partFee) * 100) / 100);
     }
   }

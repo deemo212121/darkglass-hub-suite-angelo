@@ -191,8 +191,10 @@ export function buildServicePowerClaimPayload(
     partsAmount: Math.round(partFee * 100) / 100 || undefined,
     otherAmount: claimDetails.otherFee || undefined,
     shippingChargeAmount: claimDetails.shippingFee || undefined,
-    travelChargeAmount: claimDetails.extraMileFee || undefined,
-    mileageAmount: claimDetails.mileageFee || undefined,
+    // Pre-Claim's "Mileage Amount" ($, stored as extra_mile_fee) and
+    // "Mileage (round trip)" — miles, not money (stored as mileage_fee).
+    mileageAmount: claimDetails.extraMileFee || undefined,
+    travelMiles: claimDetails.mileageFee || undefined,
 
     serviceContractNumber: clip(claimDetails.serviceContractNo, 15),
 

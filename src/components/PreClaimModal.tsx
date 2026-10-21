@@ -275,7 +275,8 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
   const usedCount = parts.filter(isClaimablePart).length;
   // Job Code dropdown / Defect Code rules for this ticket's claim company or manufacturer (lib/jobCodes.ts).
   const jobCodeRule = jobCodesFor(ticket.account, ticket.claimCompany, ticket.manufacturer, (ticket as { brand?: string | null }).brand);
-  const claimTotal = form.laborFee + partFee + form.otherFee + form.shippingFee + form.extraMileFee + form.mileageFee;
+  // Mileage (round trip) is miles, not money — not part of the total (extraMileFee is the Mileage Amount $).
+  const claimTotal = form.laborFee + partFee + form.otherFee + form.shippingFee + form.extraMileFee;
 
   // Checked in the "Submit this claim to ServicePower?" window before
   // anything is sent. `required` = what ServicePower has sent claims back
@@ -1052,11 +1053,14 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
                 <Field label="Shipping Fee">
                   <input type="number" step="0.01" value={form.shippingFee || ""} onChange={(e) => setField("shippingFee", Number(e.target.value) || 0)} className={inputCls} placeholder="0.00" />
                 </Field>
-                <Field label="Extra Mile Fee">
+                <Field label="Mileage Amount">
                   <input type="number" step="0.01" value={form.extraMileFee || ""} onChange={(e) => setField("extraMileFee", Number(e.target.value) || 0)} className={inputCls} placeholder="0.00" />
                 </Field>
-                <Field label="Mileage (round trip)">
-                  <input type="number" step="0.01" value={form.mileageFee || ""} onChange={(e) => setField("mileageFee", Number(e.target.value) || 0)} className={inputCls} placeholder="0.00" />
+                <Field label="Mileage (round trip, miles)">
+                  <div className="relative">
+                    <input type="number" step="0.1" min="0" value={form.mileageFee || ""} onChange={(e) => setField("mileageFee", Number(e.target.value) || 0)} className={`${inputCls} pr-10`} placeholder="0" />
+                    <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-slate-400">mi</span>
+                  </div>
                 </Field>
                 <Field label="PO Amount">
                   <input type="number" step="0.01" value={form.poAmount || ""} onChange={(e) => setField("poAmount", Number(e.target.value) || 0)} className={inputCls} placeholder="0.00" />
