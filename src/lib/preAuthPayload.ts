@@ -4,9 +4,10 @@
  * sent". Building it sends nothing; only sendPreAuthRFA does.
  *
  * To confirm against ServicePower's RFA guide before sending is switched on:
- * the RFA types we have carry no separate Job Code or Repair Description
- * field, so the job code goes in faultCode and the repair description is
- * put in front of whyHigherRate.
+ * the RFA types we have carry no separate Repair Description field, so it
+ * is put in front of whyHigherRate.
+ * The Job Code goes in coreInfo.jobCode — where ServicePower returns it on a
+ * retrieved RFA.
  */
 import type { CreateRFARequest } from "@/types/servicePower";
 import type { Ticket } from "@/lib/ticketData";
@@ -32,12 +33,12 @@ export function buildPreAuthRFA(ticket: Ticket, f: PreAuthForm): Omit<CreateRFAR
   return {
     manufacturerName: clip(ticket.manufacturer, 30),
     callNumber: ticket.ticketNo,
-    faultCode: clip(f.jobCode, 4),
     coreInfo: {
       additionalManRequired: yn(f.additionalMan),
       estimatedHoursOnJob: num(f.estHours),
       estimatedMinutesOnJob: num(f.estMinutes),
       isProductRepaired: yn(f.productRepaired),
+      jobCode: clip(f.jobCode, 4),
       laborInWarranty: yn(f.laborInWarranty),
       oemAuthorizedWithManufacturer: yn(f.oemAuthorized),
       partsInWarranty: yn(f.partsInWarranty),

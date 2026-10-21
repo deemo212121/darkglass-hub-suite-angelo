@@ -157,6 +157,11 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
               ? new Date(first.timestamp).toLocaleDateString("en-CA", { timeZone: "America/Chicago" })
               : "");
         }
+        // Claim-company defaults (lib/jobCodes.ts — SQT: Repair Category and
+        // Defect Code) fill in when the claim has none yet; still changeable.
+        const defaults = jobCodesFor(ticket.account, ticket.claimCompany, ticket.manufacturer, (ticket as { brand?: string | null }).brand)?.defaults;
+        if (defaults?.repairCategory && !loaded.repairCategory) loaded.repairCategory = defaults.repairCategory;
+        if (defaults?.failureDefectCode && !loaded.failureDefectCode) loaded.failureDefectCode = defaults.failureDefectCode;
         setForm(loaded);
         // Latest visit (visits are returned newest-first) carries the
         // freshest Symptom(Cx)/Resolution text; fall back to the ticket's

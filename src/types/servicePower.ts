@@ -238,6 +238,8 @@ export interface RFAPart {
 
 export interface RFACoreInfo {
   additionalManRequired?: 'Y' | 'N';
+  /** The Call Auth screen's Job Code (e.g. GE MA00) — ServicePower returns it here on a retrieved RFA. */
+  jobCode?: string;
   costEffectiveToRepair?: 'Y' | 'N';
   estimatedHoursOnJob?: number;
   estimatedMinutesOnJob?: number;

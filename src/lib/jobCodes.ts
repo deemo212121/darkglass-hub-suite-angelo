@@ -23,6 +23,8 @@ export interface ManufacturerJobCodes {
   match: RegExp;
   /** Empty = a plain text box (only the label changes). */
   codes: JobCodeOption[];
+  /** Pre-Claim fills these in when the claim has none yet — still changeable. */
+  defaults?: { repairCategory?: string; failureDefectCode?: string };
 }
 
 export const MANUFACTURER_JOB_CODES: ManufacturerJobCodes[] = [
@@ -32,6 +34,7 @@ export const MANUFACTURER_JOB_CODES: ManufacturerJobCodes[] = [
     label: "SQT",
     fieldLabel: "Repair / Job Code 1",
     field: "jobCode",
+    defaults: { repairCategory: "Minor on-site service", failureDefectCode: "MECH" },
     match: /square\s*trade|^\s*sqt\b/i,
     codes: [
       { code: "REP", note: "Successful repair" },
