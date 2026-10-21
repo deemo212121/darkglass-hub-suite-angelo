@@ -99,12 +99,42 @@ export async function getMyPayslips(profileId: string): Promise<MyPayslipRow[]> 
       .map((m) => `${m[1]}_${m[2]}`)
   );
 
+  // A technician's tax lines (MCWH, SSWH, FITW, SITW — Tech Activity Report,
+  // migration 0395) live outside payroll_line_items, so net_pay doesn't
+  // include them. Read them here so the payslip lists them and Net Pay is
+  // after tax, matching the report's "Net Pay After Tax" (Tywon Ross
+  // 9/27–10/10: $2,279.28 shown instead of $2,087.18). Read directly, not
+  // via getTechTaxLines, which would create the default lines.
+  const { data: taxRows, error: taxErr } = await supabase
+    .from("tech_tax_lines")
+    .select("period_start, period_end, label, mode, amount, sort_order")
+    .eq("profile_id", profileId)
+    .order("sort_order", { ascending: true });
+  if (taxErr) console.error("getMyPayslips tax lines error:", taxErr.message);
+  const taxLinesByPeriod = new Map<string, { label: string; mode: string; amount: number }[]>();
+  for (const t of (taxRows ?? []) as { period_start: string; period_end: string; label: string; mode: string; amount: number }[]) {
+    const key = `${t.period_start}_${t.period_end}`;
+    taxLinesByPeriod.set(key, [...(taxLinesByPeriod.get(key) ?? []), { label: t.label, mode: t.mode, amount: Number(t.amount) || 0 }]);
+  }
+
   const runById = new Map((runs ?? []).map((r: any) => [r.id, r]));
   return lineItems
     .map((li: any): MyPayslipRow | null => {
       const run = runById.get(li.payroll_run_id);
       if (!run) return null;
       if (!sentPeriods.has(`${run.period_start}_${run.period_end}`)) return null;
+      const grossPay = Number(li.gross_pay) || 0;
+      // Same math as the report: a % line is that percent of Total Payment
+      // (the line's gross), a $ line is its amount. $0 lines are left out.
+      const techTaxes = (taxLinesByPeriod.get(`${run.period_start}_${run.period_end}`) ?? [])
+        .map((t) => ({
+          kind: "tax" as const,
+          description: t.label.trim() || "Tax",
+          amount: t.mode === "percent" ? Math.round(grossPay * t.amount) / 100 : t.amount,
+          percent: t.mode === "percent" ? t.amount : null,
+        }))
+        .filter((t) => Math.abs(t.amount) >= 0.005);
+      const techTaxTotal = techTaxes.reduce((sum, t) => sum + t.amount, 0);
       return {
         runId: li.payroll_run_id,
         periodStart: run.period_start,
@@ -116,16 +146,19 @@ export async function getMyPayslips(profileId: string): Promise<MyPayslipRow[]> 
         hourlyRate: Number(li.hourly_rate) || 0,
         regularPay: Number(li.regular_pay) || 0,
         overtimePay: Number(li.overtime_pay) || 0,
-        grossPay: Number(li.gross_pay) || 0,
-        netPay: Number(li.net_pay) || 0,
+        grossPay,
+        netPay: Math.round(((Number(li.net_pay) || 0) - techTaxTotal) * 100) / 100,
         currency: li.currency || "USD",
         extraPay: Number(li.extra_pay) || 0,
         notes: li.notes ?? null,
         compensationType: li.compensation_type === "fixed" ? "fixed" : "hourly",
         annualSalary: li.annual_salary != null ? Number(li.annual_salary) || 0 : null,
-        adjustments: Array.isArray(li.breakdown?.adjustments)
-          ? li.breakdown.adjustments.map((a: any) => ({ kind: a.kind === "deduction" ? "deduction" : a.kind === "tax" ? "tax" : "reimbursement", description: String(a.description ?? ""), amount: Number(a.amount) || 0, percent: a.percent != null ? Number(a.percent) : null }))
-          : [],
+        adjustments: [
+          ...(Array.isArray(li.breakdown?.adjustments)
+            ? li.breakdown.adjustments.map((a: any) => ({ kind: a.kind === "deduction" ? "deduction" : a.kind === "tax" ? "tax" : "reimbursement", description: String(a.description ?? ""), amount: Number(a.amount) || 0, percent: a.percent != null ? Number(a.percent) : null }))
+            : []),
+          ...techTaxes,
+        ],
       };
     })
     .filter((r): r is MyPayslipRow => r !== null)

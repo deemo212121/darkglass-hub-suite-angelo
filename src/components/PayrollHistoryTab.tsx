@@ -6,6 +6,7 @@ import { getPayrollReviewDatesByPeriod, getPayrollReviewMarks, type PayrollRevie
 import { getTechCustomPayItems, type TechCustomPayItem } from "@/lib/supabase/techPayroll";
 import { getPayrollNotesForPeriod, savePayrollNote, type PayrollNote } from "@/lib/supabase/payrollNotes";
 import { createNotification } from "@/lib/supabase/notifications";
+import { getTechTaxLinesForPeriod, taxLineAmount, type TechTaxLine } from "@/lib/supabase/techTaxLines";
 
 export interface PayrollHistoryRun {
   id: string;
@@ -183,12 +184,16 @@ export function PayrollHistoryTab({
   const [marks, setMarks] = useState<Map<string, PayrollReviewMark>>(new Map());
   const [breakdowns, setBreakdowns] = useState<Map<string, PayrollReviewBreakdown>>(new Map());
   const [notes, setNotes] = useState<Map<string, PayrollNote>>(new Map());
+  // Technicians' tax lines (Tech Activity Report) — taken off Total Pay, since
+  // they aren't stored on the payroll line.
+  const [taxLines, setTaxLines] = useState<Map<string, Pick<TechTaxLine, "label" | "mode" | "amount">[]>>(new Map());
   const [notesError, setNotesError] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   useEffect(() => {
     setMarks(new Map());
     setBreakdowns(new Map());
     setNotes(new Map());
+    setTaxLines(new Map());
     setNotesError(null);
     if (!periodStart || !periodEnd) return;
     let cancelled = false;
@@ -202,15 +207,17 @@ export function PayrollHistoryTab({
         console.error("Failed to load payroll review breakdowns:", err);
         return [] as PayrollReviewBreakdown[];
       }),
+      getTechTaxLinesForPeriod(periodStart, periodEnd),
       getPayrollNotesForPeriod(periodStart, periodEnd).catch((err) => {
         if (!cancelled) setNotesError(err instanceof Error ? err.message : "Failed to load notes.");
         return new Map<string, PayrollNote>();
       }),
     ])
-      .then(([m, b, n]) => {
+      .then(([m, b, t, n]) => {
         if (cancelled) return;
         setMarks(m);
         setNotes(n);
+        setTaxLines(t);
         setBreakdowns(new Map(b.map((r) => [r.profileId, r])));
       })
       .finally(() => { if (!cancelled) setDetailLoading(false); });
@@ -238,14 +245,20 @@ export function PayrollHistoryTab({
         if (!li) {
           // Not in the saved run — the reviewed breakdown is the only pay record.
           const total = review ? reviewBreakdownTotal(review) : null;
-          return { ...base, rate: 0, regularPay: 0, overtimePay: 0, annualSalary: null, grossPay: total, extraPay: 0, adjustments: [], totalPay: total };
+          const tax = total != null ? (taxLines.get(id) ?? []).reduce((sum, t) => sum + taxLineAmount(t, total), 0) : 0;
+          return { ...base, rate: 0, regularPay: 0, overtimePay: 0, annualSalary: null, grossPay: total, extraPay: 0, adjustments: [], totalPay: total != null ? total - tax : null };
         }
         const d = li.currency === "PHP" ? exchangeRate : 1;
         const grossPay = li.gross_pay / d;
         const extraPay = (li.extra_pay || 0) / d;
         // Net pay already includes the adjustments; older lines have net = gross.
         const netPay = li.net_pay != null ? Number(li.net_pay) / d : grossPay;
-        const adjustments = (li.breakdown?.adjustments ?? []).map((a) => ({ ...a, amount: Number(a.amount) / d }));
+        // Saved adjustments, then the technician's tax lines (Net Pay After Tax on the report).
+        const techTaxes = (taxLines.get(id) ?? [])
+          .map((t) => ({ kind: "tax", description: t.label.trim() || "Tax", amount: taxLineAmount(t, grossPay), percent: t.mode === "percent" ? t.amount : null }))
+          .filter((t) => Math.abs(t.amount) >= 0.005);
+        const adjustments = [...(li.breakdown?.adjustments ?? []).map((a) => ({ ...a, amount: Number(a.amount) / d })), ...techTaxes];
+        const techTaxTotal = techTaxes.reduce((sum, t) => sum + t.amount, 0);
         return {
           ...base,
           rate: li.hourly_rate / d,
@@ -255,11 +268,11 @@ export function PayrollHistoryTab({
           grossPay,
           extraPay,
           adjustments,
-          totalPay: netPay + extraPay,
+          totalPay: netPay + extraPay - techTaxTotal,
         };
       })
       .sort((a, b) => a.department.localeCompare(b.department) || a.name.localeCompare(b.name));
-  }, [run, lineItems, marks, breakdowns, employeeById, exchangeRate]);
+  }, [run, lineItems, marks, breakdowns, taxLines, employeeById, exchangeRate]);
 
   const [department, setDepartment] = useState("");
   const [search, setSearch] = useState("");
