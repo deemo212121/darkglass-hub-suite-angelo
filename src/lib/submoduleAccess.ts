@@ -67,6 +67,13 @@ export const ACTIVITY_LOG_DEFAULT_ROLES = ["SENIOR_BRANCH_MANAGER", "ADMIN", "SU
 export const WHEREABOUTS_DEFAULT_ROLES = ["TECHNICAL_DIRECTOR", "ADMIN", "SUPERADMIN"];
 /** Guides → BizOps Operations: BizOps roles plus Admin / SuperAdmin (primary or extra role). */
 export const BIZOPS_GUIDE_DEFAULT_ROLES = ["BIZOPS_ASSOCIATE", "BIZOPS_TEAM_LEADER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"];
+/** Claims → Pre-Auth: Claims, Parts and BizOps roles plus Admin / SuperAdmin (primary or extra role). */
+export const PRE_AUTH_DEFAULT_ROLES = [
+  "CLAIMS", "CLAIMS_TEAM_LEADER", "CLAIMS_MANAGER",
+  "PARTS", "PARTS_TEAM_LEADER", "PARTS_MANAGER",
+  "BIZOPS_ASSOCIATE", "BIZOPS_TEAM_LEADER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER",
+  "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN",
+];
 // Admin-module submodules open to everyone regardless of the admin gate —
 // company-wide utilities, same carve-out as m.$module.$submodule.tsx's own.
 const ALL_ROLES_ADMIN_SUBMODULES = new Set(["internal-message-support"]);
@@ -114,6 +121,7 @@ export function canAccessSubmodule(
   if (isWhereaboutsSubmodule && !hasDashboardAccess(explicitModuleOverride ?? WHEREABOUTS_DEFAULT_ROLES, role, extraRoles)) return false;
   if (sub.custom === "company-settings" && !isCompanySuperAdminRole(role, extraRoles)) return false;
   if (sub.custom === "bizops-guide" && !hasDashboardAccess(explicitModuleOverride ?? BIZOPS_GUIDE_DEFAULT_ROLES, role, extraRoles)) return false;
+  if (sub.custom === "pre-auth" && !hasDashboardAccess(explicitModuleOverride ?? PRE_AUTH_DEFAULT_ROLES, role, extraRoles)) return false;
 
   // Same carve-out as the admin-module gate above (ALL_ROLES_ADMIN_SUBMODULES)
   // — internal-message-support must stay unrestrictable even if a company

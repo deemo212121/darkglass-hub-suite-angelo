@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Lock, Send } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { getCompanyByLegacyCode, updateCompanyDetails, type CompanyDetails } from "@/lib/supabase/companies";
+import { isPreAuthSubmitEnabled, setPreAuthSubmitEnabled } from "@/lib/supabase/preAuth";
 
 const SUBSCRIPTION_PLANS = ["basic", "professional", "enterprise"] as const;
 
@@ -33,6 +34,31 @@ export function CompanySettingsPage({ sub }: { mod: ModuleDef; sub: SubModuleDef
     subscriptionPlan: "basic",
     loginAlias: "",
   });
+
+  // Claims → Pre-Auth: whether Submit actually sends to ServicePower. Off by default.
+  const [preAuthSend, setPreAuthSend] = useState<boolean | null>(null);
+  const [preAuthBusy, setPreAuthBusy] = useState(false);
+  const [preAuthMsg, setPreAuthMsg] = useState<string | null>(null);
+  useEffect(() => {
+    if (!companyId) return;
+    isPreAuthSubmitEnabled(companyId).then(setPreAuthSend).catch(() => setPreAuthSend(false));
+  }, [companyId]);
+  const togglePreAuthSend = async () => {
+    if (!companyId || preAuthSend === null) return;
+    const next = !preAuthSend;
+    if (next && !window.confirm("Turn ON sending Pre-Auths to ServicePower?\n\nAfter this, Submit on Claims → Pre-Auth sends a real Request for Authorization to ServicePower (it still asks before each one).")) return;
+    setPreAuthBusy(true);
+    setPreAuthMsg(null);
+    try {
+      await setPreAuthSubmitEnabled(companyId, next);
+      setPreAuthSend(next);
+      setPreAuthMsg(next ? "Sending is ON." : "Sending is OFF — nothing goes to ServicePower.");
+    } catch (err) {
+      setPreAuthMsg(`Error: ${err instanceof Error ? err.message : "Couldn't change it"}`);
+    } finally {
+      setPreAuthBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (!companyId) return;
@@ -149,6 +175,36 @@ export function CompanySettingsPage({ sub }: { mod: ModuleDef; sub: SubModuleDef
             </div>
           </div>
         )}
+
+        {/* ServicePower — sending switches. Saved on its own, not with Save Changes. */}
+        <div className="mt-6 rounded-xl border border-white/15 bg-white/5 p-6">
+          <h2 className="text-lg font-semibold text-white">ServicePower</h2>
+          <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
+            <div className="max-w-xl">
+              <p className="text-sm font-medium text-white flex items-center gap-1.5">
+                {preAuthSend ? <Send className="h-4 w-4 text-emerald-300" /> : <Lock className="h-4 w-4 text-amber-300" />}
+                Send Pre-Auths to ServicePower
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                Claims → Pre-Auth&apos;s Submit button. While OFF, Pre-Auths are only saved in the app and nothing is sent. When ON, Submit sends a real Request for Authorization to ServicePower (it asks before each one).
+              </p>
+              {preAuthMsg && <p className={`mt-2 text-xs ${preAuthMsg.startsWith("Error") ? "text-red-300" : "text-slate-300"}`}>{preAuthMsg}</p>}
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!!preAuthSend}
+              onClick={() => void togglePreAuthSend()}
+              disabled={preAuthBusy || preAuthSend === null}
+              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-semibold transition disabled:opacity-50 ${preAuthSend ? "border-emerald-400/50 bg-emerald-500/15 text-emerald-200" : "border-amber-400/40 bg-amber-500/10 text-amber-200"}`}
+            >
+              <span className={`relative inline-block h-4 w-8 rounded-full transition ${preAuthSend ? "bg-emerald-500" : "bg-slate-600"}`}>
+                <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${preAuthSend ? "left-[18px]" : "left-0.5"}`} />
+              </span>
+              {preAuthSend === null ? "…" : preAuthSend ? "ON" : "OFF"}
+            </button>
+          </div>
+        </div>
       </div>
     </main>
   );
