@@ -3319,14 +3319,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // choice took the last 2 PH CSRs on 10/21 while regenerating only Angelo
   // Mendoza).
   const generatePayroll = async () => {
-    if (nationIncludedPayrollRows.length === 0) return;
+    // Only the ticked employees the table's filters / search currently show
+    // (generationRows below) — anyone the filters hide counts as unticked for
+    // this generate, without changing their saved tick.
+    const rowsToGenerate = generationRows;
+    if (rowsToGenerate.length === 0) return;
     if (!genStart || !genEnd || genStart > genEnd) {
       toast.error("Pick a valid start and end date before generating payroll.");
       return;
     }
     const runForDates = payrollRuns.find((r) => r.period_start === genStart && r.period_end === genEnd);
-    const includedIds = new Set(nationIncludedPayrollRows.map((r) => r.employee.id));
-    // Unticked employees of this nation who already have a saved payslip in that run — kept as-is.
+    const includedIds = new Set(rowsToGenerate.map((r) => r.employee.id));
+    // This nation's employees not being generated (unticked, or hidden by the filters) who already have a saved payslip in that run — kept as-is.
     const untickedSaved = runForDates
       ? nationPayrollRows.filter((r) => !includedIds.has(r.employee.id) && payrollLineItems.some((li) => li.payroll_run_id === runForDates.id && li.profile_id === r.employee.id))
       : [];
@@ -3386,7 +3390,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // per-cutoff amount (grossPayUSD) goes in as regular_pay, with 0
       // overtime, matching this session's "no overtime for fixed salary"
       // decision.
-      const lineItems = nationIncludedPayrollRows.map((r) => ({
+      const lineItems = rowsToGenerate.map((r) => ({
         payroll_run_id: runId,
         profile_id: r.employee.id,
         hours_worked: r.hoursWorked,
@@ -3423,21 +3427,21 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // run's carryoverRepairCounts fetch. Not gated on nationHasExistingLineItems:
       // a regenerate re-pays the same technicians, so re-stamping (already
       // consumed) is a harmless no-op.
-      const consumedCarryoverIds = nationIncludedPayrollRows.flatMap((r) => r.techCarryover.map((c) => c.lateTicketCompletionId));
+      const consumedCarryoverIds = rowsToGenerate.flatMap((r) => r.techCarryover.map((c) => c.lateTicketCompletionId));
       if (consumedCarryoverIds.length > 0) {
         markCarryoversConsumed(consumedCarryoverIds, runId)
           .then(refreshCarryoverRepairCounts)
           .catch((err) => console.error("Failed to mark carryovers consumed:", err));
       }
 
-      const nationTotalUSD = nationIncludedPayrollRows.reduce((s, r) => s + r.grossPayUSD, 0);
+      const nationTotalUSD = rowsToGenerate.reduce((s, r) => s + r.grossPayUSD, 0);
       const nationLabel = effectiveCurrency === "USD" ? "US" : "PH";
 
       // Insert audit log entry
       await supabase.from("payroll_audit_log").insert({
         action: nationHasExistingLineItems ? "edit" : "generate",
         employee_name: "All Employees",
-        details: `${nationHasExistingLineItems ? "Regenerated" : "Generated"} ${nationLabel} payroll for ${genStart} – ${genEnd}. ${nationIncludedPayrollRows.length} employees. Total: $${nationTotalUSD.toFixed(2)}${untickedSaved.length ? `. Kept ${untickedSaved.length} unticked employees' saved payslips` : ""}`,
+        details: `${nationHasExistingLineItems ? "Regenerated" : "Generated"} ${nationLabel} payroll for ${genStart} – ${genEnd}. ${rowsToGenerate.length} employees. Total: $${nationTotalUSD.toFixed(2)}${untickedSaved.length ? `. Kept ${untickedSaved.length} other employees' saved payslips (unticked or filtered out)` : ""}`,
         amount: Math.round(nationTotalUSD * 100) / 100,
       });
       void logModuleActivity({
@@ -3445,7 +3449,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         actorName: displayName || email || "Admin",
         action: existingRun ? "payroll_run_regenerated" : "payroll_run_generated",
         targetLabel: `${genStart} – ${genEnd}`,
-        details: { employees: payrollRows.length, totalUSD: Math.round(totalPayrollUSD * 100) / 100 },
+        // What was actually saved: this nation's ticked employees and their
+        // total. Used to be every row on the page (both nations, ticked or
+        // not) — 9/27–10/10 logged "215 employees" for a 100-person US run.
+        details: { nation: nationLabel, employees: rowsToGenerate.length, totalUSD: Math.round(nationTotalUSD * 100) / 100, ...(untickedSaved.length ? { keptOthers: untickedSaved.length } : {}) },
       });
 
       // Generating no longer notifies or exposes anything to the employee —
@@ -3465,8 +3472,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // models, reviewed via different wizards), then by reviewed status
       // within each — Finance decides whether to send the reviewed group
       // now or cancel and go review the rest first.
-      const techRows = nationIncludedPayrollRows.filter((r) => isTechRole(r.employee));
-      const officeRows = nationIncludedPayrollRows.filter((r) => !isTechRole(r.employee));
+      const techRows = rowsToGenerate.filter((r) => isTechRole(r.employee));
+      const officeRows = rowsToGenerate.filter((r) => !isTechRole(r.employee));
       setSendAllPrompt({
         nationLabel,
         technician: {
@@ -4003,6 +4010,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       )
     : visibleRowsUnsorted;
   const checkedVisibleRows = visibleRows.filter(row => !row.employee.payrollExcluded);
+  // What Generate Payroll saves: the ticked employees the filters / search
+  // currently show. Matched by person, so someone whose secondary
+  // technician role gives them a second (tech) row is generated whole when
+  // their visible row is ticked. Ticked people hidden by the filters are
+  // left out for that generate only — their saved tick (payroll_excluded,
+  // which carries over to every period) isn't touched. Before this, a
+  // role-filtered generate of 99 technicians also regenerated a ticked HR
+  // test account the filter hid (9/27–10/10, 10/21).
+  const visibleEmployeeIds = new Set(visibleRows.map((r) => r.employee.id));
+  const generationRows = nationIncludedPayrollRows.filter((r) => visibleEmployeeIds.has(r.employee.id));
+  const generationEmployeeCount = new Set(generationRows.map((r) => r.employee.id)).size;
+  const tickedHiddenCount = new Set(nationIncludedPayrollRows.filter((r) => !visibleEmployeeIds.has(r.employee.id)).map((r) => r.employee.id)).size;
   // Each technician's pay beyond hours, for the attendance workbook's
   // Includable / Reimbursements tables — so its 15-step calc comes up with
   // the total instead of leaving them blank. Custom lines keep their week
@@ -5020,16 +5039,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   onClick={() => void generatePayroll()}
                   disabled={
                     generating ||
-                    nationIncludedPayrollRows.length === 0 ||
+                    generationRows.length === 0 ||
                     !genStart ||
                     !genEnd ||
                     genStart > genEnd
                   }
-                  title={
-                    matchesExistingRun
-                      ? "A payroll run already exists for these dates — this recomputes the ticked employees' payslips in it; everyone else's saved payslip is kept"
-                      : undefined
-                  }
+                  title={[
+                    `Generates the ${generationEmployeeCount} ticked employee${generationEmployeeCount === 1 ? "" : "s"} shown in the table.`,
+                    tickedHiddenCount > 0
+                      ? `${tickedHiddenCount} ticked employee${tickedHiddenCount === 1 ? " is" : "s are"} hidden by the filters and won't be generated this time.`
+                      : "",
+                    matchesExistingRun ? "A payroll run already exists for these dates — only these employees' payslips in it are recomputed; everyone else's saved payslip is kept." : "",
+                  ].filter(Boolean).join(" ")}
                   className="px-3 py-1.5 text-xs bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded font-semibold transition flex items-center gap-2 shrink-0"
                 >
                   {generating ? (
@@ -5039,7 +5060,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   ) : (
                     <DollarSign className="h-4 w-4" />
                   )}
-                  {generating ? "Generating…" : "Generate Payroll"}
+                  {generating ? "Generating…" : `Generate Payroll (${generationEmployeeCount})`}
                 </button>
                 </div>
               </div>
