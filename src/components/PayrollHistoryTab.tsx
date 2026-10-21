@@ -24,6 +24,8 @@ export interface PayrollHistoryLineItem {
   regular_pay: number;
   overtime_pay: number;
   gross_pay: number;
+  /** gross + reimbursements − deductions − tax (migration 0393); equals gross when there are no adjustments. */
+  net_pay?: number | null;
   currency: string;
   extra_pay: number;
   notes: string | null;
@@ -31,6 +33,7 @@ export interface PayrollHistoryLineItem {
   paid_at: string | null;
   compensation_type: "hourly" | "fixed";
   annual_salary: number | null;
+  breakdown?: { adjustments?: { kind: string; description: string; amount: number; percent: number | null }[] } | null;
 }
 
 export interface PayrollHistoryPerson {
@@ -71,6 +74,8 @@ interface HistoryRow {
   /** null = no pay recorded anywhere for this person yet. */
   grossPay: number | null;
   extraPay: number;
+  /** Reimbursements (+), deductions and tax (−) saved with the run line, in USD. */
+  adjustments: { kind: string; description: string; amount: number; percent: number | null }[];
   totalPay: number | null;
 }
 
@@ -233,11 +238,14 @@ export function PayrollHistoryTab({
         if (!li) {
           // Not in the saved run — the reviewed breakdown is the only pay record.
           const total = review ? reviewBreakdownTotal(review) : null;
-          return { ...base, rate: 0, regularPay: 0, overtimePay: 0, annualSalary: null, grossPay: total, extraPay: 0, totalPay: total };
+          return { ...base, rate: 0, regularPay: 0, overtimePay: 0, annualSalary: null, grossPay: total, extraPay: 0, adjustments: [], totalPay: total };
         }
         const d = li.currency === "PHP" ? exchangeRate : 1;
         const grossPay = li.gross_pay / d;
         const extraPay = (li.extra_pay || 0) / d;
+        // Net pay already includes the adjustments; older lines have net = gross.
+        const netPay = li.net_pay != null ? Number(li.net_pay) / d : grossPay;
+        const adjustments = (li.breakdown?.adjustments ?? []).map((a) => ({ ...a, amount: Number(a.amount) / d }));
         return {
           ...base,
           rate: li.hourly_rate / d,
@@ -246,7 +254,8 @@ export function PayrollHistoryTab({
           annualSalary: li.annual_salary != null ? li.annual_salary / d : null,
           grossPay,
           extraPay,
-          totalPay: grossPay + extraPay,
+          adjustments,
+          totalPay: netPay + extraPay,
         };
       })
       .sort((a, b) => a.department.localeCompare(b.department) || a.name.localeCompare(b.name));
@@ -484,6 +493,15 @@ function PayBreakdown({
               <Line label="Other earnings" detail="tickets, bonuses, mileage, matches" amount={Math.abs(other)} negative={other < 0} />
             )}
             <Line label="Gross pay" amount={gross} strong />
+            {r.adjustments.map((a, i) => (
+              <Line
+                key={i}
+                label={a.description || (a.kind === "tax" ? "Tax" : a.kind === "deduction" ? "Deduction" : "Reimbursement")}
+                detail={a.kind === "tax" ? (a.percent != null ? `tax · ${a.percent}% of gross` : "tax") : a.kind}
+                amount={Math.abs(a.amount)}
+                negative={a.kind !== "reimbursement"}
+              />
+            ))}
             {Math.abs(r.extraPay) >= 0.01 && <Line label="Extra pay" amount={Math.abs(r.extraPay)} negative={r.extraPay < 0} />}
             {li.notes && <div className="text-xs text-slate-400 py-1">Note: {li.notes}</div>}
             <Line label="Total pay" amount={r.totalPay ?? 0} strong />
