@@ -75,7 +75,7 @@ export function ExpenseTrackingPage({
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { uid, ready, companyId, role, extraRoles } = useAuth();
   // Approve / Reject / Mark Reimbursed are Accounting's call (Admin / SuperAdmin too) — primary or extra role.
-  // The database enforces the same rule (migration 0393).
+  // The database enforces the same rule (migration 0396).
   const canReviewExpenses = [role, ...(extraRoles ?? [])].some((r) =>
     ["FINANCE", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(String(r || "").trim().toUpperCase().replace(/\s+/g, "_"))
   );

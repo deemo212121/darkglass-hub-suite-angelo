@@ -61,7 +61,7 @@ export interface EmployeePayslipData {
   extraPay: number;
   /** Finance-entered note for this specific payslip — see migration 0111. */
   notes: string;
-  /** Reimbursements (+) / deductions (−) for this period (migration 0386) — listed above the Grand Total. */
+  /** Reimbursements (+) / deductions (−) for this period (migration 0393) — listed above the Grand Total. */
   adjustments?: { kind: "reimbursement" | "deduction" | "tax"; description: string; amount: number; percent?: number | null }[];
   /**
    * True when a technician's Tech Activity Report breakdown is being

@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0386 — Payroll adjustments: reimbursements and deductions.
+-- 0393 — Payroll adjustments: reimbursements and deductions.
 --
 -- Accounting → Payroll's employee popup gets an "Adjustments" section for
 -- PH payroll (everyone) and US Office staff (Parts Manager, Parts Team
@@ -12,6 +12,9 @@
 -- net_pay; the payslip lists each line.
 --
 -- Run once in the Supabase SQL Editor.
+-- (Numbered 0386 in Angelo's repo — renumbered here past this repo's own
+-- 0386-0392; already applied to the shared database 2026-10-16. Safe to
+-- run again.)
 -- =====================================================================
 
 create table if not exists payroll_adjustments (

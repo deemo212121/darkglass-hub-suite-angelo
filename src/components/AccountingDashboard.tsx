@@ -37,18 +37,15 @@ import {
   ExternalLink,
   History,
   Search,
-  Building2,
   Car,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { supabase } from "@/lib/supabase/client";
-import { getBranchRates, upsertBranchRate, type BranchRate } from "@/lib/supabase/branchRates";
-import { STATE_MIN_WAGE_2026, stateMinWageOn } from "@/lib/stateMinWage";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
-import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, isCarIqEligible, mileageRateForCarIq, CAR_IQ_MILEAGE_RATE_WITH, CAR_IQ_MILEAGE_RATE_WITHOUT } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, hasAnyTechnicianPayRole, isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, isCarIqEligible, mileageRateForCarIq, CAR_IQ_MILEAGE_RATE_WITH, CAR_IQ_MILEAGE_RATE_WITHOUT } from "@/lib/roleLabels";
 import { getCompanyCarIqHistory, addCarIqHistoryEntry, updateCarIqHistoryEffectiveDate, carIqEntryEffectiveOn, carIqSwitchDatesInRange, type CarIqHistoryEntry } from "@/lib/supabase/carIqHistory";
 import { getCarIqMileageRateHistory, addCarIqMileageRate, deleteCarIqMileageRate, carIqRatesOn, carIqRateChangeDatesInRange, CAR_IQ_RATE_HISTORY_START, type CarIqMileageRateEntry } from "@/lib/supabase/companySettings";
 import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, computeMealTimeCredit, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
@@ -98,6 +95,7 @@ import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
 import { TicketTimeDisputesTab } from "@/components/TicketTimeDisputesTab";
 import { BranchManagerCommissionTab } from "@/components/BranchManagerCommissionTab";
 import { ReviewedPeriodsTab } from "@/components/ReviewedPeriodsTab";
+import { PayrollHistoryTab } from "@/components/PayrollHistoryTab";
 import { upsertPayrollReviewBreakdown } from "@/lib/supabase/payrollReviewBreakdowns";
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, linkPayrollDisputeCustomPayItem, modifyPayrollDispute, restorePayrollDisputeOriginal, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
@@ -323,7 +321,7 @@ export interface EmployeePayrollRow {
    * Car IQ tab (2026-09-24) — when this technician has a Car IQ status set
    * (employee_info.hasCarIq, true or false), their Mileage rate is locked
    * to $0.20/mi (with) or $0.40/mi (without) instead of the branch's shared
-   * Branch Rates figure, and the Tech Activity Report's Mileage rate cell
+   * branch rate, and the Tech Activity Report's Mileage rate cell
    * is disabled so it can't be typed over. null = no Car IQ status set yet
    * — Mileage rate stays branch-driven and editable, unchanged from before.
    */
@@ -394,10 +392,10 @@ export interface EmployeePayrollRow {
    */
   techWeeklyOt: TechWeeklyOt[];
   /**
-   * Guaranteed-minimum-salary match — see latestFixedSalaryByProfile in
-   * payrollRows. techGuaranteedSalaryTarget is that salary's per-cutoff
-   * equivalent (0 when no fixed-salary entry exists, or when this period
-   * is already being paid fixed salary); techGuaranteedSalaryMatch is the
+   * Guaranteed-minimum-salary match — see latestGuaranteeByProfile in
+   * payrollRows. techGuaranteedSalaryTarget is that guarantee's per-cutoff
+   * equivalent (0 when no Guaranteed Minimum is in effect, or when this
+   * period is being paid fixed salary); techGuaranteedSalaryMatch is the
    * shortfall already folded into grossPay, kept separate for display.
    */
   techGuaranteedSalaryTarget: number;
@@ -972,7 +970,7 @@ function parseGmailRegionParam(value: string | null): GmailRegion {
   return value === "PH" ? "PH" : "US";
 }
 
-type AccountingDashboardTabId = "traineeMonitoring" | "overview" | "payroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech" | "ticketAttendance" | "ticketTimeDisputes" | "branchRates" | "carIq" | "branchCommission" | "reviewedPeriods";
+type AccountingDashboardTabId = "traineeMonitoring" | "overview" | "payroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech" | "ticketAttendance" | "ticketTimeDisputes" | "carIq" | "branchCommission" | "reviewedPeriods" | "payrollHistory";
 // Shared by the top tab row and the floating left quick-nav so the two
 // never drift out of sync.
 const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; Icon: typeof History }[] = [
@@ -983,11 +981,11 @@ const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; 
   { id: "payrollDisputes", label: "Payroll Disputes", Icon: AlertCircle },
   { id: "reports", label: "Reports", Icon: FileText },
   { id: "ticketAttendance", label: "Ticket Attendance", Icon: FileText },
-  { id: "branchRates", label: "Branch Rates", Icon: Building2 },
   { id: "carIq", label: "Car IQ", Icon: Car },
   { id: "branchCommission", label: "Branch Commission", Icon: TrendingUp },
   { id: "ticketTimeDisputes", label: "Ticket Time Disputes", Icon: Clock },
   { id: "reviewedPeriods", label: "Reviewed Periods", Icon: Check },
+  { id: "payrollHistory", label: "Payroll History", Icon: History },
 
 ];
 
@@ -1022,7 +1020,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   };
   const [activeTab, setActiveTab] = usePersistedTab<AccountingDashboardTabId>(
     "ahs:accounting-dashboard-active-tab",
-    ["overview", "payroll", "traineeMonitoring", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes", "branchRates", "branchCommission", "reviewedPeriods"],
+    ["overview", "payroll", "traineeMonitoring", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes", "branchCommission", "reviewedPeriods", "payrollHistory"],
     "overview",
   );
   // Deep link from a bell-icon notification straight into the Payroll
@@ -1077,66 +1075,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [activityLogActionFilter, setActivityLogActionFilter] = useState("");
   const [activityLogFrom, setActivityLogFrom] = useState("");
   const [activityLogTo, setActivityLogTo] = useState("");
-
-  // Branch Rates tab — one reference $ rate per row (migration 0245),
-  // seeded from the full STATE_MIN_WAGE_2026 reference table rather than
-  // only states with a saved row yet, so every state shows up even before
-  // Finance has touched it. Lazy-loaded only once the tab is opened.
-  const [branchRatesByName, setBranchRatesByName] = useState<Map<string, BranchRate>>(new Map());
-  const [branchRatesLoading, setBranchRatesLoading] = useState(false);
-  const [branchRatesLoaded, setBranchRatesLoaded] = useState(false);
-  const [branchRateSaving, setBranchRateSaving] = useState<string | null>(null);
-  const [branchRateSearch, setBranchRateSearch] = useState("");
-  useEffect(() => {
-    if (activeTab !== "branchRates" || branchRatesLoaded) return;
-    setBranchRatesLoading(true);
-    getBranchRates()
-      .then((rows) => {
-        setBranchRatesByName(new Map(rows.map((r) => [r.branch, r])));
-        setBranchRatesLoaded(true);
-      })
-      .catch((err) => console.error("Failed to load branch rates:", err))
-      .finally(() => setBranchRatesLoading(false));
-  }, [activeTab, branchRatesLoaded]);
-  const handleBranchRateBlur = async (branch: string, value: string) => {
-    const rate = Number(value.replace(/[^\d.]/g, "")) || 0;
-    if ((branchRatesByName.get(branch)?.rate ?? 0) === rate) return;
-    setBranchRateSaving(branch);
-    try {
-      await upsertBranchRate(branch, rate);
-      setBranchRatesByName((prev) => {
-        const next = new Map(prev);
-        const existing = next.get(branch);
-        next.set(branch, { id: existing?.id ?? branch, branch, rate, updatedAt: new Date().toISOString() });
-        return next;
-      });
-      void logModuleActivity({
-        module: "accounting",
-        actorName: displayName || email || "Admin",
-        action: "branch_rate_saved",
-        targetType: "branch",
-        targetLabel: branch,
-        details: { rate },
-      });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : `Failed to save the rate for ${branch}.`);
-    } finally {
-      setBranchRateSaving(null);
-    }
-  };
-  // Rows are US states (from the state-minimum-wage reference table), not
-  // company branches — despite the tab/table still being called "Branch
-  // Rates" (the `branch_rates` table itself is just a generic label+$rate
-  // store, so a state name works as the "branch" value with no schema
-  // change needed).
-  const branchRateStateNames = STATE_MIN_WAGE_2026.map((s) => s.state);
-  const branchRateFilteredLocations = branchRateSearch.trim()
-    ? branchRateStateNames.filter((s) => s.toLowerCase().includes(branchRateSearch.trim().toLowerCase()))
-    : branchRateStateNames;
-  // "Prefill from State Minimum Wage" state — the derived count and the
-  // handler itself live further down (see suggestedBranchRateByName's own
-  // comment), since they depend on data derived later in this component.
-  const [branchRatePrefilling, setBranchRatePrefilling] = useState(false);
 
   const pendingPayrollDisputes = payrollDisputes.filter((r) => r.status === "pending");
   // Approved disputes stay visible (not just pending ones) so an accidental
@@ -2331,7 +2269,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   }, [genStart, genEnd]);
   useEffect(() => { void loadReviewMarks(); }, [loadReviewMarks]);
 
-  // Reimbursements / deductions for the picked period (migration 0386),
+  // Reimbursements / deductions for the picked period (migration 0393),
   // per employee — PH payroll and US Office staff only (see
   // payrollAdjustmentsEligible); technicians have their own custom lines.
   const [adjustmentsByProfile, setAdjustmentsByProfile] = useState<Map<string, PayrollAdjustment[]>>(new Map());
@@ -2434,8 +2372,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // Payroll for a past/current period would silently start using a future
   // rate/compensation type the moment that future entry gets saved, same
   // as rateEffectiveOn/entryEffectiveOn already do for per-day lookups.
+  // Technician-tier staff (primary or secondary role) with an hourly rate on
+  // file: their Fixed Salary entries are a guaranteed minimum, not their pay
+  // (fixedSalaryIsGuarantee in salary.ts) — so those entries never decide
+  // the rate or the hourly/fixed split, whatever their date.
+  const hasHourlyEntry = new Set(salaryEntries.filter((se) => se.compensation_type === "hourly").map((se) => se.profile_id));
+  const fixedIsGuaranteeFor = new Set(
+    employees.filter((e) => hasHourlyEntry.has(e.id) && hasAnyTechnicianPayRole(e.role, e.extraRoles)).map((e) => e.id)
+  );
+  const rateEntries = salaryEntries.filter((se) => !(se.compensation_type === "fixed" && fixedIsGuaranteeFor.has(se.profile_id)));
   const latestCompMap = new Map<string, SalaryEntry>();
-  for (const se of salaryEntries) {
+  for (const se of rateEntries) {
     if (genEnd && se.effective_date > genEnd) continue;
     const existing = latestCompMap.get(se.profile_id);
     if (
@@ -2447,24 +2394,27 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
   }
 
-  // Latest fixed-salary entry ever recorded per employee, regardless of
-  // period — unlike latestCompMap above, this is NOT filtered to entries
-  // effective by genEnd. Some technicians have a fixed annual salary on
-  // file (e.g. an upcoming switch to salary, effective next cutoff) that
-  // Finance wants treated as an ongoing guaranteed-minimum floor under
-  // their hourly + incentive pay for THIS period too, even though that
-  // period is still correctly being paid hourly per latestCompMap. See
+  // Guaranteed minimum in effect for this period per employee — the latest
+  // Fixed Salary entry dated on or before genEnd, for those whose fixed
+  // salary is a guarantee (fixedIsGuaranteeFor above). They keep their $/hr
+  // base (hours, OT, state matches) and get topped up to annual / 26 per
+  // cutoff when earnings fall short. A guarantee starting any day up to
+  // genEnd covers the whole period at the full per-cutoff amount.
+  // Previously the Fixed entry only counted as a guarantee while an hourly
+  // entry was dated after it, so dating it later silently switched the
+  // person to salaried at $0/hr (Darius Brown, 2026-10-20). See
   // techGuaranteedSalaryMatch below.
-  const latestFixedSalaryByProfile = new Map<string, SalaryEntry>();
+  const latestGuaranteeByProfile = new Map<string, SalaryEntry>();
   for (const se of salaryEntries) {
-    if (se.compensation_type !== "fixed" || !se.annual_salary) continue;
-    const existing = latestFixedSalaryByProfile.get(se.profile_id);
+    if (se.compensation_type !== "fixed" || !se.annual_salary || !fixedIsGuaranteeFor.has(se.profile_id)) continue;
+    if (genEnd && se.effective_date > genEnd) continue;
+    const existing = latestGuaranteeByProfile.get(se.profile_id);
     if (
       !existing ||
       se.effective_date > existing.effective_date ||
       (se.effective_date === existing.effective_date && se.created_at > existing.created_at)
     ) {
-      latestFixedSalaryByProfile.set(se.profile_id, se);
+      latestGuaranteeByProfile.set(se.profile_id, se);
     }
   }
 
@@ -2481,7 +2431,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // latest as of genEnd. Same tie-break as entryEffectiveOn/latestCompMap:
   // latest effective_date wins, ties broken by latest created_at.
   const salaryEntriesByProfile = new Map<string, SalaryEntry[]>();
-  for (const se of salaryEntries) {
+  for (const se of rateEntries) {
     const list = salaryEntriesByProfile.get(se.profile_id);
     if (list) list.push(se);
     else salaryEntriesByProfile.set(se.profile_id, [se]);
@@ -2569,50 +2519,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const adjustmentsFor = (emp: SupabaseEmployee, isTechPortion = false): PayrollAdjustment[] =>
     adjustmentsEnabledFor(emp, isTechPortion) ? adjustmentsByProfile.get(emp.id) ?? [] : [];
 
-  // Suggested rate for Branch Rates' "Prefill from State Minimum Wage"
-  // button — straight from the STATE_MIN_WAGE_2026 reference table. States
-  // whose minimum wage is set by county rather than statewide (rate: null —
-  // New York, Oregon) have no suggestion; Finance enters the correct
-  // county-specific number by hand for those.
-  const suggestedBranchRateByName = new Map<string, number>();
-  for (const { state } of STATE_MIN_WAGE_2026) {
-    const rate = stateMinWageOn(state); // today's rate (Florida: $15 from 2026-09-30)
-    if (rate != null) suggestedBranchRateByName.set(state, rate);
-  }
-  // "Prefill from State Minimum Wage" — fills every state that (a) doesn't
-  // already have a saved rate (never overwrites a value Finance already set,
-  // even $0) and (b) has a numeric rate in the reference table above.
-  // States failing either check are left alone — "skip those data not
-  // available" — rather than guessed at.
-  const branchRatePrefillCount = branchRateStateNames.filter((s) => !branchRatesByName.has(s) && suggestedBranchRateByName.has(s)).length;
-  const handlePrefillBranchRates = async () => {
-    const toFill = branchRateStateNames.filter((s) => !branchRatesByName.has(s) && suggestedBranchRateByName.has(s));
-    if (toFill.length === 0) return;
-    setBranchRatePrefilling(true);
-    try {
-      for (const state of toFill) {
-        const rate = suggestedBranchRateByName.get(state)!;
-        await upsertBranchRate(state, rate);
-        setBranchRatesByName((prev) => {
-          const next = new Map(prev);
-          next.set(state, { id: state, branch: state, rate, updatedAt: new Date().toISOString() });
-          return next;
-        });
-      }
-      void logModuleActivity({
-        module: "accounting",
-        actorName: displayName || email || "Admin",
-        action: "branch_rate_saved",
-        targetType: "branch",
-        targetLabel: `${toFill.length} state${toFill.length === 1 ? "" : "s"} (prefilled from state minimum wage)`,
-        details: { states: toFill },
-      });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to prefill state minimum wage rates.");
-    } finally {
-      setBranchRatePrefilling(false);
-    }
-  };
   // Holds a technician-tier role as a secondary/extra role while their
   // primary role is something else (e.g. a CSR Agent who also picks up
   // technician work) — gets an ADDITIONAL tech-portion payroll row
@@ -2998,8 +2904,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // override saved back when this technician was still hourly stays
     // stuck applying its old (now meaningless) dollar amount on top of it.
     // Fixed Salary always wins here, same as it already does for officeGrossPay.
+    //
+    // A technician on Fixed Salary gets the HIGHER of the salary or their
+    // commission (includable pay), same as Finance's workbook for salaried
+    // techs — the salary isn't paid on top of commission. Commission is
+    // still paid through its own lines, so this pays the rest of the salary.
+    // (With no hourly rate on file their hours can't be priced; add an
+    // Hourly rate + keep the Fixed Salary entry for the full workbook check
+    // of hours + OT + commission against the salary.)
     const techHourlyPay = isFixed && annualSalary
-      ? perCutoffSalary(annualSalary)
+      ? (isTechRole(emp) ? Math.max(perCutoffSalary(annualSalary) - techIncludablePay, 0) : perCutoffSalary(annualSalary))
       : hourlyOtOverrides.get(emp.id)?.amount ?? techHourlyPayCompanyOnly;
     // Extra 0.5x bonus for hours actually worked on a recognized company
     // holiday — see holidayPremiumFor above. Paid on top of techHourlyPay
@@ -3017,13 +2931,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           techWeightedRegularRate
         )
       : 0;
-    // Guaranteed-minimum-salary match: some technicians have a fixed
-    // annual salary on file (see latestFixedSalaryByProfile) that acts as
-    // an ongoing floor under their hourly + incentive pay even while a
-    // period is still correctly being paid hourly (isFixed false — see
-    // latestCompMap, which only looks at entries effective by genEnd — an
-    // upcoming switch to salary doesn't retroactively apply, but Finance
-    // still wants it treated as a floor going forward). If actual earned
+    // Guaranteed-minimum-salary match: a technician with a Guaranteed
+    // Minimum in effect (see latestGuaranteeByProfile) keeps being paid on
+    // their hourly rate, with that guarantee as a floor under their hourly +
+    // incentive pay. If actual earned
     // compensation this period (Hourly + OT as ACTUALLY applied, plus
     // includable incentive pay) falls short of that salary's per-cutoff
     // equivalent, the shortfall is topped up here.
@@ -3040,8 +2951,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // state match would count toward the guarantee — reversed per direct
     // instruction; see Matthew Nichols, where a $199.88 state-floor match
     // was decided to stack on top of the guarantee rather than closing it.)
-    const guaranteedAnnualSalary = includeTech && isTechRole(emp) && !isFixed
-      ? latestFixedSalaryByProfile.get(emp.id)?.annual_salary ?? null
+    const guaranteedAnnualSalary = includeTech && !isFixed
+      ? latestGuaranteeByProfile.get(emp.id)?.annual_salary ?? null
       : null;
     // techHolidayPremium is folded in too, for the same double-counting
     // reason as techHourlyPayCompanyOnly above — see Daven Hodge, where the
@@ -3052,6 +2963,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // of the already-topped-up target — a flat overpayment equal to the
     // holiday premium any time the guarantee triggers for a technician who
     // also worked a recognized holiday.
+    // Straight wage + OT premium + commission (includable) + holiday premium
+    // all count toward the guaranteed salary — Finance's payroll workbook
+    // ("Earnings before reimbursements", confirmed 2026-10-16 on Daven Hodge:
+    // $2,574.41 vs $4,615.38). Reimbursements are paid on top.
     const techEarnedBeforeReimbursements = techHourlyPayCompanyOnly + techIncludablePay + techHolidayPremium;
     const techGuaranteedSalaryTarget = guaranteedAnnualSalary ? perCutoffSalary(guaranteedAnnualSalary) : 0;
     const techGuaranteedSalaryMatch = guaranteedAnnualSalary
@@ -3345,16 +3260,36 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // ── Generate Payroll ─────────────────────────────────────────────────────────
   // Finance picks the period via genStart/genEnd (the date inputs on the
   // Payroll tab) rather than an auto-computed range. If the picked dates
-  // exactly match an existing run, this recomputes and replaces that run's
-  // line items in place (what "Regenerate" used to do) instead of creating
-  // a duplicate — so a rate fix or corrected timecard can be re-applied to
-  // the same payslip just by re-picking its dates and generating again.
-  const generatePayroll = async () => {
+  // exactly match an existing run, this recomputes the TICKED employees'
+  // line items in that run in place (what "Regenerate" used to do) instead
+  // of creating a duplicate — so a rate fix or corrected timecard can be
+  // re-applied to the same payslip just by re-picking its dates and
+  // generating again.
+  //
+  // Everyone else's saved payslip in the run is kept. Regenerating used to
+  // clear every employee of the nation and save only the ticked ones, so
+  // fixing one or two people wiped the rest (9/27–10/10 PH: 72 saved
+  // payslips, already emailed, went down to 2). If some unticked employees
+  // already have a saved payslip, the "Keep the other saved payslips?"
+  // window asks first: keep them (default) or remove them from the run.
+  const [regenUntickedConfirm, setRegenUntickedConfirm] = useState<{ names: string[] } | null>(null);
+  const generatePayroll = async (untickedChoice?: "keep" | "remove") => {
     if (nationIncludedPayrollRows.length === 0) return;
     if (!genStart || !genEnd || genStart > genEnd) {
       toast.error("Pick a valid start and end date before generating payroll.");
       return;
     }
+    const runForDates = payrollRuns.find((r) => r.period_start === genStart && r.period_end === genEnd);
+    const includedIds = new Set(nationIncludedPayrollRows.map((r) => r.employee.id));
+    // This nation's employees who are NOT ticked but already have a saved payslip in that run.
+    const untickedSaved = runForDates
+      ? nationPayrollRows.filter((r) => !includedIds.has(r.employee.id) && payrollLineItems.some((li) => li.payroll_run_id === runForDates.id && li.profile_id === r.employee.id))
+      : [];
+    if (untickedSaved.length > 0 && !untickedChoice) {
+      setRegenUntickedConfirm({ names: untickedSaved.map((r) => r.employee.full_name) });
+      return;
+    }
+    setRegenUntickedConfirm(null);
     setGenerating(true);
     try {
       // Timecard completeness (missing clock-outs, pending time corrections)
@@ -3376,17 +3311,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       let runId: string;
       if (existingRun) {
         runId = existingRun.id;
-        // Only this nation's line items get cleared — the other nation's
-        // (generated separately, from its own tab) are left untouched. Uses
-        // every employee in this nation, not just the currently-included
-        // ones, so someone excluded after their last payslip was generated
-        // has that stale line item cleaned up instead of left orphaned.
-        const nationProfileIds = nationPayrollRows.map((r) => r.employee.id);
+        // Only the ticked employees' line items are replaced — everyone
+        // else's saved payslip in the run (unticked people of this nation,
+        // and the other nation's, generated from its own tab) is kept,
+        // unless Finance chose "Remove them from this run" in the window
+        // above.
+        const replaceIds = [...includedIds, ...(untickedChoice === "remove" ? untickedSaved.map((r) => r.employee.id) : [])];
         const { error: deleteErr } = await supabase
           .from("payroll_line_items")
           .delete()
           .eq("payroll_run_id", runId)
-          .in("profile_id", nationProfileIds);
+          .in("profile_id", replaceIds);
         if (deleteErr) throw new Error(deleteErr.message);
         await supabase.from("payroll_runs").update({ generated_at: new Date().toISOString() }).eq("id", runId);
       } else {
@@ -3426,7 +3361,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         // itself already straightAllHours for PH; see officeGrossPay above).
         overtime_pay: r.compensationType === "fixed" ? 0 : r.overtimeHours * r.hourlyRateUSD * (r.employee.country === "PH" ? 1 : 1.5),
         gross_pay: r.grossPayUSD,
-        // Reimbursements / deductions (migration 0386): net = gross + reimbursements − deductions;
+        // Reimbursements / deductions (migration 0393): net = gross + reimbursements − deductions;
         // the lines themselves go in breakdown.adjustments for the payslip.
         ...(() => {
           // Tax lines are worked out from this gross (gross × percent).
@@ -3465,7 +3400,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       await supabase.from("payroll_audit_log").insert({
         action: nationHasExistingLineItems ? "edit" : "generate",
         employee_name: "All Employees",
-        details: `${nationHasExistingLineItems ? "Regenerated" : "Generated"} ${nationLabel} payroll for ${genStart} – ${genEnd}. ${nationIncludedPayrollRows.length} employees. Total: $${nationTotalUSD.toFixed(2)}`,
+        details: `${nationHasExistingLineItems ? "Regenerated" : "Generated"} ${nationLabel} payroll for ${genStart} – ${genEnd}. ${nationIncludedPayrollRows.length} employees. Total: $${nationTotalUSD.toFixed(2)}${untickedSaved.length ? (untickedChoice === "remove" ? `. Removed ${untickedSaved.length} unticked employees' payslips` : `. Kept ${untickedSaved.length} unticked employees' saved payslips`) : ""}`,
         amount: Math.round(nationTotalUSD * 100) / 100,
       });
       void logModuleActivity({
@@ -3695,7 +3630,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       generatedDate: new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
       dailyRows,
       grossPay: row.grossPayUSD,
-      // Net = gross + reimbursements − deductions (migration 0386); each
+      // Net = gross + reimbursements − deductions (migration 0393); each
       // line is listed on the payslip above the Grand Total.
       netPay: row.grossPayUSD + sumPayrollAdjustments(adjustmentsFor(row.employee, row.isTechPortion), row.grossPayUSD).net,
       adjustments: resolveAdjustmentLines(adjustmentsFor(row.employee, row.isTechPortion), row.grossPayUSD).map((a) => ({ kind: a.kind, description: a.description, amount: a.amount, percent: a.percent })),
@@ -5043,9 +4978,44 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                       </div>
                     </div>
                   )}
+                {regenUntickedConfirm && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setRegenUntickedConfirm(null)}>
+                    <div
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="regen-unticked-title"
+                      className="w-full max-w-lg rounded-xl border border-white/10 bg-slate-900 p-5 text-left shadow-2xl"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <h3 id="regen-unticked-title" className="text-lg font-bold text-white">Keep the other saved payslips?</h3>
+                      <p className="mt-1 text-sm text-slate-300">
+                        <span className="font-semibold text-white">{regenUntickedConfirm.names.length}</span> employee{regenUntickedConfirm.names.length === 1 ? " who isn't" : "s who aren't"} ticked already {regenUntickedConfirm.names.length === 1 ? "has" : "have"} a saved payslip in the{" "}
+                        <span className="font-semibold text-white">{genStart} to {genEnd}</span> run. Generating only recomputes the{" "}
+                        <span className="font-semibold text-white">{nationIncludedPayrollRows.length}</span> ticked employee{nationIncludedPayrollRows.length === 1 ? "" : "s"}.
+                      </p>
+                      <ul className="mt-3 max-h-48 divide-y divide-white/5 overflow-y-auto rounded-lg border border-white/10 bg-slate-950/40 text-sm">
+                        {regenUntickedConfirm.names.map((n, i) => (
+                          <li key={`${n}-${i}`} className="px-3 py-1.5 text-slate-200">{n}</li>
+                        ))}
+                      </ul>
+                      <p className="mt-2 text-xs text-amber-300">Removing deletes their payslips from this run — anyone already sent theirs will no longer see it in Self-Service.</p>
+                      <div className="mt-4 flex flex-wrap justify-end gap-2">
+                        <button type="button" onClick={() => setRegenUntickedConfirm(null)} className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600">
+                          Cancel
+                        </button>
+                        <button type="button" onClick={() => void generatePayroll("remove")} className="rounded-lg border border-red-500/50 px-4 py-2 text-sm font-semibold text-red-300 hover:bg-red-500/10">
+                          Remove them from this run
+                        </button>
+                        <button type="button" autoFocus onClick={() => void generatePayroll("keep")} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
+                          Keep their payslips
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <button
                   type="button"
-                  onClick={generatePayroll}
+                  onClick={() => void generatePayroll()}
                   disabled={
                     generating ||
                     nationIncludedPayrollRows.length === 0 ||
@@ -5055,7 +5025,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   }
                   title={
                     matchesExistingRun
-                      ? "A payroll run already exists for these dates — this will recompute and replace it"
+                      ? "A payroll run already exists for these dates — this recomputes the ticked employees' payslips in it; everyone else's saved payslip is kept"
                       : undefined
                   }
                   className="px-3 py-1.5 text-xs bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded font-semibold transition flex items-center gap-2 shrink-0"
@@ -5067,11 +5037,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   ) : (
                     <DollarSign className="h-4 w-4" />
                   )}
-                  {generating
-                    ? "Generating…"
-                    : matchesExistingRun
-                      ? `Regenerate ${effectiveCurrency === "USD" ? "Office" : "PH"} Payroll`
-                      : `Generate ${effectiveCurrency === "USD" ? "Office" : "PH"} Payroll`}
+                  {generating ? "Generating…" : "Generate Payroll"}
                 </button>
                 </div>
               </div>
@@ -6169,6 +6135,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             onPeriodChange={(start, end) => { setGenStart(start); setGenEnd(end); }}
           />
         )}
+        {activeTab === "payrollHistory" && (
+          <PayrollHistoryTab
+            runs={payrollRuns}
+            lineItems={payrollLineItems}
+            employees={employees}
+            currentPeriodStart={genStart}
+            exchangeRate={EXCHANGE_RATE}
+            myProfileId={myProfileId}
+            myName={displayName || email || null}
+          />
+        )}
+
 
         {/* ── Flash Tech Tab ───────────────────────────────────────────────── */}
         {/* Moved here from its old standalone page (reached via a button on
@@ -6407,116 +6385,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         )}
                       </Fragment>
                     ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* ── Branch Rates Tab ─────────────────────────────────────────────── */}
-        {activeTab === "branchRates" && (
-          <div className="panel p-0 overflow-hidden">
-            <div className="px-4 py-4 border-b border-white/10 flex items-center justify-between gap-3">
-              <div>
-                <h2 className="font-semibold text-sm">Branch Rates</h2>
-                <p className="text-[10px] text-muted-foreground mt-0.5">State minimum wage reference (2026) — for Finance's own use, not tied to any payroll calculation.</p>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {branchRatesLoading && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
-                <button
-                  type="button"
-                  onClick={() => void handlePrefillBranchRates()}
-                  disabled={branchRatePrefilling || branchRatePrefillCount === 0}
-                  title={
-                    branchRatePrefillCount === 0
-                      ? "No state has an unset rate left to prefill"
-                      : `Fills the ${branchRatePrefillCount} state${branchRatePrefillCount === 1 ? "" : "s"} with no rate saved yet from the state minimum wage table — states set by county (New York, Oregon) are left as-is`
-                  }
-                  className="text-xs px-3 py-1.5 rounded-md border border-white/10 text-slate-300 hover:text-white hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
-                >
-                  {branchRatePrefilling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                  Prefill from State Minimum Wage{branchRatePrefillCount > 0 ? ` (${branchRatePrefillCount})` : ""}
-                </button>
-              </div>
-            </div>
-
-            <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex items-center gap-3">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-                <input
-                  type="text"
-                  value={branchRateSearch}
-                  onChange={(e) => setBranchRateSearch(e.target.value)}
-                  placeholder="State…"
-                  className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
-                />
-              </div>
-              <span className="ml-auto text-[10px] text-muted-foreground">{branchRateFilteredLocations.length} state{branchRateFilteredLocations.length === 1 ? "" : "s"}</span>
-            </div>
-
-            {error && (
-              <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{error}</p>
-            )}
-
-            <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0">
-                  <tr className="border-b border-white/10 bg-slate-900">
-                    <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">State</th>
-                    <th className="px-4 py-3 text-right text-xs text-muted-foreground uppercase">Rate</th>
-                    <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Last Updated</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {branchRateFilteredLocations.length === 0 ? (
-                    <tr><td colSpan={3} className="px-4 py-8 text-center text-muted-foreground text-sm">No state matches "{branchRateSearch}".</td></tr>
-                  ) : (
-                    branchRateFilteredLocations.map((state) => {
-                      const existing = branchRatesByName.get(state);
-                      const saving = branchRateSaving === state;
-                      const suggested = suggestedBranchRateByName.get(state);
-                      // The two states set by county rather than a single
-                      // statewide number (rate: null in STATE_MIN_WAGE_2026)
-                      // have no numeric suggestion — Finance has to look up
-                      // and enter the right county's figure by hand.
-                      const isCountyBased = !suggested && !existing;
-                      return (
-                        <tr key={state} className="border-b border-white/5 hover:bg-white/5">
-                          <td className="px-4 py-3 font-medium whitespace-nowrap">{state}</td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="flex items-center justify-end gap-1.5">
-                              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />}
-                              <span className="text-muted-foreground">$</span>
-                              <input
-                                // Keyed on the saved rate (not just state) so
-                                // this uncontrolled input remounts and picks
-                                // up the new defaultValue after "Prefill from
-                                // State Minimum Wage" updates it out from
-                                // under an already-mounted row.
-                                key={`${state}:${existing?.rate ?? 0}`}
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                defaultValue={existing?.rate ?? 0}
-                                onBlur={(e) => void handleBranchRateBlur(state, e.target.value)}
-                                disabled={saving}
-                                className="glass-input text-sm py-1 px-2 rounded-md w-28 text-right disabled:opacity-50"
-                              />
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
-                            {existing?.updatedAt
-                              ? new Date(existing.updatedAt).toLocaleString()
-                              : suggested
-                              ? <span className="text-slate-500 italic">Suggested: ${suggested.toFixed(2)}</span>
-                              : isCountyBased
-                              ? <span className="text-slate-600 italic">Based on county — enter manually</span>
-                              : <span className="text-slate-600 italic">No rate on file</span>}
-                          </td>
-                        </tr>
-                      );
-                    })
                   )}
                 </tbody>
               </table>
@@ -6966,6 +6834,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     source: "review",
                     updatedBy: myProfileId,
                     updatedByName: displayName || email || null,
+                    hours: { regular: activityRow.hoursWorked, ot: activityRow.overtimeHours },
                   });
                 } catch (err) {
                   toast.error(`Reviewed, but the Reviewed Periods summary wasn't saved: ${err instanceof Error ? err.message : "Unknown error"}`);

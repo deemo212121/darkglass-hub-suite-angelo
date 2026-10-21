@@ -72,7 +72,7 @@ import {
   type DmInboxEntry,
 } from "@/lib/supabase/messaging";
 import { getTicketBilling, saveTicketBilling, type TicketBilling } from "@/lib/supabase/billing";
-import { getMyPayslips, payslipStatusLabel, type MyPayslipRow } from "@/lib/supabase/payslips";
+import { getMyPayslips, payslipStatusLabel, payslipAdjustmentTextLines, type MyPayslipRow } from "@/lib/supabase/payslips";
 import { getMyProfileSchedule, getMonthEntries, getEntryForDate, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, savePunch, clearPunch, canEditPunch, resolveScheduledShiftHours, type UITimeEntry, type CompanyTimecardEntry, type PunchField } from "@/lib/supabase/timecards";
 import {
   getTraineeEntryForDate,
@@ -6861,7 +6861,9 @@ function MobilePayrollView({
                       `Pay period ${row.periodLabel}\nStatus: ${row.status}\n\n` +
                         `Hours: ${p.hoursWorked.toFixed(2)} (+ ${p.overtimeHours.toFixed(2)} OT)\n` +
                         `Regular Pay: $${p.regularPay.toFixed(2)}\nOvertime Pay: $${p.overtimePay.toFixed(2)}\n` +
-                        `Gross Pay: $${p.grossPay.toFixed(2)}\nNet Pay: $${p.netPay.toFixed(2)}`,
+                        `Gross Pay: $${p.grossPay.toFixed(2)}\n` +
+                        payslipAdjustmentTextLines(p).map((l) => `${l}\n`).join("") +
+                        `Net Pay: $${p.netPay.toFixed(2)}`,
                     );
                   }}
                 >

@@ -1,5 +1,5 @@
 /**
- * Payroll adjustments (migrations 0386 + 0387) — reimbursements (+),
+ * Payroll adjustments (migrations 0393 + 0394) — reimbursements (+),
  * deductions (−) and tax (a % of gross pay, −) for one employee in one pay period, entered on Accounting → Payroll's
  * employee popup. For PH payroll (everyone) and US Office staff (Parts
  * Manager, Parts Team Leader, Parts, Admin-level) — not technicians, who
@@ -19,7 +19,7 @@ export interface PayrollAdjustment {
   description: string;
   /** For tax: the last worked-out amount (use resolveAdjustmentLines with the current gross). */
   amount: number;
-  /** Tax only — e.g. 13 for 13% of gross pay (migration 0387). */
+  /** Tax only — e.g. 13 for 13% of gross pay (migration 0394). */
   percent: number | null;
 }
 
@@ -44,12 +44,12 @@ function mapRow(r: any): PayrollAdjustment {
   };
 }
 
-/** Everyone's adjustments for exactly this pay period (RLS-scoped to the company). Empty if 0386 isn't run yet. */
+/** Everyone's adjustments for exactly this pay period (RLS-scoped to the company). Empty if 0393 isn't run yet. */
 export async function getPayrollAdjustmentsForPeriod(periodStart: string, periodEnd: string): Promise<PayrollAdjustment[]> {
   const run = (cols: string) =>
     supabase.from("payroll_adjustments").select(cols).eq("period_start", periodStart).eq("period_end", periodEnd).order("created_at", { ascending: true });
   let { data, error } = await run(COLUMNS);
-  // Before 0387 there's no percent column — load the lines without it.
+  // Before 0394 there's no percent column — load the lines without it.
   if (error && /percent/.test(error.message)) ({ data, error } = await run(COLUMNS_BASE));
   if (error) {
     console.warn("getPayrollAdjustmentsForPeriod:", error.message);
@@ -86,9 +86,9 @@ export async function addPayrollAdjustment(input: {
   if (error) {
     throw new Error(
       /percent|kind_check/.test(error.message)
-        ? "Tax lines need migration 0387 — run it in the Supabase SQL Editor first."
+        ? "Tax lines need migration 0394 — run it in the Supabase SQL Editor first."
         : /payroll_adjustments/.test(error.message)
-          ? "Adjustments need migration 0386 — run it in the Supabase SQL Editor first."
+          ? "Adjustments need migration 0393 — run it in the Supabase SQL Editor first."
           : error.message
     );
   }
@@ -105,7 +105,7 @@ export async function updatePayrollAdjustment(id: string, fields: { kind: Payrol
       ...(fields.kind === "tax" ? { percent: fields.percent ?? 0 } : {}),
     })
     .eq("id", id);
-  if (error) throw new Error(/percent|kind_check/.test(error.message) ? "Tax lines need migration 0387 — run it in the Supabase SQL Editor first." : error.message);
+  if (error) throw new Error(/percent|kind_check/.test(error.message) ? "Tax lines need migration 0394 — run it in the Supabase SQL Editor first." : error.message);
 }
 
 export async function deletePayrollAdjustment(id: string): Promise<void> {

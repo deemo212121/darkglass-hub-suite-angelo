@@ -1,5 +1,6 @@
 -- =====================================================================
--- 0393 — Expenses: only Accounting approves, rejects or reimburses.
+-- 0396 — Expenses: only Accounting approves, rejects or reimburses.
+-- (Angelo's 0393, renumbered — this repo's 0393 is payroll_adjustments.)
 --
 -- Changing an expense's status (Pending → Approved / Rejected / Reimbursed,
 -- or back) is Accounting's call: FINANCE, plus ADMIN / SUPERADMIN /

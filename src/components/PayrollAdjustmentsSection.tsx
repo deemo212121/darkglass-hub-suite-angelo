@@ -1,6 +1,6 @@
 /**
- * "Adjustments" on Accounting → Payroll's employee popup (migrations 0386 +
- * 0387) — reimbursements (+), deductions (−) and tax (a % of gross pay, −)
+ * "Adjustments" on Accounting → Payroll's employee popup (migrations 0393 +
+ * 0394) — reimbursements (+), deductions (−) and tax (a % of gross pay, −)
  * for this employee in the page's pay period. PH payroll and US Office staff
  * only (see payrollAdjustmentsEligible).
  * Net pay = gross − tax + reimbursements − deductions; the payslip lists each line.

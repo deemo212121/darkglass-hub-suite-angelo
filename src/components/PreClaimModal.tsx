@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { X, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import type { Ticket } from "@/lib/ticketData";
-import { getTicketVisits, getTicketParts, updateTicketPart, type UIPartRow } from "@/lib/supabase/tickets";
+import { getTicketVisits, getTicketParts, updateTicketPart, updateTicketStatus, type UIPartRow } from "@/lib/supabase/tickets";
 import {
   getTicketClaimDetails,
   getReadyToCompleteDate,
@@ -14,7 +14,7 @@ import { jobCodesFor } from "@/lib/jobCodes";
 import type { TicketPhoto } from "@/lib/firebase/storage";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
-import { buildServicePowerClaimPayload } from "@/lib/servicePowerClaimPayload";
+import { buildServicePowerClaimPayload, isClaimablePart } from "@/lib/servicePowerClaimPayload";
 
 interface Props {
   ticket: Ticket;
@@ -22,6 +22,8 @@ interface Props {
   ticketNumbers: string[];
   /** Called with the saved row so the parent's bulk claim-details map (Pre-Claim Status column) stays in sync without a full refetch. */
   onSaved: (ticketNo: string, details: TicketClaimDetails) => void;
+  /** The ticket's status changed here (a clean ServicePower submission sets CL-Claimed) — lets the list update its row. */
+  onStatusChanged?: (ticketNo: string, status: string) => void;
   onNavigate: (ticketNo: string) => void;
   onClose: () => void;
 }
@@ -72,10 +74,12 @@ const emptyForm = (): FormState => ({
   partsOnlyWarranty: false, failureDefectCode: "", resolutionCode: "", laborFee: 0,
   otherFee: 0, shippingFee: 0, extraMileFee: 0, mileageFee: 0, poAmount: 0,
   spClaimBatchNumber: "", spClaimSequenceNumber: "", spClaimStatusCode: "",
-  spClaimStatusDescription: "", spSubmittedAt: "", spLastResponse: null, updatedAt: "",
+  spClaimStatusDescription: "", spSubmittedAt: "", spLastResponse: null,
+  spPaidTotal: null, spPaidLabor: null, spPaidParts: null, spPaidShipping: null, spPaidMileage: null,
+  spPaidOther: null, spPaidTax: null, spPaymentDate: "", spReceivedDate: "", spClaimCheckedAt: "", updatedAt: "",
 });
 
-/** ServicePower rejecting the manufacturer / servicer number pair — shown as "ServicePower account locked". */
+/** ServicePower rejecting the manufacturer / service center number pair — shown in plain words. The usual cause is the wrong service center number (our SP login GSL00002 instead of the call's own Service Center), not a locked account — see buildServicePowerClaimPayload. */
 const SP_ACCOUNT_REJECTION = /invalid manufacturerName\s*\/\s*serviceCenterNumber/i;
 
 /**
@@ -84,7 +88,7 @@ const SP_ACCOUNT_REJECTION = /invalid manufacturerName\s*\/\s*serviceCenterNumbe
  * See src/lib/supabase/claimDetails.ts and migration 0135 for which fields
  * are newly persisted vs. read from the ticket/parts data that already existed.
  */
-export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onClose }: Props) {
+export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged, onNavigate, onClose }: Props) {
   const { uid, displayName, email } = useAuth();
   // ticket_claim_details.updated_by is a uuid FK into profiles(id) — NOT
   // the caller's email/display name (those are plain text and Postgres
@@ -100,7 +104,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
   const [form, setForm] = useState<FormState>(emptyForm());
   /** Photo shown in the right-side preview panel (opened by clicking a picture); closed when the ticket changes. */
   const [sidePreview, setSidePreview] = useState<{ photos: TicketPhoto[]; index: number } | null>(null);
-  useEffect(() => { setSidePreview(null); }, [ticket.ticketNo]);
+  useEffect(() => { setSidePreview(null); setConfirmSpSubmit(false); }, [ticket.ticketNo]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [customerComplaint, setCustomerComplaint] = useState("");
@@ -116,6 +120,8 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
   const [checkedPartIds, setCheckedPartIds] = useState<Set<string>>(new Set());
   const [savingPartId, setSavingPartId] = useState<string | null>(null);
   const [submittingToSP, setSubmittingToSP] = useState(false);
+  // "Are you sure?" step before a claim is filed with ServicePower.
+  const [confirmSpSubmit, setConfirmSpSubmit] = useState(false);
   const [spMessage, setSpMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const currentTicketRef = useRef(ticket.ticketNo);
@@ -191,7 +197,9 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
         setSpDefect({ state: "none", text: auto ? "" : "Not found on ServicePower." });
         return;
       }
-      const problemType = String(call.problemType ?? "").trim();
+      // ServicePower writes "None" when the call has no problem type — not a code to offer.
+      const rawProblemType = String(call.problemType ?? "").trim();
+      const problemType = /^none$/i.test(rawProblemType) ? "" : rawProblemType;
       const problemDesc = String(call.problemDesc ?? "").trim();
       if (!problemType && !problemDesc) {
         setSpDefect({ state: "none", text: auto ? "" : "ServicePower has no problem type on this call." });
@@ -208,7 +216,14 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
   // from the visit's own text (or clears a previous edit) — an unedited
   // claim never writes that column, so saving works before migration 0330.
   const claimFieldsToSave = (): Partial<FormState> => {
-    const { servicePerformed: savedEdit, ...rest } = form;
+    // What ServicePower paid (migration 0397) is read back by the paid-claim
+    // check / Claim List Sync Status, never edited here — left out of the save.
+    const {
+      servicePerformed: savedEdit,
+      spPaidTotal: _pt, spPaidLabor: _pl, spPaidParts: _pp, spPaidShipping: _ps, spPaidMileage: _pm,
+      spPaidOther: _po, spPaidTax: _tx, spPaymentDate: _pd, spReceivedDate: _rd, spClaimCheckedAt: _ca,
+      ...rest
+    } = form;
     const edited = servicePerformed.trim() !== visitServicePerformed.trim() ? servicePerformed : "";
     if (edited || savedEdit) return { ...rest, servicePerformed: edited };
     return rest;
@@ -223,19 +238,76 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
     const pct = Number(p.markup) || 0;
     return price * (1 + pct / 100);
   };
-  // Part Fee counts every part actually marked "Used" for the claim,
-  // independent of the checkbox column below (which is just this table's
-  // own local "included in the subtotal I'm looking at" toggle).
+  // Part Fee counts every part marked "Used" or "Claimed" for the claim
+  // (isClaimablePart), independent of the checkbox column below (which is
+  // just this table's own local "included in the subtotal I'm looking at"
+  // toggle).
   const partFee = useMemo(
-    () => parts.filter((p) => p.status === "Used").reduce((s, p) => s + markupPriceFor(p), 0),
+    () => parts.filter(isClaimablePart).reduce((s, p) => s + markupPriceFor(p), 0),
     [parts]
   );
   const checkedTotal = useMemo(
     () => parts.filter((p) => checkedPartIds.has(p.id)).reduce((s, p) => s + markupPriceFor(p), 0),
     [parts, checkedPartIds]
   );
-  const usedCount = parts.filter((p) => p.status === "Used").length;
+  const usedCount = parts.filter(isClaimablePart).length;
   const claimTotal = form.laborFee + partFee + form.otherFee + form.shippingFee + form.extraMileFee + form.mileageFee;
+
+  // Checked in the "Submit this claim to ServicePower?" window before
+  // anything is sent. `required` = what ServicePower has sent claims back
+  // for: "Blank Request Date" on any claim; "Blank Parts Invoice Number" /
+  // "Blank Job Code" on GE claims; "Blank/Invalid Defect code" on non-GE
+  // claims (a Frigidaire claim was sent back for it, two GE claims without
+  // one weren't) — the submit waits until they're filled.
+  // `blank` = anything else the claim would carry empty — listed, and the
+  // person has to choose "Submit anyway". `rejectedParts` = parts
+  // ServicePower refused on the last submission that are still on the claim.
+  const spChecks = useMemo(() => {
+    const isBlank = (v: unknown) => !String(v ?? "").trim();
+    const required: string[] = [];
+    const blank: string[] = [];
+    const isGe = !!jobCodesFor(ticket.manufacturer, (ticket as { brand?: string | null }).brand);
+    const code = form.failureDefectCode.trim();
+    if (!code) {
+      if (isGe) blank.push("Failure/Defect Code");
+      else required.push("Failure/Defect Code (Claim section) — ServicePower sends a claim back without one.");
+    } else if (code.length > 4) required.push(`Failure/Defect Code "${code}" — enter the code itself (4 characters at most).`);
+    const claimable = parts.filter(isClaimablePart);
+    const noInvoice = claimable.filter((p) => isBlank(p.invoiceNo)).map((p) => p.partNo || "(no part #)");
+    if (noInvoice.length) {
+      if (isGe) required.push(`Invoice # on part ${noInvoice.join(", ")} — ServicePower needs one on every part.`);
+      else blank.push(`Invoice # on part ${noInvoice.join(", ")}`);
+    }
+    const noJobCode = claimable.filter((p) => isBlank(p.jobCode)).map((p) => p.partNo || "(no part #)");
+    if (isBlank(form.jobCode) && (noJobCode.length || claimable.length === 0)) {
+      if (isGe) required.push(`Job Code (Claim section)${noJobCode.length ? ` — none on part ${noJobCode.join(", ")} either` : ""}.`);
+      else blank.push("Job Code");
+    }
+    if (isBlank(ticket.callReceivedDate)) required.push("Call received date on the ticket — it's sent as the request date.");
+
+    if (isBlank(form.resolutionCode)) blank.push("Resolution/Repair Code");
+    if (isBlank(form.repairCategory)) blank.push("Repair Category");
+    if (isBlank(form.startDate)) blank.push("Start Date");
+    if (isBlank(form.completeDate)) blank.push("Complete Date");
+    if (isBlank(customerComplaint)) blank.push("Customer complaint (defect description)");
+    if (isBlank(servicePerformed)) blank.push("Service Performed");
+    if (!form.laborFee) blank.push("Labor Fee ($0)");
+    if (isBlank(ticket.model)) blank.push("Model");
+    if (isBlank(ticket.serial)) blank.push("Serial #");
+    if (isBlank(ticket.purchaseDate)) blank.push("Purchase Date");
+    if (isBlank(ticket.firstName) && isBlank(ticket.lastName)) blank.push("Customer name");
+    const noAddress = [["address", "address"], ["city", "city"], ["state", "state"], ["zip", "ZIP"], ["phone", "phone"]]
+      .filter(([k]) => isBlank((ticket as any)[k]))
+      .map(([, label]) => label);
+    if (noAddress.length) blank.push(`Customer ${noAddress.join(", ")}`);
+
+    const lastErrors: Array<{ partNumber?: string; errorDescription?: string }> =
+      ((form.spLastResponse as any)?.claims?.[0]?.errors as any[]) ?? [];
+    const rejectedParts = lastErrors
+      .filter((e) => e.partNumber && claimable.some((p) => p.partNo === e.partNumber))
+      .map((e) => `Part ${e.partNumber}: "${e.errorDescription}"`);
+    return { required, blank, rejectedParts };
+  }, [form, parts, ticket, customerComplaint, servicePerformed]);
 
   const setField = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -260,6 +332,8 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
   // onto this ticket's claim details so a later resubmission updates the
   // same claim instead of creating a duplicate.
   const handleSubmitToServicePower = async () => {
+    if (spChecks.required.length > 0) return;
+    setConfirmSpSubmit(false);
     setSubmittingToSP(true);
     setSpMessage(null);
     try {
@@ -267,8 +341,21 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
       setForm((prev) => ({ ...prev, ...saved }));
       onSaved(ticket.ticketNo, saved);
 
+      // The claim's serviceCenterNumber is the call's own ServiceCenter on
+      // ServicePower (the servicer number the manufacturer issued us), read
+      // fresh from the call — see buildServicePowerClaimPayload.
+      let spServiceCenter = "";
+      try {
+        const { fetchServicePowerCalls } = await import("@/lib/servicePowerSync");
+        const res = await fetchServicePowerCalls({ callNo: ticket.ticketNo });
+        const call = (res.calls ?? []).find((c: any) => String(c?.callNumber ?? "").trim() === ticket.ticketNo) ?? res.calls?.[0];
+        spServiceCenter = String(call?.serviceCenter ?? "").trim();
+      } catch (err) {
+        console.warn("[PreClaim] couldn't read the call's Service Center from ServicePower:", err);
+      }
+
       const { claim, warnings, error } = buildServicePowerClaimPayload(
-        ticket, saved, parts, customerComplaint, servicePerformed, partFee,
+        ticket, saved, parts, customerComplaint, servicePerformed, partFee, spServiceCenter,
       );
       if (error || !claim) {
         setSpMessage({ type: "error", text: error || "Could not build a claim from this ticket's data." });
@@ -299,17 +386,34 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
       onSaved(ticket.ticketNo, updated);
 
       const errorTexts = [
-        ...(result.errors?.map((e) => e.errorDescription) ?? []),
+        ...(result.errors?.map((e) => (e.partNumber ? `${e.errorDescription} (part ${e.partNumber})` : e.errorDescription)) ?? []),
         ...(result.messages?.map((m) => m.message) ?? []),
       ];
       const warnText = warnings.length > 0 ? ` (${warnings.join(" ")})` : "";
 
       if (result.claimResponseCode === "OK") {
+        // ServicePower has the claim → the ticket is CL-Claimed in AHS too,
+        // even when it comes back needing corrections ("Incomplete",
+        // "Servicer to Correct") — ServicePower marks the call CLAIMED the
+        // same way, and the corrections are resubmitted onto the same claim.
+        // A ticket already CL-Claimed, or closed after payment, stays as is.
+        let statusNote = "";
+        const currentStatus = String(ticket.status ?? "").trim().toLowerCase();
+        if (currentStatus !== "cl-claimed" && currentStatus !== "cl-data-closed" && currentStatus !== "cl-data closed") {
+          try {
+            await updateTicketStatus(ticket.ticketNo, "CL-Claimed");
+            onStatusChanged?.(ticket.ticketNo, "CL-Claimed");
+            statusNote = " Ticket status set to CL-Claimed.";
+          } catch (statusErr) {
+            statusNote = ` (Couldn't set the ticket to CL-Claimed: ${statusErr instanceof Error ? statusErr.message : "unknown error"} — set it on the ticket page.)`;
+          }
+        }
         setSpMessage({
           type: errorTexts.length > 0 ? "error" : "success",
           text:
             `Submitted — ServicePower status: ${result.claimStatusDescription || result.claimStatusCode || "OK"}` +
-            (errorTexts.length > 0 ? `. Needs correction: ${errorTexts.join("; ")}` : "") +
+            (errorTexts.length > 0 ? `. Needs correction: ${errorTexts.join("; ")}.` : ".") +
+            statusNote +
             warnText,
         });
       } else {
@@ -375,7 +479,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
               Submit Pre-Claim
             </button>
             <button
-              onClick={handleSubmitToServicePower}
+              onClick={() => setConfirmSpSubmit(true)}
               disabled={submittingToSP || loading}
               title="Builds the claim from this ticket's own data (no retyping) and files it with ServicePower"
               className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-sm font-semibold transition"
@@ -388,6 +492,74 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
             </button>
           </div>
         </div>
+
+        {confirmSpSubmit && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" onClick={() => setConfirmSpSubmit(false)}>
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="sp-submit-confirm-title"
+              className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border border-white/10 bg-slate-900 p-5 text-left shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); setConfirmSpSubmit(false); } }}
+            >
+              <h3 id="sp-submit-confirm-title" className="text-lg font-bold text-white">Submit this claim to ServicePower?</h3>
+              <p className="mt-1 text-sm text-slate-300">
+                {form.spClaimBatchNumber
+                  ? <>This updates the claim already on ServicePower (Batch {form.spClaimBatchNumber} / Seq {form.spClaimSequenceNumber}).</>
+                  : <>This files the claim with ServicePower.</>}
+              </p>
+              <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 rounded-lg border border-white/10 bg-slate-950/40 px-3 py-2 text-sm">
+                <dt className="text-slate-400">Ticket</dt>
+                <dd className="font-mono text-white">{ticket.ticketNo}</dd>
+                <dt className="text-slate-400">Customer</dt>
+                <dd className="text-white">{[ticket.firstName, ticket.lastName].filter(Boolean).join(" ") || "—"}</dd>
+                <dt className="text-slate-400">Manufacturer</dt>
+                <dd className="text-white">{ticket.manufacturer || "—"}</dd>
+                <dt className="text-slate-400">Claim Total</dt>
+                <dd className="font-semibold text-green-300">{fmt(claimTotal)}</dd>
+              </dl>
+              {spChecks.required.length > 0 && (
+                <div className="mt-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+                  <p className="font-semibold">ServicePower will send this claim back — fill these in first:</p>
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                    {spChecks.required.map((m) => <li key={m}>{m}</li>)}
+                  </ul>
+                </div>
+              )}
+              {spChecks.rejectedParts.length > 0 && (
+                <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                  <p className="font-semibold">ServicePower refused these on the last submission:</p>
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                    {spChecks.rejectedParts.map((m) => <li key={m}>{m}</li>)}
+                  </ul>
+                  <p className="mt-1">Check the part number and the full model number (with its version digit) before sending again.</p>
+                </div>
+              )}
+              {spChecks.blank.length > 0 && (
+                <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                  <p className="font-semibold">These would go to ServicePower blank:</p>
+                  <p className="mt-1">{spChecks.blank.join(" · ")}</p>
+                </div>
+              )}
+              <p className="mt-2 text-xs text-amber-300">Any changes on this form are saved first. Once ServicePower has the claim, the ticket is set to CL-Claimed (corrections go back onto the same claim).</p>
+              <div className="mt-4 flex flex-wrap justify-end gap-2">
+                <button type="button" autoFocus onClick={() => setConfirmSpSubmit(false)} className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600">
+                  {spChecks.required.length > 0 ? "Go back and fill them in" : "Cancel"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSubmitToServicePower()}
+                  disabled={spChecks.required.length > 0}
+                  title={spChecks.required.length > 0 ? "Fill in the fields listed in red first" : undefined}
+                  className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {spChecks.blank.length > 0 || spChecks.rejectedParts.length > 0 ? "Submit anyway" : "Yes, submit to ServicePower"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Form on the left; a clicked photo opens in the preview panel on the right. */}
         <div className="flex min-h-0 flex-1">
@@ -408,7 +580,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
                 {/* ServicePower's account-pair rejection, in plain words; its original text stays below, small. */}
                 {spMessage.type === "error" && SP_ACCOUNT_REJECTION.test(spMessage.text) ? (
                   <>
-                    <span className="font-semibold">ServicePower account locked — please contact the person responsible for ServicePower.</span>
+                    <span className="font-semibold">ServicePower didn't accept the service center number sent with this claim. Try Submit to ServicePower again — if it keeps happening, contact the person responsible for ServicePower.</span>
                     <span className="mt-1 block text-[11px] text-red-300/70">SP: {spMessage.text}</span>
                   </>
                 ) : (
@@ -668,7 +840,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
             {/* Parts Used */}
             <div>
               <h3 className="text-center text-lg font-semibold text-white mb-1">Parts Used</h3>
-              <p className="text-center text-xs text-slate-500 mb-3">Part Fee (Claim Amount, below) totals every part marked "Used" regardless of the checkboxes here — the checkboxes only control this table's own subtotal row.</p>
+              <p className="text-center text-xs text-slate-500 mb-3">Part Fee (Claim Amount, below) totals every part marked "Used" or "Claimed" regardless of the checkboxes here — the checkboxes only control this table's own subtotal row.</p>
               <div className="overflow-x-auto rounded-lg border border-white/10">
                 <table className="w-full text-xs min-w-[1100px]">
                   <thead>
@@ -695,7 +867,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
                       parts.map((p) => {
                         const saving = savingPartId === p.id;
                         return (
-                          <tr key={p.id} className={p.status === "Used" ? "" : "opacity-80"}>
+                          <tr key={p.id} className={isClaimablePart(p) ? "" : "opacity-80"}>
                             <td className="px-2 py-1.5 text-center">
                               <input type="checkbox" checked={checkedPartIds.has(p.id)} onChange={() => togglePartChecked(p.id)} className="accent-blue-500" />
                             </td>
@@ -753,7 +925,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onNavigate, onCl
                       <tr className="border-t border-white/20 bg-white/5 font-semibold">
                         <td colSpan={3} className="px-2 py-2 text-slate-300">TOTAL</td>
                         <td className="px-2 py-2 text-slate-300">{parts.length}</td>
-                        <td className="px-2 py-2 text-slate-300">{usedCount} Used</td>
+                        <td className="px-2 py-2 text-slate-300">{usedCount} Used/Claimed</td>
                         <td colSpan={4} />
                         <td className="px-2 py-2 text-right text-green-300">{fmt(checkedTotal)}</td>
                         <td colSpan={3} />

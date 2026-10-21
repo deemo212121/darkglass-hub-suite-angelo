@@ -14,8 +14,9 @@ import { createPortal } from "react-dom";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS } from "@/lib/locations";
 import { useAuth } from "@/lib/auth";
+import { getMyProfileId } from "@/lib/supabase/users";
 import { supabase } from "@/lib/supabase/client";
-import { getCompanyTickets } from "@/lib/supabase/tickets";
+import { getCompanyTicketsWithStatuses } from "@/lib/supabase/tickets";
 import type { Ticket } from "@/lib/ticketData";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
 import { computeOfficeDistanceMiles } from "@/lib/mapEngine";
@@ -168,6 +169,30 @@ function tierCodeForTicket(t: Ticket): string {
   return tier && tier.code && tier.code.toLowerCase() !== "base" ? tier.code : "N/A";
 }
 
+// ── Per-column Excel-style filters (funnel icon in each header) ──
+// Every real data column gets one; Claim # (always a placeholder "—"),
+// the verify checkbox, and Actions don't since there's nothing to filter.
+const COLUMN_FILTER_KEYS = [
+  "location", "ticketNo", "wty", "status", "technician", "product", "compCancel",
+  "mileage", "parts", "redo", "claimTo", "tierCode", "preClaimStatus", "triageNote", "internalNote", "tat",
+] as const;
+type ColumnFilterKey = (typeof COLUMN_FILTER_KEYS)[number];
+/** Columns whose value is fixed per row — all but Mileage, which fills in as distances arrive. */
+type RowColumnKey = Exclude<ColumnFilterKey, "mileage">;
+
+const mileageText = (m: number | null | undefined) => (m == null ? "" : `${m.toFixed(1)} mi`);
+
+// Office-to-customer miles already worked out in this tab, keyed by what the
+// distance depends on — paging back, or leaving and reopening the page,
+// doesn't ask the map provider again.
+const mileageSessionCache = new Map<string, number | null>();
+const mileageCacheKey = (t: Ticket, provider: MapProvider) =>
+  [provider, t.location, t.city, t.address, t.state, t.zip, t.account]
+    .map((v) => String(v ?? "").trim().toLowerCase())
+    .join("|");
+
+const PAGE_SIZE_OPTIONS = [50, 100, 200] as const;
+
 interface ClaimRow {
   ticket: Ticket;
   partsCount: number;
@@ -177,8 +202,20 @@ interface ClaimRow {
   aging: number;
   /** UI-only locally-edited values. */
   preClaimStatus: string;
-  claimNote: string;
+  /** The ticket's Internal Note (tickets.internal_note). */
+  internalNote: string;
+  /** The latest Visit Log entry's Triage Note — same source as the Ticket List's Triage Notes column. */
+  triageNote: string;
   claimVerified: boolean;
+  /** Lower-cased status, for the status boxes. */
+  statusLower: string;
+  /** Claim To (account, else claim company) and its colour. */
+  claimTo: string;
+  claimToColor: ClaimToColor;
+  /** Lower-cased text the "search in result" box matches. */
+  searchBlob: string;
+  /** Each column's value, for its funnel filter. */
+  colValues: Record<RowColumnKey, string>;
 }
 
 export function NeedClaimList({ mod, sub }: Props) {
@@ -189,6 +226,8 @@ export function NeedClaimList({ mod, sub }: Props) {
   // ── Server state ──
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [partCounts, setPartCounts] = useState<Record<string, number>>({});
+  /** Latest visit Triage Note per ticket UUID. */
+  const [triageNotes, setTriageNotes] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -252,7 +291,10 @@ export function NeedClaimList({ mod, sub }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const all = await getCompanyTickets();
+      // The database narrows to the claim statuses (a "contains" match —
+      // ~3,200 of 11,000+ tickets), so the rest are never downloaded; the
+      // exact check below still decides.
+      const all = await getCompanyTicketsWithStatuses([...NEED_CLAIM_STATUSES]);
       // Narrow to claims-relevant statuses up front so the filter bar
       // operates on a clean working set.
       const claimsRelated = all.filter((t) => {
@@ -275,22 +317,82 @@ export function NeedClaimList({ mod, sub }: Props) {
         .filter((id): id is string => !!id);
       if (ticketIds.length === 0) {
         setPartCounts({});
+        setTriageNotes({});
       } else {
-        const { data: partRows, error: partsError } = await supabase
-          .from("parts")
-          .select("ticket_id")
-          .in("ticket_id", ticketIds);
-        if (partsError) {
-          console.warn("[NeedClaimList] part count fetch failed:", partsError.message);
-          setPartCounts({});
-        } else {
+        // In batches of 200 ticket ids (a few at a time), each paged by
+        // 1,000 rows: thousands of ids in one ?ticket_id=in.(…) made a URL
+        // too long for the server — the request was refused before
+        // Supabase answered, which the browser reports as a CORS error —
+        // and one response stops at 1,000 rows anyway.
+        const BATCH = 200;
+        const PAGE = 1000;
+        const CONCURRENCY = 4;
+        const batches: string[][] = [];
+        for (let i = 0; i < ticketIds.length; i += BATCH) batches.push(ticketIds.slice(i, i + BATCH));
+        const fetchBatch = async (batch: string[]) => {
+          const rows: Array<{ ticket_id: string | null }> = [];
+          for (let from = 0; ; from += PAGE) {
+            const { data, error } = await supabase.from("parts").select("ticket_id").in("ticket_id", batch).range(from, from + PAGE - 1);
+            if (error) throw error;
+            rows.push(...((data ?? []) as Array<{ ticket_id: string | null }>));
+            if (!data || data.length < PAGE) break;
+          }
+          return rows;
+        };
+        // Fire-and-forget like the claim details: the latest visit's Triage
+        // Note per ticket (newest visit first, so the first note seen per
+        // ticket wins) — the table shows while these arrive.
+        const fetchTriageBatch = async (batch: string[]) => {
+          const rows: Array<{ ticket_id: string | null; triage_note: string | null }> = [];
+          for (let from = 0; ; from += PAGE) {
+            const { data, error } = await supabase
+              .from("visits")
+              .select("ticket_id, triage_note")
+              .in("ticket_id", batch)
+              .not("triage_note", "is", null)
+              .neq("triage_note", "")
+              .order("created_at", { ascending: false })
+              .order("id", { ascending: false })
+              .range(from, from + PAGE - 1);
+            if (error) throw error;
+            rows.push(...((data ?? []) as Array<{ ticket_id: string | null; triage_note: string | null }>));
+            if (!data || data.length < PAGE) break;
+          }
+          return rows;
+        };
+        void (async () => {
+          try {
+            const notes: Record<string, string> = {};
+            for (let i = 0; i < batches.length; i += CONCURRENCY) {
+              const results = await Promise.all(batches.slice(i, i + CONCURRENCY).map(fetchTriageBatch));
+              for (const row of results.flat()) {
+                const tid = String(row.ticket_id ?? "");
+                const note = String(row.triage_note ?? "").trim();
+                if (!tid || !note || tid in notes) continue;
+                notes[tid] = note;
+              }
+            }
+            setTriageNotes(notes);
+          } catch (triageError) {
+            console.warn("[NeedClaimList] triage note fetch failed:", triageError instanceof Error ? triageError.message : triageError);
+            setTriageNotes({});
+          }
+        })();
+
+        try {
           const counts: Record<string, number> = {};
-          for (const row of partRows ?? []) {
-            const tid = String((row as any).ticket_id ?? "");
-            if (!tid) continue;
-            counts[tid] = (counts[tid] ?? 0) + 1;
+          for (let i = 0; i < batches.length; i += CONCURRENCY) {
+            const results = await Promise.all(batches.slice(i, i + CONCURRENCY).map(fetchBatch));
+            for (const row of results.flat()) {
+              const tid = String(row.ticket_id ?? "");
+              if (!tid) continue;
+              counts[tid] = (counts[tid] ?? 0) + 1;
+            }
           }
           setPartCounts(counts);
+        } catch (partsError) {
+          console.warn("[NeedClaimList] part count fetch failed:", partsError instanceof Error ? partsError.message : partsError);
+          setPartCounts({});
         }
       }
     } catch (err) {
@@ -306,10 +408,12 @@ export function NeedClaimList({ mod, sub }: Props) {
   }, [loadData]);
 
   // ── Compose rows ──
-  const rows = useMemo<ClaimRow[]>(() => {
+  // What depends only on the ticket (dates, tier code, colours…) is worked
+  // out once per load; the overlays in `rows` (part counts, triage notes,
+  // claim details, the verify tick) are cheap to re-apply.
+  const baseRows = useMemo(() => {
     return tickets.map((t) => {
       const tid = (t as any)._id as string | undefined;
-      const partsCount = tid ? partCounts[tid] ?? 0 : 0;
       // Comp/Cancel reflects the most-relevant claim date: SP-status
       // change → schedule date → call received date.
       const date =
@@ -317,46 +421,81 @@ export function NeedClaimList({ mod, sub }: Props) {
         parseFlexibleDate(t.schedule) ||
         parseFlexibleDate(t.callReceivedDate) ||
         parseFlexibleDate(t.created);
-      const compCancelIso = date ? toIsoDay(date) : "";
-      const aging = daysBetween(date);
+      const statusLower = String(t.status || "").toLowerCase();
       // Map status → default Pre-Claim Status.
-      const s = String(t.status || "").toLowerCase();
-      const isAlreadyClaimed = s.includes("claim");
-      const isCancelled = s.includes("cancel");
-      const defaultPreClaim = isAlreadyClaimed
+      const defaultPreClaim = statusLower.includes("claim")
         ? "Claimed"
-        : isCancelled
+        : statusLower.includes("cancel")
         ? "Claim Not Needed"
         : "Need Claim";
-      const override = rowOverrides[t.ticketNo] ?? {};
-      const saved = tid ? claimDetailsByTicketId.get(tid) : undefined;
+      const claimTo = t.account || t.claimCompany || "";
+      return {
+        ticket: t,
+        tid,
+        compCancelIso: date ? toIsoDay(date) : "",
+        compCancelDate: date,
+        aging: daysBetween(date),
+        statusLower,
+        defaultPreClaim,
+        claimTo,
+        claimToColor: claimToColor(claimTo),
+        internalNote: String(t.internalNote ?? "").trim(),
+        wty: wtyCode(t.warranty),
+        tierCode: tierCodeForTicket(t),
+      };
+    });
+  }, [tickets]);
+
+  const rows = useMemo<ClaimRow[]>(() => {
+    return baseRows.map((b) => {
+      const t = b.ticket;
+      const partsCount = b.tid ? partCounts[b.tid] ?? 0 : 0;
+      const triageNote = b.tid ? triageNotes[b.tid] ?? "" : "";
+      const saved = b.tid ? claimDetailsByTicketId.get(b.tid) : undefined;
+      const preClaimStatus = saved?.preClaimStatus || b.defaultPreClaim;
       return {
         ticket: t,
         partsCount,
-        compCancelIso,
-        compCancelDate: date,
-        aging,
-        preClaimStatus: saved?.preClaimStatus || defaultPreClaim,
-        claimNote: saved?.claimNote ?? "",
-        claimVerified: override.claimVerified ?? false,
+        compCancelIso: b.compCancelIso,
+        compCancelDate: b.compCancelDate,
+        aging: b.aging,
+        preClaimStatus,
+        internalNote: b.internalNote,
+        triageNote,
+        claimVerified: rowOverrides[t.ticketNo]?.claimVerified ?? false,
+        statusLower: b.statusLower,
+        claimTo: b.claimTo,
+        claimToColor: b.claimToColor,
+        searchBlob: [t.ticketNo, t.location, t.technician, t.productType, t.account, t.claimCompany, triageNote, b.internalNote]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase(),
+        colValues: {
+          location: t.location || "",
+          ticketNo: t.ticketNo || "",
+          wty: b.wty,
+          status: t.status || "",
+          technician: t.technician || "",
+          product: (t.productType || "").toUpperCase(),
+          compCancel: b.compCancelIso,
+          parts: partsCount > 0 ? String(partsCount) : "",
+          redo: t.redo || "",
+          claimTo: b.claimTo,
+          tierCode: b.tierCode,
+          preClaimStatus: preClaimStatus || "",
+          triageNote,
+          internalNote: b.internalNote,
+          tat: `${b.aging} d`,
+        },
       };
     });
-  }, [tickets, partCounts, rowOverrides, claimDetailsByTicketId]);
+  }, [baseRows, partCounts, triageNotes, rowOverrides, claimDetailsByTicketId]);
 
   // Declared here (rather than down with the rest of the mileage-fetch
-  // logic below) so columnValueGetters/filtered above can reference it —
-  // the effect that actually POPULATES it still lives further down, using
-  // `filtered` once it exists; only the state itself needs to exist first.
+  // logic below) so valueOf/filtered below can reference it — the effect
+  // that actually POPULATES it still lives further down, using the visible
+  // page once it exists; only the state itself needs to exist first.
   const [mileageByTicket, setMileageByTicket] = useState<Record<string, number | null>>({});
-
-  // ── Per-column Excel-style filters (funnel icon in each header) ──
-  // Every real data column gets one; Claim # (always a placeholder "—"),
-  // the verify checkbox, and Actions don't since there's nothing to filter.
-  const COLUMN_FILTER_KEYS = [
-    "location", "ticketNo", "wty", "status", "technician", "product", "compCancel",
-    "mileage", "parts", "redo", "claimTo", "tierCode", "preClaimStatus", "claimNote", "tat",
-  ] as const;
-  type ColumnFilterKey = (typeof COLUMN_FILTER_KEYS)[number];
 
   const [columnFilters, setColumnFilters] = useState<Record<ColumnFilterKey, Set<string>>>(() => {
     const init = {} as Record<ColumnFilterKey, Set<string>>;
@@ -366,98 +505,49 @@ export function NeedClaimList({ mod, sub }: Props) {
   const updateColumnFilter = (key: ColumnFilterKey, next: Set<string>) =>
     setColumnFilters((prev) => ({ ...prev, [key]: next }));
 
-  const columnValueGetters: Record<ColumnFilterKey, (r: ClaimRow) => string> = {
-    location: (r) => r.ticket.location || "",
-    ticketNo: (r) => r.ticket.ticketNo || "",
-    wty: (r) => wtyCode(r.ticket.warranty),
-    status: (r) => r.ticket.status || "",
-    technician: (r) => r.ticket.technician || "",
-    product: (r) => (r.ticket.productType || "").toUpperCase() || "",
-    compCancel: (r) => r.compCancelIso || "",
-    mileage: (r) => {
-      const m = mileageByTicket[r.ticket.ticketNo];
-      return m == null ? "" : `${m.toFixed(1)} mi`;
-    },
-    parts: (r) => (r.partsCount > 0 ? String(r.partsCount) : ""),
-    redo: (r) => r.ticket.redo || "",
-    claimTo: (r) => r.ticket.account || r.ticket.claimCompany || "",
-    tierCode: (r) => tierCodeForTicket(r.ticket),
-    preClaimStatus: (r) => r.preClaimStatus || "",
-    claimNote: (r) => r.claimNote || "",
-    tat: (r) => `${r.aging} d`,
-  };
+  const valueOf = (r: ClaimRow, key: ColumnFilterKey): string =>
+    key === "mileage" ? mileageText(mileageByTicket[r.ticket.ticketNo]) : r.colValues[key];
 
   // ── Filtered view ──
-  const filteredBase = useMemo(() => {
-    return rows.filter((row) => {
+  // Everything except the per-column funnels (top bar, date range, status
+  // boxes, search) — shared by the table and the funnels' option lists.
+  const passesBaseFilters = useMemo(() => {
+    const ticketQ = ticketSearch.toLowerCase();
+    const q = search.toLowerCase();
+    const allOff = !readyToComplete && !cancelled && !claimed;
+    return (row: ClaimRow): boolean => {
       const t = row.ticket;
-      const compCancelIso = row.compCancelIso;
-      // Location filter
       if (location && t.location !== location) return false;
-
       // Ticket # filter (top-bar)
-      if (ticketSearch && !t.ticketNo.toLowerCase().includes(ticketSearch.toLowerCase())) return false;
-
+      if (ticketQ && !t.ticketNo.toLowerCase().includes(ticketQ)) return false;
       // Comp/Cancel date range — uses the same comp date the row shows.
-      if (startDate && compCancelIso && compCancelIso < startDate) return false;
-      if (endDate && compCancelIso && compCancelIso > endDate) return false;
-
+      if (startDate && row.compCancelIso && row.compCancelIso < startDate) return false;
+      if (endDate && row.compCancelIso && row.compCancelIso > endDate) return false;
       // Status checkbox group. At least one of the three must include
       // this ticket's status; if all three are off, treat as "show all"
       // so the table never goes blank by accident.
-      const status = String(t.status || "").toLowerCase();
-      const isClaimedRow = status.includes("claim");
-      const isCancelledRow = status.includes("cancel");
-      const isReady = status.includes("ready to complete") || status.includes("back ordered");
-      const allOff = !readyToComplete && !cancelled && !claimed;
       if (!allOff) {
+        const status = row.statusLower;
         const matches =
-          (readyToComplete && isReady) ||
-          (cancelled && isCancelledRow) ||
-          (claimed && isClaimedRow);
+          (readyToComplete && (status.includes("ready to complete") || status.includes("back ordered"))) ||
+          (cancelled && status.includes("cancel")) ||
+          (claimed && status.includes("claim"));
         if (!matches) return false;
       }
-
       // Free-text search across visible columns.
-      if (search) {
-        const q = search.toLowerCase();
-        const blob = [
-          t.ticketNo,
-          t.location,
-          t.technician,
-          t.productType,
-          t.account,
-          t.claimCompany,
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        if (!blob.includes(q)) return false;
-      }
-
-      // Per-column funnel filters
-      const matchesColumns = COLUMN_FILTER_KEYS.every((key) => {
-        const selected = columnFilters[key];
-        if (!selected || selected.size === 0) return true;
-        return selected.has(columnValueGetters[key](row));
-      });
-      if (!matchesColumns) return false;
-
+      if (q && !row.searchBlob.includes(q)) return false;
       return true;
-    });
-  }, [
-    rows,
-    location,
-    ticketSearch,
-    startDate,
-    endDate,
-    readyToComplete,
-    cancelled,
-    claimed,
-    search,
-    columnFilters,
-    mileageByTicket,
-  ]);
+    };
+  }, [location, ticketSearch, startDate, endDate, readyToComplete, cancelled, claimed, search]);
+
+  // Mileage fills in a page at a time, so the table only re-filters on it
+  // while its funnel is in use.
+  const mileageForFilters = columnFilters.mileage.size > 0 ? mileageByTicket : null;
+  const filteredBase = useMemo(() => {
+    const active = COLUMN_FILTER_KEYS.filter((k) => columnFilters[k].size > 0);
+    return rows.filter((row) => passesBaseFilters(row) && active.every((k) => columnFilters[k].has(valueOf(row, k))));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, passesBaseFilters, columnFilters, mileageForFilters]);
 
   // Company chips in the colour key (above the table): click to show only
   // those companies' tickets; none picked = everyone.
@@ -466,61 +556,60 @@ export function NeedClaimList({ mod, sub }: Props) {
     () =>
       claimToPicked.size === 0
         ? filteredBase
-        : filteredBase.filter((r) => {
-            const v = r.ticket.account || r.ticket.claimCompany;
-            return !!v && claimToPicked.has(claimToColor(v).label);
-          }),
+        : filteredBase.filter((r) => !!r.claimTo && claimToPicked.has(r.claimToColor.label)),
     [filteredBase, claimToPicked]
   );
 
-  // Build option lists per column from the full row set **before** that
-  // column's own filter is applied (but after every other active filter) —
-  // so opening a funnel still shows every value present in rows that pass
-  // everything else. Mirrors Excel's autofilter UX (same convention as
-  // TicketList.tsx's COLUMN_FILTER_KEYS pattern).
-  const buildOptionsExcluding = (excludeKey: ColumnFilterKey): string[] => {
-    const values = new Set<string>();
-    for (const row of rows) {
-      const t = row.ticket;
-      if (location && t.location !== location) continue;
-      if (ticketSearch && !t.ticketNo.toLowerCase().includes(ticketSearch.toLowerCase())) continue;
-      if (startDate && row.compCancelIso && row.compCancelIso < startDate) continue;
-      if (endDate && row.compCancelIso && row.compCancelIso > endDate) continue;
-      const status = String(t.status || "").toLowerCase();
-      const isClaimedRow = status.includes("claim");
-      const isCancelledRow = status.includes("cancel");
-      const isReady = status.includes("ready to complete") || status.includes("back ordered");
-      const allOff = !readyToComplete && !cancelled && !claimed;
-      if (!allOff) {
-        const matches = (readyToComplete && isReady) || (cancelled && isCancelledRow) || (claimed && isClaimedRow);
-        if (!matches) continue;
-      }
-      if (search) {
-        const q = search.toLowerCase();
-        const blob = [t.ticketNo, t.location, t.technician, t.productType, t.account, t.claimCompany]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        if (!blob.includes(q)) continue;
-      }
-      const matchesOtherCols = COLUMN_FILTER_KEYS.every((key) => {
-        if (key === excludeKey) return true;
-        const sel = columnFilters[key];
-        if (!sel || sel.size === 0) return true;
-        return sel.has(columnValueGetters[key](row));
-      });
-      if (!matchesOtherCols) continue;
-      values.add(columnValueGetters[excludeKey](row));
-    }
-    return Array.from(values);
-  };
+  // ── Paging ── only one page of rows is drawn: all 3,000-odd at once (each
+  // with its own select and checkbox) made every click and keystroke slow.
+  // Open All Filtered, select-all, Submit Claim and the Pre-Claim window's
+  // ‹ › still cover every filtered ticket.
+  const [pageSize, setPageSize] = useState<number>(100);
+  const [currentPage, setCurrentPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pagedRows = useMemo(
+    () => filtered.slice((safePage - 1) * pageSize, safePage * pageSize),
+    [filtered, safePage, pageSize]
+  );
+  // Back to the first page whenever the filters change.
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [location, ticketSearch, startDate, endDate, readyToComplete, cancelled, claimed, search, columnFilters, claimToPicked]);
 
+  // Option lists per column from the full row set **before** that column's
+  // own filter is applied (but after every other active filter) — so
+  // opening a funnel still shows every value present in rows that pass
+  // everything else. Mirrors Excel's autofilter UX (same convention as
+  // TicketList.tsx's COLUMN_FILTER_KEYS pattern). One pass: a row that
+  // fails no funnel adds its value to every list; one that fails exactly
+  // one funnel adds only to that column's list.
   const columnOptions = useMemo(() => {
+    const sets = {} as Record<ColumnFilterKey, Set<string>>;
+    for (const k of COLUMN_FILTER_KEYS) sets[k] = new Set<string>();
+    const active = COLUMN_FILTER_KEYS.filter((k) => columnFilters[k].size > 0);
+    for (const row of rows) {
+      if (!passesBaseFilters(row)) continue;
+      let failedKey: ColumnFilterKey | null = null;
+      let failures = 0;
+      for (const k of active) {
+        if (!columnFilters[k].has(valueOf(row, k))) {
+          failedKey = k;
+          if (++failures > 1) break;
+        }
+      }
+      if (failures > 1) continue;
+      if (failedKey) {
+        sets[failedKey].add(valueOf(row, failedKey));
+        continue;
+      }
+      for (const k of COLUMN_FILTER_KEYS) sets[k].add(valueOf(row, k));
+    }
     const out = {} as Record<ColumnFilterKey, string[]>;
-    for (const key of COLUMN_FILTER_KEYS) out[key] = buildOptionsExcluding(key);
+    for (const k of COLUMN_FILTER_KEYS) out[k] = Array.from(sets[k]);
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, columnFilters, location, ticketSearch, startDate, endDate, readyToComplete, cancelled, claimed, search, mileageByTicket]);
+  }, [rows, passesBaseFilters, columnFilters, mileageByTicket]);
 
   const renderColFilter = (key: ColumnFilterKey, label: string) => (
     <TicketColumnFilter
@@ -533,13 +622,14 @@ export function NeedClaimList({ mod, sub }: Props) {
 
   // ── Office-to-customer mileage ──
   // Real driving distance, same calculation the ticket detail page shows
-  // (see computeOfficeDistanceMiles in mapEngine.ts) — but this page can
-  // have dozens of tickets visible at once, and each mileage figure is a
-  // real geocoding/distance-matrix API call, so they're kicked off a few at
-  // a time instead of all at once. `mileageStartedRef` marks a ticket the
-  // moment it's kicked off and is never cleared, so re-filtering (which
-  // gives `filtered` a new array reference) never re-fetches a ticket
-  // that's already resolved or still in flight.
+  // (see computeOfficeDistanceMiles in mapEngine.ts). Each figure is a real
+  // geocoding/distance-matrix API call, so only the rows on the current page
+  // are asked for, a few at a time, and the answers are applied together a
+  // few times a second (asking for all 3,000-odd rows, one re-render per
+  // answer, kept the page busy for minutes). `mileageStartedRef` marks a
+  // ticket the moment it's kicked off, so re-filtering never re-fetches a
+  // ticket that's already resolved or still in flight; answers are kept in
+  // mileageSessionCache for the rest of the tab's session.
   const [mapProvider, setMapProvider] = useState<MapProvider | null>(null);
   const mileageStartedRef = useRef<Set<string>>(new Set());
 
@@ -549,24 +639,58 @@ export function NeedClaimList({ mod, sub }: Props) {
 
   useEffect(() => {
     if (!mapProvider) return;
-    const toFetch = filtered
-      .map((r) => r.ticket)
-      .filter((t) => !mileageStartedRef.current.has(t.ticketNo));
+    const fromCache: Record<string, number | null> = {};
+    const toFetch: Ticket[] = [];
+    for (const { ticket: t } of pagedRows) {
+      if (mileageStartedRef.current.has(t.ticketNo)) continue;
+      const key = mileageCacheKey(t, mapProvider);
+      if (mileageSessionCache.has(key)) {
+        fromCache[t.ticketNo] = mileageSessionCache.get(key)!;
+        mileageStartedRef.current.add(t.ticketNo);
+      } else {
+        toFetch.push(t);
+      }
+    }
+    if (Object.keys(fromCache).length > 0) setMileageByTicket((prev) => ({ ...prev, ...fromCache }));
     if (toFetch.length === 0) return;
     toFetch.forEach((t) => mileageStartedRef.current.add(t.ticketNo));
+
+    let stopped = false;
+    let pending: Record<string, number | null> = {};
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    const flush = () => {
+      flushTimer = null;
+      const batch = pending;
+      pending = {};
+      setMileageByTicket((prev) => ({ ...prev, ...batch }));
+    };
+    const record = (t: Ticket, miles: number | null) => {
+      pending[t.ticketNo] = miles;
+      if (!flushTimer) flushTimer = setTimeout(flush, 300);
+    };
 
     const CONCURRENCY = 5;
     let idx = 0;
     const runNext = () => {
-      if (idx >= toFetch.length) return;
+      if (stopped || idx >= toFetch.length) return;
       const t = toFetch[idx++];
       computeOfficeDistanceMiles(t, mapProvider)
-        .then((miles) => setMileageByTicket((prev) => ({ ...prev, [t.ticketNo]: miles })))
-        .catch(() => setMileageByTicket((prev) => ({ ...prev, [t.ticketNo]: null })))
+        .then((miles) => {
+          mileageSessionCache.set(mileageCacheKey(t, mapProvider), miles);
+          record(t, miles);
+        })
+        .catch(() => record(t, null))
         .finally(runNext);
     };
     for (let i = 0; i < CONCURRENCY; i++) runNext();
-  }, [filtered, mapProvider]);
+
+    // Page or filters changed: stop starting new lookups (the next run picks
+    // up whatever is still on screen); ones already in flight still land.
+    return () => {
+      stopped = true;
+      for (const t of toFetch.slice(idx)) mileageStartedRef.current.delete(t.ticketNo);
+    };
+  }, [pagedRows, mapProvider]);
 
   // ── Selection helpers ──
   const toggleRow = (ticketNo: string) =>
@@ -595,11 +719,17 @@ export function NeedClaimList({ mod, sub }: Props) {
     patch: { claimVerified?: boolean },
   ) => setRowOverrides((prev) => ({ ...prev, [ticketNo]: { ...prev[ticketNo], ...patch } }));
 
-  // Pre-Claim Status / Claim Note save straight to ticket_claim_details —
+  // Pre-Claim Status saves straight to ticket_claim_details —
   // optimistic local update first (keyed by ticket UUID, same as the bulk
   // fetch) so the row reflects the edit immediately, then persist.
   const [savingClaimRowTicketNo, setSavingClaimRowTicketNo] = useState<string | null>(null);
-  const updateClaimDetails = async (ticketNo: string, patch: { preClaimStatus?: string; claimNote?: string }) => {
+  // ticket_claim_details.updated_by is a profile id — the email that used
+  // to be passed here was refused by the database, so the save never stuck.
+  const [myProfileId, setMyProfileId] = useState<string | null>(null);
+  useEffect(() => {
+    if (auth.uid) void getMyProfileId(auth.uid).then(setMyProfileId);
+  }, [auth.uid]);
+  const updateClaimDetails = async (ticketNo: string, patch: { preClaimStatus?: string }) => {
     const tid = (tickets.find((t) => t.ticketNo === ticketNo) as any)?._id as string | undefined;
     if (!tid) return;
     const prevSaved = claimDetailsByTicketId.get(tid);
@@ -610,7 +740,7 @@ export function NeedClaimList({ mod, sub }: Props) {
     });
     setSavingClaimRowTicketNo(ticketNo);
     try {
-      const saved = await upsertTicketClaimDetails(ticketNo, patch, auth.email || auth.displayName || null);
+      const saved = await upsertTicketClaimDetails(ticketNo, patch, myProfileId);
       setClaimDetailsByTicketId((prev) => new Map(prev).set(tid, saved));
     } catch (err) {
       console.error("Failed to save claim details:", err);
@@ -624,18 +754,17 @@ export function NeedClaimList({ mod, sub }: Props) {
   const dotColor = (d: 0 | 1 | 2) => (d === 0 ? "" : d === 1 ? "bg-orange-400" : "bg-red-500");
 
   // Claim To colour key: companies in the current list, most tickets first ("Other" last).
-  const claimToKey = (() => {
+  const claimToKey = useMemo(() => {
     const counts = new Map<string, { color: ClaimToColor; count: number }>();
     for (const r of filteredBase) {
-      const v = r.ticket.account || r.ticket.claimCompany;
-      if (!v) continue;
-      const color = claimToColor(v);
+      if (!r.claimTo) continue;
+      const color = r.claimToColor;
       const e = counts.get(color.label) ?? { color, count: 0 };
       e.count++;
       counts.set(color.label, e);
     }
     return Array.from(counts.values()).sort((a, b) => (a.color === OTHER_CLAIM_TO ? 1 : b.color === OTHER_CLAIM_TO ? -1 : b.count - a.count));
-  })();
+  }, [filteredBase]);
 
   // ── Open every currently-filtered ticket in its own tab ── e.g. filter to
   // "7 days" then open all of them at once instead of clicking each row.
@@ -918,6 +1047,17 @@ export function NeedClaimList({ mod, sub }: Props) {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <span className="text-[11px] text-muted-foreground">Show:</span>
+          {PAGE_SIZE_OPTIONS.map((size) => (
+            <button
+              key={size}
+              type="button"
+              onClick={() => { setPageSize(size); setCurrentPage(1); }}
+              className={`px-2 py-0.5 rounded border text-[11px] transition-colors ${pageSize === size ? "border-primary/40 bg-primary/15 text-primary" : "border-white/10 bg-white/5 hover:bg-white/10 text-muted-foreground"}`}
+            >
+              {size}
+            </button>
+          ))}
           <input
             type="text"
             value={search}
@@ -958,7 +1098,8 @@ export function NeedClaimList({ mod, sub }: Props) {
                 ["Claim #", null],
                 ["", null],
                 ["Pre-Claim Status", "preClaimStatus"],
-                ["Claim Note", "claimNote"],
+                ["Triage Note", "triageNote"],
+                ["Internal Note", "internalNote"],
                 ["TAT", "tat"],
                 ["Actions", null],
               ] as [string, ColumnFilterKey | null][]).map(([h, key], i) => (
@@ -977,7 +1118,7 @@ export function NeedClaimList({ mod, sub }: Props) {
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={19} className="px-4 py-12 text-center text-muted-foreground">
+                <td colSpan={20} className="px-4 py-12 text-center text-muted-foreground">
                   {loading
                     ? "Loading tickets…"
                     : tickets.length === 0
@@ -986,7 +1127,7 @@ export function NeedClaimList({ mod, sub }: Props) {
                 </td>
               </tr>
             ) : (
-              filtered.map((r, idx) => {
+              pagedRows.map((r, idx) => {
                 const t = r.ticket;
                 const dot = statusDotFor(t.status, r.aging);
                 return (
@@ -1021,7 +1162,7 @@ export function NeedClaimList({ mod, sub }: Props) {
                         <span className={`inline-block w-2 h-2 rounded-full ml-1 ${dotColor(dot)}`} />
                       )}
                     </td>
-                    <td className="px-1 py-1 text-center">{wtyCode(t.warranty)}</td>
+                    <td className="px-1 py-1 text-center">{r.colValues.wty}</td>
                     <td className="px-1 py-1 max-w-[110px] truncate text-muted-foreground" title={t.status || undefined}>
                       {t.status || "—"}
                     </td>
@@ -1063,14 +1204,14 @@ export function NeedClaimList({ mod, sub }: Props) {
                     </td>
                     <td className="px-1 py-1 max-w-[110px] text-xs" title={t.account || t.claimCompany || undefined}>
                       {t.account || t.claimCompany ? (
-                        <span className={`inline-block max-w-full truncate rounded border px-1.5 align-middle ${claimToColor(t.account || t.claimCompany).pill}`}>
+                        <span className={`inline-block max-w-full truncate rounded border px-1.5 align-middle ${r.claimToColor.pill}`}>
                           {t.account || t.claimCompany}
                         </span>
                       ) : (
                         "—"
                       )}
                     </td>
-                    <td className="px-1 py-1 whitespace-nowrap text-xs">{tierCodeForTicket(t)}</td>
+                    <td className="px-1 py-1 whitespace-nowrap text-xs">{r.colValues.tierCode}</td>
                     <td className="px-1 py-1 whitespace-nowrap text-xs">—</td>
                     <td className="px-1 py-1">
                       <input
@@ -1095,17 +1236,11 @@ export function NeedClaimList({ mod, sub }: Props) {
                         ))}
                       </select>
                     </td>
-                    <td className="px-1 py-1">
-                      <input
-                        key={`note:${t.ticketNo}:${r.claimNote}`}
-                        type="text"
-                        defaultValue={r.claimNote}
-                        disabled={savingClaimRowTicketNo === t.ticketNo}
-                        onBlur={(e) => void updateClaimDetails(t.ticketNo, { claimNote: e.target.value })}
-                        className="glass-input text-[10px] py-0.5 px-1 rounded w-20 disabled:opacity-50"
-                        placeholder="Note"
-                        title={r.claimNote || undefined}
-                      />
+                    <td className="px-1 py-1 max-w-[160px] truncate text-muted-foreground" title={r.triageNote || undefined}>
+                      {r.triageNote || "—"}
+                    </td>
+                    <td className="px-1 py-1 max-w-[160px] truncate text-muted-foreground" title={r.internalNote || undefined}>
+                      {r.internalNote || "—"}
                     </td>
                     <td className="px-1 py-1 text-center">{r.aging} d</td>
                     <td className="px-1 py-1 whitespace-nowrap">
@@ -1125,6 +1260,36 @@ export function NeedClaimList({ mod, sub }: Props) {
         </table>
       </div>
 
+      {filtered.length > 0 && (
+        <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+          <span>
+            Showing {(safePage - 1) * pageSize + 1}–{Math.min(safePage * pageSize, filtered.length)} of {filtered.length} tickets
+            {selectedIds.size > 0 ? ` (${selectedIds.size} selected)` : ""}
+          </span>
+          {totalPages > 1 && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                className="btn hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Prev
+              </button>
+              <span>Page {safePage} of {totalPages}</span>
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
+                className="btn hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Caution note */}
       <div className="mt-4 text-xs text-muted-foreground">
         * Caution: verification messages may not fully confirm a claim is accepted. Check with the warranty company when any claim is denied.
@@ -1142,6 +1307,7 @@ export function NeedClaimList({ mod, sub }: Props) {
               const tid = (tickets.find((t) => t.ticketNo === ticketNo) as any)?._id as string | undefined;
               if (tid) setClaimDetailsByTicketId((prev) => new Map(prev).set(tid, details));
             }}
+            onStatusChanged={(ticketNo, status) => setTickets((prev) => prev.map((t) => (t.ticketNo === ticketNo ? { ...t, status } : t)))}
             onClose={() => setPreClaimTicketNo(null)}
           />
         );
