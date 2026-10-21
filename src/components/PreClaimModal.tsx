@@ -15,6 +15,7 @@ import type { TicketPhoto } from "@/lib/firebase/storage";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { buildServicePowerClaimPayload, isClaimablePart } from "@/lib/servicePowerClaimPayload";
+import { isWrongManufacturerName, spClaimLookupNames } from "@/lib/spClaimLookup";
 
 interface Props {
   ticket: Ticket;
@@ -402,17 +403,36 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
       // ServicePower (the servicer number the manufacturer issued us), read
       // fresh from the call — see buildServicePowerClaimPayload.
       let spServiceCenter = "";
+      let spManufacturerName = "";
       try {
         const { fetchServicePowerCalls } = await import("@/lib/servicePowerSync");
         const res = await fetchServicePowerCalls({ callNo: ticket.ticketNo });
         const call = (res.calls ?? []).find((c: any) => String(c?.callNumber ?? "").trim() === ticket.ticketNo) ?? res.calls?.[0];
         spServiceCenter = String(call?.serviceCenter ?? "").trim();
+        // The name ServicePower files this call's claims under for that
+        // service center: the appliance brand for GE / Frigidaire calls, the
+        // warranty company for e.g. Square Trade ("GENERAL ELECTRIC" with
+        // Square Trade's GSL38018 is refused). Checked with the read-only
+        // claim lookup — brand first, so what already works stays the same —
+        // then the call's claim company, then its brand.
+        if (spServiceCenter) {
+          const { retrieveClaim } = await import("@/lib/servicePowerApiClient");
+          const names = Array.from(new Set([String(ticket.manufacturer ?? "").trim().toUpperCase(), ...spClaimLookupNames(call?.mfgId, ticket.ticketNo, null, call?.product?.brandDesc)].filter(Boolean)));
+          for (const name of names) {
+            const probe = await retrieveClaim({ manufacturerName: name, serviceCenterNumber: spServiceCenter, claimNumber: ticket.ticketNo });
+            const message = (probe?.messages ?? []).map((m) => m.message).join("; ");
+            if (!isWrongManufacturerName(message)) {
+              spManufacturerName = name;
+              break;
+            }
+          }
+        }
       } catch (err) {
         console.warn("[PreClaim] couldn't read the call's Service Center from ServicePower:", err);
       }
 
       const { claim, warnings, error } = buildServicePowerClaimPayload(
-        { ...ticket, model: modelCode.trim(), serial: serialNo.trim() }, saved, parts, customerComplaint, servicePerformed, partFee, spServiceCenter,
+        { ...ticket, model: modelCode.trim(), serial: serialNo.trim() }, saved, parts, customerComplaint, servicePerformed, partFee, spServiceCenter, spManufacturerName,
       );
       if (error || !claim) {
         setSpMessage({ type: "error", text: error || "Could not build a claim from this ticket's data." });

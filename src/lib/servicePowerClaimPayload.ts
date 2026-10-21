@@ -82,10 +82,19 @@ export function buildServicePowerClaimPayload(
    * the fallback when the call couldn't be read.
    */
   spServiceCenter?: string,
+  /**
+   * The name ServicePower files this call's claims under for that service
+   * center, when it differs from the appliance brand — a Square Trade call
+   * (service center GSL38018) is filed under "SQUARE TRADE", and "GENERAL
+   * ELECTRIC" there is refused with "Invalid manufacturerName/
+   * serviceCenterNumber" (050299594131, 10/21). See PreClaimModal, which
+   * checks the pair with the read-only claim lookup before sending.
+   */
+  spManufacturerName?: string,
 ): BuildClaimPayloadResult {
   const warnings: string[] = [];
 
-  const manufacturerName = clip(ticket.manufacturer, 30);
+  const manufacturerName = clip((spManufacturerName ?? "").trim() || ticket.manufacturer, 30);
   if (!manufacturerName) {
     return { claim: null, warnings, error: "This ticket has no Manufacturer set — ServicePower requires one to submit a claim." };
   }
