@@ -119,6 +119,10 @@ export function buildServicePowerClaimPayload(
     jobCode: clip(claimDetails.jobCode || p.jobCode, 4),
   }));
 
+  // The claim's Job Code (Claim section), else the first part's — see eiaRepairCode1 below.
+  const claimJobCode = clip(claimDetails.jobCode || spParts.find((p) => p.jobCode)?.jobCode, 4);
+  const resolutionCode = clip(claimDetails.resolutionCode, 4);
+
   // Resubmitting a claim SP already has an id for MUST pass these back, or
   // SP creates a brand new duplicate claim instead of updating this one —
   // see ClaimSubmissionClaim's own doc comment.
@@ -149,12 +153,18 @@ export function buildServicePowerClaimPayload(
     eiaDefectOrComplaintCode: clip(claimDetails.failureDefectCode, 4),
     defectOrComplaintDescription: clip(customerComplaint, 150),
     servicePerformedDescription: clip(servicePerformed, 250),
-    eiaRepairCode1: clip(claimDetails.resolutionCode, 4),
+    // ServicePower's claim has one "Repair/Job Code" field ("the code
+    // indicating the service performed") — the repair code slot — and that's
+    // where it reads the GE job code (MA00…) and Square Trade's "Repair / Job
+    // Code 1" (REP, BER…). Sent as jobCode it was never read: SA-5424453
+    // (10/21) went with MA00 on the claim and on its part and still came back
+    // "Blank Job Code; Blank Rate Record; Repair Type Invalid for Prod Svcd".
+    // The Resolution/Repair Code fills the slot when there's no job code,
+    // else goes in the second one.
+    eiaRepairCode1: claimJobCode || resolutionCode,
+    eiaRepairCode2: claimJobCode && resolutionCode && resolutionCode !== claimJobCode ? resolutionCode : undefined,
 
     repairCategory: clip(claimDetails.repairCategory, 2),
-    // The Claim section's Job Code, else the first part's — sent on the claim
-    // itself so a labor-only claim (no part lines) still has one.
-    jobCode: clip(claimDetails.jobCode || spParts.find((p) => p.jobCode)?.jobCode, 4),
     stockRepairFlag: claimDetails.dealerStockRepair ? "Y" : "N",
 
     existingClaimBatchNumber,

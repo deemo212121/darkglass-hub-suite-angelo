@@ -127,6 +127,11 @@ export interface ClaimSubmissionClaim {
   eiaDefectOrComplaintCode?: string;
   defectOrComplaintDescription?: string;
   servicePerformedDescription?: string;
+  /**
+   * ServicePower's "Repair/Job Code" — where it reads the claim's job code
+   * (GE MA00…, Square Trade REP…). Blank → "Blank Job Code", "Blank Rate
+   * Record", "Repair Type Invalid for Prod Svcd" (reject codes 19, 62, 143).
+   */
   eiaRepairCode1?: string;
   eiaRepairCode2?: string;
   eiaRepairCode3?: string;
@@ -134,14 +139,6 @@ export interface ClaimSubmissionClaim {
   reworkNumberOrPolicy?: string;
   warrantyType?: string;
   repairCategory?: string;
-  /**
-   * The claim's job code (GE: the 4-character labor job code, e.g. MA00) —
-   * ServicePower reads it from the claim's Repair Information, not only from
-   * part lines, so a claim with no parts still carries one. Without it a GE
-   * claim comes back "Blank Job Code" / "Blank Rate Record" / "Repair Type
-   * Invalid for Prod Svcd" (reject codes 19, 62, 143).
-   */
-  jobCode?: string;
   stockRepairFlag?: 'Y' | 'N';
   type?: string;
   /** DO NOT PASS on a new claim — only when updating one SP already assigned an id to. */
