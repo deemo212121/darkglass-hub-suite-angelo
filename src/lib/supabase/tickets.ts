@@ -745,6 +745,30 @@ export async function updateTicketStatus(ticketNo: string, status: string): Prom
 }
 
 /**
+ * The ticket's Square Trade appointment link (migration 0403), saved so
+ * everyone gets it — not only the browser that pasted it. "" when none is
+ * saved, null when the column isn't there yet (migration not run) so the
+ * caller keeps its browser copy.
+ */
+export async function getTicketSquaretradeUrl(ticketNo: string): Promise<string | null> {
+  const { data, error } = await supabase.from("tickets").select("squaretrade_url").eq("ticket_no", ticketNo).maybeSingle();
+  if (error) {
+    if (!/squaretrade_url/.test(error.message)) console.warn("getTicketSquaretradeUrl error:", error.message);
+    return null;
+  }
+  return String((data as { squaretrade_url?: string | null } | null)?.squaretrade_url ?? "").trim();
+}
+
+/** Save (or clear, with "") the ticket's Square Trade appointment link. Throws when it couldn't be saved. */
+export async function setTicketSquaretradeUrl(ticketNo: string, url: string): Promise<void> {
+  const value = String(url || "").trim();
+  const { error } = await supabase.from("tickets").update({ squaretrade_url: value || null }).eq("ticket_no", ticketNo);
+  if (error) {
+    throw new Error(/squaretrade_url/.test(error.message) ? "Saving the Square Trade link for everyone needs migration 0403 — it's saved in this browser only for now." : error.message);
+  }
+}
+
+/**
  * Set/clear a ticket's misdiagnosed flag. Restricted to manager-tier roles
  * client-side (ticket.$ticketNo.tsx); who changed it and when is captured
  * by the caller via logTicketAuditEntry, not stored on this column.

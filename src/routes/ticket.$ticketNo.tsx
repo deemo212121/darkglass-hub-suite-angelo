@@ -34,7 +34,7 @@ import {
   buildSquaretradeUrlFromToken,
   extractSquaretradeUrl,
   getSquaretradeUrl,
-  resolveSquaretradeUrl,
+  buildServicePowerWorkorderUrl,
   setSquaretradeUrl,
 } from "@/lib/squaretradeUrl";
 import { 
@@ -62,6 +62,8 @@ import {
   updateTicketPart as sbUpdateTicketPart,
   deleteTicketPart as sbDeleteTicketPart,
   getPartSuggestions,
+  getTicketSquaretradeUrl as sbGetTicketSquaretradeUrl,
+  setTicketSquaretradeUrl as sbSetTicketSquaretradeUrl,
   type PartSuggestion,
 } from "@/lib/supabase/tickets";
 import { getTicketComments, addTicketComment } from "@/lib/supabase/comments";
@@ -2382,8 +2384,35 @@ function TicketDetailsPage() {
   const [squaretradeEditOpen, setSquaretradeEditOpen] = useState(false);
   const [squaretradeDraft, setSquaretradeDraft] = useState("");
 
+  // The link is saved on the ticket (migration 0403) so everyone gets it;
+  // this browser's copy shows first and is moved onto the ticket when the
+  // ticket has none yet.
   useEffect(() => {
-    setSquaretradeUrlState(getSquaretradeUrl(ticketNo));
+    const local = getSquaretradeUrl(ticketNo);
+    setSquaretradeUrlState(local);
+    let cancelled = false;
+    void sbGetTicketSquaretradeUrl(ticketNo).then((fromTicket) => {
+      if (cancelled || fromTicket === null) return; // migration 0403 not run — keep the browser copy
+      if (fromTicket) {
+        setSquaretradeUrl(ticketNo, fromTicket);
+        setSquaretradeUrlState(fromTicket);
+      } else if (local) {
+        void sbSetTicketSquaretradeUrl(ticketNo, local).catch(() => {});
+      }
+    });
+    return () => { cancelled = true; };
+  }, [ticketNo]);
+
+  /** Saves the link on the ticket and in this browser. `quiet` = found automatically, so no message if the ticket save fails. */
+  const saveSquaretradeLink = useCallback(async (url: string, quiet = false) => {
+    const saved = setSquaretradeUrl(ticketNo, url);
+    setSquaretradeUrlState(saved);
+    try {
+      await sbSetTicketSquaretradeUrl(ticketNo, saved);
+    } catch (err) {
+      if (quiet) console.warn("Square Trade link not saved on the ticket:", err);
+      else alert(err instanceof Error ? err.message : String(err));
+    }
   }, [ticketNo]);
 
   // Load per-model reference links (Exploded View / Service Bulletin / Tech
@@ -3307,9 +3336,8 @@ function TicketDetailsPage() {
     if (!found) return;
     const current = getSquaretradeUrl(ticketNo);
     if (current === found) return;
-    const saved = setSquaretradeUrl(ticketNo, found);
-    setSquaretradeUrlState(saved);
-  }, [ticketNo, ticket?.account, runningNotes, runningNotesRawXml]);
+    void saveSquaretradeLink(found, true);
+  }, [ticketNo, ticket?.account, runningNotes, runningNotesRawXml, saveSquaretradeLink]);
 
   // Compose the Customer Notes list shown on the General tab. We always
   // prefer the live SP running notes when available (so the customer-facing
@@ -6218,7 +6246,7 @@ function TicketDetailsPage() {
                       const href = isNSA
                         ? "https://nationalservicealliance.com/login.php"
                         : isSquaretrade
-                          ? resolveSquaretradeUrl(ticketNo)
+                          ? squaretradeUrl || buildServicePowerWorkorderUrl(ticketNo)
                           : `https://hub.servicepower.com/dashboard/workorders/${encodeURIComponent(ticketNo)}`;
                       const title = isNSA
                         ? "Open NSA Service Facility Portal"
@@ -10032,8 +10060,7 @@ function TicketDetailsPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    setSquaretradeUrl(ticketNo, "");
-                    setSquaretradeUrlState("");
+                    void saveSquaretradeLink("");
                     setSquaretradeDraft("");
                     setSquaretradeEditOpen(false);
                   }}
@@ -10054,8 +10081,7 @@ function TicketDetailsPage() {
                 onClick={() => {
                   const raw = squaretradeDraft.trim();
                   if (!raw) {
-                    setSquaretradeUrl(ticketNo, "");
-                    setSquaretradeUrlState("");
+                    void saveSquaretradeLink("");
                     setSquaretradeEditOpen(false);
                     return;
                   }
@@ -10063,8 +10089,7 @@ function TicketDetailsPage() {
                   // token and build the canonical URL around it.
                   const looksLikeUrl = /^https?:\/\//i.test(raw);
                   const finalUrl = looksLikeUrl ? raw : buildSquaretradeUrlFromToken(raw);
-                  const saved = setSquaretradeUrl(ticketNo, finalUrl);
-                  setSquaretradeUrlState(saved);
+                  void saveSquaretradeLink(finalUrl);
                   setSquaretradeEditOpen(false);
                 }}
                 className="rounded bg-blue-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-400"
