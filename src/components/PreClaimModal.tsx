@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { X, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, Loader2, ExternalLink, RotateCcw, MapPin, FileCheck2 } from "lucide-react";
 import type { Ticket } from "@/lib/ticketData";
 import { getTicketVisits, getTicketParts, updateTicketPart, updateTicketStatus, type UIPartRow } from "@/lib/supabase/tickets";
 import {
@@ -10,7 +10,10 @@ import {
 } from "@/lib/supabase/claimDetails";
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { PhotoSidePreview } from "@/components/PhotoSidePreview";
-import { jobCodesFor } from "@/lib/jobCodes";
+import { jobCodesFor, REPAIR_CATEGORIES } from "@/lib/jobCodes";
+import { claimToColor, claimToPortal } from "@/lib/claimToColors";
+import { getPreAuthForTicket, type PreAuthRequest } from "@/lib/supabase/preAuth";
+import { lookupSpPreAuth, type SpPreAuth } from "@/lib/spPreAuthLookup";
 import type { TicketPhoto } from "@/lib/firebase/storage";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
@@ -26,6 +29,8 @@ interface Props {
   onStatusChanged?: (ticketNo: string, status: string) => void;
   onNavigate: (ticketNo: string) => void;
   onClose: () => void;
+  /** Office-to-customer miles from Need Claim List (undefined while still being worked out). */
+  miles?: number | null;
 }
 
 const PRE_CLAIM_STATUSES = ["Holding", "Need Claim", "Claim Not Needed", "Claimed"];
@@ -88,7 +93,27 @@ const SP_ACCOUNT_REJECTION = /invalid manufacturerName\s*\/\s*serviceCenterNumbe
  * See src/lib/supabase/claimDetails.ts and migration 0135 for which fields
  * are newly persisted vs. read from the ticket/parts data that already existed.
  */
-export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged, onNavigate, onClose }: Props) {
+export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged, onNavigate, onClose, miles }: Props) {
+  // Header summary: the ticket's Pre-Auth (Claims → Pre-Auth), if one was started.
+  // ServicePower's Call Auth is looked up first (read-only — it's where most
+  // pre-auths are filed); the AHS Pre-Auth shows when ServicePower has none.
+  const { companyId: authCompanyId } = useAuth();
+  const [preAuth, setPreAuth] = useState<PreAuthRequest | null | undefined>(undefined);
+  const [spPreAuth, setSpPreAuth] = useState<SpPreAuth | null | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    setPreAuth(undefined);
+    setSpPreAuth(undefined);
+    getPreAuthForTicket(ticket.ticketNo).then((p) => { if (!cancelled) setPreAuth(p); });
+    lookupSpPreAuth(ticket.ticketNo, [ticket.account, ticket.claimCompany, ticket.manufacturer], authCompanyId ?? null)
+      .then((r) => { if (!cancelled) setSpPreAuth(r); })
+      .catch(() => { if (!cancelled) setSpPreAuth(null); });
+    return () => { cancelled = true; };
+  }, [ticket.ticketNo]); // eslint-disable-line react-hooks/exhaustive-deps
+  const claimTo = ticket.account || ticket.claimCompany || "";
+  const claimToPill = claimToColor(claimTo);
+  const portal = claimToPortal(claimTo) ?? claimToPortal(ticket.manufacturer);
+  const isRedo = /^y/i.test(String(ticket.redo ?? "")) || !!ticket.originalTicketNo;
   const { uid, displayName, email } = useAuth();
   // ticket_claim_details.updated_by is a uuid FK into profiles(id) — NOT
   // the caller's email/display name (those are plain text and Postgres
@@ -508,6 +533,65 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
             <button onClick={goNext} disabled={currentIndex < 0 || currentIndex >= ticketNumbers.length - 1} className="p-1.5 rounded text-slate-400 hover:text-white disabled:opacity-30" title="Next ticket">
               <ChevronRight className="h-5 w-5" />
             </button>
+            {/* At a glance: miles, the warranty provider (with its portal), Redo, Pre-Auth. */}
+            <div className="ml-2 flex flex-wrap items-center gap-2 text-xs">
+              <span className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-slate-200" title="Office to customer (from Need Claim List)">
+                <MapPin className="h-3.5 w-3.5 text-slate-400" />
+                {miles == null ? (miles === null ? "No miles" : "Miles …") : `${miles.toFixed(1)} mi`}
+              </span>
+              {claimTo && (
+                <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 ${claimToPill.pill}`}>
+                  {claimTo}
+                  {portal && (
+                    <a href={portal.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 underline-offset-2 hover:underline" title={`Open ${portal.label} in a new tab`}>
+                      {portal.label} <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
+                </span>
+              )}
+              {isRedo ? (
+                ticket.originalTicketNo ? (
+                  <a href={`/ticket/${encodeURIComponent(ticket.originalTicketNo)}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-md border border-rose-400/40 bg-rose-500/15 px-2 py-1 font-semibold text-rose-200 hover:bg-rose-500/25" title="Open the original ticket">
+                    <RotateCcw className="h-3.5 w-3.5" /> REDO of {ticket.originalTicketNo}
+                  </a>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded-md border border-rose-400/40 bg-rose-500/15 px-2 py-1 font-semibold text-rose-200"><RotateCcw className="h-3.5 w-3.5" /> REDO</span>
+                )
+              ) : (
+                <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-slate-400">Not a redo</span>
+              )}
+              {spPreAuth ? (
+                <a
+                  href="https://hub.servicepower.com/orders/request-for-call-auth"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 rounded-md border border-rose-400/40 bg-rose-500/15 px-2 py-1 font-semibold text-rose-200 hover:bg-rose-500/25"
+                  title={[
+                    `ServicePower Call Auth: ${spPreAuth.status}`,
+                    spPreAuth.jobCode && `Job Code ${spPreAuth.jobCode}`,
+                    `Requested $${spPreAuth.requestedTotal.toFixed(2)} · Authorized $${spPreAuth.authorizedTotal.toFixed(2)}${spPreAuth.authorizedLabor ? ` (labor $${spPreAuth.authorizedLabor.toFixed(2)})` : ""}`,
+                    spPreAuth.approvedBy && `${spPreAuth.statusCode === "REJ" ? "Rejected" : "Approved"} by ${spPreAuth.approvedBy}${spPreAuth.approvedOn ? ` on ${spPreAuth.approvedOn}` : ""}`,
+                    spPreAuth.createdOn && `Filed ${spPreAuth.createdOn}`,
+                    spPreAuth.reason && `Reason: ${spPreAuth.reason}`,
+                    "Click to open Call Auth on ServicePower",
+                  ].filter(Boolean).join("\n")}
+                >
+                  <FileCheck2 className="h-3.5 w-3.5" /> Pre-Auth: {spPreAuth.status}
+                  {spPreAuth.statusCode === "APV" ? ` · $${spPreAuth.authorizedTotal.toFixed(2)} authorized` : spPreAuth.requestedTotal ? ` · $${spPreAuth.requestedTotal.toFixed(2)} requested` : ""}
+                  <span className="font-normal opacity-70">(SP)</span>
+                </a>
+              ) : spPreAuth === undefined && preAuth === undefined ? (
+                <span className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-slate-400"><Loader2 className="h-3 w-3 animate-spin" /> Pre-Auth…</span>
+              ) : preAuth ? (
+                <a href="/m/claims/pre-auth" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-md border border-rose-400/40 bg-rose-500/15 px-2 py-1 font-semibold text-rose-200 hover:bg-rose-500/25" title={`Pre-Auth ${preAuth.status} in AHS${preAuth.managedByName ? ` · managed by ${preAuth.managedByName}` : ""}${spPreAuth === undefined ? " · still checking ServicePower" : " · not on ServicePower yet"} — open Claims → Pre-Auth`}>
+                  <FileCheck2 className="h-3.5 w-3.5" /> Pre-Auth: {preAuth.status}{preAuth.total ? ` · $${preAuth.total.toFixed(2)}` : ""} <span className="font-normal opacity-70">(AHS)</span>
+                </a>
+              ) : spPreAuth === undefined ? (
+                <span className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-slate-400"><Loader2 className="h-3 w-3 animate-spin" /> Pre-Auth…</span>
+              ) : (
+                <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-slate-400" title="Nothing on ServicePower's Call Auth and no Pre-Auth in AHS">No Pre-Auth</span>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -723,7 +807,14 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
               </Field>
               <ReadOnly label="Warranty Flag" value={ticket.warranty || ""} />
               <Field label="Repair Category">
-                <input value={form.repairCategory} onChange={(e) => setField("repairCategory", e.target.value)} className={inputCls} />
+                {/* ServicePower's own list — the name is saved, its code is sent (lib/jobCodes.ts). */}
+                <select value={form.repairCategory} onChange={(e) => setField("repairCategory", e.target.value)} className={inputCls}>
+                  <option value="">— select —</option>
+                  {REPAIR_CATEGORIES.map((c) => <option key={c.code} value={c.label}>{c.label}</option>)}
+                  {form.repairCategory && !REPAIR_CATEGORIES.some((c) => c.label === form.repairCategory) && (
+                    <option value={form.repairCategory}>{form.repairCategory} (not on ServicePower's list)</option>
+                  )}
+                </select>
               </Field>
               <Field label="Repair Level">
                 <input value={form.repairLevel} onChange={(e) => setField("repairLevel", e.target.value)} className={inputCls} />

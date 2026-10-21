@@ -28,6 +28,21 @@ const COLORS: { match: RegExp; color: ClaimToColor }[] = [
   { match: /dacor/i, color: { label: "Dacor", pill: "bg-stone-500/20 text-stone-300 border-stone-400/30", dot: "bg-stone-400", hex: "#a8a29e" } },
 ];
 
+/** Where each claim company's claims are worked — shown as a link on Pre-Claim. Add a company's own portal here. */
+const PORTALS: { match: RegExp; label: string; url: string }[] = [
+  { match: /square\s*trade|^\s*sqt\b/i, label: "ServicePower HUB", url: "https://hub.servicepower.com/claim/list" },
+  { match: /assurant/i, label: "ServicePower HUB", url: "https://hub.servicepower.com/claim/list" },
+  { match: /^\s*(ge\b|general electric)/i, label: "ServicePower HUB", url: "https://hub.servicepower.com/claim/list" },
+  { match: /electrolux|frigidaire/i, label: "ServicePower HUB", url: "https://hub.servicepower.com/claim/list" },
+];
+
+/** The portal link for a Claim To value, if we know one. */
+export function claimToPortal(value?: string | null): { label: string; url: string } | null {
+  const v = String(value ?? "");
+  const hit = PORTALS.find((p) => p.match.test(v));
+  return hit ? { label: hit.label, url: hit.url } : null;
+}
+
 export const OTHER_CLAIM_TO: ClaimToColor = { label: "Other", pill: "bg-slate-500/15 text-slate-300 border-slate-400/25", dot: "bg-slate-400", hex: "#94a3b8" };
 
 /** The colour for a Claim To value (account / claim company); grey when it isn't a known company. */

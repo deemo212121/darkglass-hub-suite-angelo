@@ -86,6 +86,34 @@ export const MANUFACTURER_JOB_CODES: ManufacturerJobCodes[] = [
   },
 ];
 
+/**
+ * ServicePower's Repair Category choices — the codes are the option values
+ * on ServicePower's own claim screen (SDDRPRCTG). Pre-Claim saves the name;
+ * the claim sends the code.
+ */
+export const REPAIR_CATEGORIES: { code: string; label: string }[] = [
+  { code: "2", label: "Minor on-site service" },
+  { code: "3", label: "Intermediate on-site service" },
+  { code: "4", label: "Major on-site service" },
+  { code: "5", label: "Minor carry-in service" },
+  { code: "6", label: "Intermediate carry-in service" },
+  { code: "7", label: "Major carry-in service" },
+  { code: "8", label: "Minor tech/shop service" },
+  { code: "9", label: "Intermediate tech/shop service" },
+  { code: "10", label: "Major tech/shop service" },
+  { code: "11", label: "Minor stock merchandise service" },
+  { code: "12", label: "Intermediate stock merchandise service" },
+  { code: "13", label: "Major stock merchandise service" },
+];
+
+/** The code ServicePower expects for a saved Repair Category (a name from the list, or already a code). */
+export function repairCategoryCode(value?: string | null): string | undefined {
+  const v = String(value ?? "").trim();
+  if (!v) return undefined;
+  const hit = REPAIR_CATEGORIES.find((c) => c.label.toLowerCase() === v.toLowerCase() || c.code === v);
+  return hit ? hit.code : v.slice(0, 2);
+}
+
 /** The job-code rules for this ticket — pass its Claim To account, claim company, manufacturer and brand, most specific first. */
 export function jobCodesFor(...names: (string | null | undefined)[]): ManufacturerJobCodes | null {
   for (const name of names) {

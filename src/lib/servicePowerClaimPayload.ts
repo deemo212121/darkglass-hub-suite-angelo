@@ -14,6 +14,7 @@ import type { Ticket } from "@/lib/ticketData";
 import type { TicketClaimDetails } from "@/lib/supabase/claimDetails";
 import type { UIPartRow } from "@/lib/supabase/tickets";
 import type { ClaimSubmissionClaim, ClaimSubmissionPart } from "@/types/servicePower";
+import { repairCategoryCode } from "@/lib/jobCodes";
 
 /** "2026-08-07" (or with a time part) -> "20260807". Returns undefined for anything that isn't a clean date. */
 function toSpDate(value: string | undefined | null): string | undefined {
@@ -151,7 +152,8 @@ export function buildServicePowerClaimPayload(
     servicePerformedDescription: clip(servicePerformed, 250),
     eiaRepairCode1: clip(claimDetails.resolutionCode, 4),
 
-    repairCategory: clip(claimDetails.repairCategory, 2),
+    // Saved as the name ("Minor on-site service"); ServicePower takes its code ("2").
+    repairCategory: repairCategoryCode(claimDetails.repairCategory),
     // The Claim section's Job Code, else the first part's — sent on the claim
     // itself so a labor-only claim (no part lines) still has one.
     jobCode: clip(claimDetails.jobCode || spParts.find((p) => p.jobCode)?.jobCode, 4),
