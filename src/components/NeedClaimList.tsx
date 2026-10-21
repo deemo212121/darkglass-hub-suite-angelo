@@ -1302,6 +1302,7 @@ export function NeedClaimList({ mod, sub }: Props) {
           <PreClaimModal
             ticket={row.ticket}
             ticketNumbers={filtered.map((r) => r.ticket.ticketNo)}
+            miles={mileageByTicket[row.ticket.ticketNo]}
             onNavigate={setPreClaimTicketNo}
             onSaved={(ticketNo, details) => {
               const tid = (tickets.find((t) => t.ticketNo === ticketNo) as any)?._id as string | undefined;

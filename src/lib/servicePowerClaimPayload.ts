@@ -14,6 +14,7 @@ import type { Ticket } from "@/lib/ticketData";
 import type { TicketClaimDetails } from "@/lib/supabase/claimDetails";
 import type { UIPartRow } from "@/lib/supabase/tickets";
 import type { ClaimSubmissionClaim, ClaimSubmissionPart } from "@/types/servicePower";
+import { repairCategoryCode } from "@/lib/jobCodes";
 
 /** "2026-08-07" (or with a time part) -> "20260807". Returns undefined for anything that isn't a clean date. */
 function toSpDate(value: string | undefined | null): string | undefined {
@@ -173,11 +174,11 @@ export function buildServicePowerClaimPayload(
     eiaRepairCode1: claimJobCode || resolutionCode,
     eiaRepairCode2: claimJobCode && resolutionCode && resolutionCode !== claimJobCode ? resolutionCode : undefined,
 
-    // ServicePower wants the 2-character EIA category code (reject codes 9 /
-    // 43). A description typed or defaulted in its place ("Minor on-site
-    // service" for SQT) is left out rather than cut to "Mi" — the
+    // Saved as the name ("Minor on-site service"); ServicePower takes its code
+    // ("2" — lib/jobCodes.ts). Anything else longer than 2 characters is left
+    // out rather than cut to "Mi" (reject codes 9 / 43) — the
     // "Submit to ServicePower?" check says so.
-    repairCategory: (claimDetails.repairCategory ?? "").trim().length <= 2 ? clip(claimDetails.repairCategory, 2) : undefined,
+    repairCategory: repairCategoryCode(claimDetails.repairCategory),
     stockRepairFlag: claimDetails.dealerStockRepair ? "Y" : "N",
 
     existingClaimBatchNumber,

@@ -133,6 +133,13 @@ export async function getPreAuthRequests(): Promise<Map<string, PreAuthRequest>>
   return out;
 }
 
+/** One ticket's Pre-Auth, or null when none was started (or migration 0401 isn't run yet). */
+export async function getPreAuthForTicket(ticketNo: string): Promise<PreAuthRequest | null> {
+  const { data, error } = await supabase.from("pre_auth_requests").select(COLUMNS).eq("ticket_no", ticketNo).maybeSingle();
+  if (error || !data) return null;
+  return mapRow(data);
+}
+
 /** Save (create or update) a ticket's Pre-Auth draft. */
 export async function savePreAuthRequest(input: { ticketNo: string; status: PreAuthStatus; form: PreAuthForm; managedByName: string | null; byName: string | null; isNew: boolean }): Promise<PreAuthRequest> {
   const row: Record<string, unknown> = {
