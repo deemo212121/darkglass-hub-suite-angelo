@@ -1245,6 +1245,14 @@ const claimsMod: ModuleDef = {
       }),
     },
     {
+      slug: "pre-auth",
+      title: "Pre-Auth",
+      description: "ServicePower Call Auth (Request for Authorization) — fill in, save and track pre-auths for tickets in PT-Need PreAuthorization.",
+      custom: "pre-auth" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
       slug: "authorization-status",
       title: "Authorization Status",
       description: "Track authorization requests and approval status.",

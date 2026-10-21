@@ -9,6 +9,7 @@ import type {
   ClaimsRetrievalResponse,
   ClaimSubmissionClaim,
   ClaimSubmissionResponse,
+  CreateRFARequest,
   CreateRFAResponse,
   RetrieveRFAResponse,
 } from '@/types/servicePower';
@@ -181,6 +182,25 @@ export async function createRFA(params: {
     throw new Error(error.error || 'Failed to create RFA');
   }
 
+  return response.json();
+}
+
+/**
+ * Send a Pre-Auth (Request for Authorization) built by buildPreAuthRFA —
+ * the same shape as ServicePower's Call Auth screen. Only Claims → Pre-Auth
+ * calls this, and only once the company has sending switched on
+ * (settings.spPreAuthSubmitEnabled) and the person has confirmed.
+ */
+export async function sendPreAuthRFA(request: Omit<CreateRFARequest, 'authentication'>): Promise<CreateRFAResponse> {
+  const response = await fetch('/api/servicepower', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'createRFA', params: request }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error((error as any).error || 'Failed to send the Pre-Auth');
+  }
   return response.json();
 }
 
