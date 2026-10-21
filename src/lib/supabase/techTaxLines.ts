@@ -114,3 +114,29 @@ export async function deleteTechTaxLine(id: string): Promise<void> {
   const { error } = await supabase.from("tech_tax_lines").delete().eq("id", id);
   if (error) throw new Error(missingTableMessage(error.message));
 }
+
+/**
+ * Every technician's tax lines for one period, by profile id — read only,
+ * never creates the default lines (Accounting Dashboard's Payroll Runs and
+ * Payroll History, which take them off net pay). Empty map on error.
+ */
+export async function getTechTaxLinesForPeriod(periodStart: string, periodEnd: string): Promise<Map<string, Pick<TechTaxLine, "label" | "mode" | "amount">[]>> {
+  const out = new Map<string, Pick<TechTaxLine, "label" | "mode" | "amount">[]>();
+  if (!periodStart || !periodEnd) return out;
+  const { data, error } = await supabase
+    .from("tech_tax_lines")
+    .select("profile_id, label, mode, amount, sort_order")
+    .eq("period_start", periodStart)
+    .eq("period_end", periodEnd)
+    .order("sort_order", { ascending: true })
+    .limit(5000);
+  if (error) {
+    console.error("getTechTaxLinesForPeriod error:", error.message);
+    return out;
+  }
+  for (const r of (data ?? []) as { profile_id: string; label: string; mode: string; amount: number }[]) {
+    const line = { label: r.label ?? "", mode: (r.mode === "fixed" ? "fixed" : "percent") as TechTaxMode, amount: Number(r.amount) || 0 };
+    out.set(r.profile_id, [...(out.get(r.profile_id) ?? []), line]);
+  }
+  return out;
+}

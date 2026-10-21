@@ -50,7 +50,8 @@ import { getCompanyCarIqHistory, addCarIqHistoryEntry, updateCarIqHistoryEffecti
 import { getCarIqMileageRateHistory, addCarIqMileageRate, deleteCarIqMileageRate, carIqRatesOn, carIqRateChangeDatesInRange, CAR_IQ_RATE_HISTORY_START, type CarIqMileageRateEntry } from "@/lib/supabase/companySettings";
 import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, computeMealTimeCredit, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
 import { payGraceMinutesFor } from "@/lib/attendanceGrace";
-import { updatePayrollLineItemExtra, updatePayrollLineItemPaid } from "@/lib/supabase/payslips";
+import { updatePayrollLineItemPaid } from "@/lib/supabase/payslips";
+import { getTechTaxLinesForPeriod, taxLineAmount, type TechTaxLine } from "@/lib/supabase/techTaxLines";
 import { getEmployeeInfoByProfileIds, getCompanyUsers, getTechnicianContactInfoByIds, setEmployeeHasCarIq, type EmployeeInfo } from "@/lib/supabase/users";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { createNotification } from "@/lib/supabase/notifications";
@@ -1356,6 +1357,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const gmailStatus = gmailStatusByRegion[activeGmailRegion];
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [runLineItems, setRunLineItems] = useState<Record<string, PayrollLineItem[]>>({});
+  // Technicians' tax lines for an expanded run's period (MCWH, SSWH, FITW,
+  // SITW — Tech Activity Report), by profile — taken off Net Pay there, since
+  // they aren't stored on the payroll line itself.
+  const [runTaxLines, setRunTaxLines] = useState<Record<string, Map<string, Pick<TechTaxLine, "label" | "mode" | "amount">[]>>>({});
   const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
   // Bank name/account number shown next to each employee in the Reports tab's
   // expanded run view — read straight from profiles.employee_info (the same
@@ -3868,6 +3873,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       return;
     }
     setExpandedRunId(runId);
+    // Tax lines re-read on every expand — Finance may have filled them in since.
+    const run = payrollRuns.find((r) => r.id === runId);
+    if (run) {
+      void getTechTaxLinesForPeriod(run.period_start, run.period_end).then((lines) =>
+        setRunTaxLines((prev) => ({ ...prev, [runId]: lines }))
+      );
+    }
     if (runLineItems[runId]) return; // already loaded
     setLoadingRunId(runId);
     try {
@@ -3884,38 +3896,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
   };
 
-  // ── Edit Extra Pay / Notes on one employee's line item ──────────────────────
-  // Both show up on that employee's payslip (My Payroll tab) — Extra folds
-  // into the Grand Total there, Notes is a free-text line from Finance.
+  // Row key for a run's line items (the Paid toggle below). The Extra / Notes
+  // editor that used to sit here is gone (2026-10-21): extras are custom
+  // lines (technicians) or Adjustments (office / PH), already in the pay
+  // before generating, and notes to employees are written in Payroll
+  // History (payroll_employee_notes).
   const lineItemEditKey = (runId: string, profileId: string) => `${runId}|${profileId}`;
-  const [lineItemEdits, setLineItemEdits] = useState<Record<string, { extraPay: string; notes: string }>>({});
-  const [savingLineItemKey, setSavingLineItemKey] = useState<string | null>(null);
-
-  const handleSaveLineItemExtra = async (runId: string, profileId: string) => {
-    const key = lineItemEditKey(runId, profileId);
-    const edit = lineItemEdits[key];
-    if (!edit) return;
-    const extraPay = Number(edit.extraPay) || 0;
-    setSavingLineItemKey(key);
-    try {
-      await updatePayrollLineItemExtra(runId, profileId, { extraPay, notes: edit.notes });
-      setRunLineItems((prev) => ({
-        ...prev,
-        [runId]: (prev[runId] ?? []).map((li) =>
-          li.profile_id === profileId ? { ...li, extra_pay: extraPay, notes: edit.notes || null } : li
-        ),
-      }));
-      setLineItemEdits((prev) => {
-        const next = { ...prev };
-        delete next[key];
-        return next;
-      });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to save Extra/Notes");
-    } finally {
-      setSavingLineItemKey(null);
-    }
-  };
 
   // Finance checks this off once the person has actually been paid —
   // separate from the run's own draft/generated status, since payouts
@@ -6293,11 +6279,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                       <th className="py-2 text-right text-slate-500 uppercase">Regular Pay</th>
                                       <th className="py-2 text-right text-slate-500 uppercase">OT Pay</th>
                                       <th className="py-2 text-right text-slate-500 uppercase">Gross Pay</th>
-                                      <th className="py-2 text-right text-slate-500 uppercase">Extra</th>
-                                      <th className="py-2 text-right text-slate-500 uppercase">Grand Total</th>
-                                      <th className="py-2 text-left text-slate-500 uppercase">Notes</th>
+                                      <th className="py-2 text-right text-slate-500 uppercase" title="Gross pay ± adjustments (reimbursements, deductions, tax), minus a technician's tax lines">Net Pay</th>
                                       <th className="py-2 text-center text-slate-500 uppercase">Paid</th>
-                                      <th className="py-2 text-center text-slate-500 uppercase"></th>
                                     </tr>
                                   </thead>
                                   <tbody>
@@ -6309,10 +6292,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                       const divisor = li.currency === "PHP" ? EXCHANGE_RATE : 1;
                                       const grossUSD = li.gross_pay / divisor;
                                       const key = lineItemEditKey(run.id, li.profile_id);
-                                      const edit = lineItemEdits[key];
-                                      const extraValue = edit?.extraPay ?? String(li.extra_pay || 0);
-                                      const notesValue = edit?.notes ?? (li.notes || "");
-                                      const grandTotal = grossUSD + (Number(extraValue) || 0);
+                                      // Net = gross ± adjustments, as saved on the line (+ any old Extra
+                                      // amount), minus a technician's tax lines — same as the Tech Activity
+                                      // Report's "Net Pay After Tax" and the employee's own payslip.
+                                      const techTax = (runTaxLines[run.id]?.get(li.profile_id) ?? []).reduce((sum, t) => sum + taxLineAmount(t, grossUSD), 0);
+                                      const netUSD = ((li.net_pay ?? li.gross_pay) + (li.extra_pay || 0)) / divisor - techTax;
                                       const bankInfo = employeeInfoByProfileId.get(li.profile_id);
                                       return (
                                         <tr key={idx} className="border-b border-white/5">
@@ -6344,36 +6328,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                           <td className="py-2 text-right font-semibold text-green-300">
                                             ${grossUSD.toFixed(2)}
                                           </td>
-                                          <td className="py-2 text-right">
-                                            <input
-                                              type="number"
-                                              step="0.01"
-                                              value={extraValue}
-                                              onChange={(e) =>
-                                                setLineItemEdits((prev) => ({
-                                                  ...prev,
-                                                  [key]: { extraPay: e.target.value, notes: notesValue },
-                                                }))
-                                              }
-                                              className="w-20 bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-right text-slate-100 focus:outline-none focus:border-blue-500"
-                                            />
-                                          </td>
                                           <td className="py-2 text-right font-semibold text-blue-300">
-                                            ${grandTotal.toFixed(2)}
-                                          </td>
-                                          <td className="py-2 text-left">
-                                            <input
-                                              type="text"
-                                              placeholder="Note for this employee…"
-                                              value={notesValue}
-                                              onChange={(e) =>
-                                                setLineItemEdits((prev) => ({
-                                                  ...prev,
-                                                  [key]: { extraPay: extraValue, notes: e.target.value },
-                                                }))
-                                              }
-                                              className="w-40 bg-slate-900 border border-white/10 rounded px-1.5 py-1 text-slate-100 focus:outline-none focus:border-blue-500"
-                                            />
+                                            ${netUSD.toFixed(2)}
                                           </td>
                                           <td className="py-2 text-center">
                                             <input
@@ -6384,18 +6340,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                               title={li.paid && li.paid_at ? `Marked paid ${new Date(li.paid_at).toLocaleString()}` : "Mark as paid"}
                                               className="h-4 w-4 accent-green-600 cursor-pointer"
                                             />
-                                          </td>
-                                          <td className="py-2 text-center">
-                                            {edit && (
-                                              <button
-                                                type="button"
-                                                onClick={() => handleSaveLineItemExtra(run.id, li.profile_id)}
-                                                disabled={savingLineItemKey === key}
-                                                className="px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-[11px] font-semibold transition"
-                                              >
-                                                {savingLineItemKey === key ? "Saving…" : "Save"}
-                                              </button>
-                                            )}
                                           </td>
                                         </tr>
                                       );
