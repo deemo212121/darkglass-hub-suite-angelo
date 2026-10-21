@@ -3,7 +3,7 @@ import { Paperclip, X } from "lucide-react";
 import { randomId } from "@/lib/utils";
 import type { ProfileRow } from "@/lib/supabase/users";
 import { uploadExpenseReceipt, deleteExpenseReceiptFile } from "@/lib/firebase/storage";
-import { createExpense, updateExpense, type ExpenseRow, type ExpenseCategory } from "@/lib/supabase/expenses";
+import { createExpense, updateExpense, REIMBURSEMENT_TYPES, type ExpenseRow, type ExpenseCategory, type ReimbursementType } from "@/lib/supabase/expenses";
 import { todayISO } from "@/lib/localDate";
 
 /** What Accounting picks from on Add Expense. */
@@ -53,7 +53,11 @@ export function ExpenseFormModal({
     orNumber: editing?.orNumber || "",
     fromLocation: editing?.fromLocation || "",
     toLocation: editing?.toLocation || "",
+    reimbursementType: (editing?.reimbursementType ?? "") as ReimbursementType | "",
+    reimbursementOther: editing?.reimbursementOther || "",
   }));
+  // A Reimbursement Form says what it was for: Gas, Food or Other (specify).
+  const isReimbursement = form.category === EMPLOYEE_EXPENSE_CATEGORY;
   // Storage folder key for the receipt upload — a brand-new expense has no
   // row id yet, so a client-generated key stands in until it's saved; an
   // existing expense being edited just uses its own real id.
@@ -86,10 +90,22 @@ export function ExpenseFormModal({
       alert(profiles ? "Please select an employee and a date." : "Please enter a date.");
       return;
     }
+    if (isReimbursement && !form.reimbursementType) {
+      alert("Please pick the type of reimbursement (Gas, Food or Other).");
+      return;
+    }
+    if (isReimbursement && form.reimbursementType === "Other" && !form.reimbursementOther.trim()) {
+      alert("Please specify what the Other reimbursement is for.");
+      return;
+    }
     if (requireReceipt && !form.receiptUrl) {
       alert("Please attach a receipt (image or PDF).");
       return;
     }
+    // Only a Reimbursement Form carries a type; other categories clear it.
+    const typeFields = isReimbursement
+      ? { reimbursementType: form.reimbursementType || null, reimbursementOther: form.reimbursementOther }
+      : editing?.reimbursementType ? { reimbursementType: null } : {};
     setSaving(true);
     try {
       if (editing) {
@@ -103,6 +119,7 @@ export function ExpenseFormModal({
           orNumber: form.orNumber,
           fromLocation: form.fromLocation,
           toLocation: form.toLocation,
+          ...typeFields,
         });
       } else {
         await createExpense({
@@ -117,6 +134,7 @@ export function ExpenseFormModal({
           orNumber: form.orNumber,
           fromLocation: form.fromLocation,
           toLocation: form.toLocation,
+          ...typeFields,
         });
       }
       // Best-effort: if a receipt was replaced or removed during this edit,
@@ -172,6 +190,35 @@ export function ExpenseFormModal({
               <input type="date" value={form.expenseDate} onChange={(e) => setForm({ ...form, expenseDate: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
             </div>
           </div>
+          {isReimbursement && (
+            <div>
+              <label className="block text-xs text-slate-400 uppercase mb-1">
+                Type of Reimbursement <span className="text-red-400 normal-case">* required</span>
+              </label>
+              <div className="flex gap-2">
+                {REIMBURSEMENT_TYPES.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setForm({ ...form, reimbursementType: t })}
+                    className={`flex-1 rounded-lg border px-3 py-2 text-sm transition ${form.reimbursementType === t ? "border-blue-500 bg-blue-600/20 text-white" : "border-white/10 bg-slate-800/50 text-slate-300 hover:border-white/30"}`}
+                  >
+                    {t === "Other" ? "Other (specify)" : t}
+                  </button>
+                ))}
+              </div>
+              {form.reimbursementType === "Other" && (
+                <input
+                  type="text"
+                  autoFocus
+                  value={form.reimbursementOther}
+                  onChange={(e) => setForm({ ...form, reimbursementOther: e.target.value })}
+                  placeholder="What is it for? e.g. Parking, Tolls"
+                  className="mt-2 w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+                />
+              )}
+            </div>
+          )}
           <div>
             <label className="block text-xs text-slate-400 uppercase mb-1">
               Amount ($) <span className="text-red-400 normal-case">* required</span>

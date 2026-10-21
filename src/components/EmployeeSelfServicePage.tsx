@@ -61,7 +61,7 @@ import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { getMyPayslips, type MyPayslipRow } from "@/lib/supabase/payslips";
 import { getMyPayrollNotes, acknowledgePayrollNote, type PayrollNote } from "@/lib/supabase/payrollNotes";
 import { MyPayDetails } from "@/components/MyPayDetails";
-import { getProfileExpenses, deleteExpense, type ExpenseRow } from "@/lib/supabase/expenses";
+import { getProfileExpenses, deleteExpense, reimbursementTypeLabel, type ExpenseRow } from "@/lib/supabase/expenses";
 import { ExpenseFormModal } from "@/components/ExpenseFormModal";
 import { ReceiptLightbox } from "@/components/ReceiptLightbox";
 import { fmtExpenseReviewedAt } from "@/components/ExpenseTrackingPage";
@@ -2011,7 +2011,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex-1 min-w-0">
                             <p className="text-lg font-bold text-white font-mono">{fmtMoney(e.amount)}</p>
-                            <p className="text-sm text-slate-300">{e.category} · {e.expenseDate}</p>
+                            <p className="text-sm text-slate-300">{e.category}{reimbursementTypeLabel(e) ? ` · ${reimbursementTypeLabel(e)}` : ""} · {e.expenseDate}</p>
                             {e.description && <p className="text-sm text-slate-400 mt-1 break-words">{e.description}</p>}
                             {(route || e.orNumber) && (
                               <p className="text-xs text-slate-500 mt-1">{[route, e.orNumber ? `OR# ${e.orNumber}` : ""].filter(Boolean).join(" · ")}</p>
