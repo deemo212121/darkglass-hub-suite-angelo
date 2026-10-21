@@ -178,6 +178,11 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
               ? new Date(first.timestamp).toLocaleDateString("en-CA", { timeZone: "America/Chicago" })
               : "");
         }
+        // Claim-company defaults (lib/jobCodes.ts — SQT: Repair Category and
+        // Defect Code) fill in when the claim has none yet; still changeable.
+        const defaults = jobCodesFor(ticket.account, ticket.claimCompany, ticket.manufacturer, (ticket as { brand?: string | null }).brand)?.defaults;
+        if (defaults?.repairCategory && !loaded.repairCategory) loaded.repairCategory = defaults.repairCategory;
+        if (defaults?.failureDefectCode && !loaded.failureDefectCode) loaded.failureDefectCode = defaults.failureDefectCode;
         setForm(loaded);
         // Latest visit (visits are returned newest-first) carries the
         // freshest Symptom(Cx)/Resolution text; fall back to the ticket's
@@ -318,6 +323,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
 
     if (isBlank(form.resolutionCode)) blank.push("Resolution/Repair Code");
     if (isBlank(form.repairCategory)) blank.push("Repair Category");
+    else if (form.repairCategory.trim().length > 2) blank.push(`Repair Category ("${form.repairCategory.trim()}" is a description — ServicePower needs its 2-character code, so it isn't sent)`);
     if (isBlank(form.startDate)) blank.push("Start Date");
     if (isBlank(form.completeDate)) blank.push("Complete Date");
     if (isBlank(customerComplaint)) blank.push("Customer complaint (defect description)");

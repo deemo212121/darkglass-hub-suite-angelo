@@ -173,7 +173,11 @@ export function buildServicePowerClaimPayload(
     eiaRepairCode1: claimJobCode || resolutionCode,
     eiaRepairCode2: claimJobCode && resolutionCode && resolutionCode !== claimJobCode ? resolutionCode : undefined,
 
-    repairCategory: clip(claimDetails.repairCategory, 2),
+    // ServicePower wants the 2-character EIA category code (reject codes 9 /
+    // 43). A description typed or defaulted in its place ("Minor on-site
+    // service" for SQT) is left out rather than cut to "Mi" — the
+    // "Submit to ServicePower?" check says so.
+    repairCategory: (claimDetails.repairCategory ?? "").trim().length <= 2 ? clip(claimDetails.repairCategory, 2) : undefined,
     stockRepairFlag: claimDetails.dealerStockRepair ? "Y" : "N",
 
     existingClaimBatchNumber,
