@@ -102,6 +102,7 @@ import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { perCutoffSalary, getSalaryHistory } from "@/lib/supabase/salary";
 import { getPayrollReviewMarks, markPayrollReviewed, clearPayrollReviewMark, type PayrollReviewMark } from "@/lib/supabase/payrollReviewMarks";
+import { cents, centsSummaryTotal, groupCustomPayLines } from "@/lib/payRounding";
 import { getPayrollAdjustmentsForPeriod, payrollAdjustmentsEligible, resolveAdjustmentLines, sumPayrollAdjustments, type PayrollAdjustment } from "@/lib/supabase/payrollAdjustments";
 import { getHourlyOtOverrides, setHourlyOtOverride, clearHourlyOtOverride, type HourlyOtOverride } from "@/lib/supabase/payrollHourlyOtOverrides";
 import { useAuth } from "@/lib/auth";
@@ -261,6 +262,8 @@ interface PayrollLineItem {
   paid_at: string | null;
   compensation_type: "hourly" | "fixed";
   annual_salary: number | null;
+  /** Saved with the line (migration 0393) — the reimbursement / deduction / tax lines behind net_pay. */
+  breakdown?: { adjustments?: { kind: string; description: string; amount: number; percent: number | null }[] } | null;
 }
 
 interface PayrollAuditLogRow {
@@ -1789,7 +1792,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           for (let from = 0; ; from += PAGE_SIZE) {
             const { data, error } = await supabase
               .from("payroll_line_items")
-              .select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency,extra_pay,notes,paid,paid_at,compensation_type,annual_salary")
+              .select("payroll_run_id,profile_id,hours_worked,overtime_hours,hourly_rate,regular_pay,overtime_pay,gross_pay,net_pay,currency,extra_pay,notes,paid,paid_at,compensation_type,annual_salary,breakdown")
               .range(from, from + PAGE_SIZE - 1);
             if (error) return { data: null, error };
             all.push(...(data ?? []));
@@ -2671,7 +2674,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // The week-tagged part of the above (migration 0383), per Sunday week —
   // feeds that week's own regular rate (see weeklyOtPremium).
   const techCustomIncludableByProfileWeek = new Map<string, Map<string, number>>();
+  // Every line per technician — grouped into the summary columns (bonus,
+  // commission, reimbursements, deductions) when rounding gross pay below.
+  const techCustomItemsByProfile = new Map<string, TechCustomPayItem[]>();
   for (const item of techCustomPayItemsAll) {
+    techCustomItemsByProfile.set(item.profileId, [...(techCustomItemsByProfile.get(item.profileId) ?? []), item]);
     techCustomTotalByProfile.set(item.profileId, (techCustomTotalByProfile.get(item.profileId) ?? 0) + item.value * item.rate);
     if (item.isWageIncludable) {
       techCustomIncludableByProfile.set(item.profileId, (techCustomIncludableByProfile.get(item.profileId) ?? 0) + item.value * item.rate);
@@ -2977,8 +2984,42 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // for them) can still have real pay owed via manual LDT/Mileage/
     // Training, a custom line, or an approved Payroll Dispute; the old
     // `tech ? ... : 0` gate silently dropped all of that to $0 for them.
-    const techGrossPay = includeTech
+    const techGrossPayExact = includeTech
       ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + manualTotal + twoTechPay + completedTicketsPay + customPay + techHourlyPay + techGuaranteedSalaryMatch + techHolidayPremium + techTraineeMatch
+      : 0;
+    // Rounded like Finance's summary and the Tech Activity Report's Total
+    // Payment (payRounding.ts): each column to the cent, then added up.
+    // Regular $ = regular hours at the company rate (+ the state regular
+    // match when State mode is applied — saved with the override, migration
+    // 0400) + trainee/holiday top-ups; OT $ = the rest of the hourly pay;
+    // Commission is whatever's left after the other columns.
+    const stateOverride = hourlyOtOverrides.get(emp.id);
+    const stateApplied = !isFixed && !!stateOverride && Math.abs(techHourlyPay - techHourlyPayCompanyOnly) > 0.005;
+    const techRegularHourly = !isTechRole(emp)
+      ? techHourlyPay
+      : isFixed
+      ? techHourlyPay
+      : stateApplied
+      ? stateOverride!.regularAmount ?? techDailyPay.regularPay
+      : techDailyPay.regularPay;
+    const customColumns = groupCustomPayLines(includeTech ? techCustomItemsByProfile.get(emp.id) ?? [] : []);
+    const regularColumn = techRegularHourly + techTraineeMatch + techHolidayPremium;
+    const otColumn = isFixed ? 0 : techHourlyPay - techRegularHourly;
+    const reimbursementColumn = effectiveMileagePay + customColumns.reimbursement;
+    const techGrossPay = includeTech
+      ? centsSummaryTotal({
+          regularPay: regularColumn,
+          otPay: otColumn,
+          bonus: customColumns.bonus,
+          commission:
+            techGrossPayExact - regularColumn - otColumn - customColumns.bonus - reimbursementColumn +
+            customColumns.deduction + customColumns.pretaxInsurance - techGuaranteedSalaryMatch,
+          ptoPay: 0,
+          deduction: customColumns.deduction,
+          mileageOtherReimb: reimbursementColumn,
+          pretaxInsurance: customColumns.pretaxInsurance,
+          salaryMatch: techGuaranteedSalaryMatch,
+        })
       : 0;
 
     const techRow: EmployeePayrollRow | null =
@@ -3043,11 +3084,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // PH staff have no OT premium — straight pay at the same rate for every
     // hour, which is exactly what blendedDailyPay's straightAllHours already
     // is (totalHours * rate, no 1.5x split needed).
+    // Rounded to the cent here (Regular $ and OT $ separately for US hourly),
+    // so the payroll line's gross, any % tax and the net all start from the
+    // same cent figure the table shows (Angelo Mendoza 9/27–10/10: net was
+    // worked out from $474.4069, giving $534.42 against $474.41 + $60.00).
     const officeGrossPay = isFixed && annualSalary
-      ? perCutoffSalary(annualSalary, emp.country === "PH")
+      ? cents(perCutoffSalary(annualSalary, emp.country === "PH"))
       : emp.country === "PH"
-      ? officeDailyPay.straightAllHours
-      : officeDailyPay.regularPay + officeDailyPay.overtimePayAt1_5x;
+      ? cents(officeDailyPay.straightAllHours)
+      : cents(cents(officeDailyPay.regularPay) + cents(officeDailyPay.overtimePayAt1_5x));
     const officeRow: EmployeePayrollRow = {
       employee: emp,
       compensationType: isFixed ? "fixed" : "hourly",
@@ -3266,14 +3311,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // re-applied to the same payslip just by re-picking its dates and
   // generating again.
   //
-  // Everyone else's saved payslip in the run is kept. Regenerating used to
-  // clear every employee of the nation and save only the ticked ones, so
-  // fixing one or two people wiped the rest (9/27–10/10 PH: 72 saved
-  // payslips, already emailed, went down to 2). If some unticked employees
-  // already have a saved payslip, the "Keep the other saved payslips?"
-  // window asks first: keep them (default) or remove them from the run.
-  const [regenUntickedConfirm, setRegenUntickedConfirm] = useState<{ names: string[] } | null>(null);
-  const generatePayroll = async (untickedChoice?: "keep" | "remove") => {
+  // Only the ticked employees are touched — everyone else's saved payslip in
+  // the run is always kept, with no option to remove it from here.
+  // Regenerating used to clear every employee of the nation and save only
+  // the ticked ones, so fixing one or two people wiped the rest (9/27–10/10:
+  // 72 PH payslips down to 2 on 10/16; then a "Remove them from this run"
+  // choice took the last 2 PH CSRs on 10/21 while regenerating only Angelo
+  // Mendoza).
+  const generatePayroll = async () => {
     if (nationIncludedPayrollRows.length === 0) return;
     if (!genStart || !genEnd || genStart > genEnd) {
       toast.error("Pick a valid start and end date before generating payroll.");
@@ -3281,15 +3326,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
     const runForDates = payrollRuns.find((r) => r.period_start === genStart && r.period_end === genEnd);
     const includedIds = new Set(nationIncludedPayrollRows.map((r) => r.employee.id));
-    // This nation's employees who are NOT ticked but already have a saved payslip in that run.
+    // Unticked employees of this nation who already have a saved payslip in that run — kept as-is.
     const untickedSaved = runForDates
       ? nationPayrollRows.filter((r) => !includedIds.has(r.employee.id) && payrollLineItems.some((li) => li.payroll_run_id === runForDates.id && li.profile_id === r.employee.id))
       : [];
-    if (untickedSaved.length > 0 && !untickedChoice) {
-      setRegenUntickedConfirm({ names: untickedSaved.map((r) => r.employee.full_name) });
-      return;
-    }
-    setRegenUntickedConfirm(null);
     setGenerating(true);
     try {
       // Timecard completeness (missing clock-outs, pending time corrections)
@@ -3313,15 +3353,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         runId = existingRun.id;
         // Only the ticked employees' line items are replaced — everyone
         // else's saved payslip in the run (unticked people of this nation,
-        // and the other nation's, generated from its own tab) is kept,
-        // unless Finance chose "Remove them from this run" in the window
-        // above.
-        const replaceIds = [...includedIds, ...(untickedChoice === "remove" ? untickedSaved.map((r) => r.employee.id) : [])];
+        // and the other nation's, generated from its own tab) is kept.
         const { error: deleteErr } = await supabase
           .from("payroll_line_items")
           .delete()
           .eq("payroll_run_id", runId)
-          .in("profile_id", replaceIds);
+          .in("profile_id", [...includedIds]);
         if (deleteErr) throw new Error(deleteErr.message);
         await supabase.from("payroll_runs").update({ generated_at: new Date().toISOString() }).eq("id", runId);
       } else {
@@ -3400,7 +3437,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       await supabase.from("payroll_audit_log").insert({
         action: nationHasExistingLineItems ? "edit" : "generate",
         employee_name: "All Employees",
-        details: `${nationHasExistingLineItems ? "Regenerated" : "Generated"} ${nationLabel} payroll for ${genStart} – ${genEnd}. ${nationIncludedPayrollRows.length} employees. Total: $${nationTotalUSD.toFixed(2)}${untickedSaved.length ? (untickedChoice === "remove" ? `. Removed ${untickedSaved.length} unticked employees' payslips` : `. Kept ${untickedSaved.length} unticked employees' saved payslips`) : ""}`,
+        details: `${nationHasExistingLineItems ? "Regenerated" : "Generated"} ${nationLabel} payroll for ${genStart} – ${genEnd}. ${nationIncludedPayrollRows.length} employees. Total: $${nationTotalUSD.toFixed(2)}${untickedSaved.length ? `. Kept ${untickedSaved.length} unticked employees' saved payslips` : ""}`,
         amount: Math.round(nationTotalUSD * 100) / 100,
       });
       void logModuleActivity({
@@ -4978,41 +5015,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                       </div>
                     </div>
                   )}
-                {regenUntickedConfirm && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setRegenUntickedConfirm(null)}>
-                    <div
-                      role="dialog"
-                      aria-modal="true"
-                      aria-labelledby="regen-unticked-title"
-                      className="w-full max-w-lg rounded-xl border border-white/10 bg-slate-900 p-5 text-left shadow-2xl"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <h3 id="regen-unticked-title" className="text-lg font-bold text-white">Keep the other saved payslips?</h3>
-                      <p className="mt-1 text-sm text-slate-300">
-                        <span className="font-semibold text-white">{regenUntickedConfirm.names.length}</span> employee{regenUntickedConfirm.names.length === 1 ? " who isn't" : "s who aren't"} ticked already {regenUntickedConfirm.names.length === 1 ? "has" : "have"} a saved payslip in the{" "}
-                        <span className="font-semibold text-white">{genStart} to {genEnd}</span> run. Generating only recomputes the{" "}
-                        <span className="font-semibold text-white">{nationIncludedPayrollRows.length}</span> ticked employee{nationIncludedPayrollRows.length === 1 ? "" : "s"}.
-                      </p>
-                      <ul className="mt-3 max-h-48 divide-y divide-white/5 overflow-y-auto rounded-lg border border-white/10 bg-slate-950/40 text-sm">
-                        {regenUntickedConfirm.names.map((n, i) => (
-                          <li key={`${n}-${i}`} className="px-3 py-1.5 text-slate-200">{n}</li>
-                        ))}
-                      </ul>
-                      <p className="mt-2 text-xs text-amber-300">Removing deletes their payslips from this run — anyone already sent theirs will no longer see it in Self-Service.</p>
-                      <div className="mt-4 flex flex-wrap justify-end gap-2">
-                        <button type="button" onClick={() => setRegenUntickedConfirm(null)} className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600">
-                          Cancel
-                        </button>
-                        <button type="button" onClick={() => void generatePayroll("remove")} className="rounded-lg border border-red-500/50 px-4 py-2 text-sm font-semibold text-red-300 hover:bg-red-500/10">
-                          Remove them from this run
-                        </button>
-                        <button type="button" autoFocus onClick={() => void generatePayroll("keep")} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
-                          Keep their payslips
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
                 <button
                   type="button"
                   onClick={() => void generatePayroll()}
@@ -6794,13 +6796,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             savingCategoryOverrideKey={savingCategoryOverrideKey}
             onClose={() => { setDetailEmployee(null); setWizardStep("detail"); }}
             onPrev={() => setWizardStep("detail")}
+            stateRegularAmount={hourlyOtOverrides.get(detailEmployee.id)?.regularAmount ?? null}
             onSetHourlyOtMode={
               isTechRole(detailEmployee)
-                ? async (mode, total) => {
+                ? async (mode, total, regularAmount) => {
                     setNextBusy(true);
                     try {
                       if (mode === "state") {
-                        await setHourlyOtOverride(detailEmployee.id, genStart, genEnd, total, displayName || email || null);
+                        await setHourlyOtOverride(detailEmployee.id, genStart, genEnd, total, displayName || email || null, regularAmount ?? null);
                       } else {
                         await clearHourlyOtOverride(detailEmployee.id, genStart, genEnd);
                       }
