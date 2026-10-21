@@ -50,7 +50,7 @@ const roCls = "w-full bg-slate-950/50 border border-white/5 rounded px-2 py-1.5 
 const labelCls = "block text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1";
 const sectionCls = "text-sm font-semibold text-blue-300 border-b border-white/10 pb-1 mb-3";
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
   return (
     <div>
       <label className={labelCls}>{label}</label>
@@ -251,6 +251,8 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
     [parts, checkedPartIds]
   );
   const usedCount = parts.filter(isClaimablePart).length;
+  // Job Code dropdown / Defect Code rules for this ticket's claim company or manufacturer (lib/jobCodes.ts).
+  const jobCodeRule = jobCodesFor(ticket.account, ticket.claimCompany, ticket.manufacturer, (ticket as { brand?: string | null }).brand);
   const claimTotal = form.laborFee + partFee + form.otherFee + form.shippingFee + form.extraMileFee + form.mileageFee;
 
   // Checked in the "Submit this claim to ServicePower?" window before
@@ -266,12 +268,17 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
     const isBlank = (v: unknown) => !String(v ?? "").trim();
     const required: string[] = [];
     const blank: string[] = [];
-    const isGe = !!jobCodesFor(ticket.manufacturer, (ticket as { brand?: string | null }).brand);
+    const isGe = jobCodeRule?.key === "ge";
+    // Named the way the form shows them (jobCodes.ts): Electrolux's defect
+    // code sits in the Job Code spot, SQT / Assurant have their own labels.
+    const defectInJobSpot = jobCodeRule?.field === "failureDefectCode";
+    const defectLabel = defectInJobSpot ? `${jobCodeRule!.fieldLabel} (where the Job Code usually is)` : "Failure/Defect Code";
+    const jobCodeLabel = jobCodeRule && !defectInJobSpot ? jobCodeRule.fieldLabel : "Job Code";
     const code = form.failureDefectCode.trim();
     if (!code) {
       if (isGe) blank.push("Failure/Defect Code");
-      else required.push("Failure/Defect Code (Claim section) — ServicePower sends a claim back without one.");
-    } else if (code.length > 4) required.push(`Failure/Defect Code "${code}" — enter the code itself (4 characters at most).`);
+      else required.push(`${defectLabel} — ServicePower sends a claim back without one.`);
+    } else if (code.length > 4) required.push(`${defectLabel} "${code}" — enter the code itself (4 characters at most).`);
     const claimable = parts.filter(isClaimablePart);
     const noInvoice = claimable.filter((p) => isBlank(p.invoiceNo)).map((p) => p.partNo || "(no part #)");
     if (noInvoice.length) {
@@ -279,9 +286,10 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
       else blank.push(`Invoice # on part ${noInvoice.join(", ")}`);
     }
     const noJobCode = claimable.filter((p) => isBlank(p.jobCode)).map((p) => p.partNo || "(no part #)");
-    if (isBlank(form.jobCode) && (noJobCode.length || claimable.length === 0)) {
+    // Electrolux / Frigidaire claims have no Job Code box (the spot holds the defect code).
+    if (!defectInJobSpot && isBlank(form.jobCode) && (noJobCode.length || claimable.length === 0)) {
       if (isGe) required.push(`Job Code (Claim section)${noJobCode.length ? ` — none on part ${noJobCode.join(", ")} either` : ""}.`);
-      else blank.push("Job Code");
+      else blank.push(jobCodeLabel);
     }
     if (isBlank(ticket.callReceivedDate)) required.push("Call received date on the ticket — it's sent as the request date.");
 
@@ -449,6 +457,39 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
       setSavingPartId(null);
     }
   };
+
+  /** The Failure/Defect Code field with Pull from SP — under its own label, or in the Job Code slot for Electrolux. */
+  const renderDefectField = (label: React.ReactNode = "Failure/Defect Code") => (
+                <Field label={label}>
+                  <div className="flex gap-1.5">
+                    <input value={form.failureDefectCode} onChange={(e) => setField("failureDefectCode", e.target.value)} className={inputCls} />
+                    <button
+                      type="button"
+                      onClick={() => void pullDefectFromSP(false)}
+                      disabled={spDefect?.state === "loading"}
+                      title="Look this call up on ServicePower again"
+                      className="shrink-0 rounded border border-blue-400/40 bg-blue-500/15 px-2 text-[11px] font-semibold text-blue-200 hover:bg-blue-500/25 disabled:opacity-50"
+                    >
+                      {spDefect?.state === "loading" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Pull from SP"}
+                    </button>
+                  </div>
+                  {spDefect?.text && (
+                    <p className={`mt-1 text-[10px] ${spDefect.state === "ok" ? "text-emerald-300" : "text-slate-500"}`}>
+                      {spDefect.text}
+                      {spDefect.state === "ok" && spDefect.problemType && form.failureDefectCode !== spDefect.problemType && (
+                        <button
+                          type="button"
+                          onClick={() => setField("failureDefectCode", spDefect.problemType!)}
+                          className="ml-1.5 font-semibold text-blue-400 hover:text-blue-300"
+                          title="ServicePower's claim defect code is 4 characters max — longer text is cut off when submitting"
+                        >
+                          Use
+                        </button>
+                      )}
+                    </p>
+                  )}
+                </Field>
+  );
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -692,28 +733,44 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
                 <input value={form.serviceType} onChange={(e) => setField("serviceType", e.target.value)} className={inputCls} />
               </Field>
               {(() => {
-                // A dropdown of that manufacturer's job codes when we have a list (GE for now — see lib/jobCodes.ts).
-                const list = jobCodesFor(ticket.manufacturer, (ticket as { brand?: string | null }).brand);
-                if (!list) {
+                // Electrolux: this slot is the Defect Code (what ServicePower asks Electrolux / Frigidaire claims for).
+                if (jobCodeRule?.field === "failureDefectCode") return renderDefectField(<>{jobCodeRule.fieldLabel} <span className="ml-1 normal-case tracking-normal font-semibold text-emerald-400">· {jobCodeRule.label} defect code</span></>);
+                // A dropdown of the claim company's / manufacturer's job codes when we have a list (lib/jobCodes.ts).
+                const list = jobCodeRule;
+                if (!list || list.codes.length === 0) {
                   return (
                     <Field label="Job Code">
                       <input value={form.jobCode} onChange={(e) => setField("jobCode", e.target.value)} className={inputCls} />
                     </Field>
                   );
                 }
-                const options = form.jobCode && !list.codes.includes(form.jobCode) ? [...list.codes, form.jobCode] : list.codes;
+                const known = list.codes.map((c) => c.code);
+                const picked = list.codes.find((c) => c.code === form.jobCode);
                 return (
                   <div>
                     {/* Same label line as every other field — the green note sits beside it so the grid stays aligned. */}
                     <label className={labelCls}>
-                      Job Code <span className="ml-1 normal-case tracking-normal font-semibold text-emerald-400">· {list.label} job code</span>
+                      {list.fieldLabel} <span className="ml-1 normal-case tracking-normal font-semibold text-emerald-400">· {list.label} job code</span>
                     </label>
-                    <select value={form.jobCode} onChange={(e) => setField("jobCode", e.target.value)} className={inputCls}>
+                    {/* The open list shows each code with its description; the closed box shows only the
+                        code (the native select sits on top with its own text hidden), the description goes underneath. */}
+                    <div className="relative">
+                      <div className={`${inputCls} pointer-events-none flex items-center justify-between gap-2`} aria-hidden="true">
+                        <span className={form.jobCode ? "" : "text-slate-500"}>{form.jobCode || "— select —"}</span>
+                        <span className="text-slate-500 text-[10px]">▼</span>
+                      </div>
+                    <select value={form.jobCode} onChange={(e) => setField("jobCode", e.target.value)} className="absolute inset-0 w-full h-full cursor-pointer appearance-none bg-transparent text-transparent [&>option]:bg-slate-900 [&>option]:text-white" title={picked?.note ? `${picked.code} — ${picked.note}` : form.jobCode}>
                       <option value="">— select —</option>
-                      {options.map((c) => (
-                        <option key={c} value={c}>{list.codes.includes(c) ? c : `${c} (not a ${list.label} code)`}</option>
+                      {list.codes.map((c) => (
+                        <option key={c.code} value={c.code}>{c.note ? `${c.code} — ${c.note}` : c.code}</option>
                       ))}
+                      {form.jobCode && !known.includes(form.jobCode) && (
+                        <option value={form.jobCode}>{`${form.jobCode} (not a ${list.label} code)`}</option>
+                      )}
                     </select>
+                    </div>
+                    {picked?.note && <p className="mt-1 text-[10px] text-slate-400">{picked.note}</p>}
+                    {form.jobCode && !picked && <p className="mt-1 text-[10px] text-amber-300">Not a {list.label} code</p>}
                   </div>
                 );
               })()}
@@ -732,35 +789,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
                   <option>Yes</option>
                 </select>
               </Field>
-              <Field label="Failure/Defect Code">
-                <div className="flex gap-1.5">
-                  <input value={form.failureDefectCode} onChange={(e) => setField("failureDefectCode", e.target.value)} className={inputCls} />
-                  <button
-                    type="button"
-                    onClick={() => void pullDefectFromSP(false)}
-                    disabled={spDefect?.state === "loading"}
-                    title="Look this call up on ServicePower again"
-                    className="shrink-0 rounded border border-blue-400/40 bg-blue-500/15 px-2 text-[11px] font-semibold text-blue-200 hover:bg-blue-500/25 disabled:opacity-50"
-                  >
-                    {spDefect?.state === "loading" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Pull from SP"}
-                  </button>
-                </div>
-                {spDefect?.text && (
-                  <p className={`mt-1 text-[10px] ${spDefect.state === "ok" ? "text-emerald-300" : "text-slate-500"}`}>
-                    {spDefect.text}
-                    {spDefect.state === "ok" && spDefect.problemType && form.failureDefectCode !== spDefect.problemType && (
-                      <button
-                        type="button"
-                        onClick={() => setField("failureDefectCode", spDefect.problemType!)}
-                        className="ml-1.5 font-semibold text-blue-400 hover:text-blue-300"
-                        title="ServicePower's claim defect code is 4 characters max — longer text is cut off when submitting"
-                      >
-                        Use
-                      </button>
-                    )}
-                  </p>
-                )}
-              </Field>
+              {jobCodeRule?.field !== "failureDefectCode" && renderDefectField()}
               <Field label="Resolution/Repair Code">
                 <input value={form.resolutionCode} onChange={(e) => setField("resolutionCode", e.target.value)} className={inputCls} />
               </Field>
