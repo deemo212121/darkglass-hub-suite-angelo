@@ -3,7 +3,7 @@
  * filled in from the app. A queue of tickets in PT-Need PreAuthorization
  * (plus any ticket with a saved Pre-Auth, or one opened by number), and a
  * form laid out like ServicePower's screen that saves as a draft
- * (migration 0401).
+ * (migration 0402).
  *
  * Sending to ServicePower is locked: Submit only goes out for a company
  * whose settings.spPreAuthSubmitEnabled is true (nothing in the app turns
@@ -17,8 +17,6 @@ import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import type { Ticket } from "@/lib/ticketData";
 import { useAuth } from "@/lib/auth";
 import { localISODate } from "@/lib/localDate";
-import { getCompanyUsersLite } from "@/lib/supabase/users";
-import { PRE_AUTH_DEFAULT_ROLES } from "@/lib/submoduleAccess";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { getCompanyTicketsWithStatuses, getTicketByNumber, getTicketParts } from "@/lib/supabase/tickets";
@@ -84,20 +82,6 @@ export function PreAuthPage({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
   const [dateTo, setDateTo] = useState("");
   // Pending = not sent yet (Not started / Draft / Ready); Completed = Sent.
   const [bucket, setBucket] = useState<"pending" | "completed" | null>(null);
-  // "Managed by" choices: active Claims / Parts / BizOps / Admin people.
-  const [managers, setManagers] = useState<string[]>([]);
-  useEffect(() => {
-    getCompanyUsersLite()
-      .then((list) => {
-        const allowed = new Set(PRE_AUTH_DEFAULT_ROLES);
-        const names = list
-          .filter((u) => u.is_active && [u.role, ...((u.extra_roles as string[] | null) ?? [])].some((r) => allowed.has(String(r || "").trim().toUpperCase().replace(/\s+/g, "_"))))
-          .map((u) => u.display_name || u.email || "")
-          .filter(Boolean);
-        setManagers(Array.from(new Set(names)).sort((a, b) => a.localeCompare(b)));
-      })
-      .catch(() => {});
-  }, []);
   const [openTicketNo, setOpenTicketNo] = useState("");
   const [opening, setOpening] = useState(false);
   const [editing, setEditing] = useState<{ ticket: Ticket; preAuth: PreAuthRequest | null } | null>(null);
@@ -348,7 +332,6 @@ export function PreAuthPage({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
             existing={editing.preAuth}
             companyId={companyId}
             byName={displayName || email || null}
-            managers={managers}
             sendOn={sendOn}
             onClose={() => setEditing(null)}
             onSaved={(p) => setPreAuths((prev) => new Map(prev).set(p.ticketNo, p))}
@@ -393,7 +376,6 @@ function PreAuthFormModal({
   existing,
   companyId,
   byName,
-  managers,
   sendOn,
   onClose,
   onSaved,
@@ -402,14 +384,14 @@ function PreAuthFormModal({
   existing: PreAuthRequest | null;
   companyId: string | null;
   byName: string | null;
-  managers: string[];
   sendOn: boolean;
   onClose: () => void;
   onSaved: (p: PreAuthRequest) => void;
 }) {
-  // Who is handling it — defaults to whoever starts it.
-  const [managedBy, setManagedBy] = useState(existing?.managedByName ?? byName ?? "");
-  const managerOptions = managedBy && !managers.includes(managedBy) ? [managedBy, ...managers] : managers;
+  // Who is handling it: the signed-in person — shown, not picked, and saved
+  // as Managed by with Save Draft / Save as Ready.
+  const managedBy = byName ?? "";
+  const previousManager = existing?.managedByName && existing.managedByName !== managedBy ? existing.managedByName : null;
   const [form, setForm] = useState<PreAuthForm>(() => existing?.form ?? { ...emptyPreAuthForm(), newBrand: ticket.manufacturer || "" });
   const [saved, setSaved] = useState<PreAuthRequest | null>(existing);
   const [saving, setSaving] = useState(false);
@@ -530,12 +512,11 @@ function PreAuthFormModal({
             <ReadOnly label="Technician" value={ticket.technician} />
             <ReadOnly label="Scheduled" value={ticket.schedule} />
             <div className="col-span-2 border-t border-white/10 pt-3">
-              <label className={labelCls}>Managed by</label>
-              <select value={managedBy} onChange={(e) => setManagedBy(e.target.value)} className={inputCls}>
-                <option value="">— nobody yet —</option>
-                {managerOptions.map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
-              <p className="mt-1 text-[10px] text-slate-500">Who is handling this Pre-Auth — saved with Save Draft / Save as Ready.</p>
+              <ReadOnly label="Managed by" value={managedBy} />
+              <p className="mt-1 text-[10px] text-slate-500">
+                You — saved with Save Draft / Save as Ready.
+                {previousManager && <> Was: <span className="text-slate-300">{previousManager}</span>.</>}
+              </p>
             </div>
           </section>
 

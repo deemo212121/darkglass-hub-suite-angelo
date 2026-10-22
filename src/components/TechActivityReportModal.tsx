@@ -1,5 +1,6 @@
 import { trainingWindow } from "@/lib/fieldStartDate";
-import { useEffect, useMemo, useState } from "react";
+import { centsSummaryTotal, groupCustomPayLines } from "@/lib/payRounding";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { X, Plus, Trash2, Loader2 } from "lucide-react";
 import type { EmployeePayrollRow } from "@/components/AccountingDashboard";
@@ -62,7 +63,9 @@ interface Props {
   onDone?: (breakdown: PayrollReviewAmounts) => void;
   doneBusy?: boolean;
   /** Saves ("state") or clears ("company") this technician/period's Hourly + OT pay-mode override — see payroll_hourly_ot_overrides. When omitted, the Company/State comparison box shows read-only totals with no switch. */
-  onSetHourlyOtMode?: (mode: "company" | "state", stateTotal: number) => void | Promise<void>;
+  onSetHourlyOtMode?: (mode: "company" | "state", stateTotal: number, regularAmount?: number | null) => void | Promise<void>;
+  /** The Regular $ part saved with this technician's State override (migration 0400), or null when not saved yet. */
+  stateRegularAmount?: number | null;
   hourlyOtModeBusy?: boolean;
   /** True while any of the parent's period-scoped bulk fetches — including
    *  the ones a custom-line/manual-pay/category-override edit here
@@ -109,6 +112,7 @@ export function TechActivityReportModal({
   onDone,
   doneBusy,
   onSetHourlyOtMode,
+  stateRegularAmount,
   hourlyOtModeBusy,
   periodDataSettling,
 }: Props) {
@@ -354,6 +358,12 @@ export function TechActivityReportModal({
   // company calc — used both by the Company/State toggle UI below and by
   // the auto-refresh effect right after it.
   const appliedIsState = Math.abs(techHourlyPay - companyHourlyOtTotal) > 0.005;
+  // The Regular $ part of the State total (regular hours at the company rate
+  // + the state regular-hours match) — saved with the override (migration
+  // 0400) so the dashboard's gross pay rounds Regular $ and OT $ separately,
+  // exactly like Total Payment here.
+  const stateRegularShare = companyRegularPayBlended + matchMin;
+  const regularBackfillTried = useRef(false);
 
   // payroll_hourly_ot_overrides stores a frozen DOLLAR AMOUNT, not a mode —
   // so a previously-saved State override goes stale the moment anything
@@ -380,15 +390,24 @@ export function TechActivityReportModal({
     // "changing on its own" exactly like the stale-override bug this effect
     // exists to fix. Wait for every in-flight period load to settle first.
     if (periodDataSettling) return;
-    if (Math.abs(techHourlyPay - stateHourlyOtTotal) <= 0.005) return;
-    void onSetHourlyOtMode("state", stateHourlyOtTotal);
+    const totalDrifted = Math.abs(techHourlyPay - stateHourlyOtTotal) > 0.005;
+    // An override saved before migration 0400 (or by the detail step's Next,
+    // which doesn't know the split) has no Regular $ part yet — fill it in
+    // once per open.
+    const regularMissing =
+      stateRegularAmount !== undefined &&
+      (stateRegularAmount == null || Math.abs(stateRegularAmount - stateRegularShare) > 0.0005) &&
+      !regularBackfillTried.current;
+    if (!totalDrifted && !regularMissing) return;
+    if (regularMissing) regularBackfillTried.current = true;
+    void onSetHourlyOtMode("state", stateHourlyOtTotal, stateRegularShare);
     // Keyed on the two numbers being compared, not on onSetHourlyOtMode (a
     // fresh inline closure from the parent every render) — the guard above
     // makes this idempotent once the override catches up, so re-running it
     // on every parent render would just be wasted work, not a correctness
     // issue either way.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stateHourlyOtTotal, techHourlyPay, appliedIsState, periodDataSettling]);
+  }, [stateHourlyOtTotal, techHourlyPay, appliedIsState, periodDataSettling, stateRegularAmount, stateRegularShare]);
 
   // Trainee daily $100 guarantee, recomputed HERE against each day's real
   // EFFECTIVE rate (state floor if higher than the company rate on file —
@@ -735,32 +754,18 @@ export function TechActivityReportModal({
     techManual.ldtPay + techManual.mileagePay + techManual.trainingPay +
     twoTechPayment + completedTicketsPayment + redoReductionPayment + customLinesTotal + carryoverTotal + row.techHourlyPay + techGuaranteedSalaryMatch + techHolidayPremium + techTraineeMatch;
   const owIncentivePay = (techManual.owIncentivePct / 100) * subtotal;
-  const totalPayment = subtotal + owIncentivePay;
 
   // Finance's payroll-summary columns (Accounting Dashboard → Reviewed
   // Periods, saved on Done). They add up to totalPayment:
   // regular + OT + bonus + commission + reimbursements + salary match
   // − deductions − pre-tax insurance.
   const reviewBreakdown = useMemo((): PayrollReviewAmounts => {
-    const BONUS = /ltp|bonus|performance|incentive|flash tech allowance/i;
-    const INSURANCE = /insur|pre-?tax/i;
-    let bonus = owIncentivePay;
-    let customCommission = 0;
-    let deduction = 0;
-    let pretaxInsurance = 0;
-    let reimb = techManual.mileagePay;
-    for (const item of customItems) {
-      const amount = item.value * item.rate;
-      if (item.isWageIncludable) {
-        if (BONUS.test(item.label)) bonus += amount;
-        else customCommission += amount;
-      } else if (amount < 0) {
-        if (INSURANCE.test(item.label)) pretaxInsurance += -amount;
-        else deduction += -amount;
-      } else {
-        reimb += amount;
-      }
-    }
+    const lines = groupCustomPayLines(customItems);
+    const bonus = owIncentivePay + lines.bonus;
+    const customCommission = lines.commission;
+    const deduction = lines.deduction;
+    const pretaxInsurance = lines.pretaxInsurance;
+    const reimb = techManual.mileagePay + lines.reimbursement;
     const commission =
       categoryPayments.reduce((s, c) => s + c.payment, 0) + techManual.ldtPay + techManual.trainingPay +
       twoTechPayment + completedTicketsPayment + redoReductionPayment + carryoverTotal + customCommission;
@@ -782,6 +787,13 @@ export function TechActivityReportModal({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owIncentivePay, customItems, techManual, categoryPayments, twoTechPayment, completedTicketsPayment, redoReductionPayment, carryoverTotal, row.techHourlyPay, row.compensationType, companyRegularPayBlended, appliedIsState, matchMin, techTraineeMatch, techHolidayPremium, techGuaranteedSalaryMatch]);
+
+  // Total Payment: each summary column rounded to the cent, then added up —
+  // how Finance's summary (and so Payroll History and the payslip) totals
+  // it; rounding only the grand total could land a cent off (Joshua Malloch
+  // 9/27–10/10: $2,323.38 here vs $2,323.37). The dashboard's gross pay
+  // rounds the same way.
+  const totalPayment = centsSummaryTotal(reviewBreakdown);
 
   const ratioPct = ticketsAssigned > 0 ? (effectiveTicketsCompleted / ticketsAssigned) * 100 : 0;
   const avgDailyCompletion = effectiveTicketsCompleted / Math.max(1, workingDays);
@@ -1491,7 +1503,7 @@ export function TechActivityReportModal({
                               type="button"
                               disabled={hourlyOtModeBusy || loadingStateComparison}
                               title={loadingStateComparison ? "Still loading this technician's per-day state comparison — wait for it to finish before switching modes." : undefined}
-                              onClick={() => onSetHourlyOtMode("state", stateHourlyOtTotal)}
+                              onClick={() => onSetHourlyOtMode("state", stateHourlyOtTotal, stateRegularShare)}
                               className={`px-2 py-0.5 rounded-full transition disabled:opacity-50 ${appliedIsState ? "bg-emerald-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
                             >
                               State

@@ -1032,8 +1032,11 @@ function MobilePayrollPage() {
     return () => { cancelled = true; };
   }, [uid]);
 
+  // "YYYY-MM-DD" read as a LOCAL date — new Date("2026-09-27") is midnight
+  // UTC, which is still 9/26 in US time, so periods showed a day early.
   const fmtDate = (iso: string) => {
-    const d = new Date(iso);
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+    const d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(iso);
     return isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-US");
   };
 

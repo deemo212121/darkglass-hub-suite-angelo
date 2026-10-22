@@ -83,10 +83,19 @@ export function buildServicePowerClaimPayload(
    * the fallback when the call couldn't be read.
    */
   spServiceCenter?: string,
+  /**
+   * The name ServicePower files this call's claims under for that service
+   * center, when it differs from the appliance brand — a Square Trade call
+   * (service center GSL38018) is filed under "SQUARE TRADE", and "GENERAL
+   * ELECTRIC" there is refused with "Invalid manufacturerName/
+   * serviceCenterNumber" (050299594131, 10/21). See PreClaimModal, which
+   * checks the pair with the read-only claim lookup before sending.
+   */
+  spManufacturerName?: string,
 ): BuildClaimPayloadResult {
   const warnings: string[] = [];
 
-  const manufacturerName = clip(ticket.manufacturer, 30);
+  const manufacturerName = clip((spManufacturerName ?? "").trim() || ticket.manufacturer, 30);
   if (!manufacturerName) {
     return { claim: null, warnings, error: "This ticket has no Manufacturer set — ServicePower requires one to submit a claim." };
   }
@@ -115,10 +124,14 @@ export function buildServicePowerClaimPayload(
     distributorNumber: clip(p.distributorNo, 12),
     // ServicePower flags a part with no invoice number ("Blank Parts Invoice Number").
     invoiceNumber: clip(p.invoiceNo, 20),
-    // The part's own Job Code, else the claim's Job Code (Claim section) —
-    // ServicePower rejects a claim with none ("Blank Job Code").
-    jobCode: clip(p.jobCode || claimDetails.jobCode, 4),
+    // The claim's Job Code (Claim section) on every part line, else the
+    // part's own — ServicePower rejects a claim with none ("Blank Job Code").
+    jobCode: clip(claimDetails.jobCode || p.jobCode, 4),
   }));
+
+  // The claim's Job Code (Claim section), else the first part's — see eiaRepairCode1 below.
+  const claimJobCode = clip(claimDetails.jobCode || spParts.find((p) => p.jobCode)?.jobCode, 4);
+  const resolutionCode = clip(claimDetails.resolutionCode, 4);
 
   // Resubmitting a claim SP already has an id for MUST pass these back, or
   // SP creates a brand new duplicate claim instead of updating this one —
@@ -150,13 +163,22 @@ export function buildServicePowerClaimPayload(
     eiaDefectOrComplaintCode: clip(claimDetails.failureDefectCode, 4),
     defectOrComplaintDescription: clip(customerComplaint, 150),
     servicePerformedDescription: clip(servicePerformed, 250),
-    eiaRepairCode1: clip(claimDetails.resolutionCode, 4),
+    // ServicePower's claim has one "Repair/Job Code" field ("the code
+    // indicating the service performed") — the repair code slot — and that's
+    // where it reads the GE job code (MA00…) and Square Trade's "Repair / Job
+    // Code 1" (REP, BER…). Sent as jobCode it was never read: SA-5424453
+    // (10/21) went with MA00 on the claim and on its part and still came back
+    // "Blank Job Code; Blank Rate Record; Repair Type Invalid for Prod Svcd".
+    // The Resolution/Repair Code fills the slot when there's no job code,
+    // else goes in the second one.
+    eiaRepairCode1: claimJobCode || resolutionCode,
+    eiaRepairCode2: claimJobCode && resolutionCode && resolutionCode !== claimJobCode ? resolutionCode : undefined,
 
-    // Saved as the name ("Minor on-site service"); ServicePower takes its code ("2").
+    // Saved as the name ("Minor on-site service"); ServicePower takes its code
+    // ("2" — lib/jobCodes.ts). Anything else longer than 2 characters is left
+    // out rather than cut to "Mi" (reject codes 9 / 43) — the
+    // "Submit to ServicePower?" check says so.
     repairCategory: repairCategoryCode(claimDetails.repairCategory),
-    // The Claim section's Job Code, else the first part's — sent on the claim
-    // itself so a labor-only claim (no part lines) still has one.
-    jobCode: clip(claimDetails.jobCode || spParts.find((p) => p.jobCode)?.jobCode, 4),
     stockRepairFlag: claimDetails.dealerStockRepair ? "Y" : "N",
 
     existingClaimBatchNumber,
@@ -174,8 +196,10 @@ export function buildServicePowerClaimPayload(
     partsAmount: Math.round(partFee * 100) / 100 || undefined,
     otherAmount: claimDetails.otherFee || undefined,
     shippingChargeAmount: claimDetails.shippingFee || undefined,
-    travelChargeAmount: claimDetails.extraMileFee || undefined,
-    mileageAmount: claimDetails.mileageFee || undefined,
+    // Pre-Claim's "Mileage Amount" ($, stored as extra_mile_fee) and
+    // "Mileage (round trip)" — miles, not money (stored as mileage_fee).
+    mileageAmount: claimDetails.extraMileFee || undefined,
+    travelMiles: claimDetails.mileageFee || undefined,
 
     serviceContractNumber: clip(claimDetails.serviceContractNo, 15),
 

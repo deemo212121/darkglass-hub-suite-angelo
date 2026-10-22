@@ -1,6 +1,6 @@
 /**
  * Pre-Auth (ServicePower Request for Authorization / Call Auth) drafts —
- * one per ticket, saved by Claims / Parts / BizOps (migration 0401).
+ * one per ticket, saved by Claims / Parts / BizOps (migration 0402).
  */
 import { supabase } from "./client";
 
@@ -119,7 +119,7 @@ function mapRow(row: any): PreAuthRequest {
 const COLUMNS = "id, ticket_no, status, form, total, managed_by_name, created_by_name, updated_by_name, sent_at, updated_at";
 
 const migrationError = (msg: string) =>
-  /pre_auth_requests/.test(msg) ? "Pre-Auth needs migration 0401 — run it in the Supabase SQL Editor first." : msg;
+  /pre_auth_requests/.test(msg) ? "Pre-Auth needs migration 0402 — run it in the Supabase SQL Editor first." : msg;
 
 /** Every saved Pre-Auth for the company, keyed by ticket number. */
 export async function getPreAuthRequests(): Promise<Map<string, PreAuthRequest>> {

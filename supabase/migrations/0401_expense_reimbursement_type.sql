@@ -1,5 +1,8 @@
 -- =====================================================================
--- 0400 — Expenses: type of reimbursement.
+-- 0401 — Expenses: type of reimbursement.
+-- (Angelo's 0400, renumbered — this repo's 0400 is
+--  payroll_hourly_ot_overrides_regular_amount. Already applied on the shared
+--  database 2026-10-21.)
 --
 -- A Reimbursement Form (sent by the employee from Self-Service or the
 -- mobile app) now says what it was for: Gas, Food, or Other (with the

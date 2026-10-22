@@ -157,7 +157,7 @@ function wtyCode(warranty: string): string {
 const claimToFor = (t: Ticket) =>
   [t.claimCompany, t.account, t.manufacturer].map((v) => String(v ?? "").trim()).find((v) => v && !/^GSL\d/i.test(v)) ?? "";
 const hasFees = (d: TicketClaimDetails | undefined) =>
-  !!d && d.laborFee + d.otherFee + d.shippingFee + d.extraMileFee + d.mileageFee > 0;
+  !!d && d.laborFee + d.otherFee + d.shippingFee + d.extraMileFee > 0; // mileageFee is miles, not money
 
 function spStatusChip(code: string, shortPaid: boolean): string {
   if (shortPaid) return "bg-red-500/20 text-red-300 border border-red-500/30";
@@ -306,7 +306,7 @@ export function ClaimList({ mod, sub }: Props) {
       const req: Amounts | null = hasFees(d)
         ? (() => {
             const part = Math.round((partFees[tid] ?? 0) * 100) / 100;
-            const a = { labor: d!.laborFee, part, ship: d!.shippingFee, mile: d!.mileageFee + d!.extraMileFee, other: d!.otherFee, tax: 0, total: 0 };
+            const a = { labor: d!.laborFee, part, ship: d!.shippingFee, mile: d!.extraMileFee, other: d!.otherFee, tax: 0, total: 0 };
             a.total = Math.round((a.labor + a.part + a.ship + a.mile + a.other) * 100) / 100;
             return a;
           })()
@@ -856,6 +856,7 @@ export function ClaimList({ mod, sub }: Props) {
               if (tid) setDetails((prev) => new Map(prev).set(tid, saved));
             }}
             onStatusChanged={(no, status) => setTickets((prev) => prev.map((t) => (t.ticketNo === no ? { ...t, status } : t)))}
+            onTicketUpdated={(no, patch) => setTickets((prev) => prev.map((t) => (t.ticketNo === no ? { ...t, ...patch } : t)))}
             onClose={() => setPreClaimTicketNo(null)}
           />
         );

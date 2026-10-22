@@ -152,7 +152,7 @@ export function ExpenseTrackingPage({
   const COLUMNS: { key: string; label: string; value: (e: ExpenseRow) => string }[] = [
     { key: "employee", label: "Employee", value: (e) => profileName(e.profileId) },
     { key: "category", label: "Category", value: (e) => e.category || "" },
-    // Gas / Food / Other on a Reimbursement Form (migration 0400). Every "Other — …" is one filter choice, "Other".
+    // Gas / Food / Other on a Reimbursement Form (migration 0401). Every "Other — …" is one filter choice, "Other".
     { key: "type", label: "Type", value: (e) => e.reimbursementType || "—" },
     { key: "date", label: "Date", value: (e) => e.expenseDate || "" },
     { key: "amount", label: "Amount", value: (e) => fmtMoney(e.amount) },

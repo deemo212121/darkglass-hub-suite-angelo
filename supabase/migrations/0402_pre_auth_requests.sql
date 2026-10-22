@@ -1,5 +1,7 @@
 -- =====================================================================
--- 0401 — Pre-Auth: ServicePower Request for Authorization (Call Auth) drafts.
+-- 0402 — Pre-Auth: ServicePower Request for Authorization (Call Auth) drafts.
+-- (Angelo's 0401, renumbered — this repo's 0401 is expense_reimbursement_type.
+--  Already applied on the shared database 2026-10-21.)
 --
 -- Claims → Pre-Auth fills in the same form as ServicePower's Call Auth
 -- screen (repair description, why a higher rate, job code, estimated time,

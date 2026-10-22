@@ -54,6 +54,40 @@ function isStorageUnreachable(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === "storage/retry-limit-exceeded";
 }
 
+function isStorageRefusal(err: unknown): boolean {
+  const code = (err as { code?: string } | null)?.code;
+  return code === "storage/unauthorized" || code === "storage/unauthenticated";
+}
+
+/**
+ * A direct upload refused with storage/unauthorized — two causes seen on
+ * technicians' phones, both handled here before it's reported as a failure:
+ *  1. The file is already stored: the upload finished but the phone never
+ *     heard back, and sending it again was refused (Zac Coisman,
+ *     HIS20261037917556, 2026-10-21 — four photos saved at 9:05, the resend
+ *     at 9:56 refused, so he picked them again and they were saved twice).
+ *     Same name and same size already there → it's done.
+ *  2. The sign-in token went stale (Matt Simmons, SA-5279519, 2026-10-19) →
+ *     refresh it and try once more.
+ * True when the file ends up stored.
+ */
+async function recoverFromRefusal(objectRef: StorageReference, data: Blob | Uint8Array | ArrayBuffer, direct: () => Promise<void>): Promise<boolean> {
+  const size = data instanceof Blob ? data.size : data.byteLength;
+  try {
+    const existing = await getMetadata(objectRef);
+    if (existing.size === size) return true;
+  } catch {
+    // not stored yet, or can't be read either — try a fresh token below
+  }
+  try {
+    await Promise.race([auth?.currentUser?.getIdToken(true), new Promise((resolve) => setTimeout(resolve, 10_000))]);
+    await direct();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function uploadViaServer(objectRef: StorageReference, data: Blob | Uint8Array | ArrayBuffer, metadata?: UploadMetadata): Promise<string> {
   const user = auth?.currentUser;
   if (!user) throw Object.assign(new Error("Not signed in"), { code: "storage/unauthenticated" });
@@ -99,6 +133,7 @@ async function uploadWithFallback(objectRef: StorageReference, data: Blob | Uint
       await direct();
       return null;
     } catch (err) {
+      if (isStorageRefusal(err) && (await recoverFromRefusal(objectRef, data, direct))) return null;
       if (!isStorageUnreachable(err)) {
         logUploadFailure(objectRef, err);
         throw err;
@@ -248,7 +283,8 @@ export async function uploadTicketPhoto(
     directUrl = await sdkGetDownloadURL(task.snapshot.ref);
   });
   if (serverUrl) onProgress?.(100);
-  const url = serverUrl ?? directUrl;
+  // directUrl is empty when the photo turned out to be stored already (recoverFromRefusal) — ask for its link.
+  const url = serverUrl ?? (directUrl || (await sdkGetDownloadURL(objectRef)));
 
   return {
     name: objectName,

@@ -13,11 +13,11 @@ import { supabase } from "./client";
  */
 export type ExpenseCategory = "Hotel" | "Car Rental" | "Office Supply" | "Reimbursement Form" | "Travel" | "Supplies" | "Meals" | "Other";
 export type ExpenseStatus = "Pending" | "Approved" | "Reimbursed" | "Rejected";
-/** What a Reimbursement Form was for (migration 0400) — Other carries the employee's own words. */
+/** What a Reimbursement Form was for (migration 0401) — Other carries the employee's own words. */
 export const REIMBURSEMENT_TYPES = ["Gas", "Food", "Other"] as const;
 export type ReimbursementType = (typeof REIMBURSEMENT_TYPES)[number];
 
-/** "Gas", "Food", "Other — Parking", or "" when the expense has no type (not a reimbursement, or sent before 0400). */
+/** "Gas", "Food", "Other — Parking", or "" when the expense has no type (not a reimbursement, or sent before 0401). */
 export function reimbursementTypeLabel(e: Pick<ExpenseRow, "reimbursementType" | "reimbursementOther">): string {
   if (!e.reimbursementType) return "";
   return e.reimbursementType === "Other" && e.reimbursementOther ? `Other — ${e.reimbursementOther}` : e.reimbursementType;
@@ -50,7 +50,7 @@ export interface ExpenseRow {
   expenseSubtype: string | null;
   /** Why Accounting rejected it — required on Reject, shown to the employee in Self-Service (migration 0372). */
   reviewNote: string | null;
-  /** Gas / Food / Other on a Reimbursement Form (migration 0400); null otherwise. */
+  /** Gas / Food / Other on a Reimbursement Form (migration 0401); null otherwise. */
   reimbursementType: ReimbursementType | null;
   /** The employee's own words when the type is Other. */
   reimbursementOther: string | null;
@@ -92,7 +92,7 @@ const EXPENSE_COLUMNS = "id, profile_id, category, expense_date, amount, descrip
 // been run, the select retries without it instead of blanking every expense
 // list — reviewNote just comes back null.
 let reviewNoteColumnMissing = false;
-// Same for reimbursement_type / reimbursement_other (migration 0400).
+// Same for reimbursement_type / reimbursement_other (migration 0401).
 let reimbursementColumnsMissing = false;
 
 async function selectExpensePages(filter: (query: any) => any): Promise<ExpenseRow[]> {
@@ -119,7 +119,7 @@ async function selectExpensePages(filter: (query: any) => any): Promise<ExpenseR
   return all;
 }
 
-/** The reimbursement type columns, only when a type is given — so other expenses still save before migration 0400 is run. */
+/** The reimbursement type columns, only when a type is given — so other expenses still save before migration 0401 is run. */
 function reimbursementFields(f: { reimbursementType?: ReimbursementType | null; reimbursementOther?: string | null }) {
   if (f.reimbursementType === undefined) return {};
   return {
@@ -128,7 +128,7 @@ function reimbursementFields(f: { reimbursementType?: ReimbursementType | null; 
   };
 }
 const reimbursementError = (msg: string) =>
-  /reimbursement_/.test(msg) ? "Saving the reimbursement type needs migration 0400 — run it in the Supabase SQL Editor first." : msg;
+  /reimbursement_/.test(msg) ? "Saving the reimbursement type needs migration 0401 — run it in the Supabase SQL Editor first." : msg;
 
 /** All expenses for the caller's company (RLS-scoped), newest first. */
 export async function getCompanyExpenses(): Promise<ExpenseRow[]> {
@@ -181,7 +181,7 @@ export async function createExpense(input: {
   /** Set when this expense was auto-created from a Flash Tech Calendar trip — see migration 0130/flashTechTrips.ts. Never set from the ordinary Expense Tracking "Add Expense" form. */
   flashTechTripId?: string | null;
   expenseSubtype?: "hotel" | "transportation" | null;
-  /** Reimbursement Form only (migration 0400). */
+  /** Reimbursement Form only (migration 0401). */
   reimbursementType?: ReimbursementType | null;
   reimbursementOther?: string | null;
 }): Promise<string> {

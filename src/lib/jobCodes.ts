@@ -106,12 +106,17 @@ export const REPAIR_CATEGORIES: { code: string; label: string }[] = [
   { code: "13", label: "Major stock merchandise service" },
 ];
 
-/** The code ServicePower expects for a saved Repair Category (a name from the list, or already a code). */
+/**
+ * The code ServicePower expects for a saved Repair Category (a name from the
+ * list, or already a code). undefined for anything else longer than 2
+ * characters — cutting a description to "Mi" gets the claim rejected.
+ */
 export function repairCategoryCode(value?: string | null): string | undefined {
   const v = String(value ?? "").trim();
   if (!v) return undefined;
   const hit = REPAIR_CATEGORIES.find((c) => c.label.toLowerCase() === v.toLowerCase() || c.code === v);
-  return hit ? hit.code : v.slice(0, 2);
+  if (hit) return hit.code;
+  return v.length <= 2 ? v : undefined;
 }
 
 /** The job-code rules for this ticket — pass its Claim To account, claim company, manufacturer and brand, most specific first. */

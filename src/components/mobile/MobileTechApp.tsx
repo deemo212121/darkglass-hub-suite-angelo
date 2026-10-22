@@ -6793,8 +6793,11 @@ function MobilePayrollView({
     }
   };
 
+  // "YYYY-MM-DD" read as a LOCAL date — new Date("2026-09-27") is midnight
+  // UTC, which is still 9/26 in US time, so periods showed a day early.
   const fmtDate = (iso: string) => {
-    const d = new Date(iso);
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+    const d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(iso);
     return isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-US");
   };
 
@@ -6884,7 +6887,7 @@ function MobilePayrollView({
               </div>
             </div>
             {isTech && expandedRunId === row.id && (
-              <TechPayrollBreakdownPanel entry={breakdownByRun[row.id]} netPay={row.amount} />
+              <TechPayrollBreakdownPanel entry={breakdownByRun[row.id]} netPay={row.amount} payslip={row.payslip} />
             )}
           </div>
         ))}
@@ -6905,9 +6908,12 @@ function MobilePayrollView({
 function TechPayrollBreakdownPanel({
   entry,
   netPay,
+  payslip,
 }: {
   entry: TechPayrollBreakdown | "loading" | "error" | undefined;
   netPay: number;
+  /** For Total Payment and the reimbursement / deduction / tax lines between it and Net Pay. */
+  payslip?: MyPayslipRow;
 }) {
   if (!entry || entry === "loading") {
     return <div className="mtech-payroll-breakdown mtech-muted">Loading breakdown…</div>;
@@ -6939,6 +6945,17 @@ function TechPayrollBreakdownPanel({
       {line("Mileage", `${entry.mileage} mi · $${entry.mileagePay.toFixed(2)}`)}
       {line("Training Paid", `$${entry.trainingPay.toFixed(2)}`)}
       {entry.completedTicketsPay > 0 && line("Completed Tickets Rate", `$${entry.completedTicketsPay.toFixed(2)}`)}
+      {payslip && payslip.adjustments.length > 0 && (
+        <>
+          {line("Total Payment", `$${payslip.grossPay.toFixed(2)}`)}
+          {payslip.adjustments.map((a, i) => (
+            <div key={i} className="mtech-payroll-breakdown-row">
+              <span className="mtech-payroll-breakdown-label">{a.description || (a.kind === "tax" ? "Tax" : a.kind === "deduction" ? "Deduction" : "Reimbursement")}</span>
+              <span className="mtech-payroll-breakdown-value">{a.kind === "reimbursement" ? "+" : "−"}${a.amount.toFixed(2)}</span>
+            </div>
+          ))}
+        </>
+      )}
       <div className="mtech-payroll-breakdown-row mtech-payroll-breakdown-total">
         <span className="mtech-payroll-breakdown-label">Net Pay</span>
         <span className="mtech-payroll-breakdown-value">${netPay.toFixed(2)}</span>
