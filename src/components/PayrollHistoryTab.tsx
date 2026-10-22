@@ -485,7 +485,8 @@ function PayBreakdown({
   // rest shows as one line (itemised below when a reviewed breakdown exists).
   const gross = r.grossPay ?? 0;
   const other = gross - r.regularPay - r.overtimePay;
-  const otMultiplier = r.isPH ? 1 : 1.5;
+  // From what was saved: PH lines before 2026-10-22 were straight time (1×).
+  const otMultiplier = li && li.overtime_hours > 0 && r.rate > 0 && Math.abs(r.overtimePay - li.overtime_hours * r.rate) < 0.01 ? 1 : 1.5;
   const reviewTotal = review ? reviewBreakdownTotal(review) : 0;
 
   return (

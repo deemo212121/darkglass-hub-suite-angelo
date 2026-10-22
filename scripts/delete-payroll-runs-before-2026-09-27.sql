@@ -42,6 +42,17 @@ create table backup_late_ticket_completions_20261021 as
   select * from late_ticket_completions
   where carryover_payroll_run_id in (select id from backup_payroll_runs_20261021);
 
+-- Lock the backups: RLS on with no policies + no grants, so no app user (or
+-- the public anon key) can read them — only the SQL Editor / service role.
+-- (The first run of this script missed this; Supabase's Advisor flagged all
+-- three as "RLS Disabled in Public", 2026-10-22.)
+alter table backup_payroll_runs_20261021 enable row level security;
+alter table backup_payroll_line_items_20261021 enable row level security;
+alter table backup_late_ticket_completions_20261021 enable row level security;
+revoke all on backup_payroll_runs_20261021 from anon, authenticated;
+revoke all on backup_payroll_line_items_20261021 from anon, authenticated;
+revoke all on backup_late_ticket_completions_20261021 from anon, authenticated;
+
 -- 2) Keep those carryovers marked as paid (point them at the kept run).
 update late_ticket_completions
 set carryover_payroll_run_id = (

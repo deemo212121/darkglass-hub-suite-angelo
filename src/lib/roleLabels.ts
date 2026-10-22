@@ -169,8 +169,14 @@ export function isMealAlwaysPaidRole(role: string | null | undefined, extraRoles
  * work, producing overtime on hours that were never actually in excess of a
  * real 40-hour week. See timecards.ts's CSR_WEEKLY_OVERTIME_THRESHOLD.
  */
-export function usesFlatWeeklyOvertimeThreshold(role: string | null | undefined, extraRoles?: string[] | null): boolean {
-  return isCsrRestrictedRole(role, extraRoles) || isMealAlwaysPaidRole(role, extraRoles);
+//
+// Since 2026-10-22 this is EVERYONE, regardless of role or assigned working
+// hours (Finance: "everyone should have the 40hrs threshold, regardless of
+// their assigned working hours") — a 7.5-hour schedule no longer caps
+// regular hours at 37.5/week. Kept as a function (and its role params) so
+// the call sites read the same; it just always answers true now.
+export function usesFlatWeeklyOvertimeThreshold(_role?: string | null, _extraRoles?: string[] | null): boolean {
+  return true;
 }
 
 /**
