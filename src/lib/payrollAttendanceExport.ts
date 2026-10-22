@@ -98,7 +98,7 @@ export function addAttendanceStateFormulas(
   sheet.getCell("Q1").value = "Rate Notes";
   sheet.getCell("R1").value = "Rate Before Change";
   sheet.getCell("S1").value = "OT Multiplier";
-  sheet.getCell("S2").value = isPh ? 1 : 1.5;
+  sheet.getCell("S2").value = 1.5; // everyone, PH included, since 2026-10-22
   sheet.getCell("S4").value = "Edit States Worked using full names separated by / (e.g. Louisiana / Mississippi).";
   sheet.getCell("S5").value = "Edit state rates in column P. Changes apply to this employee's sheet only.";
   sheet.getCell("S6").value = "Highest listed state rate or company rate applies. Blank/unlisted states use company rate.";
@@ -143,7 +143,7 @@ export function addAttendanceStateFormulas(
     sheet.getCell(`I${row}`).value = { formula: `H${row}*M${row}`, result: total * companyRate };
     // H - G includes any paid meal credit already included in regular pay.
     sheet.getCell(`J${row}`).value = { formula: `(H${row}-G${row})*N${row}`, result: (total - overtime) * applied };
-    sheet.getCell(`K${row}`).value = { formula: `G${row}*N${row}*$S$2`, result: overtime * applied * (isPh ? 1 : 1.5) };
+    sheet.getCell(`K${row}`).value = { formula: `G${row}*N${row}*$S$2`, result: overtime * applied * 1.5 };
     sheet.getCell(`B${row}`).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF2CC" } };
   }
   const totalRow = attendance.length + 3;
@@ -453,7 +453,7 @@ export function populateAttendanceSheet(
   adjustments?: AttendanceAdjustments,
 ) {
       sheet.addRow(isPh ? attendanceExportHeadersPh : attendanceExportHeaders);
-      sheet.addRows(attendanceExportRows(attendance, hours, pay, states, isPh ? 1 : 1.5, employeeName));
+      sheet.addRows(attendanceExportRows(attendance, hours, pay, states, 1.5, employeeName));
       sheet.views = [{ state: "frozen", ySplit: 1 }];
       sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: attendance.length + 1, column: 11 } };
       sheet.columns.forEach((column, index) => { column.width = index === 1 ? 28 : 19; if (index >= 4) column.numFmt = index < 8 ? "0.000" : '"$"#,##0.00'; });

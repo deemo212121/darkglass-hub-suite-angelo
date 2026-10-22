@@ -891,10 +891,9 @@ export function EmployeePayrollDetailModal({
   // (rateEffectiveOn returns 0 for those — no per-day hourly rate to compare
   // against a floor; fixed salary is handled as its own flat branch in
   // payViewTotals below).
-  // PH has no state floor to match, and no OT premium — this collapses to
-  // 1 for PH so every pay-math site below that multiplies overtime hours by
-  // it naturally becomes flat/straight pay without needing its own branch.
-  const otMultiplier = isPhPayroll ? 1 : OVERTIME_MULTIPLIER;
+  // 1.5× for everyone, PH included (since 2026-10-22 — PH used to be
+  // straight pay). PH still has no state floor to match.
+  const otMultiplier = OVERTIME_MULTIPLIER;
   const dailyPayByDate = useMemo(() => {
     const map = new Map<string, { companyRate: number; effectiveRate: number; isMatched: boolean; calculatedPay: number; compliantPay: number }>();
     for (const row of attendance) {

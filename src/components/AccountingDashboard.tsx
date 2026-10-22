@@ -3086,17 +3086,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // mid-period raise now pays each day at that day's own rate instead of
     // one flat rate (whichever was latest as of genEnd) for the whole period.
     const officeDailyPay = blendedDailyPay(dailyHoursByEmployeeId.get(emp.id), hours, (date) => hourlyRateOnDate(emp.id, date, hourlyRate), hourlyRate);
-    // PH staff have no OT premium — straight pay at the same rate for every
-    // hour, which is exactly what blendedDailyPay's straightAllHours already
-    // is (totalHours * rate, no 1.5x split needed).
-    // Rounded to the cent here (Regular $ and OT $ separately for US hourly),
+    // Regular hours at the rate, OT (over 40 hrs/week) at 1.5× — everyone,
+    // US and PH, every role (policy 2026-10-22; PH used to be straight pay
+    // for every hour). Rounded to the cent here (Regular $ and OT $ separately),
     // so the payroll line's gross, any % tax and the net all start from the
     // same cent figure the table shows (Angelo Mendoza 9/27–10/10: net was
     // worked out from $474.4069, giving $534.42 against $474.41 + $60.00).
     const officeGrossPay = isFixed && annualSalary
       ? cents(perCutoffSalary(annualSalary, emp.country === "PH"))
-      : emp.country === "PH"
-      ? cents(officeDailyPay.straightAllHours)
       : cents(cents(officeDailyPay.regularPay) + cents(officeDailyPay.overtimePayAt1_5x));
     const officeRow: EmployeePayrollRow = {
       employee: emp,
@@ -3402,10 +3399,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         overtime_hours: r.overtimeHours,
         hourly_rate: r.hourlyRateUSD,
         regular_pay: r.compensationType === "fixed" ? r.grossPayUSD : r.hoursWorked * r.hourlyRateUSD,
-        // PH has no OT premium — straight pay, same rate as regular hours —
-        // so overtime_pay + regular_pay still sums to gross_pay (grossPayUSD,
-        // itself already straightAllHours for PH; see officeGrossPay above).
-        overtime_pay: r.compensationType === "fixed" ? 0 : r.overtimeHours * r.hourlyRateUSD * (r.employee.country === "PH" ? 1 : 1.5),
+        // OT at 1.5× for everyone, PH included (since 2026-10-22).
+        overtime_pay: r.compensationType === "fixed" ? 0 : r.overtimeHours * r.hourlyRateUSD * 1.5,
         gross_pay: r.grossPayUSD,
         // Reimbursements / deductions (migration 0393): net = gross + reimbursements − deductions;
         // the lines themselves go in breakdown.adjustments for the payslip.
@@ -3656,7 +3651,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             mealEnd: r.mealEnd,
             hours: r.hoursWorked,
             rate,
-            amount: regular * rate + overtime * rate * (isPhPayrollEmp ? 1 : 1.5),
+            amount: regular * rate + overtime * rate * 1.5,
           };
         });
     })();
@@ -6298,8 +6293,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                       const techTax = (runTaxLines[run.id]?.get(li.profile_id) ?? []).reduce((sum, t) => sum + taxLineAmount(t, grossUSD), 0);
                                       const netUSD = ((li.net_pay ?? li.gross_pay) + (li.extra_pay || 0)) / divisor - techTax;
                                       const bankInfo = employeeInfoByProfileId.get(li.profile_id);
+                                      // Alternating shade + hover highlight so a row is easy to follow across the wide table.
                                       return (
-                                        <tr key={idx} className="border-b border-white/5">
+                                        <tr key={idx} className={`border-b border-white/5 transition-colors hover:bg-blue-500/15 ${idx % 2 === 1 ? "bg-white/[0.06]" : ""}`}>
                                           <td className="py-2 text-white">
                                             {emp
                                               ? emp.full_name
