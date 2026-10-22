@@ -1302,12 +1302,14 @@ export function NeedClaimList({ mod, sub }: Props) {
           <PreClaimModal
             ticket={row.ticket}
             ticketNumbers={filtered.map((r) => r.ticket.ticketNo)}
+            miles={mileageByTicket[row.ticket.ticketNo]}
             onNavigate={setPreClaimTicketNo}
             onSaved={(ticketNo, details) => {
               const tid = (tickets.find((t) => t.ticketNo === ticketNo) as any)?._id as string | undefined;
               if (tid) setClaimDetailsByTicketId((prev) => new Map(prev).set(tid, details));
             }}
             onStatusChanged={(ticketNo, status) => setTickets((prev) => prev.map((t) => (t.ticketNo === ticketNo ? { ...t, status } : t)))}
+            onTicketUpdated={(ticketNo, patch) => setTickets((prev) => prev.map((t) => (t.ticketNo === ticketNo ? { ...t, ...patch } : t)))}
             onClose={() => setPreClaimTicketNo(null)}
           />
         );

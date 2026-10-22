@@ -18,7 +18,7 @@ import type { Ticket } from "@/lib/ticketData";
 import { isClaimablePart } from "@/lib/servicePowerClaimPayload";
 import { isShortPaid } from "@/lib/spClaimLookup";
 import { syncServicePowerClaimStatus } from "@/lib/servicePowerClaimStatus";
-import { claimToColor } from "@/lib/claimToColors";
+import { claimToColor, OTHER_CLAIM_TO, type ClaimToColor } from "@/lib/claimToColors";
 import { PreClaimModal } from "@/components/PreClaimModal";
 
 /*
@@ -157,7 +157,7 @@ function wtyCode(warranty: string): string {
 const claimToFor = (t: Ticket) =>
   [t.claimCompany, t.account, t.manufacturer].map((v) => String(v ?? "").trim()).find((v) => v && !/^GSL\d/i.test(v)) ?? "";
 const hasFees = (d: TicketClaimDetails | undefined) =>
-  !!d && d.laborFee + d.otherFee + d.shippingFee + d.extraMileFee + d.mileageFee > 0;
+  !!d && d.laborFee + d.otherFee + d.shippingFee + d.extraMileFee > 0; // mileageFee is miles, not money
 
 function spStatusChip(code: string, shortPaid: boolean): string {
   if (shortPaid) return "bg-red-500/20 text-red-300 border border-red-500/30";
@@ -270,6 +270,8 @@ export function ClaimList({ mod, sub }: Props) {
   const [accounts, setAccounts] = useState<Set<string>>(new Set());
   /** One funnel filter per column (TicketColumnFilter): column key → selected values; empty = no filter. */
   const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
+  // Claim To company chips in the toolbar — click one or more to show only those companies.
+  const [claimToPicked, setClaimToPicked] = useState<Set<string>>(new Set());
   const [ticketNo, setTicketNo] = useState("");
   const [claimNo, setClaimNo] = useState("");
   const [claimStatus, setClaimStatus] = useState("");
@@ -304,7 +306,7 @@ export function ClaimList({ mod, sub }: Props) {
       const req: Amounts | null = hasFees(d)
         ? (() => {
             const part = Math.round((partFees[tid] ?? 0) * 100) / 100;
-            const a = { labor: d!.laborFee, part, ship: d!.shippingFee, mile: d!.mileageFee + d!.extraMileFee, other: d!.otherFee, tax: 0, total: 0 };
+            const a = { labor: d!.laborFee, part, ship: d!.shippingFee, mile: d!.extraMileFee, other: d!.otherFee, tax: 0, total: 0 };
             a.total = Math.round((a.labor + a.part + a.ship + a.mile + a.other) * 100) / 100;
             return a;
           })()
@@ -383,7 +385,23 @@ export function ClaimList({ mod, sub }: Props) {
     });
   }, [rows, includeUnclaimed, includeClosed, location, accounts, ticketNo, claimNo, claimStatus, dateType, startDate, endDate, search]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const filtered = useMemo(() => baseFiltered.filter((r) => matchesCols(r)), [baseFiltered, colFilters]);
+  const colFiltered = useMemo(() => baseFiltered.filter((r) => matchesCols(r)), [baseFiltered, colFilters]);
+  const filtered = useMemo(
+    () => (claimToPicked.size === 0 ? colFiltered : colFiltered.filter((r) => !!r.claimTo && claimToPicked.has(claimToColor(r.claimTo).label))),
+    [colFiltered, claimToPicked],
+  );
+  // Claim To colour key: companies in the current list, most claims first ("Other" last).
+  const claimToKey = useMemo(() => {
+    const counts = new Map<string, { color: ClaimToColor; count: number }>();
+    for (const r of colFiltered) {
+      if (!r.claimTo) continue;
+      const color = claimToColor(r.claimTo);
+      const e = counts.get(color.label) ?? { color, count: 0 };
+      e.count++;
+      counts.set(color.label, e);
+    }
+    return Array.from(counts.values()).sort((a, b) => (a.color === OTHER_CLAIM_TO ? 1 : b.color === OTHER_CLAIM_TO ? -1 : b.count - a.count));
+  }, [colFiltered]);
   /** A column's funnel options: its distinct values after every OTHER filter. */
   const colOptions = (key: string) => {
     const list = Array.from(new Set(baseFiltered.filter((r) => matchesCols(r, key)).map(COLS[key])));
@@ -404,7 +422,7 @@ export function ClaimList({ mod, sub }: Props) {
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
   const pagedRows = useMemo(() => filtered.slice((safePage - 1) * pageSize, safePage * pageSize), [filtered, safePage, pageSize]);
-  useEffect(() => { setCurrentPage(1); }, [includeUnclaimed, includeClosed, location, accounts, ticketNo, claimNo, claimStatus, dateType, startDate, endDate, search, colFilters]);
+  useEffect(() => { setCurrentPage(1); }, [includeUnclaimed, includeClosed, location, accounts, ticketNo, claimNo, claimStatus, dateType, startDate, endDate, search, colFilters, claimToPicked]);
 
   const toggleRow = (tid: string) => setSelectedRows((prev) => { const n = new Set(prev); n.has(tid) ? n.delete(tid) : n.add(tid); return n; });
   const allChecked = filtered.length > 0 && filtered.every((r) => selectedRows.has(r.tid));
@@ -626,6 +644,39 @@ export function ClaimList({ mod, sub }: Props) {
           {loading ? " · loading…" : null}
           {error ? <span className="text-red-300 ml-3">⚠ {error}</span> : null}
         </span>
+        {/* Claim To companies in this list, with their count — click to show only those. */}
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 px-4 text-[11px] text-muted-foreground">
+          {claimToKey.map(({ color, count }) => {
+            const on = claimToPicked.has(color.label);
+            return (
+              <button
+                key={color.label}
+                type="button"
+                aria-pressed={on}
+                onClick={() =>
+                  setClaimToPicked((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(color.label)) next.delete(color.label);
+                    else next.add(color.label);
+                    return next;
+                  })
+                }
+                title={on ? `Showing ${color.label} — click to remove` : `Show only ${color.label} (${count} claim${count === 1 ? "" : "s"})`}
+                className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 transition ${
+                  on ? `${color.pill} font-semibold ring-1 ring-current` : "border-white/10 bg-white/[0.03] hover:bg-white/10 hover:text-white"
+                }`}
+              >
+                <span className={`inline-block h-2 w-2 rounded-sm ${color.dot}`} />
+                {color.label} <span className="tabular-nums opacity-70">{count}</span>
+              </button>
+            );
+          })}
+          {claimToPicked.size > 0 && (
+            <button type="button" onClick={() => setClaimToPicked(new Set())} className="rounded-md px-1.5 py-0.5 text-slate-400 hover:text-white">
+              Clear
+            </button>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           {bulkSync ? (
             <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
@@ -805,6 +856,7 @@ export function ClaimList({ mod, sub }: Props) {
               if (tid) setDetails((prev) => new Map(prev).set(tid, saved));
             }}
             onStatusChanged={(no, status) => setTickets((prev) => prev.map((t) => (t.ticketNo === no ? { ...t, status } : t)))}
+            onTicketUpdated={(no, patch) => setTickets((prev) => prev.map((t) => (t.ticketNo === no ? { ...t, ...patch } : t)))}
             onClose={() => setPreClaimTicketNo(null)}
           />
         );

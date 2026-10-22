@@ -3852,6 +3852,53 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   type WarningFormSortColumn = "employee" | "sentBy" | "status" | "sent";
   const warningFormStatusLabel = (doc: SignableDocument): string =>
     doc.status === "pending_signature" ? "Awaiting Signature" : doc.status === "signed" ? "Signed — Awaiting Confirmation" : doc.status === "confirmed" ? "Confirmed" : "Cancelled";
+  // People by how many warnings they have (signed or still awaiting
+  // signatures — cancelled ones are void and don't count): 1, 2, 3, 4+.
+  // Clicking a bucket narrows the table to those people's forms.
+  const warningEmployeeKey = (doc: SignableDocument) => {
+    const data = doc.formData as unknown as WarningFormData;
+    return data.employeeId || (data.employeeName || "").trim().toLowerCase();
+  };
+  const warningCountByEmployee = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const d of sentWarningForms) {
+      if (d.status === "cancelled") continue;
+      const k = warningEmployeeKey(d);
+      if (k) map.set(k, (map.get(k) ?? 0) + 1);
+    }
+    return map;
+  }, [sentWarningForms]);
+  const warningBucketOf = (n: number) => Math.min(n, 4);
+  const warningBucketCounts = useMemo(() => {
+    const c = [0, 0, 0, 0, 0];
+    for (const n of warningCountByEmployee.values()) c[warningBucketOf(n)]++;
+    return c;
+  }, [warningCountByEmployee]);
+  const [warningBucketPick, setWarningBucketPick] = useState<number | null>(null);
+  // The popup listing the people in a bucket (opened by clicking its chip).
+  const [warningBucketPopup, setWarningBucketPopup] = useState<number | null>(null);
+  const warningBucketPeople = useMemo(() => {
+    if (warningBucketPopup == null) return [];
+    const byKey = new Map<string, { key: string; name: string; role: string; branch: string; count: number; pending: number; latest: string }>();
+    for (const d of sentWarningForms) {
+      if (d.status === "cancelled") continue;
+      const k = warningEmployeeKey(d);
+      if (!k || warningBucketOf(warningCountByEmployee.get(k) ?? 0) !== warningBucketPopup) continue;
+      const data = d.formData as unknown as WarningFormData;
+      const p = byKey.get(k) ?? { key: k, name: data.employeeName || "—", role: data.role || "", branch: data.branch || "", count: 0, pending: 0, latest: "" };
+      p.count++;
+      if (d.status !== "confirmed") p.pending++;
+      if (d.createdAt > p.latest) p.latest = d.createdAt;
+      byKey.set(k, p);
+    }
+    return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [warningBucketPopup, sentWarningForms, warningCountByEmployee]);
+  const warningFormsInBucket = useMemo(
+    () => warningBucketPick == null
+      ? sentWarningForms
+      : sentWarningForms.filter((d) => warningBucketOf(warningCountByEmployee.get(warningEmployeeKey(d)) ?? 0) === warningBucketPick),
+    [sentWarningForms, warningCountByEmployee, warningBucketPick],
+  );
   const {
     search: warningFormSentSearch,
     setSearch: setWarningFormSentSearch,
@@ -3865,7 +3912,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     isValueChecked: warningFormIsValueChecked,
     rows: sortedSentWarningForms,
   } = useSortableSearchTable<SignableDocument, WarningFormSortColumn>(
-    sentWarningForms,
+    warningFormsInBucket,
     (doc, q) => ((doc.formData as unknown as WarningFormData).employeeName || "").toLowerCase().includes(q),
     (doc, column) => {
       switch (column) {
@@ -23639,8 +23686,93 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           {warningFormSentSearch && (
             <button onClick={() => setWarningFormSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
           )}
+          {/* People by number of warnings (signed or pending; cancelled not counted) — click to show only them. */}
+          <div className="flex flex-wrap items-center gap-1.5 mb-0.5" title="People by number of warnings — signed or awaiting signatures (cancelled ones don't count). Click to show only them.">
+            {([
+              { b: 1, label: "1st warning", cls: "border-amber-400/40 bg-amber-500/10 text-amber-200" },
+              { b: 2, label: "2nd warning", cls: "border-orange-400/40 bg-orange-500/10 text-orange-200" },
+              { b: 3, label: "3rd warning", cls: "border-red-400/40 bg-red-500/10 text-red-200" },
+              { b: 4, label: "More than 3", cls: "border-rose-500/50 bg-rose-600/20 text-rose-100" },
+            ] as const).map(({ b, label, cls }) => {
+              const on = warningBucketPick === b;
+              return (
+                <button
+                  key={b}
+                  type="button"
+                  onClick={() => { setWarningBucketPick(b); setWarningBucketPopup(b); }}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition ${cls} ${on ? "ring-2 ring-white/60" : warningBucketPick != null ? "opacity-50 hover:opacity-100" : "hover:brightness-125"}`}
+                >
+                  {label}
+                  <span className="font-semibold tabular-nums">{warningBucketCounts[b]}</span>
+                  <span className="opacity-70">{warningBucketCounts[b] === 1 ? "person" : "people"}</span>
+                </button>
+              );
+            })}
+            {warningBucketPick != null && (
+              <button type="button" onClick={() => setWarningBucketPick(null)} className="text-xs text-muted-foreground hover:text-white underline ml-1">Show all</button>
+            )}
+          </div>
+          {/* Portaled to <body> — the panel around it would otherwise centre it on the panel, not the screen. */}
+          {warningBucketPopup != null && createPortal(
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4" onClick={() => setWarningBucketPopup(null)}>
+              <div className="w-full max-w-2xl max-h-[80vh] flex flex-col rounded-xl border border-white/15 bg-slate-900 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-white/10">
+                  <div>
+                    <h3 className="font-semibold text-white">
+                      {warningBucketPopup === 4 ? "More than 3 warnings" : `${["", "1st", "2nd", "3rd"][warningBucketPopup]} warning`}
+                      <span className="ml-2 text-sm font-normal text-muted-foreground">{warningBucketPeople.length} {warningBucketPeople.length === 1 ? "person" : "people"}</span>
+                    </h3>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">Signed or awaiting signatures — cancelled warnings don't count. Click a name to show only their forms.</p>
+                  </div>
+                  <button type="button" onClick={() => setWarningBucketPopup(null)} className="text-muted-foreground hover:text-white text-lg leading-none" aria-label="Close">✕</button>
+                </div>
+                <div className="overflow-y-auto">
+                  {warningBucketPeople.length === 0 ? (
+                    <p className="px-5 py-8 text-center text-sm text-muted-foreground">Nobody here.</p>
+                  ) : (
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 bg-slate-900">
+                        <tr className="border-b border-white/10 text-left text-[11px] uppercase text-muted-foreground">
+                          <th className="px-5 py-2">Employee</th>
+                          <th className="px-3 py-2">Role</th>
+                          <th className="px-3 py-2">Branch</th>
+                          <th className="px-3 py-2 text-right">Warnings</th>
+                          <th className="px-3 py-2">Not confirmed</th>
+                          <th className="px-5 py-2">Latest</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {warningBucketPeople.map((p) => (
+                          <tr key={p.key} className="border-b border-white/5 hover:bg-white/5">
+                            <td className="px-5 py-2">
+                              <button
+                                type="button"
+                                onClick={() => { setWarningBucketPick(null); setWarningFormSentSearch(p.name); setWarningBucketPopup(null); }}
+                                className="text-blue-300 hover:text-blue-200 hover:underline text-left"
+                              >
+                                {p.name}
+                              </button>
+                            </td>
+                            <td className="px-3 py-2 text-muted-foreground">{p.role || "—"}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{p.branch || "—"}</td>
+                            <td className="px-3 py-2 text-right tabular-nums font-semibold">{p.count}</td>
+                            <td className="px-3 py-2">{p.pending > 0 ? <span className="text-amber-300 text-xs">{p.pending} pending</span> : <span className="text-muted-foreground text-xs">—</span>}</td>
+                            <td className="px-5 py-2 text-muted-foreground whitespace-nowrap">{new Date(p.latest).toLocaleDateString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+                <div className="flex justify-end gap-2 px-5 py-3 border-t border-white/10">
+                  <button type="button" onClick={() => setWarningBucketPopup(null)} className="btn text-sm px-3 py-1.5">Close</button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )}
           <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
-            {sortedSentWarningForms.length}{warningFormSentSearch ? ` of ${sentWarningForms.length}` : ""} forms
+            {sortedSentWarningForms.length}{warningFormSentSearch || warningBucketPick != null ? ` of ${sentWarningForms.length}` : ""} forms
           </span>
         </div>
         {warnActionError && (

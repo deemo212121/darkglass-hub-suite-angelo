@@ -37,7 +37,9 @@ export interface TicketClaimDetails {
   laborFee: number;
   otherFee: number;
   shippingFee: number;
+  /** Pre-Claim "Mileage Amount" — dollars (column extra_mile_fee). */
   extraMileFee: number;
+  /** Pre-Claim "Mileage (round trip)" — MILES, not money (column mileage_fee); sent as travelMiles. */
   mileageFee: number;
   poAmount: number;
   // ServicePower submission result (migration 0145) — set once "Submit to

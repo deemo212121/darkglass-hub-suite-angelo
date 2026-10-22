@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { X, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, Loader2, ExternalLink, RotateCcw, MapPin, FileCheck2 } from "lucide-react";
 import type { Ticket } from "@/lib/ticketData";
-import { getTicketVisits, getTicketParts, updateTicketPart, updateTicketStatus, type UIPartRow } from "@/lib/supabase/tickets";
+import { getTicketVisits, getTicketParts, updateTicketFields, updateTicketPart, updateTicketStatus, type UIPartRow } from "@/lib/supabase/tickets";
 import {
   getTicketClaimDetails,
   getReadyToCompleteDate,
@@ -10,11 +10,15 @@ import {
 } from "@/lib/supabase/claimDetails";
 import { TicketPhotos } from "@/components/TicketPhotos";
 import { PhotoSidePreview } from "@/components/PhotoSidePreview";
-import { jobCodesFor } from "@/lib/jobCodes";
+import { jobCodesFor, REPAIR_CATEGORIES, repairCategoryCode } from "@/lib/jobCodes";
+import { claimToColor, claimToPortal } from "@/lib/claimToColors";
+import { getPreAuthForTicket, type PreAuthRequest } from "@/lib/supabase/preAuth";
+import { lookupSpPreAuth, type SpPreAuth } from "@/lib/spPreAuthLookup";
 import type { TicketPhoto } from "@/lib/firebase/storage";
 import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { buildServicePowerClaimPayload, isClaimablePart } from "@/lib/servicePowerClaimPayload";
+import { isWrongManufacturerName, spClaimLookupNames } from "@/lib/spClaimLookup";
 
 interface Props {
   ticket: Ticket;
@@ -24,8 +28,12 @@ interface Props {
   onSaved: (ticketNo: string, details: TicketClaimDetails) => void;
   /** The ticket's status changed here (a clean ServicePower submission sets CL-Claimed) — lets the list update its row. */
   onStatusChanged?: (ticketNo: string, status: string) => void;
+  /** Model / serial edited here and saved onto the ticket — lets the list update its row. */
+  onTicketUpdated?: (ticketNo: string, patch: { model: string; serial: string }) => void;
   onNavigate: (ticketNo: string) => void;
   onClose: () => void;
+  /** Office-to-customer miles from Need Claim List (undefined while still being worked out). */
+  miles?: number | null;
 }
 
 const PRE_CLAIM_STATUSES = ["Holding", "Need Claim", "Claim Not Needed", "Claimed"];
@@ -50,7 +58,7 @@ const roCls = "w-full bg-slate-950/50 border border-white/5 rounded px-2 py-1.5 
 const labelCls = "block text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1";
 const sectionCls = "text-sm font-semibold text-blue-300 border-b border-white/10 pb-1 mb-3";
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
   return (
     <div>
       <label className={labelCls}>{label}</label>
@@ -88,7 +96,27 @@ const SP_ACCOUNT_REJECTION = /invalid manufacturerName\s*\/\s*serviceCenterNumbe
  * See src/lib/supabase/claimDetails.ts and migration 0135 for which fields
  * are newly persisted vs. read from the ticket/parts data that already existed.
  */
-export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged, onNavigate, onClose }: Props) {
+export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged, onTicketUpdated, onNavigate, onClose, miles }: Props) {
+  // Header summary: the ticket's Pre-Auth (Claims → Pre-Auth), if one was started.
+  // ServicePower's Call Auth is looked up first (read-only — it's where most
+  // pre-auths are filed); the AHS Pre-Auth shows when ServicePower has none.
+  const { companyId: authCompanyId } = useAuth();
+  const [preAuth, setPreAuth] = useState<PreAuthRequest | null | undefined>(undefined);
+  const [spPreAuth, setSpPreAuth] = useState<SpPreAuth | null | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    setPreAuth(undefined);
+    setSpPreAuth(undefined);
+    getPreAuthForTicket(ticket.ticketNo).then((p) => { if (!cancelled) setPreAuth(p); });
+    lookupSpPreAuth(ticket.ticketNo, [ticket.account, ticket.claimCompany, ticket.manufacturer], authCompanyId ?? null)
+      .then((r) => { if (!cancelled) setSpPreAuth(r); })
+      .catch(() => { if (!cancelled) setSpPreAuth(null); });
+    return () => { cancelled = true; };
+  }, [ticket.ticketNo]); // eslint-disable-line react-hooks/exhaustive-deps
+  const claimTo = ticket.account || ticket.claimCompany || "";
+  const claimToPill = claimToColor(claimTo);
+  const portal = claimToPortal(claimTo) ?? claimToPortal(ticket.manufacturer);
+  const isRedo = /^y/i.test(String(ticket.redo ?? "")) || !!ticket.originalTicketNo;
   const { uid, displayName, email } = useAuth();
   // ticket_claim_details.updated_by is a uuid FK into profiles(id) — NOT
   // the caller's email/display name (those are plain text and Postgres
@@ -122,6 +150,24 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
   const [submittingToSP, setSubmittingToSP] = useState(false);
   // "Are you sure?" step before a claim is filed with ServicePower.
   const [confirmSpSubmit, setConfirmSpSubmit] = useState(false);
+  // Model Code / Serial # — editable here (the rating plate is often in the
+  // photos), saved onto the ticket itself with Submit Pre-Claim / Submit to
+  // ServicePower through the same updateTicketFields the ticket page's Edit
+  // Product Info uses (which also keeps the ServicePower sync from
+  // overwriting them), and sent on the claim.
+  const [modelCode, setModelCode] = useState(ticket.model || "");
+  const [serialNo, setSerialNo] = useState(ticket.serial || "");
+  useEffect(() => {
+    setModelCode(ticket.model || "");
+    setSerialNo(ticket.serial || "");
+  }, [ticket.ticketNo, ticket.model, ticket.serial]);
+  const saveProductEdits = async () => {
+    const model = modelCode.trim();
+    const serial = serialNo.trim();
+    if (model === (ticket.model || "").trim() && serial === (ticket.serial || "").trim()) return;
+    await updateTicketFields(ticket.ticketNo, { model, serial });
+    onTicketUpdated?.(ticket.ticketNo, { model, serial });
+  };
   const [spMessage, setSpMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const currentTicketRef = useRef(ticket.ticketNo);
@@ -157,6 +203,11 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
               ? new Date(first.timestamp).toLocaleDateString("en-CA", { timeZone: "America/Chicago" })
               : "");
         }
+        // Claim-company defaults (lib/jobCodes.ts — SQT: Repair Category and
+        // Defect Code) fill in when the claim has none yet; still changeable.
+        const defaults = jobCodesFor(ticket.account, ticket.claimCompany, ticket.manufacturer, (ticket as { brand?: string | null }).brand)?.defaults;
+        if (defaults?.repairCategory && !loaded.repairCategory) loaded.repairCategory = defaults.repairCategory;
+        if (defaults?.failureDefectCode && !loaded.failureDefectCode) loaded.failureDefectCode = defaults.failureDefectCode;
         setForm(loaded);
         // Latest visit (visits are returned newest-first) carries the
         // freshest Symptom(Cx)/Resolution text; fall back to the ticket's
@@ -170,6 +221,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
         setVisitServicePerformed(latest?.resolution || "");
         setServicePerformed(details?.servicePerformed || latest?.resolution || "");
         setParts(partRows);
+        partJobCodesToSave.current.clear();
         setCheckedPartIds(new Set(partRows.map((p) => p.id)));
         void pullDefectFromSP(true);
       })
@@ -251,7 +303,10 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
     [parts, checkedPartIds]
   );
   const usedCount = parts.filter(isClaimablePart).length;
-  const claimTotal = form.laborFee + partFee + form.otherFee + form.shippingFee + form.extraMileFee + form.mileageFee;
+  // Job Code dropdown / Defect Code rules for this ticket's claim company or manufacturer (lib/jobCodes.ts).
+  const jobCodeRule = jobCodesFor(ticket.account, ticket.claimCompany, ticket.manufacturer, (ticket as { brand?: string | null }).brand);
+  // Mileage (round trip) is miles, not money — not part of the total (extraMileFee is the Mileage Amount $).
+  const claimTotal = form.laborFee + partFee + form.otherFee + form.shippingFee + form.extraMileFee;
 
   // Checked in the "Submit this claim to ServicePower?" window before
   // anything is sent. `required` = what ServicePower has sent claims back
@@ -266,12 +321,17 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
     const isBlank = (v: unknown) => !String(v ?? "").trim();
     const required: string[] = [];
     const blank: string[] = [];
-    const isGe = !!jobCodesFor(ticket.manufacturer, (ticket as { brand?: string | null }).brand);
+    const isGe = jobCodeRule?.key === "ge";
+    // Named the way the form shows them (jobCodes.ts): Electrolux's defect
+    // code sits in the Job Code spot, SQT / Assurant have their own labels.
+    const defectInJobSpot = jobCodeRule?.field === "failureDefectCode";
+    const defectLabel = defectInJobSpot ? `${jobCodeRule!.fieldLabel} (where the Job Code usually is)` : "Failure/Defect Code";
+    const jobCodeLabel = jobCodeRule && !defectInJobSpot ? jobCodeRule.fieldLabel : "Job Code";
     const code = form.failureDefectCode.trim();
     if (!code) {
       if (isGe) blank.push("Failure/Defect Code");
-      else required.push("Failure/Defect Code (Claim section) — ServicePower sends a claim back without one.");
-    } else if (code.length > 4) required.push(`Failure/Defect Code "${code}" — enter the code itself (4 characters at most).`);
+      else required.push(`${defectLabel} — ServicePower sends a claim back without one.`);
+    } else if (code.length > 4) required.push(`${defectLabel} "${code}" — enter the code itself (4 characters at most).`);
     const claimable = parts.filter(isClaimablePart);
     const noInvoice = claimable.filter((p) => isBlank(p.invoiceNo)).map((p) => p.partNo || "(no part #)");
     if (noInvoice.length) {
@@ -279,21 +339,23 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
       else blank.push(`Invoice # on part ${noInvoice.join(", ")}`);
     }
     const noJobCode = claimable.filter((p) => isBlank(p.jobCode)).map((p) => p.partNo || "(no part #)");
-    if (isBlank(form.jobCode) && (noJobCode.length || claimable.length === 0)) {
+    // Electrolux / Frigidaire claims have no Job Code box (the spot holds the defect code).
+    if (!defectInJobSpot && isBlank(form.jobCode) && (noJobCode.length || claimable.length === 0)) {
       if (isGe) required.push(`Job Code (Claim section)${noJobCode.length ? ` — none on part ${noJobCode.join(", ")} either` : ""}.`);
-      else blank.push("Job Code");
+      else blank.push(jobCodeLabel);
     }
     if (isBlank(ticket.callReceivedDate)) required.push("Call received date on the ticket — it's sent as the request date.");
 
     if (isBlank(form.resolutionCode)) blank.push("Resolution/Repair Code");
     if (isBlank(form.repairCategory)) blank.push("Repair Category");
+    else if (!repairCategoryCode(form.repairCategory)) blank.push(`Repair Category ("${form.repairCategory.trim()}" isn't on ServicePower's list, so it isn't sent)`);
     if (isBlank(form.startDate)) blank.push("Start Date");
     if (isBlank(form.completeDate)) blank.push("Complete Date");
     if (isBlank(customerComplaint)) blank.push("Customer complaint (defect description)");
     if (isBlank(servicePerformed)) blank.push("Service Performed");
     if (!form.laborFee) blank.push("Labor Fee ($0)");
-    if (isBlank(ticket.model)) blank.push("Model");
-    if (isBlank(ticket.serial)) blank.push("Serial #");
+    if (isBlank(modelCode)) blank.push("Model Code");
+    if (isBlank(serialNo)) blank.push("Serial #");
     if (isBlank(ticket.purchaseDate)) blank.push("Purchase Date");
     if (isBlank(ticket.firstName) && isBlank(ticket.lastName)) blank.push("Customer name");
     const noAddress = [["address", "address"], ["city", "city"], ["state", "state"], ["zip", "ZIP"], ["phone", "phone"]]
@@ -307,16 +369,42 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
       .filter((e) => e.partNumber && claimable.some((p) => p.partNo === e.partNumber))
       .map((e) => `Part ${e.partNumber}: "${e.errorDescription}"`);
     return { required, blank, rejectedParts };
-  }, [form, parts, ticket, customerComplaint, servicePerformed]);
+  }, [form, parts, ticket, customerComplaint, servicePerformed, modelCode, serialNo]);
 
   const setField = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
+
+  // The claim's Job Code is the one ServicePower gets (claim and every part
+  // line — servicePowerClaimPayload.ts), so picking it fills the parts' Job
+  // Code below too. Those parts are saved with Submit Pre-Claim / Submit to
+  // ServicePower, like the rest of the form.
+  const partJobCodesToSave = useRef<Set<string>>(new Set());
+  const setClaimJobCode = (value: string) => {
+    setField("jobCode", value);
+    const code = value.trim();
+    if (!code) return;
+    setParts((prev) =>
+      prev.map((p) => {
+        if ((p.jobCode || "") === code) return p;
+        partJobCodesToSave.current.add(p.id);
+        return { ...p, jobCode: code };
+      }),
+    );
+  };
+  const savePartJobCodes = async () => {
+    const ids = partJobCodesToSave.current;
+    if (ids.size === 0) return;
+    for (const p of parts.filter((x) => ids.has(x.id))) await updateTicketPart(p.id, p);
+    ids.clear();
+  };
 
   const handleSubmit = async () => {
     setSaving(true);
     try {
       const saved = await upsertTicketClaimDetails(ticket.ticketNo, claimFieldsToSave(), myProfileId);
       onSaved(ticket.ticketNo, saved);
+      await saveProductEdits();
+      await savePartJobCodes();
       onClose();
     } catch (err) {
       alert(`Failed to save: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -339,23 +427,44 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
     try {
       const saved = await upsertTicketClaimDetails(ticket.ticketNo, claimFieldsToSave(), myProfileId);
       setForm((prev) => ({ ...prev, ...saved }));
+      await saveProductEdits();
+      await savePartJobCodes();
       onSaved(ticket.ticketNo, saved);
 
       // The claim's serviceCenterNumber is the call's own ServiceCenter on
       // ServicePower (the servicer number the manufacturer issued us), read
       // fresh from the call — see buildServicePowerClaimPayload.
       let spServiceCenter = "";
+      let spManufacturerName = "";
       try {
         const { fetchServicePowerCalls } = await import("@/lib/servicePowerSync");
         const res = await fetchServicePowerCalls({ callNo: ticket.ticketNo });
         const call = (res.calls ?? []).find((c: any) => String(c?.callNumber ?? "").trim() === ticket.ticketNo) ?? res.calls?.[0];
         spServiceCenter = String(call?.serviceCenter ?? "").trim();
+        // The name ServicePower files this call's claims under for that
+        // service center: the appliance brand for GE / Frigidaire calls, the
+        // warranty company for e.g. Square Trade ("GENERAL ELECTRIC" with
+        // Square Trade's GSL38018 is refused). Checked with the read-only
+        // claim lookup — brand first, so what already works stays the same —
+        // then the call's claim company, then its brand.
+        if (spServiceCenter) {
+          const { retrieveClaim } = await import("@/lib/servicePowerApiClient");
+          const names = Array.from(new Set([String(ticket.manufacturer ?? "").trim().toUpperCase(), ...spClaimLookupNames(call?.mfgId, ticket.ticketNo, null, call?.product?.brandDesc)].filter(Boolean)));
+          for (const name of names) {
+            const probe = await retrieveClaim({ manufacturerName: name, serviceCenterNumber: spServiceCenter, claimNumber: ticket.ticketNo });
+            const message = (probe?.messages ?? []).map((m) => m.message).join("; ");
+            if (!isWrongManufacturerName(message)) {
+              spManufacturerName = name;
+              break;
+            }
+          }
+        }
       } catch (err) {
         console.warn("[PreClaim] couldn't read the call's Service Center from ServicePower:", err);
       }
 
       const { claim, warnings, error } = buildServicePowerClaimPayload(
-        ticket, saved, parts, customerComplaint, servicePerformed, partFee, spServiceCenter,
+        { ...ticket, model: modelCode.trim(), serial: serialNo.trim() }, saved, parts, customerComplaint, servicePerformed, partFee, spServiceCenter, spManufacturerName,
       );
       if (error || !claim) {
         setSpMessage({ type: "error", text: error || "Could not build a claim from this ticket's data." });
@@ -450,6 +559,39 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
     }
   };
 
+  /** The Failure/Defect Code field with Pull from SP — under its own label, or in the Job Code slot for Electrolux. */
+  const renderDefectField = (label: React.ReactNode = "Failure/Defect Code") => (
+                <Field label={label}>
+                  <div className="flex gap-1.5">
+                    <input value={form.failureDefectCode} onChange={(e) => setField("failureDefectCode", e.target.value)} className={inputCls} />
+                    <button
+                      type="button"
+                      onClick={() => void pullDefectFromSP(false)}
+                      disabled={spDefect?.state === "loading"}
+                      title="Look this call up on ServicePower again"
+                      className="shrink-0 rounded border border-blue-400/40 bg-blue-500/15 px-2 text-[11px] font-semibold text-blue-200 hover:bg-blue-500/25 disabled:opacity-50"
+                    >
+                      {spDefect?.state === "loading" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Pull from SP"}
+                    </button>
+                  </div>
+                  {spDefect?.text && (
+                    <p className={`mt-1 text-[10px] ${spDefect.state === "ok" ? "text-emerald-300" : "text-slate-500"}`}>
+                      {spDefect.text}
+                      {spDefect.state === "ok" && spDefect.problemType && form.failureDefectCode !== spDefect.problemType && (
+                        <button
+                          type="button"
+                          onClick={() => setField("failureDefectCode", spDefect.problemType!)}
+                          className="ml-1.5 font-semibold text-blue-400 hover:text-blue-300"
+                          title="ServicePower's claim defect code is 4 characters max — longer text is cut off when submitting"
+                        >
+                          Use
+                        </button>
+                      )}
+                    </p>
+                  )}
+                </Field>
+  );
+
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div
@@ -468,6 +610,65 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
             <button onClick={goNext} disabled={currentIndex < 0 || currentIndex >= ticketNumbers.length - 1} className="p-1.5 rounded text-slate-400 hover:text-white disabled:opacity-30" title="Next ticket">
               <ChevronRight className="h-5 w-5" />
             </button>
+            {/* At a glance: miles, the warranty provider (with its portal), Redo, Pre-Auth. */}
+            <div className="ml-2 flex flex-wrap items-center gap-2 text-xs">
+              <span className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-slate-200" title="Office to customer (from Need Claim List)">
+                <MapPin className="h-3.5 w-3.5 text-slate-400" />
+                {miles == null ? (miles === null ? "No miles" : "Miles …") : `${miles.toFixed(1)} mi`}
+              </span>
+              {claimTo && (
+                <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 ${claimToPill.pill}`}>
+                  {claimTo}
+                  {portal && (
+                    <a href={portal.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 underline-offset-2 hover:underline" title={`Open ${portal.label} in a new tab`}>
+                      {portal.label} <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
+                </span>
+              )}
+              {isRedo ? (
+                ticket.originalTicketNo ? (
+                  <a href={`/ticket/${encodeURIComponent(ticket.originalTicketNo)}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-md border border-rose-400/40 bg-rose-500/15 px-2 py-1 font-semibold text-rose-200 hover:bg-rose-500/25" title="Open the original ticket">
+                    <RotateCcw className="h-3.5 w-3.5" /> REDO of {ticket.originalTicketNo}
+                  </a>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded-md border border-rose-400/40 bg-rose-500/15 px-2 py-1 font-semibold text-rose-200"><RotateCcw className="h-3.5 w-3.5" /> REDO</span>
+                )
+              ) : (
+                <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-slate-400">Not a redo</span>
+              )}
+              {spPreAuth ? (
+                <a
+                  href="https://hub.servicepower.com/orders/request-for-call-auth"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 rounded-md border border-rose-400/40 bg-rose-500/15 px-2 py-1 font-semibold text-rose-200 hover:bg-rose-500/25"
+                  title={[
+                    `ServicePower Call Auth: ${spPreAuth.status}`,
+                    spPreAuth.jobCode && `Job Code ${spPreAuth.jobCode}`,
+                    `Requested $${spPreAuth.requestedTotal.toFixed(2)} · Authorized $${spPreAuth.authorizedTotal.toFixed(2)}${spPreAuth.authorizedLabor ? ` (labor $${spPreAuth.authorizedLabor.toFixed(2)})` : ""}`,
+                    spPreAuth.approvedBy && `${spPreAuth.statusCode === "REJ" ? "Rejected" : "Approved"} by ${spPreAuth.approvedBy}${spPreAuth.approvedOn ? ` on ${spPreAuth.approvedOn}` : ""}`,
+                    spPreAuth.createdOn && `Filed ${spPreAuth.createdOn}`,
+                    spPreAuth.reason && `Reason: ${spPreAuth.reason}`,
+                    "Click to open Call Auth on ServicePower",
+                  ].filter(Boolean).join("\n")}
+                >
+                  <FileCheck2 className="h-3.5 w-3.5" /> Pre-Auth: {spPreAuth.status}
+                  {spPreAuth.statusCode === "APV" ? ` · $${spPreAuth.authorizedTotal.toFixed(2)} authorized` : spPreAuth.requestedTotal ? ` · $${spPreAuth.requestedTotal.toFixed(2)} requested` : ""}
+                  <span className="font-normal opacity-70">(SP)</span>
+                </a>
+              ) : spPreAuth === undefined && preAuth === undefined ? (
+                <span className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-slate-400"><Loader2 className="h-3 w-3 animate-spin" /> Pre-Auth…</span>
+              ) : preAuth ? (
+                <a href="/m/claims/pre-auth" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-md border border-rose-400/40 bg-rose-500/15 px-2 py-1 font-semibold text-rose-200 hover:bg-rose-500/25" title={`Pre-Auth ${preAuth.status} in AHS${preAuth.managedByName ? ` · managed by ${preAuth.managedByName}` : ""}${spPreAuth === undefined ? " · still checking ServicePower" : " · not on ServicePower yet"} — open Claims → Pre-Auth`}>
+                  <FileCheck2 className="h-3.5 w-3.5" /> Pre-Auth: {preAuth.status}{preAuth.total ? ` · $${preAuth.total.toFixed(2)}` : ""} <span className="font-normal opacity-70">(AHS)</span>
+                </a>
+              ) : spPreAuth === undefined ? (
+                <span className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-slate-400"><Loader2 className="h-3 w-3 animate-spin" /> Pre-Auth…</span>
+              ) : (
+                <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-slate-400" title="Nothing on ServicePower's Call Auth and no Pre-Auth in AHS">No Pre-Auth</span>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -632,8 +833,12 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <ReadOnly label="Manufacture" value={ticket.manufacturer || ""} />
                 <ReadOnly label="Brand" value={ticket.manufacturer || ""} />
-                <ReadOnly label="Model Code" value={ticket.model || ""} />
-                <ReadOnly label="Serial #" value={ticket.serial || ""} />
+                <Field label="Model Code">
+                  <input value={modelCode} onChange={(e) => setModelCode(e.target.value)} className={inputCls} placeholder="Model #" />
+                </Field>
+                <Field label="Serial #">
+                  <input value={serialNo} onChange={(e) => setSerialNo(e.target.value)} className={inputCls} placeholder="Serial #" />
+                </Field>
                 <ReadOnly label="Purchase Date" value={ticket.purchaseDate || ""} />
               </div>
               </div>
@@ -683,7 +888,14 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
               </Field>
               <ReadOnly label="Warranty Flag" value={ticket.warranty || ""} />
               <Field label="Repair Category">
-                <input value={form.repairCategory} onChange={(e) => setField("repairCategory", e.target.value)} className={inputCls} />
+                {/* ServicePower's own list — the name is saved, its code is sent (lib/jobCodes.ts). */}
+                <select value={form.repairCategory} onChange={(e) => setField("repairCategory", e.target.value)} className={inputCls}>
+                  <option value="">— select —</option>
+                  {REPAIR_CATEGORIES.map((c) => <option key={c.code} value={c.label}>{c.label}</option>)}
+                  {form.repairCategory && !REPAIR_CATEGORIES.some((c) => c.label === form.repairCategory) && (
+                    <option value={form.repairCategory}>{form.repairCategory} (not on ServicePower's list)</option>
+                  )}
+                </select>
               </Field>
               <Field label="Repair Level">
                 <input value={form.repairLevel} onChange={(e) => setField("repairLevel", e.target.value)} className={inputCls} />
@@ -692,28 +904,44 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
                 <input value={form.serviceType} onChange={(e) => setField("serviceType", e.target.value)} className={inputCls} />
               </Field>
               {(() => {
-                // A dropdown of that manufacturer's job codes when we have a list (GE for now — see lib/jobCodes.ts).
-                const list = jobCodesFor(ticket.manufacturer, (ticket as { brand?: string | null }).brand);
-                if (!list) {
+                // Electrolux: this slot is the Defect Code (what ServicePower asks Electrolux / Frigidaire claims for).
+                if (jobCodeRule?.field === "failureDefectCode") return renderDefectField(<>{jobCodeRule.fieldLabel} <span className="ml-1 normal-case tracking-normal font-semibold text-emerald-400">· {jobCodeRule.label} defect code</span></>);
+                // A dropdown of the claim company's / manufacturer's job codes when we have a list (lib/jobCodes.ts).
+                const list = jobCodeRule;
+                if (!list || list.codes.length === 0) {
                   return (
                     <Field label="Job Code">
-                      <input value={form.jobCode} onChange={(e) => setField("jobCode", e.target.value)} className={inputCls} />
+                      <input value={form.jobCode} onChange={(e) => setClaimJobCode(e.target.value)} className={inputCls} />
                     </Field>
                   );
                 }
-                const options = form.jobCode && !list.codes.includes(form.jobCode) ? [...list.codes, form.jobCode] : list.codes;
+                const known = list.codes.map((c) => c.code);
+                const picked = list.codes.find((c) => c.code === form.jobCode);
                 return (
                   <div>
                     {/* Same label line as every other field — the green note sits beside it so the grid stays aligned. */}
                     <label className={labelCls}>
-                      Job Code <span className="ml-1 normal-case tracking-normal font-semibold text-emerald-400">· {list.label} job code</span>
+                      {list.fieldLabel} <span className="ml-1 normal-case tracking-normal font-semibold text-emerald-400">· {list.label} job code</span>
                     </label>
-                    <select value={form.jobCode} onChange={(e) => setField("jobCode", e.target.value)} className={inputCls}>
+                    {/* The open list shows each code with its description; the closed box shows only the
+                        code (the native select sits on top with its own text hidden), the description goes underneath. */}
+                    <div className="relative">
+                      <div className={`${inputCls} pointer-events-none flex items-center justify-between gap-2`} aria-hidden="true">
+                        <span className={form.jobCode ? "" : "text-slate-500"}>{form.jobCode || "— select —"}</span>
+                        <span className="text-slate-500 text-[10px]">▼</span>
+                      </div>
+                    <select value={form.jobCode} onChange={(e) => setClaimJobCode(e.target.value)} className="absolute inset-0 w-full h-full cursor-pointer appearance-none bg-transparent text-transparent [&>option]:bg-slate-900 [&>option]:text-white" title={picked?.note ? `${picked.code} — ${picked.note}` : form.jobCode}>
                       <option value="">— select —</option>
-                      {options.map((c) => (
-                        <option key={c} value={c}>{list.codes.includes(c) ? c : `${c} (not a ${list.label} code)`}</option>
+                      {list.codes.map((c) => (
+                        <option key={c.code} value={c.code}>{c.note ? `${c.code} — ${c.note}` : c.code}</option>
                       ))}
+                      {form.jobCode && !known.includes(form.jobCode) && (
+                        <option value={form.jobCode}>{`${form.jobCode} (not a ${list.label} code)`}</option>
+                      )}
                     </select>
+                    </div>
+                    {picked?.note && <p className="mt-1 text-[10px] text-slate-400">{picked.note}</p>}
+                    {form.jobCode && !picked && <p className="mt-1 text-[10px] text-amber-300">Not a {list.label} code</p>}
                   </div>
                 );
               })()}
@@ -732,35 +960,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
                   <option>Yes</option>
                 </select>
               </Field>
-              <Field label="Failure/Defect Code">
-                <div className="flex gap-1.5">
-                  <input value={form.failureDefectCode} onChange={(e) => setField("failureDefectCode", e.target.value)} className={inputCls} />
-                  <button
-                    type="button"
-                    onClick={() => void pullDefectFromSP(false)}
-                    disabled={spDefect?.state === "loading"}
-                    title="Look this call up on ServicePower again"
-                    className="shrink-0 rounded border border-blue-400/40 bg-blue-500/15 px-2 text-[11px] font-semibold text-blue-200 hover:bg-blue-500/25 disabled:opacity-50"
-                  >
-                    {spDefect?.state === "loading" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Pull from SP"}
-                  </button>
-                </div>
-                {spDefect?.text && (
-                  <p className={`mt-1 text-[10px] ${spDefect.state === "ok" ? "text-emerald-300" : "text-slate-500"}`}>
-                    {spDefect.text}
-                    {spDefect.state === "ok" && spDefect.problemType && form.failureDefectCode !== spDefect.problemType && (
-                      <button
-                        type="button"
-                        onClick={() => setField("failureDefectCode", spDefect.problemType!)}
-                        className="ml-1.5 font-semibold text-blue-400 hover:text-blue-300"
-                        title="ServicePower's claim defect code is 4 characters max — longer text is cut off when submitting"
-                      >
-                        Use
-                      </button>
-                    )}
-                  </p>
-                )}
-              </Field>
+              {jobCodeRule?.field !== "failureDefectCode" && renderDefectField()}
               <Field label="Resolution/Repair Code">
                 <input value={form.resolutionCode} onChange={(e) => setField("resolutionCode", e.target.value)} className={inputCls} />
               </Field>
@@ -950,11 +1150,14 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
                 <Field label="Shipping Fee">
                   <input type="number" step="0.01" value={form.shippingFee || ""} onChange={(e) => setField("shippingFee", Number(e.target.value) || 0)} className={inputCls} placeholder="0.00" />
                 </Field>
-                <Field label="Extra Mile Fee">
+                <Field label="Mileage Amount">
                   <input type="number" step="0.01" value={form.extraMileFee || ""} onChange={(e) => setField("extraMileFee", Number(e.target.value) || 0)} className={inputCls} placeholder="0.00" />
                 </Field>
-                <Field label="Mileage (round trip)">
-                  <input type="number" step="0.01" value={form.mileageFee || ""} onChange={(e) => setField("mileageFee", Number(e.target.value) || 0)} className={inputCls} placeholder="0.00" />
+                <Field label="Mileage (round trip, miles)">
+                  <div className="relative">
+                    <input type="number" step="0.1" min="0" value={form.mileageFee || ""} onChange={(e) => setField("mileageFee", Number(e.target.value) || 0)} className={`${inputCls} pr-10`} placeholder="0" />
+                    <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-slate-400">mi</span>
+                  </div>
                 </Field>
                 <Field label="PO Amount">
                   <input type="number" step="0.01" value={form.poAmount || ""} onChange={(e) => setField("poAmount", Number(e.target.value) || 0)} className={inputCls} placeholder="0.00" />

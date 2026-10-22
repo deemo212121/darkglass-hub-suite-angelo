@@ -181,6 +181,8 @@ function mapExpenseRow(row: any): ExpenseRow {
     flashTechTripId: row.flash_tech_trip_id ?? null,
     expenseSubtype: row.expense_subtype ?? null,
     reviewNote: row.review_note ?? null,
+    reimbursementType: row.reimbursement_type ?? null,
+    reimbursementOther: row.reimbursement_other ?? null,
     createdAt: row.created_at,
   };
 }
