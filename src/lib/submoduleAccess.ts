@@ -14,6 +14,8 @@
 import { isSubmoduleAllowed, isSubmoduleAllowedForTrainee, isSubmoduleAllowedForFrozen, isCompanySuperAdminRole } from "./roleLabels";
 import { getDashboardRoleGate, hasDashboardAccess } from "./dashboardAccess";
 import { getModuleRoleGate, MODULE_LEVEL_GATE_SLUG } from "./moduleAccess";
+import { canSeeTicketTour } from "./tours/ticketTours";
+import { guideDepartmentFor } from "./tours/guideDepartments";
 
 const DASHBOARD_FAMILY_MODULES = new Set(["dashboard", "hr", "accounting", "csr"]);
 
@@ -121,7 +123,10 @@ export function canAccessSubmodule(
   if (isWhereaboutsSubmodule && !hasDashboardAccess(explicitModuleOverride ?? WHEREABOUTS_DEFAULT_ROLES, role, extraRoles)) return false;
   if (sub.custom === "company-settings" && !isCompanySuperAdminRole(role, extraRoles)) return false;
   if (sub.custom === "bizops-guide" && !hasDashboardAccess(explicitModuleOverride ?? BIZOPS_GUIDE_DEFAULT_ROLES, role, extraRoles)) return false;
-  if (sub.custom === "pre-auth" && !hasDashboardAccess(explicitModuleOverride ?? PRE_AUTH_DEFAULT_ROLES, role, extraRoles)) return false;
+  if ((sub.custom === "pre-auth" || sub.custom === "claims-guide") && !hasDashboardAccess(explicitModuleOverride ?? PRE_AUTH_DEFAULT_ROLES, role, extraRoles)) return false;
+  // Guides → department tiles: that department's roles only (Admin / SuperAdmin see every one).
+  const guideDept = String(sub.custom ?? "").startsWith("guide-") ? guideDepartmentFor(sub.custom) : null;
+  if (guideDept && !explicitModuleOverride && !canSeeTicketTour(guideDept.roleKey, role, extraRoles)) return false;
 
   // Same carve-out as the admin-module gate above (ALL_ROLES_ADMIN_SUBMODULES)
   // — internal-message-support must stay unrestrictable even if a company

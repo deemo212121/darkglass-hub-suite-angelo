@@ -27,6 +27,8 @@ import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { loadOpenedTickets, markTicketOpened } from "@/lib/openedTickets";
 import { resolveTierCode } from "@/lib/tierCodes";
 import { Check } from "lucide-react";
+import { runTour, takeQueuedTour } from "@/lib/tours/runTour";
+import { CLAIMS_PRECLAIM_TOUR, NEED_CLAIM_LIST_TOUR_TARGET } from "@/lib/tours/claimsTours";
 import { localISODate, todayISO } from "@/lib/localDate";
 
 interface Props {
@@ -753,6 +755,22 @@ export function NeedClaimList({ mod, sub }: Props) {
   // ── Status-dot helper ──
   const dotColor = (d: 0 | 1 | 2) => (d === 0 ? "" : d === 1 ? "bg-orange-400" : "bg-red-500");
 
+  // Guides → Claims "Filing a claim without errors" tour, handed
+  // over from Guides — starts once the list has loaded; its Pre-Claim steps
+  // open the first ticket's Pre-Claim and close it after. Look-only.
+  const filteredForTourRef = useRef(filtered);
+  filteredForTourRef.current = filtered;
+  const claimsTourStartedRef = useRef(false);
+  useEffect(() => {
+    if (loading || claimsTourStartedRef.current) return;
+    if (takeQueuedTour(NEED_CLAIM_LIST_TOUR_TARGET) !== CLAIMS_PRECLAIM_TOUR.id) return;
+    claimsTourStartedRef.current = true;
+    window.setTimeout(() => void runTour(CLAIMS_PRECLAIM_TOUR, {
+      openPanel: () => { const first = filteredForTourRef.current[0]; if (first) setPreClaimTicketNo(first.ticket.ticketNo); },
+      closePanel: () => setPreClaimTicketNo(null),
+    }), 700);
+  }, [loading]);
+
   // Claim To colour key: companies in the current list, most tickets first ("Other" last).
   const claimToKey = useMemo(() => {
     const counts = new Map<string, { color: ClaimToColor; count: number }>();
@@ -857,7 +875,7 @@ export function NeedClaimList({ mod, sub }: Props) {
       </div>
 
       {/* Filter bar */}
-      <div className="panel mb-4">
+      <div className="panel mb-4" data-tour="ncl-filters">
         <div className="flex flex-wrap items-end gap-3">
           {/* Location (portal dropdown) */}
           <div className="flex flex-col gap-1 min-w-[160px]">
@@ -1010,7 +1028,7 @@ export function NeedClaimList({ mod, sub }: Props) {
           {error ? <span className="text-red-300 ml-3">⚠ {error}</span> : null}
         </span>
         {/* Colour key — what the dots, the REDO pill and the Claim To colours mean (companies shown with their count in this list). */}
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 px-4 text-[11px] text-muted-foreground">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 px-4 text-[11px] text-muted-foreground" data-tour="ncl-key">
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-orange-400" />14+ days / back ordered</span>
           <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-red-500" />30+ days</span>
           <span className="inline-flex items-center gap-1"><span className="inline-block rounded border border-rose-400/40 bg-rose-500/15 px-1 font-bold text-rose-200">Y</span>Redo</span>
@@ -1070,7 +1088,7 @@ export function NeedClaimList({ mod, sub }: Props) {
 
       {/* Table */}
       <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
-      <div ref={tableScrollRef} className="overflow-x-auto border border-white/10 rounded-lg">
+      <div ref={tableScrollRef} className="overflow-x-auto border border-white/10 rounded-lg" data-tour="ncl-table">
         <table className="w-full min-w-max text-[11px]">
           <thead>
             <tr className="border-b border-white/10 bg-white/5">

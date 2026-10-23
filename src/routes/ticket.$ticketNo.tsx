@@ -6147,7 +6147,7 @@ function TicketDetailsPage() {
                   of what's left (the full checklist with detail text is
                   further down the page). */}
               {claimsReadiness && (
-                <div className="relative">
+                <div className="relative" data-tour="ticket-claims-badge">
                   <button
                     type="button"
                     onClick={() => setClaimsReadinessPopoverOpen((v) => !v)}
