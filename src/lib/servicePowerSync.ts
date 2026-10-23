@@ -86,7 +86,7 @@ const ZIP3_STATE_RANGES: Array<[number, number, string]> = [
   [967, 968, 'HI'], [969, 969, 'GU'], [970, 979, 'OR'], [980, 994, 'WA'],
   [995, 999, 'AK'],
 ];
-function stateFromZip5(zip5: string): string {
+export function stateFromZip5(zip5: string): string {
   const n = parseInt(zip5.slice(0, 3), 10);
   if (!Number.isFinite(n)) return '';
   for (const [min, max, state] of ZIP3_STATE_RANGES) {
