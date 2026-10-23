@@ -1,7 +1,6 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { useSmartBack } from "@/hooks/useSmartBack";
 import { BrandedLoader } from "@/components/BrandedLoader";
 import { ChevronDown, ChevronLeft, Check, Filter, Search, Loader2, KeyRound, RotateCcw, Ban, CheckCircle2 } from "lucide-react";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
@@ -734,7 +733,10 @@ function randomThrowawayPassword(): string {
 
 export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
-  const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
+  // "< Admin" always opens the Admin page — it used to step back in browser
+  // history, which after a user's page → "Back to User Management" landed on
+  // that user's page again, so the two buttons bounced back and forth.
+  const goToModule = () => navigate({ to: "/m/$module", params: { module: mod.slug } });
   const auth = useAuth();
   // User types shown in the "Add New User" dropdown. Built-in roles plus
   // any company-created custom roles (Accessibility Management's "Add
@@ -1456,7 +1458,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
         <div className="rounded-xl border border-white/15 bg-white/8 p-5 text-white backdrop-blur-md">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex min-w-0 flex-1 items-center gap-3">
-              <button type="button" onClick={goBack} className="btn">
+              <button type="button" onClick={goToModule} className="btn">
                 <ChevronLeft className="h-4 w-4" />
                 {mod.label}
               </button>
