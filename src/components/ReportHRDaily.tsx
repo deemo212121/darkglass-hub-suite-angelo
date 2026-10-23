@@ -8724,6 +8724,33 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [validIdExternalName, setValidIdExternalName] = useState("");
   const [validIdSentLink, setValidIdSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [validIdSentLinkCopied, setValidIdSentLinkCopied] = useState(false);
+  const [validIdPreviewOpen, setValidIdPreviewOpen] = useState(false);
+  const [validIdPreviewPdfUrl, setValidIdPreviewPdfUrl] = useState<string | null>(null);
+  const [validIdPreviewLoading, setValidIdPreviewLoading] = useState(false);
+
+  /** Same collapsible blank-form preview as the NDA tab (toggleNdaPreview) — the form FillValidIdPage.tsx captures, with only the selected recipient's name filled in. */
+  const toggleValidIdPreview = async () => {
+    if (validIdPreviewOpen) {
+      setValidIdPreviewOpen(false);
+      if (validIdPreviewPdfUrl) URL.revokeObjectURL(validIdPreviewPdfUrl);
+      setValidIdPreviewPdfUrl(null);
+      return;
+    }
+    setValidIdSendError(null);
+    setValidIdPreviewOpen(true);
+    setValidIdPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === validIdRecipientId)?.name || "";
+      const logo = await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
+      const blank: ValidIdFormData = { employeeId: "", employeeName: recipientName, idType: "", idNumber: "", idPhotoUrls: [], dateSigned: "", signatureDataUrl: "" };
+      const pdfBlob = await captureHtmlToPdfBlob(buildValidIdFormBodyMarkup(blank, logo, undefined), validIdFormStyles);
+      setValidIdPreviewPdfUrl(URL.createObjectURL(pdfBlob));
+    } catch (err) {
+      setValidIdSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setValidIdPreviewLoading(false);
+    }
+  };
   const filteredValidIdRecipients = useMemo(
     () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(validIdRecipientSearch.toLowerCase())),
     [employees, validIdRecipientSearch]
@@ -27605,7 +27632,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Send Valid ID Request</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a PH teammate — they'll get a link to submit a passport, license, or other government ID. It comes back to you here automatically once submitted.</p>
         </div>
-        <div className="p-4 flex flex-col gap-3 max-w-sm">
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
           <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
             {validIdSentLink ? (
@@ -27665,9 +27693,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </div>
 
           {validIdSendError && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{validIdSendError}</p>}
-          <button onClick={handleSendValidId} disabled={!validIdRecipientId || validIdSending} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit">
-            {validIdSending ? "Sending…" : "Send Request"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={toggleValidIdPreview} className="btn text-sm px-4 py-2 flex items-center gap-1.5">
+              Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${validIdPreviewOpen ? "rotate-180" : ""}`} />
+            </button>
+            <button onClick={handleSendValidId} disabled={!validIdRecipientId || validIdSending} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
+              {validIdSending ? "Sending…" : "Send Request"}
+            </button>
+          </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {validIdPreviewOpen ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {validIdPreviewLoading || !validIdPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={validIdPreviewPdfUrl} title="Valid ID Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
