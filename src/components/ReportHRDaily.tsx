@@ -6440,6 +6440,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // dialog uses), then regenerates the whole PDF fresh with both
   // signatures. ──
   const [confidentialityNonCompeteAgreementEmployerDialog, setConfidentialityNonCompeteAgreementEmployerDialog] = useState<SignableDocument | null>(null);
+  // Bumped after an employer signature so the embedded Staff Form Checklist reloads.
+  const [staffChecklistReload, setStaffChecklistReload] = useState(0);
   const [confidentialityNonCompeteAgreementEmployerPrintedNameTitle, setConfidentialityNonCompeteAgreementEmployerPrintedNameTitle] = useState("");
   const [confidentialityNonCompeteAgreementEmployerSaving, setConfidentialityNonCompeteAgreementEmployerSaving] = useState(false);
   const [confidentialityNonCompeteAgreementEmployerError, setConfidentialityNonCompeteAgreementEmployerError] = useState<string | null>(null);
@@ -6500,6 +6502,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       void logActivity({ action: "confidentiality_noncompete_agreement_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
       setConfidentialityNonCompeteAgreementEmployerDialog(null);
+      setStaffChecklistReload((n) => n + 1);
       await loadSentConfidentialityNonCompeteAgreementForms();
     } catch (err) {
       setConfidentialityNonCompeteAgreementEmployerError(err instanceof Error ? err.message : "Failed to save signature.");
@@ -20501,7 +20504,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           consolidated here from their own standalone HR module tiles (see
           modules.ts). Same components either way, just embedded. ── */}
       {activeTab === "flashTech" && <FlashTechCalendarPage mod={mod} sub={sub} embedded />}
-      {activeTab === "staffFormChecklist" && <TechnicianFormChecklistPage embedded />}
+      {activeTab === "staffFormChecklist" && (
+        <TechnicianFormChecklistPage
+          embedded
+          onAddConfidentialityEmployerSignature={handleOpenConfidentialityNonCompeteAgreementEmployerDialog}
+          onSendToEmployer={handleOpenEmployerReassign}
+          reloadSignal={staffChecklistReload}
+        />
+      )}
       {activeTab === "trainingList" && <TrainingListPage embedded />}
       {activeTab === "clockInCodes" && <ClockInCodesTab />}
 
