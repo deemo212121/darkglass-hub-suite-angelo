@@ -12,6 +12,8 @@ export interface PreAuthPart {
   partNumber: string;
   description: string;
   price: string;
+  /** Part NLA — No Longer Available (ServicePower's nlaFlag on the part line). */
+  nla?: boolean;
 }
 
 /** The form, laid out like ServicePower's Call Auth screen. */

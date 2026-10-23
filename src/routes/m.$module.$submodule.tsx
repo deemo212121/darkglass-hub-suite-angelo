@@ -107,6 +107,10 @@ import { ServerStatusPage } from "@/components/ServerStatusPage";
 import { ApproverGuidePage } from "@/components/ApproverGuidePage";
 import { BizOpsGuidePage } from "@/components/BizOpsGuidePage";
 import { PreAuthPage } from "@/components/PreAuthPage";
+import { ClaimsGuidePage } from "@/components/ClaimsGuidePage";
+import { DepartmentGuidePage } from "@/components/DepartmentGuidePage";
+import { guideDepartmentFor } from "@/lib/tours/guideDepartments";
+import { canSeeTicketTour } from "@/lib/tours/ticketTours";
 import { TrainingListPage } from "@/components/TrainingListPage";
 import { AbsentListPage } from "@/components/AbsentListPage";
 import { RepairKnowledgeBase } from "@/components/RepairKnowledgeBase";
@@ -417,7 +421,13 @@ function SubModule() {
   }
 
   // Claims → Pre-Auth: Claims, Parts and BizOps roles plus Admin / SuperAdmin only.
-  if ((sub as any).custom === "pre-auth" && !hasDashboardAccess(explicitModuleOverride ?? PRE_AUTH_DEFAULT_ROLES, role, extraRoles)) {
+  if (((sub as any).custom === "pre-auth" || (sub as any).custom === "claims-guide") && !hasDashboardAccess(explicitModuleOverride ?? PRE_AUTH_DEFAULT_ROLES, role, extraRoles)) {
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
+  }
+
+  // Guides → department tiles: that department's roles only (Admin / SuperAdmin see every one).
+  const guideDept = String((sub as any).custom ?? "").startsWith("guide-") ? guideDepartmentFor((sub as any).custom) : null;
+  if (guideDept && !explicitModuleOverride && !canSeeTicketTour(guideDept.roleKey, role, extraRoles)) {
     return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
@@ -629,6 +639,10 @@ function SubModule() {
         ? <ApproverGuidePage />
         : (sub as any).custom === "bizops-guide"
         ? <BizOpsGuidePage />
+        : (sub as any).custom === "claims-guide"
+        ? <ClaimsGuidePage />
+        : guideDept
+        ? <DepartmentGuidePage dept={guideDept} />
         : (sub as any).custom === "clock-in-codes"
         ? <ClockInCodesTab standalone backModule={mod.slug} />
         : (sub as any).custom === "absent-list"

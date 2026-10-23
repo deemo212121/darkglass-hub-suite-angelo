@@ -29,6 +29,8 @@ export function buildPreAuthRFA(ticket: Ticket, f: PreAuthForm): Omit<CreateRFAR
       partNumber: p.partNumber.trim(),
       partDescription: clip(p.description, 30) ?? "",
       singlePartCost: num(p.price) ?? 0,
+      // Part NLA — No Longer Available (the Call Auth screen's "Part NLA" box).
+      nlaFlag: p.nla ? ("Y" as const) : ("N" as const),
     }));
   return {
     manufacturerName: clip(ticket.manufacturer, 30),

@@ -68,7 +68,7 @@ export const DESKTOP_GETTING_STARTED_TOUR: TourDef = {
     {
       selector: '[data-tour="home-module-guides"]',
       title: "Guides",
-      text: "Come back here any time to replay a tour — Getting Started, Ticket Guides and Self-Service.",
+      text: "Come back here any time to replay a tour — the general guides (Getting Started, Self-Service, Approving Requests) and your department's own (CSR, Triage, Logistics, Claims, BizOps).",
       side: "top",
     },
   ],
