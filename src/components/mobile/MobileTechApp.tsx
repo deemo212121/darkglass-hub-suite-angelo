@@ -134,7 +134,7 @@ import { getModelResources, saveModelResources, type ModelResources } from "@/li
 import { getUndismissedMobilePopupAlerts, dismissTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
 import { createItTicket, getItTickets, type ItTicketRow, type ItTicketPriority } from "@/lib/supabase/itTickets";
 import { createEmployeeRequest, getCompanyEmployeeRequests, updateEmployeeRequestStatus, canReviewTicketDispute, notifyRequestReviewers, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
-import { createPtoRequest, getCompanyPtoRequests, canReviewPtoStage, reviewPtoStage, isEligibleForPto, ptoEligibleDate, setPtoAttachmentUrl, type PtoType, type PtoRequestRow } from "@/lib/supabase/pto";
+import { createPtoRequest, getCompanyPtoRequests, canReviewPtoStage, reviewPtoStage, isEligibleForPto, ptoEligibleDate, ptoYearWindow, ptoDaysUsed, workingDayCount, setPtoAttachmentUrl, type PtoType, type PtoRequestRow } from "@/lib/supabase/pto";
 import {
   createTimecardCorrection,
   getCompanyTimecardCorrections,
@@ -143,6 +143,8 @@ import {
   validateCorrectionTimes,
   validateSelfCorrectionDate,
   selfCorrectionEarliestDate,
+  getSelfCorrectionWindow,
+  type SelfCorrectionWindow,
   correctionShiftMinutes,
   formatShift,
   CORRECTION_MEAL_REQUIRED_AFTER_MINUTES,
@@ -8848,15 +8850,12 @@ const PTO_TYPE_LABELS: Record<PtoType, string> = {
 // "submit form + My Requests list" shape as Payroll Dispute above, backed
 // by pto.ts's two-stage manager-then-(HR OR Accounting) approval instead of
 // employee_requests. Paid leave (Vacation / Personal) follows the same
-// 1-year PTO eligibility rule as desktop (isEligibleForPto in pto.ts — the
-// shared function, so the two can't drift). Unlike EmployeeSelfServicePage.tsx's
-// desktop version, this still skips the remaining-balance
-// math (ptoYearWindow/ptoAllowanceForTenureYear, sickYearWindow) — that
-// logic lives only in the desktop page today, and duplicating the
-// anniversary-anchored tenure-year calculation here risks it drifting out
-// of sync. The manager/HR/Accounting review stage is the real enforcement
-// point either way, so mobile submits directly and lets that catch
-// anything out of policy.
+// 1-year PTO eligibility rule and remaining-PTO balance as desktop
+// (isEligibleForPto / ptoYearWindow / ptoDaysUsed in pto.ts — the shared
+// functions, so the two can't drift): once every PTO day this year is
+// approved or pending, Vacation / Personal can't be submitted until the
+// anniversary reset. Sick Leave's own allowance isn't checked here; the
+// manager/HR/Accounting review stage catches that.
 function MobileTimeOffView({ userName, profileId, companyId, role }: { userName: string; profileId: string | null; companyId: string | null; role: string | null }) {
   const [requests, setRequests] = useState<PtoRequestRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -8901,6 +8900,12 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
   const ptoEligibleOn = ptoEligibleDate(hireDate, myCreatedAt);
   const isPaidLeave = leaveType === "Vacation" || leaveType === "Personal";
   const paidLeaveBlocked = isPaidLeave && !ptoEligible;
+  // Vacation and Personal both draw on the PTO allowance (ptoRequestsInYear).
+  const ptoYear = ptoYearWindow(hireDate, myCreatedAt);
+  const ptoRemaining = ptoYear ? Math.max(0, ptoYear.allowance - ptoDaysUsed(requests, ptoYear)) : 0;
+  const ptoUsedUp = ptoEligible && !loading && !!ptoYear && ptoRemaining <= 0;
+  const myOffDays = companyProfiles.find((p) => p.id === profileId)?.off_days;
+  const requestedDays = startDate && endDate && startDate <= endDate ? workingDayCount(startDate, endDate, myOffDays) : null;
 
   useEffect(() => {
     getCompanyUsers().then(setCompanyProfiles).catch((e) => console.error("time off: load users failed", e));
@@ -8944,6 +8949,12 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
     }
     if (!startDate || !endDate) {
       setMsg("Select a start and end date.");
+      return;
+    }
+    if (isPaidLeave && ptoYear && requestedDays !== null && requestedDays > ptoRemaining) {
+      setMsg(ptoRemaining <= 0
+        ? `You have no PTO days left for Year ${ptoYear.tenureYear} — it resets ${ptoYear.end}. Unpaid leave is still available.`
+        : `This request is ${requestedDays} day${requestedDays === 1 ? "" : "s"}, but you only have ${ptoRemaining} of ${ptoYear.allowance} PTO days left for Year ${ptoYear.tenureYear} (resets ${ptoYear.end}).`);
       return;
     }
     if (!details.trim()) {
@@ -9078,12 +9089,17 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
         <div className="mtech-section-title" style={{ marginTop: 0 }}>Leave Type</div>
         <select className="mtech-bill-input full" value={leaveType} onChange={(e) => setLeaveType(e.target.value)}>
           {LEAVE_TYPES.map((t) => (
-            <option key={t} value={t}>{t}{(t === "Vacation" || t === "Personal") && ptoEligibilityKnown && !ptoEligible ? " (after 1 year)" : ""}</option>
+            <option key={t} value={t}>{t}{(t === "Vacation" || t === "Personal") && ptoEligibilityKnown && !ptoEligible ? " (after 1 year)" : (t === "Vacation" || t === "Personal") && ptoUsedUp ? " (no PTO left)" : ""}</option>
           ))}
         </select>
         {paidLeaveBlocked && ptoEligibilityKnown && (
           <p style={{ marginTop: 6, fontSize: 12, color: "#fbbf24" }}>
             {leaveType} leave needs 1 year with the company — you'll be eligible starting {ptoEligibleOn}. Sick and Unpaid leave are available now.
+          </p>
+        )}
+        {isPaidLeave && ptoUsedUp && ptoYear && (
+          <p style={{ marginTop: 6, fontSize: 12, color: "#fbbf24" }}>
+            You've used all {ptoYear.allowance} PTO days for Year {ptoYear.tenureYear} (approved or still pending). {leaveType} leave reopens on {ptoYear.end}. Unpaid leave is still available.
           </p>
         )}
 
@@ -9110,6 +9126,12 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
 
         <div className="mtech-section-title">End Date</div>
         <input className="mtech-bill-input full" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+        {isPaidLeave && requestedDays !== null && (
+          <p style={{ marginTop: 6, fontSize: 12, color: ptoYear && requestedDays > ptoRemaining ? "#f87171" : "#94a3b8" }}>
+            Counts as {requestedDays} PTO day{requestedDays === 1 ? "" : "s"}. Your rest days (Sat/Sun unless your schedule says otherwise) aren't counted.
+            {ptoYear && ` You have ${ptoRemaining} left.`}
+          </p>
+        )}
 
         <div className="mtech-section-title">Reason</div>
         <textarea
@@ -9194,7 +9216,7 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
           </>
         )}
 
-        <button type="button" data-tour="m-submit" className="mtech-save-btn" onClick={submit} disabled={submitting}>
+        <button type="button" data-tour="m-submit" className="mtech-save-btn" onClick={submit} disabled={submitting || (isPaidLeave && ptoUsedUp)}>
           {submitting ? "Submitting…" : "Submit Request"}
         </button>
         {msg && <div className="mtech-save-msg">{msg}</div>}
@@ -9821,6 +9843,18 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
     getCompanyUsers().then(setCompanyProfiles).catch((e) => console.error("time correction: load users failed", e));
   }, []);
 
+  // How far back the date picker goes: 2 days, or just yesterday once today
+  // already has a Check Out.
+  const [correctionWindow, setCorrectionWindow] = useState<SelfCorrectionWindow | null>(null);
+  useEffect(() => {
+    if (!profileId) return;
+    let cancelled = false;
+    getSelfCorrectionWindow(profileId)
+      .then((w) => { if (!cancelled) setCorrectionWindow(w); })
+      .catch((e) => console.error("time correction: load window failed", e));
+    return () => { cancelled = true; };
+  }, [profileId]);
+
   const load = async () => {
     setLoading(true);
     try {
@@ -9866,7 +9900,7 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
       setMsg("Select the date you're correcting.");
       return;
     }
-    // Same day, or by the next weekday (Friday until Monday) — checked against the server clock.
+    // Up to 2 days back, or only today and yesterday once today has a Check Out — checked against the server clock.
     try {
       await validateSelfCorrectionDate(profileId, correctionDate);
     } catch (err) {
@@ -10021,8 +10055,8 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
           className="mtech-bill-input full"
           type="date"
           value={correctionDate}
-          max={zonedDateKey(new Date(), "CST")}
-          min={selfCorrectionEarliestDate(zonedDateKey(new Date(), "CST"))}
+          max={correctionWindow?.today ?? zonedDateKey(new Date(), "CST")}
+          min={correctionWindow?.earliest ?? selfCorrectionEarliestDate(zonedDateKey(new Date(), "CST"), false)}
           onChange={(e) => setCorrectionDate(e.target.value)}
           onClick={openNativePicker}
         />

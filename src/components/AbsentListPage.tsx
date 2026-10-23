@@ -41,6 +41,7 @@ import { getCompanyUsers, getEmployeeInfoByProfileIds, type ProfileRow } from "@
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { visibleEmployeeMonitoringProfileIds } from "@/lib/notifyRouting";
 import { getCompanyTimecardEntries, getProfileIdByFirebaseUid, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
+import { getCompanyTraineeEntries, type TraineeTimecardEntry } from "@/lib/supabase/traineeTimecards";
 import { getAttendanceNotes, upsertAttendanceNote, upsertAttendanceHrNote, uploadAttendanceNoteAttachment, removeAttendanceNoteAttachment, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
 import { getCompanyPtoRequests, sickYearWindow, sickDaysUsed, SICK_LEAVE_ANNUAL_ALLOWANCE, type PtoRequestRow } from "@/lib/supabase/pto";
 import { HrCalendarTab } from "@/components/HrCalendarTab";
@@ -168,6 +169,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   const [search, setSearch] = useState("");
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [entries, setEntries] = useState<CompanyTimecardEntry[]>([]);
+  const [traineeEntries, setTraineeEntries] = useState<TraineeTimecardEntry[]>([]);
   const [notes, setNotes] = useState<AttendanceNoteRow[]>([]);
   const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -287,9 +289,11 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       getAttendanceNotes(from, to),
       getCompanyHolidaysInRange(from, to),
       getPendingCorrectionsInRange(from, to),
+      getCompanyTraineeEntries(from, to).catch(() => [] as TraineeTimecardEntry[]),
     ])
-      .then(([tc, n, hol, pending]) => {
+      .then(([tc, n, hol, pending, trainee]) => {
         setEntries(tc);
+        setTraineeEntries(trainee);
         setNotes(n);
         setHolidays(hol);
         setPendingCorrections(pending);
@@ -305,9 +309,18 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
 
   // Keyed "profileId|date" — check-in and notes are both per (profile, day),
   // same as everything else on this page once it spans more than one day.
+  // A trainee clocks in on the trainee time clock; the day only reaches
+  // timecard_entries once their manager approves it. A punch still waiting
+  // for that counts as checked in here too, same as Attendance Monitoring's
+  // Daily Attendance Tracker (Maurice Bond, 10/22/2026: in at 08:07 there,
+  // yet listed absent here). A rejected day stays absent.
   const checkedInSet = useMemo(
-    () => new Set(entries.filter((e) => e.checkIn).map((e) => `${e.profileId}|${e.workDate}`)),
-    [entries]
+    () =>
+      new Set([
+        ...entries.filter((e) => e.checkIn).map((e) => `${e.profileId}|${e.workDate}`),
+        ...traineeEntries.filter((t) => t.status === "pending" && t.checkIn).map((t) => `${t.profileId}|${t.workDate}`),
+      ]),
+    [entries, traineeEntries]
   );
   const noteByKey = useMemo(() => new Map(notes.map((n) => [`${n.profileId}|${n.noteDate}`, n])), [notes]);
   // Approved, paid or unpaid leave covering a given date — not counted as
