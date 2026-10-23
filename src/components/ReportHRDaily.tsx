@@ -3688,6 +3688,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       .filter((n) => n.type === "warning" && n.agentProfileId === warnForm.employeeId && n.status === "approved")
       .sort((a, b) => (b.occurredAt || b.createdAt).localeCompare(a.occurredAt || a.createdAt))
       .slice(0, 3)
+      // Listed oldest first, so "1." is the first warning (the 3 most recent are kept).
+      .reverse()
       .map((n) => ({ cause: n.note, date: n.occurredAt || n.createdAt, issuedBy: n.createdByName || "—" }));
   }, [allNotes, warnForm.employeeId]);
 
@@ -3840,6 +3842,74 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setWarnLogoDataUrl(await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
     }
     setWarnViewDoc(doc);
+  };
+
+  // ── Edit a sent form's Previous Warnings (1, 2, 3) and regenerate its PDF ──
+  // Saves the three lines into the form, then re-renders the PDF from it with
+  // every signature already collected (nobody has to sign again).
+  type PrevWarnRow = { cause: string; date: string; issuedBy: string };
+  const [warnEditDoc, setWarnEditDoc] = useState<SignableDocument | null>(null);
+  const [warnEditRows, setWarnEditRows] = useState<PrevWarnRow[]>([]);
+  const [warnEditBusy, setWarnEditBusy] = useState(false);
+  const [warnEditError, setWarnEditError] = useState<string | null>(null);
+  const openWarnEdit = (doc: SignableDocument) => {
+    const data = doc.formData as unknown as WarningFormData;
+    const rows = [...(data.previousWarnings ?? [])]
+      .sort((a, b) => (a?.date || "9999").localeCompare(b?.date || "9999"))
+      .map((w) => ({ cause: w.cause || "", date: (w.date || "").slice(0, 10), issuedBy: w.issuedBy || "" }));
+    while (rows.length < 3) rows.push({ cause: "", date: "", issuedBy: "" });
+    setWarnEditRows(rows.slice(0, 3));
+    setWarnEditError(null);
+    setWarnEditDoc(doc);
+  };
+  const regenerateWarningPdf = async (doc: SignableDocument, data: WarningFormData) => {
+    const logo = warnLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+    if (!warnLogoDataUrl) setWarnLogoDataUrl(logo);
+    const sigs = await resolveSignaturesForCapture(doc.signatures ?? {}, "__regenerate__", "");
+    const blob = await captureHtmlToPdfBlob(buildWarningFormBodyMarkup(data, logo, sigs), warningFormStyles);
+    const pdfUrl = await uploadWarningForm(doc.companyId, data.employeeName || "warning-form", blob);
+    await updateSignableDocumentPdfUrl(doc.id, pdfUrl, data as unknown as Record<string, any>);
+    return pdfUrl;
+  };
+  const saveWarnEdit = async () => {
+    if (!warnEditDoc) return;
+    const filled = warnEditRows.filter((r) => r.cause.trim() || r.date || r.issuedBy.trim());
+    if (filled.some((r) => !r.cause.trim() || !r.date)) {
+      setWarnEditError("Each warning you fill in needs a reason and a date.");
+      return;
+    }
+    setWarnEditBusy(true);
+    setWarnEditError(null);
+    try {
+      const data = warnEditDoc.formData as unknown as WarningFormData;
+      const next: WarningFormData = {
+        ...data,
+        previousWarnings: filled
+          .map((r) => ({ cause: r.cause.trim(), date: r.date, issuedBy: r.issuedBy.trim() || "—" }))
+          .sort((a, b) => a.date.localeCompare(b.date)),
+      };
+      const pdfUrl = await regenerateWarningPdf(warnEditDoc, next);
+      setSentWarningForms((prev) => prev.map((d) => (d.id === warnEditDoc.id ? { ...d, formData: next as unknown as Record<string, any>, pdfUrl } : d)));
+      setWarnEditDoc(null);
+    } catch (err) {
+      setWarnEditError(err instanceof Error ? err.message : "Couldn't save and regenerate the PDF.");
+    } finally {
+      setWarnEditBusy(false);
+    }
+  };
+  /** Regenerate only (no edits) — e.g. so an older form prints its previous warnings oldest first. */
+  const [warnRegenBusyId, setWarnRegenBusyId] = useState<string | null>(null);
+  const handleRegenerateWarningPdf = async (doc: SignableDocument) => {
+    setWarnRegenBusyId(doc.id);
+    setWarnActionError(null);
+    try {
+      const pdfUrl = await regenerateWarningPdf(doc, doc.formData as unknown as WarningFormData);
+      setSentWarningForms((prev) => prev.map((d) => (d.id === doc.id ? { ...d, pdfUrl } : d)));
+    } catch (err) {
+      setWarnActionError(err instanceof Error ? err.message : "Couldn't regenerate the PDF.");
+    } finally {
+      setWarnRegenBusyId(null);
+    }
   };
 
   /** Forces a real download instead of just opening the PDF in a new tab. Falls back to a plain new-tab open if the fetch fails (e.g. before the Firebase Storage CORS setting is configured). */
@@ -23778,6 +23848,45 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         {warnActionError && (
           <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{warnActionError}</p>
         )}
+        {warnEditDoc && createPortal(
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4" onClick={() => !warnEditBusy && setWarnEditDoc(null)}>
+            <div className="w-full max-w-3xl rounded-xl border border-white/15 bg-slate-900 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-white/10">
+                <div>
+                  <h3 className="font-semibold text-white">Previous Warnings — {(warnEditDoc.formData as unknown as WarningFormData).employeeName}</h3>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">Printed oldest first: the earliest date is 1., then 2., then 3. Saving regenerates the PDF with the signatures already on it — nobody signs again.</p>
+                </div>
+                <button type="button" disabled={warnEditBusy} onClick={() => setWarnEditDoc(null)} className="text-muted-foreground hover:text-white text-lg leading-none" aria-label="Close">✕</button>
+              </div>
+              <div className="px-5 py-4 space-y-3">
+                {warnEditRows.map((r, i) => (
+                  <div key={i} className="grid gap-2 sm:grid-cols-[1fr_150px_170px] items-start">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Warning — reason</span>
+                      <textarea rows={2} value={r.cause} onChange={(e) => setWarnEditRows((rows) => rows.map((x, j) => (j === i ? { ...x, cause: e.target.value } : x)))} className="glass-input text-sm px-2.5 py-1.5 rounded-md resize-none" placeholder="Leave empty to remove this line" />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Date</span>
+                      <input type="date" value={r.date} onChange={(e) => setWarnEditRows((rows) => rows.map((x, j) => (j === i ? { ...x, date: e.target.value } : x)))} className="glass-input text-sm px-2.5 py-1.5 rounded-md" />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Issued by</span>
+                      <input value={r.issuedBy} onChange={(e) => setWarnEditRows((rows) => rows.map((x, j) => (j === i ? { ...x, issuedBy: e.target.value } : x)))} className="glass-input text-sm px-2.5 py-1.5 rounded-md" />
+                    </label>
+                  </div>
+                ))}
+                {warnEditError && <p className="text-xs text-red-300">{warnEditError}</p>}
+              </div>
+              <div className="flex justify-end gap-2 px-5 py-3 border-t border-white/10">
+                <button type="button" disabled={warnEditBusy} onClick={() => setWarnEditDoc(null)} className="btn text-sm px-3 py-1.5">Cancel</button>
+                <button type="button" disabled={warnEditBusy} onClick={() => void saveWarnEdit()} className="btn text-sm px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white inline-flex items-center gap-1.5 disabled:opacity-50">
+                  {warnEditBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Save &amp; Regenerate PDF
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -23840,6 +23949,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status !== "cancelled" && (
+                            <>
+                              <button type="button" disabled={busy} onClick={() => openWarnEdit(doc)} className="btn text-[10px] px-2 py-1 disabled:opacity-50" title="Edit Previous Warnings 1, 2, 3 and regenerate the PDF">
+                                Edit Warnings 1-3
+                              </button>
+                              <button type="button" disabled={busy || warnRegenBusyId === doc.id} onClick={() => void handleRegenerateWarningPdf(doc)} className="btn text-[10px] px-2 py-1 disabled:opacity-50" title="Re-render the PDF with the signatures collected so far (previous warnings print oldest first)">
+                                {warnRegenBusyId === doc.id ? "Regenerating…" : "Regenerate PDF"}
+                              </button>
+                            </>
+                          )}
                           {doc.status === "pending_signature" && (
                             <button type="button" onClick={() => handleCopyWarningFormLink(doc)} className="btn text-[10px] px-2 py-1">
                               Copy Link
