@@ -78,7 +78,7 @@ function ImportBulkTicketsModal({ onClose }: { onClose: () => void }) {
   };
 
   const busy = stage === "importing";
-  const skippedCount = summary ? summary.skippedExisting.length + summary.skippedDuplicate.length + summary.skippedMissing.length : 0;
+  const skippedCount = summary ? summary.skippedExisting.length + summary.skippedDuplicate.length + summary.skippedMissing.length + summary.skippedExcelNumbers.length : 0;
 
   return (
     <AppModal
@@ -194,7 +194,16 @@ function ImportBulkTicketsModal({ onClose }: { onClose: () => void }) {
             {summary.totalRows} row{summary.totalRows === 1 ? "" : "s"} in {fileName}.
           </p>
 
+          {summary.skippedExcelNumbers.length > 0 && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-300">
+              This file was opened or saved in Excel, which changes ticket numbers (it drops leading zeros and turns numbers like 3890096E1 into 38900960).{" "}
+              {summary.skippedExcelNumbers.length} new ticket{summary.skippedExcelNumbers.length === 1 ? " wasn't" : "s weren't"} added because the number may be wrong. Import the file exactly as downloaded, without opening it in Excel, to add {summary.skippedExcelNumbers.length === 1 ? "it" : "them"}.
+            </div>
+          )}
+
           <div className="space-y-2 text-sm">
+            <Detail title="Not added — number may have been changed by Excel" items={summary.skippedExcelNumbers} danger />
+            <Detail title="Matched to the real ticket (Excel had changed the number)" items={summary.matchedExcelNumbers.map((m) => `${m.fileNo} → ${m.ticketNo}`)} />
             <Detail title="Updated" items={summary.updated.map((u) => `${u.ticketNo} — ${u.changes.join("; ")}`)} />
             <Detail title="Already in the system, nothing new" items={summary.unchanged} />
             <Detail title="Already in the system (added by someone else during the import)" items={summary.skippedExisting} />
