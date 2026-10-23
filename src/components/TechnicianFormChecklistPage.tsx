@@ -268,7 +268,20 @@ function writeCachedDocs(tab: ChecklistTabKey, entries: Map<string, SignableDocu
 
 type SortMode = "missing-desc" | "missing-asc" | "name" | "branch";
 
-export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean } = {}) {
+export function TechnicianFormChecklistPage({
+  embedded,
+  onAddConfidentialityEmployerSignature,
+  onSendToEmployer,
+  reloadSignal,
+}: {
+  embedded?: boolean;
+  /** Embedded in HR Paperworks: opens the Confidentiality & Non-Compete employer-signature dialog right here (switching tabs on the same page did nothing). */
+  onAddConfidentialityEmployerSignature?: (doc: SignableDocument) => void;
+  /** Embedded in HR Paperworks: hand the employer signature to another teammate (DM with the sign link). */
+  onSendToEmployer?: (doc: SignableDocument) => void;
+  /** Bumped by the parent after it signs something, so the checklist reloads. */
+  reloadSignal?: number;
+} = {}) {
   const navigate = useNavigate();
   const { uid, displayName } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
@@ -506,6 +519,11 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
   const load = useCallback(async () => {
     await Promise.all([loadUsers(), loadDocsForActiveTab()]);
   }, [loadUsers, loadDocsForActiveTab]);
+
+  useEffect(() => {
+    if (reloadSignal) void loadDocsForActiveTab();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadSignal]);
 
   useEffect(() => {
     void loadUsers();
@@ -1303,6 +1321,16 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
                                 {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bell className="h-3 w-3" />} Remind
                               </button>
                             )}
+                            {!na && awaitingHr && doc && onSendToEmployer && type !== "i9" && type !== "w4" && (
+                              <button
+                                type="button"
+                                onClick={() => onSendToEmployer(doc)}
+                                title="Send it to the teammate who signs for the company — they get a DM with the sign link"
+                                className="inline-flex shrink-0 items-center gap-1 text-xs text-violet-300 hover:text-violet-200"
+                              >
+                                <Send className="h-3 w-3" /> Send to Employer
+                              </button>
+                            )}
                             {!na && awaitingHr && (
                               type === "w4" && doc ? (
                                 <button
@@ -1317,13 +1345,15 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    navigate({
-                                      to: "/m/$module/$submodule",
-                                      params: { module: "hr", submodule: "hr-paperworks" },
-                                      search: { tab: "confidentialityNonCompeteAgreement" },
-                                    } as any)
+                                    onAddConfidentialityEmployerSignature
+                                      ? onAddConfidentialityEmployerSignature(doc)
+                                      : navigate({
+                                          to: "/m/$module/$submodule",
+                                          params: { module: "hr", submodule: "hr-paperworks" },
+                                          search: { tab: "confidentialityNonCompeteAgreement" },
+                                        } as any)
                                   }
-                                  title="Add the employer signature in HR Paperworks"
+                                  title="Add the employer signature (Company signer) to this agreement"
                                   className="inline-flex shrink-0 items-center gap-1 text-xs text-sky-300 hover:text-sky-200"
                                 >
                                   <PenLine className="h-3 w-3" /> Add Employer Signature

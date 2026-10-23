@@ -59,6 +59,7 @@ import {
   uploadMasterW2AgreementForm,
   uploadMasterW2OfficeAgreementForm,
   uploadMasterPhContractorAgreementForm,
+  uploadConfidentialityNonCompeteAgreementForm,
   refreshStorageAuthToken,
 } from "@/lib/firebase/storage";
 import { fillPartsResponsibilityPdf } from "@/lib/partsResponsibilityPdfFill";
@@ -74,6 +75,7 @@ import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
 import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
 import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
 import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
+import { captureConfidentialityNonCompeteAgreementPdf, type ConfidentialityNonCompeteAgreementFormData } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
@@ -111,6 +113,7 @@ const TYPE_LABEL: Partial<Record<SignableDocumentType, string>> = {
   master_w2_agreement: "Master W-2 Technician Comprehensive Policy, Consent & Agreement",
   master_w2_office_agreement: "Master W-2 Office & Logistics Comprehensive Policy, Conduct & Agreement",
   master_ph_contractor_agreement: "Master Philippines Independent Contractor Comprehensive Agreement",
+  confidentiality_noncompete_agreement: "Master Confidentiality & Non-Compete Agreement",
 };
 
 interface UniformSignConfig {
@@ -149,7 +152,7 @@ const UNIFORM_CONFIGS: Partial<Record<SignableDocumentType, UniformSignConfig>> 
  * (everything but i9) vs. still needs the plain "Needs your review" text
  * pointing HR at Attendance Monitoring instead.
  */
-export const SUPPORTED_TYPES = new Set<SignableDocumentType>(["parts_responsibility", "master_w2_agreement", "master_w2_office_agreement", "master_ph_contractor_agreement", ...Object.keys(UNIFORM_CONFIGS) as SignableDocumentType[]]);
+export const SUPPORTED_TYPES = new Set<SignableDocumentType>(["parts_responsibility", "master_w2_agreement", "master_w2_office_agreement", "master_ph_contractor_agreement", "confidentiality_noncompete_agreement", ...Object.keys(UNIFORM_CONFIGS) as SignableDocumentType[]]);
 
 export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) {
   const { ready, uid, displayName, role } = useAuth();
@@ -162,6 +165,8 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
   const [reopening, setReopening] = useState(false);
 
   const sigPad = useSignaturePad({ width: 440, height: 100 });
+  // Confidentiality & Non-Compete Agreement: the Company signer's printed name / title (the same box HR's own dialog asks for).
+  const [printedNameTitle, setPrintedNameTitle] = useState("");
 
   useEffect(() => {
     if (!ready || !uid) return;
@@ -315,8 +320,36 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
     setDoc({ ...doc, status: "confirmed", pdfUrl, formData: merged as unknown as Record<string, any> });
   };
 
+  // Same steps as HR Paperworks' "Add Employer Signature" for this agreement:
+  // multi-page PDF re-rendered with both signatures, then confirmed.
+  const handleSubmitConfidentialityNonCompeteAgreement = async (dataUrl: string) => {
+    if (!doc) return;
+    const existing = doc.formData as unknown as ConfidentialityNonCompeteAgreementFormData;
+    await refreshStorageAuthToken();
+    const signatureUrl = await uploadSignableDocumentSignature(doc.companyId, doc.id, "hr_staff", dataUrl);
+    const signedAt = new Date().toISOString();
+    const merged: ConfidentialityNonCompeteAgreementFormData = {
+      ...existing,
+      employerSignatureDataUrl: dataUrl,
+      employerDateSigned: signedAt,
+      employerPrintedNameTitle: printedNameTitle.trim(),
+    };
+    const logo = await loadAssetDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
+    const pdfBlob = await captureConfidentialityNonCompeteAgreementPdf(merged, logo);
+    const pdfUrl = await uploadConfidentialityNonCompeteAgreementForm(doc.companyId, existing.employeeName || "confidentiality-noncompete-agreement", pdfBlob);
+    const entry = { name: displayName || "Manager", url: signatureUrl, signedAt };
+    await signDocument(doc.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
+    await confirmSignableDocument(doc.id, null);
+    void logActivity({ action: "confidentiality_noncompete_agreement_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+    setDoc({ ...doc, status: "confirmed", pdfUrl, formData: merged as unknown as Record<string, any> });
+  };
+
   const handleSubmit = async () => {
     if (!doc || !myProfileId) return;
+    if (doc.documentType === "confidentiality_noncompete_agreement" && !printedNameTitle.trim()) {
+      setError("Enter your printed name / title.");
+      return;
+    }
     if (!sigPad.hasContent()) {
       setError("Please add your signature.");
       return;
@@ -337,6 +370,8 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
         await handleSubmitMasterW2OfficeAgreement(dataUrl);
       } else if (doc.documentType === "master_ph_contractor_agreement") {
         await handleSubmitMasterPhContractorAgreement(dataUrl);
+      } else if (doc.documentType === "confidentiality_noncompete_agreement") {
+        await handleSubmitConfidentialityNonCompeteAgreement(dataUrl);
       } else {
         const config = UNIFORM_CONFIGS[doc.documentType];
         if (!config) return;
@@ -422,6 +457,17 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
               Manager/employer signature for <span className="font-semibold text-foreground">{employeeName}</span>'s {label}.
             </p>
 
+            {doc.documentType === "confidentiality_noncompete_agreement" && (
+              <div className="mb-3">
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">Your printed name / title</label>
+                <input
+                  value={printedNameTitle}
+                  onChange={(e) => setPrintedNameTitle(e.target.value)}
+                  placeholder={displayName ? `${displayName}, Title` : "Name, Title"}
+                  className="glass-input w-full text-sm py-1.5 px-2.5 rounded-md"
+                />
+              </div>
+            )}
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
             <canvas
               {...sigPad.canvasProps}
