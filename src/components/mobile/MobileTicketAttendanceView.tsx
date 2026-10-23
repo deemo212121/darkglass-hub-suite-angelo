@@ -190,12 +190,14 @@ export function MobileTicketAttendanceView({ profileId }: { profileId: string | 
     for (const r of ticketRows) {
       const key = r.technician.trim().toLowerCase();
       if (visibleNames && !visibleNames.has(key)) continue;
-      if (!byTech.has(r.technician)) byTech.set(r.technician, []);
-      byTech.get(r.technician)!.push(r);
+      // One row per person even when tickets spell the name differently ("Chris carroll" / "Chris Carroll").
+      if (!byTech.has(key)) byTech.set(key, []);
+      byTech.get(key)!.push(r);
     }
     const built: TechSummary[] = Array.from(byTech.entries())
-      .map(([technician, techRows]) => {
-        const employee = employeeByName.get(technician.trim().toLowerCase());
+      .map(([key, techRows]) => {
+        const employee = employeeByName.get(key);
+        const technician = employee?.display_name || techRows[0].technician;
         const tc = employee ? timecardByProfile.get(employee.id) : undefined;
         const note = employee ? noteByProfile.get(employee.id) : undefined;
         return {

@@ -243,7 +243,7 @@ export function TicketAttendanceTab({ offTechsOnly = false }: { offTechsOnly?: b
   // timecard map below and reading a technician's assigned branch — same
   // normalized-name matching mileage sync uses.
   const employeeByNormalizedName = useMemo(
-    () => new Map(employees.map((e) => [(e.display_name || "").trim().toLowerCase(), e])),
+    () => new Map(employees.map((e) => [(e.display_name || "").trim().replace(/s+/g, " ").toLowerCase(), e])),
     [employees]
   );
   // Every distinct branch on file — the Location filter's checklist options.
@@ -295,16 +295,21 @@ export function TicketAttendanceTab({ offTechsOnly = false }: { offTechsOnly?: b
         const bucket = row.scheduleDate === todayISO ? "notYet" : row.scheduleDate < todayISO ? "absent" : "upcoming";
         if (offStatusFilter !== "all" && bucket !== offStatusFilter) continue;
       }
-      if (!byTech.has(row.technician)) byTech.set(row.technician, []);
-      byTech.get(row.technician)!.push(row);
+      // One row per person: tickets spell a name differently at times
+      // ("Chris carroll" / "Chris Carroll"), so group case- and space-insensitively.
+      const key = row.technician.trim().replace(/s+/g, " ").toLowerCase();
+      if (!byTech.has(key)) byTech.set(key, []);
+      byTech.get(key)!.push(row);
     }
     return Array.from(byTech.entries())
-      .map(([technician, techRows]) => {
+      .map(([key, techRows]) => {
+        // Shown as the account's own name when matched, else the first spelling seen.
+        const technician = employeeByNormalizedName.get(key)?.display_name || techRows[0].technician;
         const scheduled = techRows.length;
         const checkedIn = techRows.filter((r) => r.arrivedAt).length;
         const missingCheckIn = techRows.filter((r) => !r.arrivedAt && r.statusGroup !== "cancelled" && !disputedTicketNosApproved.has(r.ticketNo)).length;
         const missingCheckOut = techRows.filter((r) => r.arrivedAt && !r.doneAt && r.statusGroup !== "cancelled" && !disputedTicketNosApproved.has(r.ticketNo)).length;
-        const employee = employeeByNormalizedName.get(technician.trim().toLowerCase());
+        const employee = employeeByNormalizedName.get(key);
         const timecard = isSingleDay && employee ? timecardByProfileDate.get(`${employee.id}|${dateFrom}`) : undefined;
         const note = isSingleDay && employee ? noteByProfileDate.get(`${employee.id}|${dateFrom}`) : undefined;
         // Date then route order (slotSortKey) — same helper Technician

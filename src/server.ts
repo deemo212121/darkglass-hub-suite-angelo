@@ -379,6 +379,17 @@ export default {
       ),
     );
 
+    // Trainee -> Regular once their Field Start day arrives (Central time),
+    // even if nobody opens HR -> Training List. Idempotent.
+    ctx.waitUntil(
+      import("./lib/server/traineeGraduation").then(
+        ({ runTraineeGraduation }) => runTraineeGraduation(merged),
+      ).then(
+        (result) => { if (result.graduated.length || result.errors.length) console.log("traineeGraduation:", JSON.stringify(result)); },
+        (error) => console.error("traineeGraduation failed:", error),
+      ),
+    );
+
     // No separate cron entry for this either — the hourly tick above lands on an
     // exact America/Chicago hour boundary too (see passwordResetSchedule.ts's
     // header comment), so this just checks "is it Monday 00:00 Chicago time
