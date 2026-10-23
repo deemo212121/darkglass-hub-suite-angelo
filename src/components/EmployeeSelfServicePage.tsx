@@ -41,6 +41,8 @@ import {
   CORRECTION_MEAL_REQUIRED_AFTER_MINUTES,
   validateSelfCorrectionDate,
   selfCorrectionEarliestDate,
+  getSelfCorrectionWindow,
+  type SelfCorrectionWindow,
   type TimecardCorrectionRow,
 } from "@/lib/supabase/timecardCorrections";
 import { zonedDateKey } from "@/lib/serverTime";
@@ -282,6 +284,17 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
       .catch(() => {});
     return () => { cancelled = true; };
   }, [myProfileId, formData.correctionDate]);
+  // How far back the date picker goes: 2 days, or just yesterday once today
+  // already has a Check Out — re-read each time the Time Correction form opens.
+  const [correctionWindow, setCorrectionWindow] = useState<SelfCorrectionWindow | null>(null);
+  useEffect(() => {
+    if (!showModal || modalType !== "correction" || !myProfileId) return;
+    let cancelled = false;
+    getSelfCorrectionWindow(myProfileId)
+      .then((w) => { if (!cancelled) setCorrectionWindow(w); })
+      .catch((e) => console.error("time correction: load window failed", e));
+    return () => { cancelled = true; };
+  }, [showModal, modalType, myProfileId]);
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const correctionSigPad =useSignaturePad({ width: 400, height: 110, defaultName: displayName || "" });
   // Reused for both Sick Leave and Unpaid Leave (mutually exclusive modal states).
@@ -582,6 +595,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   );
   const myPtoUsed = myPtoYearRequests.reduce((sum, r) => sum + r.hoursRequested / 8, 0);
   const myPtoRemaining = myPtoYear ? Math.max(0, myPtoYear.allowance - myPtoUsed) : 0;
+  // Every PTO day this year is approved or pending — the PTO Request button locks until the anniversary reset.
+  const myPtoUsedUp = ptoEligible && !!myPtoYear && myPtoRemaining <= 0;
   const myPtoYearRequestIds = useMemo(
     () => new Set(myPtoYearRequests.map((r) => `pto-${r.id}`)),
     [myPtoYearRequests]
@@ -933,7 +948,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             setSubmitting(false);
             return;
           }
-          // No future dates, and only the same day or by the next weekday (Friday until Monday).
+          // No future dates; up to 2 days back, or only today and yesterday once today has a Check Out.
           await validateSelfCorrectionDate(myProfileId, formData.correctionDate);
           // Re-read the day's real punches at submit time for the "original"
           // times saved with the request (the 30-day attendance list misses
@@ -1806,6 +1821,11 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 You're not yet eligible for PTO — employees need 1 year of tenure first. You'll be eligible starting {ptoEligibleOn}.
               </div>
             )}
+            {myPtoUsedUp && myPtoYear && (
+              <div className="bg-amber-500/10 border border-amber-400/40 rounded-lg p-3 text-xs text-amber-100">
+                You've used all {myPtoYear.allowance} PTO days for Year {myPtoYear.tenureYear} (approved or still pending). PTO requests reopen on {myPtoYear.end}. Unpaid Leave is still available.
+              </div>
+            )}
             <div data-tour="ess-req-buttons" className="grid gap-3 md:grid-cols-2">
               <button data-tour="ess-req-pto"
                 type="button"
@@ -1819,8 +1839,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   setModalType("pto");
                   setShowModal(true);
                 }}
-                disabled={!ptoEligible}
-                title={!ptoEligibilityKnown ? "Checking PTO eligibility…" : !ptoEligible ? `Not eligible until ${ptoEligibleOn} — PTO needs 1 year with the company` : undefined}
+                disabled={!ptoEligible || myPtoUsedUp}
+                title={!ptoEligibilityKnown ? "Checking PTO eligibility…" : !ptoEligible ? `Not eligible until ${ptoEligibleOn} — PTO needs 1 year with the company` : myPtoUsedUp && myPtoYear ? `No PTO days left — resets ${myPtoYear.end}` : undefined}
                 className="px-4 py-3 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-green-600 text-white rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2"
               >
                 <Plus className="h-4 w-4" />
@@ -2137,10 +2157,19 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                             type="date"
                             value={formData.endDate}
                             onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
-                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500" 
+                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
                           />
                         </div>
                       </div>
+                      {modalType === "pto" && formData.startDate && formData.endDate && formData.startDate <= formData.endDate && (() => {
+                        const days = workingDayCount(formData.startDate, formData.endDate, companyProfiles.find((p) => p.id === myProfileId)?.off_days);
+                        return (
+                          <p className={`text-xs ${myPtoYear && days > myPtoRemaining ? "text-red-300" : "text-slate-400"}`}>
+                            Counts as {days} PTO day{days === 1 ? "" : "s"}. Your rest days (Sat/Sun unless your schedule says otherwise) aren't counted.
+                            {myPtoYear && ` You have ${myPtoRemaining} left.`}
+                          </p>
+                        );
+                      })()}
                     </>
                   )}
                   {modalType === "correction" && (
@@ -2150,13 +2179,19 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                         <input
                           type="date"
                           title="Date"
-                          max={zonedDateKey(new Date(), companyProfiles.find((p) => p.id === myProfileId)?.schedule_timezone === "EST" ? "EST" : "CST")}
-                          min={selfCorrectionEarliestDate(zonedDateKey(new Date(), companyProfiles.find((p) => p.id === myProfileId)?.schedule_timezone === "EST" ? "EST" : "CST"))}
+                          max={correctionWindow?.today ?? zonedDateKey(new Date(), companyProfiles.find((p) => p.id === myProfileId)?.schedule_timezone === "EST" ? "EST" : "CST")}
+                          min={correctionWindow?.earliest ?? selfCorrectionEarliestDate(zonedDateKey(new Date(), companyProfiles.find((p) => p.id === myProfileId)?.schedule_timezone === "EST" ? "EST" : "CST"), false)}
                           value={formData.correctionDate}
                           onChange={(e) => setFormData({ ...formData, correctionDate: e.target.value })}
                           className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
                         />
-                        <p className="text-[11px] text-slate-500 mt-1">You can correct today, or a day up to the next weekday (Friday until Monday). Older days: contact HR.</p>
+                        <p className="text-[11px] text-slate-500 mt-1">
+                          {correctionWindow?.fridayOpen
+                            ? "You have no Saturday or Sunday timecard, so you can still correct back to Friday. Older days: contact HR."
+                            : correctionWindow?.clockedOutToday
+                              ? "You've clocked out today, so you can correct today or yesterday. Older days: contact HR."
+                              : "You can correct today or up to 2 days back (only today and yesterday once you've clocked out today). Older days: contact HR."}
+                        </p>
                         {formData.correctionDate && (
                           <p className="text-xs text-slate-500 mt-1">
                             {(() => {

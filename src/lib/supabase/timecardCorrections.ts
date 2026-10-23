@@ -468,38 +468,82 @@ function shiftIsoDay(iso: string, days: number): string {
   const dt = new Date(Date.UTC(y, m - 1, d + days));
   return dt.toISOString().slice(0, 10);
 }
-/** The first Mon–Fri strictly after `iso`. */
-function nextWeekday(iso: string): string {
-  let d = shiftIsoDay(iso, 1);
-  while ([0, 6].includes(new Date(d + "T00:00:00Z").getUTCDay())) d = shiftIsoDay(d, 1);
-  return d;
-}
-
 /**
- * Employee self-service window: a day can be corrected on the day itself or
- * up to the end of the NEXT WEEKDAY — Friday until Monday (Sat/Sun count),
- * Monday until Tuesday, a Saturday/Sunday until Monday. Returns the earliest
+ * Employee self-service window, in calendar days: until they've clocked out
+ * today they can correct today and the 2 days before it; once today has a
+ * Check Out, only today and yesterday. On a Monday with no Saturday or Sunday
+ * timecard (`fridayOpen`), Friday is still open too. Returns the earliest
  * work date that's still correctable when it's `today`.
  * (HR/Admin filing on someone's behalf isn't limited by this.)
  */
-export function selfCorrectionEarliestDate(today: string): string {
-  let earliest = today;
-  for (let d = shiftIsoDay(today, -1); nextWeekday(d) >= today; d = shiftIsoDay(d, -1)) earliest = d;
-  return earliest;
+export function selfCorrectionEarliestDate(today: string, clockedOutToday: boolean, fridayOpen = false): string {
+  return shiftIsoDay(today, fridayOpen ? -3 : clockedOutToday ? -1 : -2);
+}
+
+function isMondayIso(iso: string): boolean {
+  return new Date(iso + "T00:00:00Z").getUTCDay() === 1;
+}
+
+/**
+ * Per day: whether it has any punch, and whether it has a Check Out — on the
+ * real timecard, or (a trainee) on a day still awaiting approval
+ * (trainee_timecard_entries, migration 0216). A notes-only row isn't a punch.
+ */
+async function getDayPunches(profileId: string, workDates: string[]): Promise<Map<string, { punched: boolean; checkedOut: boolean }>> {
+  const cols = "work_date, check_in, check_out, meal_start, meal_end";
+  const [real, trainee] = await Promise.all([
+    supabase.from("timecard_entries").select(cols).eq("profile_id", profileId).in("work_date", workDates),
+    supabase.from("trainee_timecard_entries").select(cols).eq("profile_id", profileId).in("work_date", workDates),
+  ]);
+  if (real.error) throw real.error;
+  const days = new Map<string, { punched: boolean; checkedOut: boolean }>();
+  // Non-trainees have no rows there; a failed read just leaves the real timecard's answer.
+  for (const r of [...(real.data ?? []), ...(trainee.error ? [] : (trainee.data ?? []))]) {
+    const prev = days.get(r.work_date);
+    days.set(r.work_date, {
+      punched: !!prev?.punched || !!(r.check_in || r.check_out || r.meal_start || r.meal_end),
+      checkedOut: !!prev?.checkedOut || !!r.check_out,
+    });
+  }
+  return days;
+}
+
+export interface SelfCorrectionWindow {
+  today: string;
+  earliest: string;
+  clockedOutToday: boolean;
+  /** Monday with no Saturday or Sunday timecard: Friday can still be corrected. */
+  fridayOpen: boolean;
+}
+
+/** The employee's self-service window right now — server clock in their attendance timezone, plus today's Check Out and (on a Monday) the weekend's punches. */
+export async function getSelfCorrectionWindow(profileId: string): Promise<SelfCorrectionWindow> {
+  const { data: profile, error } = await supabase.from("profiles").select("schedule_timezone").eq("id", profileId).single();
+  if (error) throw error;
+  const today = zonedDateKey(await getServerNow(), profile.schedule_timezone === "EST" ? "EST" : "CST");
+  const monday = isMondayIso(today);
+  const saturday = shiftIsoDay(today, -2);
+  const sunday = shiftIsoDay(today, -1);
+  const days = await getDayPunches(profileId, monday ? [today, saturday, sunday] : [today]);
+  const clockedOutToday = !!days.get(today)?.checkedOut;
+  // Worked Saturday or Sunday → Friday stays closed.
+  const fridayOpen = monday && !days.get(saturday)?.punched && !days.get(sunday)?.punched;
+  return { today, earliest: selfCorrectionEarliestDate(today, clockedOutToday, fridayOpen), clockedOutToday, fridayOpen };
 }
 
 /** Self-service submit check (desktop Employee Self Service + mobile): no future dates, and within the window above. */
 export async function validateSelfCorrectionDate(profileId: string, workDate: string): Promise<void> {
-  const { data: profile, error } = await supabase.from("profiles").select("schedule_timezone").eq("id", profileId).single();
-  if (error) throw error;
-  const today = zonedDateKey(await getServerNow(), profile.schedule_timezone === "EST" ? "EST" : "CST");
+  const { today, earliest, clockedOutToday, fridayOpen } = await getSelfCorrectionWindow(profileId);
   if (workDate > today) {
     throw new Error("Time correction requests cannot be submitted for future dates. Choose today or an earlier date.");
   }
-  const earliest = selfCorrectionEarliestDate(today);
   if (workDate < earliest) {
     throw new Error(
-      `That day can no longer be corrected here. A day can be corrected on the same day or by the next weekday (Friday until Monday), so the earliest date you can pick today is ${earliest}. Contact HR for older days.`
+      isMondayIso(today) && workDate === shiftIsoDay(today, -3)
+        ? "Friday can only be corrected on Monday if you have no Saturday or Sunday timecard. Contact HR to correct it."
+        : clockedOutToday && !fridayOpen
+          ? `You've already clocked out today, so you can only correct today or yesterday (${earliest}). Contact HR for older days.`
+          : `That day can no longer be corrected here. The earliest date you can pick today is ${earliest}. Contact HR for older days.`
     );
   }
 }
