@@ -8,14 +8,18 @@
  *
  * This bridge keeps the secret on the server only (never shipped to the
  * browser) and caches the token across requests so each user action doesn't
- * burn an auth round-trip. It also proxies arbitrary read-only mSupply calls
- * so the client side can issue them without exposing the secret.
+ * burn an auth round-trip. It also proxies the mSupply calls the app makes
+ * (BROWSER_ALLOWED below), for signed-in active users only, so the client
+ * side can issue them without exposing the secret. Server jobs call
+ * marconeServerRequest directly.
  *
  * Secrets resolve from (in order):
  *   1. Vite build-time constants (globalThis.__MARCONE_* — baked into the
  *      server bundle only, NEVER the client bundle).
  *   2. Runtime env (Cloudflare Workers binding or process.env).
  */
+
+import { requireActiveCaller } from "./requireActiveCaller";
 
 const MARCONE_PROD_BASE = "https://api.msupply.com";
 const MARCONE_INT_BASE = "https://int-api.msupply.com";
@@ -112,8 +116,149 @@ async function getCachedToken(
   return token;
 }
 
+/** Marcone env + credentials (build-time constants first, then runtime env). */
+function resolveMarconeConfig(env?: Record<string, string | undefined>):
+  | { ok: true; envName: string; clientId: string; clientSecret: string }
+  | { ok: false; envName: string; probe: Record<string, unknown> } {
+  const getEnv = (k: string): string | undefined =>
+    env?.[k] ?? (typeof process !== "undefined" ? process.env?.[k] : undefined);
+  const pick = (injected: unknown, envKey: string): string | undefined => {
+    if (typeof injected === "string" && injected !== "") return injected;
+    return getEnv(envKey);
+  };
+  const envName = pick((globalThis as any).__MARCONE_ENV__, "VITE_MARCONE_ENV") || "integration";
+  const clientId =
+    envName === "production"
+      ? pick((globalThis as any).__MARCONE_PROD_CLIENT_ID__, "VITE_MARCONE_PROD_CLIENT_ID")
+      : pick((globalThis as any).__MARCONE_INT_CLIENT_ID__, "VITE_MARCONE_INT_CLIENT_ID");
+  const clientSecret =
+    envName === "production"
+      ? pick((globalThis as any).__MARCONE_PROD_CLIENT_SECRET__, "VITE_MARCONE_PROD_CLIENT_SECRET")
+      : pick((globalThis as any).__MARCONE_INT_CLIENT_SECRET__, "VITE_MARCONE_INT_CLIENT_SECRET");
+  if (clientId && clientSecret) return { ok: true, envName, clientId, clientSecret };
+  // Which path failed (build-time define vs runtime env) — values are only
+  // flagged present/missing, never logged in the clear.
+  const len = (v: unknown) => (typeof v === "string" ? v.length : null);
+  return {
+    ok: false,
+    envName,
+    probe: {
+      injectedEnv: (globalThis as any).__MARCONE_ENV__ ?? null,
+      injectedIntIdLen: len((globalThis as any).__MARCONE_INT_CLIENT_ID__),
+      injectedIntSecretLen: len((globalThis as any).__MARCONE_INT_CLIENT_SECRET__),
+      injectedProdIdLen: len((globalThis as any).__MARCONE_PROD_CLIENT_ID__),
+      injectedProdSecretLen: len((globalThis as any).__MARCONE_PROD_CLIENT_SECRET__),
+      envHasIntId: Boolean(getEnv("VITE_MARCONE_INT_CLIENT_ID")),
+      envHasIntSecret: Boolean(getEnv("VITE_MARCONE_INT_CLIENT_SECRET")),
+      envHasProdId: Boolean(getEnv("VITE_MARCONE_PROD_CLIENT_ID")),
+      envHasProdSecret: Boolean(getEnv("VITE_MARCONE_PROD_CLIENT_SECRET")),
+      chosenEnv: envName,
+      envKeysAvailable: env ? Object.keys(env).filter((k) => k.startsWith("VITE_MARCONE")) : [],
+    },
+  };
+}
+
+export interface MarconeServerResult {
+  success: boolean;
+  status?: number;
+  data?: unknown;
+  error?: string;
+}
+
 /**
- * Handle a POST /api/marcone request. Returns a standard Response.
+ * One mSupply call with the company's credentials — server-side only. Shared
+ * by the /api/marcone browser bridge below and server jobs (e.g.
+ * partCreditSync.ts), so neither has to go through the other.
+ */
+export async function marconeServerRequest(
+  env: Record<string, string | undefined> | undefined,
+  req: { method?: string; path: string; query?: MarconeRequestBody["query"]; body?: unknown },
+): Promise<MarconeServerResult> {
+  const config = resolveMarconeConfig(env);
+  if (!config.ok) return { success: false, error: `Marcone ${config.envName} credentials not configured on server` };
+  const { envName, clientId, clientSecret } = config;
+  const method = (req.method || "GET").toUpperCase();
+  let token: string;
+  try {
+    token = await getCachedToken(envName, clientId, clientSecret);
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+
+  const url = new URL(getBaseUrl(envName) + req.path);
+  if (req.query) {
+    for (const [k, v] of Object.entries(req.query)) {
+      if (v === undefined || v === null || v === "") continue;
+      url.searchParams.set(k, String(v));
+    }
+  }
+  const init: RequestInit = {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      ...(req.body !== undefined ? { "Content-Type": "application/json" } : {}),
+    },
+    body: req.body !== undefined ? JSON.stringify(req.body) : undefined,
+  };
+
+  const upstream = await fetch(url.toString(), init);
+
+  // Some endpoints (e.g. /returns/reaQrCode) return raw binary
+  // (application/octet-stream) instead of JSON — .text() would corrupt
+  // that. Detect it up front and base64-encode instead of parsing.
+  const upstreamContentType = upstream.headers.get("content-type") || "";
+  const isBinary = !upstreamContentType.includes("json") && !upstreamContentType.includes("text");
+  if (isBinary) {
+    const buf = await upstream.arrayBuffer();
+    const base64 =
+      typeof Buffer !== "undefined"
+        ? Buffer.from(buf).toString("base64")
+        : btoa(String.fromCharCode(...new Uint8Array(buf)));
+    return { success: upstream.ok, status: upstream.status, data: { base64, contentType: upstreamContentType || "application/octet-stream" } };
+  }
+
+  const parse = (text: string): unknown => {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text; // not JSON — return as text
+    }
+  };
+  const payload = parse(await upstream.text());
+
+  // Token expired mid-flight? Try ONCE more after a refresh.
+  if (upstream.status === 401 && tokenCache) {
+    tokenCache = null;
+    try {
+      const fresh = await getCachedToken(envName, clientId, clientSecret);
+      const retry = await fetch(url.toString(), { ...init, headers: { ...init.headers, Authorization: `Bearer ${fresh}` } });
+      return { success: retry.ok, status: retry.status, data: parse(await retry.text()) };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+  return { success: upstream.ok, status: upstream.status, data: payload };
+}
+
+/**
+ * The mSupply calls the app itself makes from the browser (marconeApi.ts,
+ * partOrders.ts) — nothing else passes, so a signed-in user still can't use
+ * this bridge as a general Marcone console.
+ */
+const BROWSER_ALLOWED: Record<string, string[]> = {
+  "/parts/lookup": ["POST"],
+  "/orders/orderstatus": ["POST"],
+  "/orders/purchaseorder": ["POST"],
+  "/orders/trackpackage": ["POST"],
+  "/returns/findreturnableitems": ["POST"],
+  "/returns/requestreturnauthorization": ["POST"],
+  "/returns/reaQrCode": ["GET"],
+};
+
+/**
+ * Handle a POST /api/marcone request. Returns a standard Response. Signed-in,
+ * active users only (requireActiveCaller), and only BROWSER_ALLOWED calls.
  */
 export async function handleMarconeRequest(
   request: Request,
@@ -129,83 +274,31 @@ export async function handleMarconeRequest(
     return json({ success: false, error: "Method not allowed" }, 405);
   }
 
-  const getEnv = (k: string): string | undefined =>
-    env?.[k] ?? (typeof process !== "undefined" ? process.env?.[k] : undefined);
-  const pick = (injected: unknown, envKey: string): string | undefined => {
-    if (typeof injected === "string" && injected !== "") return injected;
-    return getEnv(envKey);
-  };
-
   try {
-    const body = (await request.json()) as MarconeRequestBody;
-    const envName =
-      pick((globalThis as any).__MARCONE_ENV__, "VITE_MARCONE_ENV") || "integration";
+    const body = (await request.json()) as MarconeRequestBody & { idToken?: string };
+    const caller = await requireActiveCaller(body.idToken, env);
+    if (!caller.ok) return json({ success: false, error: caller.error }, caller.status);
 
-    const clientId =
-      envName === "production"
-        ? pick((globalThis as any).__MARCONE_PROD_CLIENT_ID__, "VITE_MARCONE_PROD_CLIENT_ID")
-        : pick((globalThis as any).__MARCONE_INT_CLIENT_ID__, "VITE_MARCONE_INT_CLIENT_ID");
-    const clientSecret =
-      envName === "production"
-        ? pick((globalThis as any).__MARCONE_PROD_CLIENT_SECRET__, "VITE_MARCONE_PROD_CLIENT_SECRET")
-        : pick((globalThis as any).__MARCONE_INT_CLIENT_SECRET__, "VITE_MARCONE_INT_CLIENT_SECRET");
-
-    if (!clientId || !clientSecret) {
-      // Help us debug which path failed (build-time define vs runtime env).
-      // Values are only flagged present/missing — never logged in the clear.
-      const probe = {
-        injectedEnv: (globalThis as any).__MARCONE_ENV__ ?? null,
-        injectedIntIdLen:
-          typeof (globalThis as any).__MARCONE_INT_CLIENT_ID__ === "string"
-            ? (globalThis as any).__MARCONE_INT_CLIENT_ID__.length
-            : null,
-        injectedIntSecretLen:
-          typeof (globalThis as any).__MARCONE_INT_CLIENT_SECRET__ === "string"
-            ? (globalThis as any).__MARCONE_INT_CLIENT_SECRET__.length
-            : null,
-        injectedProdIdLen:
-          typeof (globalThis as any).__MARCONE_PROD_CLIENT_ID__ === "string"
-            ? (globalThis as any).__MARCONE_PROD_CLIENT_ID__.length
-            : null,
-        injectedProdSecretLen:
-          typeof (globalThis as any).__MARCONE_PROD_CLIENT_SECRET__ === "string"
-            ? (globalThis as any).__MARCONE_PROD_CLIENT_SECRET__.length
-            : null,
-        envHasIntId: Boolean(getEnv("VITE_MARCONE_INT_CLIENT_ID")),
-        envHasIntSecret: Boolean(getEnv("VITE_MARCONE_INT_CLIENT_SECRET")),
-        envHasProdId: Boolean(getEnv("VITE_MARCONE_PROD_CLIENT_ID")),
-        envHasProdSecret: Boolean(getEnv("VITE_MARCONE_PROD_CLIENT_SECRET")),
-        chosenEnv: envName,
-        envKeysAvailable: env ? Object.keys(env).filter((k) => k.startsWith("VITE_MARCONE")) : [],
-      };
-      return json(
-        {
-          success: false,
-          error: `Marcone ${envName} credentials not configured on server`,
-          debug: probe,
-        },
-        500,
-      );
+    const config = resolveMarconeConfig(env);
+    if (!config.ok) {
+      return json({ success: false, error: `Marcone ${config.envName} credentials not configured on server`, debug: config.probe }, 500);
     }
 
     if (body.action === "getToken") {
       // Surfaced as a separate action mostly for debugging / health checks.
       // Returns whether auth works without exposing the bearer to the client.
       try {
-        const token = await getCachedToken(envName, clientId, clientSecret);
+        const token = await getCachedToken(config.envName, config.clientId, config.clientSecret);
         return json({
           success: true,
-          env: envName,
-          baseUrl: getBaseUrl(envName),
+          env: config.envName,
+          baseUrl: getBaseUrl(config.envName),
           // Just a fingerprint, not the actual token.
           tokenFingerprint: `${token.slice(0, 6)}…${token.slice(-4)} (${token.length} chars)`,
           expiresAt: tokenCache?.expiresAt ?? null,
         });
       } catch (err) {
-        return json(
-          { success: false, error: err instanceof Error ? err.message : String(err) },
-          500,
-        );
+        return json({ success: false, error: err instanceof Error ? err.message : String(err) }, 500);
       }
     }
 
@@ -215,95 +308,14 @@ export async function handleMarconeRequest(
         return json({ success: false, error: "request.path must start with '/'" }, 400);
       }
       const method = (body.method || "GET").toUpperCase();
-      let token: string;
-      try {
-        token = await getCachedToken(envName, clientId, clientSecret);
-      } catch (err) {
-        return json(
-          { success: false, error: err instanceof Error ? err.message : String(err) },
-          500,
-        );
+      if (!BROWSER_ALLOWED[path]?.includes(method)) {
+        return json({ success: false, error: `Not allowed: ${method} ${path}` }, 403);
       }
-
-      const url = new URL(getBaseUrl(envName) + path);
-      if (body.query) {
-        for (const [k, v] of Object.entries(body.query)) {
-          if (v === undefined || v === null || v === "") continue;
-          url.searchParams.set(k, String(v));
-        }
-      }
-
-      const init: RequestInit = {
-        method,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-          ...(body.body !== undefined ? { "Content-Type": "application/json" } : {}),
-        },
-        body: body.body !== undefined ? JSON.stringify(body.body) : undefined,
-      };
-
-      const upstream = await fetch(url.toString(), init);
-
-      // Some endpoints (e.g. /returns/reaQrCode) return raw binary
-      // (application/octet-stream) instead of JSON — .text() would corrupt
-      // that. Detect it up front and base64-encode instead of parsing.
-      const upstreamContentType = upstream.headers.get("content-type") || "";
-      const isBinary = !upstreamContentType.includes("json") && !upstreamContentType.includes("text");
-
-      if (isBinary) {
-        const buf = await upstream.arrayBuffer();
-        const base64 =
-          typeof Buffer !== "undefined"
-            ? Buffer.from(buf).toString("base64")
-            : btoa(String.fromCharCode(...new Uint8Array(buf)));
-        return json(
-          {
-            success: upstream.ok,
-            status: upstream.status,
-            data: { base64, contentType: upstreamContentType || "application/octet-stream" },
-          },
-          200,
-        );
-      }
-
-      const text = await upstream.text();
-      let payload: unknown = text;
-      try {
-        payload = JSON.parse(text);
-      } catch {
-        /* not JSON — return as text */
-      }
-
-      // Token expired mid-flight? Try ONCE more after a refresh.
-      if (upstream.status === 401 && tokenCache) {
-        tokenCache = null;
-        try {
-          const fresh = await getCachedToken(envName, clientId, clientSecret);
-          const retry = await fetch(url.toString(), {
-            ...init,
-            headers: { ...init.headers, Authorization: `Bearer ${fresh}` },
-          });
-          const retryText = await retry.text();
-          let retryPayload: unknown = retryText;
-          try {
-            retryPayload = JSON.parse(retryText);
-          } catch {
-            /* not JSON */
-          }
-          return json({ success: retry.ok, status: retry.status, data: retryPayload }, 200);
-        } catch (err) {
-          return json(
-            { success: false, error: err instanceof Error ? err.message : String(err) },
-            500,
-          );
-        }
-      }
-
+      const result = await marconeServerRequest(env, { method, path, query: body.query, body: body.body });
       // Always reply 200 to the browser — the inner `success` field tells the
       // client whether the upstream call worked. This stops harmless 4xx
       // results (e.g. "part not found") from being logged as 502 in DevTools.
-      return json({ success: upstream.ok, status: upstream.status, data: payload }, 200);
+      return json(result, result.error && result.status === undefined ? 500 : 200);
     }
 
     return json({ success: false, error: `Unknown action: ${(body as any).action}` }, 400);
