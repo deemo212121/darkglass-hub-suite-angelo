@@ -312,9 +312,13 @@ interface PartTransactionRow {
   cxPaid: string;
   createdBy: string;
   lastModifiedBy: string;
+  /** Read-only, from the hourly distributor credit check (partCreditSync, migration 0406). */
+  creditedAt?: string;
+  creditSource?: string;
+  returnRejectReason?: string;
 }
 
-type PartTransactionDraft = Omit<PartTransactionRow, "id" | "createdBy" | "lastModifiedBy">;
+type PartTransactionDraft = Omit<PartTransactionRow, "id" | "createdBy" | "lastModifiedBy" | "creditedAt" | "creditSource" | "returnRejectReason">;
 
 interface AuditLogEntry {
   id: string;
@@ -780,7 +784,7 @@ function createAuditEntry(params: Omit<AuditLogEntry, "id" | "timestamp">): Audi
   };
 }
 
-const PART_FIELD_LABELS: Record<keyof Omit<PartTransactionRow, "id" | "createdBy" | "lastModifiedBy">, string> = {
+const PART_FIELD_LABELS: Record<keyof Omit<PartTransactionRow, "id" | "createdBy" | "lastModifiedBy" | "creditedAt" | "creditSource" | "returnRejectReason">, string> = {
   partNo: "Part No",
   partDist: "Part Dist.",
   distBrand: "Brand",
@@ -7914,7 +7918,21 @@ function TicketDetailsPage() {
                             <td className={cellWrap}><input type="date" value={String(val("raDate") ?? "")} onChange={(e) => set("raDate", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} /></td>
                             <td className={cellWrap}><input value={String(val("raNo") ?? "")} onChange={(e) => set("raNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="RA #" /></td>
                             <td className={cellWrap}><input value={String(val("outTracking") ?? "")} onChange={(e) => set("outTracking", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Out Track #" /></td>
-                            <td className={cellWrap}><input value={String(val("creditNo") ?? "")} onChange={(e) => set("creditNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Credit #" /></td>
+                            <td className={cellWrap}>
+                              <input value={String(val("creditNo") ?? "")} onChange={(e) => set("creditNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Credit #" />
+                              {row.creditedAt ? (
+                                <span
+                                  className="mt-1 inline-flex items-center rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300"
+                                  title={`Credited by ${row.creditSource || "the distributor"}${row.creditNo ? ` — memo ${row.creditNo}` : ""} · found ${new Date(row.creditedAt).toLocaleDateString()}`}
+                                >
+                                  Credited{row.creditSource ? ` · ${row.creditSource}` : ""}
+                                </span>
+                              ) : row.returnRejectReason ? (
+                                <span className="mt-1 inline-flex items-center rounded-full border border-red-400/40 bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-300" title={`Return rejected: ${row.returnRejectReason}`}>
+                                  Return rejected
+                                </span>
+                              ) : null}
+                            </td>
                             <td className="px-2 py-1.5 text-slate-300">{val("totalMarkup") ? `$${val("totalMarkup")}` : "—"}</td>
                             <td className={cellWrap}>
                               <input type="checkbox" checked={val("hold") === "Hold"} onChange={(e) => set("hold", e.target.checked ? "Hold" : "No")} disabled={partsEditDisabled || !canEditParts} className="accent-blue-500" />
