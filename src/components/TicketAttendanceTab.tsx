@@ -90,6 +90,9 @@ const TIME_OUT_STATUS_CLASS: Record<TimeOutStatus, string> = {
   undertime: "border-red-400/30 bg-red-400/10 text-red-300",
 };
 
+/** Name key ignoring capitals and extra spaces ("Chris  carroll" = "Chris Carroll"). */
+const normalizeTechName = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
+
 /**
  * `offTechsOnly` — the "Off Techs with Tickets" view: same page, filters and
  * export, but only tickets whose technician has NO Time In on that ticket's
@@ -243,7 +246,7 @@ export function TicketAttendanceTab({ offTechsOnly = false }: { offTechsOnly?: b
   // timecard map below and reading a technician's assigned branch — same
   // normalized-name matching mileage sync uses.
   const employeeByNormalizedName = useMemo(
-    () => new Map(employees.map((e) => [(e.display_name || "").trim().replace(/s+/g, " ").toLowerCase(), e])),
+    () => new Map(employees.map((e) => [normalizeTechName(e.display_name || ""), e])),
     [employees]
   );
   // Every distinct branch on file — the Location filter's checklist options.
@@ -287,7 +290,7 @@ export function TicketAttendanceTab({ offTechsOnly = false }: { offTechsOnly?: b
     for (const row of rows) {
       if (offTechsOnly) {
         if (row.statusGroup === "cancelled") continue;
-        const emp = employeeByNormalizedName.get(row.technician.trim().toLowerCase());
+        const emp = employeeByNormalizedName.get(normalizeTechName(row.technician));
         // Not matched to a profile (e.g. a subcontractor name) — no
         // timecard to check, so it can't be called "off".
         if (!emp) continue;
@@ -297,7 +300,7 @@ export function TicketAttendanceTab({ offTechsOnly = false }: { offTechsOnly?: b
       }
       // One row per person: tickets spell a name differently at times
       // ("Chris carroll" / "Chris Carroll"), so group case- and space-insensitively.
-      const key = row.technician.trim().replace(/s+/g, " ").toLowerCase();
+      const key = normalizeTechName(row.technician);
       if (!byTech.has(key)) byTech.set(key, []);
       byTech.get(key)!.push(row);
     }
