@@ -8201,6 +8201,33 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [ssnCardExternalName, setSsnCardExternalName] = useState("");
   const [ssnCardSentLink, setSsnCardSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [ssnCardSentLinkCopied, setSsnCardSentLinkCopied] = useState(false);
+  const [ssnCardPreviewOpen, setSsnCardPreviewOpen] = useState(false);
+  const [ssnCardPreviewPdfUrl, setSsnCardPreviewPdfUrl] = useState<string | null>(null);
+  const [ssnCardPreviewLoading, setSsnCardPreviewLoading] = useState(false);
+
+  /** Same collapsible blank-form preview as the Valid ID / NDA tabs — the SSN Card form, with only the selected recipient's name filled in. */
+  const toggleSsnCardPreview = async () => {
+    if (ssnCardPreviewOpen) {
+      setSsnCardPreviewOpen(false);
+      if (ssnCardPreviewPdfUrl) URL.revokeObjectURL(ssnCardPreviewPdfUrl);
+      setSsnCardPreviewPdfUrl(null);
+      return;
+    }
+    setSsnCardSendError(null);
+    setSsnCardPreviewOpen(true);
+    setSsnCardPreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === ssnCardRecipientId)?.name || "";
+      const logo = await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
+      const blank: SsnCardFormData = { employeeId: "", employeeName: recipientName, ssn: "", livedInNewYork: "", cardPhotoUrls: [], dateSigned: "", signatureDataUrl: "" };
+      const pdfBlob = await captureHtmlToPdfBlob(buildSsnCardFormBodyMarkup(blank, logo, undefined), ssnCardFormStyles);
+      setSsnCardPreviewPdfUrl(URL.createObjectURL(pdfBlob));
+    } catch (err) {
+      setSsnCardSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setSsnCardPreviewLoading(false);
+    }
+  };
   const filteredSsnCardRecipients = useMemo(
     () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(ssnCardRecipientSearch.toLowerCase())),
     [employees, ssnCardRecipientSearch]
@@ -8504,6 +8531,33 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [driversLicenseExternalName, setDriversLicenseExternalName] = useState("");
   const [driversLicenseSentLink, setDriversLicenseSentLink] = useState<{ link: string; recipientName: string } | null>(null);
   const [driversLicenseSentLinkCopied, setDriversLicenseSentLinkCopied] = useState(false);
+  const [driversLicensePreviewOpen, setDriversLicensePreviewOpen] = useState(false);
+  const [driversLicensePreviewPdfUrl, setDriversLicensePreviewPdfUrl] = useState<string | null>(null);
+  const [driversLicensePreviewLoading, setDriversLicensePreviewLoading] = useState(false);
+
+  /** Same collapsible blank-form preview as the Valid ID / NDA tabs — the Driver's License form, with only the selected recipient's name filled in. */
+  const toggleDriversLicensePreview = async () => {
+    if (driversLicensePreviewOpen) {
+      setDriversLicensePreviewOpen(false);
+      if (driversLicensePreviewPdfUrl) URL.revokeObjectURL(driversLicensePreviewPdfUrl);
+      setDriversLicensePreviewPdfUrl(null);
+      return;
+    }
+    setDriversLicenseSendError(null);
+    setDriversLicensePreviewOpen(true);
+    setDriversLicensePreviewLoading(true);
+    try {
+      const recipientName = employees.find((e) => e.id === driversLicenseRecipientId)?.name || "";
+      const logo = await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
+      const blank: DriversLicenseFormData = { employeeId: "", employeeName: recipientName, licenseNumber: "", licenseState: "", licensePhotoUrls: [], dateSigned: "", signatureDataUrl: "" };
+      const pdfBlob = await captureHtmlToPdfBlob(buildDriversLicenseFormBodyMarkup(blank, logo, undefined), driversLicenseFormStyles);
+      setDriversLicensePreviewPdfUrl(URL.createObjectURL(pdfBlob));
+    } catch (err) {
+      setDriversLicenseSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setDriversLicensePreviewLoading(false);
+    }
+  };
   const filteredDriversLicenseRecipients = useMemo(
     () => employees.filter((e) => e.status === "active" && e.name.toLowerCase().includes(driversLicenseRecipientSearch.toLowerCase())),
     [employees, driversLicenseRecipientSearch]
@@ -27234,7 +27288,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Send SSN Card Request</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to enter their SSN and upload a photo of their card. It comes back to you here automatically once submitted.</p>
         </div>
-        <div className="p-4 flex flex-col gap-3 max-w-sm">
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
           <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
             {ssnCardSentLink ? (
@@ -27294,9 +27349,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </div>
 
           {ssnCardSendError && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{ssnCardSendError}</p>}
-          <button onClick={handleSendSsnCard} disabled={!ssnCardRecipientId || ssnCardSending} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit">
-            {ssnCardSending ? "Sending…" : "Send Request"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={toggleSsnCardPreview} className="btn text-sm px-4 py-2 flex items-center gap-1.5">
+              Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${ssnCardPreviewOpen ? "rotate-180" : ""}`} />
+            </button>
+            <button onClick={handleSendSsnCard} disabled={!ssnCardRecipientId || ssnCardSending} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
+              {ssnCardSending ? "Sending…" : "Send Request"}
+            </button>
+          </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {ssnCardPreviewOpen ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {ssnCardPreviewLoading || !ssnCardPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={ssnCardPreviewPdfUrl} title="SSN Card Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -27498,7 +27575,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           <h2 className="font-semibold text-sm">Send Driver's License Request</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to enter their license number/state and upload a photo. It comes back to you here automatically once submitted.</p>
         </div>
-        <div className="p-4 flex flex-col gap-3 max-w-sm">
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
           <div className="flex flex-col gap-1.5 pb-3 border-b border-white/10">
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">External Link (no login needed)</label>
             {driversLicenseSentLink ? (
@@ -27558,9 +27636,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </div>
 
           {driversLicenseSendError && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{driversLicenseSendError}</p>}
-          <button onClick={handleSendDriversLicense} disabled={!driversLicenseRecipientId || driversLicenseSending} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 w-fit">
-            {driversLicenseSending ? "Sending…" : "Send Request"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={toggleDriversLicensePreview} className="btn text-sm px-4 py-2 flex items-center gap-1.5">
+              Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${driversLicensePreviewOpen ? "rotate-180" : ""}`} />
+            </button>
+            <button onClick={handleSendDriversLicense} disabled={!driversLicenseRecipientId || driversLicenseSending} className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
+              {driversLicenseSending ? "Sending…" : "Send Request"}
+            </button>
+          </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {driversLicensePreviewOpen ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {driversLicensePreviewLoading || !driversLicensePreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={driversLicensePreviewPdfUrl} title="Driver's License Preview" className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
