@@ -221,15 +221,6 @@ export const CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION = 3;
 export const MASTER_W2_OFFICE_AGREEMENT_CURRENT_VERSION = 2;
 
 /**
- * Master Philippines Independent Contractor Comprehensive Agreement wording
- * now in use: version 2 (2026-10-26) names Admin Hub Solutions (heading,
- * Section 1, logo) instead of US In Home Services; title and content are
- * unchanged. Copies signed in version 1 stay valid — see
- * MIN_VALID_TEMPLATE_VERSION.
- */
-export const MASTER_PH_CONTRACTOR_AGREEMENT_CURRENT_VERSION = 2;
-
-/**
  * Flash travel form in use (see flashTechnicianTravelPdfFill.ts): version 2
  * (2026-10-12) is the "Flash Tech Travel & Expense Policy Agreement", which
  * replaced the "Flash Technician Travel & Out-of-State Policy" (version 1).
@@ -241,7 +232,6 @@ const CURRENT_TEMPLATE_VERSION: Partial<Record<SignableDocumentType, number>> = 
   confidentiality_noncompete_agreement: CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION,
   flash_technician_travel: FLASH_TRAVEL_CURRENT_VERSION,
   master_w2_office_agreement: MASTER_W2_OFFICE_AGREEMENT_CURRENT_VERSION,
-  master_ph_contractor_agreement: MASTER_PH_CONTRACTOR_AGREEMENT_CURRENT_VERSION,
 };
 
 /**
@@ -253,7 +243,6 @@ const CURRENT_TEMPLATE_VERSION: Partial<Record<SignableDocumentType, number>> = 
 const MIN_VALID_TEMPLATE_VERSION: Partial<Record<SignableDocumentType, number>> = {
   confidentiality_noncompete_agreement: 2,
   master_w2_office_agreement: 1,
-  master_ph_contractor_agreement: 1,
 };
 
 /** The wording version a NEW document of this type is sent in, or undefined for a type that has only ever had one. */

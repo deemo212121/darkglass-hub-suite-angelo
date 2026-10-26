@@ -1,3 +1,4 @@
+import { BRAND_COMPANY, brandOf, loadBrandLogo } from "@/lib/formBrand";
 /**
  * Fill Valid ID — opened from the deep link a Team Messenger message sends
  * (see ReportHRDaily.tsx's PH "Valid ID" tab "Send Request" flow).
@@ -80,9 +81,11 @@ export function FillValidIdPage({ docId }: Props) {
 
   const sigPad = useSignaturePad({ defaultName: form.employeeName, width: 500, height: 130 });
 
+  // The logo of this copy's version (US In Home Services, or Admin Hub Solutions from AHS FORMS PH).
+  const formBrand = brandOf(form);
   useEffect(() => {
-    loadAssetDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")).then(setLogoDataUrl);
-  }, []);
+    loadBrandLogo(formBrand).then(setLogoDataUrl);
+  }, [formBrand]);
 
   useEffect(() => {
     if (!ready || !uid) return;

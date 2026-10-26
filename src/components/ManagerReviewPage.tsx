@@ -1,3 +1,4 @@
+import { brandOf, loadBrandLogo } from "@/lib/formBrand";
 /**
  * Standalone "add your signature" link for the manager/employer half of a
  * two-party HR form — the counterpart to the Fill*Page.tsx pages the
@@ -74,7 +75,7 @@ import type { PartsResponsibilityFormData } from "@/lib/partsResponsibilityFormT
 import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
 import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
 import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, masterW2OfficeUsesAdminHub, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
-import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, masterPhContractorUsesAdminHub, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
+import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
 import { captureConfidentialityNonCompeteAgreementPdf, confidentialityUsesAdminHub, type ConfidentialityNonCompeteAgreementFormData } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
 import { agreementLogoLoader } from "@/lib/agreementBranding";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
@@ -309,7 +310,7 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
 
     const merged: MasterPhContractorAgreementFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt, employerName: displayName || "" };
 
-    const logo = await loadAssetDataUrl(agreementLogoLoader(masterPhContractorUsesAdminHub(merged)));
+    const logo = await loadBrandLogo(brandOf(merged));
     const pdfBlob = await captureHtmlToPdfBlob(buildMasterPhContractorAgreementBodyMarkup(merged, logo), masterPhContractorAgreementStyles);
     const pdfUrl = await uploadMasterPhContractorAgreementForm(doc.companyId, existing.employeeName || "master-ph-contractor-agreement", pdfBlob);
 

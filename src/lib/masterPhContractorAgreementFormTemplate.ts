@@ -1,3 +1,4 @@
+import { BRAND_COMPANY, brandOf } from "@/lib/formBrand";
 /**
  * Master Philippines Independent Contractor Comprehensive Agreement — the
  * PH-staff counterpart to masterW2AgreementFormTemplate.ts / masterW2Office
@@ -20,6 +21,8 @@
  */
 
 export interface MasterPhContractorAgreementFormData {
+  /** "ahs" = the Admin Hub Solutions version (HR Paperworks → AHS FORMS PH); absent = the original US In Home Services version. */
+  brand?: "ahs";
   /** The contractor's actual profile id — not shown on the document itself, just carried alongside for lookups. */
   employeeId: string;
   /** Derived display name — [firstName, middleName, lastName].filter(Boolean).join(" "). */
@@ -52,15 +55,6 @@ export interface MasterPhContractorAgreementFormData {
   employerSignatureDataUrl: string;
   /** Name of the HR/manager who countersigned — set when the employer signature is added. Missing on documents countersigned before it was recorded. */
   employerName?: string;
-  /** Wording version (missing = 1, US In Home Services) — see MASTER_PH_CONTRACTOR_AGREEMENT_CURRENT_VERSION. */
-  templateVersion?: number;
-}
-
-export const MASTER_PH_CONTRACTOR_AGREEMENT_TITLE = "Master Philippines Independent Contractor Comprehensive Agreement";
-
-/** Version 2 (2026-10-26) names Admin Hub Solutions; version 1 (every copy before it) US In Home Services. Same title and content. */
-export function masterPhContractorUsesAdminHub(data: { templateVersion?: number } | null | undefined): boolean {
-  return (Number(data?.templateVersion) || 1) >= 2;
 }
 
 const escapeHtml = (s: string) =>
@@ -120,14 +114,14 @@ function signRow(label: string, name: string, dateSigned: string, sigDataUrl: st
 }
 
 export function buildMasterPhContractorAgreementBodyMarkup(data: MasterPhContractorAgreementFormData, logoDataUrl: string): string {
-  // The company the copy was sent / signed in — see masterPhContractorUsesAdminHub.
-  const company = masterPhContractorUsesAdminHub(data) ? "Admin Hub Solutions" : "US In Home Services";
+  const brand = brandOf(data);
+  const company = BRAND_COMPANY[brand];
   return `
     <div class="mphc-container">
       <div class="mphc-header">
         <div>
           <h1>${company.toUpperCase()}</h1>
-          <h2>${MASTER_PH_CONTRACTOR_AGREEMENT_TITLE.toUpperCase()}</h2>
+          <h2>MASTER PHILIPPINES INDEPENDENT CONTRACTOR COMPREHENSIVE AGREEMENT</h2>
         </div>
         ${logoDataUrl ? `<img src="${logoDataUrl}" alt="${company}" />` : ""}
       </div>
@@ -180,10 +174,10 @@ export function buildMasterPhContractorAgreementBodyMarkup(data: MasterPhContrac
       <div class="mphc-bullet"><b>Electronic Signatures:</b> Electronic signatures, digital form submissions, and online verifications carry the exact same legal force and effect as original handwritten signatures.</div>
 
       <div class="mphc-section-title" style="margin-top:20px;">Contractor Acknowledgment &amp; Signature</div>
-      <p style="font-style:italic;">By signing below, I certify that I have read, understood, and voluntarily agree to all the terms, policies, and conditions outlined in this ${MASTER_PH_CONTRACTOR_AGREEMENT_TITLE} (including Personal Data, Confidentiality, and Leave Policies).</p>
+      <p style="font-style:italic;">By signing below, I certify that I have read, understood, and voluntarily agree to all the terms, policies, and conditions outlined in this Master Philippines Independent Contractor Comprehensive Agreement (including Personal Data, Confidentiality, and Leave Policies).</p>
 
       ${signRow("Contractor Signature", data.employeeName, data.contractorDateSigned, data.contractorSignatureDataUrl)}
-      ${signRow("Employer Representative Signature", data.employerName || "", data.employerDateSigned, data.employerSignatureDataUrl)}
+      ${signRow(brand === "ahs" ? "Employer Representative Signature (Admin Hub Solutions)" : "Employer Representative Signature", data.employerName || "", data.employerDateSigned, data.employerSignatureDataUrl)}
     </div>
   `;
 }

@@ -1,3 +1,4 @@
+import { brandOf, loadBrandLogo } from "@/lib/formBrand";
 /**
  * Fill Master Philippines Independent Contractor Comprehensive Agreement —
  * opened from the deep link ReportHRDaily.tsx's "Master PH Contractor
@@ -29,11 +30,8 @@ import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
 import {
   masterPhContractorAgreementStyles,
   buildMasterPhContractorAgreementBodyMarkup,
-  masterPhContractorUsesAdminHub,
   type MasterPhContractorAgreementFormData,
 } from "@/lib/masterPhContractorAgreementFormTemplate";
-import { MASTER_PH_CONTRACTOR_AGREEMENT_CURRENT_VERSION } from "@/lib/signableDocumentRegistry";
-import { agreementLogoLoader } from "@/lib/agreementBranding";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
@@ -93,26 +91,17 @@ export function FillMasterPhContractorAgreementPage({ docId }: Props) {
       setLoading(true);
       setError(null);
       try {
-        const [profileId, document] = await Promise.all([
-          getMyProfileId(uid),
-          getSignableDocument(docId),
-        ]);
+        const [profileId, document] = await Promise.all([getMyProfileId(uid), getSignableDocument(docId)]);
+        // The logo of this copy's version (US In Home Services, or Admin Hub Solutions from AHS FORMS PH).
+        const logo = await loadBrandLogo(brandOf(document?.formData));
         if (cancelled) return;
         setMyProfileId(profileId);
+        setLogoDataUrl(logo);
         if (!document || document.documentType !== "master_ph_contractor_agreement") {
           setError("This document doesn't exist or has been removed.");
         } else {
-          // Not signed yet: it's signed in the current wording. Already signed
-          // (or reopened for the employer): keep the wording it was signed in.
-          const unsigned = document.status === "pending_signature" && document.recipientSlot === "employee";
-          const existing = {
-            ...(document.formData as Partial<MasterPhContractorAgreementFormData>),
-            ...(unsigned ? { templateVersion: MASTER_PH_CONTRACTOR_AGREEMENT_CURRENT_VERSION } : {}),
-          };
-          const logo = await loadAssetDataUrl(agreementLogoLoader(masterPhContractorUsesAdminHub(existing)));
-          if (cancelled) return;
-          setLogoDataUrl(logo);
           setDoc(document);
+          const existing = document.formData as Partial<MasterPhContractorAgreementFormData>;
           setForm((prev) => ({ ...prev, ...existing }));
         }
       } catch (err) {

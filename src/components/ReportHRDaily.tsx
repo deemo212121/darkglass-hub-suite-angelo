@@ -1,3 +1,4 @@
+import { brandOf, loadBrandLogo } from "@/lib/formBrand";
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
@@ -100,8 +101,8 @@ import { useSortableSearchTable } from "@/hooks/useSortableSearchTable";
 import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
 import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, masterW2OfficeUsesAdminHub, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
 import { agreementLogoLoader } from "@/lib/agreementBranding";
-import { MASTER_W2_OFFICE_AGREEMENT_CURRENT_VERSION, MASTER_PH_CONTRACTOR_AGREEMENT_CURRENT_VERSION } from "@/lib/signableDocumentRegistry";
-import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, masterPhContractorUsesAdminHub, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
+import { MASTER_W2_OFFICE_AGREEMENT_CURRENT_VERSION } from "@/lib/signableDocumentRegistry";
+import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
 import { masterW2ExecutiveAgreementStyles, buildMasterW2ExecutiveAgreementBodyMarkup, type MasterW2ExecutiveAgreementFormData } from "@/lib/masterW2ExecutiveAgreementFormTemplate";
 import { confidentialityNonCompeteAgreementStyles, buildConfidentialityNonCompeteAgreementBodyMarkup, captureConfidentialityNonCompeteAgreementPdf, CNC_CURRENT_TEMPLATE_VERSION, confidentialityAgreementTitle, confidentialityUsesAdminHub, type ConfidentialityNonCompeteAgreementFormData } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
 import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments";
@@ -1148,7 +1149,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "compensationUpdate" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "confidentialityNonCompeteAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList" | "clockInCodes" | "performanceBonusPolicy">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "compensationUpdate" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "confidentialityNonCompeteAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList" | "clockInCodes" | "performanceBonusPolicy" | "ahsDirectDeposit" | "ahsValidId" | "ahsPhAgreement">(paperworksOnly ? "combineForms" : "hiring");
+  // HR Paperworks → "AHS Forms PH": the Admin Hub Solutions versions of Direct
+  // Deposit, Valid ID and the Master PH Contractor Agreement. Same screens as
+  // the original tabs, but they send (and list) only AHS copies — every copy
+  // is tagged form_data.brand = "ahs" and keeps that version for good
+  // (lib/formBrand.ts). The original tabs list only the US In Home Services copies.
+  const isAhsFormsTab = activeTab === "ahsDirectDeposit" || activeTab === "ahsValidId" || activeTab === "ahsPhAgreement";
+  const isAhsDoc = (d: { formData?: unknown }) => brandOf(d.formData) === "ahs";
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -1175,7 +1183,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [startDateFor, setStartDateFor] = useState<{ id: string; date: string } | null>(null);
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string; viewCvCandidateId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList", "clockInCodes", "ndaForm", "confidentialityNonCompeteAgreement", "performanceBonusPolicy"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList", "clockInCodes", "ndaForm", "confidentialityNonCompeteAgreement", "performanceBonusPolicy", "ahsDirectDeposit", "ahsValidId", "ahsPhAgreement"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -6530,7 +6538,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "masterPhContractorAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMasterPhContractorAgreementForms();
+    if (activeTab === "masterPhContractorAgreement" || activeTab === "ahsPhAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMasterPhContractorAgreementForms();
   }, [activeTab]);
   const sentMasterPhContractorAgreementAwaitingEmployerCount = useMemo(
     () => sentMasterPhContractorAgreementForms.filter(isAwaitingEmployerStep).length,
@@ -6538,6 +6546,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   );
 
   type MasterPhContractorAgreementSortColumn = "employee" | "nationality" | "sentBy" | "status" | "sent";
+  const visibleMasterPhContractorAgreementForms = useMemo(
+    () => sentMasterPhContractorAgreementForms.filter((d) => (activeTab === "ahsPhAgreement" ? isAhsDoc(d) : !isAhsDoc(d))),
+    [sentMasterPhContractorAgreementForms, activeTab],
+  );
   const masterPhContractorAgreementStatusLabel = (doc: SignableDocument): string =>
     doc.status === "confirmed" ? "Completed"
       : isAwaitingEmployerStep(doc) ? "Awaiting Employer Signature"
@@ -6556,7 +6568,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     isValueChecked: masterPhContractorAgreementIsValueChecked,
     rows: sortedSentMasterPhContractorAgreementForms,
   } = useSortableSearchTable<SignableDocument, MasterPhContractorAgreementSortColumn>(
-    sentMasterPhContractorAgreementForms,
+    visibleMasterPhContractorAgreementForms,
     (doc, q) => {
       const data = doc.formData as Partial<MasterPhContractorAgreementFormData>;
       const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
@@ -6627,7 +6639,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       spouseName: "",
       spouseEmployer: "",
       governmentIdPhotoPath: "",
-      templateVersion: MASTER_PH_CONTRACTOR_AGREEMENT_CURRENT_VERSION,
       contractorDateSigned: "",
       contractorSignatureDataUrl: "",
       employerDateSigned: "",
@@ -6648,8 +6659,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setMasterPhContractorAgreementPreviewLoading(true);
     try {
       const recipientName = employees.find((e) => e.id === masterPhContractorAgreementRecipientId)?.name || "";
-      const logo = await loadImageDataUrl(agreementLogoLoader(true));
-      const pdfBlob = await captureHtmlToPdfBlob(buildMasterPhContractorAgreementBodyMarkup(buildMasterPhContractorAgreementPreviewData(recipientName), logo), masterPhContractorAgreementStyles);
+      const logo = await loadBrandLogo(activeTab === "ahsPhAgreement" ? "ahs" : "usihs");
+      const previewData = { ...buildMasterPhContractorAgreementPreviewData(recipientName), ...(activeTab === "ahsPhAgreement" ? { brand: "ahs" as const } : {}) };
+      const pdfBlob = await captureHtmlToPdfBlob(buildMasterPhContractorAgreementBodyMarkup(previewData, logo), masterPhContractorAgreementStyles);
       const url = URL.createObjectURL(pdfBlob);
       setMasterPhContractorAgreementPreviewPdfUrl(url);
     } catch (err) {
@@ -6674,7 +6686,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       const doc = await createSignableDocument({
         documentType: "master_ph_contractor_agreement",
-        formData: { employeeId: recipient.id, employeeName: recipient.name, templateVersion: MASTER_PH_CONTRACTOR_AGREEMENT_CURRENT_VERSION } as unknown as Record<string, any>,
+        formData: { employeeId: recipient.id, employeeName: recipient.name, ...(activeTab === "ahsPhAgreement" ? { brand: "ahs" } : {}) } as unknown as Record<string, any>,
         recipientId: masterPhContractorAgreementRecipientId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -6714,7 +6726,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadMasterPhContractorAgreementPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<MasterPhContractorAgreementFormData>).employeeName || doc.recipientName || "master-ph-contractor-agreement";
-    await downloadSignableDocumentPdf(doc.pdfUrl, `Master PH Contractor Agreement - ${name}.pdf`);
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Master Philippines Independent Contractor Comprehensive Agreement - ${name}.pdf`);
   };
 
   /** Re-renders this document's PDF from its already-stored data (employee/employer signatures are inline data: URLs in form_data, no CORS resolution needed) — see regenerateSignableDocumentPdf.ts's header comment. */
@@ -6723,8 +6735,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setMasterPhContractorAgreementActionBusyId(doc.id);
     setMasterPhContractorAgreementActionError(null);
     try {
-      // The logo of the wording it was signed in (agreementBranding.ts).
-      const logo = await loadImageDataUrl(agreementLogoLoader(masterPhContractorUsesAdminHub(doc.formData)));
+      const logo = await loadBrandLogo(brandOf(doc.formData));
       await regenerateMasterAgreementPdf(doc, logo, buildMasterPhContractorAgreementBodyMarkup, masterPhContractorAgreementStyles, uploadMasterPhContractorAgreementForm, name);
       await loadSentMasterPhContractorAgreementForms();
     } catch (err) {
@@ -6770,10 +6781,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [masterPhContractorAgreementEmployerSaving, setMasterPhContractorAgreementEmployerSaving] = useState(false);
   const [masterPhContractorAgreementEmployerError, setMasterPhContractorAgreementEmployerError] = useState<string | null>(null);
   const masterPhContractorAgreementEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
+  const [masterPhContractorAgreementLogoDataUrl, setMasterPhContractorAgreementLogoDataUrl] = useState("");
 
   const handleOpenMasterPhContractorAgreementEmployerDialog = (doc: SignableDocument) => {
     setMasterPhContractorAgreementEmployerDialog(doc);
     setMasterPhContractorAgreementEmployerError(null);
+    if (!masterPhContractorAgreementLogoDataUrl) {
+      loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")).then(setMasterPhContractorAgreementLogoDataUrl).catch(() => {});
+    }
   };
 
   const handleSaveMasterPhContractorAgreementEmployerSignature = async () => {
@@ -6802,7 +6817,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       const merged: MasterPhContractorAgreementFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt, employerName: displayName || "" };
 
-      const logo = await loadImageDataUrl(agreementLogoLoader(masterPhContractorUsesAdminHub(merged)));
+      const logo = await loadBrandLogo(brandOf(merged));
       const pdfBlob = await captureHtmlToPdfBlob(buildMasterPhContractorAgreementBodyMarkup(merged, logo), masterPhContractorAgreementStyles);
       const pdfUrl = await uploadMasterPhContractorAgreementForm(masterPhContractorAgreementEmployerDialog.companyId, existing.employeeName || "master-ph-contractor-agreement", pdfBlob);
 
@@ -8797,6 +8812,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   type ValidIdSortColumn = "employee" | "sentBy" | "status" | "sent";
+  const visibleValidIdForms = useMemo(() => sentValidIdForms.filter((d) => (activeTab === "ahsValidId" ? isAhsDoc(d) : !isAhsDoc(d))), [sentValidIdForms, activeTab]);
   const validIdStatusLabel = (doc: SignableDocument): string =>
     doc.status === "signed" ? "Submitted" : doc.status === "cancelled" ? "Cancelled" : "Awaiting Completion";
   const {
@@ -8812,7 +8828,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     isValueChecked: validIdIsValueChecked,
     rows: sortedSentValidIdForms,
   } = useSortableSearchTable<SignableDocument, ValidIdSortColumn>(
-    sentValidIdForms,
+    visibleValidIdForms,
     (doc, q) => {
       const data = doc.formData as Partial<ValidIdFormData>;
       return (data.employeeName || doc.recipientName || "").toLowerCase().includes(q);
@@ -8835,7 +8851,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   );
   useEffect(() => {
-    if (activeTab === "validId" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentValidIdForms();
+    if (activeTab === "validId" || activeTab === "ahsValidId" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentValidIdForms();
   }, [activeTab]);
 
   const [validIdRecipientId, setValidIdRecipientId] = useState("");
@@ -8867,9 +8883,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setValidIdPreviewOpen(true);
     setValidIdPreviewLoading(true);
     try {
-      const recipientName = employees.find((e) => e.id === validIdRecipientId)?.name || "";
-      const logo = await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
-      const blank: ValidIdFormData = { employeeId: "", employeeName: recipientName, idType: "", idNumber: "", idPhotoUrls: [], dateSigned: "", signatureDataUrl: "" };
+      const recipientName = employees.find((e) => e.id === validIdRecipientId)?.name || validIdExternalName.trim() || "";
+      // AHS Forms PH → Valid ID previews the Admin Hub Solutions version (lib/formBrand.ts).
+      const logo = await loadBrandLogo(activeTab === "ahsValidId" ? "ahs" : "usihs");
+      const blank: ValidIdFormData = { ...(activeTab === "ahsValidId" ? { brand: "ahs" as const } : {}), employeeId: "", employeeName: recipientName, idType: "", idNumber: "", idPhotoUrls: [], dateSigned: "", signatureDataUrl: "" };
       const pdfBlob = await captureHtmlToPdfBlob(buildValidIdFormBodyMarkup(blank, logo, undefined), validIdFormStyles);
       setValidIdPreviewPdfUrl(URL.createObjectURL(pdfBlob));
     } catch (err) {
@@ -8898,7 +8915,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       const doc = await createSignableDocument({
         documentType: "valid_id_form",
-        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        formData: { employeeId: recipient.id, employeeName: recipient.name, ...(activeTab === "ahsValidId" ? { brand: "ahs" } : {}) } as unknown as Record<string, any>,
         recipientId: validIdRecipientId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -8934,7 +8951,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const name = validIdExternalName.trim() || "External Recipient";
       const doc = await createSignableDocument({
         documentType: "valid_id_form",
-        formData: { employeeId: "", employeeName: name } as unknown as Record<string, any>,
+        formData: { employeeId: "", employeeName: name, ...(activeTab === "ahsValidId" ? { brand: "ahs" } : {}) } as unknown as Record<string, any>,
         recipientName: name,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -8984,7 +9001,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setValidIdActionBusyId(doc.id);
     setValidIdActionError(null);
     try {
-      const logo = await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png"));
+      const logo = await loadBrandLogo(brandOf(doc.formData));
       await regenerateSimpleSignableDocumentPdf(doc, logo, buildValidIdFormBodyMarkup, validIdFormStyles, uploadValidIdForm, name, "idPhotoUrls");
       await loadSentValidIdForms();
     } catch (err) {
@@ -12688,12 +12705,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "directDeposit" || activeTab === "newDirectDeposit" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentDirectDepositForms();
+    if (activeTab === "directDeposit" || activeTab === "newDirectDeposit" || activeTab === "ahsDirectDeposit" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentDirectDepositForms();
   }, [activeTab]);
   // Which bucket of sentDirectDepositForms the CURRENTLY OPEN tab should
   // show — see isNewAutomationDoc's doc comment.
   const visibleDirectDepositForms = useMemo(
-    () => sentDirectDepositForms.filter((d) => (activeTab === "newDirectDeposit" ? isNewAutomationDoc(d) : !isNewAutomationDoc(d))),
+    () => sentDirectDepositForms.filter((d) => (activeTab === "ahsDirectDeposit" ? isAhsDoc(d) : !isAhsDoc(d) && (activeTab === "newDirectDeposit" ? isNewAutomationDoc(d) : !isNewAutomationDoc(d)))),
     [sentDirectDepositForms, activeTab]
   );
 
@@ -12827,7 +12844,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       const doc = await createSignableDocument({
         documentType: "direct_deposit",
-        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        formData: { employeeId: recipient.id, employeeName: recipient.name, ...(activeTab === "ahsDirectDeposit" ? { brand: "ahs", formSource: "new_automation" } : {}) } as unknown as Record<string, any>,
         recipientId: recipient.id,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -12838,6 +12855,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const signedAt = new Date().toISOString();
       const filedByHrName = displayName || "HR";
       const finalData: DirectDepositFormData = {
+        ...(activeTab === "ahsDirectDeposit" ? { brand: "ahs" as const } : {}),
         employeeId: recipient.id,
         employeeName: [directDepositFileForFirstName, directDepositFileForMiddleName, directDepositFileForLastName].filter(Boolean).join(" ").trim() || recipient.name,
         firstName: directDepositFileForFirstName.trim(),
@@ -12862,8 +12880,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       // checks filedByHr before ever rendering a <img src>.
       const entry = { name: `Filed by HR — ${filedByHrName}`, url: "", signedAt };
 
-      const logo = directDepositLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
-      if (!directDepositLogoDataUrl) setDirectDepositLogoDataUrl(logo);
+      const logo = (await loadBrandLogo(activeTab === "ahsDirectDeposit" ? "ahs" : "usihs"));
       const pdfBlob = await captureHtmlToPdfBlob(buildDirectDepositBodyMarkup(finalData, logo, entry), directDepositStyles);
       const pdfUrl = await uploadDirectDepositForm(companyId, finalData.employeeName, pdfBlob);
 
@@ -12887,6 +12904,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const buildDirectDepositPreviewData = (employeeName: string): DirectDepositFormData => ({
+    ...(activeTab === "ahsDirectDeposit" ? { brand: "ahs" as const } : {}),
     employeeId: "",
     employeeName,
     firstName: employeeName,
@@ -12917,8 +12935,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setDirectDepositPreviewExpanded(true);
     setDirectDepositPreviewLoading(true);
     try {
-      const logoDataUrl = directDepositLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
-      if (!directDepositLogoDataUrl) setDirectDepositLogoDataUrl(logoDataUrl);
+      const logoDataUrl = (await loadBrandLogo(activeTab === "ahsDirectDeposit" ? "ahs" : "usihs"));
       const recipientName = employees.find((e) => e.id === directDepositRecipientId)?.name || "";
       const pdfBlob = await captureHtmlToPdfBlob(buildDirectDepositBodyMarkup(buildDirectDepositPreviewData(recipientName), logoDataUrl, undefined), directDepositStyles);
       const url = URL.createObjectURL(pdfBlob);
@@ -12945,7 +12962,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       const doc = await createSignableDocument({
         documentType: "direct_deposit",
-        formData: { employeeId: recipient.id, employeeName: recipient.name, ...(activeTab === "newDirectDeposit" ? { formSource: "new_automation" } : {}) } as unknown as Record<string, any>,
+        formData: { employeeId: recipient.id, employeeName: recipient.name, ...(activeTab === "newDirectDeposit" || activeTab === "ahsDirectDeposit" ? { formSource: "new_automation" } : {}), ...(activeTab === "ahsDirectDeposit" ? { brand: "ahs" } : {}) } as unknown as Record<string, any>,
         recipientId: directDepositRecipientId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -12982,7 +12999,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const name = directDepositExternalName.trim() || "External Recipient";
       const doc = await createSignableDocument({
         documentType: "direct_deposit",
-        formData: { employeeId: "", employeeName: name, ...(activeTab === "newDirectDeposit" ? { formSource: "new_automation" } : {}) } as unknown as Record<string, any>,
+        formData: { employeeId: "", employeeName: name, ...(activeTab === "newDirectDeposit" || activeTab === "ahsDirectDeposit" ? { formSource: "new_automation" } : {}), ...(activeTab === "ahsDirectDeposit" ? { brand: "ahs" } : {}) } as unknown as Record<string, any>,
         recipientName: name,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -13047,9 +13064,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "master_w2_office_agreement", label: "Master W-2 Office & Logistics Agreement", run: async (doc, l) => { await regenerateMasterAgreementPdf(doc, masterW2OfficeUsesAdminHub(doc.formData) ? l.ahs : l.usihs, buildMasterW2OfficeAgreementBodyMarkup, masterW2OfficeAgreementStyles, uploadMasterW2OfficeAgreementForm, bulkName(doc, "master-w2-office-agreement")); } },
     { type: "master_w2_executive_agreement", label: "Master W-2 Executive Agreement", run: async (doc, l) => { await regenerateMasterAgreementPdf(doc, l.usihs, buildMasterW2ExecutiveAgreementBodyMarkup, masterW2ExecutiveAgreementStyles, uploadMasterW2ExecutiveAgreementForm, bulkName(doc, "master-w2-executive-agreement")); } },
     { type: "confidentiality_noncompete_agreement", label: "Master Confidentiality & Non-Compete Agreement", run: async (doc, l) => { await regenerateMasterAgreementPdf(doc, confidentialityUsesAdminHub(doc.formData) ? l.ahs : l.usihs, buildConfidentialityNonCompeteAgreementBodyMarkup, confidentialityNonCompeteAgreementStyles, uploadConfidentialityNonCompeteAgreementForm, bulkName(doc, "confidentiality-noncompete-agreement"), captureConfidentialityNonCompeteAgreementPdf); } },
-    { type: "master_ph_contractor_agreement", label: "Master PH Contractor Agreement", run: async (doc, l) => { await regenerateMasterAgreementPdf(doc, masterPhContractorUsesAdminHub(doc.formData) ? l.ahs : l.usihs, buildMasterPhContractorAgreementBodyMarkup, masterPhContractorAgreementStyles, uploadMasterPhContractorAgreementForm, bulkName(doc, "master-ph-contractor-agreement")); } },
-    { type: "direct_deposit", label: "Direct Deposit Authorization", changesWording: true, run: async (doc, l) => { await regenerateSimpleSignableDocumentPdf(doc, l.ahs, buildDirectDepositBodyMarkup, directDepositStyles, uploadDirectDepositForm, bulkName(doc, "direct-deposit")); } },
-    { type: "valid_id_form", label: "Valid ID", run: async (doc, l) => { await regenerateSimpleSignableDocumentPdf(doc, l.ahs, buildValidIdFormBodyMarkup, validIdFormStyles, uploadValidIdForm, bulkName(doc, "valid-id"), "idPhotoUrls"); } },
+    { type: "master_ph_contractor_agreement", label: "Master PH Contractor Agreement", run: async (doc, l) => { await regenerateMasterAgreementPdf(doc, brandOf(doc.formData) === "ahs" ? l.ahs : l.usihs, buildMasterPhContractorAgreementBodyMarkup, masterPhContractorAgreementStyles, uploadMasterPhContractorAgreementForm, bulkName(doc, "master-ph-contractor-agreement")); } },
+    { type: "direct_deposit", label: "Direct Deposit Authorization", run: async (doc, l) => { await regenerateSimpleSignableDocumentPdf(doc, brandOf(doc.formData) === "ahs" ? l.ahs : l.usihs, buildDirectDepositBodyMarkup, directDepositStyles, uploadDirectDepositForm, bulkName(doc, "direct-deposit")); } },
+    { type: "valid_id_form", label: "Valid ID", run: async (doc, l) => { await regenerateSimpleSignableDocumentPdf(doc, brandOf(doc.formData) === "ahs" ? l.ahs : l.usihs, buildValidIdFormBodyMarkup, validIdFormStyles, uploadValidIdForm, bulkName(doc, "valid-id"), "idPhotoUrls"); } },
     { type: "ssn_card_form", label: "SSN Card", run: async (doc, l) => { await regenerateSimpleSignableDocumentPdf(doc, l.usihs, buildSsnCardFormBodyMarkup, ssnCardFormStyles, uploadSsnCardForm, bulkName(doc, "ssn-card"), "cardPhotoUrls"); } },
     { type: "drivers_license_form", label: "Driver's License", run: async (doc, l) => { await regenerateSimpleSignableDocumentPdf(doc, l.usihs, buildDriversLicenseFormBodyMarkup, driversLicenseFormStyles, uploadDriversLicenseForm, bulkName(doc, "drivers-license"), "licensePhotoUrls"); } },
     { type: "contractor_data", label: "Contractor Data (PH)", run: async (doc, l) => { await regenerateSimpleSignableDocumentPdf(doc, l.usihs, buildContractorDataBodyMarkup, contractorDataStyles, uploadContractorDataForm, bulkName(doc, "contractor-data")); } },
@@ -13096,7 +13113,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     const forms = BULK_REGEN_FORMS.filter((f) => bulkRegenPicked.has(f.type));
     const queue = forms.flatMap((f) => (bulkRegenDocs[f.type] ?? []).filter((d) => bulkEligible(f, d)).map((d) => ({ f, d })));
     if (queue.length === 0) return;
-    if (forms.some((f) => f.changesWording) && !window.confirm("Some picked forms have new wording (Admin Hub Solutions). Their already-signed copies will show the new wording above the old signatures. Continue?")) return;
+    if (forms.some((f) => f.changesWording) && !window.confirm("Some picked forms have new wording (Admin Hub Solutions / new title). Their already-signed copies will show the new wording above the old signatures. Continue?")) return;
     bulkRegenStopRef.current = false;
     setBulkRegenRunning(true);
     const errors: string[] = [];
@@ -13135,8 +13152,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setDirectDepositActionBusyId(doc.id);
     setDirectDepositActionError(null);
     try {
-      const logo = directDepositLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
-      if (!directDepositLogoDataUrl) setDirectDepositLogoDataUrl(logo);
+      const logo = await loadBrandLogo(brandOf(doc.formData));
       await regenerateSimpleSignableDocumentPdf(doc, logo, buildDirectDepositBodyMarkup, directDepositStyles, uploadDirectDepositForm, name);
       await loadSentDirectDepositForms();
     } catch (err) {
@@ -18514,6 +18530,19 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       ] as const,
       columns: undefined,
     }] : []),
+    // AHS Forms PH — the Admin Hub Solutions versions (see isAhsFormsTab).
+    ...(paperworksOnly && companyId === "COMP001" ? [{
+      group: "AHS Forms PH",
+      icon: Paperclip,
+      tabs: [
+        { key: "ahsPhAgreement", label: "Master PH Contractor Agreement", count: 0, icon: FileCheck },
+        { key: "ahsDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
+        { key: "ahsValidId", label: "Valid ID", count: 0, icon: FileCheck },
+        // The official IRS form — no company name or logo on it, so there is no separate AHS version; same tab as New Automation Forms → PH Staff.
+        { key: "newW8ben", label: "Form W-8BEN", count: 0, icon: Landmark },
+      ] as const,
+      columns: undefined,
+    }] : []),
     ...(!paperworksOnly ? [
       {
         group: "Generate Reports",
@@ -18827,7 +18856,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 })}
               </ul>
               {BULK_REGEN_FORMS.some((f) => f.changesWording && bulkRegenPicked.has(f.type)) && (
-                <p className="mt-2 text-[11px] text-amber-300">⚠ Forms marked "new wording" now say Admin Hub Solutions — copies signed before the change will show the new wording above the old signatures.</p>
+                <p className="mt-2 text-[11px] text-amber-300">⚠ Forms marked "new wording" now say Admin Hub Solutions (and the PH agreement has a new title) — copies signed before the change will show the new wording above the old signatures.</p>
               )}
 
               {bulkRegenProgress && (
@@ -28106,11 +28135,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
-      {activeTab === "validId" && (
+      {(activeTab === "validId" || activeTab === "ahsValidId") && (
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Send Valid ID Request</h2>
+          <h2 className="font-semibold text-sm">Send Valid ID Request {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a PH teammate — they'll get a link to submit a passport, license, or other government ID. It comes back to you here automatically once submitted.</p>
         </div>
         <div className="p-4 flex flex-col md:flex-row gap-6">
@@ -28204,7 +28233,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Sent Valid ID Forms</h2>
+          <h2 className="font-semibold text-sm">Sent Valid ID Forms {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
         </div>
         <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
@@ -31366,11 +31395,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
-      {activeTab === "masterPhContractorAgreement" && (
+      {(activeTab === "masterPhContractorAgreement" || activeTab === "ahsPhAgreement") && (
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Send Master PH Contractor Agreement Request</h2>
+          <h2 className="font-semibold text-sm">Send Master PH Contractor Agreement Request {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their info and sign. Once they submit, it lands back here for HR to add the employer signature. Covers the independent-contractor relationship, confidentiality/NDA, the PH off-days & leave policy, and governing law/e-signature terms in one document.</p>
         </div>
         <div className="p-4 flex flex-col md:flex-row gap-6">
@@ -31451,7 +31480,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Sent Master PH Contractor Agreement Forms</h2>
+          <h2 className="font-semibold text-sm">Sent Master PH Contractor Agreement Forms {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the contractor finished — add your signature to finalize.</p>
         </div>
         <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
@@ -33655,11 +33684,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </>
       )}
 
-      {(activeTab === "directDeposit" || activeTab === "newDirectDeposit") && (
+      {(activeTab === "directDeposit" || activeTab === "newDirectDeposit" || activeTab === "ahsDirectDeposit") && (
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Send Direct Deposit Authorization Request</h2>
+          <h2 className="font-semibold text-sm">Send Direct Deposit Authorization Request {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their name/address/bank account info and sign. It comes back to you here automatically once submitted.</p>
         </div>
         <div className="p-4 flex flex-col md:flex-row gap-6">
@@ -33887,7 +33916,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Sent Direct Deposit Authorization Forms</h2>
+          <h2 className="font-semibold text-sm">Sent Direct Deposit Authorization Forms {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status.</p>
         </div>
         <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
