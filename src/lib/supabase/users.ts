@@ -547,8 +547,10 @@ export async function getCompanyUsersLite(): Promise<ProfileRow[]> {
     }
     return { rows, error: null };
   };
-  // tier_level is a newer column (migration 0162) — fall back without it.
-  let res = await run(`${base}, tier_level`);
+  // tier_level (migration 0162) and employment_type (0152) are newer
+  // columns — fall back without them, best-effort like the full roster.
+  let res = await run(`${base}, tier_level, employment_type`);
+  if (res.error) res = await run(`${base}, tier_level`);
   if (res.error) res = await run(base);
   if (res.error) throw new Error(res.error.message);
   return res.rows;
