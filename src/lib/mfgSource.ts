@@ -43,8 +43,10 @@ const MFG_ID_SOURCE: Record<string, string> = {
  * a broader one (`"10074"` beats `"100"` for the same ticket).
  */
 const TICKET_NO_PREFIX_SOURCE: Record<string, string> = {
-  // Electrolux direct-service call numbers routinely start with 1007.
+  // Electrolux direct-service call numbers routinely start with 1007, and
+  // newer ones with 1008 (1008874278-10 came in under Assurant's I455).
   "1007": "ELECTROLUX",
+  "1008": "ELECTROLUX",
 };
 
 /**
