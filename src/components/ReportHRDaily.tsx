@@ -5718,7 +5718,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setMasterW2OfficeAgreementPreviewLoading(true);
     try {
       const recipientName = employees.find((e) => e.id === masterW2OfficeAgreementRecipientId)?.name || "";
-      const logo = masterW2OfficeAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const logo = masterW2OfficeAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
       const pdfBlob = await captureHtmlToPdfBlob(buildMasterW2OfficeAgreementBodyMarkup(buildMasterW2OfficeAgreementPreviewData(recipientName), logo), masterW2OfficeAgreementStyles);
       const url = URL.createObjectURL(pdfBlob);
       setMasterW2OfficeAgreementPreviewPdfUrl(url);
@@ -5793,7 +5793,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setMasterW2OfficeAgreementActionBusyId(doc.id);
     setMasterW2OfficeAgreementActionError(null);
     try {
-      const logo = masterW2OfficeAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const logo = masterW2OfficeAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
       if (!masterW2OfficeAgreementLogoDataUrl) setMasterW2OfficeAgreementLogoDataUrl(logo);
       await regenerateMasterAgreementPdf(doc, logo, buildMasterW2OfficeAgreementBodyMarkup, masterW2OfficeAgreementStyles, uploadMasterW2OfficeAgreementForm, name);
       await loadSentMasterW2OfficeAgreementForms();
@@ -5846,7 +5846,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setMasterW2OfficeAgreementEmployerDialog(doc);
     setMasterW2OfficeAgreementEmployerError(null);
     if (!masterW2OfficeAgreementLogoDataUrl) {
-      loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")).then(setMasterW2OfficeAgreementLogoDataUrl).catch(() => {});
+      loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")).then(setMasterW2OfficeAgreementLogoDataUrl).catch(() => {});
     }
   };
 
@@ -5876,7 +5876,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       const merged: MasterW2OfficeAgreementFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt, employerName: displayName || "" };
 
-      const logo = masterW2OfficeAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const logo = masterW2OfficeAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
       const pdfBlob = await captureHtmlToPdfBlob(buildMasterW2OfficeAgreementBodyMarkup(merged, logo), masterW2OfficeAgreementStyles);
       const pdfUrl = await uploadMasterW2OfficeAgreementForm(masterW2OfficeAgreementEmployerDialog.companyId, existing.employeeName || "master-w2-office-agreement", pdfBlob);
 
@@ -6310,7 +6310,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setConfidentialityNonCompeteAgreementPreviewLoading(true);
     try {
       const recipientName = employees.find((e) => e.id === confidentialityNonCompeteAgreementRecipientId)?.name || "";
-      const logo = confidentialityNonCompeteAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const logo = confidentialityNonCompeteAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
       const pdfBlob = await captureConfidentialityNonCompeteAgreementPdf(buildConfidentialityNonCompeteAgreementPreviewData(recipientName), logo);
       const url = URL.createObjectURL(pdfBlob);
       setConfidentialityNonCompeteAgreementPreviewPdfUrl(url);
@@ -6394,7 +6394,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setConfidentialityNonCompeteAgreementActionBusyId(doc.id);
     setConfidentialityNonCompeteAgreementActionError(null);
     try {
-      const logo = confidentialityNonCompeteAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const logo = confidentialityNonCompeteAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
       if (!confidentialityNonCompeteAgreementLogoDataUrl) setConfidentialityNonCompeteAgreementLogoDataUrl(logo);
       await regenerateMasterAgreementPdf(doc, logo, buildConfidentialityNonCompeteAgreementBodyMarkup, confidentialityNonCompeteAgreementStyles, uploadConfidentialityNonCompeteAgreementForm, name, captureConfidentialityNonCompeteAgreementPdf);
       await loadSentConfidentialityNonCompeteAgreementForms();
@@ -6453,7 +6453,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setConfidentialityNonCompeteAgreementEmployerPrintedNameTitle("");
     setConfidentialityNonCompeteAgreementEmployerError(null);
     if (!confidentialityNonCompeteAgreementLogoDataUrl) {
-      loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")).then(setConfidentialityNonCompeteAgreementLogoDataUrl).catch(() => {});
+      loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")).then(setConfidentialityNonCompeteAgreementLogoDataUrl).catch(() => {});
     }
   };
 
@@ -6492,7 +6492,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         employerPrintedNameTitle: confidentialityNonCompeteAgreementEmployerPrintedNameTitle.trim(),
       };
 
-      const logo = confidentialityNonCompeteAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const logo = confidentialityNonCompeteAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
       const pdfBlob = await captureConfidentialityNonCompeteAgreementPdf(merged, logo);
       const pdfUrl = await uploadConfidentialityNonCompeteAgreementForm(confidentialityNonCompeteAgreementEmployerDialog.companyId, existing.employeeName || "confidentiality-noncompete-agreement", pdfBlob);
 

@@ -158,7 +158,7 @@ function buildVersion2Markup(data: ConfidentialityNonCompeteAgreementFormData, l
   return `
     <div class="cnc-container">
       <div class="cnc-header">
-        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="US In Home Services" style="width:56px;height:56px;object-fit:contain;" />` : ""}
+        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="Admin Hub Solutions" style="width:56px;height:56px;object-fit:contain;" />` : ""}
         <h1>MASTER CONFIDENTIALITY, NON-SOLICITATION, AND AFFIRMATIVE DUTY AGREEMENT</h1>
       </div>
 
@@ -210,7 +210,7 @@ function buildVersion1Markup(data: ConfidentialityNonCompeteAgreementFormData, l
   return `
     <div class="cnc-container">
       <div class="cnc-header">
-        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="US In Home Services" style="width:56px;height:56px;object-fit:contain;" />` : ""}
+        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="Admin Hub Solutions" style="width:56px;height:56px;object-fit:contain;" />` : ""}
         <h1>MASTER CONFIDENTIALITY, NON-SOLICITATION, NON-COMPETE, AND AFFIRMATIVE DUTY AGREEMENT</h1>
       </div>
 

@@ -88,7 +88,7 @@ export function FillMasterW2OfficeAgreementPage({ docId }: Props) {
         const [profileId, document, logo] = await Promise.all([
           getMyProfileId(uid),
           getSignableDocument(docId),
-          loadAssetDataUrl(() => import("@/assets/us-in-home-services-logo.png")),
+          loadAssetDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")),
         ]);
         if (cancelled) return;
         setMyProfileId(profileId);

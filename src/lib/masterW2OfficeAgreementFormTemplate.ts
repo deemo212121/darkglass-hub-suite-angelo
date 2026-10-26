@@ -108,7 +108,7 @@ export function buildMasterW2OfficeAgreementBodyMarkup(data: MasterW2OfficeAgree
           <h1>US IN HOME SERVICES</h1>
           <h2>MASTER W-2 OFFICE &amp; LOGISTICS COMPREHENSIVE POLICY, CONDUCT &amp; AGREEMENT</h2>
         </div>
-        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="US In Home Services" />` : ""}
+        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="Admin Hub Solutions" />` : ""}
       </div>
 
       <div class="mw2o-section-title">1. Employee &amp; Branch Information</div>
