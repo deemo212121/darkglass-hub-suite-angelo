@@ -1,3 +1,4 @@
+import { brandOf, type FormBrand } from "@/lib/formBrand";
 /**
  * HR module -> Staff Form Checklist. Per-person live status of every
  * signable form for 5 tiers, each its own tab — pulled straight from
@@ -78,7 +79,22 @@ import { CONTRACTOR_ADDENDUM_POSITION_LEVELS } from "@/lib/contractorAddendumFor
 const PH_BRANCH_NAMES = new Set(LOCATIONS_DATA.filter((l) => l.isPhilippines).map((l) => l.location));
 const isPhBranch = (u: ProfileRow) => PH_BRANCH_NAMES.has(u.assigned_branch || "");
 
-type ChecklistTabKey = "technician" | "newTechnician" | "officeStaffUs" | "phStaff" | "bmAndUp";
+type ChecklistTabKey = "technician" | "newTechnician" | "officeStaffUs" | "phStaff" | "ahsPhStaff" | "bmAndUp";
+
+/**
+ * The forms that come in two versions — the original US In Home Services one
+ * and the Admin Hub Solutions one (HR Paperworks → AHS Forms PH; see
+ * lib/formBrand.ts). A tab with a `brand` sends its own version of these.
+ */
+const BRANDED_FORM_TYPES = new Set<SignableDocumentType>(["master_ph_contractor_agreement", "direct_deposit", "valid_id_form"]);
+/**
+ * Of those, the ones that must be signed in the tab's own version to count —
+ * only the Master PH Contractor Agreement. Direct Deposit and Valid ID carry
+ * over: either version counts on both PH Staff and AHS Forms PH (like W-8BEN).
+ */
+const VERSION_REQUIRED_FORM_TYPES = new Set<SignableDocumentType>(["master_ph_contractor_agreement"]);
+/** The AHS Forms PH checklist — the same forms as HR Paperworks' AHS Forms PH group. */
+const AHS_PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "w8ben", "direct_deposit", "valid_id_form"];
 
 interface ChecklistTabConfig {
   key: ChecklistTabKey;
@@ -97,6 +113,8 @@ interface ChecklistTabConfig {
    * no old/new split for those yet, so every submission counts regardless.
    */
   formSourceBucket: "old" | "new";
+  /** Which version of the BRANDED_FORM_TYPES this tab counts and sends; unset = any. */
+  brand?: FormBrand;
 }
 
 /**
@@ -175,6 +193,17 @@ const CHECKLIST_TABS: ChecklistTabConfig[] = [
     isEligible: (u) => isPhBranch(u),
     noun: "PH staff",
     formSourceBucket: "new",
+    // The US In Home Services set — AHS copies count on the AHS Forms PH tab instead.
+    brand: "usihs",
+  },
+  {
+    key: "ahsPhStaff",
+    label: "AHS Forms PH",
+    formTypes: AHS_PH_STAFF_FORM_TYPES,
+    isEligible: (u) => isPhBranch(u),
+    noun: "PH staff",
+    formSourceBucket: "new",
+    brand: "ahs",
   },
   {
     key: "bmAndUp",
@@ -490,6 +519,8 @@ export function TechnicianFormChecklistPage({
         // without this, e.g. New Technician's W-4 row showed "done" off an
         // old-flow W-4 submission it never actually sent.
         if (SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) && isNewAutomationDoc(d) !== (activeConfig.formSourceBucket === "new")) continue;
+        // The Master PH Contractor Agreement counts on its own version's tab only (Direct Deposit / Valid ID carry over).
+        if (activeConfig.brand && VERSION_REQUIRED_FORM_TYPES.has(d.documentType) && brandOf(d.formData) !== activeConfig.brand) continue;
         const key = `${personId}|${d.documentType}`;
         const arr = byKey.get(key);
         if (arr) arr.push(d);
@@ -711,6 +742,7 @@ export function TechnicianFormChecklistPage({
       const alreadySent = alreadySentRaw.filter(
         (d) =>
           (!SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) || isNewAutomationDoc(d) === (activeConfig.formSourceBucket === "new")) &&
+          (!activeConfig.brand || !VERSION_REQUIRED_FORM_TYPES.has(d.documentType) || brandOf(d.formData) === activeConfig.brand) &&
           // Signed in an old wording: sending the new version is the point, not a duplicate.
           !isOutdatedDocument(d)
       );
@@ -741,7 +773,7 @@ export function TechnicianFormChecklistPage({
       const versionTag = currentVersion ? { templateVersion: currentVersion } : {};
       const doc = await createSignableDocument({
         documentType: type,
-        formData: { employeeId: personId, employeeName: personName, ...formSourceTag, ...contractorAddendumFields, ...versionTag },
+        formData: { employeeId: personId, employeeName: personName, ...formSourceTag, ...contractorAddendumFields, ...versionTag, ...(activeConfig.brand === "ahs" && BRANDED_FORM_TYPES.has(type) ? { brand: "ahs" } : {}) },
         recipientId: personId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -797,6 +829,7 @@ export function TechnicianFormChecklistPage({
         new Set(
           alreadyActiveRaw
             .filter((d) => !SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) || isNewAutomationDoc(d) === (activeConfig.formSourceBucket === "new"))
+            .filter((d) => !activeConfig.brand || !VERSION_REQUIRED_FORM_TYPES.has(d.documentType) || brandOf(d.formData) === activeConfig.brand)
             .map((d) => d.documentType)
         )
       );
@@ -819,6 +852,7 @@ export function TechnicianFormChecklistPage({
               employeeId: r.profileId,
               employeeName: r.name,
               ...formSourceTag,
+              ...(activeConfig.brand === "ahs" && BRANDED_FORM_TYPES.has(type) ? { brand: "ahs" } : {}),
               // Same reasoning as handleSendForm above — only applies to the
               // contractor_addendum entry in this bundle, if present.
               ...(type === "contractor_addendum" && contractorAddendumInfo

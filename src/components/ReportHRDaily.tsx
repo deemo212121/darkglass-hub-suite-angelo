@@ -6538,7 +6538,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (activeTab === "masterPhContractorAgreement" || activeTab === "ahsPhAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMasterPhContractorAgreementForms();
   }, [activeTab]);
   const sentMasterPhContractorAgreementAwaitingEmployerCount = useMemo(
-    () => sentMasterPhContractorAgreementForms.filter(isAwaitingEmployerStep).length,
+    () => sentMasterPhContractorAgreementForms.filter((d) => !isAhsDoc(d) && isAwaitingEmployerStep(d)).length,
+    [sentMasterPhContractorAgreementForms]
+  );
+  const sentAhsPhAgreementAwaitingEmployerCount = useMemo(
+    () => sentMasterPhContractorAgreementForms.filter((d) => isAhsDoc(d) && isAwaitingEmployerStep(d)).length,
     [sentMasterPhContractorAgreementForms]
   );
 
@@ -18450,7 +18454,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       group: "AHS Forms PH",
       icon: Paperclip,
       tabs: [
-        { key: "ahsPhAgreement", label: "Master PH Contractor Agreement", count: 0, icon: FileCheck },
+        { key: "ahsPhAgreement", label: "Master PH Contractor Agreement", count: sentAhsPhAgreementAwaitingEmployerCount, icon: FileCheck },
         { key: "ahsDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
         { key: "ahsValidId", label: "Valid ID", count: 0, icon: FileCheck },
         // The official IRS form — no company name or logo on it, so there is no separate AHS version; same tab as New Automation Forms → PH Staff.

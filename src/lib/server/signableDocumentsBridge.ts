@@ -322,11 +322,18 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
         vehicle_use_agreement: { name: "Vehicle Use Agreement", tab: "vehicleUseAgreement" },
         contractor_addendum: { name: "Master Independent Contractor Subcontractor Agreement Addendum", tab: "contractorAddendum" },
       };
-      const docLabel = DOC_TYPE_LABELS[doc.document_type] ?? DOC_TYPE_LABELS.warning_form;
+      // Admin Hub Solutions copies (form_data.brand = "ahs", sent from HR Paperworks → AHS Forms PH) open their own AHS tab there.
+      const AHS_FORM_TABS: Record<string, { name: string; tab: string }> = {
+        master_ph_contractor_agreement: { name: "Master PH Contractor Agreement (AHS)", tab: "ahsPhAgreement" },
+        direct_deposit: { name: "Direct Deposit Authorization (AHS)", tab: "ahsDirectDeposit" },
+        valid_id_form: { name: "Valid ID (AHS)", tab: "ahsValidId" },
+      };
+      const ahsLabel = (doc.form_data as { brand?: string } | null)?.brand === "ahs" ? AHS_FORM_TABS[doc.document_type] : undefined;
+      const docLabel = ahsLabel ?? DOC_TYPE_LABELS[doc.document_type] ?? DOC_TYPE_LABELS.warning_form;
       const notifyFields = {
         title: `Signed by ${doc.recipient_name ?? "recipient"}`,
         body: `${docLabel.name} for ${formTitle} has been signed.`,
-        link: `/m/hr/hr-dashboard?tab=${docLabel.tab}`,
+        link: ahsLabel ? `/m/hr/hr-paperworks?tab=${ahsLabel.tab}` : `/m/hr/hr-dashboard?tab=${docLabel.tab}`,
       };
       const [{ creatorFirebaseUid, hrFirebaseUids }, notifyHrEnabled] = await Promise.all([
         fetchHrRoleAndCreatorFirebaseUids(envBag, doc.company_id, doc.created_by),
