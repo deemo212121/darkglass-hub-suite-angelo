@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, KeyRound, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, UserPlus, Search, Bell, Download, Forward, History, FileText, ClipboardList, ClipboardCheck, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, ShieldCheck, GraduationCap, LogOut, PhoneCall, Briefcase, Star, Route as RouteIcon } from "lucide-react";
+import { ChevronLeft, KeyRound, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, UserPlus, Search, Bell, Download, Forward, History, FileText, ClipboardList, ClipboardCheck, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, ShieldCheck, GraduationCap, LogOut, PhoneCall, Briefcase, Star, Route as RouteIcon, RefreshCw } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import { StickyHorizontalScrollbar } from "@/components/StickyHorizontalScrollbar";
@@ -13021,6 +13021,109 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   /** Re-renders this document's PDF from its already-stored data/signatures — see regenerateSignableDocumentPdf.ts's header comment (built for the date-rollback fmtDate fix, which only affects documents generated after the fix). */
+  // ── Regenerate all PDFs (HR Paperworks header) ──
+  // Re-renders every signed copy of the picked forms from its saved data and
+  // signatures, the same way each form's own "Regenerate PDF" does (same
+  // logo per form), one document at a time with a progress bar. Skips
+  // cancelled ones, ones still waiting for a signature (warning forms
+  // excepted — their PDF exists from the start) and scanned paper copies.
+  type BulkRegenForm = {
+    type: SignableDocumentType;
+    label: string;
+    /** The wording changed since some copies were signed (company name / title) — the tool warns before running these. */
+    changesWording?: boolean;
+    run: (doc: SignableDocument, logos: { ahs: string; usihs: string }) => Promise<void>;
+  };
+  const bulkName = (doc: SignableDocument, fallback: string) => (doc.formData as { employeeName?: string })?.employeeName || doc.recipientName || fallback;
+  const BULK_REGEN_FORMS: BulkRegenForm[] = [
+    { type: "warning_form", label: "Employee Warning Form", run: async (doc) => { await regenerateWarningPdf(doc, doc.formData as unknown as WarningFormData); } },
+    { type: "master_w2_agreement", label: "Master W-2 Technician Agreement", run: async (doc, l) => { await regenerateMasterAgreementPdf(doc, l.usihs, buildMasterW2AgreementBodyMarkup, masterW2AgreementStyles, uploadMasterW2AgreementForm, bulkName(doc, "master-w2-agreement")); } },
+    { type: "master_w2_office_agreement", label: "Master W-2 Office & Logistics Agreement", run: async (doc, l) => { await regenerateMasterAgreementPdf(doc, masterW2OfficeUsesAdminHub(doc.formData) ? l.ahs : l.usihs, buildMasterW2OfficeAgreementBodyMarkup, masterW2OfficeAgreementStyles, uploadMasterW2OfficeAgreementForm, bulkName(doc, "master-w2-office-agreement")); } },
+    { type: "master_w2_executive_agreement", label: "Master W-2 Executive Agreement", run: async (doc, l) => { await regenerateMasterAgreementPdf(doc, l.usihs, buildMasterW2ExecutiveAgreementBodyMarkup, masterW2ExecutiveAgreementStyles, uploadMasterW2ExecutiveAgreementForm, bulkName(doc, "master-w2-executive-agreement")); } },
+    { type: "confidentiality_noncompete_agreement", label: "Master Confidentiality & Non-Compete Agreement", run: async (doc, l) => { await regenerateMasterAgreementPdf(doc, confidentialityUsesAdminHub(doc.formData) ? l.ahs : l.usihs, buildConfidentialityNonCompeteAgreementBodyMarkup, confidentialityNonCompeteAgreementStyles, uploadConfidentialityNonCompeteAgreementForm, bulkName(doc, "confidentiality-noncompete-agreement"), captureConfidentialityNonCompeteAgreementPdf); } },
+    { type: "master_ph_contractor_agreement", label: "Master Confidentiality, Non-Solicitation & Affirmative Duty Agreement (PH)", changesWording: true, run: async (doc, l) => { await regenerateMasterAgreementPdf(doc, l.ahs, buildMasterPhContractorAgreementBodyMarkup, masterPhContractorAgreementStyles, uploadMasterPhContractorAgreementForm, bulkName(doc, "master-ph-contractor-agreement")); } },
+    { type: "direct_deposit", label: "Direct Deposit Authorization", changesWording: true, run: async (doc, l) => { await regenerateSimpleSignableDocumentPdf(doc, l.ahs, buildDirectDepositBodyMarkup, directDepositStyles, uploadDirectDepositForm, bulkName(doc, "direct-deposit")); } },
+    { type: "valid_id_form", label: "Valid ID", run: async (doc, l) => { await regenerateSimpleSignableDocumentPdf(doc, l.ahs, buildValidIdFormBodyMarkup, validIdFormStyles, uploadValidIdForm, bulkName(doc, "valid-id"), "idPhotoUrls"); } },
+    { type: "ssn_card_form", label: "SSN Card", run: async (doc, l) => { await regenerateSimpleSignableDocumentPdf(doc, l.usihs, buildSsnCardFormBodyMarkup, ssnCardFormStyles, uploadSsnCardForm, bulkName(doc, "ssn-card"), "cardPhotoUrls"); } },
+    { type: "drivers_license_form", label: "Driver's License", run: async (doc, l) => { await regenerateSimpleSignableDocumentPdf(doc, l.usihs, buildDriversLicenseFormBodyMarkup, driversLicenseFormStyles, uploadDriversLicenseForm, bulkName(doc, "drivers-license"), "licensePhotoUrls"); } },
+    { type: "contractor_data", label: "Contractor Data (PH)", run: async (doc, l) => { await regenerateSimpleSignableDocumentPdf(doc, l.usihs, buildContractorDataBodyMarkup, contractorDataStyles, uploadContractorDataForm, bulkName(doc, "contractor-data")); } },
+    { type: "contractor_data_us", label: "Contractor Data (US)", run: async (doc, l) => { await regenerateSimpleSignableDocumentPdf(doc, l.usihs, buildContractorDataUsBodyMarkup, contractorDataUsStyles, uploadContractorDataForm, bulkName(doc, "contractor-data-us")); } },
+    { type: "vehicle_use_agreement", label: "Company Vehicle Use Agreement", run: async (doc, l) => { await regenerateSimpleSignableDocumentPdf(doc, l.usihs, buildVehicleUseAgreementBodyMarkup, vehicleUseAgreementStyles, uploadVehicleUseAgreementForm, bulkName(doc, "vehicle-use-agreement")); } },
+    {
+      type: "nda_form", label: "NDA", run: async (doc, l) => {
+        const resolved = await resolveSignaturesForCapture(doc.signatures, "__regenerate__", "");
+        const pdfBlob = await captureHtmlPagesToPdfBlob(buildNdaFormPages(doc.formData as NdaFormData, l.usihs, resolved.employee), ndaFormStyles);
+        await updateSignableDocumentPdfUrl(doc.id, await uploadNdaForm(doc.companyId, bulkName(doc, "nda-form"), pdfBlob));
+      },
+    },
+    {
+      type: "flash_technician_travel", label: "Flash Technician Travel & Out-of-State Policy", run: async (doc) => {
+        const data = doc.formData as FlashTechnicianTravelFormData;
+        if (!data?.employeeSignatureDataUrl) throw new Error("no saved signature to rebuild from");
+        // Signed under earlier wording — regenerating would put today's text above their signature.
+        if (!canRegenerateFlashTravelPdf(data)) throw new Error("signed under the earlier wording — skipped");
+        const toBytes = async (url?: string) => (url ? new Uint8Array(await (await fetch(url)).arrayBuffer()) : undefined);
+        const pdfBytes = await fillFlashTechnicianTravelPdf(data, await toBytes(data.employeeSignatureDataUrl), await toBytes(data.employerSignatureDataUrl));
+        const pdfUrl = await uploadFlashTechnicianTravelForm(doc.companyId, data.employeeName || "flash-technician-travel", new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }));
+        await updateSignableDocumentPdfUrl(doc.id, pdfUrl);
+      },
+    },
+  ];
+  const bulkEligible = (f: BulkRegenForm, d: SignableDocument) =>
+    d.status !== "cancelled" && !(d.formData as { paperCopy?: unknown })?.paperCopy && (f.type === "warning_form" ? !!d.pdfUrl : d.status !== "pending_signature");
+  const [bulkRegenOpen, setBulkRegenOpen] = useState(false);
+  const [bulkRegenDocs, setBulkRegenDocs] = useState<Partial<Record<SignableDocumentType, SignableDocument[]>>>({});
+  const [bulkRegenPicked, setBulkRegenPicked] = useState<Set<SignableDocumentType>>(new Set());
+  const [bulkRegenRunning, setBulkRegenRunning] = useState(false);
+  const [bulkRegenProgress, setBulkRegenProgress] = useState<{ done: number; total: number; failed: number; current: string; errors: string[]; finished: boolean } | null>(null);
+  const bulkRegenStopRef = useRef(false);
+  const openBulkRegen = async () => {
+    setBulkRegenOpen(true);
+    setBulkRegenProgress(null);
+    setBulkRegenDocs({});
+    const entries = await Promise.all(
+      BULK_REGEN_FORMS.map(async (f) => [f.type, await getSignableDocuments(f.type).catch(() => [] as SignableDocument[])] as const),
+    );
+    setBulkRegenDocs(Object.fromEntries(entries));
+  };
+  const runBulkRegen = async () => {
+    const forms = BULK_REGEN_FORMS.filter((f) => bulkRegenPicked.has(f.type));
+    const queue = forms.flatMap((f) => (bulkRegenDocs[f.type] ?? []).filter((d) => bulkEligible(f, d)).map((d) => ({ f, d })));
+    if (queue.length === 0) return;
+    if (forms.some((f) => f.changesWording) && !window.confirm("Some picked forms have new wording (Admin Hub Solutions / new title). Their already-signed copies will show the new wording above the old signatures. Continue?")) return;
+    bulkRegenStopRef.current = false;
+    setBulkRegenRunning(true);
+    const errors: string[] = [];
+    let done = 0;
+    let failed = 0;
+    setBulkRegenProgress({ done, total: queue.length, failed, current: "", errors, finished: false });
+    try {
+      await refreshStorageAuthToken();
+      const [ahs, usihs] = await Promise.all([
+        loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")),
+        loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")),
+      ]);
+      for (const { f, d } of queue) {
+        if (bulkRegenStopRef.current) break;
+        const who = `${bulkName(d, "—")} · ${f.label}`;
+        setBulkRegenProgress({ done, total: queue.length, failed, current: who, errors: [...errors], finished: false });
+        try {
+          await f.run(d, { ahs, usihs });
+        } catch (err) {
+          failed++;
+          errors.push(`${who}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        done++;
+      }
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBulkRegenProgress({ done, total: queue.length, failed, current: "", errors: [...errors], finished: true });
+      setBulkRegenRunning(false);
+      void logActivity({ action: "bulk_regenerate_pdfs", targetType: "employee", targetLabel: `${done - failed} regenerated, ${failed} failed (${forms.map((f) => f.label).join(", ")})` });
+    }
+  };
+
   const handleRegenerateDirectDepositPdf = async (doc: SignableDocument) => {
     const name = (doc.formData as Partial<DirectDepositFormData>).employeeName || doc.recipientName || "direct-deposit";
     setDirectDepositActionBusyId(doc.id);
@@ -18638,7 +18741,108 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         >
           <History className="h-4 w-4" /> Activity Log
         </button>
+        <button
+          type="button"
+          onClick={() => void openBulkRegen()}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-sm text-muted-foreground hover:text-foreground"
+          title="Rebuild every signed PDF of the forms you pick — with today's logo and layout, keeping every signature"
+        >
+          <RefreshCw className="h-4 w-4" /> Regenerate all PDFs
+        </button>
       </div>
+
+      {bulkRegenOpen && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4" onClick={() => !bulkRegenRunning && setBulkRegenOpen(false)}>
+          <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-xl border border-white/15 bg-slate-900 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-white/10">
+              <div>
+                <h3 className="font-semibold text-white">Regenerate all PDFs</h3>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Rebuilds every signed copy of the forms you pick with today's logo and layout. Signatures, photos and answers are kept. Cancelled forms, ones still waiting for a signature and scanned paper copies are skipped.</p>
+              </div>
+              <button type="button" disabled={bulkRegenRunning} onClick={() => setBulkRegenOpen(false)} className="text-muted-foreground hover:text-white text-lg leading-none disabled:opacity-40" aria-label="Close">✕</button>
+            </div>
+            <div className="overflow-y-auto px-5 py-3">
+              <div className="flex items-center justify-between mb-2 text-xs">
+                <span className="text-muted-foreground">Pick the forms:</span>
+                <span className="flex gap-3">
+                  <button type="button" disabled={bulkRegenRunning} onClick={() => setBulkRegenPicked(new Set(BULK_REGEN_FORMS.map((f) => f.type)))} className="text-blue-300 hover:text-blue-200">Select all</button>
+                  <button type="button" disabled={bulkRegenRunning} onClick={() => setBulkRegenPicked(new Set())} className="text-slate-400 hover:text-white">Clear</button>
+                </span>
+              </div>
+              <ul className="divide-y divide-white/5 rounded-lg border border-white/10">
+                {BULK_REGEN_FORMS.map((f) => {
+                  const docs = bulkRegenDocs[f.type];
+                  const n = docs ? docs.filter((d) => bulkEligible(f, d)).length : null;
+                  return (
+                    <li key={f.type}>
+                      <label className="flex items-center gap-2.5 px-3 py-2 text-sm cursor-pointer hover:bg-white/5">
+                        <input
+                          type="checkbox"
+                          disabled={bulkRegenRunning || n === 0}
+                          checked={bulkRegenPicked.has(f.type)}
+                          onChange={(e) => setBulkRegenPicked((prev) => { const next = new Set(prev); if (e.target.checked) next.add(f.type); else next.delete(f.type); return next; })}
+                          className="h-4 w-4 accent-blue-500"
+                        />
+                        <span className="flex-1 text-slate-200">
+                          {f.label}
+                          {f.changesWording && <span className="ml-2 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-300" title="Company name / title changed since some copies were signed">new wording</span>}
+                        </span>
+                        <span className="text-xs tabular-nums text-muted-foreground">{n === null ? <Loader2 className="h-3.5 w-3.5 animate-spin inline" /> : `${n} signed`}</span>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+              {BULK_REGEN_FORMS.some((f) => f.changesWording && bulkRegenPicked.has(f.type)) && (
+                <p className="mt-2 text-[11px] text-amber-300">⚠ Forms marked "new wording" now say Admin Hub Solutions (and the PH agreement has a new title) — copies signed before the change will show the new wording above the old signatures.</p>
+              )}
+
+              {bulkRegenProgress && (
+                <div className="mt-4 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-300">
+                      {bulkRegenProgress.finished
+                        ? `Done — ${bulkRegenProgress.done - bulkRegenProgress.failed} regenerated${bulkRegenProgress.failed ? `, ${bulkRegenProgress.failed} failed` : ""}${bulkRegenProgress.done < bulkRegenProgress.total ? ` (stopped at ${bulkRegenProgress.done} of ${bulkRegenProgress.total})` : ""}`
+                        : `Regenerating ${bulkRegenProgress.done + 1} of ${bulkRegenProgress.total}…`}
+                    </span>
+                    <span className="tabular-nums text-muted-foreground">{Math.round((bulkRegenProgress.done / Math.max(1, bulkRegenProgress.total)) * 100)}%</span>
+                  </div>
+                  <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-800">
+                    <div
+                      className={`h-full transition-all duration-300 ${bulkRegenProgress.failed ? "bg-amber-500" : "bg-emerald-500"}`}
+                      style={{ width: `${(bulkRegenProgress.done / Math.max(1, bulkRegenProgress.total)) * 100}%` }}
+                    />
+                  </div>
+                  {bulkRegenProgress.current && <p className="text-[11px] text-muted-foreground truncate">Now: {bulkRegenProgress.current}</p>}
+                  {bulkRegenProgress.errors.length > 0 && (
+                    <details className="text-[11px] text-red-300">
+                      <summary className="cursor-pointer">{bulkRegenProgress.errors.length} couldn't be regenerated</summary>
+                      <ul className="mt-1 max-h-32 overflow-y-auto list-disc pl-4 space-y-0.5">{bulkRegenProgress.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>
+                    </details>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-white/10">
+              {bulkRegenRunning ? (
+                <button type="button" onClick={() => { bulkRegenStopRef.current = true; }} className="btn text-sm px-3 py-1.5 text-red-300">Stop</button>
+              ) : (
+                <button type="button" onClick={() => setBulkRegenOpen(false)} className="btn text-sm px-3 py-1.5">Close</button>
+              )}
+              <button
+                type="button"
+                disabled={bulkRegenRunning || bulkRegenPicked.size === 0 || BULK_REGEN_FORMS.every((f) => !bulkRegenPicked.has(f.type) || !(bulkRegenDocs[f.type] ?? []).some((d) => bulkEligible(f, d)))}
+                onClick={() => void runBulkRegen()}
+                className="btn text-sm px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white inline-flex items-center gap-1.5 disabled:opacity-40"
+              >
+                {bulkRegenRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                Regenerate {BULK_REGEN_FORMS.filter((f) => bulkRegenPicked.has(f.type)).reduce((t, f) => t + (bulkRegenDocs[f.type] ?? []).filter((d) => bulkEligible(f, d)).length, 0)} PDFs
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
 
       {showActivityLog && (
         <div
