@@ -86,7 +86,7 @@ const ZIP3_STATE_RANGES: Array<[number, number, string]> = [
   [967, 968, 'HI'], [969, 969, 'GU'], [970, 979, 'OR'], [980, 994, 'WA'],
   [995, 999, 'AK'],
 ];
-function stateFromZip5(zip5: string): string {
+export function stateFromZip5(zip5: string): string {
   const n = parseInt(zip5.slice(0, 3), 10);
   if (!Number.isFinite(n)) return '';
   for (const [min, max, state] of ZIP3_STATE_RANGES) {
@@ -328,8 +328,11 @@ export function convertCallToTicket(call: any): Ticket {
   // City lives in PostcodeLevel3 (Level2 is usually blank); fall back to Level2.
   const city = consumer.postcodeLevel3 || consumer.postcodeLevel2 || '';
   // Work-order Source (SQUARE TRADE / GE / ASSURANT ...): SP exposes both a
-  // MfgId code and (sometimes) a friendlier MfgName. Prefer the name.
-  const source = mapSource(call.mfgId, call.mfgName);
+  // MfgId code and (sometimes) a friendlier MfgName. Prefer the name. The
+  // call number goes along so an Electrolux call SP files under Assurant's
+  // MfgId is saved as ELECTROLUX (source, account and claim company) — not
+  // only shown that way on read (mfgSource.ts).
+  const source = mapSource(call.mfgId, call.mfgName, call.callNumber);
   // Servicer account = the credential we authenticated to ServicePower with
   // (e.g. GSL00002). Same value for every SP-sourced ticket. Falls back to
   // whatever SP echoed in ServicerAccount when the env var isn't available.

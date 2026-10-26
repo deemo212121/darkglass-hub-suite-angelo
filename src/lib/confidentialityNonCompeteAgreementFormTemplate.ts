@@ -17,6 +17,7 @@
 
 import { captureHtmlPagesToPdfBlob } from "./pdfCapture";
 import { CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION } from "./signableDocumentRegistry";
+import { brandOf } from "./formBrand";
 
 export interface ConfidentialityNonCompeteAgreementFormData {
   /** The employee's profile id — not shown on the document, carried along for lookups. */
@@ -41,6 +42,8 @@ export interface ConfidentialityNonCompeteAgreementFormData {
    * CNC_CURRENT_TEMPLATE_VERSION (see FillConfidentialityNonCompeteAgreementPage.tsx).
    */
   templateVersion?: number;
+  /** "ahs" = the Admin Hub Solutions version (HR Paperworks / Staff Form Checklist → AHS Forms PH); absent = the original US In Home Services version. */
+  brand?: "ahs";
 }
 
 /** Version 2 (2026-10-09): "Master Confidentiality, Non-Solicitation, and Affirmative Duty Agreement" — no non-compete, 1-year restrictions, no residence line. */
@@ -122,13 +125,22 @@ function signField(label: string, inner: string, minWidth = 150, isText = false)
   return `<div class="cnc-sign-field">${escapeHtml(label)}: <span class="cnc-val${isText ? " cnc-val-text" : ""}" style="min-width:${minWidth}px">${inner || "&nbsp;"}</span></div>`;
 }
 
+/**
+ * The Admin Hub Solutions version (sent from AHS Forms PH — form_data.brand,
+ * see lib/formBrand.ts): version 2's text with Admin Hub Solutions as the
+ * employer and its logo. Every other copy is US In Home Services.
+ */
+export function confidentialityUsesAdminHub(data: unknown): boolean {
+  return brandOf(data) === "ahs";
+}
+
 /** The document in the wording its data says it was signed with (see templateVersion). */
 export function buildConfidentialityNonCompeteAgreementBodyMarkup(data: ConfidentialityNonCompeteAgreementFormData, logoDataUrl: string): string {
   return (data.templateVersion ?? 1) >= 2 ? buildVersion2Markup(data, logoDataUrl) : buildVersion1Markup(data, logoDataUrl);
 }
 
 /** Shared signature blocks (same fields in both versions). */
-function signatureBlocks(data: ConfidentialityNonCompeteAgreementFormData): string {
+function signatureBlocks(data: ConfidentialityNonCompeteAgreementFormData, employerName: string): string {
   const empDate = dateParts(data.employeeDateSigned);
   const erDate = dateParts(data.employerDateSigned);
   const sig = (url: string) => (url ? `<img class="cnc-sig-img" src="${url}" alt="Signature" />` : "");
@@ -143,7 +155,7 @@ function signatureBlocks(data: ConfidentialityNonCompeteAgreementFormData): stri
       </div>
 
       <div class="cnc-sign-block">
-        <div class="cnc-sign-title">EMPLOYER REPRESENTATIVE (US IN HOME SERVICES):</div>
+        <div class="cnc-sign-title">EMPLOYER REPRESENTATIVE (${employerName.toUpperCase()}):</div>
         <div class="cnc-sign-row">
           ${signField("Authorized Representative Signature", sig(data.employerSignatureDataUrl), 170)}
           ${signField("Date", erDate ? escapeHtml(erDate.full) : "", 120, true)}
@@ -152,18 +164,26 @@ function signatureBlocks(data: ConfidentialityNonCompeteAgreementFormData): stri
       </div>`;
 }
 
-/** Version 2 — text as supplied by HR on 2026-10-09. */
+/**
+ * Version 2 — text as supplied by HR on 2026-10-09. Its Admin Hub Solutions
+ * version (confidentialityUsesAdminHub) is the same text with Admin Hub
+ * Solutions as the employer, US In Home Services moving to the
+ * related-entities list in its place.
+ */
 function buildVersion2Markup(data: ConfidentialityNonCompeteAgreementFormData, logoDataUrl: string): string {
   const eff = dateParts(data.effectiveDate);
+  const adminHub = confidentialityUsesAdminHub(data);
+  const employer = adminHub ? "Admin Hub Solutions" : "US In Home Services";
+  const relatedEntity = adminHub ? "US In Home Services" : "Admin Hub Solutions";
   return `
     <div class="cnc-container">
       <div class="cnc-header">
-        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="US In Home Services" style="width:56px;height:56px;object-fit:contain;" />` : ""}
+        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="${employer}" style="width:56px;height:56px;object-fit:contain;" />` : ""}
         <h1>MASTER CONFIDENTIALITY, NON-SOLICITATION, AND AFFIRMATIVE DUTY AGREEMENT</h1>
       </div>
 
       <p class="cnc-p cnc-p-fill">THIS MASTER AGREEMENT (the "Agreement") is made and entered into as of this ${blank(eff?.day ?? "", 50)} day of ${blank(eff?.month ?? "", 110)}, 20${blank(eff?.year ?? "", 24)} (the "Effective Date"), by and between:</p>
-      <p class="cnc-p"><b>EMPLOYER:</b> US In Home Services, its subsidiaries, affiliates, related entities (including Admin Hub Solutions), successors, and assigns (collectively, the "Company"), 3663 Cherry Rd. #101, Memphis, TN 38117, USA.</p>
+      <p class="cnc-p"><b>EMPLOYER:</b> ${employer}, its subsidiaries, affiliates, related entities (including ${relatedEntity}), successors, and assigns (collectively, the "Company"), 3663 Cherry Rd. #101, Memphis, TN 38117, USA.</p>
       <p class="cnc-p cnc-p-fill"><b>EMPLOYEE/INDIVIDUAL:</b> ${blank(data.employeeName, 260)} ("Employee").</p>
 
       <p class="cnc-center">RECITALS</p>
@@ -196,7 +216,7 @@ function buildVersion2Markup(data: ConfidentialityNonCompeteAgreementFormData, l
       ${PAGE_BREAK}
       <p class="cnc-center">ACKNOWLEDGMENT OF VOLUNTARY EXECUTION</p>
       <p class="cnc-p">BY SIGNING BELOW, EMPLOYEE ACKNOWLEDGES THAT THEY HAVE READ, UNDERSTOOD, AND VOLUNTARILY AGREE TO ALL TERMS.</p>
-${signatureBlocks(data)}
+${signatureBlocks(data, employer)}
     </div>
   `;
 }

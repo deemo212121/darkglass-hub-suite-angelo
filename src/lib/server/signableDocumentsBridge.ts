@@ -321,10 +321,14 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
         nda_form: { name: "Non-Disclosure Agreement", tab: "ndaForm" },
         vehicle_use_agreement: { name: "Vehicle Use Agreement", tab: "vehicleUseAgreement" },
         contractor_addendum: { name: "Master Independent Contractor Subcontractor Agreement Addendum", tab: "contractorAddendum" },
+        confidentiality_noncompete_agreement: { name: "Master Confidentiality, Non-Solicitation & Affirmative Duty Agreement", tab: "confidentialityNonCompeteAgreement" },
+        master_w2_office_agreement: { name: "Master W-2 Office & Logistics Agreement", tab: "masterW2OfficeAgreement" },
       };
       // Admin Hub Solutions copies (form_data.brand = "ahs", sent from HR Paperworks → AHS Forms PH) open their own AHS tab there.
       const AHS_FORM_TABS: Record<string, { name: string; tab: string }> = {
         master_ph_contractor_agreement: { name: "Master PH Contractor Agreement (AHS)", tab: "ahsPhAgreement" },
+        confidentiality_noncompete_agreement: { name: "Master Confidentiality, Non-Solicitation & Affirmative Duty Agreement (AHS)", tab: "ahsConfidentiality" },
+        master_w2_office_agreement: { name: "Master W-2 Office & Logistics Agreement (AHS)", tab: "ahsW2Office" },
         direct_deposit: { name: "Direct Deposit Authorization (AHS)", tab: "ahsDirectDeposit" },
         valid_id_form: { name: "Valid ID (AHS)", tab: "ahsValidId" },
       };

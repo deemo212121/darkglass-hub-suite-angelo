@@ -79,22 +79,28 @@ import { CONTRACTOR_ADDENDUM_POSITION_LEVELS } from "@/lib/contractorAddendumFor
 const PH_BRANCH_NAMES = new Set(LOCATIONS_DATA.filter((l) => l.isPhilippines).map((l) => l.location));
 const isPhBranch = (u: ProfileRow) => PH_BRANCH_NAMES.has(u.assigned_branch || "");
 
-type ChecklistTabKey = "technician" | "newTechnician" | "officeStaffUs" | "phStaff" | "ahsPhStaff" | "bmAndUp";
+type ChecklistTabKey = "technician" | "newTechnician" | "officeStaffUs" | "officeStaffUsAhs" | "phStaff" | "ahsPhStaff" | "bmAndUp";
 
 /**
- * The forms that come in two versions — the original US In Home Services one
- * and the Admin Hub Solutions one (HR Paperworks → AHS Forms PH; see
- * lib/formBrand.ts). A tab with a `brand` sends its own version of these.
+ * The AHS Forms PH forms that come in two versions — the original US In Home
+ * Services one and the Admin Hub Solutions one (HR Paperworks → AHS Forms PH;
+ * see lib/formBrand.ts). That tab sends these in their AHS version (its
+ * `ahsFormTypes`); Office Staff (US) AHS has its own list.
  */
-const BRANDED_FORM_TYPES = new Set<SignableDocumentType>(["master_ph_contractor_agreement", "direct_deposit", "valid_id_form"]);
+const BRANDED_FORM_TYPES = new Set<SignableDocumentType>(["master_ph_contractor_agreement", "confidentiality_noncompete_agreement", "direct_deposit", "valid_id_form"]);
 /**
- * Of those, the ones that must be signed in the tab's own version to count —
- * only the Master PH Contractor Agreement. Direct Deposit and Valid ID carry
- * over: either version counts on both PH Staff and AHS Forms PH (like W-8BEN).
+ * The ones that must be signed in the tab's own version to count — the
+ * agreements naming the employer (Master PH Contractor Agreement, Master
+ * Confidentiality, Master W-2 Office & Logistics). Everything else carries
+ * over: either version of Direct Deposit / Valid ID counts on both PH Staff
+ * and AHS Forms PH (like W-8BEN), and Office Staff (US) AHS shares every
+ * other Office Staff (US) form.
  */
-const VERSION_REQUIRED_FORM_TYPES = new Set<SignableDocumentType>(["master_ph_contractor_agreement"]);
+const VERSION_REQUIRED_FORM_TYPES = new Set<SignableDocumentType>(["master_ph_contractor_agreement", "confidentiality_noncompete_agreement", "master_w2_office_agreement"]);
+/** What Office Staff (US) AHS sends in the Admin Hub Solutions version — only the two agreements; its other forms (Direct Deposit included) go out as usual. */
+const AHS_OFFICE_STAFF_US_FORM_TYPES = new Set<SignableDocumentType>(["master_w2_office_agreement", "confidentiality_noncompete_agreement"]);
 /** The AHS Forms PH checklist — the same forms as HR Paperworks' AHS Forms PH group. */
-const AHS_PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "w8ben", "direct_deposit", "valid_id_form"];
+const AHS_PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "confidentiality_noncompete_agreement", "w8ben", "direct_deposit", "valid_id_form"];
 
 interface ChecklistTabConfig {
   key: ChecklistTabKey;
@@ -113,8 +119,10 @@ interface ChecklistTabConfig {
    * no old/new split for those yet, so every submission counts regardless.
    */
   formSourceBucket: "old" | "new";
-  /** Which version of the BRANDED_FORM_TYPES this tab counts and sends; unset = any. */
+  /** Which version of the VERSION_REQUIRED_FORM_TYPES this tab counts; unset = any. */
   brand?: FormBrand;
+  /** The forms this tab sends in their Admin Hub Solutions version (brand "ahs" tabs). */
+  ahsFormTypes?: ReadonlySet<SignableDocumentType>;
 }
 
 /**
@@ -185,6 +193,21 @@ const CHECKLIST_TABS: ChecklistTabConfig[] = [
     isEligible: (u) => !isPhBranch(u) && !isBmAndUpRole(u.role) && !isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
     noun: "office staff",
     formSourceBucket: "new",
+    // The US In Home Services agreements — AHS copies count on Office Staff (US) AHS instead.
+    brand: "usihs",
+  },
+  {
+    // Same people and forms as Office Staff (US); the Master W-2 Office &
+    // Logistics and Master Confidentiality agreements are their Admin Hub
+    // Solutions versions here, everything else carries over.
+    key: "officeStaffUsAhs",
+    label: "Office Staff (US) AHS",
+    formTypes: OFFICE_STAFF_US_FORM_TYPES,
+    isEligible: (u) => !isPhBranch(u) && !isBmAndUpRole(u.role) && !isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
+    noun: "office staff",
+    formSourceBucket: "new",
+    brand: "ahs",
+    ahsFormTypes: AHS_OFFICE_STAFF_US_FORM_TYPES,
   },
   {
     key: "phStaff",
@@ -204,6 +227,7 @@ const CHECKLIST_TABS: ChecklistTabConfig[] = [
     noun: "PH staff",
     formSourceBucket: "new",
     brand: "ahs",
+    ahsFormTypes: BRANDED_FORM_TYPES,
   },
   {
     key: "bmAndUp",
@@ -773,7 +797,7 @@ export function TechnicianFormChecklistPage({
       const versionTag = currentVersion ? { templateVersion: currentVersion } : {};
       const doc = await createSignableDocument({
         documentType: type,
-        formData: { employeeId: personId, employeeName: personName, ...formSourceTag, ...contractorAddendumFields, ...versionTag, ...(activeConfig.brand === "ahs" && BRANDED_FORM_TYPES.has(type) ? { brand: "ahs" } : {}) },
+        formData: { employeeId: personId, employeeName: personName, ...formSourceTag, ...contractorAddendumFields, ...versionTag, ...(activeConfig.ahsFormTypes?.has(type) ? { brand: "ahs" } : {}) },
         recipientId: personId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -852,7 +876,7 @@ export function TechnicianFormChecklistPage({
               employeeId: r.profileId,
               employeeName: r.name,
               ...formSourceTag,
-              ...(activeConfig.brand === "ahs" && BRANDED_FORM_TYPES.has(type) ? { brand: "ahs" } : {}),
+              ...(activeConfig.ahsFormTypes?.has(type) ? { brand: "ahs" } : {}),
               // Same reasoning as handleSendForm above — only applies to the
               // contractor_addendum entry in this bundle, if present.
               ...(type === "contractor_addendum" && contractorAddendumInfo

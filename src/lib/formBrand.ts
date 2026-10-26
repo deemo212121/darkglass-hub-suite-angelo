@@ -24,6 +24,6 @@ export const BRAND_COMPANY: Record<FormBrand, string> = {
 /** The logo drawn on the PDF for each version. */
 export function loadBrandLogo(brand: FormBrand): Promise<string> {
   return brand === "ahs"
-    ? loadAssetDataUrl(() => import("@/assets/AHS logo.png"))
+    ? loadAssetDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png"))
     : loadAssetDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
 }

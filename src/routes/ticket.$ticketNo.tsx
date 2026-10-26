@@ -313,9 +313,13 @@ interface PartTransactionRow {
   cxPaid: string;
   createdBy: string;
   lastModifiedBy: string;
+  /** Read-only, from the hourly distributor credit check (partCreditSync, migration 0406). */
+  creditedAt?: string;
+  creditSource?: string;
+  returnRejectReason?: string;
 }
 
-type PartTransactionDraft = Omit<PartTransactionRow, "id" | "createdBy" | "lastModifiedBy">;
+type PartTransactionDraft = Omit<PartTransactionRow, "id" | "createdBy" | "lastModifiedBy" | "creditedAt" | "creditSource" | "returnRejectReason">;
 
 interface AuditLogEntry {
   id: string;
@@ -781,7 +785,7 @@ function createAuditEntry(params: Omit<AuditLogEntry, "id" | "timestamp">): Audi
   };
 }
 
-const PART_FIELD_LABELS: Record<keyof Omit<PartTransactionRow, "id" | "createdBy" | "lastModifiedBy">, string> = {
+const PART_FIELD_LABELS: Record<keyof Omit<PartTransactionRow, "id" | "createdBy" | "lastModifiedBy" | "creditedAt" | "creditSource" | "returnRejectReason">, string> = {
   partNo: "Part No",
   partDist: "Part Dist.",
   distBrand: "Brand",
@@ -1530,6 +1534,11 @@ function TicketDetailsPage() {
   // replaced, since the on-screen price/description belong to the OLD
   // distributor's answer, not the one about to be looked up.
   const lastMarconeFillDistRef = React.useRef<string | null>(null);
+  // The last Lookup's stock answer, for the Part No + Part Dist. it was run
+  // for. Add / Save writes "No stock at <vendor> (MM/DD)" into the row's Note
+  // when it was out of stock — the Lookup banner itself is gone once the form
+  // clears, so without this the saved part never shows it.
+  const lastLookupStockRef = React.useRef<{ partNo: string; partDist: string; vendor: string; inStock: boolean } | null>(null);
   // ServicePower status sending
   const [spStatus, setSpStatus] = useState("");
   const [spStatusSending, setSpStatusSending] = useState(false);
@@ -4764,6 +4773,7 @@ function TicketDetailsPage() {
     setPartDraft(createEmptyPartDraft());
     lastMarconeFillPartNoRef.current = null;
     lastMarconeFillDistRef.current = null;
+    lastLookupStockRef.current = null;
   };
 
   // ── Marcone /parts/lookup — autofill Description / List Price / Core / Stock ──
@@ -4792,6 +4802,7 @@ function TicketDetailsPage() {
     }
     setMarconeLookupBusy(true);
     setMarconeLookupMsg(null);
+    lastLookupStockRef.current = null;
     try {
       // The inline Lookup is for vendor info only now — in-house
       // truck-stock fulfilment is handled by the dedicated Truck Stock
@@ -4828,6 +4839,7 @@ function TicketDetailsPage() {
         lastMarconeFillPartNoRef.current = partNumber;
         lastMarconeFillDistRef.current = partDist;
         const stockLine = stockSummary(d.totalAvailable ?? 0, (d.inventory ?? []).map((w) => ({ name: w.warehouseName, qty: Number(w.quantityAvailable ?? 0) || 0 })));
+        lastLookupStockRef.current = { partNo: partNumber, partDist, vendor: "Marcone", inStock: (d.totalAvailable ?? 0) > 0 };
         const discLine = d.isDiscontinued ? " · discontinued" : "";
         setPartInfoLookup({ partNumber, vendor: "marcone", marcone: d });
         setMarconeLookupMsg({
@@ -4859,6 +4871,7 @@ function TicketDetailsPage() {
       lastMarconeFillDistRef.current = partDist;
       setPartInfoLookup({ partNumber, vendor: "encompass", encompass: d });
       const stockLine = stockSummary(d.totalAvailable, d.availabilityByLocation.map((l) => ({ name: l.name || l.number, qty: l.available })));
+      lastLookupStockRef.current = { partNo: partNumber, partDist, vendor: "Encompass", inStock: d.totalAvailable > 0 };
       setMarconeLookupMsg({
         kind: "ok",
         text: `Found ${d.mfgName || ""} ${d.partNumber || partNumber} · Encompass: ${stockLine}.`,
@@ -5212,6 +5225,15 @@ function TicketDetailsPage() {
       finalStatus = 'PO Made';
     }
 
+    // Lookup said this part (same Part No + Part Dist.) is out of stock — keep that on the row.
+    const lookup = lastLookupStockRef.current;
+    const typedNote = partDraft.note.trim();
+    const noStockNote =
+      lookup && !lookup.inStock && lookup.partNo.toUpperCase() === partDraft.partNo.trim().toUpperCase() && lookup.partDist === partDraft.partDist.trim()
+        ? `No stock at ${lookup.vendor} (${new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit" })})`
+        : "";
+    const finalNote = noStockNote && !/no stock/i.test(typedNote) ? [typedNote, noStockNote].filter(Boolean).join(" · ") : typedNote;
+
     const nextRow: PartTransactionRow = {
       id: rowId,
       partNo: partDraft.partNo.trim(),
@@ -5229,7 +5251,7 @@ function TicketDetailsPage() {
       totalMarkup,
       claimTo: partDraft.claimTo.trim(),
       status: finalStatus,
-      note: partDraft.note.trim(),
+      note: finalNote,
       visitId: partDraft.visitId.trim(),
       orderNo: partDraft.orderNo.trim(),
       eta: partDraft.eta.trim(),
@@ -7912,7 +7934,21 @@ function TicketDetailsPage() {
                             <td className={cellWrap}><input type="date" value={String(val("raDate") ?? "")} onChange={(e) => set("raDate", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} /></td>
                             <td className={cellWrap}><input value={String(val("raNo") ?? "")} onChange={(e) => set("raNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="RA #" /></td>
                             <td className={cellWrap}><input value={String(val("outTracking") ?? "")} onChange={(e) => set("outTracking", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Out Track #" /></td>
-                            <td className={cellWrap}><input value={String(val("creditNo") ?? "")} onChange={(e) => set("creditNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Credit #" /></td>
+                            <td className={cellWrap}>
+                              <input value={String(val("creditNo") ?? "")} onChange={(e) => set("creditNo", e.target.value)} disabled={partsEditDisabled || !canEditParts} className={inputCls} placeholder="Credit #" />
+                              {row.creditedAt ? (
+                                <span
+                                  className="mt-1 inline-flex items-center rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300"
+                                  title={`Credited by ${row.creditSource || "the distributor"}${row.creditNo ? ` — memo ${row.creditNo}` : ""} · found ${new Date(row.creditedAt).toLocaleDateString()}`}
+                                >
+                                  Credited{row.creditSource ? ` · ${row.creditSource}` : ""}
+                                </span>
+                              ) : row.returnRejectReason ? (
+                                <span className="mt-1 inline-flex items-center rounded-full border border-red-400/40 bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-300" title={`Return rejected: ${row.returnRejectReason}`}>
+                                  Return rejected
+                                </span>
+                              ) : null}
+                            </td>
                             <td className="px-2 py-1.5 text-slate-300">{val("totalMarkup") ? `$${val("totalMarkup")}` : "—"}</td>
                             <td className={cellWrap}>
                               <input type="checkbox" checked={val("hold") === "Hold"} onChange={(e) => set("hold", e.target.checked ? "Hold" : "No")} disabled={partsEditDisabled || !canEditParts} className="accent-blue-500" />

@@ -1930,6 +1930,11 @@ export interface UIPartRow {
   distributorNo: string;
   /** Claim job code for this individual part line, distinct from a ticket's own job code (ticket_claim_details.jobCode). */
   jobCode: string;
+  /** Read-only, set by the hourly partCreditSync job (migration 0406) — never written back from the UI. */
+  creditedAt?: string;
+  creditSource?: string;
+  returnRejectReason?: string;
+  returnStatus?: string;
 }
 
 const numOrNull = (v: unknown) => {
@@ -1980,6 +1985,10 @@ function rowToPart(row: any): UIPartRow {
     lastModifiedBy: row.last_modified_by ?? "",
     distributorNo: row.distributor_no ?? "",
     jobCode: row.job_code ?? "",
+    creditedAt: row.credited_at ?? "",
+    creditSource: row.credit_source ?? "",
+    returnRejectReason: row.return_reject_reason ?? "",
+    returnStatus: row.return_status ?? "",
   };
 }
 

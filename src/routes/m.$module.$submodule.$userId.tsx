@@ -1,4 +1,4 @@
-import { createFileRoute, notFound, Link, Navigate, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, notFound, Link, Navigate, useNavigate, useRouter } from "@tanstack/react-router";
 import { useRedirectGuard } from "@/lib/useRedirectGuard";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -484,6 +484,7 @@ function UserDetailsPage() {
   const { module, submodule, userId } = Route.useLoaderData();
   const { ready, role: viewerRole, extraRoles: viewerExtraRoles, displayName: viewerDisplayName, email: viewerEmail } = useAuth();
   const navigate = useNavigate();
+  const router = useRouter();
   // Guards the <Navigate> below against firing more than once per distinct
   // target — see useRedirectGuard.ts for why this is necessary.
   const redirectOnce = useRedirectGuard();
@@ -828,9 +829,19 @@ function UserDetailsPage() {
       <AppHeader />
       <main className="flex-1 bg-slate-950 py-6">
         <div className="max-w-5xl mx-auto px-6">
+          {/* Steps back to the list (keeping its filters / scroll) instead of
+              adding a new history entry — a new entry made the list's own
+              Back button return here again. Opened directly (no history),
+              it's a normal link to the list. */}
           <Link
             to="/m/$module/$submodule"
             params={{ module: module.slug, submodule: submodule.slug }}
+            onClick={(e) => {
+              if (router.history.canGoBack()) {
+                e.preventDefault();
+                router.history.back();
+              }
+            }}
             className="inline-flex items-center gap-2 text-slate-300 hover:text-white mb-4 transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

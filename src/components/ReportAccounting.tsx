@@ -16,11 +16,8 @@ import { Bar, BarChart, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } fro
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { supabase } from "@/lib/supabase/client";
-import { calcWorkedHours } from "@/lib/supabase/timecards";
+import { calcWorkedHours, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
 import { todayISO } from "@/lib/localDate";
-
-const EXCHANGE_RATE = 57; // 1 USD = 57 PHP — same convention as AccountingDashboard.tsx
-const REGULAR_HOURS_PER_DAY = 8;
 
 // Supabase caps an unbounded select at 1000 rows — the profiles,
 // salary_entries, and payroll_line_items queries below have no row limit
@@ -38,7 +35,33 @@ interface Employee {
   isActive: boolean;
 }
 interface SalaryEntry { profile_id: string; effective_date: string; hourly_rate: number; created_at: string }
-interface TimecardEntry { profile_id: string | null; employee_id: string | null; check_in: string | null; check_out: string | null; meal_start: string | null; meal_end: string | null }
+interface TimecardEntry { profile_id: string | null; employee_id: string | null; work_date: string; check_in: string | null; check_out: string | null; meal_start: string | null; meal_end: string | null }
+
+// Regular vs overtime per employee for the live period: 40 hours per
+// Sunday–Saturday week, OT beyond (everyone, PH included — policy
+// 2026-10-22), same as the Payroll tab. Used to cap regular hours at
+// 8 × 14 = 112 for the whole period, so two 50-hour weeks counted as 100
+// regular hours with no OT and the report came out under the Payroll tab.
+function regularOvertimeByEmployee(timecardEntries: TimecardEntry[]): Map<string, { regular: number; overtime: number }> {
+  const daysByEmployee = new Map<string, Map<string, number>>();
+  for (const tc of timecardEntries) {
+    const key = tc.profile_id || tc.employee_id;
+    if (!key || !tc.check_in || !tc.check_out) continue;
+    const hours = calcWorkedHours({ checkIn: tc.check_in, checkOut: tc.check_out, mealStart: tc.meal_start || "", mealEnd: tc.meal_end || "", notes: "" });
+    const days = daysByEmployee.get(key) ?? new Map<string, number>();
+    days.set(tc.work_date, (days.get(tc.work_date) ?? 0) + hours);
+    daysByEmployee.set(key, days);
+  }
+  const out = new Map<string, { regular: number; overtime: number }>();
+  for (const [key, days] of daysByEmployee) {
+    const split = splitRegularOvertimeWeekly([...days].map(([date, rawHours]) => ({ date, rawHours })), {}, 8, CSR_WEEKLY_OVERTIME_THRESHOLD);
+    let regular = 0;
+    let overtime = 0;
+    for (const v of split.values()) { regular += v.regular; overtime += v.overtime; }
+    out.set(key, { regular, overtime });
+  }
+  return out;
+}
 interface PayrollRun { id: string; period_start: string; period_end: string; status: string; generated_at: string | null }
 interface PayrollLineItem { payroll_run_id: string; profile_id: string; gross_pay: number; currency: string }
 
@@ -87,9 +110,6 @@ function periodBounds(lastPeriodEnd: string | null): { start: string; end: strin
 }
 function fmt(amount: number) {
   return `$${amount.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
-}
-function toUSD(li: PayrollLineItem): number {
-  return li.currency === "PHP" ? (li.gross_pay ?? 0) / EXCHANGE_RATE : (li.gross_pay ?? 0);
 }
 
 export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
@@ -161,7 +181,7 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
         const { start, end } = periodBounds(runs[0]?.period_end ?? null);
         const tcRes = await supabase
           .from("timecard_entries")
-          .select("profile_id,employee_id,check_in,check_out,meal_start,meal_end")
+          .select("profile_id,employee_id,work_date,check_in,check_out,meal_start,meal_end")
           .gte("work_date", start)
           .lte("work_date", end);
         if (tcRes.error) throw new Error(tcRes.error.message);
@@ -191,13 +211,7 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
   const currentPeriod = useMemo(() => {
     const latestRateMap = buildLatestRateMap(salaryEntries);
 
-    const hoursMap = new Map<string, number>();
-    for (const tc of timecardEntries) {
-      const key = tc.profile_id || tc.employee_id;
-      if (!key || !tc.check_in || !tc.check_out) continue;
-      const hours = calcWorkedHours({ checkIn: tc.check_in, checkOut: tc.check_out, mealStart: tc.meal_start || "", mealEnd: tc.meal_end || "", notes: "" });
-      hoursMap.set(key, (hoursMap.get(key) ?? 0) + hours);
-    }
+    const hoursByEmployee = regularOvertimeByEmployee(timecardEntries);
 
     // Dollar totals stay historically inclusive — a since-deactivated
     // employee who actually worked hours in this period genuinely earned
@@ -209,9 +223,7 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
     let usTotal = 0, phTotal = 0, usCount = 0, phCount = 0;
     for (const emp of employees) {
       const rate = latestRateMap.get(emp.id) ?? 0;
-      const hours = hoursMap.get(emp.id) ?? 0;
-      const reg = Math.min(hours, REGULAR_HOURS_PER_DAY * 14);
-      const ot = Math.max(0, hours - reg);
+      const { regular: reg, overtime: ot } = hoursByEmployee.get(emp.id) ?? { regular: 0, overtime: 0 };
       // OT at 1.5× for everyone, PH included (since 2026-10-22).
       const gross = reg * rate + ot * rate * 1.5;
       if (emp.country === "PH") phTotal += gross; else usTotal += gross;
@@ -226,10 +238,13 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
   const monthlyChartData = useMemo(() => {
     const map = new Map<string, { usPayroll: number; phPayroll: number }>();
     for (const run of payrollRuns) {
-      const label = run.period_start ? new Date(run.period_start).toLocaleString("en-US", { month: "short", year: "2-digit" }) : run.id;
+      // Read "YYYY-MM-DD" as a LOCAL date — new Date("2026-11-01") is midnight
+      // UTC, still Oct 31 in US time, so a run starting on the 1st charted
+      // under the previous month.
+      const label = run.period_start ? new Date(`${run.period_start}T00:00:00`).toLocaleString("en-US", { month: "short", year: "2-digit" }) : run.id;
       const items = payrollLineItems.filter((li) => li.payroll_run_id === run.id);
-      const us = items.filter((li) => employees.find((e) => e.id === li.profile_id)?.country === "US").reduce((s, li) => s + toUSD(li), 0);
-      const ph = items.filter((li) => employees.find((e) => e.id === li.profile_id)?.country === "PH").reduce((s, li) => s + toUSD(li), 0);
+      const us = items.filter((li) => employees.find((e) => e.id === li.profile_id)?.country === "US").reduce((s, li) => s + (li.gross_pay ?? 0), 0);
+      const ph = items.filter((li) => employees.find((e) => e.id === li.profile_id)?.country === "PH").reduce((s, li) => s + (li.gross_pay ?? 0), 0);
       const prev = map.get(label) ?? { usPayroll: 0, phPayroll: 0 };
       map.set(label, { usPayroll: prev.usPayroll + us, phPayroll: prev.phPayroll + ph });
     }
@@ -241,19 +256,11 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
   // the interactive per-employee payroll ledger (that stays on the Dashboard).
   const departmentBreakdown = useMemo(() => {
     const latestRateMap = buildLatestRateMap(salaryEntries);
-    const hoursMap = new Map<string, number>();
-    for (const tc of timecardEntries) {
-      const key = tc.profile_id || tc.employee_id;
-      if (!key || !tc.check_in || !tc.check_out) continue;
-      const hours = calcWorkedHours({ checkIn: tc.check_in, checkOut: tc.check_out, mealStart: tc.meal_start || "", mealEnd: tc.meal_end || "", notes: "" });
-      hoursMap.set(key, (hoursMap.get(key) ?? 0) + hours);
-    }
+    const hoursByEmployee = regularOvertimeByEmployee(timecardEntries);
     const map = new Map<string, { count: number; total: number }>();
     for (const emp of employees) {
       const rate = latestRateMap.get(emp.id) ?? 0;
-      const hours = hoursMap.get(emp.id) ?? 0;
-      const reg = Math.min(hours, REGULAR_HOURS_PER_DAY * 14);
-      const ot = Math.max(0, hours - reg);
+      const { regular: reg, overtime: ot } = hoursByEmployee.get(emp.id) ?? { regular: 0, overtime: 0 };
       // OT at 1.5× for everyone, PH included (since 2026-10-22).
       const gross = reg * rate + ot * rate * 1.5;
       const dept = emp.department || "Unspecified";

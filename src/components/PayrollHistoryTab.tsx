@@ -110,7 +110,6 @@ export function PayrollHistoryTab({
   lineItems,
   employees,
   currentPeriodStart,
-  exchangeRate,
   myProfileId,
   myName,
 }: {
@@ -120,8 +119,6 @@ export function PayrollHistoryTab({
   employees: PayrollHistoryPerson[];
   /** The Payroll tab's period start — the default pick is the latest run that ended before it. */
   currentPeriodStart: string;
-  /** For old line items recorded in PHP. */
-  exchangeRate: number;
   /** Who's writing notes to employees (author + notification sender). */
   myProfileId: string | null;
   myName: string | null;
@@ -248,23 +245,22 @@ export function PayrollHistoryTab({
           const tax = total != null ? (taxLines.get(id) ?? []).reduce((sum, t) => sum + taxLineAmount(t, total), 0) : 0;
           return { ...base, rate: 0, regularPay: 0, overtimePay: 0, annualSalary: null, grossPay: total, extraPay: 0, adjustments: [], totalPay: total != null ? total - tax : null };
         }
-        const d = li.currency === "PHP" ? exchangeRate : 1;
-        const grossPay = li.gross_pay / d;
-        const extraPay = (li.extra_pay || 0) / d;
+        const grossPay = li.gross_pay;
+        const extraPay = (li.extra_pay || 0);
         // Net pay already includes the adjustments; older lines have net = gross.
-        const netPay = li.net_pay != null ? Number(li.net_pay) / d : grossPay;
+        const netPay = li.net_pay != null ? Number(li.net_pay) : grossPay;
         // Saved adjustments, then the technician's tax lines (Net Pay After Tax on the report).
         const techTaxes = (taxLines.get(id) ?? [])
           .map((t) => ({ kind: "tax", description: t.label.trim() || "Tax", amount: taxLineAmount(t, grossPay), percent: t.mode === "percent" ? t.amount : null }))
           .filter((t) => Math.abs(t.amount) >= 0.005);
-        const adjustments = [...(li.breakdown?.adjustments ?? []).map((a) => ({ ...a, amount: Number(a.amount) / d })), ...techTaxes];
+        const adjustments = [...(li.breakdown?.adjustments ?? []).map((a) => ({ ...a, amount: Number(a.amount) })), ...techTaxes];
         const techTaxTotal = techTaxes.reduce((sum, t) => sum + t.amount, 0);
         return {
           ...base,
-          rate: li.hourly_rate / d,
-          regularPay: li.regular_pay / d,
-          overtimePay: li.overtime_pay / d,
-          annualSalary: li.annual_salary != null ? li.annual_salary / d : null,
+          rate: li.hourly_rate,
+          regularPay: li.regular_pay,
+          overtimePay: li.overtime_pay,
+          annualSalary: li.annual_salary != null ? li.annual_salary : null,
           grossPay,
           extraPay,
           adjustments,
@@ -272,7 +268,7 @@ export function PayrollHistoryTab({
         };
       })
       .sort((a, b) => a.department.localeCompare(b.department) || a.name.localeCompare(b.name));
-  }, [run, lineItems, marks, breakdowns, taxLines, employeeById, exchangeRate]);
+  }, [run, lineItems, marks, breakdowns, taxLines, employeeById]);
 
   const [department, setDepartment] = useState("");
   const [search, setSearch] = useState("");

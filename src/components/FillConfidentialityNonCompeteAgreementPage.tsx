@@ -27,8 +27,10 @@ import {
   captureConfidentialityNonCompeteAgreementPdf,
   confidentialityAgreementTitle,
   CNC_CURRENT_TEMPLATE_VERSION,
+  confidentialityUsesAdminHub,
   type ConfidentialityNonCompeteAgreementFormData,
 } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
+import { agreementLogoLoader } from "@/lib/agreementBranding";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
@@ -79,23 +81,27 @@ export function FillConfidentialityNonCompeteAgreementPage({ docId }: Props) {
       setLoading(true);
       setError(null);
       try {
-        const [profileId, document, logo] = await Promise.all([
+        const [profileId, document] = await Promise.all([
           getMyProfileId(uid),
           getSignableDocument(docId),
-          loadAssetDataUrl(() => import("@/assets/us-in-home-services-logo.png")),
         ]);
         if (cancelled) return;
         setMyProfileId(profileId);
-        setLogoDataUrl(logo);
         if (!document || document.documentType !== "confidentiality_noncompete_agreement") {
           setError("This document doesn't exist or has been removed.");
         } else {
-          setDoc(document);
-          const existing = document.formData as Partial<ConfidentialityNonCompeteAgreementFormData>;
           // Not signed yet: it's signed in the current wording. Already signed
           // (or reopened for the employer): keep the wording it was signed in.
           const unsigned = document.status === "pending_signature" && document.recipientSlot === "employee";
-          setForm((prev) => ({ ...prev, ...existing, ...(unsigned ? { templateVersion: CNC_CURRENT_TEMPLATE_VERSION } : {}) }));
+          const existing = {
+            ...(document.formData as Partial<ConfidentialityNonCompeteAgreementFormData>),
+            ...(unsigned ? { templateVersion: CNC_CURRENT_TEMPLATE_VERSION } : {}),
+          };
+          const logo = await loadAssetDataUrl(agreementLogoLoader(confidentialityUsesAdminHub(existing)));
+          if (cancelled) return;
+          setLogoDataUrl(logo);
+          setDoc(document);
+          setForm((prev) => ({ ...prev, ...existing }));
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load document.");

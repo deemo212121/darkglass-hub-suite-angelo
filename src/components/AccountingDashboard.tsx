@@ -118,10 +118,9 @@ import { todayISO, formatISODate } from "@/lib/localDate";
 import { toast } from "sonner";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
-// PH employees are paid in PHP; this converts their PHP-denominated rate into
-// a comparable USD figure so the whole dashboard can report in one currency
-// (no ₱ shown anywhere) instead of switching symbols per employee's country.
-const EXCHANGE_RATE = 57; // 1 USD = 57 PHP
+// All pay is in USD — PH rates are entered in dollars and every payroll line
+// is saved in USD. The old fixed ₱57 = $1 conversion for early peso-saved
+// lines was removed 2026-10-26 (none were left; the rate was out of date).
 // Hours worked are computed client-side from real check_in/check_out punches
 // (timecard_entries.hours_worked/overtime_hours are never populated by the
 // clock-in/out save flow) — same convention as PayrollCalculationPage.tsx.
@@ -437,6 +436,9 @@ export interface EmployeePayrollRow {
    * still gets paid instead of silently dropped.
    */
   isTechPortion?: boolean;
+  /** Fixed salary paid pro rata for a deactivated employee: days worked of
+   *  FIXED_WORKING_DAYS_PER_CUTOFF. Unset when the full per-cutoff salary is paid. */
+  fixedDaysWorked?: number;
 }
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
@@ -857,9 +859,7 @@ function periodBounds(lastPeriodEnd: string | null): { start: string; end: strin
   return { start, end };
 }
 
-// Always USD — PH employees are paid in PHP internally (salary_entries),
-// but every amount is converted (see EXCHANGE_RATE) before it reaches this
-// formatter so nothing in the UI shows ₱.
+// Always USD — every rate (PH included) is entered and saved in dollars.
 function fmt(amount: number) {
   return `$${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
@@ -892,16 +892,13 @@ function mileageStatusStyle(status: string, rows: RepairStatus[]): { color: stri
   return { color: row.color, fontWeight: row.fontBold ? 700 : undefined };
 }
 
-// Older payroll_line_items rows may have been recorded with currency: "PHP"
-// (native, pre-standardization) — convert only those; everything else (all
-// current rows use currency: "USD") is already a plain USD figure.
-function toUSD(li: PayrollLineItem): number {
-  return li.currency === "PHP" ? (li.gross_pay ?? 0) / EXCHANGE_RATE : (li.gross_pay ?? 0);
-}
 
 // A fixed-salary row's hourlyRateUSD is always 0 (see payrollRows above) —
 // shown instead as its annual salary so the Rate column/filter/export never
 // display a misleading "$0.00" for these employees.
+/** Working days a fixed salary's per-cutoff amount covers (biweekly: 2 × 5). */
+const FIXED_WORKING_DAYS_PER_CUTOFF = 10;
+
 function rateLabel(row: EmployeePayrollRow): string {
   if (row.compensationType === "fixed" && row.annualSalary) return `Fixed $${row.annualSalary.toLocaleString()}/yr`;
   return `$${row.hourlyRateUSD.toFixed(2)}`;
@@ -2534,7 +2531,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // EmployeePayrollRow.isTechPortion).
   const hasSecondaryTechRole = (emp: SupabaseEmployee) =>
     !isTechRole(emp) && (emp.extraRoles ?? []).some((r) => TECHNICIAN_PAY_ROLES.has(normalizeRole(r)));
-  const getsTechPortion = (emp: SupabaseEmployee) => isTechRole(emp) || hasSecondaryTechRole(emp);
+  // PH staff never get a technician row — there are no PH field technicians,
+  // so a PH employee holding a technician role as a secondary role (Mark
+  // Marquez: Technical Support Manager + Tech Manager / Technician) only got
+  // a duplicate row that re-paid his salary (9/27–10/10: saved twice,
+  // $576.92 + $576.92).
+  const getsTechPortion = (emp: SupabaseEmployee) => emp.country !== "PH" && (isTechRole(emp) || hasSecondaryTechRole(emp));
 
   // Rate lookup: an exact (repair_type, branch) match wins; otherwise fall
   // back to that repair_type's "All Branches" rate; otherwise the branch's
@@ -2699,9 +2701,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // plain USD figure (the shared "Add Rate Change" form labels it "$/hr"
   // with no currency conversion of its own — see EmployeePayrollDetailModal.tsx),
   // regardless of the employee's assigned country, so hourlyRateUSD/grossPayUSD
-  // are just hourlyRate/grossPay verbatim — no PHP division here. (EXCHANGE_RATE
-  // is still used for payroll_line_items rows recorded with currency: "PHP"
-  // before this was standardized — see toggleRun()/Reports tab below.)
+  // are just hourlyRate/grossPay verbatim.
   //
   // Fixed-salary employees (migration 0118) are paid a flat per-cutoff
   // amount (annual / 26, see perCutoffSalary) regardless of hours actually worked or overtime —
@@ -2925,7 +2925,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // Hourly rate + keep the Fixed Salary entry for the full workbook check
     // of hours + OT + commission against the salary.)
     const techHourlyPay = isFixed && annualSalary
-      ? (isTechRole(emp) ? Math.max(perCutoffSalary(annualSalary) - techIncludablePay, 0) : perCutoffSalary(annualSalary))
+      ? (isTechRole(emp)
+          ? Math.max(perCutoffSalary(annualSalary) - techIncludablePay, 0)
+          // A secondary-role technician's salary is paid on their office row;
+          // the technician row only carries ticket / commission pay — paying
+          // perCutoffSalary here too paid the salary twice.
+          : 0)
       : hourlyOtOverrides.get(emp.id)?.amount ?? techHourlyPayCompanyOnly;
     // Extra 0.5x bonus for hours actually worked on a recognized company
     // holiday — see holidayPremiumFor above. Paid on top of techHourlyPay
@@ -3092,8 +3097,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // so the payroll line's gross, any % tax and the net all start from the
     // same cent figure the table shows (Angelo Mendoza 9/27–10/10: net was
     // worked out from $474.4069, giving $534.42 against $474.41 + $60.00).
+    // A fixed-salary employee who left (deactivated) gets the per-cutoff
+    // salary pro rata — ÷ 10 working days × the days they actually worked in
+    // the period, never more than the full amount (Finance, 2026-10-26: Raul
+    // Bayuyos Jr. was getting the whole $576.92 for 37.6 hours). Active
+    // fixed-salary staff still get the full per-cutoff amount.
+    const fixedDaysWorked = isFixed && annualSalary && !emp.isActive
+      ? (dailyHoursByEmployeeId.get(emp.id) ?? []).filter((d) => (!genStart || d.date >= genStart) && (!genEnd || d.date <= genEnd) && d.regular + d.overtime > 0.0005).length
+      : undefined;
+    const fullCutoffSalary = isFixed && annualSalary ? perCutoffSalary(annualSalary, emp.country === "PH") : 0;
     const officeGrossPay = isFixed && annualSalary
-      ? cents(perCutoffSalary(annualSalary, emp.country === "PH"))
+      ? cents(fixedDaysWorked != null ? Math.min(fullCutoffSalary, (fullCutoffSalary / FIXED_WORKING_DAYS_PER_CUTOFF) * fixedDaysWorked) : fullCutoffSalary)
       : cents(cents(officeDailyPay.regularPay) + cents(officeDailyPay.overtimePayAt1_5x));
     const officeRow: EmployeePayrollRow = {
       employee: emp,
@@ -3128,9 +3142,16 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       grossPay: officeGrossPay,
       grossPayUSD: officeGrossPay,
       isTechPortion: false,
+      ...(fixedDaysWorked != null ? { fixedDaysWorked } : {}),
     };
     return techRow ? [officeRow, techRow] : [officeRow];
-  });
+  })
+    // A deactivated employee shows only when they actually worked or earned
+    // something in the selected period — real hours or pay. hoursMap also
+    // gets an entry from a punch worth 0 hours (a clock-in with no clock-out,
+    // an unpaid PTO day, a trainee clock-in still awaiting approval), which
+    // kept people like Nikkie Agacer on 10/11–10/24 at 0.000 hrs / $0.00.
+    .filter((r) => r.employee.isActive || r.hoursWorked + r.overtimeHours > 0.0005 || Math.abs(r.grossPayUSD) >= 0.005);
 
   const usRows = payrollRows.filter((r) => r.employee.country === "US");
   const phRows = payrollRows.filter((r) => r.employee.country === "PH");
@@ -3930,9 +3951,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const runTotals = new Map<string, number>();
   for (const li of payrollLineItems) {
     const prev = runTotals.get(li.payroll_run_id) ?? 0;
-    // Normalize to USD
-    const usdAmount = li.currency === "PHP" ? li.gross_pay / EXCHANGE_RATE : li.gross_pay;
-    runTotals.set(li.payroll_run_id, prev + usdAmount);
+    runTotals.set(li.payroll_run_id, prev + li.gross_pay);
   }
 
   // ── Render helpers ───────────────────────────────────────────────────────────
@@ -5299,8 +5318,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               <td className="px-3 py-2 text-center text-slate-400">
                                 {row.employee.mealMinutes ? `${row.employee.mealMinutes} min` : "—"}
                               </td>
-                              <td className="px-3 py-2 text-center text-slate-300" title={row.compensationType === "fixed" && row.annualSalary ? `$${perCutoffSalary(row.annualSalary, row.employee.country === "PH").toFixed(2)}/cutoff` : undefined}>
+                              <td className="px-3 py-2 text-center text-slate-300" title={row.compensationType === "fixed" && row.annualSalary ? `$${perCutoffSalary(row.annualSalary, row.employee.country === "PH").toFixed(2)}/cutoff${row.fixedDaysWorked != null ? ` ÷ ${FIXED_WORKING_DAYS_PER_CUTOFF} days × ${row.fixedDaysWorked} worked` : ""}` : undefined}>
                                 {rateLabel(row)}
+                                {row.fixedDaysWorked != null && (
+                                  <div className="text-[10px] text-amber-300">Pro rata · {row.fixedDaysWorked} of {FIXED_WORKING_DAYS_PER_CUTOFF} days</div>
+                                )}
                               </td>
                               <td className="px-3 py-2 text-right font-semibold text-green-300">
                                 {/* With adjustments the Net (below) is the payout, so it's the green one and gross is muted. */}
@@ -6145,7 +6167,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             lineItems={payrollLineItems}
             employees={employees}
             currentPeriodStart={genStart}
-            exchangeRate={EXCHANGE_RATE}
             myProfileId={myProfileId}
             myName={displayName || email || null}
           />
@@ -6281,17 +6302,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                   <tbody>
                                     {runLineItems[run.id].map((li, idx) => {
                                       const emp = employees.find((e) => e.id === li.profile_id);
-                                      // Historical runs generated before this dashboard went dollar-only
-                                      // may still be flagged "PHP" — convert those for display so every
-                                      // run (old or new) reads in USD.
-                                      const divisor = li.currency === "PHP" ? EXCHANGE_RATE : 1;
-                                      const grossUSD = li.gross_pay / divisor;
+                                      const grossUSD = li.gross_pay;
                                       const key = lineItemEditKey(run.id, li.profile_id);
                                       // Net = gross ± adjustments, as saved on the line (+ any old Extra
                                       // amount), minus a technician's tax lines — same as the Tech Activity
                                       // Report's "Net Pay After Tax" and the employee's own payslip.
                                       const techTax = (runTaxLines[run.id]?.get(li.profile_id) ?? []).reduce((sum, t) => sum + taxLineAmount(t, grossUSD), 0);
-                                      const netUSD = ((li.net_pay ?? li.gross_pay) + (li.extra_pay || 0)) / divisor - techTax;
+                                      const netUSD = (li.net_pay ?? li.gross_pay) + (li.extra_pay || 0) - techTax;
                                       const bankInfo = employeeInfoByProfileId.get(li.profile_id);
                                       // Alternating shade + hover highlight so a row is easy to follow across the wide table.
                                       return (
@@ -6313,13 +6330,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                           <td className="py-2 text-right text-slate-300">
                                             {li.compensation_type === "fixed" && li.annual_salary
                                               ? `Fixed $${li.annual_salary.toLocaleString()}/yr`
-                                              : `$${(li.hourly_rate / divisor).toFixed(2)}`}
+                                              : `$${li.hourly_rate.toFixed(2)}`}
                                           </td>
                                           <td className="py-2 text-right text-slate-300">
-                                            ${(li.regular_pay / divisor).toFixed(2)}
+                                            ${li.regular_pay.toFixed(2)}
                                           </td>
                                           <td className="py-2 text-right text-orange-300">
-                                            ${(li.overtime_pay / divisor).toFixed(2)}
+                                            ${li.overtime_pay.toFixed(2)}
                                           </td>
                                           <td className="py-2 text-right font-semibold text-green-300">
                                             ${grossUSD.toFixed(2)}
