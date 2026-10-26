@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect } from "react";
+import { localISODate } from "@/lib/localDate";
 import { CalendarDays, ChevronLeft, ChevronRight, Home, ListFilter, Search } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -53,7 +54,7 @@ function buildCalendarWeeks(monthValue: string) {
       return {
         date,
         currentMonth: date.getMonth() === month,
-        key: date.toISOString().slice(0, 10),
+        key: localISODate(date),
       };
     });
     weeks.push(week);

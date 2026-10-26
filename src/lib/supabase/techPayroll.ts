@@ -22,6 +22,7 @@
  */
 
 import { supabase } from "./client";
+import { selectAllPages } from "./selectAllPages";
 import { mileageEffectiveTotal } from "./mileage";
 import { statusGroupOf } from "@/lib/ticketData";
 
@@ -1051,12 +1052,18 @@ export async function getTechCustomPayItems(
  */
 export async function getAllTechCustomPayItemsForPeriod(periodStart: string, periodEnd: string): Promise<TechCustomPayItem[]> {
   if (!periodStart || !periodEnd) return [];
+  // Paged: one answer stops at 1,000 rows and a period already has ~600
+  // lines (9/27–10/10: 592) — past 1,000, some technicians' commissions,
+  // bonuses and mileage would silently drop out of their gross pay.
   const { data, error } = await withWorkWeekFallback((columns) =>
-    supabase
-      .from("tech_custom_pay_items")
-      .select(columns)
-      .eq("period_start", periodStart)
-      .eq("period_end", periodEnd)
+    selectAllPages<any>(() =>
+      supabase
+        .from("tech_custom_pay_items")
+        .select(columns)
+        .eq("period_start", periodStart)
+        .eq("period_end", periodEnd)
+        .order("id", { ascending: true })
+    )
   );
   if (error) {
     console.error("getAllTechCustomPayItemsForPeriod error:", error.message);

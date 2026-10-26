@@ -114,7 +114,7 @@ import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, blobToBase64 } from "@
 import { renderPayslipBodyHtml, renderTechActivitySummaryPageHtml, PAYSLIP_STYLES, formatClockTime, offDaysInRange, ptoDaysInRange, type PayslipDailyRow, type EmployeePayslipData } from "@/lib/payslipTemplate";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity, getModuleActivityLog, getModuleActivityLogByAction, moduleActivityActionLabel, type ModuleActivityLogEntry } from "@/lib/supabase/moduleActivityLog";
-import { todayISO, formatISODate } from "@/lib/localDate";
+import { todayISO, formatISODate, localISODate } from "@/lib/localDate";
 import { toast } from "sonner";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -845,7 +845,7 @@ function periodBounds(lastPeriodEnd: string | null): { start: string; end: strin
     d.setDate(d.getDate() - 1);
     return d;
   })());
-  const end = endDate.toISOString().split("T")[0];
+  const end = localISODate(endDate); // local calendar date, not toISOString() (UTC) — that's the previous day for PH staff (UTC+8) and the next day for US staff late in the evening
 
   let startDate: Date;
   if (lastPeriodEnd) {
@@ -855,7 +855,7 @@ function periodBounds(lastPeriodEnd: string | null): { start: string; end: strin
     startDate = new Date(endDate);
     startDate.setDate(startDate.getDate() - 13); // first-ever run: default 14-day window
   }
-  const start = startDate.toISOString().split("T")[0];
+  const start = localISODate(startDate);
   return { start, end };
 }
 

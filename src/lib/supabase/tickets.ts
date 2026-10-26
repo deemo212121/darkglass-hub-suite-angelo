@@ -11,6 +11,7 @@
  */
 
 import { supabase } from "./client";
+import { selectAllPages } from "./selectAllPages";
 import { statusGroupOf, type Ticket } from "@/lib/ticketData";
 import { mapSource, mapSourceFromTicketNumber } from "@/lib/mfgSource";
 import { syncMileageForTicketDay } from "./mileage";
@@ -1507,10 +1508,19 @@ export async function getLatestVisitTechnicianByTicketIds(
 export async function getSecondTechnicianAssignments(): Promise<
   { ticketId: string; secondTechnician: string }[]
 > {
-  const { data, error } = await supabase
-    .from("visits")
-    .select("ticket_id, second_technician")
-    .not("second_technician", "is", null);
+  // Blank ("") second technicians are excluded in the query itself: ~9,800
+  // visits have one, and with them included one answer (1,000 rows) was
+  // almost all blanks, so most of the ~240 real assignments never reached
+  // the mobile app's My Tickets / route for the assisting technician. Paged
+  // as well so the real ones can grow past 1,000.
+  const { data, error } = await selectAllPages<any>(() =>
+    supabase
+      .from("visits")
+      .select("ticket_id, second_technician")
+      .not("second_technician", "is", null)
+      .neq("second_technician", "")
+      .order("id", { ascending: true })
+  );
   if (error) {
     console.error("getSecondTechnicianAssignments error:", error.message);
     return [];

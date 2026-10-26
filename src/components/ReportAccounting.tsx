@@ -16,8 +16,9 @@ import { Bar, BarChart, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } fro
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { supabase } from "@/lib/supabase/client";
+import { selectAllPages } from "@/lib/supabase/selectAllPages";
 import { calcWorkedHours, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
-import { todayISO } from "@/lib/localDate";
+import { todayISO, localISODate } from "@/lib/localDate";
 
 // Supabase caps an unbounded select at 1000 rows — the profiles,
 // salary_entries, and payroll_line_items queries below have no row limit
@@ -97,7 +98,10 @@ function rollBackToWeekday(d: Date): Date {
 }
 function periodBounds(lastPeriodEnd: string | null): { start: string; end: string } {
   const endDate = rollBackToWeekday((() => { const d = new Date(); d.setDate(d.getDate() - 1); return d; })());
-  const end = endDate.toISOString().split("T")[0];
+  // Local calendar dates, not toISOString() (UTC): that put the start a day
+  // early for PH staff (local midnight is the previous day in UTC) and the
+  // end a day late for US staff after ~7 PM Central.
+  const end = localISODate(endDate);
   let startDate: Date;
   if (lastPeriodEnd) {
     startDate = new Date(lastPeriodEnd + "T00:00:00");
@@ -106,7 +110,7 @@ function periodBounds(lastPeriodEnd: string | null): { start: string; end: strin
     startDate = new Date(endDate);
     startDate.setDate(startDate.getDate() - 13);
   }
-  return { start: startDate.toISOString().split("T")[0], end };
+  return { start: localISODate(startDate), end };
 }
 function fmt(amount: number) {
   return `$${amount.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
@@ -179,11 +183,17 @@ export function ReportAccounting({ mod, sub }: { mod: ModuleDef; sub: SubModuleD
         for (const res of [empRes, salRes, runsRes, lineRes]) if (res.error) throw new Error(res.error.message);
         const runs = (runsRes.data ?? []) as PayrollRun[];
         const { start, end } = periodBounds(runs[0]?.period_end ?? null);
-        const tcRes = await supabase
-          .from("timecard_entries")
-          .select("profile_id,employee_id,work_date,check_in,check_out,meal_start,meal_end")
-          .gte("work_date", start)
-          .lte("work_date", end);
+        // Paged: a 14-day period has ~1,500 punches (10/11–10/24: 1,466), and
+        // one answer stops at 1,000 — the report's totals were missing about a
+        // third of the period's hours.
+        const tcRes = await selectAllPages<TimecardEntry>(() =>
+          supabase
+            .from("timecard_entries")
+            .select("profile_id,employee_id,work_date,check_in,check_out,meal_start,meal_end")
+            .gte("work_date", start)
+            .lte("work_date", end)
+            .order("id", { ascending: true })
+        );
         if (tcRes.error) throw new Error(tcRes.error.message);
         if (cancelled) return;
         setEmployees(((empRes.data ?? []) as any[]).map((p) => ({
