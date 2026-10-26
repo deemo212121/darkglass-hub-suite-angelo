@@ -17,6 +17,7 @@
 
 import { captureHtmlPagesToPdfBlob } from "./pdfCapture";
 import { CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION } from "./signableDocumentRegistry";
+import { brandOf } from "./formBrand";
 
 export interface ConfidentialityNonCompeteAgreementFormData {
   /** The employee's profile id — not shown on the document, carried along for lookups. */
@@ -41,6 +42,8 @@ export interface ConfidentialityNonCompeteAgreementFormData {
    * CNC_CURRENT_TEMPLATE_VERSION (see FillConfidentialityNonCompeteAgreementPage.tsx).
    */
   templateVersion?: number;
+  /** "ahs" = the Admin Hub Solutions version (HR Paperworks / Staff Form Checklist → AHS Forms PH); absent = the original US In Home Services version. */
+  brand?: "ahs";
 }
 
 /** Version 2 (2026-10-09): "Master Confidentiality, Non-Solicitation, and Affirmative Duty Agreement" — no non-compete, 1-year restrictions, no residence line. */
@@ -122,9 +125,13 @@ function signField(label: string, inner: string, minWidth = 150, isText = false)
   return `<div class="cnc-sign-field">${escapeHtml(label)}: <span class="cnc-val${isText ? " cnc-val-text" : ""}" style="min-width:${minWidth}px">${inner || "&nbsp;"}</span></div>`;
 }
 
-/** Version 3 on (2026-10-26): version 2's text with Admin Hub Solutions as the employer (and its logo). Older copies keep US In Home Services. */
-export function confidentialityUsesAdminHub(data: { templateVersion?: number } | null | undefined): boolean {
-  return (Number(data?.templateVersion) || 1) >= 3;
+/**
+ * The Admin Hub Solutions version (sent from AHS Forms PH — form_data.brand,
+ * see lib/formBrand.ts): version 2's text with Admin Hub Solutions as the
+ * employer and its logo. Every other copy is US In Home Services.
+ */
+export function confidentialityUsesAdminHub(data: unknown): boolean {
+  return brandOf(data) === "ahs";
 }
 
 /** The document in the wording its data says it was signed with (see templateVersion). */
@@ -158,9 +165,10 @@ function signatureBlocks(data: ConfidentialityNonCompeteAgreementFormData, emplo
 }
 
 /**
- * Version 2 — text as supplied by HR on 2026-10-09. Version 3 (2026-10-26)
- * is the same text with Admin Hub Solutions as the employer, US In Home
- * Services moving to the related-entities list in its place.
+ * Version 2 — text as supplied by HR on 2026-10-09. Its Admin Hub Solutions
+ * version (confidentialityUsesAdminHub) is the same text with Admin Hub
+ * Solutions as the employer, US In Home Services moving to the
+ * related-entities list in its place.
  */
 function buildVersion2Markup(data: ConfidentialityNonCompeteAgreementFormData, logoDataUrl: string): string {
   const eff = dateParts(data.effectiveDate);

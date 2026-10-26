@@ -86,15 +86,16 @@ type ChecklistTabKey = "technician" | "newTechnician" | "officeStaffUs" | "phSta
  * and the Admin Hub Solutions one (HR Paperworks → AHS Forms PH; see
  * lib/formBrand.ts). A tab with a `brand` sends its own version of these.
  */
-const BRANDED_FORM_TYPES = new Set<SignableDocumentType>(["master_ph_contractor_agreement", "direct_deposit", "valid_id_form"]);
+const BRANDED_FORM_TYPES = new Set<SignableDocumentType>(["master_ph_contractor_agreement", "confidentiality_noncompete_agreement", "direct_deposit", "valid_id_form"]);
 /**
  * Of those, the ones that must be signed in the tab's own version to count —
- * only the Master PH Contractor Agreement. Direct Deposit and Valid ID carry
- * over: either version counts on both PH Staff and AHS Forms PH (like W-8BEN).
+ * the two agreements naming the employer (Master PH Contractor Agreement,
+ * Master Confidentiality). Direct Deposit and Valid ID carry over: either
+ * version counts on both PH Staff and AHS Forms PH (like W-8BEN).
  */
-const VERSION_REQUIRED_FORM_TYPES = new Set<SignableDocumentType>(["master_ph_contractor_agreement"]);
+const VERSION_REQUIRED_FORM_TYPES = new Set<SignableDocumentType>(["master_ph_contractor_agreement", "confidentiality_noncompete_agreement"]);
 /** The AHS Forms PH checklist — the same forms as HR Paperworks' AHS Forms PH group. */
-const AHS_PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "w8ben", "direct_deposit", "valid_id_form"];
+const AHS_PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "confidentiality_noncompete_agreement", "w8ben", "direct_deposit", "valid_id_form"];
 
 interface ChecklistTabConfig {
   key: ChecklistTabKey;

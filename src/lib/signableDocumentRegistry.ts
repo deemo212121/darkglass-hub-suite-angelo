@@ -209,14 +209,15 @@ export const DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE = new Set<SignableDocum
  * as CNC_CURRENT_TEMPLATE_VERSION). Kept here, dependency-free, because the
  * checklist status below needs it too.
  */
-export const CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION = 3;
+export const CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION = 2;
 
 /**
  * Master W-2 Office & Logistics agreement wording now in use: version 2
  * (2026-10-26) names Admin Hub Solutions (heading, at-will clause, logo)
- * instead of US In Home Services. Same for the Master Confidentiality
- * agreement's version 3. Copies signed in the older wording stay valid —
- * see MIN_VALID_TEMPLATE_VERSION.
+ * instead of US In Home Services. Copies signed in the older wording stay
+ * valid — see MIN_VALID_TEMPLATE_VERSION. (The Master Confidentiality
+ * agreement's Admin Hub Solutions version is a per-copy brand instead — sent
+ * from AHS Forms PH, see lib/formBrand.ts.)
  */
 export const MASTER_W2_OFFICE_AGREEMENT_CURRENT_VERSION = 2;
 
@@ -241,7 +242,6 @@ const CURRENT_TEMPLATE_VERSION: Partial<Record<SignableDocumentType, number>> = 
  * need the current version.
  */
 const MIN_VALID_TEMPLATE_VERSION: Partial<Record<SignableDocumentType, number>> = {
-  confidentiality_noncompete_agreement: 2,
   master_w2_office_agreement: 1,
 };
 

@@ -1149,13 +1149,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "compensationUpdate" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "confidentialityNonCompeteAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList" | "clockInCodes" | "performanceBonusPolicy" | "ahsDirectDeposit" | "ahsValidId" | "ahsPhAgreement">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "compensationUpdate" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "confidentialityNonCompeteAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList" | "clockInCodes" | "performanceBonusPolicy" | "ahsDirectDeposit" | "ahsValidId" | "ahsPhAgreement" | "ahsConfidentiality">(paperworksOnly ? "combineForms" : "hiring");
   // HR Paperworks → "AHS Forms PH": the Admin Hub Solutions versions of Direct
   // Deposit, Valid ID and the Master PH Contractor Agreement. Same screens as
   // the original tabs, but they send (and list) only AHS copies — every copy
   // is tagged form_data.brand = "ahs" and keeps that version for good
   // (lib/formBrand.ts). The original tabs list only the US In Home Services copies.
-  const isAhsFormsTab = activeTab === "ahsDirectDeposit" || activeTab === "ahsValidId" || activeTab === "ahsPhAgreement";
+  const isAhsFormsTab = activeTab === "ahsDirectDeposit" || activeTab === "ahsValidId" || activeTab === "ahsPhAgreement" || activeTab === "ahsConfidentiality";
   const isAhsDoc = (d: { formData?: unknown }) => brandOf(d.formData) === "ahs";
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -1183,7 +1183,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [startDateFor, setStartDateFor] = useState<{ id: string; date: string } | null>(null);
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string; viewCvCandidateId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList", "clockInCodes", "ndaForm", "confidentialityNonCompeteAgreement", "performanceBonusPolicy", "ahsDirectDeposit", "ahsValidId", "ahsPhAgreement"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList", "clockInCodes", "ndaForm", "confidentialityNonCompeteAgreement", "performanceBonusPolicy", "ahsDirectDeposit", "ahsValidId", "ahsPhAgreement", "ahsConfidentiality"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -6230,11 +6230,21 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "confidentialityNonCompeteAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentConfidentialityNonCompeteAgreementForms();
+    if (activeTab === "confidentialityNonCompeteAgreement" || activeTab === "ahsConfidentiality" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentConfidentialityNonCompeteAgreementForms();
   }, [activeTab]);
+  // Each version counts on its own tab — the original (US In Home Services)
+  // and AHS Forms PH (Admin Hub Solutions; form_data.brand, lib/formBrand.ts).
   const sentConfidentialityNonCompeteAgreementAwaitingEmployerCount = useMemo(
-    () => sentConfidentialityNonCompeteAgreementForms.filter(isAwaitingEmployerStep).length,
+    () => sentConfidentialityNonCompeteAgreementForms.filter((d) => !isAhsDoc(d) && isAwaitingEmployerStep(d)).length,
     [sentConfidentialityNonCompeteAgreementForms]
+  );
+  const sentAhsConfidentialityAwaitingEmployerCount = useMemo(
+    () => sentConfidentialityNonCompeteAgreementForms.filter((d) => isAhsDoc(d) && isAwaitingEmployerStep(d)).length,
+    [sentConfidentialityNonCompeteAgreementForms]
+  );
+  const visibleConfidentialityNonCompeteAgreementForms = useMemo(
+    () => sentConfidentialityNonCompeteAgreementForms.filter((d) => (activeTab === "ahsConfidentiality" ? isAhsDoc(d) : !isAhsDoc(d))),
+    [sentConfidentialityNonCompeteAgreementForms, activeTab],
   );
 
   type ConfidentialityNonCompeteAgreementSortColumn = "employee" | "branch" | "sentBy" | "status" | "sent";
@@ -6256,7 +6266,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     isValueChecked: confidentialityNonCompeteAgreementIsValueChecked,
     rows: sortedSentConfidentialityNonCompeteAgreementForms,
   } = useSortableSearchTable<SignableDocument, ConfidentialityNonCompeteAgreementSortColumn>(
-    sentConfidentialityNonCompeteAgreementForms,
+    visibleConfidentialityNonCompeteAgreementForms,
     (doc, q) => {
       const data = doc.formData as Partial<ConfidentialityNonCompeteAgreementFormData>;
       const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
@@ -6326,8 +6336,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setConfidentialityNonCompeteAgreementPreviewLoading(true);
     try {
       const recipientName = employees.find((e) => e.id === confidentialityNonCompeteAgreementRecipientId)?.name || "";
-      const logo = await loadImageDataUrl(agreementLogoLoader(true));
-      const pdfBlob = await captureConfidentialityNonCompeteAgreementPdf(buildConfidentialityNonCompeteAgreementPreviewData(recipientName), logo);
+      // AHS Forms PH previews the Admin Hub Solutions version; the original tab US In Home Services.
+      const ahsTab = activeTab === "ahsConfidentiality";
+      const logo = await loadImageDataUrl(agreementLogoLoader(ahsTab));
+      const previewData = { ...buildConfidentialityNonCompeteAgreementPreviewData(recipientName), ...(ahsTab ? { brand: "ahs" as const } : {}) };
+      const pdfBlob = await captureConfidentialityNonCompeteAgreementPdf(previewData, logo);
       const url = URL.createObjectURL(pdfBlob);
       setConfidentialityNonCompeteAgreementPreviewPdfUrl(url);
     } catch (err) {
@@ -6349,19 +6362,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === confidentialityNonCompeteAgreementRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      // AHS Forms PH sends the Admin Hub Solutions version (form_data.brand).
+      const ahsTab = activeTab === "ahsConfidentiality";
       const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["confidentiality_noncompete_agreement"]);
+      // Only a copy of this tab's version counts as already on file — a US
+      // In Home Services copy doesn't block sending the AHS one, or vice versa.
+      const hasSameVersion = alreadySent.length > 0 && sentConfidentialityNonCompeteAgreementForms.some((d) => d.recipientId === recipient.id && d.status !== "cancelled" && isAhsDoc(d) === ahsTab);
       // Signed in the old wording (with the non-compete) — resending is how they get the new version.
-      const signedOldWording = sentConfidentialityNonCompeteAgreementForms.some((d) => d.recipientId === recipient.id && isOldConfidentialityWording(d));
+      const signedOldWording = !ahsTab && sentConfidentialityNonCompeteAgreementForms.some((d) => d.recipientId === recipient.id && isOldConfidentialityWording(d));
       const confirmText = signedOldWording
         ? `${recipient.name} signed the OLD wording (with the non-compete). Send the new version for them to sign? Their old signed copy stays on file.`
-        : `${recipient.name} already has a Master Confidentiality agreement on file. Send another one anyway?`;
-      if (alreadySent.length > 0 && !window.confirm(confirmText)) {
+        : `${recipient.name} already has a${ahsTab ? "n Admin Hub Solutions" : ""} Master Confidentiality agreement on file. Send another one anyway?`;
+      if (hasSameVersion && !window.confirm(confirmText)) {
         return;
       }
 
       const doc = await createSignableDocument({
         documentType: "confidentiality_noncompete_agreement",
-        formData: { employeeId: recipient.id, employeeName: recipient.name, templateVersion: CNC_CURRENT_TEMPLATE_VERSION } as unknown as Record<string, any>,
+        formData: { employeeId: recipient.id, employeeName: recipient.name, templateVersion: CNC_CURRENT_TEMPLATE_VERSION, ...(ahsTab ? { brand: "ahs" } : {}) } as unknown as Record<string, any>,
         recipientId: confidentialityNonCompeteAgreementRecipientId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -18542,6 +18560,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         { key: "ahsPhAgreement", label: "Master PH Contractor Agreement", count: sentAhsPhAgreementAwaitingEmployerCount, icon: FileCheck },
         { key: "ahsDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
         { key: "ahsValidId", label: "Valid ID", count: 0, icon: FileCheck },
+        { key: "ahsConfidentiality", label: "Master Confidentiality, Non-Solicitation & Affirmative Duty Agreement", count: sentAhsConfidentialityAwaitingEmployerCount, icon: FileText },
         // The official IRS form — no company name or logo on it, so there is no separate AHS version; same tab as New Automation Forms → PH Staff.
         { key: "newW8ben", label: "Form W-8BEN", count: 0, icon: Landmark },
       ] as const,
@@ -31090,11 +31109,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
-      {activeTab === "confidentialityNonCompeteAgreement" && (
+      {(activeTab === "confidentialityNonCompeteAgreement" || activeTab === "ahsConfidentiality") && (
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Send Master Confidentiality & Non-Compete Agreement Request</h2>
+          <h2 className="font-semibold text-sm">Send Master Confidentiality & Non-Compete Agreement Request {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their legal name and address and sign. Once they submit, it lands back here for an employer representative to countersign. For everyone (all Staff Form Checklist groups).</p>
         </div>
         <div className="p-4 flex flex-col md:flex-row gap-6">
