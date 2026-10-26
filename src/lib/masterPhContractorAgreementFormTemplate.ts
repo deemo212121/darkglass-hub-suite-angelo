@@ -52,6 +52,15 @@ export interface MasterPhContractorAgreementFormData {
   employerSignatureDataUrl: string;
   /** Name of the HR/manager who countersigned — set when the employer signature is added. Missing on documents countersigned before it was recorded. */
   employerName?: string;
+  /** Wording version (missing = 1, US In Home Services) — see MASTER_PH_CONTRACTOR_AGREEMENT_CURRENT_VERSION. */
+  templateVersion?: number;
+}
+
+export const MASTER_PH_CONTRACTOR_AGREEMENT_TITLE = "Master Philippines Independent Contractor Comprehensive Agreement";
+
+/** Version 2 (2026-10-26) names Admin Hub Solutions; version 1 (every copy before it) US In Home Services. Same title and content. */
+export function masterPhContractorUsesAdminHub(data: { templateVersion?: number } | null | undefined): boolean {
+  return (Number(data?.templateVersion) || 1) >= 2;
 }
 
 const escapeHtml = (s: string) =>
@@ -111,14 +120,16 @@ function signRow(label: string, name: string, dateSigned: string, sigDataUrl: st
 }
 
 export function buildMasterPhContractorAgreementBodyMarkup(data: MasterPhContractorAgreementFormData, logoDataUrl: string): string {
+  // The company the copy was sent / signed in — see masterPhContractorUsesAdminHub.
+  const company = masterPhContractorUsesAdminHub(data) ? "Admin Hub Solutions" : "US In Home Services";
   return `
     <div class="mphc-container">
       <div class="mphc-header">
         <div>
-          <h1>ADMIN HUB SOLUTIONS</h1>
-          <h2>MASTER CONFIDENTIALITY, NON-SOLICITATION, AND AFFIRMATIVE DUTY AGREEMENT</h2>
+          <h1>${company.toUpperCase()}</h1>
+          <h2>${MASTER_PH_CONTRACTOR_AGREEMENT_TITLE.toUpperCase()}</h2>
         </div>
-        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="Admin Hub Solutions" />` : ""}
+        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="${company}" />` : ""}
       </div>
 
       <div class="mphc-section-title">1. Contractor &amp; Personal Information</div>
@@ -147,7 +158,7 @@ export function buildMasterPhContractorAgreementBodyMarkup(data: MasterPhContrac
       </div>
 
       <div class="mphc-section-title">Section 1. Independent Contractor Relationship</div>
-      <div class="mphc-bullet"><b>Business-to-Business Status:</b> You are engaged and contracted strictly as an independent contractor providing remote back-office, administrative, or technical support services to Admin Hub Solutions, and not as a regular employee under local Philippine labor codes or U.S. employment laws.</div>
+      <div class="mphc-bullet"><b>Business-to-Business Status:</b> You are engaged and contracted strictly as an independent contractor providing remote back-office, administrative, or technical support services to ${company}, and not as a regular employee under local Philippine labor codes or U.S. employment laws.</div>
       <div class="mphc-bullet"><b>Tax &amp; Statutory Independence:</b> As an independent contractor, you are solely responsible for all personal income taxes, local filings, and national contributions (such as SSS, PhilHealth, and Pag-IBIG). No local statutory benefits or U.S. employee withholdings are deducted by the Company.</div>
 
       <div class="mphc-section-title">Section 2. Confidentiality &amp; Non-Disclosure (NDA)</div>
@@ -169,10 +180,10 @@ export function buildMasterPhContractorAgreementBodyMarkup(data: MasterPhContrac
       <div class="mphc-bullet"><b>Electronic Signatures:</b> Electronic signatures, digital form submissions, and online verifications carry the exact same legal force and effect as original handwritten signatures.</div>
 
       <div class="mphc-section-title" style="margin-top:20px;">Contractor Acknowledgment &amp; Signature</div>
-      <p style="font-style:italic;">By signing below, I certify that I have read, understood, and voluntarily agree to all the terms, policies, and conditions outlined in this Master Confidentiality, Non-Solicitation, and Affirmative Duty Agreement (including Personal Data, Confidentiality, and Leave Policies).</p>
+      <p style="font-style:italic;">By signing below, I certify that I have read, understood, and voluntarily agree to all the terms, policies, and conditions outlined in this ${MASTER_PH_CONTRACTOR_AGREEMENT_TITLE} (including Personal Data, Confidentiality, and Leave Policies).</p>
 
       ${signRow("Contractor Signature", data.employeeName, data.contractorDateSigned, data.contractorSignatureDataUrl)}
-      ${signRow("Employer Representative Signature (Admin Hub Solutions)", data.employerName || "", data.employerDateSigned, data.employerSignatureDataUrl)}
+      ${signRow("Employer Representative Signature", data.employerName || "", data.employerDateSigned, data.employerSignatureDataUrl)}
     </div>
   `;
 }

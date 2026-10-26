@@ -74,7 +74,7 @@ import type { PartsResponsibilityFormData } from "@/lib/partsResponsibilityFormT
 import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
 import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
 import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, masterW2OfficeUsesAdminHub, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
-import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
+import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, masterPhContractorUsesAdminHub, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
 import { captureConfidentialityNonCompeteAgreementPdf, confidentialityUsesAdminHub, type ConfidentialityNonCompeteAgreementFormData } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
 import { agreementLogoLoader } from "@/lib/agreementBranding";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
@@ -113,7 +113,7 @@ const TYPE_LABEL: Partial<Record<SignableDocumentType, string>> = {
   flash_technician_travel: "Flash Technician Travel & Out-of-State Policy",
   master_w2_agreement: "Master W-2 Technician Comprehensive Policy, Consent & Agreement",
   master_w2_office_agreement: "Master W-2 Office & Logistics Comprehensive Policy, Conduct & Agreement",
-  master_ph_contractor_agreement: "Master Confidentiality, Non-Solicitation, and Affirmative Duty Agreement (PH)",
+  master_ph_contractor_agreement: "Master Philippines Independent Contractor Comprehensive Agreement",
   confidentiality_noncompete_agreement: "Master Confidentiality & Non-Compete Agreement",
 };
 
@@ -309,7 +309,7 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
 
     const merged: MasterPhContractorAgreementFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt, employerName: displayName || "" };
 
-    const logo = await loadAssetDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png"));
+    const logo = await loadAssetDataUrl(agreementLogoLoader(masterPhContractorUsesAdminHub(merged)));
     const pdfBlob = await captureHtmlToPdfBlob(buildMasterPhContractorAgreementBodyMarkup(merged, logo), masterPhContractorAgreementStyles);
     const pdfUrl = await uploadMasterPhContractorAgreementForm(doc.companyId, existing.employeeName || "master-ph-contractor-agreement", pdfBlob);
 

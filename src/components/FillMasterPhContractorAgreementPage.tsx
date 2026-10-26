@@ -1,5 +1,5 @@
 /**
- * Fill Master Confidentiality, Non-Solicitation, and Affirmative Duty Agreement —
+ * Fill Master Philippines Independent Contractor Comprehensive Agreement —
  * opened from the deep link ReportHRDaily.tsx's "Master PH Contractor
  * Agreement" tab "Send Request" flow sends. HTML/CSS document (no source
  * PDF to overlay — see masterPhContractorAgreementFormTemplate.ts's header
@@ -29,8 +29,11 @@ import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
 import {
   masterPhContractorAgreementStyles,
   buildMasterPhContractorAgreementBodyMarkup,
+  masterPhContractorUsesAdminHub,
   type MasterPhContractorAgreementFormData,
 } from "@/lib/masterPhContractorAgreementFormTemplate";
+import { MASTER_PH_CONTRACTOR_AGREEMENT_CURRENT_VERSION } from "@/lib/signableDocumentRegistry";
+import { agreementLogoLoader } from "@/lib/agreementBranding";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
@@ -90,19 +93,26 @@ export function FillMasterPhContractorAgreementPage({ docId }: Props) {
       setLoading(true);
       setError(null);
       try {
-        const [profileId, document, logo] = await Promise.all([
+        const [profileId, document] = await Promise.all([
           getMyProfileId(uid),
           getSignableDocument(docId),
-          loadAssetDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")),
         ]);
         if (cancelled) return;
         setMyProfileId(profileId);
-        setLogoDataUrl(logo);
         if (!document || document.documentType !== "master_ph_contractor_agreement") {
           setError("This document doesn't exist or has been removed.");
         } else {
+          // Not signed yet: it's signed in the current wording. Already signed
+          // (or reopened for the employer): keep the wording it was signed in.
+          const unsigned = document.status === "pending_signature" && document.recipientSlot === "employee";
+          const existing = {
+            ...(document.formData as Partial<MasterPhContractorAgreementFormData>),
+            ...(unsigned ? { templateVersion: MASTER_PH_CONTRACTOR_AGREEMENT_CURRENT_VERSION } : {}),
+          };
+          const logo = await loadAssetDataUrl(agreementLogoLoader(masterPhContractorUsesAdminHub(existing)));
+          if (cancelled) return;
+          setLogoDataUrl(logo);
           setDoc(document);
-          const existing = document.formData as Partial<MasterPhContractorAgreementFormData>;
           setForm((prev) => ({ ...prev, ...existing }));
         }
       } catch (err) {
@@ -175,7 +185,7 @@ export function FillMasterPhContractorAgreementPage({ docId }: Props) {
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "Contractor",
-          body: `📋 Master Confidentiality, Non-Solicitation, and Affirmative Duty Agreement for ${employeeName} has been signed, and is ready for the employer signature: ${pdfUrl}`,
+          body: `📋 Master Philippines Independent Contractor Comprehensive Agreement for ${employeeName} has been signed, and is ready for the employer signature: ${pdfUrl}`,
         });
       }
 
@@ -183,7 +193,7 @@ export function FillMasterPhContractorAgreementPage({ docId }: Props) {
         .then(({ taxForms }) => {
           if (!taxForms) return;
           const excludeIds = doc.createdBy ? [doc.createdBy] : [];
-          void notifyHrRoleUsers(myProfileId, displayName || "Contractor", excludeIds, `📋 Master Confidentiality, Non-Solicitation, and Affirmative Duty Agreement for ${employeeName} has been signed — the employer signature is ready to be added.`);
+          void notifyHrRoleUsers(myProfileId, displayName || "Contractor", excludeIds, `📋 Master Philippines Independent Contractor Comprehensive Agreement for ${employeeName} has been signed — the employer signature is ready to be added.`);
         })
         .catch((err) => console.error("[master-ph-contractor-agreement] hr notify check failed:", err));
 
