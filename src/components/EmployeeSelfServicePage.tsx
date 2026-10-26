@@ -13,6 +13,8 @@ import {
   getAttendanceForRange,
   getMyProfileSchedule,
   getEntryForDate,
+  splitRegularOvertimeWeekly,
+  CSR_WEEKLY_OVERTIME_THRESHOLD,
 } from "@/lib/supabase/timecards";
 import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
 import { getPendingCorrectionsInRange } from "@/lib/supabase/timecardCorrections";
@@ -1176,12 +1178,21 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         );
         if (cancelled) return;
         const rate = selectedPayslip.hourlyRate;
-        // OT at 1.5× for everyone, PH included (since 2026-10-22).
+        // Regular vs OT split per Sunday–Saturday WEEK at 40 hours — the same
+        // rule the payslip's gross uses (everyone, PH included, OT at 1.5×,
+        // since 2026-10-22). This used to split each DAY at 8 hours, so the
+        // day rows showed OT the gross didn't have (four 10-hour days: 8 OT
+        // hours in the rows, none in the gross).
+        const split = splitRegularOvertimeWeekly(
+          rows.map((r) => ({ date: r.date, rawHours: r.hoursWorked })),
+          {},
+          8,
+          CSR_WEEKLY_OVERTIME_THRESHOLD
+        );
         const daily: PayslipDailyRow[] = rows
           .filter((r) => r.hoursWorked > 0)
           .map((r) => {
-            const regular = Math.min(r.hoursWorked, 8);
-            const overtime = Math.max(0, r.hoursWorked - 8);
+            const { regular, overtime } = split.get(r.date) ?? { regular: r.hoursWorked, overtime: 0 };
             return {
               date: r.date,
               clockIn: r.clockIn,
