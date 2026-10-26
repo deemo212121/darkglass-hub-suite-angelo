@@ -1550,7 +1550,11 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
           <div className="mt-5 flex flex-wrap items-end gap-4">
             <div>
               <div className="text-2xl font-bold text-white">
-                {loading ? "Loading..." : `${users.length} records found`}
+                {/* What the Status / column filters and search leave in the table, not every account. */}
+                {loading ? "Loading..." : `${filtered.length} record${filtered.length === 1 ? "" : "s"} found`}
+                {!loading && filtered.length !== users.length && (
+                  <span className="ml-2 text-sm font-normal text-slate-400">of {users.length}</span>
+                )}
               </div>
               <div className="text-sm text-slate-400">
                 {loading ? "Fetching from database..." : "search in result"}
