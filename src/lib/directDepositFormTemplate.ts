@@ -123,7 +123,7 @@ export function buildDirectDepositBodyMarkup(data: DirectDepositFormData, logoDa
     <div class="ddep-container">
       <div class="ddep-header">
         <h1>DIRECT DEPOSIT AUTHORIZATION</h1>
-        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="US In Home Services" />` : ""}
+        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="Admin Hub Solutions" />` : ""}
       </div>
 
       <div class="ddep-section-title">NAME</div>
@@ -150,7 +150,7 @@ export function buildDirectDepositBodyMarkup(data: DirectDepositFormData, logoDa
         ${field("Type of Account", data.accountType)}
       </div>
 
-      <p class="ddep-notice">US In Home Services is hereby authorized to directly deposit my pay to the account listed above. This authorization will remain in effect until I modify or cancel it in writing.</p>
+      <p class="ddep-notice">Admin Hub Solutions is hereby authorized to directly deposit my pay to the account listed above. This authorization will remain in effect until I modify or cancel it in writing.</p>
 
       ${data.filedByHr
         ? `<p class="ddep-notice">Filed by HR (${blank(data.filedByHrName || "")}) on behalf of ${blank(data.employeeName)} — no employee signature was collected for this submission.</p>

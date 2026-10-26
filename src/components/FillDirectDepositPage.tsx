@@ -78,7 +78,7 @@ export function FillDirectDepositPage({ docId }: Props) {
   const sigPad = useSignaturePad({ defaultName: employeeName, width: 500, height: 130 });
 
   useEffect(() => {
-    loadAssetDataUrl(() => import("@/assets/us-in-home-services-logo.png")).then(setLogoDataUrl);
+    loadAssetDataUrl(() => import("@/assets/AHS logo.png")).then(setLogoDataUrl);
   }, []);
 
   useEffect(() => {
@@ -288,7 +288,7 @@ export function FillDirectDepositPage({ docId }: Props) {
                   </div>
                 </div>
 
-                <p className="text-xs text-muted-foreground">US In Home Services is hereby authorized to directly deposit my pay to the account listed above. This authorization will remain in effect until I modify or cancel it in writing.</p>
+                <p className="text-xs text-muted-foreground">Admin Hub Solutions is hereby authorized to directly deposit my pay to the account listed above. This authorization will remain in effect until I modify or cancel it in writing.</p>
 
                 <div>
                   <label className={labelCls}>Contractor's Signature</label>

@@ -75,7 +75,7 @@ export function buildValidIdFormBodyMarkup(data: ValidIdFormData, logoDataUrl: s
     <div class="validid-container">
       <div class="validid-header">
         <h1>VALID ID SUBMISSION</h1>
-        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="US In Home Services" />` : ""}
+        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="Admin Hub Solutions" />` : ""}
       </div>
 
       <div class="validid-section-title">EMPLOYEE INFORMATION</div>
