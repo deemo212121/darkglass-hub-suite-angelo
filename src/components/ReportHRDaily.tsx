@@ -101,7 +101,6 @@ import { useSortableSearchTable } from "@/hooks/useSortableSearchTable";
 import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
 import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, masterW2OfficeUsesAdminHub, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
 import { agreementLogoLoader } from "@/lib/agreementBranding";
-import { MASTER_W2_OFFICE_AGREEMENT_CURRENT_VERSION } from "@/lib/signableDocumentRegistry";
 import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
 import { masterW2ExecutiveAgreementStyles, buildMasterW2ExecutiveAgreementBodyMarkup, type MasterW2ExecutiveAgreementFormData } from "@/lib/masterW2ExecutiveAgreementFormTemplate";
 import { confidentialityNonCompeteAgreementStyles, buildConfidentialityNonCompeteAgreementBodyMarkup, captureConfidentialityNonCompeteAgreementPdf, CNC_CURRENT_TEMPLATE_VERSION, confidentialityAgreementTitle, confidentialityUsesAdminHub, type ConfidentialityNonCompeteAgreementFormData } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
@@ -1149,13 +1148,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "compensationUpdate" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "confidentialityNonCompeteAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList" | "clockInCodes" | "performanceBonusPolicy" | "ahsDirectDeposit" | "ahsValidId" | "ahsPhAgreement" | "ahsConfidentiality">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "compensationUpdate" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "confidentialityNonCompeteAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList" | "clockInCodes" | "performanceBonusPolicy" | "ahsDirectDeposit" | "ahsValidId" | "ahsPhAgreement" | "ahsConfidentiality" | "ahsW2Office">(paperworksOnly ? "combineForms" : "hiring");
   // HR Paperworks → "AHS Forms PH": the Admin Hub Solutions versions of Direct
-  // Deposit, Valid ID and the Master PH Contractor Agreement. Same screens as
+  // Deposit, Valid ID, the Master PH Contractor Agreement and the Master
+  // Confidentiality agreement; "AHS Forms US" has the Master W-2 Office &
+  // Logistics and Master Confidentiality agreements. Same screens as
   // the original tabs, but they send (and list) only AHS copies — every copy
   // is tagged form_data.brand = "ahs" and keeps that version for good
   // (lib/formBrand.ts). The original tabs list only the US In Home Services copies.
-  const isAhsFormsTab = activeTab === "ahsDirectDeposit" || activeTab === "ahsValidId" || activeTab === "ahsPhAgreement" || activeTab === "ahsConfidentiality";
+  const isAhsFormsTab = activeTab === "ahsDirectDeposit" || activeTab === "ahsValidId" || activeTab === "ahsPhAgreement" || activeTab === "ahsConfidentiality" || activeTab === "ahsW2Office";
   const isAhsDoc = (d: { formData?: unknown }) => brandOf(d.formData) === "ahs";
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -1183,7 +1184,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [startDateFor, setStartDateFor] = useState<{ id: string; date: string } | null>(null);
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string; viewCvCandidateId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList", "clockInCodes", "ndaForm", "confidentialityNonCompeteAgreement", "performanceBonusPolicy", "ahsDirectDeposit", "ahsValidId", "ahsPhAgreement", "ahsConfidentiality"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList", "clockInCodes", "ndaForm", "confidentialityNonCompeteAgreement", "performanceBonusPolicy", "ahsDirectDeposit", "ahsValidId", "ahsPhAgreement", "ahsConfidentiality", "ahsW2Office"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -5627,11 +5628,21 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "masterW2OfficeAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMasterW2OfficeAgreementForms();
+    if (activeTab === "masterW2OfficeAgreement" || activeTab === "ahsW2Office" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMasterW2OfficeAgreementForms();
   }, [activeTab]);
+  // Each version counts on its own tab — the original (US In Home Services)
+  // and AHS Forms US (Admin Hub Solutions; form_data.brand, lib/formBrand.ts).
   const sentMasterW2OfficeAgreementAwaitingEmployerCount = useMemo(
-    () => sentMasterW2OfficeAgreementForms.filter(isAwaitingEmployerStep).length,
+    () => sentMasterW2OfficeAgreementForms.filter((d) => !isAhsDoc(d) && isAwaitingEmployerStep(d)).length,
     [sentMasterW2OfficeAgreementForms]
+  );
+  const sentAhsW2OfficeAwaitingEmployerCount = useMemo(
+    () => sentMasterW2OfficeAgreementForms.filter((d) => isAhsDoc(d) && isAwaitingEmployerStep(d)).length,
+    [sentMasterW2OfficeAgreementForms]
+  );
+  const visibleMasterW2OfficeAgreementForms = useMemo(
+    () => sentMasterW2OfficeAgreementForms.filter((d) => (activeTab === "ahsW2Office" ? isAhsDoc(d) : !isAhsDoc(d))),
+    [sentMasterW2OfficeAgreementForms, activeTab],
   );
 
   type MasterW2OfficeAgreementSortColumn = "employee" | "branch" | "sentBy" | "status" | "sent";
@@ -5653,7 +5664,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     isValueChecked: masterW2OfficeAgreementIsValueChecked,
     rows: sortedSentMasterW2OfficeAgreementForms,
   } = useSortableSearchTable<SignableDocument, MasterW2OfficeAgreementSortColumn>(
-    sentMasterW2OfficeAgreementForms,
+    visibleMasterW2OfficeAgreementForms,
     (doc, q) => {
       const data = doc.formData as Partial<MasterW2OfficeAgreementFormData>;
       const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
@@ -5721,7 +5732,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       employeeSignatureDataUrl: "",
       employerDateSigned: "",
       employerSignatureDataUrl: "",
-      templateVersion: MASTER_W2_OFFICE_AGREEMENT_CURRENT_VERSION,
     };
   };
 
@@ -5738,8 +5748,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setMasterW2OfficeAgreementPreviewLoading(true);
     try {
       const recipientName = employees.find((e) => e.id === masterW2OfficeAgreementRecipientId)?.name || "";
-      const logo = await loadImageDataUrl(agreementLogoLoader(true));
-      const pdfBlob = await captureHtmlToPdfBlob(buildMasterW2OfficeAgreementBodyMarkup(buildMasterW2OfficeAgreementPreviewData(recipientName), logo), masterW2OfficeAgreementStyles);
+      // AHS Forms US previews the Admin Hub Solutions version; the original tab US In Home Services.
+      const ahsTab = activeTab === "ahsW2Office";
+      const logo = await loadImageDataUrl(agreementLogoLoader(ahsTab));
+      const previewData = { ...buildMasterW2OfficeAgreementPreviewData(recipientName), ...(ahsTab ? { brand: "ahs" as const } : {}) };
+      const pdfBlob = await captureHtmlToPdfBlob(buildMasterW2OfficeAgreementBodyMarkup(previewData, logo), masterW2OfficeAgreementStyles);
       const url = URL.createObjectURL(pdfBlob);
       setMasterW2OfficeAgreementPreviewPdfUrl(url);
     } catch (err) {
@@ -5757,14 +5770,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const recipient = employees.find((e) => e.id === masterW2OfficeAgreementRecipientId);
       if (!recipient) throw new Error("Select a recipient first.");
 
+      // AHS Forms US sends the Admin Hub Solutions version (form_data.brand).
+      const ahsTab = activeTab === "ahsW2Office";
       const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["master_w2_office_agreement"]);
-      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Master W-2 Office Agreement on file. Send another one anyway?`)) {
+      // Only a copy of this tab's version counts as already on file.
+      const hasSameVersion = alreadySent.length > 0 && sentMasterW2OfficeAgreementForms.some((d) => d.recipientId === recipient.id && d.status !== "cancelled" && isAhsDoc(d) === ahsTab);
+      if (hasSameVersion && !window.confirm(`${recipient.name} already has a${ahsTab ? "n Admin Hub Solutions" : ""} Master W-2 Office Agreement on file. Send another one anyway?`)) {
         return;
       }
 
       const doc = await createSignableDocument({
         documentType: "master_w2_office_agreement",
-        formData: { employeeId: recipient.id, employeeName: recipient.name, templateVersion: MASTER_W2_OFFICE_AGREEMENT_CURRENT_VERSION } as unknown as Record<string, any>,
+        formData: { employeeId: recipient.id, employeeName: recipient.name, ...(ahsTab ? { brand: "ahs" } : {}) } as unknown as Record<string, any>,
         recipientId: masterW2OfficeAgreementRecipientId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -18566,6 +18583,19 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       ] as const,
       columns: undefined,
     }] : []),
+    // AHS Forms US — the Admin Hub Solutions versions of the two US office
+    // agreements naming the employer (the rest of Office Staff (US) has no
+    // separate AHS version). The Confidentiality tab is the same one as in
+    // AHS Forms PH: one list of every AHS copy.
+    ...(paperworksOnly && companyId === "COMP001" ? [{
+      group: "AHS Forms US",
+      icon: Paperclip,
+      tabs: [
+        { key: "ahsW2Office", label: "Master W-2 Office & Logistics Agreement", count: sentAhsW2OfficeAwaitingEmployerCount, icon: FileCheck },
+        { key: "ahsConfidentiality", label: "Master Confidentiality, Non-Solicitation & Affirmative Duty Agreement", count: sentAhsConfidentialityAwaitingEmployerCount, icon: FileText },
+      ] as const,
+      columns: undefined,
+    }] : []),
     ...(!paperworksOnly ? [
       {
         group: "Generate Reports",
@@ -30482,11 +30512,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
-      {activeTab === "masterW2OfficeAgreement" && (
+      {(activeTab === "masterW2OfficeAgreement" || activeTab === "ahsW2Office") && (
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Send Master W-2 Office Agreement Request</h2>
+          <h2 className="font-semibold text-sm">Send Master W-2 Office Agreement Request {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their info and sign. Once they submit, it lands back here for HR to add the employer signature. Covers wage/overtime, multi-state compliance, equipment & data security, conduct & substance screening, property damage, confidentiality, and at-will employment in one document.</p>
         </div>
         <div className="p-4 flex flex-col md:flex-row gap-6">

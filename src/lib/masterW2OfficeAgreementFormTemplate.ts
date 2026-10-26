@@ -19,6 +19,8 @@
  * ManagerReviewPage.tsx when reassigned to a non-HR manager).
  */
 
+import { brandOf } from "@/lib/formBrand";
+
 export { MASTER_W2_AGREEMENT_BRANCHES as MASTER_W2_OFFICE_AGREEMENT_BRANCHES } from "@/lib/masterW2AgreementFormTemplate";
 
 export interface MasterW2OfficeAgreementFormData {
@@ -46,13 +48,18 @@ export interface MasterW2OfficeAgreementFormData {
   employerSignatureDataUrl: string;
   /** Name of the HR/manager who countersigned — set when the employer signature is added. Missing on documents countersigned before it was recorded. */
   employerName?: string;
-  /** Wording version (signableDocumentRegistry's MASTER_W2_OFFICE_AGREEMENT_CURRENT_VERSION). Missing = 1, US In Home Services; 2 = Admin Hub Solutions. */
-  templateVersion?: number;
+  /** "ahs" = the Admin Hub Solutions version (HR Paperworks / Staff Form Checklist → AHS Forms US); absent = the original US In Home Services version. */
+  brand?: "ahs";
 }
 
-/** Version 2 on (2026-10-26) names Admin Hub Solutions; older copies keep US In Home Services — a signed agreement never re-renders under a different company's name. */
-export function masterW2OfficeUsesAdminHub(data: { templateVersion?: number } | null | undefined): boolean {
-  return (Number(data?.templateVersion) || 1) >= 2;
+/**
+ * The Admin Hub Solutions version (sent from AHS Forms US — form_data.brand,
+ * see lib/formBrand.ts): heading, at-will clause and logo name Admin Hub
+ * Solutions. Every other copy is US In Home Services, and a copy keeps its
+ * version for good.
+ */
+export function masterW2OfficeUsesAdminHub(data: unknown): boolean {
+  return brandOf(data) === "ahs";
 }
 
 const escapeHtml = (s: string) =>

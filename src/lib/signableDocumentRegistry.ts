@@ -212,16 +212,6 @@ export const DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE = new Set<SignableDocum
 export const CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION = 2;
 
 /**
- * Master W-2 Office & Logistics agreement wording now in use: version 2
- * (2026-10-26) names Admin Hub Solutions (heading, at-will clause, logo)
- * instead of US In Home Services. Copies signed in the older wording stay
- * valid — see MIN_VALID_TEMPLATE_VERSION. (The Master Confidentiality
- * agreement's Admin Hub Solutions version is a per-copy brand instead — sent
- * from AHS Forms PH, see lib/formBrand.ts.)
- */
-export const MASTER_W2_OFFICE_AGREEMENT_CURRENT_VERSION = 2;
-
-/**
  * Flash travel form in use (see flashTechnicianTravelPdfFill.ts): version 2
  * (2026-10-12) is the "Flash Tech Travel & Expense Policy Agreement", which
  * replaced the "Flash Technician Travel & Out-of-State Policy" (version 1).
@@ -232,17 +222,6 @@ export const FLASH_TRAVEL_CURRENT_VERSION = 2;
 const CURRENT_TEMPLATE_VERSION: Partial<Record<SignableDocumentType, number>> = {
   confidentiality_noncompete_agreement: CONFIDENTIALITY_AGREEMENT_CURRENT_VERSION,
   flash_technician_travel: FLASH_TRAVEL_CURRENT_VERSION,
-  master_w2_office_agreement: MASTER_W2_OFFICE_AGREEMENT_CURRENT_VERSION,
-};
-
-/**
- * The oldest wording a signed copy still counts in, when that's older than
- * the current one — a wording change that doesn't need everyone to re-sign
- * (the 2026-10-26 switch to Admin Hub Solutions branding). Types not listed
- * need the current version.
- */
-const MIN_VALID_TEMPLATE_VERSION: Partial<Record<SignableDocumentType, number>> = {
-  master_w2_office_agreement: 1,
 };
 
 /** The wording version a NEW document of this type is sent in, or undefined for a type that has only ever had one. */
@@ -258,13 +237,12 @@ export function currentTemplateVersion(type: SignableDocumentType): number | und
  * version, so the checklist shows "Needs new version" and lets HR send it.
  */
 export function isOutdatedDocument(doc: { documentType?: string; status: SignableDocumentStatus; formData?: Record<string, any> } | undefined): boolean {
-  const type = doc?.documentType as SignableDocumentType | undefined;
-  const needed = type ? MIN_VALID_TEMPLATE_VERSION[type] ?? CURRENT_TEMPLATE_VERSION[type] : undefined;
+  const current = doc?.documentType ? CURRENT_TEMPLATE_VERSION[doc.documentType as SignableDocumentType] : undefined;
   return (
     !!doc &&
-    needed != null &&
+    current != null &&
     (doc.status === "signed" || doc.status === "confirmed") &&
-    !((Number(doc.formData?.templateVersion) || 1) >= needed)
+    !(Number(doc.formData?.templateVersion) >= current)
   );
 }
 

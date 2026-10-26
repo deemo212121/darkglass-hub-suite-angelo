@@ -34,7 +34,6 @@ import {
   masterW2OfficeUsesAdminHub,
   type MasterW2OfficeAgreementFormData,
 } from "@/lib/masterW2OfficeAgreementFormTemplate";
-import { MASTER_W2_OFFICE_AGREEMENT_CURRENT_VERSION } from "@/lib/signableDocumentRegistry";
 import { agreementLogoLoader } from "@/lib/agreementBranding";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
@@ -97,13 +96,8 @@ export function FillMasterW2OfficeAgreementPage({ docId }: Props) {
         if (!document || document.documentType !== "master_w2_office_agreement") {
           setError("This document doesn't exist or has been removed.");
         } else {
-          // Not signed yet: it's signed in the current wording. Already signed
-          // (or reopened for the employer): keep the wording it was signed in.
-          const unsigned = document.status === "pending_signature" && document.recipientSlot === "employee";
-          const existing = {
-            ...(document.formData as Partial<MasterW2OfficeAgreementFormData>),
-            ...(unsigned ? { templateVersion: MASTER_W2_OFFICE_AGREEMENT_CURRENT_VERSION } : {}),
-          };
+          const existing = document.formData as Partial<MasterW2OfficeAgreementFormData>;
+          // The logo of this copy's version (US In Home Services, or Admin Hub Solutions from AHS Forms US).
           const logo = await loadAssetDataUrl(agreementLogoLoader(masterW2OfficeUsesAdminHub(existing)));
           if (cancelled) return;
           setLogoDataUrl(logo);
