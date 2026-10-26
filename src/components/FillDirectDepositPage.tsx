@@ -1,3 +1,4 @@
+import { BRAND_COMPANY, brandOf, loadBrandLogo } from "@/lib/formBrand";
 /**
  * Fill Direct Deposit Authorization — opened from the deep link a Team
  * Messenger message sends (see ReportHRDaily.tsx's "Direct Deposit" tab
@@ -77,9 +78,11 @@ export function FillDirectDepositPage({ docId }: Props) {
   const employeeName = [form.firstName, form.middleName, form.lastName].filter(Boolean).join(" ");
   const sigPad = useSignaturePad({ defaultName: employeeName, width: 500, height: 130 });
 
+  // The logo of this copy's version (US In Home Services, or Admin Hub Solutions from AHS FORMS PH).
+  const formBrand = brandOf(form);
   useEffect(() => {
-    loadAssetDataUrl(() => import("@/assets/AHS logo.png")).then(setLogoDataUrl);
-  }, []);
+    loadBrandLogo(formBrand).then(setLogoDataUrl);
+  }, [formBrand]);
 
   useEffect(() => {
     if (!ready || !uid) return;
@@ -288,7 +291,7 @@ export function FillDirectDepositPage({ docId }: Props) {
                   </div>
                 </div>
 
-                <p className="text-xs text-muted-foreground">Admin Hub Solutions is hereby authorized to directly deposit my pay to the account listed above. This authorization will remain in effect until I modify or cancel it in writing.</p>
+                <p className="text-xs text-muted-foreground">{BRAND_COMPANY[formBrand]} is hereby authorized to directly deposit my pay to the account listed above. This authorization will remain in effect until I modify or cancel it in writing.</p>
 
                 <div>
                   <label className={labelCls}>Contractor's Signature</label>

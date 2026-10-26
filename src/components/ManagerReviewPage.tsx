@@ -1,3 +1,4 @@
+import { brandOf, loadBrandLogo } from "@/lib/formBrand";
 /**
  * Standalone "add your signature" link for the manager/employer half of a
  * two-party HR form — the counterpart to the Fill*Page.tsx pages the
@@ -112,7 +113,7 @@ const TYPE_LABEL: Partial<Record<SignableDocumentType, string>> = {
   flash_technician_travel: "Flash Technician Travel & Out-of-State Policy",
   master_w2_agreement: "Master W-2 Technician Comprehensive Policy, Consent & Agreement",
   master_w2_office_agreement: "Master W-2 Office & Logistics Comprehensive Policy, Conduct & Agreement",
-  master_ph_contractor_agreement: "Master Confidentiality, Non-Solicitation, and Affirmative Duty Agreement (PH)",
+  master_ph_contractor_agreement: "Master Philippines Independent Contractor Comprehensive Agreement",
   confidentiality_noncompete_agreement: "Master Confidentiality & Non-Compete Agreement",
 };
 
@@ -308,7 +309,7 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
 
     const merged: MasterPhContractorAgreementFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt, employerName: displayName || "" };
 
-    const logo = await loadAssetDataUrl(() => import("@/assets/AHS logo.png"));
+    const logo = await loadBrandLogo(brandOf(merged));
     const pdfBlob = await captureHtmlToPdfBlob(buildMasterPhContractorAgreementBodyMarkup(merged, logo), masterPhContractorAgreementStyles);
     const pdfUrl = await uploadMasterPhContractorAgreementForm(doc.companyId, existing.employeeName || "master-ph-contractor-agreement", pdfBlob);
 

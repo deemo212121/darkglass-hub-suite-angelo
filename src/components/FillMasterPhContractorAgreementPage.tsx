@@ -1,5 +1,6 @@
+import { brandOf, loadBrandLogo } from "@/lib/formBrand";
 /**
- * Fill Master Confidentiality, Non-Solicitation, and Affirmative Duty Agreement —
+ * Fill Master Philippines Independent Contractor Comprehensive Agreement —
  * opened from the deep link ReportHRDaily.tsx's "Master PH Contractor
  * Agreement" tab "Send Request" flow sends. HTML/CSS document (no source
  * PDF to overlay — see masterPhContractorAgreementFormTemplate.ts's header
@@ -90,11 +91,9 @@ export function FillMasterPhContractorAgreementPage({ docId }: Props) {
       setLoading(true);
       setError(null);
       try {
-        const [profileId, document, logo] = await Promise.all([
-          getMyProfileId(uid),
-          getSignableDocument(docId),
-          loadAssetDataUrl(() => import("@/assets/AHS logo.png")),
-        ]);
+        const [profileId, document] = await Promise.all([getMyProfileId(uid), getSignableDocument(docId)]);
+        // The logo of this copy's version (US In Home Services, or Admin Hub Solutions from AHS FORMS PH).
+        const logo = await loadBrandLogo(brandOf(document?.formData));
         if (cancelled) return;
         setMyProfileId(profileId);
         setLogoDataUrl(logo);
@@ -175,7 +174,7 @@ export function FillMasterPhContractorAgreementPage({ docId }: Props) {
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "Contractor",
-          body: `📋 Master Confidentiality, Non-Solicitation, and Affirmative Duty Agreement for ${employeeName} has been signed, and is ready for the employer signature: ${pdfUrl}`,
+          body: `📋 Master Philippines Independent Contractor Comprehensive Agreement for ${employeeName} has been signed, and is ready for the employer signature: ${pdfUrl}`,
         });
       }
 
@@ -183,7 +182,7 @@ export function FillMasterPhContractorAgreementPage({ docId }: Props) {
         .then(({ taxForms }) => {
           if (!taxForms) return;
           const excludeIds = doc.createdBy ? [doc.createdBy] : [];
-          void notifyHrRoleUsers(myProfileId, displayName || "Contractor", excludeIds, `📋 Master Confidentiality, Non-Solicitation, and Affirmative Duty Agreement for ${employeeName} has been signed — the employer signature is ready to be added.`);
+          void notifyHrRoleUsers(myProfileId, displayName || "Contractor", excludeIds, `📋 Master Philippines Independent Contractor Comprehensive Agreement for ${employeeName} has been signed — the employer signature is ready to be added.`);
         })
         .catch((err) => console.error("[master-ph-contractor-agreement] hr notify check failed:", err));
 

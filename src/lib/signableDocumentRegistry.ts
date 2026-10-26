@@ -54,7 +54,7 @@ export const SIGNABLE_DOCUMENT_REGISTRY: Record<SignableDocumentType, SignableDo
   master_w2_office_agreement: { label: "Master W-2 Office Agreement", internalPath: "/fill-master-w2-office-agreement", externalPath: "/fill-master-w2-office-agreement" },
   // Same reasoning as master_w2_agreement above — PH recipients are all
   // existing AHS contractors, not outside candidates.
-  master_ph_contractor_agreement: { label: "Master Confidentiality, Non-Solicitation & Affirmative Duty Agreement (PH)", internalPath: "/fill-master-ph-contractor-agreement", externalPath: "/fill-master-ph-contractor-agreement" },
+  master_ph_contractor_agreement: { label: "Master PH Contractor Agreement", internalPath: "/fill-master-ph-contractor-agreement", externalPath: "/fill-master-ph-contractor-agreement" },
   // Same reasoning as master_w2_agreement above — BM/SBS/Director recipients
   // are all existing AHS employees, not outside candidates.
   master_w2_executive_agreement: { label: "W-2 Executive Exempt Management Agreement", internalPath: "/fill-master-w2-executive-agreement", externalPath: "/fill-master-w2-executive-agreement" },

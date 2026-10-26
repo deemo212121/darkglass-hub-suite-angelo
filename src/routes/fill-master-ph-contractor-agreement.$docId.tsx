@@ -4,7 +4,7 @@ import { FillMasterPhContractorAgreementPage } from "@/components/FillMasterPhCo
 export const Route = createFileRoute("/fill-master-ph-contractor-agreement/$docId")({
   ssr: false,
   head: () => ({
-    meta: [{ title: `Master Confidentiality, Non-Solicitation, and Affirmative Duty Agreement — Admin Hub Solutions` }],
+    meta: [{ title: `Master Philippines Independent Contractor Comprehensive Agreement — Admin Hub Solutions` }],
   }),
   component: RouteComponent,
 });
