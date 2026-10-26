@@ -1,7 +1,7 @@
 import { TraineeMonitoringTab } from "@/components/TraineeMonitoringTab";
 import { resolveTrainingRecord, trainingWindow } from "@/lib/fieldStartDate";
 import { getTrainingDates } from "@/lib/supabase/trainingDates";
-import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment, useDeferredValue } from "react";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { usePersistedTab } from "@/lib/usePersistedTab";
@@ -1197,6 +1197,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [regHoursFilter, setRegHoursFilter] = useState<Set<string>>(new Set());
   const [rateFilter, setRateFilter] = useState<Set<string>>(new Set());
   const [employeeSearch, setEmployeeSearch] = useState("");
+  // The box shows each keystroke immediately; the table filters on this
+  // deferred copy, so typing stays smooth while the list catches up.
+  const deferredEmployeeSearch = useDeferredValue(employeeSearch);
   const [traineeSearch, setTraineeSearch] = useState("");
   const [traineeDepartments, setTraineeDepartments] = useState<Set<string>>(new Set());
   // Clicking the Name column header cycles asc -> desc -> back to
@@ -2381,777 +2384,801 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // file: their Fixed Salary entries are a guaranteed minimum, not their pay
   // (fixedSalaryIsGuarantee in salary.ts) — so those entries never decide
   // the rate or the hourly/fixed split, whatever their date.
-  const hasHourlyEntry = new Set(salaryEntries.filter((se) => se.compensation_type === "hourly").map((se) => se.profile_id));
-  const fixedIsGuaranteeFor = new Set(
-    employees.filter((e) => hasHourlyEntry.has(e.id) && hasAnyTechnicianPayRole(e.role, e.extraRoles)).map((e) => e.id)
-  );
-  const rateEntries = salaryEntries.filter((se) => !(se.compensation_type === "fixed" && fixedIsGuaranteeFor.has(se.profile_id)));
-  const latestCompMap = new Map<string, SalaryEntry>();
-  for (const se of rateEntries) {
-    if (genEnd && se.effective_date > genEnd) continue;
-    const existing = latestCompMap.get(se.profile_id);
-    if (
-      !existing ||
-      se.effective_date > existing.effective_date ||
-      (se.effective_date === existing.effective_date && se.created_at > existing.created_at)
-    ) {
-      latestCompMap.set(se.profile_id, se);
-    }
-  }
-
-  // Guaranteed minimum in effect for this period per employee — the latest
-  // Fixed Salary entry dated on or before genEnd, for those whose fixed
-  // salary is a guarantee (fixedIsGuaranteeFor above). They keep their $/hr
-  // base (hours, OT, state matches) and get topped up to annual / 26 per
-  // cutoff when earnings fall short. A guarantee starting any day up to
-  // genEnd covers the whole period at the full per-cutoff amount.
-  // Previously the Fixed entry only counted as a guarantee while an hourly
-  // entry was dated after it, so dating it later silently switched the
-  // person to salaried at $0/hr (Darius Brown, 2026-10-20). See
-  // techGuaranteedSalaryMatch below.
-  const latestGuaranteeByProfile = new Map<string, SalaryEntry>();
-  for (const se of salaryEntries) {
-    if (se.compensation_type !== "fixed" || !se.annual_salary || !fixedIsGuaranteeFor.has(se.profile_id)) continue;
-    if (genEnd && se.effective_date > genEnd) continue;
-    const existing = latestGuaranteeByProfile.get(se.profile_id);
-    if (
-      !existing ||
-      se.effective_date > existing.effective_date ||
-      (se.effective_date === existing.effective_date && se.created_at > existing.created_at)
-    ) {
-      latestGuaranteeByProfile.set(se.profile_id, se);
-    }
-  }
-
-  // Hours worked per employee in current period. Computed from real
-  // check_in/check_out punches (see REGULAR_HOURS_PER_DAY comment above).
-  const dutyHoursByEmployeeId = computeDutyHoursByEmployee(employees, genStart, genEnd);
-  const { totals: hoursMap, daily: dailyHoursByEmployeeId } = computeHoursMap(timecardEntries, employees, ptoRequests, genStart, genEnd, dutyHoursByEmployeeId, weekSeedTimecardEntries);
-
-  // Every rate-change row per employee (not just the one latestCompMap picks
-  // for the whole period) — lets blendedDailyPay below apply the rate that
-  // was ACTUALLY effective on each individual day, same as the Attendance
-  // table's own per-day rateEffectiveOn lookup (salary.ts), instead of
-  // paying every hour in the period at whichever single rate happened to be
-  // latest as of genEnd. Same tie-break as entryEffectiveOn/latestCompMap:
-  // latest effective_date wins, ties broken by latest created_at.
-  const salaryEntriesByProfile = new Map<string, SalaryEntry[]>();
-  for (const se of rateEntries) {
-    const list = salaryEntriesByProfile.get(se.profile_id);
-    if (list) list.push(se);
-    else salaryEntriesByProfile.set(se.profile_id, [se]);
-  }
-  const hourlyRateOnDate = (profileId: string, date: string, fallbackRate: number): number => {
-    const entries = salaryEntriesByProfile.get(profileId);
-    if (!entries) return fallbackRate;
-    let best: SalaryEntry | null = null;
-    for (const se of entries) {
-      if (se.effective_date > date) continue;
-      if (!best || se.effective_date > best.effective_date || (se.effective_date === best.effective_date && se.created_at > best.created_at)) {
-        best = se;
+  // ── Payroll calculation (memoized) ─────────────────────────────────────
+  // Everything from here to payrollRows is recomputed only when something
+  // that affects PAY changes — the period, timecards, PTO, rates, custom /
+  // tax lines, adjustments, overrides, tickets, holidays, ticks — never on
+  // view-only state (search box, column filters, sort, expanded rows,
+  // popups). It used to rerun on every render, so each keystroke in
+  // "Search employee…" recalculated the whole period. The dependency list
+  // is checked by eslint react-hooks/exhaustive-deps, so an input the
+  // calculation reads can't be left off it (2026-10-26).
+  const payrollCalc = useMemo(() => {
+    const hasHourlyEntry = new Set(salaryEntries.filter((se) => se.compensation_type === "hourly").map((se) => se.profile_id));
+    const fixedIsGuaranteeFor = new Set(
+      employees.filter((e) => hasHourlyEntry.has(e.id) && hasAnyTechnicianPayRole(e.role, e.extraRoles)).map((e) => e.id)
+    );
+    const rateEntries = salaryEntries.filter((se) => !(se.compensation_type === "fixed" && fixedIsGuaranteeFor.has(se.profile_id)));
+    const latestCompMap = new Map<string, SalaryEntry>();
+    for (const se of rateEntries) {
+      if (genEnd && se.effective_date > genEnd) continue;
+      const existing = latestCompMap.get(se.profile_id);
+      if (
+        !existing ||
+        se.effective_date > existing.effective_date ||
+        (se.effective_date === existing.effective_date && se.created_at > existing.created_at)
+      ) {
+        latestCompMap.set(se.profile_id, se);
       }
     }
-    return best ? (best.compensation_type === "hourly" ? best.hourly_rate : 0) : fallbackRate;
-  };
 
-  // "YYYY-MM-DD" dates recognized as a company holiday this period — feeds
-  // the Holiday Premium below. Multiple rows can share a date across US/PH,
-  // so this is a Set, not keyed by anything else.
-  const holidayDateSet = new Set(companyHolidays.map((h) => h.date));
-  /** Extra premium pay for hours actually worked ON a company holiday —
-   * Holiday Hours Worked × that day's own hourly rate × 0.5, same
-   * "half-time extra" convention as the FLSA OT premium. A day OFF on a
-   * holiday earns nothing here (0 hours worked); this is purely a bonus for
-   * choosing to work a recognized holiday, on top of normal straight/OT pay
-   * for those hours, which is unaffected. */
-  const HOLIDAY_PREMIUM_MULTIPLIER = 0.5;
-  function holidayPremiumFor(profileId: string, dailyHours: DailyHours[] | undefined, fallbackRate: number): number {
-    if (!dailyHours || holidayDateSet.size === 0) return 0;
-    let premium = 0;
-    for (const day of dailyHours) {
-      if (!holidayDateSet.has(day.date)) continue;
-      const dayHours = day.regular + day.overtime;
-      if (dayHours <= 0) continue;
-      premium += dayHours * hourlyRateOnDate(profileId, day.date, fallbackRate) * HOLIDAY_PREMIUM_MULTIPLIER;
-    }
-    return premium;
-  }
-
-  // Eligible trainee worked days receive max(that day's pay, $100) — the
-  // company's $100/day training guarantee. Overtime on a training day is
-  // still overtime (FLSA/state law covers trainees): it earns the OT premium
-  // like any other day (techHourlyPayOtPremium), so the day's pay checked
-  // against $100 includes that premium too — otherwise the guarantee would
-  // top up pay the premium already covers.
-  const TRAINEE_DAILY_MATCH_TARGET = 100;
-  function traineeDailyMatchFor(
-    profileId: string,
-    dailyHours: DailyHours[] | undefined,
-    fallbackRate: number,
-    hireDate: string | null,
-    trainingEndDate: string | null,
-    weightedRate: number
-  ): number {
-    if (!dailyHours || !trainingEndDate) return 0;
-    let match = 0;
-    for (const day of dailyHours) {
-      if (hireDate && day.date < hireDate) continue;
-      if (day.date > trainingEndDate) continue;
-      const dayHours = day.regular + day.overtime;
-      if (dayHours <= 0) continue;
-      const rate = hourlyRateOnDate(profileId, day.date, fallbackRate);
-      const actualDailyPay = dayHours * rate + day.overtime * weightedRate * 0.5;
-      if (actualDailyPay < TRAINEE_DAILY_MATCH_TARGET) {
-        match += TRAINEE_DAILY_MATCH_TARGET - actualDailyPay;
+    // Guaranteed minimum in effect for this period per employee — the latest
+    // Fixed Salary entry dated on or before genEnd, for those whose fixed
+    // salary is a guarantee (fixedIsGuaranteeFor above). They keep their $/hr
+    // base (hours, OT, state matches) and get topped up to annual / 26 per
+    // cutoff when earnings fall short. A guarantee starting any day up to
+    // genEnd covers the whole period at the full per-cutoff amount.
+    // Previously the Fixed entry only counted as a guarantee while an hourly
+    // entry was dated after it, so dating it later silently switched the
+    // person to salaried at $0/hr (Darius Brown, 2026-10-20). See
+    // techGuaranteedSalaryMatch below.
+    const latestGuaranteeByProfile = new Map<string, SalaryEntry>();
+    for (const se of salaryEntries) {
+      if (se.compensation_type !== "fixed" || !se.annual_salary || !fixedIsGuaranteeFor.has(se.profile_id)) continue;
+      if (genEnd && se.effective_date > genEnd) continue;
+      const existing = latestGuaranteeByProfile.get(se.profile_id);
+      if (
+        !existing ||
+        se.effective_date > existing.effective_date ||
+        (se.effective_date === existing.effective_date && se.created_at > existing.created_at)
+      ) {
+        latestGuaranteeByProfile.set(se.profile_id, se);
       }
     }
-    return match;
-  }
 
-  // Technicians are paid per completed repair ticket (Tech Payroll) instead
-  // of hourly-or-fixed — any field-technician tier (TECHNICIAN,
-  // TECHNICIAN_MANAGER, TECHNICAL_DIRECTOR, TECHNICAL_ASSISTANT_DIRECTOR —
-  // see TECHNICIAN_PAY_ROLES), not just the bare "TECHNICIAN" code. A Tech
-  // Manager/Director still does real ticket work and clocks real hours the
-  // same as a plain Technician, so they get the same piece-rate + tech
-  // hourly treatment instead of silently falling through to a plain
-  // office hourly row.
-  const isTechRole = (emp: SupabaseEmployee) => TECHNICIAN_PAY_ROLES.has(normalizeRole(emp.role));
+    // Hours worked per employee in current period. Computed from real
+    // check_in/check_out punches (see REGULAR_HOURS_PER_DAY comment above).
+    const dutyHoursByEmployeeId = computeDutyHoursByEmployee(employees, genStart, genEnd);
+    const { totals: hoursMap, daily: dailyHoursByEmployeeId } = computeHoursMap(timecardEntries, employees, ptoRequests, genStart, genEnd, dutyHoursByEmployeeId, weekSeedTimecardEntries);
 
-  /** Can this employee have reimbursements / deductions? PH payroll + US Office staff; never technicians. */
-  const adjustmentsEnabledFor = (emp: SupabaseEmployee, isTechPortion = false) => payrollAdjustmentsEligible(emp, isTechPortion || isTechRole(emp));
-  /** This employee's adjustment lines for the picked period (empty when not eligible). */
-  const adjustmentsFor = (emp: SupabaseEmployee, isTechPortion = false): PayrollAdjustment[] =>
-    adjustmentsEnabledFor(emp, isTechPortion) ? adjustmentsByProfile.get(emp.id) ?? [] : [];
-
-  // Holds a technician-tier role as a secondary/extra role while their
-  // primary role is something else (e.g. a CSR Agent who also picks up
-  // technician work) — gets an ADDITIONAL tech-portion payroll row
-  // alongside their normal office row, rather than replacing it (see
-  // EmployeePayrollRow.isTechPortion).
-  const hasSecondaryTechRole = (emp: SupabaseEmployee) =>
-    !isTechRole(emp) && (emp.extraRoles ?? []).some((r) => TECHNICIAN_PAY_ROLES.has(normalizeRole(r)));
-  // PH staff never get a technician row — there are no PH field technicians,
-  // so a PH employee holding a technician role as a secondary role (Mark
-  // Marquez: Technical Support Manager + Tech Manager / Technician) only got
-  // a duplicate row that re-paid his salary (9/27–10/10: saved twice,
-  // $576.92 + $576.92).
-  const getsTechPortion = (emp: SupabaseEmployee) => emp.country !== "PH" && (isTechRole(emp) || hasSecondaryTechRole(emp));
-
-  // Rate lookup: an exact (repair_type, branch) match wins; otherwise fall
-  // back to that repair_type's "All Branches" rate; otherwise the branch's
-  // own "Default Amount" rate; otherwise "Default Amount, All Branches";
-  // otherwise $0 (no rate configured yet — see TechPayrollSetup.tsx).
-  const techRateFor = (repairType: string, branch: string): number => techRateForRates(techRepairRates, repairType, branch);
-
-  // "Total Working Days" — distinct work_date this employee actually
-  // clocked in on within the picked period. Drives Avg. Comp. (completed
-  // tickets ÷ working days, not raw calendar days — confirmed against the
-  // legacy Tech Activity Report's "Avg. Daily Completion" figure) both here
-  // and on TechActivityReportModal.tsx.
-  const workingDatesByProfile = new Map<string, Set<string>>();
-  for (const tc of timecardEntries) {
-    const profileId = tc.profile_id || tc.employee_id;
-    if (!profileId || !tc.check_in) continue;
-    const dates = workingDatesByProfile.get(profileId) ?? new Set<string>();
-    dates.add(tc.work_date);
-    workingDatesByProfile.set(profileId, dates);
-  }
-  const workingDaysCountByProfile = new Map(
-    Array.from(workingDatesByProfile.entries()).map(([profileId, dates]) => [profileId, dates.size])
-  );
-
-  // visits.technician is free text (no FK to profiles) — matched by name,
-  // same convention as every other free-text technician match in the app
-  // (e.g. resolveTeamLeadOrManager's manager_name match).
-  const employeeByName = new Map(employees.map((e) => [e.full_name.trim().toLowerCase(), e]));
-  const techGrossByProfile = new Map<
-    string,
-    {
-      ticketsCompleted: number; grossPay: number; twoManJob: number; backTub: number; sealedSystem: number; sealedSystemR600: number;
-      /** Completed (redo-excluded) count per repair_type, every configured category — Tech Activity Report's full breakdown. */
-      categoryCounts: Record<string, number>;
+    // Every rate-change row per employee (not just the one latestCompMap picks
+    // for the whole period) — lets blendedDailyPay below apply the rate that
+    // was ACTUALLY effective on each individual day, same as the Attendance
+    // table's own per-day rateEffectiveOn lookup (salary.ts), instead of
+    // paying every hour in the period at whichever single rate happened to be
+    // latest as of genEnd. Same tie-break as entryEffectiveOn/latestCompMap:
+    // latest effective_date wins, ties broken by latest created_at.
+    const salaryEntriesByProfile = new Map<string, SalaryEntry[]>();
+    for (const se of rateEntries) {
+      const list = salaryEntriesByProfile.get(se.profile_id);
+      if (list) list.push(se);
+      else salaryEntriesByProfile.set(se.profile_id, [se]);
     }
-  >();
-  for (const rc of techRepairCounts) {
-    const emp = employeeByName.get(rc.technician.trim().toLowerCase());
-    if (!emp) continue;
-    const rate = techRateFor(rc.repairType, rc.branch || emp.assigned_branch || "");
-    const amount = rate * rc.count;
-    const prev = techGrossByProfile.get(emp.id) ?? {
-      ticketsCompleted: 0, grossPay: 0, twoManJob: 0, backTub: 0, sealedSystem: 0, sealedSystemR600: 0, categoryCounts: {},
+    const hourlyRateOnDate = (profileId: string, date: string, fallbackRate: number): number => {
+      const entries = salaryEntriesByProfile.get(profileId);
+      if (!entries) return fallbackRate;
+      let best: SalaryEntry | null = null;
+      for (const se of entries) {
+        if (se.effective_date > date) continue;
+        if (!best || se.effective_date > best.effective_date || (se.effective_date === best.effective_date && se.created_at > best.created_at)) {
+          best = se;
+        }
+      }
+      return best ? (best.compensation_type === "hourly" ? best.hourly_rate : 0) : fallbackRate;
     };
-    techGrossByProfile.set(emp.id, {
-      ticketsCompleted: prev.ticketsCompleted + rc.count,
-      grossPay: prev.grossPay + amount,
-      twoManJob: prev.twoManJob + (rc.repairType === "2 Man Job" ? amount : 0),
-      backTub: prev.backTub + (rc.repairType === "Back Tub" ? amount : 0),
-      sealedSystem: prev.sealedSystem + (rc.repairType === "Sealed System" ? amount : 0),
-      sealedSystemR600: prev.sealedSystemR600 + (rc.repairType === "Sealed System(R600)" ? amount : 0),
-      categoryCounts: { ...prev.categoryCounts, [rc.repairType]: (prev.categoryCounts[rc.repairType] ?? 0) + rc.count },
-    });
-  }
-  // Finance's manual category-count corrections replace the live count for
-  // that one category (not add to it) — applied as a second pass so the
-  // delta vs. whatever was already accumulated above gets folded into
-  // grossPay/ticketsCompleted/the 4 named fields correctly.
-  for (const ov of techCategoryOverrides) {
-    if (ov.category === "Two Tech") continue; // applied separately below — not part of techGrossByProfile
-    const emp = employees.find((e) => e.id === ov.profileId);
-    if (!emp) continue;
-    const rate = techRateFor(ov.category, emp.assigned_branch || "");
-    const prev = techGrossByProfile.get(emp.id) ?? {
-      ticketsCompleted: 0, grossPay: 0, twoManJob: 0, backTub: 0, sealedSystem: 0, sealedSystemR600: 0, categoryCounts: {},
-    };
-    const liveCount = prev.categoryCounts[ov.category] ?? 0;
-    const countDelta = ov.count - liveCount;
-    const amountDelta = countDelta * rate;
-    techGrossByProfile.set(emp.id, {
-      ticketsCompleted: prev.ticketsCompleted + countDelta,
-      grossPay: prev.grossPay + amountDelta,
-      twoManJob: prev.twoManJob + (ov.category === "2 Man Job" ? amountDelta : 0),
-      backTub: prev.backTub + (ov.category === "Back Tub" ? amountDelta : 0),
-      sealedSystem: prev.sealedSystem + (ov.category === "Sealed System" ? amountDelta : 0),
-      sealedSystemR600: prev.sealedSystemR600 + (ov.category === "Sealed System(R600)" ? amountDelta : 0),
-      categoryCounts: { ...prev.categoryCounts, [ov.category]: ov.count },
-    });
-  }
 
-  // Confirmed late ticket completions (see carryoverRepairCounts' own
-  // comment) — priced at today's rate and folded into ticketsCompleted/
-  // grossPay exactly like any other completed ticket this period (so the
-  // flat Completed Tickets rate sees them too), but kept in their own map
-  // (not merged into techGrossByProfile.categoryCounts) so techRow below can
-  // still show them as distinctly-labeled, per-ticket "(carried over)" lines.
-  const techCarryoverByProfile = new Map<string, { count: number; grossPay: number; tickets: TechCarryoverTicket[] }>();
-  for (const co of carryoverRepairCounts) {
-    const emp = employeeByName.get(co.technician.trim().toLowerCase());
-    if (!emp) continue;
-    const rate = techRateFor(co.repairType, co.branch || emp.assigned_branch || "");
-    const prev = techCarryoverByProfile.get(emp.id) ?? { count: 0, grossPay: 0, tickets: [] };
-    techCarryoverByProfile.set(emp.id, {
-      count: prev.count + 1,
-      grossPay: prev.grossPay + rate,
-      tickets: [...prev.tickets, co],
-    });
-  }
+    // "YYYY-MM-DD" dates recognized as a company holiday this period — feeds
+    // the Holiday Premium below. Multiple rows can share a date across US/PH,
+    // so this is a Set, not keyed by anything else.
+    const holidayDateSet = new Set(companyHolidays.map((h) => h.date));
+    /** Extra premium pay for hours actually worked ON a company holiday —
+     * Holiday Hours Worked × that day's own hourly rate × 0.5, same
+     * "half-time extra" convention as the FLSA OT premium. A day OFF on a
+     * holiday earns nothing here (0 hours worked); this is purely a bonus for
+     * choosing to work a recognized holiday, on top of normal straight/OT pay
+     * for those hours, which is unaffected. */
+    const HOLIDAY_PREMIUM_MULTIPLIER = 0.5;
+    function holidayPremiumFor(profileId: string, dailyHours: DailyHours[] | undefined, fallbackRate: number): number {
+      if (!dailyHours || holidayDateSet.size === 0) return 0;
+      let premium = 0;
+      for (const day of dailyHours) {
+        if (!holidayDateSet.has(day.date)) continue;
+        const dayHours = day.regular + day.overtime;
+        if (dayHours <= 0) continue;
+        premium += dayHours * hourlyRateOnDate(profileId, day.date, fallbackRate) * HOLIDAY_PREMIUM_MULTIPLIER;
+      }
+      return premium;
+    }
 
-  // "Two Tech" isn't part of techGrossByProfile (no repair_type row backs it),
-  // so its override is looked up separately wherever twoTechCount/twoTechPay
-  // get computed below.
-  const twoTechOverrideByProfile = new Map(
-    techCategoryOverrides.filter((o) => o.category === "Two Tech").map((o) => [o.profileId, o.count])
-  );
+    // Eligible trainee worked days receive max(that day's pay, $100) — the
+    // company's $100/day training guarantee. Overtime on a training day is
+    // still overtime (FLSA/state law covers trainees): it earns the OT premium
+    // like any other day (techHourlyPayOtPremium), so the day's pay checked
+    // against $100 includes that premium too — otherwise the guarantee would
+    // top up pay the premium already covers.
+    const TRAINEE_DAILY_MATCH_TARGET = 100;
+    function traineeDailyMatchFor(
+      profileId: string,
+      dailyHours: DailyHours[] | undefined,
+      fallbackRate: number,
+      hireDate: string | null,
+      trainingEndDate: string | null,
+      weightedRate: number
+    ): number {
+      if (!dailyHours || !trainingEndDate) return 0;
+      let match = 0;
+      for (const day of dailyHours) {
+        if (hireDate && day.date < hireDate) continue;
+        if (day.date > trainingEndDate) continue;
+        const dayHours = day.regular + day.overtime;
+        if (dayHours <= 0) continue;
+        const rate = hourlyRateOnDate(profileId, day.date, fallbackRate);
+        const actualDailyPay = dayHours * rate + day.overtime * weightedRate * 0.5;
+        if (actualDailyPay < TRAINEE_DAILY_MATCH_TARGET) {
+          match += TRAINEE_DAILY_MATCH_TARGET - actualDailyPay;
+        }
+      }
+      return match;
+    }
 
-  // Finance's manually entered LDT/Mileage/Training values for this period,
-  // times the corresponding rate from TechPayrollSetup (tech_repair_rates
-  // rows using "LDT"/"Mileage"/"Training Paid" as the repair_type value —
-  // same rate lookup as completed-ticket categories, just not per-branch in
-  // practice since these are entered once per technician per period).
-  const techManualByProfile = new Map(
-    techManualPayItems.map((item) => {
-      const emp = employees.find((e) => e.id === item.profileId);
-      const branch = emp?.assigned_branch || "";
-      const ldtPay = item.ldtCount * techRateFor("LDT", branch);
-      const mileagePay = item.mileage * techRateFor("Mileage", branch);
-      const trainingPay = item.trainingValue * techRateFor("Training Paid", branch);
-      return [item.profileId, { ...item, ldtPay, mileagePay, trainingPay }];
-    })
-  );
+    // Technicians are paid per completed repair ticket (Tech Payroll) instead
+    // of hourly-or-fixed — any field-technician tier (TECHNICIAN,
+    // TECHNICIAN_MANAGER, TECHNICAL_DIRECTOR, TECHNICAL_ASSISTANT_DIRECTOR —
+    // see TECHNICIAN_PAY_ROLES), not just the bare "TECHNICIAN" code. A Tech
+    // Manager/Director still does real ticket work and clocks real hours the
+    // same as a plain Technician, so they get the same piece-rate + tech
+    // hourly treatment instead of silently falling through to a plain
+    // office hourly row.
+    const isTechRole = (emp: SupabaseEmployee) => TECHNICIAN_PAY_ROLES.has(normalizeRole(emp.role));
 
-  // "(custom program)" lines from the Tech Activity Report — hand-added by
-  // Finance, or auto-created when a Payroll Dispute with a linked period
-  // gets approved (see handlePayrollDisputeAction). Summed per technician
-  // so it feeds real grossPay below instead of only the modal's own
-  // preview total.
-  const techCustomTotalByProfile = new Map<string, number>();
-  // Same total, minus any line NOT flagged isWageIncludable (migration
-  // 0291) — an expense reimbursement, a flat per-diem stipend, or an
-  // unrelated cash adjustment (a copay, a withheld deduction) isn't wages,
-  // so FLSA's weighted regular-rate calc (techIncludablePay below) has to
-  // leave it out even though it still counts toward Total Payment via
-  // techCustomTotalByProfile above. This used to be guessed from the label
-  // text via regex, which kept missing real deductions phrased differently
-  // each time ("Insurance", "Co pay paid in cash", "700 -$250 (6thcharged)
-  // = remaining balance") — an explicit, Finance-set flag replaces
-  // guessing from text. Redo Reduction defaults to includable (it's a real
-  // reduction in earned piece-rate wages, not an unrelated adjustment) —
-  // sign alone was never a safe signal for exclusion anyway.
-  const techCustomIncludableByProfile = new Map<string, number>();
-  // The week-tagged part of the above (migration 0383), per Sunday week —
-  // feeds that week's own regular rate (see weeklyOtPremium).
-  const techCustomIncludableByProfileWeek = new Map<string, Map<string, number>>();
-  // Every line per technician — grouped into the summary columns (bonus,
-  // commission, reimbursements, deductions) when rounding gross pay below.
-  const techCustomItemsByProfile = new Map<string, TechCustomPayItem[]>();
-  for (const item of techCustomPayItemsAll) {
-    techCustomItemsByProfile.set(item.profileId, [...(techCustomItemsByProfile.get(item.profileId) ?? []), item]);
-    techCustomTotalByProfile.set(item.profileId, (techCustomTotalByProfile.get(item.profileId) ?? 0) + item.value * item.rate);
-    if (item.isWageIncludable) {
-      techCustomIncludableByProfile.set(item.profileId, (techCustomIncludableByProfile.get(item.profileId) ?? 0) + item.value * item.rate);
-      if (item.workWeekStart) {
-        const byWeek = techCustomIncludableByProfileWeek.get(item.profileId) ?? new Map<string, number>();
-        byWeek.set(item.workWeekStart, (byWeek.get(item.workWeekStart) ?? 0) + item.value * item.rate);
-        techCustomIncludableByProfileWeek.set(item.profileId, byWeek);
+    /** Can this employee have reimbursements / deductions? PH payroll + US Office staff; never technicians. */
+    const adjustmentsEnabledFor = (emp: SupabaseEmployee, isTechPortion = false) => payrollAdjustmentsEligible(emp, isTechPortion || isTechRole(emp));
+    /** This employee's adjustment lines for the picked period (empty when not eligible). */
+    const adjustmentsFor = (emp: SupabaseEmployee, isTechPortion = false): PayrollAdjustment[] =>
+      adjustmentsEnabledFor(emp, isTechPortion) ? adjustmentsByProfile.get(emp.id) ?? [] : [];
+
+    // Holds a technician-tier role as a secondary/extra role while their
+    // primary role is something else (e.g. a CSR Agent who also picks up
+    // technician work) — gets an ADDITIONAL tech-portion payroll row
+    // alongside their normal office row, rather than replacing it (see
+    // EmployeePayrollRow.isTechPortion).
+    const hasSecondaryTechRole = (emp: SupabaseEmployee) =>
+      !isTechRole(emp) && (emp.extraRoles ?? []).some((r) => TECHNICIAN_PAY_ROLES.has(normalizeRole(r)));
+    // PH staff never get a technician row — there are no PH field technicians,
+    // so a PH employee holding a technician role as a secondary role (Mark
+    // Marquez: Technical Support Manager + Tech Manager / Technician) only got
+    // a duplicate row that re-paid his salary (9/27–10/10: saved twice,
+    // $576.92 + $576.92).
+    const getsTechPortion = (emp: SupabaseEmployee) => emp.country !== "PH" && (isTechRole(emp) || hasSecondaryTechRole(emp));
+
+    // Rate lookup: an exact (repair_type, branch) match wins; otherwise fall
+    // back to that repair_type's "All Branches" rate; otherwise the branch's
+    // own "Default Amount" rate; otherwise "Default Amount, All Branches";
+    // otherwise $0 (no rate configured yet — see TechPayrollSetup.tsx).
+    const techRateFor = (repairType: string, branch: string): number => techRateForRates(techRepairRates, repairType, branch);
+
+    // "Total Working Days" — distinct work_date this employee actually
+    // clocked in on within the picked period. Drives Avg. Comp. (completed
+    // tickets ÷ working days, not raw calendar days — confirmed against the
+    // legacy Tech Activity Report's "Avg. Daily Completion" figure) both here
+    // and on TechActivityReportModal.tsx.
+    const workingDatesByProfile = new Map<string, Set<string>>();
+    for (const tc of timecardEntries) {
+      const profileId = tc.profile_id || tc.employee_id;
+      if (!profileId || !tc.check_in) continue;
+      const dates = workingDatesByProfile.get(profileId) ?? new Set<string>();
+      dates.add(tc.work_date);
+      workingDatesByProfile.set(profileId, dates);
+    }
+    const workingDaysCountByProfile = new Map(
+      Array.from(workingDatesByProfile.entries()).map(([profileId, dates]) => [profileId, dates.size])
+    );
+
+    // visits.technician is free text (no FK to profiles) — matched by name,
+    // same convention as every other free-text technician match in the app
+    // (e.g. resolveTeamLeadOrManager's manager_name match).
+    const employeeByName = new Map(employees.map((e) => [e.full_name.trim().toLowerCase(), e]));
+    const techGrossByProfile = new Map<
+      string,
+      {
+        ticketsCompleted: number; grossPay: number; twoManJob: number; backTub: number; sealedSystem: number; sealedSystemR600: number;
+        /** Completed (redo-excluded) count per repair_type, every configured category — Tech Activity Report's full breakdown. */
+        categoryCounts: Record<string, number>;
+      }
+    >();
+    for (const rc of techRepairCounts) {
+      const emp = employeeByName.get(rc.technician.trim().toLowerCase());
+      if (!emp) continue;
+      const rate = techRateFor(rc.repairType, rc.branch || emp.assigned_branch || "");
+      const amount = rate * rc.count;
+      const prev = techGrossByProfile.get(emp.id) ?? {
+        ticketsCompleted: 0, grossPay: 0, twoManJob: 0, backTub: 0, sealedSystem: 0, sealedSystemR600: 0, categoryCounts: {},
+      };
+      techGrossByProfile.set(emp.id, {
+        ticketsCompleted: prev.ticketsCompleted + rc.count,
+        grossPay: prev.grossPay + amount,
+        twoManJob: prev.twoManJob + (rc.repairType === "2 Man Job" ? amount : 0),
+        backTub: prev.backTub + (rc.repairType === "Back Tub" ? amount : 0),
+        sealedSystem: prev.sealedSystem + (rc.repairType === "Sealed System" ? amount : 0),
+        sealedSystemR600: prev.sealedSystemR600 + (rc.repairType === "Sealed System(R600)" ? amount : 0),
+        categoryCounts: { ...prev.categoryCounts, [rc.repairType]: (prev.categoryCounts[rc.repairType] ?? 0) + rc.count },
+      });
+    }
+    // Finance's manual category-count corrections replace the live count for
+    // that one category (not add to it) — applied as a second pass so the
+    // delta vs. whatever was already accumulated above gets folded into
+    // grossPay/ticketsCompleted/the 4 named fields correctly.
+    for (const ov of techCategoryOverrides) {
+      if (ov.category === "Two Tech") continue; // applied separately below — not part of techGrossByProfile
+      const emp = employees.find((e) => e.id === ov.profileId);
+      if (!emp) continue;
+      const rate = techRateFor(ov.category, emp.assigned_branch || "");
+      const prev = techGrossByProfile.get(emp.id) ?? {
+        ticketsCompleted: 0, grossPay: 0, twoManJob: 0, backTub: 0, sealedSystem: 0, sealedSystemR600: 0, categoryCounts: {},
+      };
+      const liveCount = prev.categoryCounts[ov.category] ?? 0;
+      const countDelta = ov.count - liveCount;
+      const amountDelta = countDelta * rate;
+      techGrossByProfile.set(emp.id, {
+        ticketsCompleted: prev.ticketsCompleted + countDelta,
+        grossPay: prev.grossPay + amountDelta,
+        twoManJob: prev.twoManJob + (ov.category === "2 Man Job" ? amountDelta : 0),
+        backTub: prev.backTub + (ov.category === "Back Tub" ? amountDelta : 0),
+        sealedSystem: prev.sealedSystem + (ov.category === "Sealed System" ? amountDelta : 0),
+        sealedSystemR600: prev.sealedSystemR600 + (ov.category === "Sealed System(R600)" ? amountDelta : 0),
+        categoryCounts: { ...prev.categoryCounts, [ov.category]: ov.count },
+      });
+    }
+
+    // Confirmed late ticket completions (see carryoverRepairCounts' own
+    // comment) — priced at today's rate and folded into ticketsCompleted/
+    // grossPay exactly like any other completed ticket this period (so the
+    // flat Completed Tickets rate sees them too), but kept in their own map
+    // (not merged into techGrossByProfile.categoryCounts) so techRow below can
+    // still show them as distinctly-labeled, per-ticket "(carried over)" lines.
+    const techCarryoverByProfile = new Map<string, { count: number; grossPay: number; tickets: TechCarryoverTicket[] }>();
+    for (const co of carryoverRepairCounts) {
+      const emp = employeeByName.get(co.technician.trim().toLowerCase());
+      if (!emp) continue;
+      const rate = techRateFor(co.repairType, co.branch || emp.assigned_branch || "");
+      const prev = techCarryoverByProfile.get(emp.id) ?? { count: 0, grossPay: 0, tickets: [] };
+      techCarryoverByProfile.set(emp.id, {
+        count: prev.count + 1,
+        grossPay: prev.grossPay + rate,
+        tickets: [...prev.tickets, co],
+      });
+    }
+
+    // "Two Tech" isn't part of techGrossByProfile (no repair_type row backs it),
+    // so its override is looked up separately wherever twoTechCount/twoTechPay
+    // get computed below.
+    const twoTechOverrideByProfile = new Map(
+      techCategoryOverrides.filter((o) => o.category === "Two Tech").map((o) => [o.profileId, o.count])
+    );
+
+    // Finance's manually entered LDT/Mileage/Training values for this period,
+    // times the corresponding rate from TechPayrollSetup (tech_repair_rates
+    // rows using "LDT"/"Mileage"/"Training Paid" as the repair_type value —
+    // same rate lookup as completed-ticket categories, just not per-branch in
+    // practice since these are entered once per technician per period).
+    const techManualByProfile = new Map(
+      techManualPayItems.map((item) => {
+        const emp = employees.find((e) => e.id === item.profileId);
+        const branch = emp?.assigned_branch || "";
+        const ldtPay = item.ldtCount * techRateFor("LDT", branch);
+        const mileagePay = item.mileage * techRateFor("Mileage", branch);
+        const trainingPay = item.trainingValue * techRateFor("Training Paid", branch);
+        return [item.profileId, { ...item, ldtPay, mileagePay, trainingPay }];
+      })
+    );
+
+    // "(custom program)" lines from the Tech Activity Report — hand-added by
+    // Finance, or auto-created when a Payroll Dispute with a linked period
+    // gets approved (see handlePayrollDisputeAction). Summed per technician
+    // so it feeds real grossPay below instead of only the modal's own
+    // preview total.
+    const techCustomTotalByProfile = new Map<string, number>();
+    // Same total, minus any line NOT flagged isWageIncludable (migration
+    // 0291) — an expense reimbursement, a flat per-diem stipend, or an
+    // unrelated cash adjustment (a copay, a withheld deduction) isn't wages,
+    // so FLSA's weighted regular-rate calc (techIncludablePay below) has to
+    // leave it out even though it still counts toward Total Payment via
+    // techCustomTotalByProfile above. This used to be guessed from the label
+    // text via regex, which kept missing real deductions phrased differently
+    // each time ("Insurance", "Co pay paid in cash", "700 -$250 (6thcharged)
+    // = remaining balance") — an explicit, Finance-set flag replaces
+    // guessing from text. Redo Reduction defaults to includable (it's a real
+    // reduction in earned piece-rate wages, not an unrelated adjustment) —
+    // sign alone was never a safe signal for exclusion anyway.
+    const techCustomIncludableByProfile = new Map<string, number>();
+    // The week-tagged part of the above (migration 0383), per Sunday week —
+    // feeds that week's own regular rate (see weeklyOtPremium).
+    const techCustomIncludableByProfileWeek = new Map<string, Map<string, number>>();
+    // Every line per technician — grouped into the summary columns (bonus,
+    // commission, reimbursements, deductions) when rounding gross pay below.
+    const techCustomItemsByProfile = new Map<string, TechCustomPayItem[]>();
+    for (const item of techCustomPayItemsAll) {
+      techCustomItemsByProfile.set(item.profileId, [...(techCustomItemsByProfile.get(item.profileId) ?? []), item]);
+      techCustomTotalByProfile.set(item.profileId, (techCustomTotalByProfile.get(item.profileId) ?? 0) + item.value * item.rate);
+      if (item.isWageIncludable) {
+        techCustomIncludableByProfile.set(item.profileId, (techCustomIncludableByProfile.get(item.profileId) ?? 0) + item.value * item.rate);
+        if (item.workWeekStart) {
+          const byWeek = techCustomIncludableByProfileWeek.get(item.profileId) ?? new Map<string, number>();
+          byWeek.set(item.workWeekStart, (byWeek.get(item.workWeekStart) ?? 0) + item.value * item.rate);
+          techCustomIncludableByProfileWeek.set(item.profileId, byWeek);
+        }
       }
     }
-  }
 
-  // Build payroll rows. salary_entries.hourly_rate is always entered as a
-  // plain USD figure (the shared "Add Rate Change" form labels it "$/hr"
-  // with no currency conversion of its own — see EmployeePayrollDetailModal.tsx),
-  // regardless of the employee's assigned country, so hourlyRateUSD/grossPayUSD
-  // are just hourlyRate/grossPay verbatim.
-  //
-  // Fixed-salary employees (migration 0118) are paid a flat per-cutoff
-  // amount (annual / 26, see perCutoffSalary) regardless of hours actually worked or overtime —
-  // hoursWorked/overtimeHours/dutyHours are still computed for attendance
-  // visibility, they just don't feed into grossPay for these employees.
-  // Technicians (Tech Payroll) take priority over both: hoursWorked/
-  // overtimeHours/hourlyRate/dutyHours stay populated from real
-  // punches/schedule (informational, shown for reference) but grossPay is
-  // their piece-rate total instead.
-  // Deactivated accounts never appear as a row here — nothing left to pay
-  // or schedule going forward. `employees` itself stays unfiltered so
-  // name lookups for THEIR existing historical records (e.g. mileage
-  // entries already synced under their profile_id) still resolve a real
-  // name elsewhere on this dashboard instead of falling back to "—".
-  //
-  // .filter().flatMap(), not .map(): a plain TECHNICIAN emits exactly one
-  // row (unchanged from before, just now tagged isTechPortion: true).
-  // Everyone else emits their normal office row, PLUS a second
-  // isTechPortion row if they hold TECHNICIAN as a secondary role AND
-  // actually have tech pay to show (skip a noisy $0 row for someone who
-  // merely holds the role but did no tech work this period).
-  // A deactivated employee is still included when they actually have hours
-  // owed for the selected period (hoursMap only ever gets an entry from a
-  // real punch or credited PTO in that window — see computeHoursMap above)
-  // — e.g. deactivated 9/1 but this period runs 8/27–9/12 and they worked
-  // several of those days before being let go. Their pay for that period
-  // shouldn't silently vanish just because their account is inactive today;
-  // the row is labeled "(Deactivated)" (see EmployeePayrollRow.employee.isActive)
-  // so it's still obvious they're no longer active.
-  const payrollRows: EmployeePayrollRow[] = employees.filter((emp) => emp.isActive || hoursMap.has(emp.id)).flatMap((emp) => {
-    const comp = latestCompMap.get(emp.id);
-    const isFixed = comp?.compensation_type === "fixed";
-    const hourlyRate = isFixed ? 0 : comp?.hourly_rate ?? emp.hourly_rate ?? 0;
-    const annualSalary = isFixed ? comp?.annual_salary ?? 0 : null;
-    const hours = hoursMap.get(emp.id) ?? { regular: 0, overtime: 0 };
-    // NOTE: for CSR/Technician-tier roles, computeHoursMap above already
-    // splits regular/overtime against a flat 40 hrs/WEEK (not this
-    // schedule-derived, whole-period number) — see its own
-    // usesFlatWeeklyOvertimeThreshold check. This dutyHours value stays
-    // schedule-derived (and 0 for CSR with no configured schedule) since
-    // it's an informational whole-period total, not safe to just multiply
-    // the weekly 40 out by week count here.
-    const dutyHours = dutyHoursByEmployeeId.get(emp.id) ?? 0;
-    const workingDays = workingDaysCountByProfile.get(emp.id) ?? 0;
+    // Build payroll rows. salary_entries.hourly_rate is always entered as a
+    // plain USD figure (the shared "Add Rate Change" form labels it "$/hr"
+    // with no currency conversion of its own — see EmployeePayrollDetailModal.tsx),
+    // regardless of the employee's assigned country, so hourlyRateUSD/grossPayUSD
+    // are just hourlyRate/grossPay verbatim.
+    //
+    // Fixed-salary employees (migration 0118) are paid a flat per-cutoff
+    // amount (annual / 26, see perCutoffSalary) regardless of hours actually worked or overtime —
+    // hoursWorked/overtimeHours/dutyHours are still computed for attendance
+    // visibility, they just don't feed into grossPay for these employees.
+    // Technicians (Tech Payroll) take priority over both: hoursWorked/
+    // overtimeHours/hourlyRate/dutyHours stay populated from real
+    // punches/schedule (informational, shown for reference) but grossPay is
+    // their piece-rate total instead.
+    // Deactivated accounts never appear as a row here — nothing left to pay
+    // or schedule going forward. `employees` itself stays unfiltered so
+    // name lookups for THEIR existing historical records (e.g. mileage
+    // entries already synced under their profile_id) still resolve a real
+    // name elsewhere on this dashboard instead of falling back to "—".
+    //
+    // .filter().flatMap(), not .map(): a plain TECHNICIAN emits exactly one
+    // row (unchanged from before, just now tagged isTechPortion: true).
+    // Everyone else emits their normal office row, PLUS a second
+    // isTechPortion row if they hold TECHNICIAN as a secondary role AND
+    // actually have tech pay to show (skip a noisy $0 row for someone who
+    // merely holds the role but did no tech work this period).
+    // A deactivated employee is still included when they actually have hours
+    // owed for the selected period (hoursMap only ever gets an entry from a
+    // real punch or credited PTO in that window — see computeHoursMap above)
+    // — e.g. deactivated 9/1 but this period runs 8/27–9/12 and they worked
+    // several of those days before being let go. Their pay for that period
+    // shouldn't silently vanish just because their account is inactive today;
+    // the row is labeled "(Deactivated)" (see EmployeePayrollRow.employee.isActive)
+    // so it's still obvious they're no longer active.
+    const payrollRows: EmployeePayrollRow[] = employees.filter((emp) => emp.isActive || hoursMap.has(emp.id)).flatMap((emp) => {
+      const comp = latestCompMap.get(emp.id);
+      const isFixed = comp?.compensation_type === "fixed";
+      const hourlyRate = isFixed ? 0 : comp?.hourly_rate ?? emp.hourly_rate ?? 0;
+      const annualSalary = isFixed ? comp?.annual_salary ?? 0 : null;
+      const hours = hoursMap.get(emp.id) ?? { regular: 0, overtime: 0 };
+      // NOTE: for CSR/Technician-tier roles, computeHoursMap above already
+      // splits regular/overtime against a flat 40 hrs/WEEK (not this
+      // schedule-derived, whole-period number) — see its own
+      // usesFlatWeeklyOvertimeThreshold check. This dutyHours value stays
+      // schedule-derived (and 0 for CSR with no configured schedule) since
+      // it's an informational whole-period total, not safe to just multiply
+      // the weekly 40 out by week count here.
+      const dutyHours = dutyHoursByEmployeeId.get(emp.id) ?? 0;
+      const workingDays = workingDaysCountByProfile.get(emp.id) ?? 0;
 
-    const includeTech = getsTechPortion(emp);
-    const tech = includeTech ? techGrossByProfile.get(emp.id) : undefined;
-    const carryover = includeTech ? techCarryoverByProfile.get(emp.id) : undefined;
-    const manual = includeTech ? techManualByProfile.get(emp.id) : undefined;
-    // "Two Tech" (auto-counted from visits.second_technician) is
-    // rate-table-driven and deterministic, same as Mileage/Training, so
-    // it folds into Total Net the same way. MCA Bonus and LDT no longer
-    // have any editable UI anywhere in the app (their rows were removed
-    // from the Tech Activity Report) and are deliberately excluded from
-    // every pay total in this function. Custom program lines and OW
-    // Incentive are ad-hoc/manual-per-open — those live on the Tech Activity
-    // Report modal only and are NOT included here (see TechActivityReportModal.tsx).
-    const techBranch = emp.assigned_branch || "";
-    // Mileage defaults to the technician's real logged total (Mileage tab,
-    // excluding held tickets — see getTechAutoMileageTotals) until Finance
-    // has manually entered/edited a value for this specific period, at
-    // which point their saved number takes over for good — see
-    // handleManualPayBlur, which always re-saves whatever's currently
-    // showing for every field, not just the one just edited.
-    const effectiveMileage = manual ? manual.mileage : includeTech ? techAutoMileageByProfile.get(emp.id) ?? 0 : 0;
-    // Car IQ tab (2026-09-24): once a technician has a Car IQ status on
-    // file, their Mileage rate is locked to $0.20/$0.40 regardless of the
-    // branch's shared rate — and, unlike the plain branch-rate path below,
-    // recomputed fresh every time rather than trusting a stale saved
-    // manual.mileagePay, since the whole point of locking it is that
-    // Finance shouldn't need to re-touch this technician's mileage line
-    // just to pick up a Car IQ status set after their last edit.
-    // Rates in effect on the period's first day (migration 0381 — a rate
-    // change dated later doesn't re-price this period's start).
-    const periodCarIqRates = carIqRatesOn(carIqRateHistory, genStart || todayISO());
-    const mileageRateOverride = mileageRateForCarIq(employeeInfoByProfileId.get(emp.id)?.hasCarIq, periodCarIqRates.with, periodCarIqRates.without);
-    // A switch date strictly inside the period — the technician's Car IQ
-    // status changing, or the company's Car IQ rates changing — means
-    // mileageRateOverride's single rate doesn't cover every day of it.
-    // Only the very last switch matters here (a second one within the same
-    // period is rare enough that flagging the latest and letting Finance
-    // sort out the detail manually is enough).
-    const hasStatusHistory = carIqHistory.some((e) => e.profileId === emp.id);
-    const carIqStatusOn = (date: string) =>
-      hasStatusHistory ? carIqEntryEffectiveOn(carIqHistory, emp.id, date)?.hasCarIq ?? null : employeeInfoByProfileId.get(emp.id)?.hasCarIq ?? null;
-    const carIqSwitchDates = Array.from(new Set([
-      ...carIqSwitchDatesInRange(carIqHistory, emp.id, genStart, genEnd),
-      ...carIqRateChangeDatesInRange(carIqRateHistory, genStart, genEnd),
-    ])).sort();
-    const carIqSwitch = carIqSwitchDates.length === 0 ? null : (() => {
-      const switchDate = carIqSwitchDates[carIqSwitchDates.length - 1];
-      const dayBefore = addDaysISO(switchDate, -1);
-      const ratesBefore = carIqRatesOn(carIqRateHistory, dayBefore);
-      const ratesAfter = carIqRatesOn(carIqRateHistory, switchDate);
-      const rateBefore = mileageRateForCarIq(carIqStatusOn(dayBefore), ratesBefore.with, ratesBefore.without);
-      const rateAfter = mileageRateForCarIq(carIqStatusOn(switchDate), ratesAfter.with, ratesAfter.without);
-      if (rateBefore == null || rateAfter == null || rateBefore === rateAfter) return null;
-      return { date: switchDate, rateBefore, rateAfter };
-    })();
-    const effectiveMileagePay =
-      mileageRateOverride != null
-        ? effectiveMileage * mileageRateOverride
-        : manual
-        ? manual.mileagePay
-        : effectiveMileage * techRateFor("Mileage", techBranch);
-    // LDT no longer has any editable UI anywhere in the app (its row was
-    // removed from the Tech Activity Report) — manual.ldtPay is dead going
-    // forward, deliberately left out of every pay total below so it can't
-    // silently keep paying out a stale historical value forever with no
-    // way for Finance to see or correct it.
-    const manualTotal = effectiveMileagePay + (manual?.trainingPay ?? 0);
-    const twoTechCountForEmp = twoTechOverrideByProfile.get(emp.id) ?? techSecondCounts.get(emp.full_name.trim().toLowerCase()) ?? 0;
-    const twoTechPay = includeTech ? twoTechCountForEmp * techRateFor("Two Tech", techBranch) : 0;
-    // Confirmed late completions count toward Completed Tickets exactly
-    // like any other completed ticket this period — they ARE completed
-    // tickets, just paid a period late; only their repair-type $ amount
-    // (carryover.grossPay, folded into techGrossPay below) and their own
-    // labeled line items stay visibly separate from this period's own work.
-    // (MCA Bonus no longer has any editable UI anywhere in the app — its
-    // row was removed from the Tech Activity Report — so it's deliberately
-    // left out of every pay total below, same reasoning as manual.ldtPay above.)
-    const ticketsCompletedForEmp = (tech?.ticketsCompleted ?? 0) + (carryover?.count ?? 0);
-    // Flat per-ticket rate paid on every completed (redo-excluded) ticket,
-    // on top of that ticket's own repair-type rate already in tech.grossPay.
-    const completedTicketsPay = includeTech ? ticketsCompletedForEmp * techRateFor("Completed Tickets", techBranch) : 0;
-    const customPay = includeTech ? techCustomTotalByProfile.get(emp.id) ?? 0 : 0;
-    const customIncludablePay = includeTech ? techCustomIncludableByProfile.get(emp.id) ?? 0 : 0;
-    // Technicians are piece-rate by default, but can now ALSO earn hourly
-    // pay on top of it once Finance sets a rate for them (same
-    // salary_entries hourly_rate office employees use) — a tech with no
-    // rate ever set has hourlyRate 0, so this stays $0 and existing
-    // behavior is unchanged until Finance actually enters one.
-    // Gated to isTechRole(emp) (a PRIMARY technician), not just includeTech
-    // — someone who merely holds Technician as a SECONDARY role has no
-    // separate field-tech punch system; `hours` here is their normal office
-    // attendance, the exact same hours officeGrossPay below already pays
-    // them for. Without this gate they'd be paid twice for one shift the
-    // moment Finance sets any hourly rate for them, surfacing as an
-    // identical-looking "duplicate" row alongside their real office row.
-    //
-    // The overtime premium can't just be hourlyRate×1.5 once a tech earns
-    // piece-rate/incentive pay in the same period — FLSA requires that pay
-    // (repair-type pay, carryover, Training, Two Tech, Completed Tickets,
-    // and any commission-style custom line) to be folded into the
-    // "regular rate" the OT premium is computed from, same as a
-    // non-discretionary bonus. Mileage reimbursement (effectiveMileagePay,
-    // inside manualTotal) and any custom line labeled as a reimbursement/
-    // mileage/allowance/stipend (customIncludablePay excludes those, see
-    // techCustomIncludableByProfile) are left out — they're expense
-    // reimbursements or flat per-diem stipends, not wages, so they don't
-    // factor into the regular rate even though they still count toward
-    // Total Payment. Straight time is paid for ALL hours (regular + OT) at
-    // the base rate, then OT hours additionally earn the extra 0.5× on the
-    // weighted rate — the standard FLSA weighted-average method, not an
-    // alternative to it. (LDT and MCA are deliberately excluded — see the
-    // comments by manualTotal/ticketsCompletedForEmp above.)
-    const techIncludablePay = includeTech && isTechRole(emp)
-      ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + (manual?.trainingPay ?? 0) + twoTechPay + completedTicketsPay + customIncludablePay
-      : 0;
-    // Blended per-day, not one flat rate for the whole period — a technician
-    // whose hourly rate changed mid-period (salary_entries effective mid-way
-    // through genStart..genEnd) gets each day's hours paid at THAT day's
-    // rate, same as the Attendance table already shows per day. See
-    // blendedDailyPay/hourlyRateOnDate above.
-    const techDailyPay = blendedDailyPay(dailyHoursByEmployeeId.get(emp.id), hours, (date) => hourlyRateOnDate(emp.id, date, hourlyRate), hourlyRate);
-    const techTotalHours = techDailyPay.totalHours;
-    const techStraightTimeAllHours = techDailyPay.straightAllHours;
-    const techPeriodRegularRate = techTotalHours > 0 ? (techStraightTimeAllHours + techIncludablePay) / techTotalHours : hourlyRate;
-    const techHourlyPayStraight = includeTech && isTechRole(emp) ? techStraightTimeAllHours : 0;
-    const traineeWindow = trainingWindow(emp.hrTrainingStart, emp.hrFieldStart,
-      employeeInfoByProfileId.get(emp.id)?.hireDate, emp.isTrainee);
-    const techDailyHours = dailyHoursByEmployeeId.get(emp.id) ?? [];
-    // Training days included: overtime during training is still overtime
-    // (Vincent Pullens 9/28–10/2: 12.838 OT hrs had been paid flat $7.25).
-    const premiumHours = techDailyHours.reduce((sum, day) => sum + day.overtime, 0);
-    // FLSA: the regular rate — and so the OT premium — is set per WORKWEEK
-    // even on a biweekly payroll, matching the reference workbook's Weekly
-    // Calculations tab (see weeklyOtPremium). Without a daily breakdown
-    // (no schedule configured) there are no weeks to split, so the old
-    // period-wide rate is used.
-    const taggedIncludable = techCustomIncludableByProfileWeek.get(emp.id);
-    const taggedIncludableTotal = [...(taggedIncludable?.values() ?? [])].reduce((sum, v) => sum + v, 0);
-    const techWeeklyOt = includeTech && isTechRole(emp) && techDailyHours.length > 0
-      ? weeklyOtPremium(
-          techDailyHours,
-          (date) => hourlyRateOnDate(emp.id, date, hourlyRate),
-          () => true,
-          taggedIncludable,
-          techIncludablePay - taggedIncludableTotal
-        )
-      : [];
-    const techHourlyPayOtPremium = !(includeTech && isTechRole(emp))
-      ? 0
-      : techWeeklyOt.length > 0
-      ? techWeeklyOt.reduce((sum, w) => sum + w.premium, 0)
-      : premiumHours * techPeriodRegularRate * 0.5;
-    const techWeightedRegularRate = premiumHours > 0 && techWeeklyOt.length > 0 ? techHourlyPayOtPremium / (premiumHours * 0.5) : techPeriodRegularRate;
-    const techHourlyPayCompanyOnly = techHourlyPayStraight + techHourlyPayOtPremium;
-    // A State-mode override (payroll_hourly_ot_overrides, migration 0289,
-    // set from the payroll detail step's Compliant/"State" toggle) replaces
-    // the flat company-rate figure everywhere pay actually flows — gross
-    // pay, Total Payment, CSV export, payslip/Send. techHourlyPayCompanyOnly
-    // above stays the un-overridden flat calc, purely for the Tech Activity
-    // Report's "Company vs. Applied" comparison.
-    //
-    // A technician who has since moved to Fixed Salary (isFixed — e.g. a
-    // promotion to a salaried Branch Manager role, effective mid-period) is
-    // paid the same flat perCutoffSalary officeGrossPay below already uses,
-    // not the hourly/piece-rate blend above — hourlyRate is forced to 0 for
-    // a fixed comp type (see isFixed above), so techHourlyPayCompanyOnly
-    // would otherwise silently collapse toward $0 while any State-mode
-    // override saved back when this technician was still hourly stays
-    // stuck applying its old (now meaningless) dollar amount on top of it.
-    // Fixed Salary always wins here, same as it already does for officeGrossPay.
-    //
-    // A technician on Fixed Salary gets the HIGHER of the salary or their
-    // commission (includable pay), same as Finance's workbook for salaried
-    // techs — the salary isn't paid on top of commission. Commission is
-    // still paid through its own lines, so this pays the rest of the salary.
-    // (With no hourly rate on file their hours can't be priced; add an
-    // Hourly rate + keep the Fixed Salary entry for the full workbook check
-    // of hours + OT + commission against the salary.)
-    const techHourlyPay = isFixed && annualSalary
-      ? (isTechRole(emp)
-          ? Math.max(perCutoffSalary(annualSalary) - techIncludablePay, 0)
-          // A secondary-role technician's salary is paid on their office row;
-          // the technician row only carries ticket / commission pay — paying
-          // perCutoffSalary here too paid the salary twice.
-          : 0)
-      : hourlyOtOverrides.get(emp.id)?.amount ?? techHourlyPayCompanyOnly;
-    // Extra 0.5x bonus for hours actually worked on a recognized company
-    // holiday — see holidayPremiumFor above. Paid on top of techHourlyPay
-    // regardless of Company/State mode; not part of techIncludablePay/the
-    // weighted rate (the reference payroll workbook computes this as its
-    // own separate Step 6, independent of the Step 4 weighted-rate calc).
-    const techHolidayPremium = includeTech && isTechRole(emp) ? holidayPremiumFor(emp.id, dailyHoursByEmployeeId.get(emp.id), hourlyRate) : 0;
-    const techTraineeMatch = includeTech && isTechRole(emp)
-      ? traineeDailyMatchFor(
-          emp.id,
-          dailyHoursByEmployeeId.get(emp.id),
-          hourlyRate,
-          traineeWindow.start,
-          traineeWindow.end,
-          techWeightedRegularRate
-        )
-      : 0;
-    // Guaranteed-minimum-salary match: a technician with a Guaranteed
-    // Minimum in effect (see latestGuaranteeByProfile) keeps being paid on
-    // their hourly rate, with that guarantee as a floor under their hourly +
-    // incentive pay. If actual earned
-    // compensation this period (Hourly + OT as ACTUALLY applied, plus
-    // includable incentive pay) falls short of that salary's per-cutoff
-    // equivalent, the shortfall is topped up here.
-    //
-    // Keyed off techHourlyPayCompanyOnly, NOT techHourlyPay — company policy
-    // (2026-09-23) treats the state minimum-wage floor match as separate
-    // money that doesn't count toward satisfying the salary guarantee: the
-    // guarantee is a promise of at least $X in company-rate wages +
-    // incentive pay, independent of which state a technician happened to
-    // work in that period. The floor match is still paid in full — via
-    // techHourlyPay itself once State mode is applied — this only changes
-    // what the guarantee is SIZED against, not what actually gets paid for
-    // the floor match. (Previously this was keyed off techHourlyPay so the
-    // state match would count toward the guarantee — reversed per direct
-    // instruction; see Matthew Nichols, where a $199.88 state-floor match
-    // was decided to stack on top of the guarantee rather than closing it.)
-    const guaranteedAnnualSalary = includeTech && !isFixed
-      ? latestGuaranteeByProfile.get(emp.id)?.annual_salary ?? null
-      : null;
-    // techHolidayPremium is folded in too, for the same double-counting
-    // reason as techHourlyPayCompanyOnly above — see Daven Hodge, where the
-    // reference workbook's own AN9 ("Corrected Wages Before Match") already
-    // folds its Holiday Premium into the earned baseline before sizing the
-    // match. Leaving it out here sized the guarantee as if that $51.40
-    // hadn't been earned yet, then techGrossPay below added it again on top
-    // of the already-topped-up target — a flat overpayment equal to the
-    // holiday premium any time the guarantee triggers for a technician who
-    // also worked a recognized holiday.
-    // Straight wage + OT premium + commission (includable) + holiday premium
-    // all count toward the guaranteed salary — Finance's payroll workbook
-    // ("Earnings before reimbursements", confirmed 2026-10-16 on Daven Hodge:
-    // $2,574.41 vs $4,615.38). Reimbursements are paid on top.
-    const techEarnedBeforeReimbursements = techHourlyPayCompanyOnly + techIncludablePay + techHolidayPremium;
-    const techGuaranteedSalaryTarget = guaranteedAnnualSalary ? perCutoffSalary(guaranteedAnnualSalary) : 0;
-    const techGuaranteedSalaryMatch = guaranteedAnnualSalary
-      ? Math.max(techGuaranteedSalaryTarget - techEarnedBeforeReimbursements, 0)
-      : 0;
-    // Gated on includeTech, not on `tech` — a technician with zero
-    // completed tickets this period (so techGrossByProfile has no entry
-    // for them) can still have real pay owed via manual LDT/Mileage/
-    // Training, a custom line, or an approved Payroll Dispute; the old
-    // `tech ? ... : 0` gate silently dropped all of that to $0 for them.
-    const techGrossPayExact = includeTech
-      ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + manualTotal + twoTechPay + completedTicketsPay + customPay + techHourlyPay + techGuaranteedSalaryMatch + techHolidayPremium + techTraineeMatch
-      : 0;
-    // Rounded like Finance's summary and the Tech Activity Report's Total
-    // Payment (payRounding.ts): each column to the cent, then added up.
-    // Regular $ = regular hours at the company rate (+ the state regular
-    // match when State mode is applied — saved with the override, migration
-    // 0400) + trainee/holiday top-ups; OT $ = the rest of the hourly pay;
-    // Commission is whatever's left after the other columns.
-    const stateOverride = hourlyOtOverrides.get(emp.id);
-    const stateApplied = !isFixed && !!stateOverride && Math.abs(techHourlyPay - techHourlyPayCompanyOnly) > 0.005;
-    const techRegularHourly = !isTechRole(emp)
-      ? techHourlyPay
-      : isFixed
-      ? techHourlyPay
-      : stateApplied
-      ? stateOverride!.regularAmount ?? techDailyPay.regularPay
-      : techDailyPay.regularPay;
-    const customColumns = groupCustomPayLines(includeTech ? techCustomItemsByProfile.get(emp.id) ?? [] : []);
-    const regularColumn = techRegularHourly + techTraineeMatch + techHolidayPremium;
-    const otColumn = isFixed ? 0 : techHourlyPay - techRegularHourly;
-    const reimbursementColumn = effectiveMileagePay + customColumns.reimbursement;
-    const techGrossPay = includeTech
-      ? centsSummaryTotal({
-          regularPay: regularColumn,
-          otPay: otColumn,
-          bonus: customColumns.bonus,
-          commission:
-            techGrossPayExact - regularColumn - otColumn - customColumns.bonus - reimbursementColumn +
-            customColumns.deduction + customColumns.pretaxInsurance - techGuaranteedSalaryMatch,
-          ptoPay: 0,
-          deduction: customColumns.deduction,
-          mileageOtherReimb: reimbursementColumn,
-          pretaxInsurance: customColumns.pretaxInsurance,
-          salaryMatch: techGuaranteedSalaryMatch,
-        })
-      : 0;
-
-    const techRow: EmployeePayrollRow | null =
-      includeTech && (isTechRole(emp) || techGrossPay > 0)
-        ? {
-            employee: emp,
-            compensationType: isFixed ? "fixed" : "hourly",
+      const includeTech = getsTechPortion(emp);
+      const tech = includeTech ? techGrossByProfile.get(emp.id) : undefined;
+      const carryover = includeTech ? techCarryoverByProfile.get(emp.id) : undefined;
+      const manual = includeTech ? techManualByProfile.get(emp.id) : undefined;
+      // "Two Tech" (auto-counted from visits.second_technician) is
+      // rate-table-driven and deterministic, same as Mileage/Training, so
+      // it folds into Total Net the same way. MCA Bonus and LDT no longer
+      // have any editable UI anywhere in the app (their rows were removed
+      // from the Tech Activity Report) and are deliberately excluded from
+      // every pay total in this function. Custom program lines and OW
+      // Incentive are ad-hoc/manual-per-open — those live on the Tech Activity
+      // Report modal only and are NOT included here (see TechActivityReportModal.tsx).
+      const techBranch = emp.assigned_branch || "";
+      // Mileage defaults to the technician's real logged total (Mileage tab,
+      // excluding held tickets — see getTechAutoMileageTotals) until Finance
+      // has manually entered/edited a value for this specific period, at
+      // which point their saved number takes over for good — see
+      // handleManualPayBlur, which always re-saves whatever's currently
+      // showing for every field, not just the one just edited.
+      const effectiveMileage = manual ? manual.mileage : includeTech ? techAutoMileageByProfile.get(emp.id) ?? 0 : 0;
+      // Car IQ tab (2026-09-24): once a technician has a Car IQ status on
+      // file, their Mileage rate is locked to $0.20/$0.40 regardless of the
+      // branch's shared rate — and, unlike the plain branch-rate path below,
+      // recomputed fresh every time rather than trusting a stale saved
+      // manual.mileagePay, since the whole point of locking it is that
+      // Finance shouldn't need to re-touch this technician's mileage line
+      // just to pick up a Car IQ status set after their last edit.
+      // Rates in effect on the period's first day (migration 0381 — a rate
+      // change dated later doesn't re-price this period's start).
+      const periodCarIqRates = carIqRatesOn(carIqRateHistory, genStart || todayISO());
+      const mileageRateOverride = mileageRateForCarIq(employeeInfoByProfileId.get(emp.id)?.hasCarIq, periodCarIqRates.with, periodCarIqRates.without);
+      // A switch date strictly inside the period — the technician's Car IQ
+      // status changing, or the company's Car IQ rates changing — means
+      // mileageRateOverride's single rate doesn't cover every day of it.
+      // Only the very last switch matters here (a second one within the same
+      // period is rare enough that flagging the latest and letting Finance
+      // sort out the detail manually is enough).
+      const hasStatusHistory = carIqHistory.some((e) => e.profileId === emp.id);
+      const carIqStatusOn = (date: string) =>
+        hasStatusHistory ? carIqEntryEffectiveOn(carIqHistory, emp.id, date)?.hasCarIq ?? null : employeeInfoByProfileId.get(emp.id)?.hasCarIq ?? null;
+      const carIqSwitchDates = Array.from(new Set([
+        ...carIqSwitchDatesInRange(carIqHistory, emp.id, genStart, genEnd),
+        ...carIqRateChangeDatesInRange(carIqRateHistory, genStart, genEnd),
+      ])).sort();
+      const carIqSwitch = carIqSwitchDates.length === 0 ? null : (() => {
+        const switchDate = carIqSwitchDates[carIqSwitchDates.length - 1];
+        const dayBefore = addDaysISO(switchDate, -1);
+        const ratesBefore = carIqRatesOn(carIqRateHistory, dayBefore);
+        const ratesAfter = carIqRatesOn(carIqRateHistory, switchDate);
+        const rateBefore = mileageRateForCarIq(carIqStatusOn(dayBefore), ratesBefore.with, ratesBefore.without);
+        const rateAfter = mileageRateForCarIq(carIqStatusOn(switchDate), ratesAfter.with, ratesAfter.without);
+        if (rateBefore == null || rateAfter == null || rateBefore === rateAfter) return null;
+        return { date: switchDate, rateBefore, rateAfter };
+      })();
+      const effectiveMileagePay =
+        mileageRateOverride != null
+          ? effectiveMileage * mileageRateOverride
+          : manual
+          ? manual.mileagePay
+          : effectiveMileage * techRateFor("Mileage", techBranch);
+      // LDT no longer has any editable UI anywhere in the app (its row was
+      // removed from the Tech Activity Report) — manual.ldtPay is dead going
+      // forward, deliberately left out of every pay total below so it can't
+      // silently keep paying out a stale historical value forever with no
+      // way for Finance to see or correct it.
+      const manualTotal = effectiveMileagePay + (manual?.trainingPay ?? 0);
+      const twoTechCountForEmp = twoTechOverrideByProfile.get(emp.id) ?? techSecondCounts.get(emp.full_name.trim().toLowerCase()) ?? 0;
+      const twoTechPay = includeTech ? twoTechCountForEmp * techRateFor("Two Tech", techBranch) : 0;
+      // Confirmed late completions count toward Completed Tickets exactly
+      // like any other completed ticket this period — they ARE completed
+      // tickets, just paid a period late; only their repair-type $ amount
+      // (carryover.grossPay, folded into techGrossPay below) and their own
+      // labeled line items stay visibly separate from this period's own work.
+      // (MCA Bonus no longer has any editable UI anywhere in the app — its
+      // row was removed from the Tech Activity Report — so it's deliberately
+      // left out of every pay total below, same reasoning as manual.ldtPay above.)
+      const ticketsCompletedForEmp = (tech?.ticketsCompleted ?? 0) + (carryover?.count ?? 0);
+      // Flat per-ticket rate paid on every completed (redo-excluded) ticket,
+      // on top of that ticket's own repair-type rate already in tech.grossPay.
+      const completedTicketsPay = includeTech ? ticketsCompletedForEmp * techRateFor("Completed Tickets", techBranch) : 0;
+      const customPay = includeTech ? techCustomTotalByProfile.get(emp.id) ?? 0 : 0;
+      const customIncludablePay = includeTech ? techCustomIncludableByProfile.get(emp.id) ?? 0 : 0;
+      // Technicians are piece-rate by default, but can now ALSO earn hourly
+      // pay on top of it once Finance sets a rate for them (same
+      // salary_entries hourly_rate office employees use) — a tech with no
+      // rate ever set has hourlyRate 0, so this stays $0 and existing
+      // behavior is unchanged until Finance actually enters one.
+      // Gated to isTechRole(emp) (a PRIMARY technician), not just includeTech
+      // — someone who merely holds Technician as a SECONDARY role has no
+      // separate field-tech punch system; `hours` here is their normal office
+      // attendance, the exact same hours officeGrossPay below already pays
+      // them for. Without this gate they'd be paid twice for one shift the
+      // moment Finance sets any hourly rate for them, surfacing as an
+      // identical-looking "duplicate" row alongside their real office row.
+      //
+      // The overtime premium can't just be hourlyRate×1.5 once a tech earns
+      // piece-rate/incentive pay in the same period — FLSA requires that pay
+      // (repair-type pay, carryover, Training, Two Tech, Completed Tickets,
+      // and any commission-style custom line) to be folded into the
+      // "regular rate" the OT premium is computed from, same as a
+      // non-discretionary bonus. Mileage reimbursement (effectiveMileagePay,
+      // inside manualTotal) and any custom line labeled as a reimbursement/
+      // mileage/allowance/stipend (customIncludablePay excludes those, see
+      // techCustomIncludableByProfile) are left out — they're expense
+      // reimbursements or flat per-diem stipends, not wages, so they don't
+      // factor into the regular rate even though they still count toward
+      // Total Payment. Straight time is paid for ALL hours (regular + OT) at
+      // the base rate, then OT hours additionally earn the extra 0.5× on the
+      // weighted rate — the standard FLSA weighted-average method, not an
+      // alternative to it. (LDT and MCA are deliberately excluded — see the
+      // comments by manualTotal/ticketsCompletedForEmp above.)
+      const techIncludablePay = includeTech && isTechRole(emp)
+        ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + (manual?.trainingPay ?? 0) + twoTechPay + completedTicketsPay + customIncludablePay
+        : 0;
+      // Blended per-day, not one flat rate for the whole period — a technician
+      // whose hourly rate changed mid-period (salary_entries effective mid-way
+      // through genStart..genEnd) gets each day's hours paid at THAT day's
+      // rate, same as the Attendance table already shows per day. See
+      // blendedDailyPay/hourlyRateOnDate above.
+      const techDailyPay = blendedDailyPay(dailyHoursByEmployeeId.get(emp.id), hours, (date) => hourlyRateOnDate(emp.id, date, hourlyRate), hourlyRate);
+      const techTotalHours = techDailyPay.totalHours;
+      const techStraightTimeAllHours = techDailyPay.straightAllHours;
+      const techPeriodRegularRate = techTotalHours > 0 ? (techStraightTimeAllHours + techIncludablePay) / techTotalHours : hourlyRate;
+      const techHourlyPayStraight = includeTech && isTechRole(emp) ? techStraightTimeAllHours : 0;
+      const traineeWindow = trainingWindow(emp.hrTrainingStart, emp.hrFieldStart,
+        employeeInfoByProfileId.get(emp.id)?.hireDate, emp.isTrainee);
+      const techDailyHours = dailyHoursByEmployeeId.get(emp.id) ?? [];
+      // Training days included: overtime during training is still overtime
+      // (Vincent Pullens 9/28–10/2: 12.838 OT hrs had been paid flat $7.25).
+      const premiumHours = techDailyHours.reduce((sum, day) => sum + day.overtime, 0);
+      // FLSA: the regular rate — and so the OT premium — is set per WORKWEEK
+      // even on a biweekly payroll, matching the reference workbook's Weekly
+      // Calculations tab (see weeklyOtPremium). Without a daily breakdown
+      // (no schedule configured) there are no weeks to split, so the old
+      // period-wide rate is used.
+      const taggedIncludable = techCustomIncludableByProfileWeek.get(emp.id);
+      const taggedIncludableTotal = [...(taggedIncludable?.values() ?? [])].reduce((sum, v) => sum + v, 0);
+      const techWeeklyOt = includeTech && isTechRole(emp) && techDailyHours.length > 0
+        ? weeklyOtPremium(
+            techDailyHours,
+            (date) => hourlyRateOnDate(emp.id, date, hourlyRate),
+            () => true,
+            taggedIncludable,
+            techIncludablePay - taggedIncludableTotal
+          )
+        : [];
+      const techHourlyPayOtPremium = !(includeTech && isTechRole(emp))
+        ? 0
+        : techWeeklyOt.length > 0
+        ? techWeeklyOt.reduce((sum, w) => sum + w.premium, 0)
+        : premiumHours * techPeriodRegularRate * 0.5;
+      const techWeightedRegularRate = premiumHours > 0 && techWeeklyOt.length > 0 ? techHourlyPayOtPremium / (premiumHours * 0.5) : techPeriodRegularRate;
+      const techHourlyPayCompanyOnly = techHourlyPayStraight + techHourlyPayOtPremium;
+      // A State-mode override (payroll_hourly_ot_overrides, migration 0289,
+      // set from the payroll detail step's Compliant/"State" toggle) replaces
+      // the flat company-rate figure everywhere pay actually flows — gross
+      // pay, Total Payment, CSV export, payslip/Send. techHourlyPayCompanyOnly
+      // above stays the un-overridden flat calc, purely for the Tech Activity
+      // Report's "Company vs. Applied" comparison.
+      //
+      // A technician who has since moved to Fixed Salary (isFixed — e.g. a
+      // promotion to a salaried Branch Manager role, effective mid-period) is
+      // paid the same flat perCutoffSalary officeGrossPay below already uses,
+      // not the hourly/piece-rate blend above — hourlyRate is forced to 0 for
+      // a fixed comp type (see isFixed above), so techHourlyPayCompanyOnly
+      // would otherwise silently collapse toward $0 while any State-mode
+      // override saved back when this technician was still hourly stays
+      // stuck applying its old (now meaningless) dollar amount on top of it.
+      // Fixed Salary always wins here, same as it already does for officeGrossPay.
+      //
+      // A technician on Fixed Salary gets the HIGHER of the salary or their
+      // commission (includable pay), same as Finance's workbook for salaried
+      // techs — the salary isn't paid on top of commission. Commission is
+      // still paid through its own lines, so this pays the rest of the salary.
+      // (With no hourly rate on file their hours can't be priced; add an
+      // Hourly rate + keep the Fixed Salary entry for the full workbook check
+      // of hours + OT + commission against the salary.)
+      const techHourlyPay = isFixed && annualSalary
+        ? (isTechRole(emp)
+            ? Math.max(perCutoffSalary(annualSalary) - techIncludablePay, 0)
+            // A secondary-role technician's salary is paid on their office row;
+            // the technician row only carries ticket / commission pay — paying
+            // perCutoffSalary here too paid the salary twice.
+            : 0)
+        : hourlyOtOverrides.get(emp.id)?.amount ?? techHourlyPayCompanyOnly;
+      // Extra 0.5x bonus for hours actually worked on a recognized company
+      // holiday — see holidayPremiumFor above. Paid on top of techHourlyPay
+      // regardless of Company/State mode; not part of techIncludablePay/the
+      // weighted rate (the reference payroll workbook computes this as its
+      // own separate Step 6, independent of the Step 4 weighted-rate calc).
+      const techHolidayPremium = includeTech && isTechRole(emp) ? holidayPremiumFor(emp.id, dailyHoursByEmployeeId.get(emp.id), hourlyRate) : 0;
+      const techTraineeMatch = includeTech && isTechRole(emp)
+        ? traineeDailyMatchFor(
+            emp.id,
+            dailyHoursByEmployeeId.get(emp.id),
             hourlyRate,
-            hourlyRateUSD: hourlyRate,
-            annualSalary,
-            hoursWorked: hours.regular,
-            overtimeHours: hours.overtime,
-            ticketsCompleted: ticketsCompletedForEmp,
-            ticketsAssigned: techAssignedCounts.get(emp.full_name.trim().toLowerCase()) ?? 0,
-            techCategoryPay: {
-              twoManJob: tech?.twoManJob ?? 0,
-              backTub: tech?.backTub ?? 0,
-              sealedSystem: tech?.sealedSystem ?? 0,
-              sealedSystemR600: tech?.sealedSystemR600 ?? 0,
-            },
-            techCategoryCounts: tech?.categoryCounts ?? {},
-            techCarryover: carryover?.tickets ?? [],
-            workingDays,
-            twoTechCount: twoTechCountForEmp,
-            techManual: {
-              ldtCount: manual?.ldtCount ?? 0,
-              ldtPay: manual?.ldtPay ?? 0,
-              mileage: effectiveMileage,
-              mileagePay: effectiveMileagePay,
-              trainingValue: manual?.trainingValue ?? 0,
-              trainingPay: manual?.trainingPay ?? 0,
-              owIncentivePct: manual?.owIncentivePct ?? 0,
-            },
-            mileageRateOverride,
-            carIqSwitch,
-            techHourlyPay,
-            techHourlyPayCompanyOnly,
-            techHourlyPayStraight,
-            techHourlyPayOtPremium,
-            techWeightedRegularRate,
-            techWeeklyOt,
-            techGuaranteedSalaryTarget,
-            techGuaranteedSalaryMatch,
-            techHolidayPremium,
-            techTraineeMatch,
-            techIncludablePay,
-            dutyHours,
-            grossPay: techGrossPay,
-            grossPayUSD: techGrossPay,
-            isTechPortion: true,
-          }
+            traineeWindow.start,
+            traineeWindow.end,
+            techWeightedRegularRate
+          )
+        : 0;
+      // Guaranteed-minimum-salary match: a technician with a Guaranteed
+      // Minimum in effect (see latestGuaranteeByProfile) keeps being paid on
+      // their hourly rate, with that guarantee as a floor under their hourly +
+      // incentive pay. If actual earned
+      // compensation this period (Hourly + OT as ACTUALLY applied, plus
+      // includable incentive pay) falls short of that salary's per-cutoff
+      // equivalent, the shortfall is topped up here.
+      //
+      // Keyed off techHourlyPayCompanyOnly, NOT techHourlyPay — company policy
+      // (2026-09-23) treats the state minimum-wage floor match as separate
+      // money that doesn't count toward satisfying the salary guarantee: the
+      // guarantee is a promise of at least $X in company-rate wages +
+      // incentive pay, independent of which state a technician happened to
+      // work in that period. The floor match is still paid in full — via
+      // techHourlyPay itself once State mode is applied — this only changes
+      // what the guarantee is SIZED against, not what actually gets paid for
+      // the floor match. (Previously this was keyed off techHourlyPay so the
+      // state match would count toward the guarantee — reversed per direct
+      // instruction; see Matthew Nichols, where a $199.88 state-floor match
+      // was decided to stack on top of the guarantee rather than closing it.)
+      const guaranteedAnnualSalary = includeTech && !isFixed
+        ? latestGuaranteeByProfile.get(emp.id)?.annual_salary ?? null
         : null;
+      // techHolidayPremium is folded in too, for the same double-counting
+      // reason as techHourlyPayCompanyOnly above — see Daven Hodge, where the
+      // reference workbook's own AN9 ("Corrected Wages Before Match") already
+      // folds its Holiday Premium into the earned baseline before sizing the
+      // match. Leaving it out here sized the guarantee as if that $51.40
+      // hadn't been earned yet, then techGrossPay below added it again on top
+      // of the already-topped-up target — a flat overpayment equal to the
+      // holiday premium any time the guarantee triggers for a technician who
+      // also worked a recognized holiday.
+      // Straight wage + OT premium + commission (includable) + holiday premium
+      // all count toward the guaranteed salary — Finance's payroll workbook
+      // ("Earnings before reimbursements", confirmed 2026-10-16 on Daven Hodge:
+      // $2,574.41 vs $4,615.38). Reimbursements are paid on top.
+      const techEarnedBeforeReimbursements = techHourlyPayCompanyOnly + techIncludablePay + techHolidayPremium;
+      const techGuaranteedSalaryTarget = guaranteedAnnualSalary ? perCutoffSalary(guaranteedAnnualSalary) : 0;
+      const techGuaranteedSalaryMatch = guaranteedAnnualSalary
+        ? Math.max(techGuaranteedSalaryTarget - techEarnedBeforeReimbursements, 0)
+        : 0;
+      // Gated on includeTech, not on `tech` — a technician with zero
+      // completed tickets this period (so techGrossByProfile has no entry
+      // for them) can still have real pay owed via manual LDT/Mileage/
+      // Training, a custom line, or an approved Payroll Dispute; the old
+      // `tech ? ... : 0` gate silently dropped all of that to $0 for them.
+      const techGrossPayExact = includeTech
+        ? (tech?.grossPay ?? 0) + (carryover?.grossPay ?? 0) + manualTotal + twoTechPay + completedTicketsPay + customPay + techHourlyPay + techGuaranteedSalaryMatch + techHolidayPremium + techTraineeMatch
+        : 0;
+      // Rounded like Finance's summary and the Tech Activity Report's Total
+      // Payment (payRounding.ts): each column to the cent, then added up.
+      // Regular $ = regular hours at the company rate (+ the state regular
+      // match when State mode is applied — saved with the override, migration
+      // 0400) + trainee/holiday top-ups; OT $ = the rest of the hourly pay;
+      // Commission is whatever's left after the other columns.
+      const stateOverride = hourlyOtOverrides.get(emp.id);
+      const stateApplied = !isFixed && !!stateOverride && Math.abs(techHourlyPay - techHourlyPayCompanyOnly) > 0.005;
+      const techRegularHourly = !isTechRole(emp)
+        ? techHourlyPay
+        : isFixed
+        ? techHourlyPay
+        : stateApplied
+        ? stateOverride!.regularAmount ?? techDailyPay.regularPay
+        : techDailyPay.regularPay;
+      const customColumns = groupCustomPayLines(includeTech ? techCustomItemsByProfile.get(emp.id) ?? [] : []);
+      const regularColumn = techRegularHourly + techTraineeMatch + techHolidayPremium;
+      const otColumn = isFixed ? 0 : techHourlyPay - techRegularHourly;
+      const reimbursementColumn = effectiveMileagePay + customColumns.reimbursement;
+      const techGrossPay = includeTech
+        ? centsSummaryTotal({
+            regularPay: regularColumn,
+            otPay: otColumn,
+            bonus: customColumns.bonus,
+            commission:
+              techGrossPayExact - regularColumn - otColumn - customColumns.bonus - reimbursementColumn +
+              customColumns.deduction + customColumns.pretaxInsurance - techGuaranteedSalaryMatch,
+            ptoPay: 0,
+            deduction: customColumns.deduction,
+            mileageOtherReimb: reimbursementColumn,
+            pretaxInsurance: customColumns.pretaxInsurance,
+            salaryMatch: techGuaranteedSalaryMatch,
+          })
+        : 0;
 
-    // A plain TECHNICIAN-primary employee's whole pay IS the tech row — no
-    // separate office row, same as before this change.
-    if (isTechRole(emp)) return techRow ? [techRow] : [];
+      const techRow: EmployeePayrollRow | null =
+        includeTech && (isTechRole(emp) || techGrossPay > 0)
+          ? {
+              employee: emp,
+              compensationType: isFixed ? "fixed" : "hourly",
+              hourlyRate,
+              hourlyRateUSD: hourlyRate,
+              annualSalary,
+              hoursWorked: hours.regular,
+              overtimeHours: hours.overtime,
+              ticketsCompleted: ticketsCompletedForEmp,
+              ticketsAssigned: techAssignedCounts.get(emp.full_name.trim().toLowerCase()) ?? 0,
+              techCategoryPay: {
+                twoManJob: tech?.twoManJob ?? 0,
+                backTub: tech?.backTub ?? 0,
+                sealedSystem: tech?.sealedSystem ?? 0,
+                sealedSystemR600: tech?.sealedSystemR600 ?? 0,
+              },
+              techCategoryCounts: tech?.categoryCounts ?? {},
+              techCarryover: carryover?.tickets ?? [],
+              workingDays,
+              twoTechCount: twoTechCountForEmp,
+              techManual: {
+                ldtCount: manual?.ldtCount ?? 0,
+                ldtPay: manual?.ldtPay ?? 0,
+                mileage: effectiveMileage,
+                mileagePay: effectiveMileagePay,
+                trainingValue: manual?.trainingValue ?? 0,
+                trainingPay: manual?.trainingPay ?? 0,
+                owIncentivePct: manual?.owIncentivePct ?? 0,
+              },
+              mileageRateOverride,
+              carIqSwitch,
+              techHourlyPay,
+              techHourlyPayCompanyOnly,
+              techHourlyPayStraight,
+              techHourlyPayOtPremium,
+              techWeightedRegularRate,
+              techWeeklyOt,
+              techGuaranteedSalaryTarget,
+              techGuaranteedSalaryMatch,
+              techHolidayPremium,
+              techTraineeMatch,
+              techIncludablePay,
+              dutyHours,
+              grossPay: techGrossPay,
+              grossPayUSD: techGrossPay,
+              isTechPortion: true,
+            }
+          : null;
 
-    // Same per-day rate blending as techDailyPay above — an office employee's
-    // mid-period raise now pays each day at that day's own rate instead of
-    // one flat rate (whichever was latest as of genEnd) for the whole period.
-    const officeDailyPay = blendedDailyPay(dailyHoursByEmployeeId.get(emp.id), hours, (date) => hourlyRateOnDate(emp.id, date, hourlyRate), hourlyRate);
-    // Regular hours at the rate, OT (over 40 hrs/week) at 1.5× — everyone,
-    // US and PH, every role (policy 2026-10-22; PH used to be straight pay
-    // for every hour). Rounded to the cent here (Regular $ and OT $ separately),
-    // so the payroll line's gross, any % tax and the net all start from the
-    // same cent figure the table shows (Angelo Mendoza 9/27–10/10: net was
-    // worked out from $474.4069, giving $534.42 against $474.41 + $60.00).
-    // A fixed-salary employee who left (deactivated) gets the per-cutoff
-    // salary pro rata — ÷ 10 working days × the days they actually worked in
-    // the period, never more than the full amount (Finance, 2026-10-26: Raul
-    // Bayuyos Jr. was getting the whole $576.92 for 37.6 hours). Active
-    // fixed-salary staff still get the full per-cutoff amount.
-    const fixedDaysWorked = isFixed && annualSalary && !emp.isActive
-      ? (dailyHoursByEmployeeId.get(emp.id) ?? []).filter((d) => (!genStart || d.date >= genStart) && (!genEnd || d.date <= genEnd) && d.regular + d.overtime > 0.0005).length
-      : undefined;
-    const fullCutoffSalary = isFixed && annualSalary ? perCutoffSalary(annualSalary, emp.country === "PH") : 0;
-    const officeGrossPay = isFixed && annualSalary
-      ? cents(fixedDaysWorked != null ? Math.min(fullCutoffSalary, (fullCutoffSalary / FIXED_WORKING_DAYS_PER_CUTOFF) * fixedDaysWorked) : fullCutoffSalary)
-      : cents(cents(officeDailyPay.regularPay) + cents(officeDailyPay.overtimePayAt1_5x));
-    const officeRow: EmployeePayrollRow = {
-      employee: emp,
-      compensationType: isFixed ? "fixed" : "hourly",
-      hourlyRate,
-      hourlyRateUSD: hourlyRate,
-      annualSalary,
-      hoursWorked: hours.regular,
-      overtimeHours: hours.overtime,
-      ticketsCompleted: 0,
-      ticketsAssigned: 0,
-      techCategoryPay: { twoManJob: 0, backTub: 0, sealedSystem: 0, sealedSystemR600: 0 },
-      techCategoryCounts: {},
-      techCarryover: [],
-      workingDays,
-      twoTechCount: 0,
-      techManual: { ldtCount: 0, ldtPay: 0, mileage: 0, mileagePay: 0, trainingValue: 0, trainingPay: 0, owIncentivePct: 0 },
-      mileageRateOverride: null,
-      carIqSwitch: null,
-      techHourlyPay: 0,
-      techHourlyPayCompanyOnly: 0,
-      techHourlyPayStraight: 0,
-      techHourlyPayOtPremium: 0,
-      techWeightedRegularRate: hourlyRate,
-      techWeeklyOt: [],
-      techGuaranteedSalaryTarget: 0,
-      techGuaranteedSalaryMatch: 0,
-      techHolidayPremium: 0,
-      techTraineeMatch: 0,
-      techIncludablePay: 0,
-      dutyHours,
-      grossPay: officeGrossPay,
-      grossPayUSD: officeGrossPay,
-      isTechPortion: false,
-      ...(fixedDaysWorked != null ? { fixedDaysWorked } : {}),
+      // A plain TECHNICIAN-primary employee's whole pay IS the tech row — no
+      // separate office row, same as before this change.
+      if (isTechRole(emp)) return techRow ? [techRow] : [];
+
+      // Same per-day rate blending as techDailyPay above — an office employee's
+      // mid-period raise now pays each day at that day's own rate instead of
+      // one flat rate (whichever was latest as of genEnd) for the whole period.
+      const officeDailyPay = blendedDailyPay(dailyHoursByEmployeeId.get(emp.id), hours, (date) => hourlyRateOnDate(emp.id, date, hourlyRate), hourlyRate);
+      // Regular hours at the rate, OT (over 40 hrs/week) at 1.5× — everyone,
+      // US and PH, every role (policy 2026-10-22; PH used to be straight pay
+      // for every hour). Rounded to the cent here (Regular $ and OT $ separately),
+      // so the payroll line's gross, any % tax and the net all start from the
+      // same cent figure the table shows (Angelo Mendoza 9/27–10/10: net was
+      // worked out from $474.4069, giving $534.42 against $474.41 + $60.00).
+      // A fixed-salary employee who left (deactivated) gets the per-cutoff
+      // salary pro rata — ÷ 10 working days × the days they actually worked in
+      // the period, never more than the full amount (Finance, 2026-10-26: Raul
+      // Bayuyos Jr. was getting the whole $576.92 for 37.6 hours). Active
+      // fixed-salary staff still get the full per-cutoff amount.
+      const fixedDaysWorked = isFixed && annualSalary && !emp.isActive
+        ? (dailyHoursByEmployeeId.get(emp.id) ?? []).filter((d) => (!genStart || d.date >= genStart) && (!genEnd || d.date <= genEnd) && d.regular + d.overtime > 0.0005).length
+        : undefined;
+      const fullCutoffSalary = isFixed && annualSalary ? perCutoffSalary(annualSalary, emp.country === "PH") : 0;
+      const officeGrossPay = isFixed && annualSalary
+        ? cents(fixedDaysWorked != null ? Math.min(fullCutoffSalary, (fullCutoffSalary / FIXED_WORKING_DAYS_PER_CUTOFF) * fixedDaysWorked) : fullCutoffSalary)
+        : cents(cents(officeDailyPay.regularPay) + cents(officeDailyPay.overtimePayAt1_5x));
+      const officeRow: EmployeePayrollRow = {
+        employee: emp,
+        compensationType: isFixed ? "fixed" : "hourly",
+        hourlyRate,
+        hourlyRateUSD: hourlyRate,
+        annualSalary,
+        hoursWorked: hours.regular,
+        overtimeHours: hours.overtime,
+        ticketsCompleted: 0,
+        ticketsAssigned: 0,
+        techCategoryPay: { twoManJob: 0, backTub: 0, sealedSystem: 0, sealedSystemR600: 0 },
+        techCategoryCounts: {},
+        techCarryover: [],
+        workingDays,
+        twoTechCount: 0,
+        techManual: { ldtCount: 0, ldtPay: 0, mileage: 0, mileagePay: 0, trainingValue: 0, trainingPay: 0, owIncentivePct: 0 },
+        mileageRateOverride: null,
+        carIqSwitch: null,
+        techHourlyPay: 0,
+        techHourlyPayCompanyOnly: 0,
+        techHourlyPayStraight: 0,
+        techHourlyPayOtPremium: 0,
+        techWeightedRegularRate: hourlyRate,
+        techWeeklyOt: [],
+        techGuaranteedSalaryTarget: 0,
+        techGuaranteedSalaryMatch: 0,
+        techHolidayPremium: 0,
+        techTraineeMatch: 0,
+        techIncludablePay: 0,
+        dutyHours,
+        grossPay: officeGrossPay,
+        grossPayUSD: officeGrossPay,
+        isTechPortion: false,
+        ...(fixedDaysWorked != null ? { fixedDaysWorked } : {}),
+      };
+      return techRow ? [officeRow, techRow] : [officeRow];
+    })
+      // A deactivated employee shows only when they actually worked or earned
+      // something in the selected period — real hours or pay. hoursMap also
+      // gets an entry from a punch worth 0 hours (a clock-in with no clock-out,
+      // an unpaid PTO day, a trainee clock-in still awaiting approval), which
+      // kept people like Nikkie Agacer on 10/11–10/24 at 0.000 hrs / $0.00.
+      .filter((r) => r.employee.isActive || r.hoursWorked + r.overtimeHours > 0.0005 || Math.abs(r.grossPayUSD) >= 0.005);
+    return {
+      hasHourlyEntry, fixedIsGuaranteeFor, rateEntries, latestCompMap, latestGuaranteeByProfile, dutyHoursByEmployeeId, hoursMap, dailyHoursByEmployeeId, salaryEntriesByProfile, hourlyRateOnDate, holidayDateSet, HOLIDAY_PREMIUM_MULTIPLIER, holidayPremiumFor, TRAINEE_DAILY_MATCH_TARGET, traineeDailyMatchFor, isTechRole, adjustmentsEnabledFor, adjustmentsFor, hasSecondaryTechRole, getsTechPortion, techRateFor, workingDatesByProfile, workingDaysCountByProfile, employeeByName, techGrossByProfile, techCarryoverByProfile, twoTechOverrideByProfile, techManualByProfile, techCustomTotalByProfile, techCustomIncludableByProfile, techCustomIncludableByProfileWeek, techCustomItemsByProfile, payrollRows,
     };
-    return techRow ? [officeRow, techRow] : [officeRow];
-  })
-    // A deactivated employee shows only when they actually worked or earned
-    // something in the selected period — real hours or pay. hoursMap also
-    // gets an entry from a punch worth 0 hours (a clock-in with no clock-out,
-    // an unpaid PTO day, a trainee clock-in still awaiting approval), which
-    // kept people like Nikkie Agacer on 10/11–10/24 at 0.000 hrs / $0.00.
-    .filter((r) => r.employee.isActive || r.hoursWorked + r.overtimeHours > 0.0005 || Math.abs(r.grossPayUSD) >= 0.005);
+  }, [
+    // Every input that affects pay (react-hooks/exhaustive-deps keeps this complete).
+    genStart, genEnd, employees, timecardEntries, weekSeedTimecardEntries, ptoRequests, salaryEntries,
+    companyHolidays, hourlyOtOverrides, adjustmentsByProfile, employeeInfoByProfileId,
+    techRepairRates, techRepairCounts, techCategoryOverrides, carryoverRepairCounts, techAssignedCounts,
+    techSecondCounts, techManualPayItems, techCustomPayItemsAll, techAutoMileageByProfile,
+    carIqHistory, carIqRateHistory,
+  ]);
+  const {
+    hasHourlyEntry, fixedIsGuaranteeFor, rateEntries, latestCompMap, latestGuaranteeByProfile, dutyHoursByEmployeeId, hoursMap, dailyHoursByEmployeeId, salaryEntriesByProfile, hourlyRateOnDate, holidayDateSet, HOLIDAY_PREMIUM_MULTIPLIER, holidayPremiumFor, TRAINEE_DAILY_MATCH_TARGET, traineeDailyMatchFor, isTechRole, adjustmentsEnabledFor, adjustmentsFor, hasSecondaryTechRole, getsTechPortion, techRateFor, workingDatesByProfile, workingDaysCountByProfile, employeeByName, techGrossByProfile, techCarryoverByProfile, twoTechOverrideByProfile, techManualByProfile, techCustomTotalByProfile, techCustomIncludableByProfile, techCustomIncludableByProfileWeek, techCustomItemsByProfile, payrollRows,
+  } = payrollCalc;
 
   const usRows = payrollRows.filter((r) => r.employee.country === "US");
   const phRows = payrollRows.filter((r) => r.employee.country === "PH");
@@ -3984,7 +4011,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     if (!opts.excludeRole && roleFilter.size > 0 && !roleFilter.has(roleTypeLabel(row.employee))) return false;
     if (!opts.excludeRegHours && regHoursFilter.size > 0 && !regHoursFilter.has(row.hoursWorked.toFixed(1))) return false;
     if (!opts.excludeRate && rateFilter.size > 0 && !rateFilter.has(rateLabel(row))) return false;
-    if (employeeSearch && !row.employee.full_name.toLowerCase().includes(employeeSearch.toLowerCase())) return false;
+    if (deferredEmployeeSearch && !row.employee.full_name.toLowerCase().includes(deferredEmployeeSearch.toLowerCase())) return false;
     return true;
   };
 

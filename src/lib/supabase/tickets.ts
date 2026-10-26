@@ -301,11 +301,20 @@ const PAGE_SIZE = 1000;
 // import run directly in Supabase) and the next natural fetch. Keyed by
 // sinceDate so the unscoped (full-history) and scoped callers never collide.
 const COMPANY_TICKETS_CACHE_TTL_MS = 15_000;
-const companyTicketsCache = new Map<string, { data: Ticket[]; expiresAt: number }>();
+// After the first full load, a refresh only downloads tickets whose
+// updated_at moved since the last load (the tickets trigger stamps it on
+// every update, and new tickets get it on insert) and merges them in — a
+// handful of rows instead of the whole history (~12,700 tickets, ~25 MB).
+// A complete reload still happens every FULL_RELOAD_MS, which also drops
+// deleted tickets and picks up customer-only edits (those don't touch the
+// ticket row).
+const COMPANY_TICKETS_FULL_RELOAD_MS = 10 * 60_000;
+const companyTicketsCache = new Map<string, { data: Ticket[]; expiresAt: number; fullLoadedAt: number; maxUpdatedAt: string }>();
 const companyTicketsInFlight = new Map<string, Promise<Ticket[]>>();
 
+/** After an in-app ticket write: the next read refreshes (changed tickets only), instead of trusting the cache. */
 export function invalidateCompanyTicketsCache(): void {
-  companyTicketsCache.clear();
+  for (const entry of companyTicketsCache.values()) entry.expiresAt = 0;
 }
 
 /**
@@ -373,13 +382,58 @@ export async function getCompanyTickets(options?: { sinceDate?: string }): Promi
   const inFlight = companyTicketsInFlight.get(cacheKey);
   if (inFlight) return cloneTickets(await inFlight);
 
-  const promise = fetchCompanyTicketsUncached(sinceDate).finally(() => {
+  const canRefreshChanged = !!cached && Date.now() - cached.fullLoadedAt < COMPANY_TICKETS_FULL_RELOAD_MS && !!cached.maxUpdatedAt;
+  const promise = (async () => {
+    if (canRefreshChanged) {
+      try {
+        return await refreshChangedTickets(cacheKey, cached!, sinceDate);
+      } catch (err) {
+        console.warn("getCompanyTickets: changed-only refresh failed, doing a full load:", err);
+      }
+    }
+    const tracker = { maxUpdatedAt: "" };
+    const rows = await fetchCompanyTicketsUncached(sinceDate, undefined, tracker);
+    companyTicketsCache.set(cacheKey, { data: rows, expiresAt: Date.now() + COMPANY_TICKETS_CACHE_TTL_MS, fullLoadedAt: Date.now(), maxUpdatedAt: tracker.maxUpdatedAt });
+    return rows;
+  })().finally(() => {
     companyTicketsInFlight.delete(cacheKey);
   });
   companyTicketsInFlight.set(cacheKey, promise);
-  const rows = await promise;
-  companyTicketsCache.set(cacheKey, { data: rows, expiresAt: Date.now() + COMPANY_TICKETS_CACHE_TTL_MS });
-  return cloneTickets(rows);
+  return cloneTickets(await promise);
+}
+
+/** Download only tickets changed since the cached load and merge them in by id. */
+async function refreshChangedTickets(
+  cacheKey: string,
+  cached: { data: Ticket[]; fullLoadedAt: number; maxUpdatedAt: string },
+  sinceDate?: string,
+): Promise<Ticket[]> {
+  // gte, not gt: several rows can share the newest timestamp; re-merging one is harmless.
+  const { data, error } = await selectAllPages<any>(() => {
+    let q = supabase.from("tickets").select(SELECT).gte("updated_at", cached.maxUpdatedAt);
+    if (sinceDate) q = q.gte("created_at", sinceDate);
+    return q.order("updated_at", { ascending: true }).order("id", { ascending: true });
+  });
+  if (error) throw new Error(error.message);
+  let maxUpdatedAt = cached.maxUpdatedAt;
+  const changed = new Map<string, Ticket>();
+  for (const row of data) {
+    if (row.updated_at && row.updated_at > maxUpdatedAt) maxUpdatedAt = row.updated_at;
+    changed.set(row.id, rowToTicket(row));
+  }
+  let merged = cached.data;
+  if (changed.size > 0) {
+    merged = cached.data.map((t) => {
+      const id = (t as Ticket & { _id?: string })._id;
+      const next = id ? changed.get(id) : undefined;
+      if (next && id) changed.delete(id);
+      return next ?? t;
+    });
+    // Brand-new tickets: newest first, like a full load (created_at desc).
+    merged = [...changed.values(), ...merged];
+  }
+  companyTicketsCache.set(cacheKey, { data: merged, expiresAt: Date.now() + COMPANY_TICKETS_CACHE_TTL_MS, fullLoadedAt: cached.fullLoadedAt, maxUpdatedAt });
+  return merged;
 }
 
 // At least one existing caller (Work Planner's visit-technician overlay)
@@ -409,7 +463,11 @@ export async function getCompanyTicketsWithStatuses(statuses: string[]): Promise
   return fetchCompanyTicketsUncached(undefined, terms.map((s) => `status.ilike.*${s}*`).join(","));
 }
 
-async function fetchCompanyTicketsUncached(sinceDate?: string, orFilter?: string): Promise<Ticket[]> {
+async function fetchCompanyTicketsUncached(sinceDate?: string, orFilter?: string, tracker?: { maxUpdatedAt: string }): Promise<Ticket[]> {
+  const track = (rows: any[] | null) => {
+    if (!tracker) return;
+    for (const r of rows ?? []) if (r.updated_at && r.updated_at > tracker.maxUpdatedAt) tracker.maxUpdatedAt = r.updated_at;
+  };
   // created_at is NOT unique — a bulk import can give thousands of rows the
   // same timestamp, and range()-based paging over a non-unique sort key
   // silently drops/duplicates rows across page boundaries. id is the stable
@@ -424,6 +482,7 @@ async function fetchCompanyTicketsUncached(sinceDate?: string, orFilter?: string
     throw new Error(first.error.message);
   }
 
+  track(first.data);
   const all: Ticket[] = (first.data ?? []).map(rowToTicket);
   const total = first.count ?? all.length;
   if (total <= PAGE_SIZE) return all;
@@ -436,6 +495,7 @@ async function fetchCompanyTicketsUncached(sinceDate?: string, orFilter?: string
       console.error("getCompanyTickets error:", error.message);
       throw new Error(error.message);
     }
+    track(data);
     all.push(...(data ?? []).map(rowToTicket));
   }
   return all;
