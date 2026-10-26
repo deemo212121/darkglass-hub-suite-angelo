@@ -37,7 +37,7 @@ import { useAuth } from "@/lib/auth";
 import { nowInTimezone, DEFAULT_ATTENDANCE_TIMEZONE } from "@/lib/attendanceGrace";
 import { normalizeRole, ROLE_LABELS, isJotformHrRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { useAllRoleOptions } from "@/lib/customRoles";
-import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, getProfileCredentialsPreview, setTraineeAccessGranted, type EmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, getProfileCredentialsPreview, setTraineeAccessGranted, getUserStatusChanges, recordAccountStatusChange, type AccountStatusChange, type EmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
 import { CorrectionManagerSignModal, CorrectionHrSignModal } from "@/components/CorrectionSignModals";
 import { PtoManagerSignModal, PtoHrSignModal } from "@/components/PtoSignModals";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
@@ -402,6 +402,8 @@ interface Employee {
   terminationDate?: string;
   terminationReason?: string;
   status: EmploymentStatus;
+  /** Can this person log in (profiles.is_active)? Normally follows `status`, but User Management can reactivate a login on its own. */
+  accountActive?: boolean;
   /** Trainee vs Regular — a separate classification from `status` (Account Status) above. See migration 0152. */
   employmentType: "trainee" | "regular";
   /** HR override (migration 0268/0271) — a trainee with this set gets full access to their real role despite employmentType still being "trainee". See users.ts's setTraineeAccessGranted. */
@@ -1654,10 +1656,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // address, etc. with a partial save.
   const [employeeInfoByProfileId, setEmployeeInfoByProfileId] = useState<Map<string, EmployeeInfo>>(new Map());
 
-  const [confirmDialog, setConfirmDialog] = useState<{ show: boolean; employeeId: string; employeeName: string; newStatus: EmploymentStatus; effectiveDate: string } | null>(null);
+  // `reason` is asked for when the change reactivates someone (status back to Active).
+  const [confirmDialog, setConfirmDialog] = useState<{ show: boolean; employeeId: string; employeeName: string; newStatus: EmploymentStatus; effectiveDate: string; reason?: string } | null>(null);
+  // Each account's latest Activate/Deactivate from User Management's Activity
+  // Log — the reactivation date, who did it and the reason, shown under the
+  // Master List's status (written here and by User Management alike).
+  const [accountStatusChanges, setAccountStatusChanges] = useState<Map<string, AccountStatusChange>>(new Map());
 
   const loadEmployees = async () => {
     setEmployeesLoading(true);
+    void getUserStatusChanges().then(setAccountStatusChanges).catch((err) => console.error("Failed to load account status changes:", err));
     try {
       const profiles = await getCompanyUsers();
 
@@ -1690,6 +1698,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           terminationDate: info.employmentStatusDate || info.terminateDate || undefined,
           terminationReason: info.employeeNote || undefined,
           status: employmentStatus,
+          accountActive: p.is_active,
           employmentType: p.employment_type || "regular",
           traineeAccessGranted: p.trainee_access_granted === true,
           tierLevel: p.tier_level ?? null,
@@ -16787,21 +16796,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   // ── Employee status handlers (now real — persists to employee_info + is_active) ──
   const handleUpdateEmployeeStatus = (id: string, newStatus: EmploymentStatus) => {
-    if (newStatus === "terminated" || newStatus === "resigned" || newStatus === "inactive") {
-      const employee = employees.find(e => e.id === id);
+    const employee = employees.find(e => e.id === id);
+    // Reactivating (back to Active from Inactive / Terminated / Resigned) asks
+    // why, same as User Management's Reactivate — see the confirm dialog.
+    const reactivating = newStatus === "active" && !!employee && employee.status !== "active";
+    if (newStatus === "terminated" || newStatus === "resigned" || newStatus === "inactive" || reactivating) {
       // Defaults to today, but the confirm dialog's own date input lets this
       // be corrected before saving — e.g. HR processing a termination a few
       // days after the person's actual last day shouldn't stamp the
       // Separation Date with "today" instead of when they really left.
-      if (employee) setConfirmDialog({ show: true, employeeId: id, employeeName: employee.name, newStatus, effectiveDate: today });
+      if (employee) setConfirmDialog({ show: true, employeeId: id, employeeName: employee.name, newStatus, effectiveDate: today, ...(reactivating ? { reason: "" } : {}) });
     } else {
       void persistEmployeeStatus(id, newStatus);
     }
   };
 
-  const persistEmployeeStatus = async (id: string, newStatus: EmploymentStatus, effectiveDate: string = today) => {
+  const persistEmployeeStatus = async (id: string, newStatus: EmploymentStatus, effectiveDate: string = today, reactivationReason?: string) => {
     const employee = employees.find((e) => e.id === id);
     const prevStatus = employee?.status;
+    const byName = displayName || "HR";
+    let accountUpdated = false;
     try {
       const info = (await getProfileEmployeeInfo(id)) || {};
       await saveProfileEmployeeInfo(id, {
@@ -16816,16 +16830,37 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         terminateDate: newStatus === "active" ? undefined : info.terminateDate,
       });
       await updateCompanyUser(id, { isActive: newStatus === "active" });
-      setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, status: newStatus, terminationDate: newStatus === "active" ? e.terminationDate : effectiveDate } : e)));
-      void logActivity({ action: "employee_status_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { from: prevStatus, to: newStatus, status: newStatus, effectiveDate } });
+      accountUpdated = true;
+      setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, status: newStatus, accountActive: newStatus === "active", terminationDate: newStatus === "active" ? e.terminationDate : effectiveDate } : e)));
+      void logActivity({ action: "employee_status_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { from: prevStatus, to: newStatus, status: newStatus, effectiveDate, ...(reactivationReason ? { reason: reactivationReason } : {}) } });
+      // Account Activate / Deactivate goes in User Management's Activity Log
+      // too — where both pages read the reactivation date and reason from,
+      // and User Management's Status date. A reactivation waits on it (and
+      // reports a failure) so the reason is never silently lost.
+      const change = reactivationReason
+        ? { action: "user_activated" as const, reason: reactivationReason }
+        : newStatus !== "active" && employee?.accountActive
+          ? { action: "user_deactivated" as const, reason: undefined }
+          : null;
+      if (change) {
+        const record = recordAccountStatusChange({ profileId: id, label: employee?.name || id, action: change.action, byName, reason: change.reason, date: effectiveDate, source: "master-list" });
+        if (change.action === "user_activated") await record;
+        else void record.catch((err) => console.error("Failed to log the account deactivation:", err));
+        setAccountStatusChanges((prev) => new Map(prev).set(id, { action: change.action, at: new Date().toISOString(), date: effectiveDate, reason: change.reason ?? null, byName }));
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update employment status.");
+      const message = err instanceof Error ? err.message : "Failed to update employment status.";
+      setError(accountUpdated && reactivationReason ? `${employee?.name || "This employee"} was reactivated, but the reason couldn't be saved: ${message}` : message);
     }
   };
 
   const handleConfirmStatusChange = async () => {
     if (!confirmDialog) return;
-    await persistEmployeeStatus(confirmDialog.employeeId, confirmDialog.newStatus, confirmDialog.effectiveDate);
+    const reactivating = confirmDialog.reason !== undefined;
+    const reason = (confirmDialog.reason ?? "").trim();
+    // The Confirm button stays disabled until a reason is entered.
+    if (reactivating && !reason) return;
+    await persistEmployeeStatus(confirmDialog.employeeId, confirmDialog.newStatus, confirmDialog.effectiveDate, reactivating ? reason : undefined);
     setConfirmDialog(null);
   };
 
@@ -17539,9 +17574,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     try {
       const patch: Partial<Employee> = {};
 
-      // Terminated/Resigned/Inactive all route through the existing confirm
-      // dialog (they all deactivate the account too), which persists (and
-      // logs) on its own once confirmed — only "active" commits directly.
+      // Terminated/Resigned/Inactive route through the existing confirm
+      // dialog (they all deactivate the account too), and so does a
+      // reactivation (back to Active — it asks for the reason); the dialog
+      // persists (and logs) on its own once confirmed.
       if (popupDraft.status !== original.status) {
         handleUpdateEmployeeStatus(id, popupDraft.status);
       }
@@ -20991,6 +21027,27 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           <option value="terminated" className="bg-slate-800 text-white">Terminated</option>
                           <option value="resigned" className="bg-slate-800 text-white">Resigned</option>
                         </select>
+                        {(() => {
+                          // Reactivated: when, by whom and why — from the account's
+                          // latest Activate/Deactivate (this page or User Management).
+                          // Amber when the login was switched back on while HR still
+                          // has them Inactive / Terminated / Resigned.
+                          const change = accountStatusChanges.get(employee.id);
+                          if (!employee.accountActive || change?.action !== "user_activated") return null;
+                          const loginOnly = employee.status !== "active";
+                          const when = formatISODate(change.date ?? change.at, { year: "numeric", month: "short", day: "numeric" });
+                          return (
+                            <div
+                              className="mt-0.5 max-w-[170px] text-[9px] leading-tight"
+                              title={`${loginOnly ? "Login reactivated" : "Reactivated"} ${when}${change.byName ? ` by ${change.byName}` : ""}\nReason: ${change.reason || "none recorded"}`}
+                            >
+                              <div className={`whitespace-nowrap ${loginOnly ? "text-amber-300" : "text-sky-300"}`}>
+                                {loginOnly ? "Login reactivated" : "Reactivated"} {when}{change.byName ? ` · ${change.byName}` : ""}
+                              </div>
+                              <div className={`truncate ${change.reason ? "text-slate-300" : "italic text-slate-500"}`}>{change.reason || "No reason recorded"}</div>
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-2 py-1">
                         <input
@@ -36314,7 +36371,53 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       )}
 
       {/* Confirmation Dialog */}
-      {confirmDialog?.show && (
+      {confirmDialog?.show && confirmDialog.reason !== undefined && (
+        // Reactivating: back to Active from Inactive / Terminated / Resigned.
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">Reactivate Employee</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Mark <span className="font-semibold text-white">{confirmDialog.employeeName}</span> as <span className="font-semibold text-white">Active</span> again? Their account will be able to log in.
+            </p>
+            <div className="flex flex-col gap-1 mb-3">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Reactivation Date</label>
+              <input
+                type="date"
+                value={confirmDialog.effectiveDate}
+                max={today}
+                onChange={(e) => setConfirmDialog({ ...confirmDialog, effectiveDate: e.target.value || today })}
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+            </div>
+            <div className="flex flex-col gap-1 mb-4">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                Reason for reactivating <span className="text-red-400">*</span>
+              </label>
+              <textarea
+                value={confirmDialog.reason}
+                onChange={(e) => setConfirmDialog({ ...confirmDialog, reason: e.target.value })}
+                rows={3}
+                maxLength={500}
+                placeholder="e.g. Rehired, returned from leave, deactivated by mistake"
+                className="glass-input text-sm py-1.5 px-3 rounded-md resize-y"
+              />
+              <p className="text-[10px] text-muted-foreground mt-0.5">Shown with the reactivation date under their status here and in User Management.</p>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={handleCancelStatusChange} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleConfirmStatusChange}
+                disabled={!confirmDialog.reason.trim()}
+                className="btn text-sm px-4 py-2 text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Confirm Reactivation
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDialog?.show && confirmDialog.reason === undefined && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm">
             <h3 className="text-lg font-bold mb-2">Confirm Status Change</h3>

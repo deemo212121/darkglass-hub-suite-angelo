@@ -1112,20 +1112,33 @@ export async function getAccountCreatorsByEmail(): Promise<Map<string, { created
   return result;
 }
 
+/** An account's latest Activate / Deactivate (see getUserStatusChanges). */
+export interface AccountStatusChange {
+  action: "user_activated" | "user_deactivated";
+  /** When it was done (the log entry's timestamp). */
+  at: string;
+  /** The day it took effect ("YYYY-MM-DD") when one was picked — reactivations from 2026-10-26 on; otherwise use `at`. */
+  date: string | null;
+  /** Why the account was reactivated — asked for since 2026-10-26, so null on older entries. */
+  reason: string | null;
+  byName: string | null;
+}
+
 /**
- * Most recent Activate/Deactivate timestamp per profile, sourced from the
- * User Management Activity Log (module_activity_log) rather than a DB
- * column — that log has already been recording every real toggle since
+ * Most recent Activate/Deactivate per profile, sourced from the User
+ * Management Activity Log (module_activity_log) rather than a DB column —
+ * that log has already been recording every real toggle since
  * handleToggleUserActive started calling logModuleActivity, so this gives
  * real history for accounts deactivated long before this lookup existed,
  * not just ones toggled from now on. Unlike user_created's targetId (a
  * Firebase uid — see getAccountCreatorsByEmail above), user_activated/
- * user_deactivated's targetId is the Supabase profile id (row.profileId in
- * AdminUserManagementPage.tsx's handleToggleUserActive), so this keys
- * straight off profileId with no email/uid indirection needed.
+ * user_deactivated's targetId is the Supabase profile id, so this keys
+ * straight off profileId with no email/uid indirection needed. User
+ * Management and HR's Master List both write these entries
+ * (recordAccountStatusChange) and both read them back here.
  */
-export async function getUserStatusChangeDates(): Promise<Map<string, string>> {
-  const result = new Map<string, string>();
+export async function getUserStatusChanges(): Promise<Map<string, AccountStatusChange>> {
+  const result = new Map<string, AccountStatusChange>();
   const [activated, deactivated] = await Promise.all([
     getModuleActivityLogByAction("user-management", "user_activated"),
     getModuleActivityLogByAction("user-management", "user_deactivated"),
@@ -1136,9 +1149,51 @@ export async function getUserStatusChangeDates(): Promise<Map<string, string>> {
   const merged = [...activated, ...deactivated].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   for (const entry of merged) {
     if (!entry.targetId || result.has(entry.targetId)) continue;
-    result.set(entry.targetId, entry.createdAt);
+    const reason = typeof entry.details?.reason === "string" ? entry.details.reason.trim() : "";
+    const date = typeof entry.details?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(entry.details.date) ? entry.details.date : null;
+    result.set(entry.targetId, {
+      action: entry.action as AccountStatusChange["action"],
+      at: entry.createdAt,
+      date,
+      reason: reason || null,
+      byName: entry.actorName,
+    });
   }
   return result;
+}
+
+/**
+ * Log an account Activate / Deactivate in User Management's Activity Log —
+ * the record User Management and HR's Master List read the status date and
+ * the reactivation reason back from (getUserStatusChanges). Unlike
+ * logModuleActivity this throws, so a reactivation never quietly goes
+ * through with its reason unsaved.
+ */
+export async function recordAccountStatusChange(input: {
+  profileId: string;
+  label: string;
+  action: AccountStatusChange["action"];
+  byName: string;
+  /** Required by both pages' Reactivate dialogs. */
+  reason?: string;
+  /** "YYYY-MM-DD" the change took effect. */
+  date?: string;
+  source: "user-management" | "master-list";
+}): Promise<void> {
+  const { error } = await supabase.from("module_activity_log").insert({
+    module: "user-management",
+    actor_name: input.byName,
+    action: input.action,
+    target_type: "profile",
+    target_id: input.profileId,
+    target_label: input.label,
+    details: {
+      ...(input.reason?.trim() ? { reason: input.reason.trim() } : {}),
+      ...(input.date ? { date: input.date } : {}),
+      source: input.source,
+    },
+  });
+  if (error) throw new Error(error.message);
 }
 
 /**

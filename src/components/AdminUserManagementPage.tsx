@@ -7,13 +7,14 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { type UserManagementRecord } from "@/lib/user-management";
 import { useAuth } from "@/lib/auth";
-import { createCompanyUser, getCompanyUsers, updateCompanyUser, setMustChangePassword, getUserStatusChangeDates, saveProfileEmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
+import { createCompanyUser, getCompanyUsers, updateCompanyUser, setMustChangePassword, getUserStatusChanges, recordAccountStatusChange, saveProfileEmployeeInfo, type AccountStatusChange, type ProfileRow } from "@/lib/supabase/users";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { useAllRoleOptions } from "@/lib/customRoles";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
+import { todayISO, formatISODate } from "@/lib/localDate";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getCompanyWeeklyPasswordResetEnabled, setCompanyWeeklyPasswordResetEnabled } from "@/lib/supabase/companySettings";
 import { Switch } from "@/components/ui/switch";
@@ -405,9 +406,11 @@ function RoleMultiSelect({
 // the sole basis for an eligibility check. `extraRoles` (held roles, same
 // as canReviewPtoStage's convention) must be checked alongside it anywhere
 // this file asks "does this person hold role X" — see managerCandidates.
-type UserRow = UserManagementRecord & { profileId: string; firebaseUid: string; extraRoles: string[] };
+// `lastStatusChange` is the account's latest Activate/Deactivate (who, when,
+// and the reason given when it was a reactivation) — see getUserStatusChanges.
+type UserRow = UserManagementRecord & { profileId: string; firebaseUid: string; extraRoles: string[]; lastStatusChange: AccountStatusChange | null };
 
-function mapProfilesToRecords(profiles: ProfileRow[], statusChangeDates: Map<string, string> = new Map()): UserRow[] {
+function mapProfilesToRecords(profiles: ProfileRow[], statusChanges: Map<string, AccountStatusChange> = new Map()): UserRow[] {
   return profiles.map((p, index) => ({
     profileId: p.id,
     firebaseUid: p.firebase_uid,
@@ -422,7 +425,8 @@ function mapProfilesToRecords(profiles: ProfileRow[], statusChangeDates: Map<str
     office: p.assigned_branch || "",
     locations: p.branch_access || "",
     isActive: p.is_active,
-    statusChangedAt: statusChangeDates.get(p.id) ?? null,
+    statusChangedAt: (() => { const c = statusChanges.get(p.id); return c ? c.date ?? c.at : null; })(),
+    lastStatusChange: statusChanges.get(p.id) ?? null,
   }));
 }
 
@@ -811,6 +815,9 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   };
   const [creatingUser, setCreatingUser] = useState(false);
   const [deactivateTarget, setDeactivateTarget] = useState<UserRow | null>(null);
+  // Reactivate dialog: why the account is coming back, and from which day.
+  const [reactivateReason, setReactivateReason] = useState("");
+  const [reactivateDate, setReactivateDate] = useState(() => todayISO());
   const [togglingActive, setTogglingActive] = useState(false);
   const [resetModal, setResetModal] = useState<{ mode: "single"; row: UserRow } | { mode: "all" } | null>(null);
   const [resettingPassword, setResettingPassword] = useState(false);
@@ -909,8 +916,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       }
       try {
         setLoading(true);
-        const [profiles, statusChangeDates] = await Promise.all([getCompanyUsers(), getUserStatusChangeDates()]);
-        setUsers(mapProfilesToRecords(profiles, statusChangeDates));
+        const [profiles, statusChanges] = await Promise.all([getCompanyUsers(), getUserStatusChanges()]);
+        setUsers(mapProfilesToRecords(profiles, statusChanges));
       } catch (error) {
         console.error("❌ Error loading users:", error);
         alert(`Error loading users: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -1198,28 +1205,45 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     }));
   };
 
+  const openToggleUserActive = (row: UserRow) => {
+    setReactivateReason("");
+    setReactivateDate(todayISO());
+    setDeactivateTarget(row);
+  };
+
   const handleToggleUserActive = async (row: UserRow) => {
     const reactivating = row.isActive === false;
+    const reason = reactivateReason.trim();
+    // Reactivating asks why (the button stays disabled until it's filled in).
+    if (reactivating && !reason) return;
     setTogglingActive(true);
+    let toggled = false;
     try {
       await updateCompanyUser(row.profileId, { isActive: reactivating });
-      // Awaited (not fire-and-forget) — the status date shown right below
-      // now comes from this very log entry, so it must land before the
-      // re-fetch just after, or the just-toggled row would show no date
-      // until the next full reload.
-      await logModuleActivity({
-        module: "user-management",
-        actorName: auth.displayName || auth.email || "Admin",
+      toggled = true;
+      // Awaited (not fire-and-forget) — the status date and the reactivation
+      // reason shown in the Status column come from this very log entry, so
+      // it must land before the re-fetch just after.
+      await recordAccountStatusChange({
+        profileId: row.profileId,
+        label: row.userName,
         action: reactivating ? "user_activated" : "user_deactivated",
-        targetType: "profile",
-        targetId: row.profileId,
-        targetLabel: row.userName,
+        byName: auth.displayName || auth.email || "Admin",
+        ...(reactivating ? { reason, date: reactivateDate || todayISO() } : {}),
+        source: "user-management",
       });
-      const [profiles, statusChangeDates] = await Promise.all([getCompanyUsers(), getUserStatusChangeDates()]);
-      setUsers(mapProfilesToRecords(profiles, statusChangeDates));
+      const [profiles, statusChanges] = await Promise.all([getCompanyUsers(), getUserStatusChanges()]);
+      setUsers(mapProfilesToRecords(profiles, statusChanges));
     } catch (error) {
       console.error("Toggle active error:", error);
-      alert(`Error ${reactivating ? "reactivating" : "deactivating"} user: ${error instanceof Error ? error.message : "Unknown error"}`);
+      const message = error instanceof Error ? error.message : "Unknown error";
+      alert(toggled
+        ? `${row.userName} was ${reactivating ? "reactivated" : "deactivated"}, but it couldn't be recorded${reactivating ? " with the reason" : ""}: ${message}`
+        : `Error ${reactivating ? "reactivating" : "deactivating"} user: ${message}`);
+      if (toggled) {
+        const [profiles, statusChanges] = await Promise.all([getCompanyUsers(), getUserStatusChanges()]).catch(() => [null, null] as const);
+        if (profiles && statusChanges) setUsers(mapProfilesToRecords(profiles, statusChanges));
+      }
     } finally {
       setTogglingActive(false);
       setDeactivateTarget(null);
@@ -1420,8 +1444,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       });
 
       // Reload users from Supabase
-      const [profiles, statusChangeDates] = await Promise.all([getCompanyUsers(), getUserStatusChangeDates()]);
-      setUsers(mapProfilesToRecords(profiles, statusChangeDates));
+      const [profiles, statusChanges] = await Promise.all([getCompanyUsers(), getUserStatusChanges()]);
+      setUsers(mapProfilesToRecords(profiles, statusChanges));
 
       // Reset form
       setNewUserForm({
@@ -1703,10 +1727,24 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                         >
                           {record.isActive === false ? "Deactivated" : "Active"}
                         </span>
-                        {record.statusChangedAt && (
+                        {record.isActive !== false && record.lastStatusChange?.action === "user_activated" ? (
+                          // Reactivated: when, by whom, and the reason given.
+                          <div
+                            className="mt-1 max-w-[190px] text-[10px] leading-snug"
+                            title={`Reactivated ${formatISODate(record.lastStatusChange.date ?? record.lastStatusChange.at, { year: "numeric", month: "short", day: "numeric" })}${record.lastStatusChange.byName ? ` by ${record.lastStatusChange.byName}` : ""}\nReason: ${record.lastStatusChange.reason || "none recorded"}`}
+                          >
+                            <div className="text-sky-300 whitespace-nowrap">
+                              Reactivated {formatISODate(record.lastStatusChange.date ?? record.lastStatusChange.at, { year: "numeric", month: "short", day: "numeric" })}
+                            </div>
+                            {record.lastStatusChange.byName && <div className="text-slate-500 truncate">by {record.lastStatusChange.byName}</div>}
+                            <div className={`line-clamp-2 ${record.lastStatusChange.reason ? "text-slate-300" : "italic text-slate-500"}`}>
+                              {record.lastStatusChange.reason || "No reason recorded"}
+                            </div>
+                          </div>
+                        ) : record.statusChangedAt && (
                           <div className="mt-1 text-[10px] text-slate-400 whitespace-nowrap">
                             {record.isActive === false ? "on " : "since "}
-                            {new Date(record.statusChangedAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+                            {formatISODate(record.statusChangedAt, { year: "numeric", month: "short", day: "numeric" })}
                           </div>
                         )}
                       </td>
@@ -1723,7 +1761,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           </button>
                           <button
                             type="button"
-                            onClick={() => setDeactivateTarget(record)}
+                            onClick={() => openToggleUserActive(record)}
                             title={record.isActive === false ? "Reactivate" : "Deactivate"}
                             aria-label={record.isActive === false ? "Reactivate" : "Deactivate"}
                             className={
@@ -2095,6 +2133,36 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 ? `Reactivate ${deactivateTarget.userName} (${deactivateTarget.email})? They'll be able to log in again.`
                 : `Deactivate ${deactivateTarget.userName} (${deactivateTarget.email})? They won't be able to log in, but their records stay intact.`}
             </p>
+            {deactivateTarget.isActive === false && (
+              <div className="mt-4 space-y-3">
+                <div>
+                  <label htmlFor="reactivate-date" className="block text-[11px] font-semibold uppercase tracking-wide text-slate-400">Reactivation date</label>
+                  <input
+                    id="reactivate-date"
+                    type="date"
+                    value={reactivateDate}
+                    max={todayISO()}
+                    onChange={(e) => setReactivateDate(e.target.value || todayISO())}
+                    className="glass-input mt-1 w-full rounded-md px-3 py-1.5 text-sm"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="reactivate-reason" className="block text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    Reason for reactivating <span className="text-red-400">*</span>
+                  </label>
+                  <textarea
+                    id="reactivate-reason"
+                    value={reactivateReason}
+                    onChange={(e) => setReactivateReason(e.target.value)}
+                    rows={3}
+                    maxLength={500}
+                    placeholder="e.g. Rehired, returned from leave, deactivated by mistake"
+                    className="glass-input mt-1 w-full resize-y rounded-md px-3 py-2 text-sm"
+                  />
+                  <p className="mt-1 text-[10px] text-slate-500">Shown with the reactivation date in User Management's Status column and on the Master List.</p>
+                </div>
+              </div>
+            )}
             <div className="mt-5 flex justify-end gap-3">
               <button type="button" onClick={() => setDeactivateTarget(null)} disabled={togglingActive} className="btn hover:bg-slate-800">
                 Cancel
@@ -2102,7 +2170,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
               <button
                 type="button"
                 onClick={() => handleToggleUserActive(deactivateTarget)}
-                disabled={togglingActive}
+                disabled={togglingActive || (deactivateTarget.isActive === false && !reactivateReason.trim())}
                 className={deactivateTarget.isActive === false ? "btn btn-primary" : "btn btn-danger"}
               >
                 {togglingActive
@@ -2120,8 +2188,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
           onClose={() => setShowWorkingHoursModal(false)}
           changedByName={auth.displayName || auth.email || "Admin"}
           onApplied={async () => {
-            const [profiles, schedules, statusChangeDates] = await Promise.all([getCompanyUsers(), getBranchRoleSchedules(), getUserStatusChangeDates()]);
-            setUsers(mapProfilesToRecords(profiles, statusChangeDates));
+            const [profiles, schedules, statusChanges] = await Promise.all([getCompanyUsers(), getBranchRoleSchedules(), getUserStatusChanges()]);
+            setUsers(mapProfilesToRecords(profiles, statusChanges));
             setBranchSchedules(schedules);
           }}
         />
