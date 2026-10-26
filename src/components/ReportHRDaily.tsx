@@ -98,10 +98,12 @@ import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
 import { repairMultiSignerPdfs, type RepairResult } from "@/lib/repairMultiSignerSignatures";
 import { useSortableSearchTable } from "@/hooks/useSortableSearchTable";
 import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
-import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
+import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, masterW2OfficeUsesAdminHub, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
+import { agreementLogoLoader } from "@/lib/agreementBranding";
+import { MASTER_W2_OFFICE_AGREEMENT_CURRENT_VERSION } from "@/lib/signableDocumentRegistry";
 import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
 import { masterW2ExecutiveAgreementStyles, buildMasterW2ExecutiveAgreementBodyMarkup, type MasterW2ExecutiveAgreementFormData } from "@/lib/masterW2ExecutiveAgreementFormTemplate";
-import { confidentialityNonCompeteAgreementStyles, buildConfidentialityNonCompeteAgreementBodyMarkup, captureConfidentialityNonCompeteAgreementPdf, CNC_CURRENT_TEMPLATE_VERSION, confidentialityAgreementTitle, type ConfidentialityNonCompeteAgreementFormData } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
+import { confidentialityNonCompeteAgreementStyles, buildConfidentialityNonCompeteAgreementBodyMarkup, captureConfidentialityNonCompeteAgreementPdf, CNC_CURRENT_TEMPLATE_VERSION, confidentialityAgreementTitle, confidentialityUsesAdminHub, type ConfidentialityNonCompeteAgreementFormData } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
 import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments";
 import {
   createSignableDocument,
@@ -5702,6 +5704,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       employeeSignatureDataUrl: "",
       employerDateSigned: "",
       employerSignatureDataUrl: "",
+      templateVersion: MASTER_W2_OFFICE_AGREEMENT_CURRENT_VERSION,
     };
   };
 
@@ -5718,7 +5721,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setMasterW2OfficeAgreementPreviewLoading(true);
     try {
       const recipientName = employees.find((e) => e.id === masterW2OfficeAgreementRecipientId)?.name || "";
-      const logo = masterW2OfficeAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
+      const logo = await loadImageDataUrl(agreementLogoLoader(true));
       const pdfBlob = await captureHtmlToPdfBlob(buildMasterW2OfficeAgreementBodyMarkup(buildMasterW2OfficeAgreementPreviewData(recipientName), logo), masterW2OfficeAgreementStyles);
       const url = URL.createObjectURL(pdfBlob);
       setMasterW2OfficeAgreementPreviewPdfUrl(url);
@@ -5744,7 +5747,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       const doc = await createSignableDocument({
         documentType: "master_w2_office_agreement",
-        formData: { employeeId: recipient.id, employeeName: recipient.name } as unknown as Record<string, any>,
+        formData: { employeeId: recipient.id, employeeName: recipient.name, templateVersion: MASTER_W2_OFFICE_AGREEMENT_CURRENT_VERSION } as unknown as Record<string, any>,
         recipientId: masterW2OfficeAgreementRecipientId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -5793,8 +5796,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setMasterW2OfficeAgreementActionBusyId(doc.id);
     setMasterW2OfficeAgreementActionError(null);
     try {
-      const logo = masterW2OfficeAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
-      if (!masterW2OfficeAgreementLogoDataUrl) setMasterW2OfficeAgreementLogoDataUrl(logo);
+      // The logo of the wording it was signed in (agreementBranding.ts).
+      const logo = await loadImageDataUrl(agreementLogoLoader(masterW2OfficeUsesAdminHub(doc.formData)));
       await regenerateMasterAgreementPdf(doc, logo, buildMasterW2OfficeAgreementBodyMarkup, masterW2OfficeAgreementStyles, uploadMasterW2OfficeAgreementForm, name);
       await loadSentMasterW2OfficeAgreementForms();
     } catch (err) {
@@ -5840,14 +5843,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [masterW2OfficeAgreementEmployerSaving, setMasterW2OfficeAgreementEmployerSaving] = useState(false);
   const [masterW2OfficeAgreementEmployerError, setMasterW2OfficeAgreementEmployerError] = useState<string | null>(null);
   const masterW2OfficeAgreementEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
-  const [masterW2OfficeAgreementLogoDataUrl, setMasterW2OfficeAgreementLogoDataUrl] = useState("");
 
   const handleOpenMasterW2OfficeAgreementEmployerDialog = (doc: SignableDocument) => {
     setMasterW2OfficeAgreementEmployerDialog(doc);
     setMasterW2OfficeAgreementEmployerError(null);
-    if (!masterW2OfficeAgreementLogoDataUrl) {
-      loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")).then(setMasterW2OfficeAgreementLogoDataUrl).catch(() => {});
-    }
   };
 
   const handleSaveMasterW2OfficeAgreementEmployerSignature = async () => {
@@ -5876,7 +5875,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       const merged: MasterW2OfficeAgreementFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt, employerName: displayName || "" };
 
-      const logo = masterW2OfficeAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
+      const logo = await loadImageDataUrl(agreementLogoLoader(masterW2OfficeUsesAdminHub(merged)));
       const pdfBlob = await captureHtmlToPdfBlob(buildMasterW2OfficeAgreementBodyMarkup(merged, logo), masterW2OfficeAgreementStyles);
       const pdfUrl = await uploadMasterW2OfficeAgreementForm(masterW2OfficeAgreementEmployerDialog.companyId, existing.employeeName || "master-w2-office-agreement", pdfBlob);
 
@@ -6310,7 +6309,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setConfidentialityNonCompeteAgreementPreviewLoading(true);
     try {
       const recipientName = employees.find((e) => e.id === confidentialityNonCompeteAgreementRecipientId)?.name || "";
-      const logo = confidentialityNonCompeteAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
+      const logo = await loadImageDataUrl(agreementLogoLoader(true));
       const pdfBlob = await captureConfidentialityNonCompeteAgreementPdf(buildConfidentialityNonCompeteAgreementPreviewData(recipientName), logo);
       const url = URL.createObjectURL(pdfBlob);
       setConfidentialityNonCompeteAgreementPreviewPdfUrl(url);
@@ -6394,8 +6393,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setConfidentialityNonCompeteAgreementActionBusyId(doc.id);
     setConfidentialityNonCompeteAgreementActionError(null);
     try {
-      const logo = confidentialityNonCompeteAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
-      if (!confidentialityNonCompeteAgreementLogoDataUrl) setConfidentialityNonCompeteAgreementLogoDataUrl(logo);
+      const logo = await loadImageDataUrl(agreementLogoLoader(confidentialityUsesAdminHub(doc.formData)));
       await regenerateMasterAgreementPdf(doc, logo, buildConfidentialityNonCompeteAgreementBodyMarkup, confidentialityNonCompeteAgreementStyles, uploadConfidentialityNonCompeteAgreementForm, name, captureConfidentialityNonCompeteAgreementPdf);
       await loadSentConfidentialityNonCompeteAgreementForms();
     } catch (err) {
@@ -6446,15 +6444,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [confidentialityNonCompeteAgreementEmployerSaving, setConfidentialityNonCompeteAgreementEmployerSaving] = useState(false);
   const [confidentialityNonCompeteAgreementEmployerError, setConfidentialityNonCompeteAgreementEmployerError] = useState<string | null>(null);
   const confidentialityNonCompeteAgreementEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
-  const [confidentialityNonCompeteAgreementLogoDataUrl, setConfidentialityNonCompeteAgreementLogoDataUrl] = useState("");
 
   const handleOpenConfidentialityNonCompeteAgreementEmployerDialog = (doc: SignableDocument) => {
     setConfidentialityNonCompeteAgreementEmployerDialog(doc);
     setConfidentialityNonCompeteAgreementEmployerPrintedNameTitle("");
     setConfidentialityNonCompeteAgreementEmployerError(null);
-    if (!confidentialityNonCompeteAgreementLogoDataUrl) {
-      loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")).then(setConfidentialityNonCompeteAgreementLogoDataUrl).catch(() => {});
-    }
   };
 
   const handleSaveConfidentialityNonCompeteAgreementEmployerSignature = async () => {
@@ -6492,7 +6486,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         employerPrintedNameTitle: confidentialityNonCompeteAgreementEmployerPrintedNameTitle.trim(),
       };
 
-      const logo = confidentialityNonCompeteAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
+      const logo = await loadImageDataUrl(agreementLogoLoader(confidentialityUsesAdminHub(merged)));
       const pdfBlob = await captureConfidentialityNonCompeteAgreementPdf(merged, logo);
       const pdfUrl = await uploadConfidentialityNonCompeteAgreementForm(confidentialityNonCompeteAgreementEmployerDialog.companyId, existing.employeeName || "confidentiality-noncompete-agreement", pdfBlob);
 

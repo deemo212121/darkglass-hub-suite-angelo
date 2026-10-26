@@ -73,9 +73,10 @@ import { fillFlashTechnicianTravelPdf } from "@/lib/flashTechnicianTravelPdfFill
 import type { PartsResponsibilityFormData } from "@/lib/partsResponsibilityFormTemplate";
 import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
 import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
-import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
+import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, masterW2OfficeUsesAdminHub, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
 import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
-import { captureConfidentialityNonCompeteAgreementPdf, type ConfidentialityNonCompeteAgreementFormData } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
+import { captureConfidentialityNonCompeteAgreementPdf, confidentialityUsesAdminHub, type ConfidentialityNonCompeteAgreementFormData } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
+import { agreementLogoLoader } from "@/lib/agreementBranding";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
@@ -285,7 +286,7 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
 
     const merged: MasterW2OfficeAgreementFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt, employerName: displayName || "" };
 
-    const logo = await loadAssetDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png"));
+    const logo = await loadAssetDataUrl(agreementLogoLoader(masterW2OfficeUsesAdminHub(merged)));
     const pdfBlob = await captureHtmlToPdfBlob(buildMasterW2OfficeAgreementBodyMarkup(merged, logo), masterW2OfficeAgreementStyles);
     const pdfUrl = await uploadMasterW2OfficeAgreementForm(doc.companyId, existing.employeeName || "master-w2-office-agreement", pdfBlob);
 
@@ -334,7 +335,7 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
       employerDateSigned: signedAt,
       employerPrintedNameTitle: printedNameTitle.trim(),
     };
-    const logo = await loadAssetDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png"));
+    const logo = await loadAssetDataUrl(agreementLogoLoader(confidentialityUsesAdminHub(merged)));
     const pdfBlob = await captureConfidentialityNonCompeteAgreementPdf(merged, logo);
     const pdfUrl = await uploadConfidentialityNonCompeteAgreementForm(doc.companyId, existing.employeeName || "confidentiality-noncompete-agreement", pdfBlob);
     const entry = { name: displayName || "Manager", url: signatureUrl, signedAt };
