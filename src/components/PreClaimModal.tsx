@@ -870,6 +870,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
                   category="service"
                   title=""
                   uploadedBy={displayName || email || undefined}
+                  compactChecklist
                   onPhotoClick={(photo, all) => setSidePreview({ photos: all, index: Math.max(0, all.findIndex((p) => p.fullPath === photo.fullPath)) })}
                 />
               </div>

@@ -45,7 +45,7 @@ export function ExternalFillValidIdPage({ docId }: Props) {
   const sigPad = useSignaturePad({ defaultName: form.employeeName, width: 500, height: 130 });
 
   useEffect(() => {
-    loadAssetDataUrl(() => import("@/assets/us-in-home-services-logo.png")).then(setLogoDataUrl);
+    loadAssetDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")).then(setLogoDataUrl);
   }, []);
 
   useEffect(() => {

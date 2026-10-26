@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { runTour, takeQueuedTour } from "@/lib/tours/runTour";
 import { TICKET_TOURS, ALL_TICKET_TOURS, PRACTICE_TICKET_NO, canSeeTicketTour, TICKET_TOUR_DEPARTMENT } from "@/lib/tours/ticketTours";
+import { missingRequiredPhotoTypes } from "@/lib/photoTypes";
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
@@ -2234,6 +2235,8 @@ function TicketDetailsPage() {
   // role now, so this loads for everyone, not just Admin/Claims/BizOps.
   // Uses listTicketPhotos from Firebase Storage — non-blocking, best-effort.
   const [ticketPhotoCount, setTicketPhotoCount] = useState<number | null>(null);
+  // What each photo shows (lib/photoTypes.ts) — empty strings for photos uploaded before types existed.
+  const [ticketPhotoTypes, setTicketPhotoTypes] = useState<string[]>([]);
   useEffect(() => {
     if (!authReady) return;
     let cancelled = false;
@@ -2248,7 +2251,10 @@ function TicketDetailsPage() {
         // items) and the checklist always reads "no photos" even when there
         // are some.
         const photos = await listTicketPhotos(cid, `${ticketNo}/service`);
-        if (!cancelled) setTicketPhotoCount(photos.length);
+        if (!cancelled) {
+          setTicketPhotoCount(photos.length);
+          setTicketPhotoTypes(photos.map((p) => p.photoType || ""));
+        }
       } catch {
         if (!cancelled) setTicketPhotoCount(0);
       }
@@ -4541,8 +4547,14 @@ function TicketDetailsPage() {
     const hasServiceNotes = Boolean(
       visitLogEntries.some(v => (v as any).resolution?.trim() || (v as any).diagnosis?.trim())
     );
-    const hasPhotos = (ticketPhotoCount !== null && ticketPhotoCount > 0) ||
-      partRows.some(p => (p as any).inTracking);
+    // Required photo types (Model & Serial, Before, After, Invoice). A ticket
+    // whose photos were all uploaded before types existed keeps the old rule
+    // (any photo counts) so older tickets don't suddenly turn red.
+    const anyTypedPhoto = ticketPhotoTypes.some(Boolean);
+    const missingPhotoTypes = missingRequiredPhotoTypes(ticketPhotoTypes);
+    const hasPhotos = anyTypedPhoto
+      ? missingPhotoTypes.length === 0
+      : (ticketPhotoCount !== null && ticketPhotoCount > 0) || partRows.some(p => (p as any).inTracking);
     const hasCorrectPartStatus = partRows.length === 0 || partRows.every(p => {
       const s = String((p as any).status || "").toLowerCase();
       return s && s !== "tech pickup" && s !== "need po" && s !== "";
@@ -4601,9 +4613,13 @@ function TicketDetailsPage() {
         done: hasPhotos,
         detail: ticketPhotoCount === null
           ? "Checking photo count…"
-          : ticketPhotoCount > 0
-            ? `${ticketPhotoCount} photo${ticketPhotoCount !== 1 ? "s" : ""} uploaded — work order, model/serial tag, installed parts, damage proof`
-            : "No photos found — work order, model/serial tag, installed parts, damage proof required",
+          : anyTypedPhoto
+            ? missingPhotoTypes.length === 0
+              ? "Model & Serial, Before-Work, After-Work and Invoice / Repair Order photos uploaded"
+              : `Missing: ${missingPhotoTypes.map((t) => t.label).join(", ")} — upload them in Attachments`
+            : ticketPhotoCount > 0
+              ? `${ticketPhotoCount} photo${ticketPhotoCount !== 1 ? "s" : ""} uploaded (no types yet) — set each photo's type in Attachments: Model & Serial, Before-Work, After-Work, Invoice / Repair Order`
+              : "No photos found — Model & Serial, Before-Work, After-Work and Invoice / Repair Order are required",
       },
       {
         label: "Part Status Correct",
@@ -4627,7 +4643,7 @@ function TicketDetailsPage() {
     const allDone = items.every(i => i.skip || i.done);
     const doneCount = items.filter(i => i.skip || i.done).length;
     return { items, allDone, doneCount };
-  }, [ticket, visitLogEntries, partRows, ticketPhotoCount]);
+  }, [ticket, visitLogEntries, partRows, ticketPhotoCount, ticketPhotoTypes]);
 
   // CSR-only accounts (agents, team leaders, CSR managers) should see
   // the Part Transaction table but not the write-side toolbar (View

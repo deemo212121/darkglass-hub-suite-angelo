@@ -6638,7 +6638,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setMasterPhContractorAgreementPreviewLoading(true);
     try {
       const recipientName = employees.find((e) => e.id === masterPhContractorAgreementRecipientId)?.name || "";
-      const logo = masterPhContractorAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const logo = masterPhContractorAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
       const pdfBlob = await captureHtmlToPdfBlob(buildMasterPhContractorAgreementBodyMarkup(buildMasterPhContractorAgreementPreviewData(recipientName), logo), masterPhContractorAgreementStyles);
       const url = URL.createObjectURL(pdfBlob);
       setMasterPhContractorAgreementPreviewPdfUrl(url);
@@ -6658,7 +6658,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       if (!recipient) throw new Error("Select a recipient first.");
 
       const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["master_ph_contractor_agreement"]);
-      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Master PH Contractor Agreement on file. Send another one anyway?`)) {
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Master Confidentiality, Non-Solicitation & Affirmative Duty Agreement (PH) on file. Send another one anyway?`)) {
         return;
       }
 
@@ -6678,7 +6678,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         dmThreadId: thread.id,
         senderId: myProfileId,
         senderName: displayName || "HR",
-        body: `📋 Please complete the Master Philippines Independent Contractor Comprehensive Agreement: ${fillLink}`,
+        body: `📋 Please complete the Master Confidentiality, Non-Solicitation, and Affirmative Duty Agreement: ${fillLink}`,
       });
 
       void logActivity({ action: "master_ph_contractor_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
@@ -6704,7 +6704,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadMasterPhContractorAgreementPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<MasterPhContractorAgreementFormData>).employeeName || doc.recipientName || "master-ph-contractor-agreement";
-    await downloadSignableDocumentPdf(doc.pdfUrl, `Master PH Contractor Agreement - ${name}.pdf`);
+    await downloadSignableDocumentPdf(doc.pdfUrl, `Master Confidentiality, Non-Solicitation, and Affirmative Duty Agreement (PH) - ${name}.pdf`);
   };
 
   /** Re-renders this document's PDF from its already-stored data (employee/employer signatures are inline data: URLs in form_data, no CORS resolution needed) — see regenerateSignableDocumentPdf.ts's header comment. */
@@ -6713,7 +6713,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setMasterPhContractorAgreementActionBusyId(doc.id);
     setMasterPhContractorAgreementActionError(null);
     try {
-      const logo = masterPhContractorAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const logo = masterPhContractorAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
       if (!masterPhContractorAgreementLogoDataUrl) setMasterPhContractorAgreementLogoDataUrl(logo);
       await regenerateMasterAgreementPdf(doc, logo, buildMasterPhContractorAgreementBodyMarkup, masterPhContractorAgreementStyles, uploadMasterPhContractorAgreementForm, name);
       await loadSentMasterPhContractorAgreementForms();
@@ -6739,7 +6739,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const handleDeleteMasterPhContractorAgreement = async (doc: SignableDocument) => {
-    if (!window.confirm("Permanently delete this Master PH Contractor Agreement request?")) return;
+    if (!window.confirm("Permanently delete this Master Confidentiality, Non-Solicitation & Affirmative Duty Agreement (PH) request?")) return;
     setMasterPhContractorAgreementActionBusyId(doc.id);
     setMasterPhContractorAgreementActionError(null);
     try {
@@ -6766,7 +6766,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setMasterPhContractorAgreementEmployerDialog(doc);
     setMasterPhContractorAgreementEmployerError(null);
     if (!masterPhContractorAgreementLogoDataUrl) {
-      loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")).then(setMasterPhContractorAgreementLogoDataUrl).catch(() => {});
+      loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")).then(setMasterPhContractorAgreementLogoDataUrl).catch(() => {});
     }
   };
 
@@ -6796,7 +6796,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       const merged: MasterPhContractorAgreementFormData = { ...existing, employerSignatureDataUrl: dataUrl, employerDateSigned: signedAt, employerName: displayName || "" };
 
-      const logo = masterPhContractorAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const logo = masterPhContractorAgreementLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
       const pdfBlob = await captureHtmlToPdfBlob(buildMasterPhContractorAgreementBodyMarkup(merged, logo), masterPhContractorAgreementStyles);
       const pdfUrl = await uploadMasterPhContractorAgreementForm(masterPhContractorAgreementEmployerDialog.companyId, existing.employeeName || "master-ph-contractor-agreement", pdfBlob);
 
@@ -8978,7 +8978,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setValidIdActionBusyId(doc.id);
     setValidIdActionError(null);
     try {
-      const logo = await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
+      const logo = await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png"));
       await regenerateSimpleSignableDocumentPdf(doc, logo, buildValidIdFormBodyMarkup, validIdFormStyles, uploadValidIdForm, name, "idPhotoUrls");
       await loadSentValidIdForms();
     } catch (err) {
@@ -12856,7 +12856,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       // checks filedByHr before ever rendering a <img src>.
       const entry = { name: `Filed by HR — ${filedByHrName}`, url: "", signedAt };
 
-      const logo = directDepositLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const logo = directDepositLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
       if (!directDepositLogoDataUrl) setDirectDepositLogoDataUrl(logo);
       const pdfBlob = await captureHtmlToPdfBlob(buildDirectDepositBodyMarkup(finalData, logo, entry), directDepositStyles);
       const pdfUrl = await uploadDirectDepositForm(companyId, finalData.employeeName, pdfBlob);
@@ -12911,7 +12911,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setDirectDepositPreviewExpanded(true);
     setDirectDepositPreviewLoading(true);
     try {
-      const logoDataUrl = directDepositLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const logoDataUrl = directDepositLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
       if (!directDepositLogoDataUrl) setDirectDepositLogoDataUrl(logoDataUrl);
       const recipientName = employees.find((e) => e.id === directDepositRecipientId)?.name || "";
       const pdfBlob = await captureHtmlToPdfBlob(buildDirectDepositBodyMarkup(buildDirectDepositPreviewData(recipientName), logoDataUrl, undefined), directDepositStyles);
@@ -13026,7 +13026,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setDirectDepositActionBusyId(doc.id);
     setDirectDepositActionError(null);
     try {
-      const logo = directDepositLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
+      const logo = directDepositLogoDataUrl || (await loadImageDataUrl(() => import("@/assets/admin-hub-solutions-logo-badge.png")));
       if (!directDepositLogoDataUrl) setDirectDepositLogoDataUrl(logo);
       await regenerateSimpleSignableDocumentPdf(doc, logo, buildDirectDepositBodyMarkup, directDepositStyles, uploadDirectDepositForm, name);
       await loadSentDirectDepositForms();
@@ -13341,7 +13341,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "confidentiality_noncompete_agreement", label: "Master Confidentiality & Non-Compete Agreement" },
   ];
   const NEW_PH_BULK_FORM_TYPES: { type: SignableDocumentType; label: string }[] = [
-    { type: "master_ph_contractor_agreement", label: "Master PH Contractor Agreement" },
+    { type: "master_ph_contractor_agreement", label: "Master Confidentiality, Non-Solicitation & Affirmative Duty Agreement (PH)" },
     { type: "w8ben", label: "Form W-8BEN" },
     { type: "direct_deposit", label: "Direct Deposit Authorization" },
     { type: "confidentiality_noncompete_agreement", label: "Master Confidentiality & Non-Compete Agreement" },
@@ -18285,7 +18285,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // same trick "newW4" uses for W-4), and Direct Deposit is the same shared
   // tab reused from New Technician/New Office Forms.
   const newAutomationFormsPhTabs = [
-    { key: "masterPhContractorAgreement", label: "Master PH Contractor Agreement", count: sentMasterPhContractorAgreementAwaitingEmployerCount, icon: FileCheck },
+    { key: "masterPhContractorAgreement", label: "Master Confidentiality, Non-Solicitation & Affirmative Duty Agreement (PH)", count: sentMasterPhContractorAgreementAwaitingEmployerCount, icon: FileCheck },
     { key: "newW8ben", label: "Form W-8BEN", count: 0, icon: Landmark },
     { key: "newDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
     { key: "validId", label: "Valid ID", count: 0, icon: FileCheck },
@@ -31112,7 +31112,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Send Master PH Contractor Agreement Request</h2>
+          <h2 className="font-semibold text-sm">Send Master Confidentiality, Non-Solicitation & Affirmative Duty Agreement (PH) Request</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their info and sign. Once they submit, it lands back here for HR to add the employer signature. Covers the independent-contractor relationship, confidentiality/NDA, the PH off-days & leave policy, and governing law/e-signature terms in one document.</p>
         </div>
         <div className="p-4 flex flex-col md:flex-row gap-6">
@@ -31179,7 +31179,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 {masterPhContractorAgreementPreviewLoading || !masterPhContractorAgreementPreviewPdfUrl ? (
                   <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
                 ) : (
-                  <iframe src={masterPhContractorAgreementPreviewPdfUrl} title="Master PH Contractor Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
+                  <iframe src={masterPhContractorAgreementPreviewPdfUrl} title="Master Confidentiality, Non-Solicitation &amp; Affirmative Duty Agreement (PH) Preview" className="w-full border-0" style={{ height: 560 }} />
                 )}
               </div>
             ) : (
@@ -31193,7 +31193,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Sent Master PH Contractor Agreement Forms</h2>
+          <h2 className="font-semibold text-sm">Sent Master Confidentiality, Non-Solicitation & Affirmative Duty Agreement (PH) Forms</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the contractor finished — add your signature to finalize.</p>
         </div>
         <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
@@ -31375,7 +31375,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <p className="text-sm text-muted-foreground mb-4">
               Employer representative signature for{" "}
               <span className="font-semibold text-white">{(masterPhContractorAgreementEmployerDialog.formData as Partial<MasterPhContractorAgreementFormData>).employeeName || "—"}</span>'s
-              Master Philippines Independent Contractor Comprehensive Agreement.
+              Master Confidentiality, Non-Solicitation, and Affirmative Duty Agreement.
             </p>
 
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
@@ -31423,7 +31423,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </div>
             </div>
             <div className="flex-1 overflow-hidden bg-slate-950">
-              {masterPhContractorAgreementDocPreview.pdfUrl && <iframe src={masterPhContractorAgreementDocPreview.pdfUrl} title="Master PH Contractor Agreement" className="w-full h-full min-h-[70vh] border-0" />}
+              {masterPhContractorAgreementDocPreview.pdfUrl && <iframe src={masterPhContractorAgreementDocPreview.pdfUrl} title="Master Confidentiality, Non-Solicitation & Affirmative Duty Agreement (PH)" className="w-full h-full min-h-[70vh] border-0" />}
             </div>
           </div>
         </div>

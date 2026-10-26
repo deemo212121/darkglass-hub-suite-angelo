@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, CheckCircle2, Circle, Camera } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import {
   uploadTicketPhoto,
   listTicketPhotos,
   deleteTicketPhoto,
+  setTicketPhotoType,
   type TicketPhoto,
 } from "@/lib/firebase/storage";
+import { PHOTO_TYPES, photoTypeLabel, missingRequiredPhotoTypes } from "@/lib/photoTypes";
 import { compressImage, validateImageFile, formatBytes } from "@/lib/imageCompression";
 import { enqueuePhotoUpload, getQueuedActionStates } from "@/lib/offlineQueue";
 import { isTabVisible, onTabVisible } from "@/lib/pageVisibility";
 
-const MAX_PHOTOS = 20;
+// Room for every photo type (8) plus extras.
+const MAX_PHOTOS = 30;
 
 interface UploadQueueItem {
   id: string;
@@ -46,6 +49,7 @@ export function TicketPhotos({
   visitOptions,
   enableOfflineQueue,
   onPhotoClick,
+  compactChecklist,
 }: {
   ticketNo: string;
   category?: string;
@@ -56,6 +60,8 @@ export function TicketPhotos({
   enableOfflineQueue?: boolean;
   /** When set, clicking a photo calls this (with every image photo, in order) instead of opening the full-screen viewer — e.g. Pre-Claim's side preview. */
   onPhotoClick?: (photo: TicketPhoto, imagePhotos: TicketPhoto[]) => void;
+  /** Narrow spots (Pre-Claim): only the "Missing required" line, not the full photo checklist. */
+  compactChecklist?: boolean;
 }) {
   const { companyId, ready } = useAuth();
   const [photos, setPhotos] = useState<TicketPhoto[]>([]);
@@ -71,6 +77,28 @@ export function TicketPhotos({
   const lastTouchDist = useRef<number | null>(null);
   const [selectedVisitNo, setSelectedVisitNo] = useState<string>(() => (visitOptions && visitOptions.length ? visitOptions[visitOptions.length - 1] : ""));
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Which photo type the next pick from the file picker is for ("" = other / untyped).
+  const pendingTypeRef = useRef<string>("");
+  const pickFor = (photoType: string) => {
+    pendingTypeRef.current = photoType;
+    fileInputRef.current?.click();
+  };
+  const [typingPath, setTypingPath] = useState<string | null>(null);
+  // Categorize a photo uploaded without a type (or change its type).
+  const handleSetType = async (photo: TicketPhoto, photoType: string) => {
+    if (!photoType) return;
+    setTypingPath(photo.fullPath);
+    try {
+      await setTicketPhotoType(photo.fullPath, photoType);
+      setPhotos((prev) => prev.map((p) => (p.fullPath === photo.fullPath ? { ...p, photoType } : p)));
+    } catch (err) {
+      alert(`Couldn't set the photo type: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setTypingPath(null);
+    }
+  };
+  const missingRequired = missingRequiredPhotoTypes(photos.map((p) => p.photoType));
+  const countByType = (key: string) => photos.filter((p) => p.photoType === key).length;
 
   const cid = companyId || "COMP001";
   const ticketPath = category ? `${ticketNo}/${category}` : ticketNo;
@@ -157,6 +185,8 @@ export function TicketPhotos({
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setError(null);
+    const photoType = pendingTypeRef.current || undefined;
+    pendingTypeRef.current = "";
 
     const candidates = Array.from(files);
     const valid: File[] = [];
@@ -218,6 +248,7 @@ export function TicketPhotos({
               width: compressed.width,
               height: compressed.height,
               originalSize: compressed.originalSize,
+              photoType,
             },
             (percent) => updateQueueItem(id, { progress: percent }),
           );
@@ -242,6 +273,7 @@ export function TicketPhotos({
                 width: compressed?.width,
                 height: compressed?.height,
                 originalSize: compressed?.originalSize ?? file.size,
+                photoType,
               });
               updateQueueItem(id, { status: "queued", progress: 100, queueId });
               return;
@@ -307,13 +339,51 @@ export function TicketPhotos({
           />
           <button
             type="button"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => pickFor("")}
             disabled={uploading}
-            className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold transition-colors"
+            title="A photo that isn't one of the types below"
+            className="px-3 py-2 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 disabled:opacity-50 text-slate-200 text-xs font-semibold transition-colors"
           >
-            {uploading ? "Uploading..." : "+ Upload Photos"}
+            {uploading ? "Uploading..." : "+ Other photo"}
           </button>
         </div>
+      </div>
+
+      {/* Photo checklist — upload each kind of photo from its own row. Required ones are checked by Claims Readiness. */}
+      <div className="rounded-lg border border-white/10 bg-slate-900/40">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-white/10">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Photos needed</span>
+          {loading ? null : missingRequired.length === 0 ? (
+            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> All required photos uploaded</span>
+          ) : (
+            <span className="text-[11px] font-semibold text-amber-300">Missing required: {missingRequired.map((t) => t.label).join(" · ")}</span>
+          )}
+        </div>
+        {!compactChecklist && <ul className="divide-y divide-white/5">
+          {PHOTO_TYPES.map((t) => {
+            const n = countByType(t.key);
+            return (
+              <li key={t.key} className="flex items-center gap-2.5 px-3 py-1.5" title={t.help}>
+                {n > 0 ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" /> : <Circle className={`h-4 w-4 shrink-0 ${t.required ? "text-amber-400" : "text-slate-600"}`} />}
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-slate-200">
+                    {t.label}
+                    <span className={`ml-2 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${t.required ? "bg-rose-500/15 text-rose-300" : "bg-white/5 text-slate-400"}`}>{t.required ? "Required" : "Optional"}</span>
+                    {n > 0 && <span className="ml-2 text-[11px] text-emerald-300">{n} uploaded</span>}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => pickFor(t.key)}
+                  disabled={uploading}
+                  className="shrink-0 inline-flex items-center gap-1 rounded-md bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-2.5 py-1.5 text-xs font-semibold text-white"
+                >
+                  <Camera className="h-3.5 w-3.5" /> Upload
+                </button>
+              </li>
+            );
+          })}
+        </ul>}
       </div>
 
       {error && (
@@ -390,6 +460,20 @@ export function TicketPhotos({
                 title={photo.uploadedAt ? new Date(photo.uploadedAt).toLocaleString() : ""}
               >
                 <div>{formatUploadedAt(photo.uploadedAt)}</div>
+                {photo.photoType ? (
+                  <div className="mb-0.5 font-semibold text-sky-300">{photoTypeLabel(photo.photoType) || photo.photoType}</div>
+                ) : (
+                  <select
+                    value=""
+                    disabled={typingPath === photo.fullPath}
+                    onChange={(e) => void handleSetType(photo, e.target.value)}
+                    className="mb-0.5 w-full rounded border border-amber-400/30 bg-slate-950 px-1 py-0.5 text-[10px] text-amber-200"
+                    title="This photo has no type yet — pick what it shows"
+                  >
+                    <option value="">{typingPath === photo.fullPath ? "Saving…" : "Set type…"}</option>
+                    {PHOTO_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+                  </select>
+                )}
                 {(photo.uploadedBy || photo.visitNo) && (
                   <div className="text-[9px] text-slate-400 flex flex-wrap gap-x-2">
                     {photo.uploadedBy && <span>by {photo.uploadedBy}</span>}

@@ -14,6 +14,7 @@ import {
   listAll,
   deleteObject,
   getMetadata,
+  updateMetadata,
   type StorageReference,
   type UploadMetadata,
 } from "firebase/storage";
@@ -224,6 +225,8 @@ export interface TicketPhoto {
   height?: number;
   /** Size in bytes before client-side compression, if known. */
   originalSize?: number;
+  /** What the photo shows — a key from lib/photoTypes.ts (e.g. "model_serial"); empty on photos uploaded before types existed. */
+  photoType?: string;
 }
 
 function sanitizeFileName(name: string): string {
@@ -248,7 +251,7 @@ export async function uploadTicketPhoto(
   ticketNo: string,
   blob: Blob,
   fileName: string,
-  meta?: { uploadedBy?: string; visitNo?: string; width?: number; height?: number; originalSize?: number },
+  meta?: { uploadedBy?: string; visitNo?: string; width?: number; height?: number; originalSize?: number; photoType?: string },
   onProgress?: (percent: number) => void,
 ): Promise<TicketPhoto> {
   if (!isFirebaseReady() || !storage) {
@@ -265,6 +268,7 @@ export async function uploadTicketPhoto(
   if (meta?.width) customMetadata.width = String(meta.width);
   if (meta?.height) customMetadata.height = String(meta.height);
   if (meta?.originalSize) customMetadata.originalSize = String(meta.originalSize);
+  if (meta?.photoType) customMetadata.photoType = meta.photoType;
 
   const metadata: UploadMetadata = { contentType: blob.type || "application/octet-stream", customMetadata };
   let directUrl = "";
@@ -297,7 +301,16 @@ export async function uploadTicketPhoto(
     width: meta?.width,
     height: meta?.height,
     originalSize: meta?.originalSize,
+    photoType: meta?.photoType,
   };
+}
+
+/** Set (or change) what an already-uploaded ticket photo shows — keeps every other detail on it. */
+export async function setTicketPhotoType(fullPath: string, photoType: string): Promise<void> {
+  if (!isFirebaseReady() || !storage) throw new Error("Firebase Storage not configured");
+  const objectRef = ref(storage, fullPath);
+  const current = await getMetadata(objectRef);
+  await updateMetadata(objectRef, { customMetadata: { ...(current.customMetadata ?? {}), photoType } });
 }
 
 /**
@@ -353,6 +366,7 @@ export async function listTicketPhotos(
         width,
         height,
         originalSize,
+        photoType: meta?.customMetadata?.photoType ?? undefined,
       } as TicketPhoto;
     })
   );
