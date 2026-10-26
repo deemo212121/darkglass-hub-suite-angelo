@@ -18584,14 +18584,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       columns: undefined,
     }] : []),
     // AHS Forms US — the Admin Hub Solutions versions of the two US office
-    // agreements naming the employer (the rest of Office Staff (US) has no
-    // separate AHS version). The Confidentiality tab is the same one as in
-    // AHS Forms PH: one list of every AHS copy.
+    // agreements naming the employer, plus the W-4, I-9 and Direct Deposit
+    // carried over from New Office Forms (US) (no company name on them, so no
+    // separate AHS version — same tabs as there). The Confidentiality tab is
+    // the same one as in AHS Forms PH: one list of every AHS copy.
     ...(paperworksOnly && companyId === "COMP001" ? [{
       group: "AHS Forms US",
       icon: Paperclip,
       tabs: [
         { key: "ahsW2Office", label: "Master W-2 Office & Logistics Agreement", count: sentAhsW2OfficeAwaitingEmployerCount, icon: FileCheck },
+        { key: "newW4", label: "Form W-4", count: 0, icon: Landmark },
+        { key: "newI9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2CountNew, icon: FileCheck },
+        { key: "newDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
         { key: "ahsConfidentiality", label: "Master Confidentiality, Non-Solicitation & Affirmative Duty Agreement", count: sentAhsConfidentialityAwaitingEmployerCount, icon: FileText },
       ] as const,
       columns: undefined,
