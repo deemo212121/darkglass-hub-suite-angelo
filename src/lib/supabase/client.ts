@@ -29,6 +29,40 @@ let tokenExpiresAt = 0; // unix seconds
 // against what it locally claimed to detect a login elsewhere superseding
 // this device. See supabaseTokenBridge.ts's mintOrReadSessionId.
 let currentSessionId: string | null = null;
+// The signed-in Firebase user the token belongs to, so a request can mint a
+// fresh token itself when the stored one is missing or about to expire —
+// e.g. the background / app-resume refresh failed on a flaky phone
+// connection. Without it the request went out with no login at all and RLS
+// refused it ("new row violates row-level security policy" on a Time Out,
+// Chris Simpson 2026-10-26) until the next refresh 45 minutes later.
+let tokenUser: FirebaseUser | null = null;
+let refreshInFlight: Promise<boolean> | null = null;
+// After a failed exchange, requests wait this long before trying again, so
+// a page full of requests on no signal doesn't each sit through one.
+const REQUEST_REFRESH_RETRY_MS = 10_000;
+let lastRequestRefreshFailedAt = 0;
+
+/** Missing, or expiring within a minute. */
+function tokenNeedsRefresh(): boolean {
+  return !supabaseAccessToken || tokenExpiresAt - Math.floor(Date.now() / 1000) < 60;
+}
+
+/** Before a request: mint a token first if there's a signed-in user but no usable token (one exchange at a time). */
+async function ensureTokenBeforeRequest(): Promise<void> {
+  if (!tokenUser || !tokenNeedsRefresh()) return;
+  if (!refreshInFlight) {
+    if (Date.now() - lastRequestRefreshFailedAt < REQUEST_REFRESH_RETRY_MS) return;
+    refreshInFlight = refreshSupabaseSession(tokenUser)
+      .then((ok) => {
+        if (!ok) lastRequestRefreshFailedAt = Date.now();
+        return ok;
+      })
+      .finally(() => {
+        refreshInFlight = null;
+      });
+  }
+  await refreshInFlight.catch(() => false);
+}
 
 const READ_TIMEOUT_MS = 60_000;
 const READ_RETRY_TIMEOUT_MS = 90_000;
@@ -79,13 +113,16 @@ export const supabase: SupabaseClient = createClient(
       detectSessionInUrl: false,
     },
     global: {
-      fetch: (input, init = {}) => {
+      fetch: async (input, init = {}) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        // Never send a data / storage request without the login when one can
+        // be had — see tokenUser above.
+        if (url.includes("/rest/v1/") || url.includes("/storage/v1/")) await ensureTokenBeforeRequest();
         const headers = new Headers(init.headers);
         if (supabaseAccessToken) {
           headers.set("Authorization", `Bearer ${supabaseAccessToken}`);
         }
         const method = (init.method || "GET").toUpperCase();
-        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
         // Reads only (never writes or storage uploads): a request that
         // stalls on a flaky connection never settles on its own, which
         // left whole pages (Attendance Monitoring, Trainee Attendance)
@@ -127,6 +164,20 @@ export async function refreshSupabaseSession(
     clearSupabaseSession();
     return false;
   }
+  tokenUser = firebaseUser;
+
+  // A failed exchange keeps the token already held while it's still valid
+  // (it used to be thrown away). The server answers 401 for any failure,
+  // including passing ones — a slow database, a key fetch — so one bad
+  // refresh on a weak signal no longer leaves every request until the next
+  // refresh going out with no login (refused by RLS). Requests retry the
+  // exchange themselves while the token is missing (ensureTokenBeforeRequest).
+  const keepTokenIfValid = () => {
+    if (tokenExpiresAt <= Math.floor(Date.now() / 1000)) {
+      supabaseAccessToken = null;
+      tokenExpiresAt = 0;
+    }
+  };
 
   try {
     const idToken = await firebaseUser.getIdToken(/* forceRefresh */ false);
@@ -139,7 +190,7 @@ export async function refreshSupabaseSession(
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       console.error("❌ Supabase token exchange failed:", err);
-      clearSupabaseSession();
+      keepTokenIfValid();
       return false;
     }
 
@@ -151,7 +202,7 @@ export async function refreshSupabaseSession(
     return true;
   } catch (error) {
     console.error("❌ Error exchanging Firebase token for Supabase token:", error);
-    clearSupabaseSession();
+    keepTokenIfValid();
     return false;
   }
 }
@@ -169,10 +220,12 @@ export async function ensureSupabaseSession(firebaseUser: FirebaseUser | null): 
   return true;
 }
 
+/** Sign-out: drop the token and the user it belongs to (requests stop minting new ones). */
 export function clearSupabaseSession(): void {
   supabaseAccessToken = null;
   tokenExpiresAt = 0;
   currentSessionId = null;
+  tokenUser = null;
 }
 
 export function hasSupabaseSession(): boolean {
