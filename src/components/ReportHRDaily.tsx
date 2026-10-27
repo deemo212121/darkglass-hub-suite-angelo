@@ -3642,8 +3642,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // ── Generate Employee Warning Form ──────────────────────────────────
   // Fields mirror the company's real paper form exactly (see
   // warningFormTemplate.ts). "Previous Warning(s) Issued" auto-fills from
-  // this employee's actual approved warning history (same data backing the
-  // Warnings & Mistakes tab), frozen into the document at generation time
+  // this employee's actual warning history — approved warnings (same data
+  // backing the Warnings & Mistakes tab) plus forms sent but not yet
+  // confirmed (see warnPreviousWarnings), frozen into the document at generation time
   // so a later new warning never retroactively rewrites a document already
   // out for signature. Sending creates the real warning record (fast-
   // tracked to approved, same as HR submitting directly elsewhere in this
@@ -3698,20 +3699,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setAddPrevWarnOpen(false);
     setAddPrevWarnError(null);
   };
-
-  // Frozen snapshot for the currently-selected employee — approved warnings only (the official record), most recent first, capped at the 3 slots the paper form has.
-  // Sorts/displays by occurredAt when set (backfilled pre-system warnings — see handleAddPreviousWarning below) so a
-  // historical warning entered today doesn't look like the most recent one and bump a genuinely recent warning out of the top 3.
-  const warnPreviousWarnings = useMemo(() => {
-    if (!warnForm.employeeId) return [];
-    return allNotes
-      .filter((n) => n.type === "warning" && n.agentProfileId === warnForm.employeeId && n.status === "approved")
-      .sort((a, b) => (b.occurredAt || b.createdAt).localeCompare(a.occurredAt || a.createdAt))
-      .slice(0, 3)
-      // Listed oldest first, so "1." is the first warning (the 3 most recent are kept).
-      .reverse()
-      .map((n) => ({ cause: n.note, date: n.occurredAt || n.createdAt, issuedBy: n.createdByName || "—" }));
-  }, [allNotes, warnForm.employeeId]);
 
   // ── Backfill a pre-system warning (issued before this app's warning workflow existed) ──
   const [addPrevWarnOpen, setAddPrevWarnOpen] = useState(false);
@@ -3852,6 +3839,36 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
     return map;
   }, [sentWarningForms]);
+
+  // "Previous Warning(s) Issued" for the currently-selected employee, frozen
+  // into the form when it's sent: their approved warnings (the official
+  // record) plus warning forms already sent but not yet confirmed — signed
+  // or still awaiting signatures. Approved alone left a 3rd warning without
+  // its 2nd (or 1st) whenever HR hadn't confirmed the earlier form yet. A
+  // confirmed form is already one of the approved warnings; a cancelled one
+  // is void. Most recent 3 kept, the slots the paper form has. Sorts by
+  // occurredAt when set (backfilled pre-system warnings — see
+  // handleAddPreviousWarning) so a historical warning entered today doesn't
+  // look like the most recent one and bump a genuinely recent warning out of
+  // the top 3. "Issued By" is whoever generated the form, as on the Warnings
+  // & Mistakes tab (falling back to who logged the warning).
+  const warnPreviousWarnings = useMemo(() => {
+    if (!warnForm.employeeId) return [];
+    const approved = allNotes
+      .filter((n) => n.type === "warning" && n.agentProfileId === warnForm.employeeId && n.status === "approved")
+      .map((n) => ({ cause: n.note, date: n.occurredAt || n.createdAt, issuedBy: issuerNameByNoteId.get(n.id) || n.createdByName || "—" }));
+    const unconfirmed = sentWarningForms
+      .filter((d) => (d.status === "pending_signature" || d.status === "signed") && (d.formData as unknown as WarningFormData).employeeId === warnForm.employeeId)
+      .map((d) => {
+        const data = d.formData as unknown as WarningFormData;
+        return { cause: buildWarnNoteText(data), date: data.warningDate || d.createdAt, issuedBy: d.createdByName || "—" };
+      });
+    return [...approved, ...unconfirmed]
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 3)
+      // Listed oldest first, so "1." is the first warning (the 3 most recent are kept).
+      .reverse();
+  }, [allNotes, sentWarningForms, issuerNameByNoteId, warnForm.employeeId]);
 
   // Clicking a name in the tracking table previews the form as it stands
   // right now — whichever signatures have been captured so far render in
@@ -24101,7 +24118,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </button>
             </div>
             {warnPreviousWarnings.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No prior approved warnings on record for this employee.</p>
+              <p className="text-xs text-muted-foreground">No prior warnings on record for this employee.</p>
             ) : (
               <ul className="text-xs space-y-1">
                 {warnPreviousWarnings.map((w, i) => (
