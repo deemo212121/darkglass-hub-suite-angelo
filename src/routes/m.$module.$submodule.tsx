@@ -155,6 +155,7 @@ import { ClaimsDashboard } from "@/components/ClaimsDashboard";
 import { ClaimsDailyReport } from "@/components/ClaimsDailyReport";
 import { OperationsDashboard } from "@/components/OperationsDashboard";
 import { ReceivingStatusPage } from "@/components/ReceivingStatusPage";
+import { NoCoverageTicketsPage } from "@/components/NoCoverageTicketsPage";
 import { TicketOperationReport } from "@/components/TicketOperationReport";
 
 const MOVED_SUBMODULES: Record<string, { module: string; submodule: string }> = {
@@ -711,6 +712,8 @@ function SubModule() {
         ? <TicketList mod={mod} sub={sub} />
         : (sub as any).custom === "receiving-status"
         ? <ReceivingStatusPage mod={mod} sub={sub} />
+        : (sub as any).custom === "no-coverage-tickets"
+        ? <NoCoverageTicketsPage mod={mod} sub={sub} />
         : (sub as any).custom === "ticket-operation-report"
         ? <TicketOperationReport mod={mod} sub={sub} />
         : sub.slug === "new-ticket"

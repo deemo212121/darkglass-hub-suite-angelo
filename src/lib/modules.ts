@@ -1165,6 +1165,14 @@ const ticketsMod: ModuleDef = {
       fields: [],
       seed: () => ({}),
     },
+    {
+      slug: "no-coverage-tickets",
+      title: "No-Coverage Tickets",
+      description: "Open tickets whose ZIP code isn't in our coverage area.",
+      custom: "no-coverage-tickets" as any,
+      fields: [],
+      seed: () => ({}),
+    },
   ],
 };
 
