@@ -360,7 +360,8 @@ export function TechnicianFormChecklistPage({
   const [exemptions, setExemptions] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
   const [hideComplete, setHideComplete] = useState(false);
-  const [accountFilter, setAccountFilter] = useState<"" | "active" | "deactivated">("");
+  // Activated accounts by default; deactivated people are one pick away (their paperwork stays on file).
+  const [accountFilter, setAccountFilter] = useState<"" | "active" | "deactivated">("active");
   const [branchFilter, setBranchFilter] = useState("");
   const [search, setSearch] = useState("");
   // A "View in Staff Checklist" link from a chat message (see MessageBody.tsx)
@@ -693,12 +694,19 @@ export function TechnicianFormChecklistPage({
   // to leave visible) into who's Signed/Not Signed/Waiting for HR on THAT
   // form — the Status dropdown alone only ever shows one bucket at a time,
   // but seeing all three side by side per form is the more useful view.
+  // The Account filter (Activated by default) decides who counts anywhere on the page — the list, its
+  // "N of M" total and the per-form Signed / Not signed groups.
+  const accountRows = useMemo(
+    () => (accountFilter ? rows.filter((r) => r.isDeactivated === (accountFilter === "deactivated")) : rows),
+    [rows, accountFilter]
+  );
+
   const formStatusGroups = useMemo(() => {
     if (!formTypeFilter) return null;
     const signed: string[] = [];
     const notSigned: string[] = [];
     const awaitingHr: string[] = [];
-    for (const r of rows) {
+    for (const r of accountRows) {
       if (r.exempt.has(formTypeFilter)) continue;
       const status = getDocumentReviewStatus(formTypeFilter, r.docs.get(formTypeFilter));
       if (status === "done") signed.push(r.name);
@@ -707,12 +715,11 @@ export function TechnicianFormChecklistPage({
     }
     const byName = (a: string, b: string) => a.localeCompare(b);
     return { signed: signed.sort(byName), notSigned: notSigned.sort(byName), awaitingHr: awaitingHr.sort(byName) };
-  }, [rows, formTypeFilter]);
+  }, [accountRows, formTypeFilter]);
 
   const visibleRows = useMemo(() => {
-    let result = rows;
+    let result = accountRows;
     if (hideComplete) result = result.filter((r) => r.doneCount < r.applicableTotal);
-    if (accountFilter) result = result.filter((r) => r.isDeactivated === (accountFilter === "deactivated"));
     if (branchFilter) result = result.filter((r) => r.branch === branchFilter);
     if (statusFilter) {
       const checkTypes = formTypeFilter ? [formTypeFilter] : activeConfig.formTypes;
@@ -736,7 +743,7 @@ export function TechnicianFormChecklistPage({
       }
     });
     return result;
-  }, [rows, hideComplete, accountFilter, branchFilter, sortMode, search]);
+  }, [accountRows, hideComplete, branchFilter, statusFilter, formTypeFilter, activeConfig, sortMode, search]);
 
   // "Not sent" — creates the document (same formData/recipientSlot shape
   // every individual Send handler in ReportHRDaily.tsx uses: just the
@@ -1068,9 +1075,9 @@ export function TechnicianFormChecklistPage({
           </div>
         )}
         <span className={`shrink-0 rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-xs font-semibold text-slate-300 ${embedded ? "ml-auto" : ""}`}>
-          {visibleRows.length === rows.length
-            ? `${rows.length} ${activeConfig.noun}`
-            : `${visibleRows.length} of ${rows.length} ${activeConfig.noun}`}
+          {visibleRows.length === accountRows.length
+            ? `${accountRows.length} ${activeConfig.noun}`
+            : `${visibleRows.length} of ${accountRows.length} ${activeConfig.noun}`}
         </span>
         <button
           type="button"
@@ -1166,10 +1173,10 @@ export function TechnicianFormChecklistPage({
             <option value="deactivated">Deactivated</option>
           </select>
         </div>
-        {(search || branchFilter || sortMode !== "missing-desc" || hideComplete || accountFilter || statusFilter || formTypeFilter) && (
+        {(search || branchFilter || sortMode !== "missing-desc" || hideComplete || accountFilter !== "active" || statusFilter || formTypeFilter) && (
           <button
             type="button"
-            onClick={() => { setSearch(""); setBranchFilter(""); setSortMode("missing-desc"); setHideComplete(false); setAccountFilter(""); setStatusFilter(""); setFormTypeFilter(""); }}
+            onClick={() => { setSearch(""); setBranchFilter(""); setSortMode("missing-desc"); setHideComplete(false); setAccountFilter("active"); setStatusFilter(""); setFormTypeFilter(""); }}
             className="text-xs text-blue-400 hover:text-blue-300 mt-4"
           >
             Reset filters
