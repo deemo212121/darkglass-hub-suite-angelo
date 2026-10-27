@@ -795,6 +795,40 @@ export async function getHireDatesByProfileIds(profileIds: string[]): Promise<Ma
   return out;
 }
 
+export interface EmploymentStatusInfo {
+  status: EmployeeInfo["employmentStatus"] | null;
+  statusDate: string | null;
+  terminateDate: string | null;
+}
+
+/**
+ * Master List employment status (Terminated / Resigned / Inactive / Active)
+ * and its dates for these profiles — only those three fields of
+ * employee_info, never the rest of it (bank / address).
+ */
+export async function getEmploymentStatusesByProfileIds(profileIds: string[]): Promise<Map<string, EmploymentStatusInfo>> {
+  const out = new Map<string, EmploymentStatusInfo>();
+  const uniq = Array.from(new Set(profileIds.filter(Boolean)));
+  for (let i = 0; i < uniq.length; i += 200) {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, status:employee_info->>employmentStatus, status_date:employee_info->>employmentStatusDate, terminate_date:employee_info->>terminateDate")
+      .in("id", uniq.slice(i, i + 200));
+    if (error) {
+      console.error("getEmploymentStatusesByProfileIds error:", error.message);
+      return out;
+    }
+    for (const row of (data ?? []) as unknown as { id: string; status: string | null; status_date: string | null; terminate_date: string | null }[]) {
+      out.set(row.id, {
+        status: (row.status as EmploymentStatusInfo["status"]) || null,
+        statusDate: row.status_date?.slice(0, 10) || null,
+        terminateDate: row.terminate_date?.slice(0, 10) || null,
+      });
+    }
+  }
+  return out;
+}
+
 export async function getEmployeeInfoByProfileIds(profileIds: string[]): Promise<Map<string, EmployeeInfo>> {
   const out = new Map<string, EmployeeInfo>();
   const uniq = Array.from(new Set(profileIds.filter(Boolean)));

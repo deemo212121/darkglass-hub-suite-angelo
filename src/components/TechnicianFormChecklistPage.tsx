@@ -40,7 +40,8 @@ import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, Refres
 import { useAuth } from "@/lib/auth";
 import { Switch } from "@/components/ui/switch";
 import { ManagerReviewPage, SUPPORTED_TYPES as EMPLOYER_SIGN_SUPPORTED_TYPES } from "@/components/ManagerReviewPage";
-import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsers, getEmploymentStatusesByProfileIds, getMyProfileId, getUserStatusChanges, setProfileFrozen, type AccountStatusChange, type EmploymentStatusInfo, type ProfileRow } from "@/lib/supabase/users";
+import { formatISODate, localISODate } from "@/lib/localDate";
 import { isEligibleForTechnicianFormChecklist, isBmAndUpRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { getSignableDocumentsByTypes, getExistingActiveDocuments, createSignableDocument, updateSignableDocumentPdfUrl, confirmSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import {
@@ -253,8 +254,35 @@ interface TechRow {
   frozen: boolean;
   /** profiles.employment_type === "trainee" (Master List) — shown as a badge next to their name; doesn't affect which tab/tier they land in, that's still purely role-based (isEligible above). */
   isTrainee: boolean;
-  /** Deactivated account — still listed (their paperwork stays on file) with a Deactivated badge, real name shown. */
+  /** Deactivated account — still listed (their paperwork stays on file), real name shown. */
   isDeactivated: boolean;
+  /** Badge beside the name for someone who left: "Terminated · Oct 3, 2026", "Resigned · …" or "Deactivated · …" (see leftBadgeFor). */
+  leftBadge: { label: string; title: string } | null;
+}
+
+/**
+ * "Terminated · Oct 3, 2026" / "Resigned · …" / "Deactivated · …" for someone
+ * who left — the Master List's status and its date (employmentStatusDate,
+ * else terminateDate), same as the Master List shows; a deactivated account
+ * with neither falls back to when User Management deactivated it. A
+ * Terminated / Resigned person whose login is still on gets the badge too.
+ */
+function leftBadgeFor(
+  user: Pick<ProfileRow, "is_active">,
+  info: EmploymentStatusInfo | undefined,
+  change: AccountStatusChange | undefined,
+): { label: string; title: string } | null {
+  const left = info?.status === "terminated" || info?.status === "resigned" ? info.status : !user.is_active ? "deactivated" : null;
+  if (!left) return null;
+  const word = left === "terminated" ? "Terminated" : left === "resigned" ? "Resigned" : "Deactivated";
+  const loggedDeactivation = !user.is_active && change?.action === "user_deactivated" ? change.date || localISODate(new Date(change.at)) : null;
+  const date = info?.statusDate || info?.terminateDate || loggedDeactivation;
+  const shown = date ? formatISODate(date, { month: "short", day: "numeric", year: "numeric" }) : null;
+  const source = info?.statusDate || info?.terminateDate ? "Master List" : loggedDeactivation ? `User Management${change?.byName ? `, by ${change.byName}` : ""}` : null;
+  return {
+    label: shown ? `${word} · ${shown}` : word,
+    title: `${word}${shown ? ` on ${shown}` : ""}${source ? ` (${source})` : ""}${user.is_active ? " — login still active" : ""}`,
+  };
 }
 
 function isComplete(doc: SignableDocument | undefined, type: SignableDocumentType): boolean {
@@ -356,6 +384,8 @@ export function TechnicianFormChecklistPage({
   // the very first render — see the cache helpers above loadUsers/
   // loadDocsForActiveTab further down, which always still fetch for real.
   const [allUsers, setAllUsers] = useState<ProfileRow[]>(() => readCachedUsers() ?? []);
+  const [employmentStatuses, setEmploymentStatuses] = useState<Map<string, EmploymentStatusInfo>>(new Map());
+  const [statusChanges, setStatusChanges] = useState<Map<string, AccountStatusChange>>(new Map());
   const [latestByKey, setLatestByKey] = useState<Map<string, SignableDocument>>(() => readCachedDocs("newTechnician") ?? new Map());
   const [exemptions, setExemptions] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -493,6 +523,13 @@ export function TechnicianFormChecklistPage({
       const users = await getCompanyUsers() as ProfileRow[];
       setAllUsers(users);
       writeCachedUsers(users);
+      // Terminated / Resigned / Deactivated + date for the badge (best-effort — the badge just says Deactivated without it).
+      const [statuses, changes] = await Promise.all([
+        getEmploymentStatusesByProfileIds(users.map((u) => u.id)).catch(() => new Map<string, EmploymentStatusInfo>()),
+        getUserStatusChanges().catch(() => new Map<string, AccountStatusChange>()),
+      ]);
+      setEmploymentStatuses(statuses);
+      setStatusChanges(changes);
     } catch (err) {
       console.error("Staff form checklist: failed to load users:", err);
     } finally {
@@ -639,9 +676,10 @@ export function TechnicianFormChecklistPage({
         frozen: u.frozen === true,
         isTrainee: u.employment_type === "trainee",
         isDeactivated: !u.is_active,
+        leftBadge: leftBadgeFor(u, employmentStatuses.get(u.id), statusChanges.get(u.id)),
       };
     });
-  }, [allUsers, latestByKey, exemptions, activeConfig]);
+  }, [allUsers, latestByKey, exemptions, activeConfig, employmentStatuses, statusChanges]);
 
   // Auto-(re)select a row to expand whenever the underlying row list changes
   // (data refresh OR switching tabs) — keeps the current selection if it's
@@ -1223,7 +1261,7 @@ export function TechnicianFormChecklistPage({
                       <p className="truncate text-sm font-semibold text-white flex items-center gap-1.5">
                         {r.name}
                         {r.isTrainee && <span className="shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-300">Trainee</span>}
-                        {r.isDeactivated && <span className="shrink-0 rounded-full border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-300">Deactivated</span>}
+                        {r.leftBadge && <span title={r.leftBadge.title} className="shrink-0 rounded-full border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-300">{r.leftBadge.label}</span>}
                         {r.frozen && <span className="shrink-0 rounded-full border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-300">Frozen</span>}
                       </p>
                       <p className="text-[11px] text-slate-400">{r.roleLabel} · {r.branch}</p>
