@@ -18,6 +18,7 @@ import { AuthProvider, useAuth } from "@/lib/auth";
 import { ThemeProvider } from "@/lib/theme";
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { TraineeAttendanceReviewModal } from "@/components/TraineeAttendanceReviewModal";
+import { TraineeDecisionPrompt } from "@/components/TraineeDecisionPrompt";
 import { PasswordChangeReminder } from "@/components/PasswordChangeReminder";
 import { FrozenAccountModal } from "@/components/FrozenAccountModal";
 import { LateTicketCompletionModal } from "@/components/LateTicketCompletionModal";
@@ -172,6 +173,8 @@ function RootComponent() {
             <MustChangePasswordGate hideChrome={hideChrome} />
             {!hideChrome && <AnnouncementBanner />}
             {!hideChrome && <TraineeAttendanceReviewModal />}
+            {/* Hire / keep training / let go — mobile too, where managers often are. */}
+            {(!hideChrome || isMobilePage) && <TraineeDecisionPrompt />}
             {!hideChrome && <PasswordChangeReminder />}
             {!hideChrome && <FrozenAccountModal />}
             {!hideChrome && <LateTicketCompletionModal />}

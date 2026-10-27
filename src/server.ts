@@ -27,6 +27,7 @@ import { handlePasswordResetRequest } from "./lib/server/passwordResetRequestBri
 import { handleItBypassLoginRequest } from "./lib/server/itBypassLoginBridge";
 import { handleServerStatusRequest } from "./lib/server/serverStatus";
 import { handleStorageUploadRequest } from "./lib/server/storageUploadBridge";
+import { handleTraineeDecisionRequest } from "./lib/server/traineeDecisions";
 
 const CANONICAL_ORIGIN = "https://adminhubsolution.com";
 
@@ -239,6 +240,10 @@ export default {
       const merged = await resolveServerEnv(env);
       return await handleStorageUploadRequest(request, merged);
     }
+    if (url.pathname === "/api/trainee-decision") {
+      const merged = await resolveServerEnv(env);
+      return await handleTraineeDecisionRequest(request, merged);
+    }
 
     try {
       const handler = await getServerEntry();
@@ -387,6 +392,18 @@ export default {
       ).then(
         (result) => { if (result.graduated.length || result.errors.length) console.log("traineeGraduation:", JSON.stringify(result)); },
         (error) => console.error("traineeGraduation failed:", error),
+      ),
+    );
+
+    // Ask each trainee's manager "hire, keep training, or let go?" after 2
+    // weeks of training and on the last training day. One notification per
+    // checkpoint (hr_trainee_decisions, migration 0407).
+    ctx.waitUntil(
+      import("./lib/server/traineeDecisions").then(
+        ({ runTraineeDecisionPrompts }) => runTraineeDecisionPrompts(merged),
+      ).then(
+        (result) => { if (result.newlyAsked.length || result.errors.length) console.log("traineeDecisionPrompts:", JSON.stringify(result)); },
+        (error) => console.error("traineeDecisionPrompts failed:", error),
       ),
     );
 

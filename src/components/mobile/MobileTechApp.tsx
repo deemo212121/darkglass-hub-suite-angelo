@@ -159,6 +159,7 @@ import { createOrUpdateTicketReschedule, getTicketReschedulesForTicketNos, type 
 import { AnnouncementBanner } from "@/components/AnnouncementBanner";
 import { FrozenAccountModal } from "@/components/FrozenAccountModal";
 import { TraineeAttendanceMobileModal } from "@/components/mobile/TraineeAttendanceMobileModal";
+import { TRAINEE_DECISION_OPEN_EVENT } from "@/lib/traineeDecision";
 import { MobileTicketAttendanceView } from "@/components/mobile/MobileTicketAttendanceView";
 import { MobileExpensesView } from "@/components/mobile/MobileExpensesView";
 import { AnnouncementsPage } from "@/components/AnnouncementsPage";
@@ -1486,6 +1487,7 @@ export function MobileTechApp() {
   // nothing left to open.
   const handleNotificationLink = (linkTo: string) => {
     const lower = linkTo.toLowerCase();
+    if (lower.includes("traineedecision")) { window.dispatchEvent(new Event(TRAINEE_DECISION_OPEN_EVENT)); return; }
     if (lower.includes("it-tickets") || lower.includes("itsupport")) { setView("itsupport"); return; }
     if (lower.includes("pto-management")) { setView("timeoff"); return; }
     if (lower.includes("corrections")) { setCorrectionPrefillDate(null); setView("correction"); return; }
