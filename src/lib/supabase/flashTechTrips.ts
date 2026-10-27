@@ -222,6 +222,41 @@ export async function getActiveFlashTechDestinations(profileId: string): Promise
     .filter((d) => d.location !== "");
 }
 
+/** Every technician's "Open" trips company-wide (same rule as getActiveFlashTechDestinations), by profile id — for User Management's list. */
+export async function getActiveFlashTechDestinationsByProfile(): Promise<Map<string, ActiveFlashTechDestination[]>> {
+  const rows: any[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("flash_tech_trips")
+      .select("technician_profile_id, destination_location, start_date, end_date, status_override")
+      .not("technician_profile_id", "is", null)
+      .order("start_date", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getActiveFlashTechDestinationsByProfile error:", error.message);
+      return new Map();
+    }
+    rows.push(...(data ?? []));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  const byProfile = new Map<string, ActiveFlashTechDestination[]>();
+  for (const r of rows) {
+    if (((r.status_override as FlashTechStatus | null) || computeFlashTechTripStatus(r.start_date, r.end_date)) !== "Open") continue;
+    const location = normalizeLocationName(r.destination_location);
+    if (!location) continue;
+    const list = byProfile.get(r.technician_profile_id) ?? [];
+    // Two open trips to the same branch: one entry, the later end date.
+    const same = list.find((d) => d.location === location);
+    if (same) {
+      if (r.end_date > same.endDate) same.endDate = r.end_date;
+    } else {
+      list.push({ location, endDate: r.end_date as string });
+    }
+    byProfile.set(r.technician_profile_id, list);
+  }
+  return byProfile;
+}
+
 /** Every Flash Tech trip for the caller's company, with its linked expenses (if any) attached. */
 export async function getCompanyFlashTechTrips(): Promise<FlashTechTrip[]> {
   const tripRows: any[] = [];
