@@ -31,6 +31,8 @@ import { CANCEL_REASONS } from "@/lib/operationsBranchMetrics";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
 import type { TechnicianOption } from "@/lib/supabase/users";
 import { computeOfficeDistanceMiles } from "@/lib/mapEngine";
+import { isZipCovered } from "@/lib/zipCoverage";
+import { ensureCompanyZipCoverage } from "@/lib/zipCoverageLoader";
 import {
   buildSquaretradeUrlFromToken,
   extractSquaretradeUrl,
@@ -2390,6 +2392,25 @@ function TicketDetailsPage() {
   }, [ticketDbId]);
 
   const ticket = ticketData;
+
+  // Out of Coverage (like USAPP's "*** Out-of-Coverage ***"): the customer ZIP
+  // isn't in Location Management or the built-in map — the same check that
+  // picks a ticket's branch and fills Tickets -> No-Coverage Tickets. null
+  // until coverage has loaded, so a ZIP added in Location Management isn't
+  // flagged while the list is still on its way.
+  const [zipCovered, setZipCovered] = useState<boolean | null>(null);
+  const ticketZip = ticket?.zip ?? null;
+  const hasTicket = !!ticket;
+  useEffect(() => {
+    if (!hasTicket) return;
+    let cancelled = false;
+    setZipCovered(null);
+    ensureCompanyZipCoverage()
+      .catch((err) => console.warn("Ticket coverage check: coverage list didn't load, using the built-in map:", err))
+      .then(() => { if (!cancelled) setZipCovered(isZipCovered(ticketZip)); });
+    return () => { cancelled = true; };
+  }, [ticketZip, hasTicket]);
+  const outOfCoverage = zipCovered === false;
 
   // Squaretrade tickets need a per-ticket appointment-completion URL so the
   // claims team can finish the repair. We persist whatever the user pastes
@@ -6385,6 +6406,16 @@ function TicketDetailsPage() {
                   </div>
                 )}
               </div>
+              {ticket && outOfCoverage && (
+                <div className="mt-3 rounded-md border border-rose-500/40 bg-rose-500/15 px-3 py-2 text-sm font-semibold text-rose-200">
+                  *** Out of Coverage ***{" "}
+                  <span className="font-normal text-rose-200/90">
+                    {/\d/.test(String(ticket.zip ?? ""))
+                      ? `ZIP ${ticket.zip} isn't in our coverage area (Location Management).`
+                      : "This ticket has no ZIP code, so it isn't in any branch's coverage."}
+                  </span>
+                </div>
+              )}
             </div>
         </div>
 
@@ -6504,7 +6535,16 @@ function TicketDetailsPage() {
                       </div>
                       <div>
                         <div className="text-slate-500 font-semibold text-xs">Location</div>
-                        <div className="text-white font-semibold mt-1">{ticket.location || ticket.city || "—"}</div>
+                        <div className="text-white font-semibold mt-1">
+                          {outOfCoverage ? (
+                            <>
+                              <span className="text-rose-300">Out of coverage</span>
+                              {ticket.location && <span className="ml-1 text-xs font-normal text-slate-400">(filed under {ticket.location})</span>}
+                            </>
+                          ) : (
+                            ticket.location || ticket.city || "—"
+                          )}
+                        </div>
                       </div>
                     </div>
                     {/* NSA-specific identifiers shown inside customer card */}
@@ -6578,6 +6618,9 @@ function TicketDetailsPage() {
                     <div>
                       <label className="text-slate-500 font-semibold">State/Zip</label>
                       <div className="text-white mt-1">{ticket.state} {ticket.zip}</div>
+                      {outOfCoverage && (
+                        <span className="mt-1 inline-block rounded bg-rose-700 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-white">Out of coverage</span>
+                      )}
                     </div>
                     <div>
                       <label className="text-slate-500 font-semibold">Home Phone</label>

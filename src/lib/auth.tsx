@@ -149,21 +149,10 @@ function loadCompanyZipCoverage() {
   zipCoverageLoaded = true;
   (async () => {
     try {
-      const { getCoverage } = await import("./supabase/locationManagement");
-      const { registerZipCoverage } = await import("./zipCoverage");
-      const rows = await getCoverage();
-      if (rows.length) {
-        registerZipCoverage(
-          rows.map((r) => ({
-            zipCode: r.zipCode,
-            location: r.location,
-            city: r.city,
-            selfSchedule: r.selfSchedule,
-            tierCode: r.tierCode,
-          }))
-        );
-        devLog(`📍 Registered ${rows.length} coverage zips from Supabase.`);
-      }
+      // Shared with pages that judge coverage (zipCoverageLoader.ts), so they wait on this same load.
+      const { ensureCompanyZipCoverage } = await import("./zipCoverageLoader");
+      const count = await ensureCompanyZipCoverage();
+      if (count) devLog(`📍 Registered ${count} coverage zips from Supabase.`);
     } catch (error) {
       console.warn("Loading company zip coverage skipped:", error);
       zipCoverageLoaded = false; // allow retry next login

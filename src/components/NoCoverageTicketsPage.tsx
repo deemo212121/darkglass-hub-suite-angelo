@@ -23,18 +23,12 @@ import { useSmartBack } from "@/hooks/useSmartBack";
 import { useAuth } from "@/lib/auth";
 import { BrandedLoader } from "@/components/BrandedLoader";
 import { getCompanyTickets, invalidateCompanyTicketsCache } from "@/lib/supabase/tickets";
-import { getCoverage } from "@/lib/supabase/locationManagement";
-import { lookupZip, registerZipCoverage } from "@/lib/zipCoverage";
+import { isZipCovered } from "@/lib/zipCoverage";
+import { ensureCompanyZipCoverage } from "@/lib/zipCoverageLoader";
 import { isPendingStatus, type Ticket } from "@/lib/ticketData";
 import { formatISODate, todayISO } from "@/lib/localDate";
 
 const PAGE_SIZES = [10, 20, 50, 100, 500];
-
-/** A ZIP with digits that the coverage lookup knows (ZIP+4 and a dropped leading zero are handled by lookupZip). */
-function isZipCovered(zip: string | undefined): boolean {
-  const z = String(zip ?? "");
-  return /\d/.test(z) && lookupZip(z) !== null;
-}
 
 const COLUMNS: { label: string; value: (t: Ticket) => string; align?: "right" }[] = [
   { label: "Ticket No", value: (t) => t.ticketNo },
@@ -74,20 +68,14 @@ export function NoCoverageTicketsPage({ mod }: { mod: ModuleDef; sub: SubModuleD
       setLoading(true);
       setError(null);
       if (fresh) invalidateCompanyTicketsCache();
-      const [rows, coverage] = await Promise.all([
+      const [rows] = await Promise.all([
         getCompanyTickets(),
         // Best-effort: without it the lookup still has the built-in map plus
         // whatever coverage was loaded at sign-in.
-        getCoverage().catch((err) => {
+        ensureCompanyZipCoverage(true).catch((err) => {
           console.warn("No-Coverage Tickets: coverage reload skipped:", err);
-          return [];
         }),
       ]);
-      if (coverage.length) {
-        registerZipCoverage(
-          coverage.map((r) => ({ zipCode: r.zipCode, location: r.location, city: r.city, selfSchedule: r.selfSchedule, tierCode: r.tierCode })),
-        );
-      }
       setTickets(rows);
       setLastLoadedAt(new Date());
     } catch (err) {
