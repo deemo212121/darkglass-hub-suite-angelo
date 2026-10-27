@@ -37,6 +37,7 @@ const DailyActivityPage = lazy(() => import("@/components/DailyActivityPage").th
 const TriageDashboardPage = lazy(() => import("@/components/TriageDashboardPage").then((m) => ({ default: m.TriageDashboardPage })));
 const UniversalActivityLogPage = lazy(() => import("@/components/UniversalActivityLogPage").then((m) => ({ default: m.UniversalActivityLogPage })));
 const ReportsLibraryPage = lazy(() => import("@/components/ReportsLibraryPage").then((m) => ({ default: m.ReportsLibraryPage })));
+const ErrorsImprovementsPage = lazy(() => import("@/components/ErrorsImprovementsPage").then((m) => ({ default: m.ErrorsImprovementsPage })));
 const GenericModulePage = lazy(() => import("@/components/GenericModulePage").then((m) => ({ default: m.GenericModulePage })));
 const PartReturnStatusPage = lazy(() => import("@/components/PartReturnStatus").then((m) => ({ default: m.PartReturnStatusPage })));
 const ClaimsPipeline = lazy(() => import("@/components/ClaimsPipeline").then((m) => ({ default: m.ClaimsPipeline })));
@@ -739,6 +740,8 @@ function SubModule() {
         ? <UniversalActivityLogPage mod={mod} sub={sub} />
         : (sub as any).custom === "reports-library"
         ? <ReportsLibraryPage mod={mod} sub={sub} />
+        : (sub as any).custom === "errors-improvements"
+        ? <ErrorsImprovementsPage mod={mod} sub={sub} />
         : (sub as any).custom === "add-branch"
         ? <AddBranchPage mod={mod} sub={sub} />
         : <GenericModulePage mod={mod} sub={sub} />}

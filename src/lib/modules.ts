@@ -1958,6 +1958,15 @@ const adminMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "errors-improvements",
+      title: "Errors & Improvements",
+      description: "What needs doing — errors to fix, improvements and to-dos, with who added each one and a Confirm button once it's done.",
+      custom: "errors-improvements" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
       slug: "reports-library",
       title: "Reports Library",
       description: "Imported reports for leadership (attendance and leave reports, dashboards), kept separate from live data. Admin and SuperAdmin only.",
