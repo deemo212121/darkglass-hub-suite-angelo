@@ -9,14 +9,35 @@ import { supabase } from "./client";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import type { TraineeDecisionChoice, TraineeDecisionItem } from "@/lib/traineeDecision";
 
+// Migration 0407 not run yet: the table 404s. Remembered for a while in this
+// tab so every page load doesn't log the same 404 in the console.
+const MISSING_TABLE_KEY = "ahs.traineeDecisions.missingUntil";
+const MISSING_TABLE_RECHECK_MS = 30 * 60 * 1000;
+const tableKnownMissing = () => {
+  try {
+    return Number(sessionStorage.getItem(MISSING_TABLE_KEY) || 0) > Date.now();
+  } catch {
+    return false;
+  }
+};
+
 /** Whether the hourly job has asked this person about a trainee they haven't answered yet. */
 export async function hasUnansweredTraineeAsk(profileId: string): Promise<boolean> {
+  if (tableKnownMissing()) return false;
   const { data: asks, error } = await supabase
     .from("hr_trainee_decisions")
     .select("trainee_key, due_date")
     .eq("manager_profile_id", profileId)
     .eq("decision", "asked");
-  if (error || !asks?.length) return false; // includes migration 0407 not run yet
+  if (error && (error.code === "PGRST205" || error.code === "42P01")) {
+    try {
+      sessionStorage.setItem(MISSING_TABLE_KEY, String(Date.now() + MISSING_TABLE_RECHECK_MS));
+    } catch {
+      /* storage blocked — just asks again next load */
+    }
+    return false;
+  }
+  if (error || !asks?.length) return false;
   const { data: answers } = await supabase
     .from("hr_trainee_decisions")
     .select("trainee_key, due_date")
