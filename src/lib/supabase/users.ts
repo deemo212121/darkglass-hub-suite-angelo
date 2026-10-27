@@ -12,6 +12,7 @@
  *  - Then we insert the matching row into Supabase `profiles`.
  */
 
+import { setInactiveNamesFromRoster } from "@/lib/inactiveNames";
 import { registerApprovalDirectory } from "@/lib/approvalDirectory";
 import { initializeApp, deleteApp, getApps } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword } from "firebase/auth";
@@ -520,6 +521,7 @@ export async function getCompanyUsers(): Promise<ProfileRow[]> {
     });
   const rows = await companyUsersInFlight;
   companyUsersCache = { data: rows, expiresAt: Date.now() + COMPANY_USERS_CACHE_TTL_MS };
+  setInactiveNamesFromRoster(rows);
   return rows;
 }
 
@@ -1137,6 +1139,9 @@ export interface AccountStatusChange {
  * Management and HR's Master List both write these entries
  * (recordAccountStatusChange) and both read them back here.
  */
+/** Activate/Deactivate entries by these people are left out of the Status column (User Management, HR Master List). */
+const STATUS_HIDDEN_ACTORS = new Set(["angelo mendoza"]);
+
 export async function getUserStatusChanges(): Promise<Map<string, AccountStatusChange>> {
   const result = new Map<string, AccountStatusChange>();
   const [activated, deactivated] = await Promise.all([
@@ -1149,6 +1154,8 @@ export async function getUserStatusChanges(): Promise<Map<string, AccountStatusC
   const merged = [...activated, ...deactivated].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   for (const entry of merged) {
     if (!entry.targetId || result.has(entry.targetId)) continue;
+    // Still in the Activity Log, just not shown as anyone's status.
+    if (STATUS_HIDDEN_ACTORS.has((entry.actorName ?? "").trim().toLowerCase())) continue;
     const reason = typeof entry.details?.reason === "string" ? entry.details.reason.trim() : "";
     const date = typeof entry.details?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(entry.details.date) ? entry.details.date : null;
     result.set(entry.targetId, {

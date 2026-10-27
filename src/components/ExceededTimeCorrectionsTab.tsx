@@ -165,12 +165,14 @@ function countsTowardLimit(c: TimecardCorrectionRow, activeExemption: Map<string
   return c.status !== "rejected" && !activeExemption.has(c.id);
 }
 
-/** Leave columns, same letters as the Time Off Calendar. A = Unnoticed. */
+/**
+ * Leave columns, same letters as the Time Off Calendar. A = Unnoticed.
+ * No H column — PTO can't be filed on a holiday (company holidays aren't counted at all).
+ */
 const LEAVE_COLUMNS: { letter: LeaveLetter; label: string }[] = [
   { letter: "V", label: "Vacation" },
   { letter: "S", label: "Sick" },
   { letter: "P", label: "Personal" },
-  { letter: "H", label: "Holiday" },
   { letter: "U", label: "Unpaid" },
   { letter: "B", label: "Bereavement" },
   { letter: "A", label: "Unnoticed + Absent — marked Unnoticed, pending/rejected leave, or a missed workday with nothing filed" },

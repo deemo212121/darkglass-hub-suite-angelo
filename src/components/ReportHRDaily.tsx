@@ -3717,11 +3717,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [addPrevWarnOpen, setAddPrevWarnOpen] = useState(false);
   const [addPrevWarnDate, setAddPrevWarnDate] = useState(todayStr);
   const [addPrevWarnReason, setAddPrevWarnReason] = useState("");
+  // Which warning it was — saved as the note's "1st Warning — …" prefix, same as a confirmed Warning Form's note.
+  const [addPrevWarnLevel, setAddPrevWarnLevel] = useState<"" | "1st" | "2nd" | "3rd">("");
   const [addPrevWarnSaving, setAddPrevWarnSaving] = useState(false);
   const [addPrevWarnError, setAddPrevWarnError] = useState<string | null>(null);
   const handleAddPreviousWarning = async () => {
-    if (!warnForm.employeeId || !addPrevWarnDate || !addPrevWarnReason.trim()) {
-      setAddPrevWarnError("Date and reason are required.");
+    if (!warnForm.employeeId || !addPrevWarnLevel || !addPrevWarnDate || !addPrevWarnReason.trim()) {
+      setAddPrevWarnError("Warning type, date and reason are required.");
       return;
     }
     setAddPrevWarnSaving(true);
@@ -3730,7 +3732,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       await addAgentNote({
         agentProfileId: warnForm.employeeId,
         type: "warning",
-        note: addPrevWarnReason.trim(),
+        note: `${addPrevWarnLevel} Warning — ${addPrevWarnReason.trim()}`,
         occurredAt: new Date(addPrevWarnDate + "T00:00:00").toISOString(),
         fastTrackToApproved: true,
       });
@@ -3738,6 +3740,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setAddPrevWarnOpen(false);
       setAddPrevWarnDate(todayStr);
       setAddPrevWarnReason("");
+      setAddPrevWarnLevel("");
     } catch (error) {
       setAddPrevWarnError(error instanceof Error ? error.message : "Failed to add warning.");
     } finally {
@@ -3790,6 +3793,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   }, [employees, warnRecipientSearch]);
 
   const handleOpenWarnPreview = async () => {
+    if (warnMissingPrior > 0) return;
     setWarnGenerating(true);
     try {
       setWarnLogoDataUrl(await loadImageDataUrl(() => import("@/assets/us-in-home-services-logo.png")));
@@ -3844,6 +3848,30 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     // table there.
     if (activeTab === "warningForm" || activeTab === "warnings" || activeTab === "employerQueue") void loadSentWarningForms();
   }, [activeTab]);
+
+  // A 2nd warning needs a 1st on file, a 3rd needs two. "On file" = the
+  // employee's warning notes (approved, or still pending review — incl.
+  // backfilled ones) plus warning forms sent but not yet confirmed (a
+  // confirmed form already has its note). Cancelled/rejected don't count.
+  const warnPriorWarningCount = useMemo(() => {
+    if (!warnForm.employeeId) return 0;
+    const notes = allNotes.filter(
+      (n) => n.type === "warning" && n.agentProfileId === warnForm.employeeId && (n.status === "approved" || n.status === "pending" || n.status === "manager_approved")
+    ).length;
+    const unconfirmedForms = sentWarningForms.filter(
+      (d) => (d.status === "pending_signature" || d.status === "signed") && (d.formData as unknown as WarningFormData).employeeId === warnForm.employeeId
+    ).length;
+    return notes + unconfirmedForms;
+  }, [allNotes, sentWarningForms, warnForm.employeeId]);
+  const warnRequiredPrior = warnForm.level === "2nd" ? 1 : warnForm.level === "3rd" ? 2 : 0;
+  const warnMissingPrior = warnForm.employeeId ? Math.max(0, warnRequiredPrior - warnPriorWarningCount) : 0;
+  // Opens "+ Add previous warning" as soon as one is missing.
+  useEffect(() => {
+    if (warnMissingPrior > 0) {
+      setAddPrevWarnOpen(true);
+      setAddPrevWarnLevel((["1st", "2nd", "3rd"] as const)[Math.min(warnPriorWarningCount, 2)]);
+    }
+  }, [warnMissingPrior, warnPriorWarningCount]);
 
   const issuerNameByNoteId = useMemo(() => {
     const map = new Map<string, string>();
@@ -24045,6 +24073,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 </button>
               ))}
             </div>
+            {warnMissingPrior > 0 && (
+              <p className="mt-2 text-xs text-red-400">
+                {warnPriorWarningCount === 0
+                  ? `No 1st warning on file for ${warnForm.employeeName}.`
+                  : `Only ${warnPriorWarningCount} previous warning on file for ${warnForm.employeeName}.`}{" "}
+                Add the {warnPriorWarningCount === 0 ? "1st" : "2nd"} warning first (send it, or use "+ Add previous warning" below) before sending a {warnForm.level} warning.
+              </p>
+            )}
           </div>
           <div>
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5 block">Reason(s) for Warning</label>
@@ -24116,7 +24152,22 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <p className="text-[10px] text-muted-foreground">
                   For a warning issued before this system existed (paper form, verbal, etc.) — logs it as an approved record on this employee's file with its real date.
                 </p>
-                <div className="grid grid-cols-1 md:grid-cols-[auto_1fr] gap-2 items-start">
+                <div className="grid grid-cols-1 md:grid-cols-[auto_auto_1fr] gap-2 items-start">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Type of warning</label>
+                    <div className="flex gap-3 h-[34px] items-center">
+                      {(["1st", "2nd", "3rd"] as const).map((lvl) => (
+                        <button
+                          key={lvl}
+                          type="button"
+                          onClick={() => setAddPrevWarnLevel(addPrevWarnLevel === lvl ? "" : lvl)}
+                          className="flex items-center gap-1.5 text-sm"
+                        >
+                          <span className="text-base">{addPrevWarnLevel === lvl ? "☑" : "☐"}</span> {lvl}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Date it happened</label>
                     <input
@@ -24157,7 +24208,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         <div className="px-4 py-4 border-t border-white/10 flex justify-end">
           <button
             onClick={handleOpenWarnPreview}
-            disabled={warnGenerating || !warnForm.employeeName.trim()}
+            disabled={warnGenerating || !warnForm.employeeName.trim() || warnMissingPrior > 0}
+            title={warnMissingPrior > 0 ? `Add the missing previous warning(s) before sending a ${warnForm.level} warning.` : undefined}
             className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1.5 disabled:opacity-50"
           >
             <Download className="h-3.5 w-3.5" /> {warnGenerating ? "Loading…" : "Preview & Send"}
