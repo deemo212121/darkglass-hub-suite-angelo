@@ -158,7 +158,10 @@ function signRow(label: string, name: string, entry: SignatureEntry | undefined)
 
 export function buildWarningFormBodyMarkup(data: WarningFormData, logoDataUrl: string, signatures: WarningFormSignatures): string {
   const r = data.reasons;
-  const prev = [0, 1, 2].map((i) => data.previousWarnings[i]);
+  // Oldest first — "1." is the first warning, "2." the second… (forms saved
+  // newest-first before this still print in the right order). Undated last.
+  const sortedPrev = [...(data.previousWarnings ?? [])].sort((a, b) => (a?.date || "9999").localeCompare(b?.date || "9999"));
+  const prev = [0, 1, 2].map((i) => sortedPrev[i]);
 
   return `
     <div class="warn-container">

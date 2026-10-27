@@ -84,6 +84,9 @@ const PH_DEPT_BY_ROLE: Record<string, string> = {
   PARTS: "Parts", PARTS_ORDER: "Parts", PARTS_TEAM_LEADER: "Parts", PARTS_MANAGER: "Parts",
   BIZOPS_ASSOCIATE: "BizOps", BIZOPS_TEAM_LEADER: "BizOps", BIZOPS_MANAGER: "BizOps", BIZOPS_SENIOR_MANAGER: "BizOps",
   TRIAGE_USER: "Triage", TRIAGE_MANAGER: "Triage",
+  // No default approver role for Sales (not in PH_DEPT_MANAGER_ROLES) — its
+  // requests go to the top level unless Admin names Sales managers (0405).
+  SALES_MANAGER: "Sales",
   MANAGER: "Management", SENIOR_MANAGER: "Management",
   FINANCE: "Accounting", HR: "HR", IT: "IT", DISPATCHER: "Dispatch",
   TECHNICIAN: "Technician", TECHNICIAN_MANAGER: "Technician", TECHNICAL_DIRECTOR: "Technician",

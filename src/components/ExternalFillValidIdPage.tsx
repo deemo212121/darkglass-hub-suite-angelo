@@ -1,3 +1,4 @@
+import { BRAND_COMPANY, brandOf, loadBrandLogo } from "@/lib/formBrand";
 /**
  * External Fill Valid ID — the no-login counterpart to FillValidIdPage.tsx.
  * See ExternalFillContractorDataPage.tsx's header comment for the shared
@@ -44,9 +45,11 @@ export function ExternalFillValidIdPage({ docId }: Props) {
 
   const sigPad = useSignaturePad({ defaultName: form.employeeName, width: 500, height: 130 });
 
+  // The logo of this copy's version (US In Home Services, or Admin Hub Solutions from AHS FORMS PH).
+  const formBrand = brandOf(form);
   useEffect(() => {
-    loadAssetDataUrl(() => import("@/assets/us-in-home-services-logo.png")).then(setLogoDataUrl);
-  }, []);
+    loadBrandLogo(formBrand).then(setLogoDataUrl);
+  }, [formBrand]);
 
   useEffect(() => {
     let cancelled = false;

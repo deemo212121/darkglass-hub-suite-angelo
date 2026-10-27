@@ -1,3 +1,4 @@
+import { BRAND_COMPANY, brandOf } from "@/lib/formBrand";
 /**
  * Valid ID (Philippines) — a standalone identification-document submission
  * for PH staff, split out of the Master PH Contractor Agreement (which
@@ -14,6 +15,8 @@
 export const VALID_ID_TYPES = ["Passport", "Driver's License", "Other Government ID"] as const;
 
 export interface ValidIdFormData {
+  /** "ahs" = the Admin Hub Solutions version (HR Paperworks → AHS FORMS PH); absent = the original US In Home Services version. */
+  brand?: "ahs";
   employeeId: string;
   employeeName: string;
   idType: string;
@@ -75,7 +78,7 @@ export function buildValidIdFormBodyMarkup(data: ValidIdFormData, logoDataUrl: s
     <div class="validid-container">
       <div class="validid-header">
         <h1>VALID ID SUBMISSION</h1>
-        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="US In Home Services" />` : ""}
+        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="${BRAND_COMPANY[brandOf(data)]}" />` : ""}
       </div>
 
       <div class="validid-section-title">EMPLOYEE INFORMATION</div>

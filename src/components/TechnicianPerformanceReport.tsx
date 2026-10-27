@@ -500,7 +500,9 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       const cancelledByName = new Map<string, number>();
       for (const c of cancelledCounts) cancelledByName.set(c.technician.trim().toLowerCase(), c.count);
 
-      const techs = allUsers.filter((u) => u.is_active && TECHNICIAN_PAY_ROLES.has(normalizeRole(u.role)));
+      // Active technicians only, and not trainees (Master List's Employment
+      // Status) — a trainee isn't graded here until they're Regular.
+      const techs = allUsers.filter((u) => u.is_active && u.employment_type !== "trainee" && TECHNICIAN_PAY_ROLES.has(normalizeRole(u.role)));
       const dimensionByName = new Map<string, { location: string; manager: string; tier: string }>();
       for (const t of techs) {
         dimensionByName.set((t.display_name || t.email).trim().toLowerCase(), {
@@ -848,16 +850,33 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const managerOptions = useMemo(() => Array.from(new Set(visibleRows.map((r) => r.manager))).sort(), [visibleRows]);
   const tierOptions = useMemo(() => Array.from(new Set(visibleRows.map((r) => r.tier))).sort(), [visibleRows]);
 
-  const filteredRows = useMemo(() => {
+  // A technician with nothing at all in the period — no tickets, no punched
+  // days or hours, and nothing to flag (no-shows, missed clock-ins,
+  // reschedules, cancellations, damage, timecard issues) — would only show as
+  // an all-zero "Needs Attention" row. Hidden unless "Show techs with no work"
+  // is ticked; a tech who no-showed every scheduled day still has counts and
+  // stays listed.
+  const [showNoActivity, setShowNoActivity] = useState(false);
+  const isNoActivity = (r: TechPerfRow) =>
+    r.totalTickets === 0 && r.daysWorked === 0 && r.hoursWorked === 0 && r.ncnsCount === 0 && r.missedClockInCount === 0 &&
+    r.rescheduleCount === 0 && r.cancelledCount === 0 && r.damageAssessmentCount === 0 && r.timecardIssueCount === 0;
+  const { filteredRows, noActivityHidden } = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return visibleRows.filter((r) => {
+    let hidden = 0;
+    const kept = visibleRows.filter((r) => {
       if (q && !r.name.toLowerCase().includes(q) && !r.id.toLowerCase().includes(q)) return false;
       if (locationFilter.length > 0 && !locationFilter.includes(r.location)) return false;
       if (managerFilter.length > 0 && !managerFilter.includes(r.manager)) return false;
       if (tierFilter.length > 0 && !tierFilter.includes(r.tier)) return false;
+      if (!showNoActivity && isNoActivity(r)) {
+        hidden++;
+        return false;
+      }
       return true;
     });
-  }, [visibleRows, search, locationFilter, managerFilter, tierFilter]);
+    return { filteredRows: kept, noActivityHidden: hidden };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleRows, search, locationFilter, managerFilter, tierFilter, showNoActivity]);
 
   // "Compare" mode: once 2+ values are picked in one of the Location/
   // Manager/Tier multi-selects, aggregate the (already combined/OR-
@@ -2053,6 +2072,10 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide block mb-1">Tier</label>
             <MultiSelect label="Tier" options={tierOptions} selected={tierFilter} onChange={setTierFilter} />
           </div>
+          <label className="flex items-center gap-1.5 self-end pb-1.5 text-xs text-muted-foreground cursor-pointer" title="Technicians with no tickets, no hours and nothing flagged in this period">
+            <input type="checkbox" checked={showNoActivity} onChange={(e) => setShowNoActivity(e.target.checked)} className="accent-blue-500" />
+            Show techs with no work{!showNoActivity && noActivityHidden > 0 ? ` (${noActivityHidden} hidden)` : ""}
+          </label>
           <div>
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide block mb-1">Group By</label>
             <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)} className="glass-input text-xs py-1.5 px-3 rounded-md">

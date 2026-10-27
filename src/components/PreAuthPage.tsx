@@ -9,17 +9,19 @@
  * whose settings.spPreAuthSubmitEnabled is true (nothing in the app turns
  * it on), and even then asks "Submit this Pre-Auth to ServicePower?" first.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import { CheckCircle2, ChevronLeft, Clock, FileCheck2, Loader2, Lock, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import type { Ticket } from "@/lib/ticketData";
 import { useAuth } from "@/lib/auth";
+import { runTour, takeQueuedTour } from "@/lib/tours/runTour";
+import { PRE_AUTH_TOUR, PRE_AUTH_TOUR_TARGET } from "@/lib/tours/claimsTours";
 import { localISODate } from "@/lib/localDate";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
-import { getCompanyTicketsWithStatuses, getTicketByNumber, getTicketParts } from "@/lib/supabase/tickets";
+import { getCompanyTicketsWithStatuses, getTicketByNumber, getTicketParts, updateTicketFields } from "@/lib/supabase/tickets";
 import { claimToColor } from "@/lib/claimToColors";
 import { jobCodesFor } from "@/lib/jobCodes";
 import { buildPreAuthRFA } from "@/lib/preAuthPayload";
@@ -173,6 +175,23 @@ export function PreAuthPage({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
     if (!ticket) { alert(`Ticket ${r.ticketNo} wasn't found.`); return; }
     setEditing({ ticket, preAuth: r.preAuth });
   };
+  // Guides → Claims / BizOps "Pre-Auth" tour, handed over from Guides —
+  // starts once the list has loaded; its form steps open the first row's
+  // Pre-Auth and close it after. Look-only.
+  const rowsForTourRef = useRef<Row[]>([]);
+  rowsForTourRef.current = filtered;
+  const tourStartedRef = useRef(false);
+  useEffect(() => {
+    if (loading || tourStartedRef.current) return;
+    if (takeQueuedTour(PRE_AUTH_TOUR_TARGET) !== PRE_AUTH_TOUR.id) return;
+    tourStartedRef.current = true;
+    window.setTimeout(() => void runTour(PRE_AUTH_TOUR, {
+      openPanel: () => { const first = rowsForTourRef.current[0]; if (first) void openRow(first); },
+      closePanel: () => setEditing(null),
+    }), 700);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+
   const openByNumber = async () => {
     const no = openTicketNo.trim();
     if (!no) return;
@@ -194,11 +213,11 @@ export function PreAuthPage({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
         <h1 className="text-xl font-bold">Pre-Auth</h1>
         <span className="text-xs text-muted-foreground">ServicePower Call Auth (Request for Authorization) — fill in and save here</span>
         {sendOn ? (
-          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-200" title="Turned on in Admin → Company Settings → ServicePower. Submit still asks before sending.">
+          <span data-tour="pa-send-badge" className="inline-flex items-center gap-1 rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-200" title="Turned on in Admin → Company Settings → ServicePower. Submit still asks before sending.">
             Sending to ServicePower is ON
           </span>
         ) : (
-          <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-200" title="Nothing is sent to ServicePower from this page. A SuperAdmin can turn it on in Admin → Company Settings → ServicePower.">
+          <span data-tour="pa-send-badge" className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-200" title="Nothing is sent to ServicePower from this page. A SuperAdmin can turn it on in Admin → Company Settings → ServicePower.">
             <Lock className="h-3 w-3" /> Sending to ServicePower is off · turn on in Admin → Company Settings
           </span>
         )}
@@ -210,7 +229,7 @@ export function PreAuthPage({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
       {error && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2">{error}</p>}
 
       {/* Pending / Completed — click to show only those; the date range drives both. */}
-      <div className="flex flex-wrap items-stretch gap-3">
+      <div className="flex flex-wrap items-stretch gap-3" data-tour="pa-cards">
         {([
           { key: "pending" as const, title: "Pending Pre-Auth", sub: "Not started, Draft or Ready — not sent yet", list: pendingRows, Icon: Clock, tone: "border-amber-400/30 bg-amber-500/[0.07]", ring: "ring-amber-300/70", num: "text-amber-200" },
           { key: "completed" as const, title: "Completed Pre-Auth", sub: "Sent to ServicePower", list: completedRows, Icon: CheckCircle2, tone: "border-emerald-400/30 bg-emerald-500/[0.07]", ring: "ring-emerald-300/70", num: "text-emerald-200" },
@@ -250,7 +269,7 @@ export function PreAuthPage({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Ticket #, customer, model, serial…" className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-64" />
           </div>
-          <div className="flex items-end gap-1.5">
+          <div className="flex items-end gap-1.5" data-tour="pa-open">
             <label className="flex flex-col gap-1">
               <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Start one for any ticket</span>
               <input value={openTicketNo} onChange={(e) => setOpenTicketNo(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void openByNumber()} placeholder="Ticket #" className="glass-input text-sm py-1.5 px-3 rounded-md w-40" />
@@ -269,7 +288,7 @@ export function PreAuthPage({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
             ))}
           </div>
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto" data-tour="pa-table">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
@@ -335,6 +354,7 @@ export function PreAuthPage({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
             sendOn={sendOn}
             onClose={() => setEditing(null)}
             onSaved={(p) => setPreAuths((prev) => new Map(prev).set(p.ticketNo, p))}
+            onTicketUpdated={(ticketNo, patch) => setTickets((prev) => prev.map((t) => (t.ticketNo === ticketNo ? { ...t, ...patch } : t)))}
           />,
           document.body,
         )}
@@ -379,6 +399,7 @@ function PreAuthFormModal({
   sendOn,
   onClose,
   onSaved,
+  onTicketUpdated,
 }: {
   ticket: Ticket;
   existing: PreAuthRequest | null;
@@ -387,7 +408,23 @@ function PreAuthFormModal({
   sendOn: boolean;
   onClose: () => void;
   onSaved: (p: PreAuthRequest) => void;
+  /** Model / serial edited here and saved onto the ticket — lets the list update its row. */
+  onTicketUpdated?: (ticketNo: string, patch: { model: string; serial: string }) => void;
 }) {
+  // Model / Serial Number — editable here (read off the rating plate) and saved
+  // onto the ticket with Save Draft / Save as Ready, through the same
+  // updateTicketFields the ticket page's Edit Product Info and Pre-Claim use.
+  const [modelNo, setModelNo] = useState(ticket.model || "");
+  const [serialNo, setSerialNo] = useState(ticket.serial || "");
+  const [savedProduct, setSavedProduct] = useState({ model: ticket.model || "", serial: ticket.serial || "" });
+  const saveProductInfo = async () => {
+    const model = modelNo.trim();
+    const serial = serialNo.trim();
+    if (model === savedProduct.model && serial === savedProduct.serial) return;
+    await updateTicketFields(ticket.ticketNo, { model, serial });
+    setSavedProduct({ model, serial });
+    onTicketUpdated?.(ticket.ticketNo, { model, serial });
+  };
   // Who is handling it: the signed-in person — shown, not picked, and saved
   // as Managed by with Save Draft / Save as Ready.
   const managedBy = byName ?? "";
@@ -421,7 +458,7 @@ function PreAuthFormModal({
   const pickedJob = jobList?.codes.find((c) => c.code === form.jobCode);
   const totals = preAuthTotals(form);
   const missing = preAuthMissing(form);
-  const payload = useMemo(() => buildPreAuthRFA(ticket, form), [ticket, form]);
+  const payload = useMemo(() => buildPreAuthRFA({ ...ticket, model: modelNo.trim(), serial: serialNo.trim() }, form), [ticket, form, modelNo, serialNo]);
 
   const save = async (status: "Draft" | "Ready") => {
     if (status === "Ready" && missing.length) {
@@ -431,6 +468,7 @@ function PreAuthFormModal({
     setSaving(true);
     setMsg(null);
     try {
+      await saveProductInfo();
       const p = await savePreAuthRequest({ ticketNo: ticket.ticketNo, status: saved?.status === "Sent" ? "Sent" : status, form, managedByName: managedBy || null, byName, isNew: !saved });
       setSaved(p);
       onSaved(p);
@@ -475,7 +513,7 @@ function PreAuthFormModal({
     }
   };
 
-  const setPart = (i: number, k: keyof PreAuthPart, v: string) => set("parts", form.parts.map((p, j) => (j === i ? { ...p, [k]: v } : p)));
+  const setPart = <K extends keyof PreAuthPart>(i: number, k: K, v: PreAuthPart[K]) => set("parts", form.parts.map((p, j) => (j === i ? { ...p, [k]: v } : p)));
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
@@ -493,7 +531,7 @@ function PreAuthFormModal({
 
         <div className="overflow-y-auto px-5 py-4 grid gap-4 lg:grid-cols-[300px_1fr]">
           {/* Request Details — from the ticket */}
-          <section className="rounded-lg border border-white/10 bg-white/[0.03] p-4 grid grid-cols-2 gap-3 content-start">
+          <section data-tour="pa-details" className="rounded-lg border border-white/10 bg-white/[0.03] p-4 grid grid-cols-2 gap-3 content-start">
             <h3 className="col-span-2 text-sm font-semibold text-white">Request Details</h3>
             <ReadOnly label="Call Number" value={ticket.ticketNo} />
             <ReadOnly label="Ticket Status" value={ticket.status} />
@@ -504,8 +542,17 @@ function PreAuthFormModal({
             <ReadOnly label="State / Zip" value={[ticket.state, ticket.zip].filter(Boolean).join(" ")} />
             <ReadOnly label="Brand" value={ticket.manufacturer} />
             <ReadOnly label="Claim To" value={ticket.account || ticket.claimCompany} />
-            <ReadOnly label="Model Number" value={ticket.model} />
-            <ReadOnly label="Serial Number" value={ticket.serial} />
+            <div>
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Model Number</label>
+              <input value={modelNo} onChange={(e) => setModelNo(e.target.value)} className={`${inputCls} mt-0.5`} title="Saved onto the ticket with Save Draft / Save as Ready" />
+            </div>
+            <div>
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Serial Number</label>
+              <input value={serialNo} onChange={(e) => setSerialNo(e.target.value)} className={`${inputCls} mt-0.5`} title="Saved onto the ticket with Save Draft / Save as Ready" />
+            </div>
+            {(modelNo.trim() !== savedProduct.model || serialNo.trim() !== savedProduct.serial) && (
+              <p className="col-span-2 -mt-1 text-[10px] text-amber-300">Model / serial changed — saved onto the ticket with Save Draft or Save as Ready.</p>
+            )}
             <ReadOnly label="Purchase Date" value={ticket.purchaseDate} />
             <ReadOnly label="Phone" value={ticket.phone} />
             <div className="col-span-2"><ReadOnly label="Customer Notes" value={ticket.problemDescription || ticket.internalNote} /></div>
@@ -522,8 +569,8 @@ function PreAuthFormModal({
 
           <div className="space-y-4 min-w-0">
             {/* Questions — as on ServicePower's Call Auth screen */}
-            <section className="rounded-lg border border-white/10 bg-white/[0.03] p-4 grid gap-3 md:grid-cols-3">
-              <div className="md:col-span-3">
+            <section data-tour="pa-questions" className="rounded-lg border border-white/10 bg-white/[0.03] p-4 grid gap-3 md:grid-cols-3">
+              <div className="md:col-span-3" data-tour="pa-desc">
                 <label className={labelCls}>Repair Description <Req /></label>
                 <textarea rows={2} value={form.repairDescription} onChange={(e) => set("repairDescription", e.target.value)} placeholder="e.g. Unit is a wall oven. Requesting additional labor." className={`${inputCls} resize-none`} />
               </div>
@@ -531,7 +578,7 @@ function PreAuthFormModal({
                 <label className={labelCls}>Why does this repair require a rate higher than your negotiated rate?</label>
                 <input value={form.whyHigherRate} onChange={(e) => set("whyHigherRate", e.target.value)} className={inputCls} />
               </div>
-              <div>
+              <div data-tour="pa-jobcode">
                 <label className={labelCls}>
                   Job Code <Req />
                   {jobList && <span className="ml-1 normal-case tracking-normal font-semibold text-emerald-400">· {jobList.label} job code</span>}
@@ -549,11 +596,18 @@ function PreAuthFormModal({
                   <input value={form.jobCode} onChange={(e) => set("jobCode", e.target.value)} className={inputCls} />
                 )}
               </div>
-              <div>
-                <label className={labelCls}>Estimated time on the job (Hrs / Min) <Req /></label>
+              <div data-tour="pa-time">
+                {/* One line, like the fields beside it (the long label wrapped and pushed the boxes down). */}
+                <label className={`${labelCls} truncate`} title="Estimated time on the job (hours / minutes)">Est. time on job <Req /></label>
                 <div className="flex gap-2">
-                  <input type="number" min="0" value={form.estHours} onChange={(e) => set("estHours", e.target.value)} placeholder="Hrs" className={inputCls} />
-                  <input type="number" min="0" max="59" value={form.estMinutes} onChange={(e) => set("estMinutes", e.target.value)} placeholder="Min" className={inputCls} />
+                  <div className="relative flex-1">
+                    <input type="number" min="0" value={form.estHours} onChange={(e) => set("estHours", e.target.value)} placeholder="0" className={`${inputCls} pr-9`} aria-label="Estimated hours" />
+                    <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-slate-500">hrs</span>
+                  </div>
+                  <div className="relative flex-1">
+                    <input type="number" min="0" max="59" value={form.estMinutes} onChange={(e) => set("estMinutes", e.target.value)} placeholder="0" className={`${inputCls} pr-9`} aria-label="Estimated minutes" />
+                    <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-slate-500">min</span>
+                  </div>
                 </div>
               </div>
               <div>
@@ -569,9 +623,9 @@ function PreAuthFormModal({
             </section>
 
             {/* Amounts */}
-            <section className="rounded-lg border border-white/10 bg-white/[0.03] p-4 space-y-3">
+            <section data-tour="pa-amounts" className="rounded-lg border border-white/10 bg-white/[0.03] p-4 space-y-3">
               <h3 className="text-sm font-semibold text-white">Requested Amounts</h3>
-              <div className="grid gap-3 sm:grid-cols-4">
+              <div className="grid gap-3 sm:grid-cols-4" data-tour="pa-labor">
                 <div>
                   <label className={labelCls}>Labor ($)</label>
                   <input type="number" step="0.01" min="0" value={form.labor} onChange={(e) => set("labor", e.target.value)} className={inputCls} />
@@ -589,7 +643,7 @@ function PreAuthFormModal({
                   <input type="number" step="0.01" min="0" value={form.travel} onChange={(e) => set("travel", e.target.value)} className={inputCls} />
                 </div>
               </div>
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto" data-tour="pa-parts">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-[11px] uppercase text-slate-400 border-b border-white/10">
@@ -598,6 +652,7 @@ function PreAuthFormModal({
                       <th className="py-1.5 pr-2">Description</th>
                       <th className="py-1.5 pr-2 w-28">Price ($)</th>
                       <th className="py-1.5 pr-2 w-24 text-right">Ext</th>
+                      <th className="py-1.5 pr-2 w-20 text-center" title="No Longer Available">Part NLA</th>
                       <th className="w-8" />
                     </tr>
                   </thead>
@@ -609,6 +664,9 @@ function PreAuthFormModal({
                         <td className="py-1 pr-2"><input value={p.description} onChange={(e) => setPart(i, "description", e.target.value)} className={inputCls} /></td>
                         <td className="py-1 pr-2"><input type="number" step="0.01" min="0" value={p.price} onChange={(e) => setPart(i, "price", e.target.value)} className={inputCls} /></td>
                         <td className="py-1 pr-2 text-right tabular-nums text-slate-300">{fmtMoney((Number(p.quantity) || 0) * (Number(p.price) || 0))}</td>
+                        <td className="py-1 pr-2 text-center">
+                          <input type="checkbox" checked={!!p.nla} onChange={(e) => setPart(i, "nla", e.target.checked)} className="h-4 w-4 accent-blue-500 cursor-pointer" title="Part NLA — No Longer Available" aria-label={`Part ${i + 1} NLA — No Longer Available`} />
+                        </td>
                         <td className="py-1 text-right">
                           <button type="button" onClick={() => set("parts", form.parts.filter((_, j) => j !== i))} className="text-slate-500 hover:text-red-300 p-1" title="Remove line"><Trash2 className="h-3.5 w-3.5" /></button>
                         </td>
@@ -616,10 +674,10 @@ function PreAuthFormModal({
                     ))}
                   </tbody>
                 </table>
-                <button type="button" onClick={() => set("parts", [...form.parts, { quantity: "1", partNumber: "", description: "", price: "" }])} className="mt-2 text-xs text-blue-300 hover:text-blue-200 inline-flex items-center gap-1">
+                <button type="button" onClick={() => set("parts", [...form.parts, { quantity: "1", partNumber: "", description: "", price: "", nla: false }])} className="mt-2 text-xs text-blue-300 hover:text-blue-200 inline-flex items-center gap-1">
                   <Plus className="h-3.5 w-3.5" /> Add part line
                 </button>
-                <p className="mt-1 text-[10px] text-slate-500">ServicePower adds its own markup on parts.</p>
+                <p className="mt-1 text-[10px] text-slate-500">ServicePower adds its own markup on parts. Tick <b>Part NLA</b> when a part is No Longer Available — it's sent with the Pre-Auth.</p>
               </div>
               <dl className="grid grid-cols-2 sm:grid-cols-6 gap-2 text-xs border-t border-white/10 pt-3">
                 {([["Labor", totals.labor], ["Parts", totals.parts], ["Mileage", totals.mileage], ["Travel", totals.travel], ["Other", totals.other]] as const).map(([k, v]) => (
@@ -638,7 +696,7 @@ function PreAuthFormModal({
           </div>
         </div>
 
-        <div className="border-t border-white/10 px-5 py-3 space-y-2">
+        <div className="border-t border-white/10 px-5 py-3 space-y-2" data-tour="pa-actions">
           {missing.length > 0 && <p className="text-[11px] text-amber-300">Required before it's Ready: {missing.join(" · ")}</p>}
           {msg && <p className={`text-xs ${msg.tone === "ok" ? "text-emerald-300" : msg.tone === "warn" ? "text-amber-300" : "text-red-300"}`}>{msg.text}</p>}
           <div className="flex flex-wrap items-center gap-2">

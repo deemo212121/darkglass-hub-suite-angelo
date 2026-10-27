@@ -1,3 +1,4 @@
+import { brandOf, loadBrandLogo } from "@/lib/formBrand";
 /**
  * Fill Master Philippines Independent Contractor Comprehensive Agreement —
  * opened from the deep link ReportHRDaily.tsx's "Master PH Contractor
@@ -90,11 +91,9 @@ export function FillMasterPhContractorAgreementPage({ docId }: Props) {
       setLoading(true);
       setError(null);
       try {
-        const [profileId, document, logo] = await Promise.all([
-          getMyProfileId(uid),
-          getSignableDocument(docId),
-          loadAssetDataUrl(() => import("@/assets/us-in-home-services-logo.png")),
-        ]);
+        const [profileId, document] = await Promise.all([getMyProfileId(uid), getSignableDocument(docId)]);
+        // The logo of this copy's version (US In Home Services, or Admin Hub Solutions from AHS FORMS PH).
+        const logo = await loadBrandLogo(brandOf(document?.formData));
         if (cancelled) return;
         setMyProfileId(profileId);
         setLogoDataUrl(logo);

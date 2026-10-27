@@ -32,6 +32,18 @@
  *
  * Skipped (never inserted): no TicketNo, or a ticket number repeated later in
  * the same file.
+ *
+ * Excel-changed ticket numbers: opening or saving the export in Excel turns
+ * ticket numbers into numbers — an AIG "3890096E1" becomes 38900960
+ * (scientific notation) and a 12-digit "061747484133" loses its leading zero.
+ * Before this check every such row was "new" and got inserted as a duplicate
+ * ticket with a duplicate customer (141 of them, 10/21–10/23). Now a row is
+ * matched to the existing ticket in either direction (file changed, or the
+ * system holding the changed copy) when the customer ZIP agrees, and the
+ * update goes to that ticket's real number. When the file shows it went
+ * through Excel (an .xlsx storing TicketNo as a number, or a row that only
+ * matched after undoing Excel's change), a NEW all-digit number isn't trusted
+ * — it's listed instead of inserted.
  */
 import * as XLSX from "xlsx";
 import { supabase } from "./client";
@@ -59,7 +71,33 @@ export interface ImportSummary {
   skippedExisting: string[];
   skippedDuplicate: string[];
   skippedMissing: number[]; // spreadsheet line numbers
+  /** Rows matched to an existing ticket only after undoing Excel's change to the number. */
+  matchedExcelNumbers: { fileNo: string; ticketNo: string }[];
+  /** New all-digit numbers not added because the file went through Excel (they may be changed). */
+  skippedExcelNumbers: string[];
   failed: { ticketNo: string; error: string }[];
+}
+
+/** Reserved row key: this row's TicketNo cell was stored as a number in the .xlsx. */
+const TICKET_NO_WAS_NUMBER = "__ticketNoWasNumber";
+
+/** What Excel turns a real ticket number into: "3890096E1" → "38900960", "061747484133" → "61747484133". null when Excel leaves it alone. */
+export function excelChangedTicketNo(no: string): string | null {
+  if (/^\d{7}E\d+$/i.test(no)) {
+    const n = Number(no);
+    return Number.isSafeInteger(n) ? String(n) : null;
+  }
+  if (/^0\d{11}$/.test(no)) return no.replace(/^0+/, "");
+  return null;
+}
+
+/** Real ticket numbers an Excel-changed one could have come from (the reverse of excelChangedTicketNo) — e.g. 390780000 is "3907800E2" or "000390780000". */
+export function excelOriginalTicketNos(no: string): string[] {
+  const out: string[] = [];
+  const e = no.match(/^([1-9]\d{6})(0+)$/);
+  if (e) out.push(`${e[1]}E${e[2].length}`);
+  if (/^[1-9]\d{8,10}$/.test(no)) out.push(no.padStart(12, "0"));
+  return out;
 }
 
 /** Same CSV rules as gen-ticket-sql.mjs: only a quote at the start of a field opens a quoted field (stray quotes inside CSR notes are literal). */
@@ -109,17 +147,24 @@ function cellText(v: unknown): string {
 /** Reads the uploaded file into header-keyed rows. */
 export async function readImportFile(file: File): Promise<ImportRow[]> {
   let table: string[][];
+  let ticketNoWasNumber: boolean[] = [];
   if (/\.csv$/i.test(file.name) || file.type === "text/csv") {
     table = parseCsv(await file.text());
   } else {
     const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
     const ws = wb.Sheets[wb.SheetNames[0]];
     const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true, defval: "" });
+    const ticketCol = (raw[0] ?? []).findIndex((h) => String(h).trim().replace(/^﻿/, "") === "TicketNo");
+    ticketNoWasNumber = raw.map((r) => ticketCol >= 0 && typeof r[ticketCol] === "number");
     table = raw.map((r) => r.map(cellText));
   }
   if (table.length === 0) return [];
   const header = table[0].map((h) => h.trim().replace(/^﻿/, ""));
-  return table.slice(1).map((r) => Object.fromEntries(header.map((h, i) => [h, (r[i] ?? "").trim()])));
+  return table.slice(1).map((r, i) => {
+    const row: ImportRow = Object.fromEntries(header.map((h, j) => [h, (r[j] ?? "").trim()]));
+    if (ticketNoWasNumber[i + 1]) row[TICKET_NO_WAS_NUMBER] = "1";
+    return row;
+  });
 }
 
 /** True when the file has the ServicePower export's key columns. */
@@ -193,10 +238,15 @@ function toRecords(r: ImportRow) {
 }
 
 interface ExistingTicket {
+  ticketNo: string;
   status: string;
   scheduleDate: string;
   technician: string;
+  /** Customer ZIP (first 5) — the check that an Excel-changed number really is this ticket. */
+  zip: string;
 }
+
+const zip5 = (v: string | null | undefined) => String(v ?? "").trim().slice(0, 5);
 
 /** The tickets (from `ticketNos`) that already exist in the signed-in company, with the fields an import may update. */
 async function existingTickets(ticketNos: string[]): Promise<Map<string, ExistingTicket>> {
@@ -204,25 +254,50 @@ async function existingTickets(ticketNos: string[]): Promise<Map<string, Existin
   for (let i = 0; i < ticketNos.length; i += 200) {
     const { data, error } = await supabase
       .from("tickets")
-      .select("ticket_no, status, schedule_date, technician")
+      .select("ticket_no, status, schedule_date, technician, customers(zip)")
       .in("ticket_no", ticketNos.slice(i, i + 200));
     if (error) throw new Error(`Couldn't check existing tickets: ${error.message}`);
-    for (const r of data ?? []) {
+    for (const r of (data ?? []) as Array<{ ticket_no: string; status: string | null; schedule_date: string | null; technician: string | null; customers: { zip: string | null } | { zip: string | null }[] | null }>) {
+      const customer = Array.isArray(r.customers) ? r.customers[0] : r.customers;
       found.set(r.ticket_no, {
+        ticketNo: r.ticket_no,
         status: (r.status ?? "").trim(),
         scheduleDate: r.schedule_date ? String(r.schedule_date).slice(0, 10) : "",
         technician: (r.technician ?? "").trim(),
+        zip: zip5(customer?.zip),
       });
     }
   }
   return found;
 }
 
+/**
+ * The existing ticket a file row is, if any. An Excel-changed number in the
+ * file goes to the real ticket first (even while the changed copy still
+ * exists); then an exact match; then a real number in the file whose ticket
+ * the system only holds under Excel's changed copy. Either Excel match needs
+ * the customer ZIP to agree when both sides have one.
+ */
+function resolveExisting(rec: ReturnType<typeof toRecords>, existing: Map<string, ExistingTicket>): { ticket: ExistingTicket; fileWasChanged: boolean; viaExcel: boolean } | null {
+  const no = rec.ticket.ticket_no;
+  const zipAgrees = (t: ExistingTicket) => !t.zip || !zip5(rec.customer.zip) || t.zip === zip5(rec.customer.zip);
+  for (const original of excelOriginalTicketNos(no)) {
+    const t = existing.get(original);
+    if (t && zipAgrees(t)) return { ticket: t, fileWasChanged: true, viaExcel: true };
+  }
+  const exact = existing.get(no);
+  if (exact) return { ticket: exact, fileWasChanged: false, viaExcel: false };
+  const changed = excelChangedTicketNo(no);
+  const t = changed ? existing.get(changed) : undefined;
+  if (t && zipAgrees(t)) return { ticket: t, fileWasChanged: false, viaExcel: true };
+  return null;
+}
+
 type UpdatePayload = { ticket_no: string; status?: string; schedule_date?: string; technician?: string };
 
 /** What the file would change on an existing ticket (no changes = nothing new). */
 function diffExisting(rec: ReturnType<typeof toRecords>, cur: ExistingTicket, opts: ImportOptions): { payload: UpdatePayload; changes: string[] } {
-  const payload: UpdatePayload = { ticket_no: rec.ticket.ticket_no };
+  const payload: UpdatePayload = { ticket_no: cur.ticketNo };
   const changes: string[] = [];
   const fileStatus = rec.rawStatus;
   if (fileStatus && fileStatus !== cur.status) {
@@ -281,9 +356,13 @@ export async function importTickets(
     skippedExisting: [],
     skippedDuplicate: [],
     skippedMissing: [],
+    matchedExcelNumbers: [],
+    skippedExcelNumbers: [],
     failed: [],
   };
 
+  // An .xlsx that stores any TicketNo as a number has been through Excel.
+  let fileWentThroughExcel = rows.some((r) => r[TICKET_NO_WAS_NUMBER] === "1");
   const seen = new Set<string>();
   const toInsert: ReturnType<typeof toRecords>[] = [];
   rows.forEach((r, i) => {
@@ -301,16 +380,43 @@ export async function importTickets(
     toInsert.push(rec);
   });
 
-  const existing = await existingTickets(toInsert.map((r) => r.ticket.ticket_no));
+  // Look up each number as given, plus what Excel would have changed it from / to.
+  const lookupNos = new Set<string>();
+  for (const r of toInsert) {
+    const no = r.ticket.ticket_no;
+    lookupNos.add(no);
+    for (const original of excelOriginalTicketNos(no)) lookupNos.add(original);
+    const changed = excelChangedTicketNo(no);
+    if (changed) lookupNos.add(changed);
+  }
+  const existing = await existingTickets(Array.from(lookupNos));
+  const resolved = toInsert.map((r) => ({ rec: r, match: resolveExisting(r, existing) }));
+  if (resolved.some((x) => x.match?.fileWasChanged)) fileWentThroughExcel = true;
+
   const updates: { payload: UpdatePayload; changes: string[] }[] = [];
-  const fresh = toInsert.filter((r) => {
-    const cur = existing.get(r.ticket.ticket_no);
-    if (!cur) return true;
-    const d = diffExisting(r, cur, opts);
-    if (d.changes.length === 0) summary.unchanged.push(r.ticket.ticket_no);
+  const updatedNos = new Set<string>();
+  const fresh: ReturnType<typeof toRecords>[] = [];
+  for (const { rec, match } of resolved) {
+    const fileNo = rec.ticket.ticket_no;
+    if (!match) {
+      // Excel drops leading zeros and expands "E" numbers into plain digits, so
+      // in a file it touched, a NEW all-digit number may not be the real one.
+      if (fileWentThroughExcel && /^[1-9]\d*$/.test(fileNo)) summary.skippedExcelNumbers.push(fileNo);
+      else fresh.push(rec);
+      continue;
+    }
+    const cur = match.ticket;
+    // The real and the changed number can both be in one file — the ticket is updated once.
+    if (updatedNos.has(cur.ticketNo)) {
+      summary.skippedDuplicate.push(fileNo);
+      continue;
+    }
+    updatedNos.add(cur.ticketNo);
+    if (match.viaExcel) summary.matchedExcelNumbers.push({ fileNo, ticketNo: cur.ticketNo });
+    const d = diffExisting(rec, cur, opts);
+    if (d.changes.length === 0) summary.unchanged.push(cur.ticketNo);
     else updates.push(d);
-    return false;
-  });
+  }
 
   const UPDATE_BATCH = 100;
   const total = fresh.length + updates.length;

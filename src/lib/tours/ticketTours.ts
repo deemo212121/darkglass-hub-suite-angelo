@@ -4,7 +4,7 @@ import { BIZOPS_TICKET_TOURS } from "./bizopsTours";
  * here so it can be reworded without touching the page. Selectors point at
  * `data-tour` labels / ids on src/routes/ticket.$ticketNo.tsx.
  *
- * Written so far: CSR, Triage and Parts. Claims comes next.
+ * Written: CSR, Triage, Parts and Claims (plus the BizOps tours in bizopsTours.ts).
  */
 import type { TourDef } from "./runTour";
 
@@ -302,6 +302,60 @@ export const PARTS_TICKET_TOUR: TourDef = {
   ],
 };
 
+export const CLAIMS_TICKET_TOUR: TourDef = {
+  id: "ticket-claims",
+  title: "Getting a ticket paid (Claims)",
+  summary: "On the ticket: Claims Readiness, the product details and photos the claim needs, parts with invoices, and the Claim Transaction.",
+  steps: [
+    {
+      selector: '[data-tour="ticket-header"]',
+      title: "Is it ready to claim?",
+      text: "The status tells you where the ticket is — Claims works tickets that are completed (CL-Ready to Complete) and follows them through CL-Claimed to CL-Data Closed once ServicePower pays.",
+    },
+    {
+      selector: '[data-tour="ticket-claims-badge"]',
+      title: "Claims Readiness at a glance",
+      text: "Green = everything the claim needs is there. Amber shows how many items are missing — click it for the short list. A <b>REDO</b> badge next to it links to the original ticket.",
+    },
+    {
+      selector: '[data-tour="ticket-claims-readiness"]',
+      title: "Claims Readiness checklist",
+      text: "The full list of what's missing before this ticket can be claimed — fix these first and ServicePower won't send the claim back.",
+      tab: "general",
+    },
+    {
+      selector: '[data-tour="ticket-product"]',
+      title: "Product details",
+      text: "Model, serial and purchase date go on the claim. Check them against the rating-plate photo — a wrong model or serial is a common rejection.",
+      tab: "general",
+    },
+    {
+      selector: "#section-attachments",
+      title: "Photos",
+      text: "The rating plate, the problem and the finished repair. Pre-Claim shows these same photos (click one for a zoomable preview while you type the serial).",
+      tab: "tracking",
+    },
+    {
+      selector: "#section-part-transaction",
+      title: "Parts used — with invoices",
+      text: "Parts marked <b>Used</b> or <b>Claimed</b> make the Part Fee. Every claimed part needs its <b>Invoice #</b>. A part with no stock shows <b>Back Order</b>; a discontinued one is <b>NLA</b> (No Longer Available).",
+      tab: "tracking",
+    },
+    {
+      selector: "#section-visit-log",
+      title: "What was done",
+      text: "The latest visit's symptom and resolution become the claim's complaint and Service Performed — make sure the technician wrote them clearly.",
+      tab: "tracking",
+    },
+    {
+      selector: "#section-claim-transaction",
+      title: "Claim Transaction",
+      text: "The claim's record on this ticket: what was claimed and ServicePower's status. To file or fix the claim, open it from <b>Need Claim List → Pre-Claim</b> (see the <i>Filing a claim without errors</i> tour).",
+      tab: "tracking",
+    },
+  ],
+};
+
 /**
  * Who sees each department's ticket tour (primary or extra role). Admin and
  * Super Admin see every tour. Claims is listed for when its tour is written.
@@ -327,11 +381,12 @@ export const TICKET_TOUR_DEPARTMENT: Record<string, string> = {
   "ticket-csr": "csr",
   "ticket-triage": "triage",
   "ticket-parts": "parts",
+  "ticket-claims": "claims",
   "bizops-parts-shipments": "bizops",
   "bizops-need-cancel": "bizops",
 };
 
 /** Every ticket tour, in the order the Tour menu lists them. */
-export const ALL_TICKET_TOURS: TourDef[] = [CSR_TICKET_TOUR, TRIAGE_TICKET_TOUR, PARTS_TICKET_TOUR, ...BIZOPS_TICKET_TOURS];
+export const ALL_TICKET_TOURS: TourDef[] = [CSR_TICKET_TOUR, TRIAGE_TICKET_TOUR, PARTS_TICKET_TOUR, CLAIMS_TICKET_TOUR, ...BIZOPS_TICKET_TOURS];
 
 export const TICKET_TOURS: Record<string, TourDef> = Object.fromEntries(ALL_TICKET_TOURS.map((t) => [t.id, t]));

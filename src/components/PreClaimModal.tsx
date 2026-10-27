@@ -611,7 +611,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
               <ChevronRight className="h-5 w-5" />
             </button>
             {/* At a glance: miles, the warranty provider (with its portal), Redo, Pre-Auth. */}
-            <div className="ml-2 flex flex-wrap items-center gap-2 text-xs">
+            <div className="ml-2 flex flex-wrap items-center gap-2 text-xs" data-tour="pc-glance">
               <span className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-slate-200" title="Office to customer (from Need Claim List)">
                 <MapPin className="h-3.5 w-3.5 text-slate-400" />
                 {miles == null ? (miles === null ? "No miles" : "Miles …") : `${miles.toFixed(1)} mi`}
@@ -670,7 +670,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
               )}
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3" data-tour="pc-actions">
             <button
               onClick={handleSubmit}
               disabled={saving || loading}
@@ -799,7 +799,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
             )}
             {/* Ticket / Customer / Product info + Pictures */}
             <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
-              <div className="space-y-5">
+              <div className="space-y-5" data-tour="pc-claim">
               <div>
               <h3 className={sectionCls}>Claim</h3>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -870,13 +870,14 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
                   category="service"
                   title=""
                   uploadedBy={displayName || email || undefined}
+                  compactChecklist
                   onPhotoClick={(photo, all) => setSidePreview({ photos: all, index: Math.max(0, all.findIndex((p) => p.fullPath === photo.fullPath)) })}
                 />
               </div>
             </div>
 
             {/* Dates + classification */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-tour="pc-classification">
               <Field label="Posting Date">
                 <input type="date" value={form.postingDate} onChange={(e) => setField("postingDate", e.target.value)} className={inputCls} />
               </Field>
@@ -1038,7 +1039,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
             </div>
 
             {/* Parts Used */}
-            <div>
+            <div data-tour="pc-parts">
               <h3 className="text-center text-lg font-semibold text-white mb-1">Parts Used</h3>
               <p className="text-center text-xs text-slate-500 mb-3">Part Fee (Claim Amount, below) totals every part marked "Used" or "Claimed" regardless of the checkboxes here — the checkboxes only control this table's own subtotal row.</p>
               <div className="overflow-x-auto rounded-lg border border-white/10">
@@ -1137,7 +1138,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
             </div>
 
             {/* Claim Amount */}
-            <div>
+            <div data-tour="pc-amount">
               <h3 className="text-center text-lg font-semibold text-white mb-3">Claim Amount</h3>
               <div className="grid md:grid-cols-3 gap-4 bg-slate-800/30 border border-white/10 rounded-lg p-4">
                 <Field label="Labor Fee">

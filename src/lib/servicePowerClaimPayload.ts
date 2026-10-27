@@ -15,6 +15,7 @@ import type { TicketClaimDetails } from "@/lib/supabase/claimDetails";
 import type { UIPartRow } from "@/lib/supabase/tickets";
 import type { ClaimSubmissionClaim, ClaimSubmissionPart } from "@/types/servicePower";
 import { repairCategoryCode } from "@/lib/jobCodes";
+import { normalizeStateCode, stateFromZip5 } from "@/lib/servicePowerSync";
 
 /** "2026-08-07" (or with a time part) -> "20260807". Returns undefined for anything that isn't a clean date. */
 function toSpDate(value: string | undefined | null): string | undefined {
@@ -40,6 +41,19 @@ function markupPriceFor(p: UIPartRow): number {
 function clip(value: string | undefined | null, maxLen: number): string | undefined {
   const s = String(value ?? "").trim();
   return s ? s.slice(0, maxLen) : undefined;
+}
+
+/**
+ * The customer's state as ServicePower's 2-letter code. A state saved as the
+ * full name ("North Carolina") used to be cut to "No" — "Invalid
+ * Province/State" (3908291E1, 10/23). Falls back to the ZIP's state when the
+ * saved value isn't a recognisable state at all.
+ */
+function spStateCode(state: string | undefined | null, zip: string | undefined | null): string | undefined {
+  const code = normalizeStateCode(String(state ?? ""));
+  if (/^[A-Z]{2}$/.test(code)) return code;
+  const zip5 = (String(zip ?? "").match(/\d{5}/) || [""])[0];
+  return (zip5 && stateFromZip5(zip5)) || undefined;
 }
 
 export interface BuildClaimPayloadResult {
@@ -150,7 +164,7 @@ export function buildServicePowerClaimPayload(
     customerAddress1: clip(ticket.address, 30),
     customerAddress2: clip(ticket.address2, 30),
     customerCity: clip(ticket.city, 20),
-    customerState: clip(ticket.state, 2),
+    customerState: spStateCode(ticket.state, ticket.zip),
     customerZipCode: clip(ticket.zip, 9),
     customerPhone: toSpPhone(ticket.phone),
     customerEmail: clip(ticket.email, 50),

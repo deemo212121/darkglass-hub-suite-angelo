@@ -82,6 +82,8 @@ export interface PhotoUploadPayload {
   width?: number;
   height?: number;
   originalSize?: number;
+  /** What the photo shows (lib/photoTypes.ts). */
+  photoType?: string;
 }
 
 export interface TicketCommentPayload {
@@ -284,6 +286,7 @@ async function replay(action: QueuedAction): Promise<void> {
       width: p.width,
       height: p.height,
       originalSize: p.originalSize,
+      photoType: p.photoType,
     });
   } else if (action.type === "ticket_comment") {
     const p = action.payload as TicketCommentPayload;

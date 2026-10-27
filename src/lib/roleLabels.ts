@@ -47,6 +47,7 @@ export const ROLE_LABELS: Record<string, string> = {
   TECHNICAL_ASSISTANT_DIRECTOR: "Technical Assistant Director",
   SENIOR_DIRECTOR: "Senior Director",
   ASSISTANT_MANAGER: "Assistant Manager",
+  SALES_MANAGER: "Sales Manager",
 };
 
 /**
@@ -113,6 +114,7 @@ export const ROLE_DEPARTMENT_BREAKDOWN: Record<string, { department: string; rol
   BIZOPS_SENIOR_MANAGER: { department: "BizOps", roleLabel: "Senior Manager" },
   TRIAGE_USER: { department: "Triage", roleLabel: "Agent" },
   TRIAGE_MANAGER: { department: "Triage", roleLabel: "Manager" },
+  SALES_MANAGER: { department: "Sales", roleLabel: "Manager" },
 };
 
 /**

@@ -1,3 +1,4 @@
+import { BRAND_COMPANY, brandOf } from "@/lib/formBrand";
 /**
  * Direct Deposit Authorization — shared data types + HTML/CSS document
  * template. Same architecture as contractorDataFormTemplate.ts: there's no
@@ -30,6 +31,8 @@ export const DIRECT_DEPOSIT_COUNTRIES = ["United States", "Philippines", "Other"
 export const DIRECT_DEPOSIT_ACCOUNT_TYPES = ["Checking", "Savings"] as const;
 
 export interface DirectDepositFormData {
+  /** "ahs" = the Admin Hub Solutions version (HR Paperworks → AHS FORMS PH); absent = the original US In Home Services version. */
+  brand?: "ahs";
   /** The employee's actual profile id — not shown on the document itself, just carried alongside for lookups. */
   employeeId: string;
   /** Derived display name — [firstName, middleName, lastName].filter(Boolean).join(" "). */
@@ -123,7 +126,7 @@ export function buildDirectDepositBodyMarkup(data: DirectDepositFormData, logoDa
     <div class="ddep-container">
       <div class="ddep-header">
         <h1>DIRECT DEPOSIT AUTHORIZATION</h1>
-        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="US In Home Services" />` : ""}
+        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="${BRAND_COMPANY[brandOf(data)]}" />` : ""}
       </div>
 
       <div class="ddep-section-title">NAME</div>
@@ -150,7 +153,7 @@ export function buildDirectDepositBodyMarkup(data: DirectDepositFormData, logoDa
         ${field("Type of Account", data.accountType)}
       </div>
 
-      <p class="ddep-notice">US In Home Services is hereby authorized to directly deposit my pay to the account listed above. This authorization will remain in effect until I modify or cancel it in writing.</p>
+      <p class="ddep-notice">${BRAND_COMPANY[brandOf(data)]} is hereby authorized to directly deposit my pay to the account listed above. This authorization will remain in effect until I modify or cancel it in writing.</p>
 
       ${data.filedByHr
         ? `<p class="ddep-notice">Filed by HR (${blank(data.filedByHrName || "")}) on behalf of ${blank(data.employeeName)} — no employee signature was collected for this submission.</p>

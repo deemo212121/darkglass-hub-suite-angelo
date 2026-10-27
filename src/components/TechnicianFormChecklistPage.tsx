@@ -1,3 +1,4 @@
+import { brandOf, type FormBrand } from "@/lib/formBrand";
 /**
  * HR module -> Staff Form Checklist. Per-person live status of every
  * signable form for 5 tiers, each its own tab — pulled straight from
@@ -78,7 +79,28 @@ import { CONTRACTOR_ADDENDUM_POSITION_LEVELS } from "@/lib/contractorAddendumFor
 const PH_BRANCH_NAMES = new Set(LOCATIONS_DATA.filter((l) => l.isPhilippines).map((l) => l.location));
 const isPhBranch = (u: ProfileRow) => PH_BRANCH_NAMES.has(u.assigned_branch || "");
 
-type ChecklistTabKey = "technician" | "newTechnician" | "officeStaffUs" | "phStaff" | "bmAndUp";
+type ChecklistTabKey = "technician" | "newTechnician" | "officeStaffUs" | "officeStaffUsAhs" | "phStaff" | "ahsPhStaff" | "bmAndUp";
+
+/**
+ * The AHS Forms PH forms that come in two versions — the original US In Home
+ * Services one and the Admin Hub Solutions one (HR Paperworks → AHS Forms PH;
+ * see lib/formBrand.ts). That tab sends these in their AHS version (its
+ * `ahsFormTypes`); Office Staff (US) AHS has its own list.
+ */
+const BRANDED_FORM_TYPES = new Set<SignableDocumentType>(["master_ph_contractor_agreement", "confidentiality_noncompete_agreement", "direct_deposit", "valid_id_form"]);
+/**
+ * The ones that must be signed in the tab's own version to count — the
+ * agreements naming the employer (Master PH Contractor Agreement, Master
+ * Confidentiality, Master W-2 Office & Logistics). Everything else carries
+ * over: either version of Direct Deposit / Valid ID counts on both PH Staff
+ * and AHS Forms PH (like W-8BEN), and Office Staff (US) AHS shares every
+ * other Office Staff (US) form.
+ */
+const VERSION_REQUIRED_FORM_TYPES = new Set<SignableDocumentType>(["master_ph_contractor_agreement", "confidentiality_noncompete_agreement", "master_w2_office_agreement"]);
+/** What Office Staff (US) AHS sends in the Admin Hub Solutions version — only the two agreements; its other forms (Direct Deposit included) go out as usual. */
+const AHS_OFFICE_STAFF_US_FORM_TYPES = new Set<SignableDocumentType>(["master_w2_office_agreement", "confidentiality_noncompete_agreement"]);
+/** The AHS Forms PH checklist — the same forms as HR Paperworks' AHS Forms PH group. */
+const AHS_PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "confidentiality_noncompete_agreement", "w8ben", "direct_deposit", "valid_id_form"];
 
 interface ChecklistTabConfig {
   key: ChecklistTabKey;
@@ -97,6 +119,10 @@ interface ChecklistTabConfig {
    * no old/new split for those yet, so every submission counts regardless.
    */
   formSourceBucket: "old" | "new";
+  /** Which version of the VERSION_REQUIRED_FORM_TYPES this tab counts; unset = any. */
+  brand?: FormBrand;
+  /** The forms this tab sends in their Admin Hub Solutions version (brand "ahs" tabs). */
+  ahsFormTypes?: ReadonlySet<SignableDocumentType>;
 }
 
 /**
@@ -167,6 +193,21 @@ const CHECKLIST_TABS: ChecklistTabConfig[] = [
     isEligible: (u) => !isPhBranch(u) && !isBmAndUpRole(u.role) && !isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
     noun: "office staff",
     formSourceBucket: "new",
+    // The US In Home Services agreements — AHS copies count on Office Staff (US) AHS instead.
+    brand: "usihs",
+  },
+  {
+    // Same people and forms as Office Staff (US); the Master W-2 Office &
+    // Logistics and Master Confidentiality agreements are their Admin Hub
+    // Solutions versions here, everything else carries over.
+    key: "officeStaffUsAhs",
+    label: "Office Staff (US) AHS",
+    formTypes: OFFICE_STAFF_US_FORM_TYPES,
+    isEligible: (u) => !isPhBranch(u) && !isBmAndUpRole(u.role) && !isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
+    noun: "office staff",
+    formSourceBucket: "new",
+    brand: "ahs",
+    ahsFormTypes: AHS_OFFICE_STAFF_US_FORM_TYPES,
   },
   {
     key: "phStaff",
@@ -175,6 +216,18 @@ const CHECKLIST_TABS: ChecklistTabConfig[] = [
     isEligible: (u) => isPhBranch(u),
     noun: "PH staff",
     formSourceBucket: "new",
+    // The US In Home Services set — AHS copies count on the AHS Forms PH tab instead.
+    brand: "usihs",
+  },
+  {
+    key: "ahsPhStaff",
+    label: "AHS Forms PH",
+    formTypes: AHS_PH_STAFF_FORM_TYPES,
+    isEligible: (u) => isPhBranch(u),
+    noun: "PH staff",
+    formSourceBucket: "new",
+    brand: "ahs",
+    ahsFormTypes: BRANDED_FORM_TYPES,
   },
   {
     key: "bmAndUp",
@@ -268,7 +321,20 @@ function writeCachedDocs(tab: ChecklistTabKey, entries: Map<string, SignableDocu
 
 type SortMode = "missing-desc" | "missing-asc" | "name" | "branch";
 
-export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean } = {}) {
+export function TechnicianFormChecklistPage({
+  embedded,
+  onAddConfidentialityEmployerSignature,
+  onSendToEmployer,
+  reloadSignal,
+}: {
+  embedded?: boolean;
+  /** Embedded in HR Paperworks: opens the Confidentiality & Non-Compete employer-signature dialog right here (switching tabs on the same page did nothing). */
+  onAddConfidentialityEmployerSignature?: (doc: SignableDocument) => void;
+  /** Embedded in HR Paperworks: hand the employer signature to another teammate (DM with the sign link). */
+  onSendToEmployer?: (doc: SignableDocument) => void;
+  /** Bumped by the parent after it signs something, so the checklist reloads. */
+  reloadSignal?: number;
+} = {}) {
   const navigate = useNavigate();
   const { uid, displayName } = useAuth();
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
@@ -477,6 +543,8 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
         // without this, e.g. New Technician's W-4 row showed "done" off an
         // old-flow W-4 submission it never actually sent.
         if (SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) && isNewAutomationDoc(d) !== (activeConfig.formSourceBucket === "new")) continue;
+        // The Master PH Contractor Agreement counts on its own version's tab only (Direct Deposit / Valid ID carry over).
+        if (activeConfig.brand && VERSION_REQUIRED_FORM_TYPES.has(d.documentType) && brandOf(d.formData) !== activeConfig.brand) continue;
         const key = `${personId}|${d.documentType}`;
         const arr = byKey.get(key);
         if (arr) arr.push(d);
@@ -506,6 +574,11 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
   const load = useCallback(async () => {
     await Promise.all([loadUsers(), loadDocsForActiveTab()]);
   }, [loadUsers, loadDocsForActiveTab]);
+
+  useEffect(() => {
+    if (reloadSignal) void loadDocsForActiveTab();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadSignal]);
 
   useEffect(() => {
     void loadUsers();
@@ -693,6 +766,7 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
       const alreadySent = alreadySentRaw.filter(
         (d) =>
           (!SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) || isNewAutomationDoc(d) === (activeConfig.formSourceBucket === "new")) &&
+          (!activeConfig.brand || !VERSION_REQUIRED_FORM_TYPES.has(d.documentType) || brandOf(d.formData) === activeConfig.brand) &&
           // Signed in an old wording: sending the new version is the point, not a duplicate.
           !isOutdatedDocument(d)
       );
@@ -723,7 +797,7 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
       const versionTag = currentVersion ? { templateVersion: currentVersion } : {};
       const doc = await createSignableDocument({
         documentType: type,
-        formData: { employeeId: personId, employeeName: personName, ...formSourceTag, ...contractorAddendumFields, ...versionTag },
+        formData: { employeeId: personId, employeeName: personName, ...formSourceTag, ...contractorAddendumFields, ...versionTag, ...(activeConfig.ahsFormTypes?.has(type) ? { brand: "ahs" } : {}) },
         recipientId: personId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -779,6 +853,7 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
         new Set(
           alreadyActiveRaw
             .filter((d) => !SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) || isNewAutomationDoc(d) === (activeConfig.formSourceBucket === "new"))
+            .filter((d) => !activeConfig.brand || !VERSION_REQUIRED_FORM_TYPES.has(d.documentType) || brandOf(d.formData) === activeConfig.brand)
             .map((d) => d.documentType)
         )
       );
@@ -801,6 +876,7 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
               employeeId: r.profileId,
               employeeName: r.name,
               ...formSourceTag,
+              ...(activeConfig.ahsFormTypes?.has(type) ? { brand: "ahs" } : {}),
               // Same reasoning as handleSendForm above — only applies to the
               // contractor_addendum entry in this bundle, if present.
               ...(type === "contractor_addendum" && contractorAddendumInfo
@@ -1303,6 +1379,16 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
                                 {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bell className="h-3 w-3" />} Remind
                               </button>
                             )}
+                            {!na && awaitingHr && doc && onSendToEmployer && type !== "i9" && type !== "w4" && (
+                              <button
+                                type="button"
+                                onClick={() => onSendToEmployer(doc)}
+                                title="Send it to the teammate who signs for the company — they get a DM with the sign link"
+                                className="inline-flex shrink-0 items-center gap-1 text-xs text-violet-300 hover:text-violet-200"
+                              >
+                                <Send className="h-3 w-3" /> Send to Employer
+                              </button>
+                            )}
                             {!na && awaitingHr && (
                               type === "w4" && doc ? (
                                 <button
@@ -1317,13 +1403,15 @@ export function TechnicianFormChecklistPage({ embedded }: { embedded?: boolean }
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    navigate({
-                                      to: "/m/$module/$submodule",
-                                      params: { module: "hr", submodule: "hr-paperworks" },
-                                      search: { tab: "confidentialityNonCompeteAgreement" },
-                                    } as any)
+                                    onAddConfidentialityEmployerSignature
+                                      ? onAddConfidentialityEmployerSignature(doc)
+                                      : navigate({
+                                          to: "/m/$module/$submodule",
+                                          params: { module: "hr", submodule: "hr-paperworks" },
+                                          search: { tab: "confidentialityNonCompeteAgreement" },
+                                        } as any)
                                   }
-                                  title="Add the employer signature in HR Paperworks"
+                                  title="Add the employer signature (Company signer) to this agreement"
                                   className="inline-flex shrink-0 items-center gap-1 text-xs text-sky-300 hover:text-sky-200"
                                 >
                                   <PenLine className="h-3 w-3" /> Add Employer Signature

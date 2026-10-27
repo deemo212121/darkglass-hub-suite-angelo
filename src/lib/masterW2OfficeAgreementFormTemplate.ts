@@ -19,6 +19,8 @@
  * ManagerReviewPage.tsx when reassigned to a non-HR manager).
  */
 
+import { brandOf } from "@/lib/formBrand";
+
 export { MASTER_W2_AGREEMENT_BRANCHES as MASTER_W2_OFFICE_AGREEMENT_BRANCHES } from "@/lib/masterW2AgreementFormTemplate";
 
 export interface MasterW2OfficeAgreementFormData {
@@ -46,6 +48,18 @@ export interface MasterW2OfficeAgreementFormData {
   employerSignatureDataUrl: string;
   /** Name of the HR/manager who countersigned — set when the employer signature is added. Missing on documents countersigned before it was recorded. */
   employerName?: string;
+  /** "ahs" = the Admin Hub Solutions version (HR Paperworks / Staff Form Checklist → AHS Forms US); absent = the original US In Home Services version. */
+  brand?: "ahs";
+}
+
+/**
+ * The Admin Hub Solutions version (sent from AHS Forms US — form_data.brand,
+ * see lib/formBrand.ts): heading, at-will clause and logo name Admin Hub
+ * Solutions. Every other copy is US In Home Services, and a copy keeps its
+ * version for good.
+ */
+export function masterW2OfficeUsesAdminHub(data: unknown): boolean {
+  return brandOf(data) === "ahs";
 }
 
 const escapeHtml = (s: string) =>
@@ -101,14 +115,15 @@ function signRow(label: string, name: string, dateSigned: string, sigDataUrl: st
 }
 
 export function buildMasterW2OfficeAgreementBodyMarkup(data: MasterW2OfficeAgreementFormData, logoDataUrl: string): string {
+  const company = masterW2OfficeUsesAdminHub(data) ? "Admin Hub Solutions" : "US In Home Services";
   return `
     <div class="mw2o-container">
       <div class="mw2o-header">
         <div>
-          <h1>US IN HOME SERVICES</h1>
+          <h1>${company.toUpperCase()}</h1>
           <h2>MASTER W-2 OFFICE &amp; LOGISTICS COMPREHENSIVE POLICY, CONDUCT &amp; AGREEMENT</h2>
         </div>
-        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="US In Home Services" />` : ""}
+        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="${company}" />` : ""}
       </div>
 
       <div class="mw2o-section-title">1. Employee &amp; Branch Information</div>
@@ -153,7 +168,7 @@ export function buildMasterW2OfficeAgreementBodyMarkup(data: MasterW2OfficeAgree
       <div class="mw2o-bullet"><b>Duration:</b> Confidentiality obligations remain in full force during your employment and for a period of two (2) years following the termination of employment for any reason.</div>
 
       <div class="mw2o-section-title">Section 7. At-Will Employment &amp; Voluntary Election</div>
-      <div class="mw2o-bullet"><b>At-Will Status:</b> Employment with US In Home Services is strictly "at-will," meaning either you or the Company may terminate the employment relationship at any time, with or without cause, and with or without notice.</div>
+      <div class="mw2o-bullet"><b>At-Will Status:</b> Employment with ${company} is strictly "at-will," meaning either you or the Company may terminate the employment relationship at any time, with or without cause, and with or without notice.</div>
       <div class="mw2o-bullet"><b>Voluntary Election:</b> The Employee expressly acknowledges and confirms that their W-2 employment status under this Agreement was voluntarily chosen and that any tools, equipment, or software provided are standard business conveniences that do not alter at-will status or operational control.</div>
 
       <div class="mw2o-section-title" style="margin-top:20px;">Employee Acknowledgment &amp; Signature</div>

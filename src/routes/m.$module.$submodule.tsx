@@ -23,6 +23,8 @@ import { useModuleRoleGate, useModuleRoleGateOverrides } from "@/lib/moduleAcces
 // decide what to even list) so both surfaces can never drift apart.
 import { ADMIN_MODULE_ROLES, USER_MANAGEMENT_DEFAULT_ROLES, ACTIVITY_LOG_DEFAULT_ROLES, WHEREABOUTS_DEFAULT_ROLES, BIZOPS_GUIDE_DEFAULT_ROLES, PRE_AUTH_DEFAULT_ROLES, resolveSubmoduleAllowedRoles, passesModuleLevelGate } from "@/lib/submoduleAccess";
 import { ROLE_LABELS } from "@/lib/roleLabels";
+import { guideDepartmentFor } from "@/lib/tours/guideDepartments";
+import { canSeeTicketTour } from "@/lib/tours/ticketTours";
 import { ExpensesModulePage } from "@/components/ExpensesModulePage";import { StaffListPage } from "@/components/StaffListPage";
 import { ItTicketsPage } from "@/components/ItTicketsPage";
 
@@ -115,6 +117,8 @@ const ServerStatusPage = lazy(() => import("@/components/ServerStatusPage").then
 const ApproverGuidePage = lazy(() => import("@/components/ApproverGuidePage").then((m) => ({ default: m.ApproverGuidePage })));
 const BizOpsGuidePage = lazy(() => import("@/components/BizOpsGuidePage").then((m) => ({ default: m.BizOpsGuidePage })));
 const PreAuthPage = lazy(() => import("@/components/PreAuthPage").then((m) => ({ default: m.PreAuthPage })));
+const ClaimsGuidePage = lazy(() => import("@/components/ClaimsGuidePage").then((m) => ({ default: m.ClaimsGuidePage })));
+const DepartmentGuidePage = lazy(() => import("@/components/DepartmentGuidePage").then((m) => ({ default: m.DepartmentGuidePage })));
 const TrainingListPage = lazy(() => import("@/components/TrainingListPage").then((m) => ({ default: m.TrainingListPage })));
 const AbsentListPage = lazy(() => import("@/components/AbsentListPage").then((m) => ({ default: m.AbsentListPage })));
 const RepairKnowledgeBase = lazy(() => import("@/components/RepairKnowledgeBase").then((m) => ({ default: m.RepairKnowledgeBase })));
@@ -423,7 +427,13 @@ function SubModule() {
   }
 
   // Claims → Pre-Auth: Claims, Parts and BizOps roles plus Admin / SuperAdmin only.
-  if ((sub as any).custom === "pre-auth" && !hasDashboardAccess(explicitModuleOverride ?? PRE_AUTH_DEFAULT_ROLES, role, extraRoles)) {
+  if (((sub as any).custom === "pre-auth" || (sub as any).custom === "claims-guide") && !hasDashboardAccess(explicitModuleOverride ?? PRE_AUTH_DEFAULT_ROLES, role, extraRoles)) {
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
+  }
+
+  // Guides → department tiles: that department's roles only (Admin / SuperAdmin see every one).
+  const guideDept = String((sub as any).custom ?? "").startsWith("guide-") ? guideDepartmentFor((sub as any).custom) : null;
+  if (guideDept && !explicitModuleOverride && !canSeeTicketTour(guideDept.roleKey, role, extraRoles)) {
     return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
@@ -636,6 +646,10 @@ function SubModule() {
         ? <ApproverGuidePage />
         : (sub as any).custom === "bizops-guide"
         ? <BizOpsGuidePage />
+        : (sub as any).custom === "claims-guide"
+        ? <ClaimsGuidePage />
+        : guideDept
+        ? <DepartmentGuidePage dept={guideDept} />
         : (sub as any).custom === "clock-in-codes"
         ? <ClockInCodesTab standalone backModule={mod.slug} />
         : (sub as any).custom === "absent-list"

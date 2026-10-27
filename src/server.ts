@@ -390,6 +390,17 @@ export default {
       ),
     );
 
+    // Marcone / Encompass credits on returned parts -> Part Transaction
+    // "Credited" badge + Credit # (migration 0406).
+    ctx.waitUntil(
+      import("./lib/server/partCreditSync").then(
+        ({ runPartCreditSync }) => runPartCreditSync(merged),
+      ).then(
+        (result) => { if (result.credited.length || result.rejected.length || result.errors.length) console.log("partCreditSync:", JSON.stringify(result)); },
+        (error) => console.error("partCreditSync failed:", error),
+      ),
+    );
+
     // No separate cron entry for this either — the hourly tick above lands on an
     // exact America/Chicago hour boundary too (see passwordResetSchedule.ts's
     // header comment), so this just checks "is it Monday 00:00 Chicago time

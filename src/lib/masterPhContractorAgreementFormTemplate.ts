@@ -1,3 +1,4 @@
+import { BRAND_COMPANY, brandOf } from "@/lib/formBrand";
 /**
  * Master Philippines Independent Contractor Comprehensive Agreement — the
  * PH-staff counterpart to masterW2AgreementFormTemplate.ts / masterW2Office
@@ -20,6 +21,8 @@
  */
 
 export interface MasterPhContractorAgreementFormData {
+  /** "ahs" = the Admin Hub Solutions version (HR Paperworks → AHS FORMS PH); absent = the original US In Home Services version. */
+  brand?: "ahs";
   /** The contractor's actual profile id — not shown on the document itself, just carried alongside for lookups. */
   employeeId: string;
   /** Derived display name — [firstName, middleName, lastName].filter(Boolean).join(" "). */
@@ -111,14 +114,16 @@ function signRow(label: string, name: string, dateSigned: string, sigDataUrl: st
 }
 
 export function buildMasterPhContractorAgreementBodyMarkup(data: MasterPhContractorAgreementFormData, logoDataUrl: string): string {
+  const brand = brandOf(data);
+  const company = BRAND_COMPANY[brand];
   return `
     <div class="mphc-container">
       <div class="mphc-header">
         <div>
-          <h1>US IN HOME SERVICES</h1>
+          <h1>${company.toUpperCase()}</h1>
           <h2>MASTER PHILIPPINES INDEPENDENT CONTRACTOR COMPREHENSIVE AGREEMENT</h2>
         </div>
-        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="US In Home Services" />` : ""}
+        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="${company}" />` : ""}
       </div>
 
       <div class="mphc-section-title">1. Contractor &amp; Personal Information</div>
@@ -147,7 +152,7 @@ export function buildMasterPhContractorAgreementBodyMarkup(data: MasterPhContrac
       </div>
 
       <div class="mphc-section-title">Section 1. Independent Contractor Relationship</div>
-      <div class="mphc-bullet"><b>Business-to-Business Status:</b> You are engaged and contracted strictly as an independent contractor providing remote back-office, administrative, or technical support services to US In Home Services, and not as a regular employee under local Philippine labor codes or U.S. employment laws.</div>
+      <div class="mphc-bullet"><b>Business-to-Business Status:</b> You are engaged and contracted strictly as an independent contractor providing remote back-office, administrative, or technical support services to ${company}, and not as a regular employee under local Philippine labor codes or U.S. employment laws.</div>
       <div class="mphc-bullet"><b>Tax &amp; Statutory Independence:</b> As an independent contractor, you are solely responsible for all personal income taxes, local filings, and national contributions (such as SSS, PhilHealth, and Pag-IBIG). No local statutory benefits or U.S. employee withholdings are deducted by the Company.</div>
 
       <div class="mphc-section-title">Section 2. Confidentiality &amp; Non-Disclosure (NDA)</div>
@@ -172,7 +177,7 @@ export function buildMasterPhContractorAgreementBodyMarkup(data: MasterPhContrac
       <p style="font-style:italic;">By signing below, I certify that I have read, understood, and voluntarily agree to all the terms, policies, and conditions outlined in this Master Philippines Independent Contractor Comprehensive Agreement (including Personal Data, Confidentiality, and Leave Policies).</p>
 
       ${signRow("Contractor Signature", data.employeeName, data.contractorDateSigned, data.contractorSignatureDataUrl)}
-      ${signRow("Employer Representative Signature", data.employerName || "", data.employerDateSigned, data.employerSignatureDataUrl)}
+      ${signRow(brand === "ahs" ? "Employer Representative Signature (Admin Hub Solutions)" : "Employer Representative Signature", data.employerName || "", data.employerDateSigned, data.employerSignatureDataUrl)}
     </div>
   `;
 }

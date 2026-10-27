@@ -39,11 +39,17 @@ interface MarconeRequestOptions {
   body?: unknown;
 }
 
-async function postJson<T>(payload: unknown): Promise<T> {
+/** The signed-in user's Firebase ID token — /api/marcone only answers signed-in, active users. */
+async function currentIdToken(): Promise<string | undefined> {
+  const { auth } = await import("@/lib/firebase/config");
+  return (await auth?.currentUser?.getIdToken(false)) ?? undefined;
+}
+
+async function postJson<T>(payload: Record<string, unknown>): Promise<T> {
   const res = await fetch("/api/marcone", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, idToken: await currentIdToken() }),
   });
   const text = await res.text();
   try {
