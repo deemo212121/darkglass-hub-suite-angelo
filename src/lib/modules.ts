@@ -1644,6 +1644,17 @@ const reportMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "report-ltp-report",
+      title: "LTP Report",
+      description: "Live per-branch aging snapshot — 7+ day pending tickets and Today's/Monthly LTP%.",
+      // Same page as CSR → LTP Report (dispatch is by `custom` alone); starts
+      // with that page's audience — see BORROWED_DEFAULT_GATES in submoduleAccess.ts.
+      custom: "csr-ltp-report" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
       slug: "report-claims-daily",
       title: "Claims Daily Report",
       description: "Claims completed vs remaining, brand breakdown and pending types.",

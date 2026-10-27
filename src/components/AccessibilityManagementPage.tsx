@@ -7,6 +7,7 @@ import { MODULES } from "@/lib/modules";
 import { ROLE_LABELS, ROLE_OPTIONS } from "@/lib/roleLabels";
 import { useAllRoleOptions, useCustomRoles, createCustomRole, setRoleLabel, deleteCustomRole } from "@/lib/customRoles";
 import { DASHBOARD_ROLE_GATES } from "@/lib/dashboardAccess";
+import { BORROWED_DEFAULT_GATES } from "@/lib/submoduleAccess";
 import { hydrateModuleRoleGates } from "@/lib/moduleAccess";
 import { getModuleRoleGateOverrides, setModuleRoleGateOverride } from "@/lib/supabase/moduleRoleGates";
 
@@ -520,7 +521,10 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
       for (const row of gateRows) {
         const key = `${row.moduleSlug}:${row.slug}`;
         const hardcodedDefault = (row.moduleSlug === "dashboard" || row.moduleSlug === "hr" || row.moduleSlug === "accounting" || row.moduleSlug === "csr") ? DASHBOARD_ROLE_GATES[row.slug] : undefined;
-        effective[key] = overrides[key] ?? hardcodedDefault ?? allRoleValues;
+        // A copy of another module's page starts with the original's audience (Report → LTP Report = CSR → LTP Report).
+        const borrowed = BORROWED_DEFAULT_GATES[key];
+        const borrowedDefault = borrowed ? overrides[`${borrowed.moduleSlug}:${borrowed.subSlug}`] ?? DASHBOARD_ROLE_GATES[borrowed.subSlug] : undefined;
+        effective[key] = overrides[key] ?? hardcodedDefault ?? borrowedDefault ?? allRoleValues;
       }
       // Re-apply any not-yet-saved edits on top of the fresh load — this
       // effect can in principle re-run mid-edit (its dep is roleOptions
