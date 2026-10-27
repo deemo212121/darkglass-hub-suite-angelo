@@ -99,7 +99,7 @@ import {
   type DailyPerformanceOverride,
 } from "@/lib/supabase/technicianPerformanceOverrides";
 import { getSeniorBranchManagerAssignments, type SbmBranchAssignment } from "@/lib/supabase/seniorBranchManagerAssignments";
-import { todayISO } from "@/lib/localDate";
+import { todayISO, localISODate } from "@/lib/localDate";
 
 const TOOLTIP_STYLE = {
   background: "#ffffff",
@@ -317,7 +317,7 @@ const todayStr = () => todayISO();
 const monthStart = (d: string) => `${d.slice(0, 7)}-01`;
 const monthEnd = (d: string) => {
   const [y, m] = d.split("-").map(Number);
-  return new Date(y, m, 0).toISOString().slice(0, 10);
+  return localISODate(new Date(y, m, 0)); // local calendar date, not toISOString() (UTC) — that's the previous day for PH staff (UTC+8) and the next day for US staff late in the evening
 };
 const daysBetween = (start: string, end: string) => Math.round((new Date(`${end}T00:00:00`).getTime() - new Date(`${start}T00:00:00`).getTime()) / 86400000) + 1;
 

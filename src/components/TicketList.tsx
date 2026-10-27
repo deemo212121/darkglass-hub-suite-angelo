@@ -594,7 +594,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
 
       const now = new Date();
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-      const startISO = monthStart.toISOString().slice(0, 10);
+      const startISO = localISODate(monthStart);
       const result = await syncServicePowerToSupabase(undefined as any, {
         startDate: startISO,
         locationFilters: ["San Antonio", "Asheville"],

@@ -1364,7 +1364,7 @@ export async function updateCompanyUser(
     employmentType: "trainee" | "regular";
     /** Trainee daily $100 guarantee window's end date ("YYYY-MM-DD") — every
      *  day from this profile's hireDate through this date is a trainee day
-     *  for payroll purposes. Pass null to clear. See migration 0297. */
+     *  for payroll purposes. Pass null to clear. See migration 0291. */
     trainingEndDate: string | null;
   }>
 ): Promise<void> {

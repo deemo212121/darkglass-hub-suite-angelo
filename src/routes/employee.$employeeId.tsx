@@ -12,6 +12,7 @@
  * numbers here always agree with the company-wide report.
  */
 import { getRestDayHistory } from "@/lib/supabase/restDayHistory";
+import { localISODate } from "@/lib/localDate";
 import { isRestDayOn, requiredTimesOn, type RestDayHistory } from "@/lib/restDays";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -37,7 +38,8 @@ export const Route = createFileRoute("/employee/$employeeId")({
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAY_ABBREV = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-const toIso = (d: Date) => d.toISOString().slice(0, 10);
+// Local calendar date, not toisostring() (utc) — that's the previous day for ph staff (utc+8) and the next day for us staff late in the evening.
+const toIso = (d: Date) => localISODate(d);
 const todayMonthValue = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
 function monthLabel(monthValue: string): string {
   const [y, m] = monthValue.split("-").map(Number);

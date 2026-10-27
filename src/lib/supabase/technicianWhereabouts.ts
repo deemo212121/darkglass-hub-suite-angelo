@@ -20,6 +20,8 @@
  */
 
 import { supabase } from "./client";
+import { selectAllPages } from "./selectAllPages";
+import { getErBackfillTicketIds } from "./erBackfill";
 import { getCompanyTechnicians } from "./users";
 import { getCompanyLocationPings } from "./technicianLocationPings";
 import { statusGroupOf } from "@/lib/ticketData";
@@ -250,17 +252,24 @@ function sortTicketAttendanceRows(rows: TicketAttendanceRow[]): TicketAttendance
 }
 
 export async function getCompanyTicketAttendance(dateFrom: string, dateTo: string): Promise<TicketAttendanceRow[]> {
-  const { data, error } = await supabase
-    .from("tickets")
-    .select(TICKET_ATTENDANCE_SELECT)
-    .gte("schedule_date", dateFrom)
-    .lte("schedule_date", dateTo);
+  // Paged: a two-week range is ~3,000 tickets (10/11–10/24: 3,120) and one
+  // answer stops at 1,000 — the Ticket Attendance tab was counting about a
+  // third of them.
+  const { data, error } = await selectAllPages<any>(() =>
+    supabase
+      .from("tickets")
+      .select(TICKET_ATTENDANCE_SELECT)
+      .gte("schedule_date", dateFrom)
+      .lte("schedule_date", dateTo)
+      .order("id", { ascending: true })
+  );
   if (error) {
     console.error("getCompanyTicketAttendance error:", error.message);
     throw new Error(error.message);
   }
+  const backfillIds = await getErBackfillTicketIds();
   return sortTicketAttendanceRows(
-    (data ?? []).filter((row: any) => String(row.technician || "").trim()).map(mapTicketAttendanceRow)
+    (data ?? []).filter((row: any) => String(row.technician || "").trim() && !backfillIds.has(row.id)).map(mapTicketAttendanceRow)
   );
 }
 
@@ -291,5 +300,7 @@ export async function getTicketAttendanceForTechnician(technician: string, dateF
     console.error("getTicketAttendanceForTechnician error:", error.message);
     throw new Error(error.message);
   }
-  return sortTicketAttendanceRows((data ?? []).map(mapTicketAttendanceRow));
+  // ER history tickets (migration 0408) aren't attendance — the work was done and paid in ER.
+  const backfillIds = await getErBackfillTicketIds();
+  return sortTicketAttendanceRows((data ?? []).filter((row: any) => !backfillIds.has(row.id)).map(mapTicketAttendanceRow));
 }

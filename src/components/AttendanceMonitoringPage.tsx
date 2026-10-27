@@ -46,7 +46,7 @@ import { correctionIssueLabel, correctionIssueKey, correctionIssueOptions } from
 import { chainCanClockIn } from "@/lib/approvalDirectory";
 import { ClockInCodePrompt } from "@/components/ClockInCodePrompt";
 import { CorrectionStageBadges, CorrectionOverallBadge, CorrectionComments } from "@/components/CorrectionStageBadges";
-import { timestampParts } from "@/lib/localDate";
+import { timestampParts, localISODate } from "@/lib/localDate";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { ATTENDANCE_GRACE_MINUTES, addMinutesToHHMM, nowInTimezone, timezoneForBranch, DEFAULT_ATTENDANCE_TIMEZONE, payGraceMinutesFor, applyGraceToCheckIn, roundCheckOutToSchedule, toSeconds, ON_TIME_BUFFER_SECONDS } from "@/lib/attendanceGrace";
 import { getServerNow } from "@/lib/serverTime";
@@ -292,8 +292,9 @@ const PTO_TYPE_LABELS: Record<PtoType, string> = {
 const PAID_LEAVE_PTO_TYPES: PtoType[] = ["vacation"];
 const UNPAID_LEAVE_PTO_TYPES: PtoType[] = ["personal", "unpaid", "sick", "holiday", "bereavement"];
 
+// Local calendar date, not toisostring() (utc) — that's the previous day for ph staff (utc+8) and the next day for us staff late in the evening.
 function toISODate(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  return localISODate(d);
 }
 
 function mondayOf(d: Date): Date {
