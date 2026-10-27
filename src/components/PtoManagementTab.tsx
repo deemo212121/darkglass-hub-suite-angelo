@@ -9,6 +9,7 @@
  * same reason.
  */
 import { useEffect, useMemo, useState } from "react";
+import { PtoBalanceSummary, usePtoHireDates } from "@/components/PtoBalanceSummary";
 import { Loader2, CheckCircle, XCircle } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
@@ -54,6 +55,8 @@ export function PtoManagementTab() {
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);
   const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
+  // Each requester's PTO balance under the Type column (PtoBalanceSummary).
+  const ptoHireDates = usePtoHireDates(ptoRequests);
   const [loading, setLoading] = useState(true);
 
   const load = async () => {
@@ -288,7 +291,8 @@ export function PtoManagementTab() {
                 >
                   Dates <span className="text-[10px]">{ptoSort.key === "dates" ? (ptoSort.dir === "desc" ? "▼" : "▲") : "↕"}</span>
                 </button>
-              </th>
+              </th>
+
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">
                 <button
                   type="button"
@@ -317,7 +321,12 @@ export function PtoManagementTab() {
               return (
               <tr key={request.id} className="border-b border-white/5 hover:bg-white/5 transition">
                 <td className="px-3 py-3 text-white font-medium">{profileName(request.profileId)}</td>
-                <td className="px-3 py-3 text-slate-300">{PTO_TYPE_LABELS[request.ptoType]}</td>
+                <td className="px-3 py-3 text-slate-300">
+                  {PTO_TYPE_LABELS[request.ptoType]}
+                  {ptoHireDates && (
+                    <PtoBalanceSummary request={request} requests={ptoRequests} hireDate={ptoHireDates.get(request.profileId)} createdAt={profileById.get(request.profileId)?.created_at} />
+                  )}
+                </td>
                 <td className="px-3 py-3 text-slate-300">{request.startDate} to {request.endDate}</td>
                 <td className="px-3 py-3 text-slate-300 whitespace-nowrap">{ptoSubmittedDay(request.createdAt)}</td>
                 <td className="px-3 py-3 text-center text-slate-300">{Math.round(request.hoursRequested / 8)}</td>

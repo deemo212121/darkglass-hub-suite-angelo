@@ -770,6 +770,31 @@ export async function getProfileEmployeeInfo(profileId: string): Promise<Employe
  * row's hire date without paying for employee_info (which can carry a
  * base64 photoDataUrl) on every getCompanyUsers() call.
  */
+/**
+ * Just the Master List Hire Date (employee_info.hireDate) for these
+ * profiles — what PTO balances are anchored to (see pto.ts's ptoYearWindow).
+ * Reads only that one field, so a manager reviewing PTO never pulls anyone's
+ * full employee_info (bank / address) into the browser.
+ */
+export async function getHireDatesByProfileIds(profileIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const uniq = Array.from(new Set(profileIds.filter(Boolean)));
+  for (let i = 0; i < uniq.length; i += 200) {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, hire_date:employee_info->>hireDate")
+      .in("id", uniq.slice(i, i + 200));
+    if (error) {
+      console.error("getHireDatesByProfileIds error:", error.message);
+      return out;
+    }
+    for (const row of (data ?? []) as unknown as { id: string; hire_date: string | null }[]) {
+      if (row.hire_date) out.set(row.id, row.hire_date.slice(0, 10));
+    }
+  }
+  return out;
+}
+
 export async function getEmployeeInfoByProfileIds(profileIds: string[]): Promise<Map<string, EmployeeInfo>> {
   const out = new Map<string, EmployeeInfo>();
   const uniq = Array.from(new Set(profileIds.filter(Boolean)));

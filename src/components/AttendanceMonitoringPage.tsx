@@ -3,6 +3,7 @@ import { getRestDayHistory } from "@/lib/supabase/restDayHistory";
 import { isRestDayOn, requiredTimesOn, type RestDayHistory } from "@/lib/restDays";
 import { AlertCircle, AlertTriangle, Compass, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, ChevronRight, ChevronDown, Download, Calendar, FileText, CheckCircle, XCircle, Loader2, Settings } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
+import { PtoBalanceSummary, usePtoHireDates } from "@/components/PtoBalanceSummary";
 import { toast } from "sonner";
 import { runTour, takeQueuedTour } from "@/lib/tours/runTour";
 import { APPROVER_TOUR, APPROVER_TOUR_TARGET } from "@/lib/tours/approverTour";
@@ -558,6 +559,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [approvingProposalId, setApprovingProposalId] = useState<string | null>(null);
   const [lastTicketUpdateByProfile, setLastTicketUpdateByProfile] = useState<Map<string, LatestVisitUpdate>>(new Map());
   const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
+  // Each requester's PTO balance under the Type column (PtoBalanceSummary).
+  const ptoHireDates = usePtoHireDates(ptoRequests);
   const [corrections, setCorrections] = useState<TimecardCorrectionRow[]>([]);
   const [correctionHistory, setCorrectionHistory] = useState<TimecardCorrectionHistoryRow[]>([]);
   const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "ticket-attendance", "off-techs", "ticket-dispute", "trainee-attendance", "settings"] as const;
@@ -3215,7 +3218,12 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       return (
                       <tr key={request.id} className="border-b border-white/5 hover:bg-white/5 transition">
                         <td className="px-3 py-3 text-white font-medium">{profileName(request.profileId)}</td>
-                        <td className="px-3 py-3 text-slate-300">{PTO_TYPE_LABELS[request.ptoType]}</td>
+                        <td className="px-3 py-3 text-slate-300">
+                          {PTO_TYPE_LABELS[request.ptoType]}
+                          {ptoHireDates && (
+                            <PtoBalanceSummary request={request} requests={ptoRequests} hireDate={ptoHireDates.get(request.profileId)} createdAt={profiles.find((p) => p.id === request.profileId)?.created_at} />
+                          )}
+                        </td>
                         <td className="px-3 py-3 text-slate-300">{request.startDate} to {request.endDate}</td>
                         <td className="px-3 py-3 text-slate-300 whitespace-nowrap">{ptoSubmittedDay(request.createdAt)}</td>
                         <td className="px-3 py-3 text-center text-slate-300">{Math.round(request.hoursRequested / 8)}</td>
