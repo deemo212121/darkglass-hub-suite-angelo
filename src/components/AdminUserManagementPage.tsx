@@ -1729,7 +1729,9 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                               : "inline-block rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[11px] font-semibold text-emerald-300"
                           }
                         >
-                          {record.isActive === false ? "Deactivated" : "Active"}
+                          {record.isActive === false
+                            ? `Deactivated${record.statusChangedAt ? ` · ${formatISODate(record.statusChangedAt, { year: "numeric", month: "short", day: "numeric" })}` : ""}`
+                            : "Active"}
                         </span>
                         {record.isActive !== false && record.lastStatusChange?.action === "user_activated" ? (
                           // Reactivated: when, by whom, and the reason given.
@@ -1745,9 +1747,9 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                               {record.lastStatusChange.reason || "No reason recorded"}
                             </div>
                           </div>
-                        ) : record.statusChangedAt && (
+                        ) : record.isActive !== false && record.statusChangedAt && (
                           <div className="mt-1 text-[10px] text-slate-400 whitespace-nowrap">
-                            {record.isActive === false ? "on " : "since "}
+                            {"since "}
                             {formatISODate(record.statusChangedAt, { year: "numeric", month: "short", day: "numeric" })}
                           </div>
                         )}

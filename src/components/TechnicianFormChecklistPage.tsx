@@ -40,7 +40,8 @@ import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, Refres
 import { useAuth } from "@/lib/auth";
 import { Switch } from "@/components/ui/switch";
 import { ManagerReviewPage, SUPPORTED_TYPES as EMPLOYER_SIGN_SUPPORTED_TYPES } from "@/components/ManagerReviewPage";
-import { getCompanyUsers, getMyProfileId, setProfileFrozen, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsers, getMyProfileId, getUserStatusChanges, setProfileFrozen, type AccountStatusChange, type ProfileRow } from "@/lib/supabase/users";
+import { formatISODate } from "@/lib/localDate";
 import { isEligibleForTechnicianFormChecklist, isBmAndUpRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { getSignableDocumentsByTypes, getExistingActiveDocuments, createSignableDocument, updateSignableDocumentPdfUrl, confirmSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import {
@@ -255,6 +256,8 @@ interface TechRow {
   isTrainee: boolean;
   /** Deactivated account — still listed (their paperwork stays on file) with a Deactivated badge, real name shown. */
   isDeactivated: boolean;
+  /** When it was deactivated (latest Deactivate in User Management's Activity Log), if logged. */
+  deactivatedOn: string | null;
 }
 
 function isComplete(doc: SignableDocument | undefined, type: SignableDocumentType): boolean {
@@ -360,6 +363,10 @@ export function TechnicianFormChecklistPage({
   const [exemptions, setExemptions] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
   const [hideComplete, setHideComplete] = useState(false);
+  const [statusChanges, setStatusChanges] = useState<Map<string, AccountStatusChange>>(new Map());
+  useEffect(() => {
+    void getUserStatusChanges().then(setStatusChanges).catch(() => {});
+  }, []);
   const [accountFilter, setAccountFilter] = useState<"" | "active" | "deactivated">("");
   const [branchFilter, setBranchFilter] = useState("");
   const [search, setSearch] = useState("");
@@ -638,9 +645,13 @@ export function TechnicianFormChecklistPage({
         frozen: u.frozen === true,
         isTrainee: u.employment_type === "trainee",
         isDeactivated: !u.is_active,
+        deactivatedOn: (() => {
+          const c = statusChanges.get(u.id);
+          return !u.is_active && c?.action === "user_deactivated" ? c.date ?? c.at : null;
+        })(),
       };
     });
-  }, [allUsers, latestByKey, exemptions, activeConfig]);
+  }, [allUsers, latestByKey, exemptions, activeConfig, statusChanges]);
 
   // Auto-(re)select a row to expand whenever the underlying row list changes
   // (data refresh OR switching tabs) — keeps the current selection if it's
@@ -1216,7 +1227,7 @@ export function TechnicianFormChecklistPage({
                       <p className="truncate text-sm font-semibold text-white flex items-center gap-1.5">
                         {r.name}
                         {r.isTrainee && <span className="shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-300">Trainee</span>}
-                        {r.isDeactivated && <span className="shrink-0 rounded-full border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-300">Deactivated</span>}
+                        {r.isDeactivated && <span className="shrink-0 rounded-full border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-300">Deactivated{r.deactivatedOn ? ` · ${formatISODate(r.deactivatedOn, { year: "numeric", month: "short", day: "numeric" })}` : ""}</span>}
                         {r.frozen && <span className="shrink-0 rounded-full border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-300">Frozen</span>}
                       </p>
                       <p className="text-[11px] text-slate-400">{r.roleLabel} · {r.branch}</p>

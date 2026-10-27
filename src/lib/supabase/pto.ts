@@ -12,6 +12,7 @@
  * at any stage immediately denies the whole request).
  */
 
+import { getCompanyHolidaysInRange } from "./companyHolidays";
 import { requireRejectReason, requireApproveNote, RejectCancelledError, APPROVE_CANCELLED_MESSAGE } from "@/lib/rejectReason";
 import { askAccountingSignature } from "@/lib/accountingSignature";
 import { chainCanApprovePto, isRequesterDepartmentManager } from "@/lib/approvalDirectory";
@@ -567,15 +568,81 @@ export function canReviewPtoStage(
  * rest days on file is treated as off Saturday and Sunday. Can be 0 when the
  * whole range is rest days.
  */
-export function workingDayCount(startDate: string, endDate: string, offDays?: number[] | null): number {
+export function workingDayCount(
+  startDate: string,
+  endDate: string,
+  offDays?: number[] | null,
+  /** Declared company holidays (Holiday Calendar, "YYYY-MM-DD") — PTO can't be filed for them, so they're not counted either. */
+  holidays?: { has(date: string): boolean } | null,
+): number {
+  return leaveDaysIn(startDate, endDate, offDays, holidays).length;
+}
+
+const isoOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/** The days in the range that count as leave: not a rest day, not a declared holiday. */
+function leaveDaysIn(startDate: string, endDate: string, offDays?: number[] | null, holidays?: { has(date: string): boolean } | null): string[] {
   const restDays = new Set(offDays && offDays.length > 0 ? offDays : [0, 6]);
   const start = new Date(startDate + "T00:00:00");
   const end = new Date(endDate + "T00:00:00");
-  let count = 0;
+  const days: string[] = [];
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    if (!restDays.has(d.getDay())) count++;
+    const iso = isoOf(d);
+    if (!restDays.has(d.getDay()) && !holidays?.has(iso)) days.push(iso);
   }
-  return count;
+  return days;
+}
+
+/**
+ * Filing-date rules for an employee filing their own leave (HR plotting time
+ * off for someone is exempt):
+ *  - PTO (Vacation/Personal) and Unpaid Leave can't start on a past date;
+ *  - Sick Leave must be filed at least 1 day ahead (start tomorrow or later).
+ * Returns the reason it's refused, or null when the start date is fine.
+ */
+export function leaveFilingDateError(ptoType: PtoType, startDate: string, today: string = todayISO()): string | null {
+  if (!startDate) return null;
+  if (ptoType === "sick") {
+    const [y, m, d] = today.split("-").map(Number);
+    const tomorrow = isoOf(new Date(y, m - 1, d + 1));
+    return startDate < tomorrow
+      ? `Sick Leave must be filed at least 1 day ahead — the earliest start date you can file for is ${new Date(tomorrow + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.`
+      : null;
+  }
+  if (ptoType === "vacation" || ptoType === "personal" || ptoType === "unpaid") {
+    return startDate < today ? `${ptoType === "unpaid" ? "Unpaid Leave" : "PTO"} can't be filed for past dates — pick today or a later start date.` : null;
+  }
+  return null;
+}
+
+/** Earliest start date an employee can pick for this leave type (see leaveFilingDateError). */
+export function earliestLeaveStart(ptoType: PtoType, today: string = todayISO()): string {
+  if (ptoType !== "sick") return today;
+  const [y, m, d] = today.split("-").map(Number);
+  return isoOf(new Date(y, m - 1, d + 1));
+}
+
+/** Declared holidays (Holiday Calendar) in the range, date → name. */
+export async function getHolidayNamesInRange(startDate: string, endDate: string): Promise<Map<string, string>> {
+  return new Map((await getCompanyHolidaysInRange(startDate, endDate)).map((h) => [h.date, h.name]));
+}
+
+/**
+ * Why a range has nothing to file leave for — "Dec 25 is a company holiday
+ * (Christmas Day)…" when it's holidays (plus rest days), else the rest-day
+ * message. Shared by the filing forms and createPtoRequest/updatePtoRequest.
+ */
+export function noLeaveDaysMessage(startDate: string, endDate: string, offDays: number[] | null | undefined, holidays: Map<string, string>): string {
+  const restDays = new Set(offDays && offDays.length > 0 ? offDays : [0, 6]);
+  const hit: string[] = [];
+  for (const [date, name] of holidays) {
+    if (date >= startDate && date <= endDate && !restDays.has(new Date(date + "T00:00:00").getDay())) {
+      hit.push(`${new Date(date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })} (${name})`);
+    }
+  }
+  return hit.length
+    ? `${hit.join(", ")} ${hit.length === 1 ? "is a company holiday" : "are company holidays"} — PTO can't be filed for declared holidays.`
+    : "Every day in that range is a scheduled rest day — there's nothing to file leave for.";
 }
 
 async function getProfileOffDays(profileId: string): Promise<number[] | null> {
@@ -588,10 +655,10 @@ async function getProfileOffDays(profileId: string): Promise<number[] | null> {
 }
 
 async function leaveHoursFor(profileId: string, startDate: string, endDate: string): Promise<number> {
-  const days = workingDayCount(startDate, endDate, await getProfileOffDays(profileId));
-  if (days === 0) {
-    throw new Error("Every day in that range is a scheduled rest day for this employee — there's nothing to file leave for.");
-  }
+  const [offDays, holidays] = await Promise.all([getProfileOffDays(profileId), getHolidayNamesInRange(startDate, endDate)]);
+  // Declared holidays aren't leave days — a request that's only holidays (and rest days) is refused.
+  const days = workingDayCount(startDate, endDate, offDays, holidays);
+  if (days === 0) throw new Error(noLeaveDaysMessage(startDate, endDate, offDays, holidays));
   return days * 8;
 }
 
@@ -631,6 +698,11 @@ export async function createPtoRequest(input: {
   employeeSignatureName?: string;
   pdfUrl?: string;
 }): Promise<PtoRequestRow> {
+  // An employee filing their own leave — HR plotting it for someone (autoApprovedBy / another requester) is exempt.
+  if (!input.autoApprovedBy && input.requestedBy === input.profileId) {
+    const dateError = leaveFilingDateError(input.ptoType, input.startDate);
+    if (dateError) throw new Error(dateError);
+  }
   const hoursRequested = await leaveHoursFor(input.profileId, input.startDate, input.endDate);
   const insertPayload: Record<string, unknown> = {
     ...(input.id ? { id: input.id } : {}),

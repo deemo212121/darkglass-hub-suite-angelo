@@ -1154,8 +1154,10 @@ export async function getUserStatusChanges(): Promise<Map<string, AccountStatusC
   const merged = [...activated, ...deactivated].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   for (const entry of merged) {
     if (!entry.targetId || result.has(entry.targetId)) continue;
-    // Still in the Activity Log, just not shown as anyone's status.
-    if (STATUS_HIDDEN_ACTORS.has((entry.actorName ?? "").trim().toLowerCase())) continue;
+    // Still in the Activity Log, just not shown as anyone's status — except a
+    // deactivation's date (without the name), so every deactivated account has one.
+    const hiddenActor = STATUS_HIDDEN_ACTORS.has((entry.actorName ?? "").trim().toLowerCase());
+    if (hiddenActor && entry.action !== "user_deactivated") continue;
     const reason = typeof entry.details?.reason === "string" ? entry.details.reason.trim() : "";
     const date = typeof entry.details?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(entry.details.date) ? entry.details.date : null;
     result.set(entry.targetId, {
@@ -1163,7 +1165,7 @@ export async function getUserStatusChanges(): Promise<Map<string, AccountStatusC
       at: entry.createdAt,
       date,
       reason: reason || null,
-      byName: entry.actorName,
+      byName: hiddenActor ? null : entry.actorName,
     });
   }
   return result;
