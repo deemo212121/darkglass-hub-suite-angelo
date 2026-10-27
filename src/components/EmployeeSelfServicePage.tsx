@@ -1,4 +1,5 @@
 import { ChevronLeft, Compass, DollarSign, Clock, ListTodo, Download, Eye, EyeOff, TrendingUp, AlertCircle, CheckCircle2, XCircle, Plus, FileText, X, Paperclip, Receipt, Pencil, Trash2, Loader2 } from "lucide-react";
+import { useHolidayNames } from "@/hooks/useHolidayNames";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { runTour, takeQueuedTour } from "@/lib/tours/runTour";
 import { SELF_SERVICE_TOUR, SELF_SERVICE_TOUR_TARGET } from "@/lib/tours/selfServiceTour";
@@ -29,6 +30,9 @@ import {
   sickYearWindow,
   sickRequestsInYear,
   workingDayCount,
+  noLeaveDaysMessage,
+  leaveFilingDateError,
+  earliestLeaveStart,
   setPtoAttachmentUrl,
   type PtoRequestRow,
   type PtoType,
@@ -202,6 +206,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [allCorrections, setAllCorrections] = useState<TimecardCorrectionRow[]>([]);
   const [allEmployeeRequests, setAllEmployeeRequests] = useState<EmployeeRequestRow[]>([]);
   const [companyProfiles, setCompanyProfiles] = useState<ProfileRow[]>([]);
+  // Declared holidays aren't PTO days — PTO can't be filed for them.
+  const holidayNames = useHolidayNames();
   const [requestsLoading, setRequestsLoading] = useState(true);
   const [myPayslips, setMyPayslips] = useState<MyPayslipRow[]>([]);
   // Notes from Payroll (migration 0399) — unread ones show as a banner above
@@ -682,14 +688,22 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             setSubmitting(false);
             return;
           }
+          {
+            const dateError = leaveFilingDateError("vacation", formData.startDate);
+            if (dateError) {
+              alert(dateError);
+              setSubmitting(false);
+              return;
+            }
+          }
           if (!ptoEligible) {
             alert(`You're not yet eligible for PTO — employees need 1 year of tenure first. You'll be eligible starting ${ptoEligibleOn}.`);
             setSubmitting(false);
             return;
           }
-          const requestedDays = workingDayCount(formData.startDate, formData.endDate, companyProfiles.find((p) => p.id === myProfileId)?.off_days);
+          const requestedDays = workingDayCount(formData.startDate, formData.endDate, companyProfiles.find((p) => p.id === myProfileId)?.off_days, holidayNames);
           if (requestedDays === 0) {
-            alert("Every day in that range is one of your scheduled rest days — there's nothing to file leave for.");
+            alert(noLeaveDaysMessage(formData.startDate, formData.endDate, companyProfiles.find((p) => p.id === myProfileId)?.off_days, holidayNames));
             setSubmitting(false);
             return;
           }
@@ -743,11 +757,19 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             setSubmitting(false);
             return;
           }
+          {
+            const dateError = leaveFilingDateError("sick", formData.startDate);
+            if (dateError) {
+              alert(dateError);
+              setSubmitting(false);
+              return;
+            }
+          }
           // No 1-year eligibility gate here — Sick Leave is available from
           // day 1 of employment, unlike vacation PTO above.
-          const requestedDays = workingDayCount(formData.startDate, formData.endDate, companyProfiles.find((p) => p.id === myProfileId)?.off_days);
+          const requestedDays = workingDayCount(formData.startDate, formData.endDate, companyProfiles.find((p) => p.id === myProfileId)?.off_days, holidayNames);
           if (requestedDays === 0) {
-            alert("Every day in that range is one of your scheduled rest days — there's nothing to file leave for.");
+            alert(noLeaveDaysMessage(formData.startDate, formData.endDate, companyProfiles.find((p) => p.id === myProfileId)?.off_days, holidayNames));
             setSubmitting(false);
             return;
           }
@@ -852,6 +874,14 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             alert("Please select start and end dates");
             setSubmitting(false);
             return;
+          }
+          {
+            const dateError = leaveFilingDateError("unpaid", formData.startDate);
+            if (dateError) {
+              alert(dateError);
+              setSubmitting(false);
+              return;
+            }
           }
           // No eligibility gate and no allowance check — unpaid leave
           // doesn't draw against any balance, unlike vacation PTO/Sick Leave
@@ -2157,6 +2187,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           <label className="text-xs font-semibold text-white block mb-1">Start Date</label>
                           <input 
                             type="date" 
+                            min={earliestLeaveStart(modalType === "sick" ? "sick" : "vacation")}
                             value={formData.startDate}
                             onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
                             className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500" 
@@ -2166,6 +2197,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           <label className="text-xs font-semibold text-white block mb-1">End Date</label>
                           <input 
                             type="date"
+                            min={formData.startDate || earliestLeaveStart(modalType === "sick" ? "sick" : "vacation")}
                             value={formData.endDate}
                             onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
                             className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
@@ -2173,10 +2205,10 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                         </div>
                       </div>
                       {modalType === "pto" && formData.startDate && formData.endDate && formData.startDate <= formData.endDate && (() => {
-                        const days = workingDayCount(formData.startDate, formData.endDate, companyProfiles.find((p) => p.id === myProfileId)?.off_days);
+                        const days = workingDayCount(formData.startDate, formData.endDate, companyProfiles.find((p) => p.id === myProfileId)?.off_days, holidayNames);
                         return (
                           <p className={`text-xs ${myPtoYear && days > myPtoRemaining ? "text-red-300" : "text-slate-400"}`}>
-                            Counts as {days} PTO day{days === 1 ? "" : "s"}. Your rest days (Sat/Sun unless your schedule says otherwise) aren't counted.
+                            Counts as {days} PTO day{days === 1 ? "" : "s"}. Your rest days (Sat/Sun unless your schedule says otherwise) and company holidays aren't counted.
                             {myPtoYear && ` You have ${myPtoRemaining} left.`}
                           </p>
                         );

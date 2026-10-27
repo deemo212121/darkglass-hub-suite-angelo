@@ -1,4 +1,5 @@
 ﻿import { chainCanClockIn, isChainTopApprover } from "@/lib/approvalDirectory";
+import { useHolidayNames } from "@/hooks/useHolidayNames";
 import { traineeFlagFor, traineeFlagLabel, type TraineeFlag } from "@/lib/traineeFlag";
 import { ClockInCodePrompt } from "@/components/ClockInCodePrompt";
 import { isClockInCodeRequired } from "@/lib/supabase/clockInCodes";
@@ -134,7 +135,7 @@ import { getModelResources, saveModelResources, type ModelResources } from "@/li
 import { getUndismissedMobilePopupAlerts, dismissTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
 import { createItTicket, getItTickets, type ItTicketRow, type ItTicketPriority } from "@/lib/supabase/itTickets";
 import { createEmployeeRequest, getCompanyEmployeeRequests, updateEmployeeRequestStatus, canReviewTicketDispute, notifyRequestReviewers, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
-import { createPtoRequest, getCompanyPtoRequests, canReviewPtoStage, reviewPtoStage, isEligibleForPto, ptoEligibleDate, ptoYearWindow, ptoDaysUsed, workingDayCount, setPtoAttachmentUrl, type PtoType, type PtoRequestRow } from "@/lib/supabase/pto";
+import { createPtoRequest, getCompanyPtoRequests, canReviewPtoStage, reviewPtoStage, isEligibleForPto, ptoEligibleDate, ptoYearWindow, ptoDaysUsed, workingDayCount, noLeaveDaysMessage, leaveFilingDateError, earliestLeaveStart, setPtoAttachmentUrl, type PtoType, type PtoRequestRow } from "@/lib/supabase/pto";
 import {
   createTimecardCorrection,
   getCompanyTimecardCorrections,
@@ -8907,7 +8908,9 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
   const ptoRemaining = ptoYear ? Math.max(0, ptoYear.allowance - ptoDaysUsed(requests, ptoYear)) : 0;
   const ptoUsedUp = ptoEligible && !loading && !!ptoYear && ptoRemaining <= 0;
   const myOffDays = companyProfiles.find((p) => p.id === profileId)?.off_days;
-  const requestedDays = startDate && endDate && startDate <= endDate ? workingDayCount(startDate, endDate, myOffDays) : null;
+  // Declared holidays aren't PTO days — PTO can't be filed for them.
+  const holidayNames = useHolidayNames();
+  const requestedDays = startDate && endDate && startDate <= endDate ? workingDayCount(startDate, endDate, myOffDays, holidayNames) : null;
 
   useEffect(() => {
     getCompanyUsers().then(setCompanyProfiles).catch((e) => console.error("time off: load users failed", e));
@@ -8951,6 +8954,17 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
     }
     if (!startDate || !endDate) {
       setMsg("Select a start and end date.");
+      return;
+    }
+    {
+      const dateError = leaveFilingDateError(leaveType === "Sick" ? "sick" : leaveType === "Unpaid" ? "unpaid" : "vacation", startDate);
+      if (dateError) {
+        setMsg(dateError);
+        return;
+      }
+    }
+    if (requestedDays === 0) {
+      setMsg(noLeaveDaysMessage(startDate, endDate, myOffDays, holidayNames));
       return;
     }
     if (isPaidLeave && ptoYear && requestedDays !== null && requestedDays > ptoRemaining) {
@@ -9124,13 +9138,13 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
         </select>
 
         <div className="mtech-section-title">Start Date</div>
-        <input className="mtech-bill-input full" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+        <input className="mtech-bill-input full" type="date" min={earliestLeaveStart(leaveType === "Sick" ? "sick" : "vacation")} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
 
         <div className="mtech-section-title">End Date</div>
-        <input className="mtech-bill-input full" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+        <input className="mtech-bill-input full" type="date" min={startDate || earliestLeaveStart(leaveType === "Sick" ? "sick" : "vacation")} value={endDate} onChange={(e) => setEndDate(e.target.value)} />
         {isPaidLeave && requestedDays !== null && (
           <p style={{ marginTop: 6, fontSize: 12, color: ptoYear && requestedDays > ptoRemaining ? "#f87171" : "#94a3b8" }}>
-            Counts as {requestedDays} PTO day{requestedDays === 1 ? "" : "s"}. Your rest days (Sat/Sun unless your schedule says otherwise) aren't counted.
+            Counts as {requestedDays} PTO day{requestedDays === 1 ? "" : "s"}. Your rest days (Sat/Sun unless your schedule says otherwise) and company holidays aren't counted.
             {ptoYear && ` You have ${ptoRemaining} left.`}
           </p>
         )}
