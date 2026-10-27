@@ -592,6 +592,52 @@ export async function notifyOnCandidateHired(
   );
 }
 
+/** Positions whose new trainees the Senior Managers hear about ("Technicain" is a typo on file). */
+const TRAINING_NOTIFY_POSITIONS = /^\s*(technician|technicain|parts manager)\s*$/i;
+
+/**
+ * Notifies everyone holding Senior Manager (primary or extra role — Naveen
+ * Lakhani and Lou Basco today) when a Technician or Parts Manager candidate
+ * is moved to Training (Hiring tab's Training dialog). Only a genuine move
+ * into Training — the caller skips a same-status date change. Other
+ * positions send nothing.
+ */
+export async function notifyOnCandidateTraining(
+  candidate: { name: string; branch: string | null; position: string | null },
+  training: { startDate: string; endDate: string | null; trainerName: string | null },
+  senderId: string | null,
+  senderName: string | null
+): Promise<void> {
+  if (!TRAINING_NOTIFY_POSITIONS.test(candidate.position ?? "")) return;
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("is_active", true)
+    .or("role.eq.SENIOR_MANAGER,extra_roles.cs.{SENIOR_MANAGER}");
+  if (error) {
+    console.error("notifyOnCandidateTraining (Senior Manager lookup) error:", error.message);
+    return;
+  }
+  const recipientIds = new Set((data ?? []).map((r) => r.id as string));
+  if (senderId) recipientIds.delete(senderId);
+
+  const fmt = (iso: string) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+    return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : iso;
+  };
+  const body =
+    `🎓 New trainee: ${candidate.name} — ${candidate.position?.trim()}${candidate.branch ? ` (${candidate.branch})` : ""}, training starts ${fmt(training.startDate)}` +
+    `${training.endDate ? `, Field Start ${fmt(training.endDate)}` : ""}${training.trainerName ? `. Trainer: ${training.trainerName}` : ""}.`;
+
+  await Promise.all(
+    Array.from(recipientIds).map((recipientId) =>
+      createNotification({ recipientId, senderId, senderName, body, linkTo: "/m/hr/training-list" }).catch((err) =>
+        console.error(`notifyOnCandidateTraining: failed for recipient ${recipientId}:`, err)
+      )
+    )
+  );
+}
+
 /** Sets the manual Screening Date — independent of the phone_screening status (no required-date dialog like Interview Date has). See migration 0247. */
 export async function updateCandidateScreeningDate(id: string, date: string): Promise<void> {
   const { error } = await supabase.from("hr_candidates").update({ screening_date: date || null }).eq("id", id);

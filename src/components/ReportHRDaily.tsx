@@ -72,6 +72,7 @@ import {
   setStaffingTarget,
   logCvForward,
   notifyOnCandidateHired,
+  notifyOnCandidateTraining,
   type Candidate,
   type CandidateStatus,
   type CvForwardDetail,
@@ -16386,6 +16387,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     // should notify (not re-saving the Start Date on someone already
     // hired).
     const wasAlreadyHired = candidates.find((c) => c.id === statusDateDialog.candidateId)?.status === "hired";
+    // Same for Training: a date change on someone already training doesn't notify again.
+    const wasAlreadyTraining = candidates.find((c) => c.id === statusDateDialog.candidateId)?.status === "training";
     try {
       await updateCandidateStatus(
         statusDateDialog.candidateId,
@@ -16407,6 +16410,21 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             )
           )
           .catch((err) => console.error("Failed to send hire notifications:", err));
+      }
+      // Technician / Parts Manager moved to Training → the Senior Managers (Naveen Lakhani, Lou Basco).
+      if (statusDateDialog.status === "training" && !wasAlreadyTraining && uid) {
+        const trainee = candidates.find((c) => c.id === statusDateDialog.candidateId);
+        const trainerName = (statusDateDialog.trainerId && employeesById.get(statusDateDialog.trainerId)?.name) || null;
+        getMyProfileId(uid)
+          .then((myProfileId) =>
+            notifyOnCandidateTraining(
+              { name: statusDateDialog.candidateName, branch: trainee?.branch ?? null, position: trainee?.position ?? null },
+              { startDate: statusDateDialog.date, endDate: statusDateDialog.endDate || null, trainerName },
+              myProfileId,
+              displayName || "HR"
+            )
+          )
+          .catch((err) => console.error("Failed to send training notifications:", err));
       }
       // Trainer isn't part of hr_update_candidate_status() (it's a plain
       // field, not a status-transition side effect like the dates above —
