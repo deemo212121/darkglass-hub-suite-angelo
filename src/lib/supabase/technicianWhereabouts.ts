@@ -21,6 +21,7 @@
 
 import { supabase } from "./client";
 import { selectAllPages } from "./selectAllPages";
+import { getErBackfillTicketIds } from "./erBackfill";
 import { getCompanyTechnicians } from "./users";
 import { getCompanyLocationPings } from "./technicianLocationPings";
 import { statusGroupOf } from "@/lib/ticketData";
@@ -266,8 +267,9 @@ export async function getCompanyTicketAttendance(dateFrom: string, dateTo: strin
     console.error("getCompanyTicketAttendance error:", error.message);
     throw new Error(error.message);
   }
+  const backfillIds = await getErBackfillTicketIds();
   return sortTicketAttendanceRows(
-    (data ?? []).filter((row: any) => String(row.technician || "").trim()).map(mapTicketAttendanceRow)
+    (data ?? []).filter((row: any) => String(row.technician || "").trim() && !backfillIds.has(row.id)).map(mapTicketAttendanceRow)
   );
 }
 
@@ -298,5 +300,7 @@ export async function getTicketAttendanceForTechnician(technician: string, dateF
     console.error("getTicketAttendanceForTechnician error:", error.message);
     throw new Error(error.message);
   }
-  return sortTicketAttendanceRows((data ?? []).map(mapTicketAttendanceRow));
+  // ER history tickets (migration 0407) aren't attendance — the work was done and paid in ER.
+  const backfillIds = await getErBackfillTicketIds();
+  return sortTicketAttendanceRows((data ?? []).filter((row: any) => !backfillIds.has(row.id)).map(mapTicketAttendanceRow));
 }

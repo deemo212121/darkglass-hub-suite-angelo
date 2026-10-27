@@ -12,6 +12,7 @@
 
 import { supabase } from "./client";
 import { selectAllPages } from "./selectAllPages";
+import { invalidateErBackfillIds } from "./erBackfill";
 import { statusGroupOf, type Ticket } from "@/lib/ticketData";
 import { mapSource, mapSourceFromTicketNumber } from "@/lib/mfgSource";
 import { syncMileageForTicketDay } from "./mileage";
@@ -148,6 +149,8 @@ function rowToTicket(row: any): Ticket {
     diagnosed: row.diagnosed ? "Y" : "N",
     technician: row.technician ?? "",
     customerPref: row.customer_pref ? "Y" : "N",
+    cxPreferredDate: row.cx_preferred_date ?? "",
+    erBackfill: !!row.er_backfill,
     schedule: row.schedule_date ?? "",
     schedulePeriod: row.time_slot ?? "",
     status: row.status ?? "",
@@ -339,6 +342,15 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// ER history tickets (migration 0407) that are paid, cancelled or completed
+// are history only — kept out of the company-wide load every ticket page
+// shares, or six months of ER history would nearly double it. Open ones and
+// unpaid claims (CL-Claimed) still load: they're worked in AHS. A ticket's
+// own page still opens any of them by number.
+const HIDE_CLOSED_ER_HISTORY = 'er_backfill.is.false,status.not.in.("CL-Data-Closed","CL-Cancelled","CL-Completed")';
+// Set once the database turns out not to have migration 0407 yet — then nothing is backfilled to hide.
+let erBackfillColumnMissing = false;
+
 async function fetchTicketPage(
   i: number,
   withCount: boolean,
@@ -355,9 +367,15 @@ async function fetchTicketPage(
       .order("id", { ascending: false });
     if (sinceDate) query = query.gte("created_at", sinceDate);
     if (orFilter) query = query.or(orFilter);
+    if (!erBackfillColumnMissing) query = query.or(HIDE_CLOSED_ER_HISTORY);
     query = query.range(i * PAGE_SIZE, i * PAGE_SIZE + PAGE_SIZE - 1);
     const { data, error, count } = await query;
     if (!error) return { data, error: null, count };
+    if (!erBackfillColumnMissing && /er_backfill/i.test(error.message)) {
+      erBackfillColumnMissing = true;
+      attempt--; // not a real failure — ask again without the filter
+      continue;
+    }
     lastError = error;
     console.warn(`getCompanyTickets: page ${i} failed (attempt ${attempt + 1}/${PAGE_FETCH_RETRIES + 1}):`, error.message);
     if (attempt < PAGE_FETCH_RETRIES) await sleep(PAGE_FETCH_RETRY_DELAY_MS * (attempt + 1));
@@ -778,6 +796,8 @@ export async function createTicket(input: Partial<Ticket>): Promise<Ticket> {
       fake_ticket: input.fakeTicket ?? false,
       original_ticket_no: input.originalTicketNo ?? null,
       case_number: input.caseNumber ?? null,
+      // Only sent when given, so creating a ticket doesn't depend on migration 0407.
+      ...(input.cxPreferredDate ? { cx_preferred_date: input.cxPreferredDate } : {}),
     })
     .select(SELECT)
     .single();
@@ -853,12 +873,13 @@ export async function updateTicketMisdiagnosed(ticketNo: string, misdiagnosed: b
  */
 export async function updateTicketAssignment(
   ticketNo: string,
-  fields: { technician?: string; scheduleDate?: string; timeSlot?: string }
+  fields: { technician?: string; scheduleDate?: string; timeSlot?: string; cxPreferredDate?: string }
 ): Promise<void> {
   const update: Record<string, unknown> = {};
   if (fields.technician !== undefined) update.technician = fields.technician;
   if (fields.scheduleDate !== undefined) update.schedule_date = fields.scheduleDate || null;
   if (fields.timeSlot !== undefined) update.time_slot = fields.timeSlot || null;
+  if (fields.cxPreferredDate !== undefined) update.cx_preferred_date = fields.cxPreferredDate || null;
   if (Object.keys(update).length === 0) return;
 
   // A reassignment or reschedule invalidates any prior physical on-site
@@ -1877,10 +1898,21 @@ export async function getTicketVisits(ticketNo: string): Promise<UIVisit[]> {
   return (data ?? []).map(rowToVisit);
 }
 
-/** Add a visit to a ticket. company_id auto-stamped server-side. */
-export async function addTicketVisit(ticketNo: string, visit: Partial<UIVisit>): Promise<UIVisit> {
+/**
+ * Add a visit to a ticket. company_id auto-stamped server-side.
+ *
+ * `pastRecordFromEr`: a visit copied from ER's history (the ticket page's
+ * "Past record from ER" box, migration 0407) — marked er_backfill so tech
+ * pay never counts it, and dated on its own schedule date instead of now, so
+ * it sorts into the visit log where it happened and never becomes the
+ * ticket's "latest" visit.
+ */
+export async function addTicketVisit(ticketNo: string, visit: Partial<UIVisit>, opts: { pastRecordFromEr?: boolean } = {}): Promise<UIVisit> {
   const ticketId = await getTicketId(ticketNo);
   if (!ticketId) throw new Error(`Ticket ${ticketNo} not found`);
+  const pastRecord = opts.pastRecordFromEr
+    ? { er_backfill: true, ...(visit.scheduleDate ? { created_at: new Date(`${visit.scheduleDate}T12:00:00`).toISOString() } : {}) }
+    : {};
 
   const { data, error } = await supabase
     .from("visits")
@@ -1904,14 +1936,17 @@ export async function addTicketVisit(ticketNo: string, visit: Partial<UIVisit>):
       status: visit.status ?? null,
       note: visit.note ?? null,
       locked: visit.locked ?? false,
+      ...pastRecord,
     })
     .select("*")
     .single();
 
   if (error) {
     console.error("addTicketVisit error:", error.message);
+    if (/er_backfill/i.test(error.message)) throw new Error("Past records from ER need migration 0407 in Supabase — run it, then save again.");
     throw new Error(error.message);
   }
+  if (opts.pastRecordFromEr) invalidateErBackfillIds();
   return rowToVisit(data);
 }
 
