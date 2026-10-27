@@ -600,7 +600,7 @@ const TRAINING_NOTIFY_POSITIONS = /^\s*(technician|technicain|parts manager)\s*$
  * Lakhani and Lou Basco today) when a Technician or Parts Manager candidate
  * is moved to Training (Hiring tab's Training dialog). Only a genuine move
  * into Training — the caller skips a same-status date change. Other
- * positions send nothing.
+ * positions send nothing; a Philippines-branch candidate notifies HR instead.
  */
 export async function notifyOnCandidateTraining(
   candidate: { name: string; branch: string | null; position: string | null },
@@ -608,6 +608,11 @@ export async function notifyOnCandidateTraining(
   senderId: string | null,
   senderName: string | null
 ): Promise<void> {
+  // PH staff trainees go to HR instead (see notifyHrOfNewPhTrainee).
+  if (isPhilippinesBranch(candidate.branch)) {
+    await notifyHrOfNewPhTrainee({ name: candidate.name, position: candidate.position, startDate: training.startDate }, senderId, senderName);
+    return;
+  }
   if (!TRAINING_NOTIFY_POSITIONS.test(candidate.position ?? "")) return;
   const { data, error } = await supabase
     .from("profiles")
@@ -633,6 +638,48 @@ export async function notifyOnCandidateTraining(
     Array.from(recipientIds).map((recipientId) =>
       createNotification({ recipientId, senderId, senderName, body, linkTo: "/m/hr/training-list" }).catch((err) =>
         console.error(`notifyOnCandidateTraining: failed for recipient ${recipientId}:`, err)
+      )
+    )
+  );
+}
+
+/** A Philippines branch (LOCATIONS_DATA.isPhilippines — "Philippines" today): PH staff. */
+export function isPhilippinesBranch(branch: string | null | undefined): boolean {
+  return !!branch && LOCATIONS_DATA.some((l) => l.isPhilippines && l.location === branch.trim());
+}
+
+/**
+ * Notifies everyone holding HR (primary or extra role) when a PH staff
+ * trainee starts: an account created as a Trainee in User Management, a
+ * Master List employee switched to Trainee, or a Philippines-branch
+ * candidate moved to Training in Hiring (notifyOnCandidateTraining). Whoever
+ * made the change isn't notified.
+ */
+export async function notifyHrOfNewPhTrainee(
+  trainee: { name: string; position: string | null; startDate: string | null },
+  senderId: string | null,
+  senderName: string | null
+): Promise<void> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("is_active", true)
+    .or("role.eq.HR,extra_roles.cs.{HR}");
+  if (error) {
+    console.error("notifyHrOfNewPhTrainee (HR lookup) error:", error.message);
+    return;
+  }
+  const recipientIds = new Set((data ?? []).map((r) => r.id as string));
+  if (senderId) recipientIds.delete(senderId);
+
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trainee.startDate ?? "");
+  const starts = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : null;
+  const body = `🎓 New PH staff trainee: ${trainee.name}${trainee.position?.trim() ? ` — ${trainee.position.trim()}` : ""}${starts ? `, starts ${starts}` : ""}.`;
+
+  await Promise.all(
+    Array.from(recipientIds).map((recipientId) =>
+      createNotification({ recipientId, senderId, senderName, body, linkTo: "/m/hr/training-list" }).catch((err) =>
+        console.error(`notifyHrOfNewPhTrainee: failed for recipient ${recipientId}:`, err)
       )
     )
   );

@@ -73,6 +73,7 @@ import {
   logCvForward,
   notifyOnCandidateHired,
   notifyOnCandidateTraining,
+  notifyHrOfNewPhTrainee,
   type Candidate,
   type CandidateStatus,
   type CvForwardDetail,
@@ -16991,6 +16992,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     try {
       await updateCompanyUser(id, { employmentType: newType });
       void logActivity({ action: "employee_status_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { employmentType: newType } });
+      // A PH staff member switched to Trainee → the rest of HR is notified.
+      if (newType === "trainee" && prevType !== "trainee" && employee?.country === "PH" && uid) {
+        const position = (employee.position && (ROLE_LABELS[normalizeRole(employee.position)] || employee.position)) || employee.department || null;
+        void getMyProfileId(uid)
+          .then((myProfileId) =>
+            notifyHrOfNewPhTrainee({ name: employee.name, position, startDate: employee.startDate || null }, myProfileId, displayName || "HR")
+          )
+          .catch((err) => console.error("Failed to notify HR of the new PH trainee:", err));
+      }
     } catch (err) {
       setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, employmentType: prevType } : e)));
       setError(err instanceof Error ? err.message : "Failed to update employment type.");

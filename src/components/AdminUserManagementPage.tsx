@@ -7,7 +7,8 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { type UserManagementRecord } from "@/lib/user-management";
 import { useAuth } from "@/lib/auth";
-import { createCompanyUser, getCompanyUsers, updateCompanyUser, setMustChangePassword, getUserStatusChanges, recordAccountStatusChange, saveProfileEmployeeInfo, type AccountStatusChange, type ProfileRow } from "@/lib/supabase/users";
+import { createCompanyUser, getCompanyUsers, getMyProfileId, updateCompanyUser, setMustChangePassword, getUserStatusChanges, recordAccountStatusChange, saveProfileEmployeeInfo, type AccountStatusChange, type ProfileRow } from "@/lib/supabase/users";
+import { isPhilippinesBranch, notifyHrOfNewPhTrainee } from "@/lib/supabase/hrCandidates";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { useAllRoleOptions } from "@/lib/customRoles";
@@ -1420,6 +1421,16 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
           ? `User ${newUserForm.userName} created successfully!\nThey sign in with the default password and choose their own right away.`
           : `User ${newUserForm.userName} was created, but the default password couldn't be applied. Set one in Login Security → Default Password, then use "Reset to default" on this user.`
       );
+
+      // A PH staff trainee → HR is notified.
+      if (newUserForm.isTrainee && isPhilippinesBranch(newUserForm.assignedBranch)) {
+        const traineeName = newUserForm.userName;
+        const position = roleDisplay(primaryRole);
+        const startDate = newUserForm.startDate || null;
+        void getMyProfileId(auth.uid)
+          .then((myProfileId) => notifyHrOfNewPhTrainee({ name: traineeName, position, startDate }, myProfileId, auth.displayName || "Admin"))
+          .catch((err) => console.error("Failed to notify HR of the new PH trainee:", err));
+      }
 
       // Seed HR's post-creation setup checklist for this hire (login handoff,
       // profile detail, off-days, pay rate, onboarding docs, ...) — surfaced
