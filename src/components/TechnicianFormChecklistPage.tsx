@@ -253,6 +253,8 @@ interface TechRow {
   frozen: boolean;
   /** profiles.employment_type === "trainee" (Master List) — shown as a badge next to their name; doesn't affect which tab/tier they land in, that's still purely role-based (isEligible above). */
   isTrainee: boolean;
+  /** Deactivated account — still listed (their paperwork stays on file) with a Deactivated badge, real name shown. */
+  isDeactivated: boolean;
 }
 
 function isComplete(doc: SignableDocument | undefined, type: SignableDocumentType): boolean {
@@ -358,6 +360,7 @@ export function TechnicianFormChecklistPage({
   const [exemptions, setExemptions] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
   const [hideComplete, setHideComplete] = useState(false);
+  const [accountFilter, setAccountFilter] = useState<"" | "active" | "deactivated">("");
   const [branchFilter, setBranchFilter] = useState("");
   const [search, setSearch] = useState("");
   // A "View in Staff Checklist" link from a chat message (see MessageBody.tsx)
@@ -485,7 +488,8 @@ export function TechnicianFormChecklistPage({
   const loadUsers = useCallback(async () => {
     setUsersLoading(true);
     try {
-      const users = (await getCompanyUsers() as ProfileRow[]).filter((u) => u.is_active);
+      // Deactivated accounts included — badged on their row.
+      const users = await getCompanyUsers() as ProfileRow[];
       setAllUsers(users);
       writeCachedUsers(users);
     } catch (err) {
@@ -633,6 +637,7 @@ export function TechnicianFormChecklistPage({
         applicableTotal: activeConfig.formTypes.length - exempt.size,
         frozen: u.frozen === true,
         isTrainee: u.employment_type === "trainee",
+        isDeactivated: !u.is_active,
       };
     });
   }, [allUsers, latestByKey, exemptions, activeConfig]);
@@ -707,6 +712,7 @@ export function TechnicianFormChecklistPage({
   const visibleRows = useMemo(() => {
     let result = rows;
     if (hideComplete) result = result.filter((r) => r.doneCount < r.applicableTotal);
+    if (accountFilter) result = result.filter((r) => r.isDeactivated === (accountFilter === "deactivated"));
     if (branchFilter) result = result.filter((r) => r.branch === branchFilter);
     if (statusFilter) {
       const checkTypes = formTypeFilter ? [formTypeFilter] : activeConfig.formTypes;
@@ -730,7 +736,7 @@ export function TechnicianFormChecklistPage({
       }
     });
     return result;
-  }, [rows, hideComplete, branchFilter, sortMode, search]);
+  }, [rows, hideComplete, accountFilter, branchFilter, sortMode, search]);
 
   // "Not sent" — creates the document (same formData/recipientSlot shape
   // every individual Send handler in ReportHRDaily.tsx uses: just the
@@ -1040,7 +1046,8 @@ export function TechnicianFormChecklistPage({
   };
 
   return (
-    <>
+    // data-keep-names: deactivated people keep their real names here, incl. the floating filter panel (see InactiveNameMask).
+    <div data-keep-names className="contents">
     <main className={embedded ? "" : "max-w-[1000px] mx-auto px-6 py-8"}>
       <div className="flex items-center gap-3 mb-4">
         {!embedded && (
@@ -1147,10 +1154,22 @@ export function TechnicianFormChecklistPage({
             <option value="hide">Hide complete</option>
           </select>
         </div>
-        {(search || branchFilter || sortMode !== "missing-desc" || hideComplete || statusFilter || formTypeFilter) && (
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Account</label>
+          <select
+            value={accountFilter}
+            onChange={(e) => setAccountFilter(e.target.value as typeof accountFilter)}
+            className="rounded-lg border border-white/15 bg-slate-900/60 px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+          >
+            <option value="">All accounts</option>
+            <option value="active">Activated</option>
+            <option value="deactivated">Deactivated</option>
+          </select>
+        </div>
+        {(search || branchFilter || sortMode !== "missing-desc" || hideComplete || accountFilter || statusFilter || formTypeFilter) && (
           <button
             type="button"
-            onClick={() => { setSearch(""); setBranchFilter(""); setSortMode("missing-desc"); setHideComplete(false); setStatusFilter(""); setFormTypeFilter(""); }}
+            onClick={() => { setSearch(""); setBranchFilter(""); setSortMode("missing-desc"); setHideComplete(false); setAccountFilter(""); setStatusFilter(""); setFormTypeFilter(""); }}
             className="text-xs text-blue-400 hover:text-blue-300 mt-4"
           >
             Reset filters
@@ -1197,6 +1216,7 @@ export function TechnicianFormChecklistPage({
                       <p className="truncate text-sm font-semibold text-white flex items-center gap-1.5">
                         {r.name}
                         {r.isTrainee && <span className="shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-300">Trainee</span>}
+                        {r.isDeactivated && <span className="shrink-0 rounded-full border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-300">Deactivated</span>}
                         {r.frozen && <span className="shrink-0 rounded-full border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-300">Frozen</span>}
                       </p>
                       <p className="text-[11px] text-slate-400">{r.roleLabel} · {r.branch}</p>
@@ -1776,6 +1796,6 @@ export function TechnicianFormChecklistPage({
         </div>
       </div>
     )}
-    </>
+    </div>
   );
 }

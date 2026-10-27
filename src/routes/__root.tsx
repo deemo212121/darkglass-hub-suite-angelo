@@ -28,6 +28,7 @@ import { SessionKickedOutBanner } from "@/components/SessionKickedOutBanner";
 import { ViewAsRoleBanner } from "@/components/ViewAsRoleBanner";
 import { TechnicianLocationTracker } from "@/components/TechnicianLocationTracker";
 import { LiveLocationProvider } from "@/lib/liveLocationContext";
+import { InactiveNameMask } from "@/components/InactiveNameMask";
 
 import appCss from "../styles.css?url";
 import faviconUrl from "@/assets/Admin Hub Solutions Logo no Text.png";
@@ -168,6 +169,8 @@ function RootComponent() {
                 on /mobile too, since that's exactly where technicians clock
                 in/out day to day. */}
             <TechnicianLocationTracker />
+            {/* Deactivated people's names show as "—" (kept on Payroll / HR Paperworks / signing pages). */}
+            {!isSignExternalPage && !isApplyPage && <InactiveNameMask />}
             <SessionKickedOutBanner />
             {!hideChrome && <ViewAsRoleBanner />}
             <MustChangePasswordGate hideChrome={hideChrome} />
