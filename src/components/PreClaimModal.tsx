@@ -1088,7 +1088,10 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
                                 {PART_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                               </select>
                             </td>
-                            <td className="px-2 py-1.5">{p.invoiceNo}</td>
+                            <td className="px-2 py-1.5">
+                              {/* ServicePower takes 20 characters at most (servicePowerClaimPayload clips the rest). */}
+                              <input key={`invoice:${p.id}:${p.invoiceNo}`} defaultValue={p.invoiceNo} maxLength={20} disabled={saving} onBlur={(e) => handlePartFieldBlur(p, "invoiceNo", e.target.value.trim())} className={`${inputCls} py-1 w-32`} />
+                            </td>
                             <td className="px-2 py-1.5 text-right">
                               <input key={`price:${p.id}:${p.partPrice}`} defaultValue={p.partPrice} disabled={saving} onBlur={(e) => handlePartFieldBlur(p, "partPrice", e.target.value)} className={`${inputCls} py-1 text-right w-20`} />
                             </td>
