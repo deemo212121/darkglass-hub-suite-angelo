@@ -41,6 +41,7 @@ import { useAuth } from "@/lib/auth";
 import { Switch } from "@/components/ui/switch";
 import { ManagerReviewPage, SUPPORTED_TYPES as EMPLOYER_SIGN_SUPPORTED_TYPES } from "@/components/ManagerReviewPage";
 import { getCompanyUsers, getEmploymentStatusesByProfileIds, getMyProfileId, getUserStatusChanges, setProfileFrozen, type AccountStatusChange, type EmploymentStatusInfo, type ProfileRow } from "@/lib/supabase/users";
+import { getActiveFlashTechDestinationsByProfile, type ActiveFlashTechDestination } from "@/lib/supabase/flashTechTrips";
 import { formatISODate, localISODate } from "@/lib/localDate";
 import { isEligibleForTechnicianFormChecklist, isBmAndUpRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { getSignableDocumentsByTypes, getExistingActiveDocuments, createSignableDocument, updateSignableDocumentPdfUrl, confirmSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
@@ -258,6 +259,8 @@ interface TechRow {
   isDeactivated: boolean;
   /** Badge beside the name for someone who left: "Terminated · Oct 3, 2026", "Resigned · …" or "Deactivated · …" (see leftBadgeFor). */
   leftBadge: { label: string; title: string } | null;
+  /** Flash Tech trips open right now (same rule as the Flash Tech Tracker and User Management) — destination and last day, shown under the name. */
+  flashTrips: ActiveFlashTechDestination[];
 }
 
 /**
@@ -386,6 +389,7 @@ export function TechnicianFormChecklistPage({
   const [allUsers, setAllUsers] = useState<ProfileRow[]>(() => readCachedUsers() ?? []);
   const [employmentStatuses, setEmploymentStatuses] = useState<Map<string, EmploymentStatusInfo>>(new Map());
   const [statusChanges, setStatusChanges] = useState<Map<string, AccountStatusChange>>(new Map());
+  const [flashTripsByProfile, setFlashTripsByProfile] = useState<Map<string, ActiveFlashTechDestination[]>>(new Map());
   const [latestByKey, setLatestByKey] = useState<Map<string, SignableDocument>>(() => readCachedDocs("newTechnician") ?? new Map());
   const [exemptions, setExemptions] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -523,13 +527,16 @@ export function TechnicianFormChecklistPage({
       const users = await getCompanyUsers() as ProfileRow[];
       setAllUsers(users);
       writeCachedUsers(users);
-      // Terminated / Resigned / Deactivated + date for the badge (best-effort — the badge just says Deactivated without it).
-      const [statuses, changes] = await Promise.all([
+      // Terminated / Resigned / Deactivated + date for the badge (best-effort — the badge just says Deactivated without it),
+      // and open Flash Tech trips (best-effort — no Flash Tech line without them).
+      const [statuses, changes, flashTrips] = await Promise.all([
         getEmploymentStatusesByProfileIds(users.map((u) => u.id)).catch(() => new Map<string, EmploymentStatusInfo>()),
         getUserStatusChanges().catch(() => new Map<string, AccountStatusChange>()),
+        getActiveFlashTechDestinationsByProfile().catch(() => new Map<string, ActiveFlashTechDestination[]>()),
       ]);
       setEmploymentStatuses(statuses);
       setStatusChanges(changes);
+      setFlashTripsByProfile(flashTrips);
     } catch (err) {
       console.error("Staff form checklist: failed to load users:", err);
     } finally {
@@ -677,9 +684,10 @@ export function TechnicianFormChecklistPage({
         isTrainee: u.employment_type === "trainee",
         isDeactivated: !u.is_active,
         leftBadge: leftBadgeFor(u, employmentStatuses.get(u.id), statusChanges.get(u.id)),
+        flashTrips: flashTripsByProfile.get(u.id) ?? [],
       };
     });
-  }, [allUsers, latestByKey, exemptions, activeConfig, employmentStatuses, statusChanges]);
+  }, [allUsers, latestByKey, exemptions, activeConfig, employmentStatuses, statusChanges, flashTripsByProfile]);
 
   // Auto-(re)select a row to expand whenever the underlying row list changes
   // (data refresh OR switching tabs) — keeps the current selection if it's
@@ -1265,6 +1273,11 @@ export function TechnicianFormChecklistPage({
                         {r.frozen && <span className="shrink-0 rounded-full border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-300">Frozen</span>}
                       </p>
                       <p className="text-[11px] text-slate-400">{r.roleLabel} · {r.branch}</p>
+                      {r.flashTrips.map((t) => (
+                        <p key={t.location} className="text-[11px] font-semibold text-amber-300" title={`On a Flash Tech trip to ${t.location} until ${formatISODate(t.endDate)}`}>
+                          Flash Tech · {t.location} · until {formatISODate(t.endDate, { month: "short", day: "numeric", year: "numeric" })}
+                        </p>
+                      ))}
                     </div>
                     <span className={`shrink-0 text-xs font-semibold ${r.doneCount === total ? "text-emerald-400" : "text-slate-300"}`}>
                       {r.doneCount}/{total}
