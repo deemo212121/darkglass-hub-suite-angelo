@@ -355,6 +355,26 @@ export async function getMyProfileId(firebaseUid: string): Promise<string | null
 }
 
 /**
+ * The signed-in person's profile id and company uuid (profiles.company_id),
+ * for inserts into tables whose company_id is a uuid. useAuth().companyId
+ * can be the legacy company code instead (e.g. "COMP001" — what the storage
+ * folders still use), which Postgres rejects as a uuid.
+ */
+export async function getMyProfileAndCompanyIds(firebaseUid: string): Promise<{ profileId: string; companyId: string } | null> {
+  if (!firebaseUid) return null;
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, company_id")
+    .eq("firebase_uid", firebaseUid)
+    .maybeSingle();
+  if (error) {
+    console.error("getMyProfileAndCompanyIds error:", error.message);
+    return null;
+  }
+  return data?.id && data.company_id ? { profileId: data.id, companyId: data.company_id } : null;
+}
+
+/**
  * Resolve the current user's primary role + extra_roles from their Firebase
  * uid. Used by page-level role gates (useAuth().role alone doesn't carry
  * extra_roles — see getProfileForLogin).

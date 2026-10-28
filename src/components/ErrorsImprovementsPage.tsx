@@ -21,7 +21,7 @@ import { Check, ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Loa
 import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
-import { getActiveCompanyUsers, getMyProfileId } from "@/lib/supabase/users";
+import { getActiveCompanyUsers, getMyProfileAndCompanyIds } from "@/lib/supabase/users";
 import {
   addErrorImprovement,
   deleteErrorImprovement,
@@ -342,6 +342,9 @@ export function ErrorsImprovementsPage({ mod, sub }: { mod: ModuleDef; sub: SubM
   // Only IT chooses who handles an item (also enforced by migration 0411's trigger).
   const canAssign = [role, ...extraRoles].includes("IT");
   const [profileId, setProfileId] = useState<string | null>(null);
+  // The company's uuid for the row's company_id — useAuth's companyId can be
+  // the legacy code ("COMP001"), which only names the storage folder.
+  const [companyUuid, setCompanyUuid] = useState<string | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const [items, setItems] = useState<ErrorImprovementItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -359,7 +362,11 @@ export function ErrorsImprovementsPage({ mod, sub }: { mod: ModuleDef; sub: SubM
   const [pdfView, setPdfView] = useState<ErrorImprovementAttachment | null>(null);
 
   useEffect(() => {
-    if (uid) void getMyProfileId(uid).then(setProfileId);
+    if (!uid) return;
+    void getMyProfileAndCompanyIds(uid).then((ids) => {
+      setProfileId(ids?.profileId ?? null);
+      setCompanyUuid(ids?.companyId ?? null);
+    });
   }, [uid]);
 
   // Handled by: the people who can open this page (RLS: Admin / SuperAdmin, main or extra role).
@@ -414,7 +421,7 @@ export function ErrorsImprovementsPage({ mod, sub }: { mod: ModuleDef; sub: SubM
    * A newly given Handled by (someone other than me) is notified.
    */
   const saveItem = async (existing: ErrorImprovementItem | null, d: Draft, files: File[]): Promise<ErrorImprovementItem> => {
-    if (!companyId) throw new Error("No company on this account.");
+    if (!companyId || (!existing && !companyUuid)) throw new Error("Your account is still loading — try Save again in a moment.");
     const id = existing?.id ?? randomUuid();
     const uploaded: ErrorImprovementAttachment[] = [];
     let saved: ErrorImprovementItem;
@@ -426,7 +433,7 @@ export function ErrorsImprovementsPage({ mod, sub }: { mod: ModuleDef; sub: SubM
       setSavingLabel("Saving…");
       const assignedToName = d.assignedTo ? nameOf(d.assignedTo) ?? (d.assignedTo === existing?.assignedTo ? existing?.assignedToName ?? null : null) : null;
       const input = { ...d, assignedToName, attachments: [...d.attachments, ...uploaded] };
-      saved = existing ? await updateErrorImprovement(id, input) : await addErrorImprovement(id, input, { companyId, ...me });
+      saved = existing ? await updateErrorImprovement(id, input) : await addErrorImprovement(id, input, { companyId: companyUuid!, ...me });
     } catch (err) {
       for (const a of uploaded) void deleteAttachmentByUrl(a.path).catch(() => {});
       throw err;
