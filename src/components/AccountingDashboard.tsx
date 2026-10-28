@@ -52,7 +52,7 @@ import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, comput
 import { payGraceMinutesFor } from "@/lib/attendanceGrace";
 import { updatePayrollLineItemPaid } from "@/lib/supabase/payslips";
 import { getTechTaxLinesForPeriod, taxLineAmount, type TechTaxLine } from "@/lib/supabase/techTaxLines";
-import { getEmployeeInfoByProfileIds, getCompanyUsers, getTechnicianContactInfoByIds, setEmployeeHasCarIq, type EmployeeInfo } from "@/lib/supabase/users";
+import { getEmployeeInfoByProfileIds, getCompanyUsers, getTechnicianContactInfoByIds, setEmployeeHasCarIq, getUserStatusChanges, type AccountStatusChange, type EmployeeInfo } from "@/lib/supabase/users";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { createNotification } from "@/lib/supabase/notifications";
 import { getCompanyPtoRequests, isPaidPtoType, type PtoRequestRow } from "@/lib/supabase/pto";
@@ -997,6 +997,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const { uid, role, extraRoles, displayName, email, companyId } = useAuth();
   const canConnectGmail = String(role || "").toUpperCase() === "ADMIN" || String(role || "").toUpperCase() === "SUPERADMIN";
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
+  // When each account was deactivated (User Management's Activity Log), for
+  // the payroll table's Deactivated badge.
+  const [statusChanges, setStatusChanges] = useState<Map<string, AccountStatusChange>>(new Map());
+  useEffect(() => {
+    void getUserStatusChanges().then(setStatusChanges).catch(() => {});
+  }, []);
   // Floating left quick-nav — collapsed (icon-only) by default so it stays
   // out of the way of this page's already-wide tables; expands to show
   // labels too. Persisted like the active tab itself so it doesn't reset
@@ -5245,14 +5251,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 {row.employee.isTrainee && (
                                   <span className="ml-1.5 shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-300">Trainee</span>
                                 )}
-                                {!row.employee.isActive && (
-                                  <span
-                                    className="ml-1.5 shrink-0 rounded-full border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-300"
-                                    title="Deactivated since this row was pulled up — still shown because they have hours owed for this period."
-                                  >
-                                    Deactivated
-                                  </span>
-                                )}
+                                {!row.employee.isActive && (() => {
+                                  const change = statusChanges.get(row.employee.id);
+                                  const deactivatedOn = change?.action === "user_deactivated" ? change.date ?? change.at : null;
+                                  return (
+                                    <span
+                                      className="ml-1.5 shrink-0 rounded-full border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-300"
+                                      title="Deactivated since this row was pulled up — still shown because they have hours owed for this period."
+                                    >
+                                      Deactivated{deactivatedOn ? ` · ${formatISODate(deactivatedOn, { year: "numeric", month: "short", day: "numeric" })}` : ""}
+                                    </span>
+                                  );
+                                })()}
                                 {(() => {
                                   const mark = reviewMarks.get(row.employee.id);
                                   const sentAt = sentMarks.get(row.employee.id);
