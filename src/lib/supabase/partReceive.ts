@@ -11,6 +11,7 @@
  */
 
 import { supabase } from "./client";
+import { selectAllPages } from "./selectAllPages";
 
 export interface PartReceiveRow {
   id: string;
@@ -147,7 +148,11 @@ export async function saveDeliveredDate(id: string, date: string, location: stri
 
 /** Distinct real "Part From" (part_dist) values currently in use, for the filter dropdown. */
 export async function getDistinctPartSources(): Promise<string[]> {
-  const { data, error } = await supabase.from("parts").select("part_dist").not("part_dist", "is", null);
+  // Paged: parts is near 1,000 rows (961 on 2026-10-26); past that a
+  // distributor only on later rows would drop out of the dropdown.
+  const { data, error } = await selectAllPages<any>(() =>
+    supabase.from("parts").select("part_dist").not("part_dist", "is", null).order("id", { ascending: true })
+  );
   if (error) {
     console.error("getDistinctPartSources error:", error.message);
     return [];

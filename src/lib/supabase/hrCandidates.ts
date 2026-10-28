@@ -11,6 +11,7 @@ import { createNotification } from "./notifications";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import { INACTIVE_BRANCHES, normalizeLocationForRegionMatch } from "@/lib/locations";
 import { localISODate } from "@/lib/localDate";
+import { HIRE_NOTIFICATION_EXTRA_RECIPIENT_IDS } from "@/lib/hireNotificationRecipients";
 
 // "training" and "on_hold" added for EOD/EOM hiring reports (0048); "phone_screening",
 // "withdrawn", and "cancelled" added (and "on_hold" removed) by 0221_hr_candidates_status_update.sql.
@@ -549,16 +550,6 @@ export async function updateCandidateStatus(
   }
 }
 
-// Fixed extra recipients on every hire notification, regardless of branch —
-// the user's explicit list (Naveen Lakhani, Yujung Chris Yong, Lou Basco).
-// Not role-derived like Branch Manager/SBM below since none of the three
-// hold a BM/SBM role themselves.
-const HIRE_NOTIFICATION_EXTRA_RECIPIENT_IDS = [
-  "bec83133-0de3-4fa6-8174-f6aa1b04d3e8", // Naveen Lakhani
-  "f4131c1f-0676-40e0-aa61-dc10ca620259", // Yujung Chris Yong
-  "17e098e0-f237-45dc-b8e0-13e34cf275fc", // Lou Basco
-];
-
 /**
  * Notifies every active Branch Manager + Senior Branch Manager company-wide
  * (not scoped to the hire's own branch — the user's explicit call), plus
@@ -596,6 +587,99 @@ export async function notifyOnCandidateHired(
     Array.from(recipientIds).map((recipientId) =>
       createNotification({ recipientId, senderId, senderName, body, linkTo }).catch((err) =>
         console.error(`notifyOnCandidateHired: failed for recipient ${recipientId}:`, err)
+      )
+    )
+  );
+}
+
+/** Positions whose new trainees the Senior Managers hear about ("Technicain" is a typo on file). */
+const TRAINING_NOTIFY_POSITIONS = /^\s*(technician|technicain|parts manager)\s*$/i;
+
+/**
+ * Notifies everyone holding Senior Manager (primary or extra role — Naveen
+ * Lakhani and Lou Basco today) when a Technician or Parts Manager candidate
+ * is moved to Training (Hiring tab's Training dialog). Only a genuine move
+ * into Training — the caller skips a same-status date change. Other
+ * positions send nothing; a Philippines-branch candidate notifies HR instead.
+ */
+export async function notifyOnCandidateTraining(
+  candidate: { name: string; branch: string | null; position: string | null },
+  training: { startDate: string; endDate: string | null; trainerName: string | null },
+  senderId: string | null,
+  senderName: string | null
+): Promise<void> {
+  // PH staff trainees go to HR instead (see notifyHrOfNewPhTrainee).
+  if (isPhilippinesBranch(candidate.branch)) {
+    await notifyHrOfNewPhTrainee({ name: candidate.name, position: candidate.position, startDate: training.startDate }, senderId, senderName);
+    return;
+  }
+  if (!TRAINING_NOTIFY_POSITIONS.test(candidate.position ?? "")) return;
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("is_active", true)
+    .or("role.eq.SENIOR_MANAGER,extra_roles.cs.{SENIOR_MANAGER}");
+  if (error) {
+    console.error("notifyOnCandidateTraining (Senior Manager lookup) error:", error.message);
+    return;
+  }
+  const recipientIds = new Set((data ?? []).map((r) => r.id as string));
+  if (senderId) recipientIds.delete(senderId);
+
+  const fmt = (iso: string) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+    return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : iso;
+  };
+  const body =
+    `🎓 New trainee: ${candidate.name} — ${candidate.position?.trim()}${candidate.branch ? ` (${candidate.branch})` : ""}, training starts ${fmt(training.startDate)}` +
+    `${training.endDate ? `, Field Start ${fmt(training.endDate)}` : ""}${training.trainerName ? `. Trainer: ${training.trainerName}` : ""}.`;
+
+  await Promise.all(
+    Array.from(recipientIds).map((recipientId) =>
+      createNotification({ recipientId, senderId, senderName, body, linkTo: "/m/hr/training-list" }).catch((err) =>
+        console.error(`notifyOnCandidateTraining: failed for recipient ${recipientId}:`, err)
+      )
+    )
+  );
+}
+
+/** A Philippines branch (LOCATIONS_DATA.isPhilippines — "Philippines" today): PH staff. */
+export function isPhilippinesBranch(branch: string | null | undefined): boolean {
+  return !!branch && LOCATIONS_DATA.some((l) => l.isPhilippines && l.location === branch.trim());
+}
+
+/**
+ * Notifies everyone holding HR (primary or extra role) when a PH staff
+ * trainee starts: an account created as a Trainee in User Management, a
+ * Master List employee switched to Trainee, or a Philippines-branch
+ * candidate moved to Training in Hiring (notifyOnCandidateTraining). Whoever
+ * made the change isn't notified.
+ */
+export async function notifyHrOfNewPhTrainee(
+  trainee: { name: string; position: string | null; startDate: string | null },
+  senderId: string | null,
+  senderName: string | null
+): Promise<void> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("is_active", true)
+    .or("role.eq.HR,extra_roles.cs.{HR}");
+  if (error) {
+    console.error("notifyHrOfNewPhTrainee (HR lookup) error:", error.message);
+    return;
+  }
+  const recipientIds = new Set((data ?? []).map((r) => r.id as string));
+  if (senderId) recipientIds.delete(senderId);
+
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trainee.startDate ?? "");
+  const starts = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : null;
+  const body = `🎓 New PH staff trainee: ${trainee.name}${trainee.position?.trim() ? ` — ${trainee.position.trim()}` : ""}${starts ? `, starts ${starts}` : ""}.`;
+
+  await Promise.all(
+    Array.from(recipientIds).map((recipientId) =>
+      createNotification({ recipientId, senderId, senderName, body, linkTo: "/m/hr/training-list" }).catch((err) =>
+        console.error(`notifyHrOfNewPhTrainee: failed for recipient ${recipientId}:`, err)
       )
     )
   );

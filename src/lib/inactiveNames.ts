@@ -1,6 +1,6 @@
 /**
  * Deactivated accounts' names are hidden across the app — shown as
- * "— (Deactivated User)" — everywhere except Payroll, HR Paperworks and the
+ * "— (Deactivated User)" — everywhere except Payroll, the Accounting Dashboard and Expenses, HR Paperworks and the
  * signing pages (the papers they signed), plus User Management so an admin can still find and
  * reactivate them. Nothing stored is changed: this is display-only (see
  * components/InactiveNameMask.tsx), so reactivating an account brings the
@@ -16,6 +16,9 @@ export const INACTIVE_NAME_PLACEHOLDER = "— (Deactivated User)";
 /** Pages where deactivated people keep their names. */
 const KEEP_NAMES_PATHS: RegExp[] = [
   /^\/m\/[^/]+\/(payroll-calculation|payroll-report|tech-payroll-setup|hr-paperworks|user-management)(\/|$)/,
+  // Accounting's own pages — payroll runs, payslips, disputes and expenses for people who've since left.
+  /^\/m\/[^/]+\/accounting-dashboard(\/|$)/,
+  /^\/m\/accounting\/expenses(\/|$)/,
   /^\/payroll-demo(\/|$)/,
   /^\/(fill|sign)-/,
   /^\/sign-(document|bundle|external)/,

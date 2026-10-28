@@ -31,6 +31,8 @@ import { CANCEL_REASONS } from "@/lib/operationsBranchMetrics";
 import { getCompanyMapProvider, type MapProvider } from "@/lib/supabase/companySettings";
 import type { TechnicianOption } from "@/lib/supabase/users";
 import { computeOfficeDistanceMiles } from "@/lib/mapEngine";
+import { isZipCovered } from "@/lib/zipCoverage";
+import { ensureCompanyZipCoverage } from "@/lib/zipCoverageLoader";
 import {
   buildSquaretradeUrlFromToken,
   extractSquaretradeUrl,
@@ -262,6 +264,10 @@ interface TicketData {
   problemDescription: string;
   scheduleDate: string;
   schedulePeriod: string;
+  /** tickets.cx_preferred_date ("YYYY-MM-DD"); blank = never set, the page shows the schedule date. */
+  cxPreferredDate?: string;
+  /** "YYYY-MM-DD" the call came in (call_received_date, else created) — decides whether "Past record from ER" is offered. */
+  receivedDate?: string;
   technician: string;
   customerNotes: Array<{ date: string; notes: string; by: string }>;
   servicerNotes: Array<{ notes: string; by: string }>;
@@ -1243,7 +1249,7 @@ function buildTicketCopyPayload(ticket: TicketData): TicketCopyPayload {
     productCategory: ticket.productCategory,
     purchaseDate: ticket.purchaseDate,
     warrantyType: ticket.warrantyType,
-    cxPreferredDate: ticket.scheduleDate || "",
+    cxPreferredDate: ticket.cxPreferredDate || ticket.scheduleDate || "",
     callTakenDate: ticket.postingDate,
     problemDescription: ticket.problemDescription,
     caseNumber: ticket.caseNumber,
@@ -1313,6 +1319,9 @@ function TicketDetailsPage() {
   const [newVisitResolution, setNewVisitResolution] = useState("");
   const [newVisitNonCompletionReason, setNewVisitNonCompletionReason] = useState("");
   const [newVisitTriageNote, setNewVisitTriageNote] = useState("");
+  // "Past record from ER" (ER history backfill, migration 0408) — see addVisitLogEntry / savePartRow.
+  const [newVisitPastRecord, setNewVisitPastRecord] = useState(false);
+  const [partPastRecord, setPartPastRecord] = useState(false);
   const [newVisitSchedNotes, setNewVisitSchedNotes] = useState("");
   const [selectedTicket, setSelectedTicket] = useState(ticketNo);
   
@@ -2340,6 +2349,8 @@ function TicketDetailsPage() {
           // ServicePower's appointment window string, lives on
           // tickets.time_slot and surfaces as Ticket.schedulePeriod.
           schedulePeriod: (centralTicket as any).schedulePeriod || "",
+          cxPreferredDate: centralTicket.cxPreferredDate || "",
+          receivedDate: centralTicket.callReceivedDate || centralTicket.created || "",
           technician: centralTicket.technician,
           customerNotes: [],
           servicerNotes: [],
@@ -2390,6 +2401,30 @@ function TicketDetailsPage() {
   }, [ticketDbId]);
 
   const ticket = ticketData;
+  // "Past record from ER" (visit modal, part row) is only offered on tickets
+  // received before the cutover to AHS — the ER history backfill. Remove
+  // this, the two checkboxes and their branches once the backfill is done.
+  const ER_CUTOVER_DATE = "2026-11-01";
+  const erPastRecordAllowed = !!ticket?.receivedDate && ticket.receivedDate.slice(0, 10) < ER_CUTOVER_DATE;
+
+  // Out of Coverage (like USAPP's "*** Out-of-Coverage ***"): the customer ZIP
+  // isn't in Location Management or the built-in map — the same check that
+  // picks a ticket's branch and fills Tickets -> No-Coverage Tickets. null
+  // until coverage has loaded, so a ZIP added in Location Management isn't
+  // flagged while the list is still on its way.
+  const [zipCovered, setZipCovered] = useState<boolean | null>(null);
+  const ticketZip = ticket?.zip ?? null;
+  const hasTicket = !!ticket;
+  useEffect(() => {
+    if (!hasTicket) return;
+    let cancelled = false;
+    setZipCovered(null);
+    ensureCompanyZipCoverage()
+      .catch((err) => console.warn("Ticket coverage check: coverage list didn't load, using the built-in map:", err))
+      .then(() => { if (!cancelled) setZipCovered(isZipCovered(ticketZip)); });
+    return () => { cancelled = true; };
+  }, [ticketZip, hasTicket]);
+  const outOfCoverage = zipCovered === false;
 
   // Squaretrade tickets need a per-ticket appointment-completion URL so the
   // claims team can finish the repair. We persist whatever the user pastes
@@ -2878,6 +2913,7 @@ function TicketDetailsPage() {
       setEditedScheduleInfo({
         scheduleDate: ticket.scheduleDate,
         schedulePeriod: ticket.schedulePeriod,
+        cxPreferredDate: ticket.cxPreferredDate || "",
         technician: ticket.technician,
       });
       setIsEditingScheduleInfo(true);
@@ -2887,7 +2923,9 @@ function TicketDetailsPage() {
   const saveScheduleInfo = async () => {
     if (!ticket) return;
 
-    const fieldsToCheck: (keyof TicketData)[] = ["scheduleDate", "schedulePeriod", "technician"];
+    const fieldsToCheck: (keyof TicketData)[] = ["scheduleDate", "schedulePeriod", "cxPreferredDate", "technician"];
+    // Sent only when it changed, so saving a schedule doesn't depend on migration 0408.
+    const cxPreferredChanged = (editedScheduleInfo.cxPreferredDate ?? "") !== (ticket.cxPreferredDate ?? "");
 
     fieldsToCheck.forEach((field) => {
       const oldValue = formatAuditValue(ticket[field]);
@@ -2922,6 +2960,7 @@ function TicketDetailsPage() {
         technician: editedScheduleInfo.technician ?? ticket.technician,
         scheduleDate: editedScheduleInfo.scheduleDate ?? ticket.scheduleDate,
         timeSlot: editedScheduleInfo.schedulePeriod ?? ticket.schedulePeriod ?? "",
+        ...(cxPreferredChanged ? { cxPreferredDate: editedScheduleInfo.cxPreferredDate ?? "" } : {}),
       });
     } catch (err) {
       console.warn("saveScheduleInfo: Supabase update skipped", err);
@@ -3046,6 +3085,15 @@ function TicketDetailsPage() {
       }
     }
 
+    // A past record copied from ER (only offered on a new visit, on tickets received
+    // before the cutover): saved with its real date and marked er_backfill — it never
+    // supersedes / locks the latest visit, and never changes the ticket's status,
+    // technician or schedule date.
+    const pastRecord = !editingVisitId && newVisitPastRecord && erPastRecordAllowed;
+    if (pastRecord && !newVisitScheduleDate) {
+      alert("A past record from ER needs the visit's date (Schedule Date).");
+      return;
+    }
     const existingVisit = editingVisitId ? visitLogEntries.find((entry) => entry.id === editingVisitId) ?? null : null;
     // Normalize away the Parts Used hint / any in-progress label damage
     // regardless of whether the field was blurred before Save was clicked.
@@ -3109,7 +3157,7 @@ function TicketDetailsPage() {
     // newest visit's repair status should ever drive the ticket status:
     // e.g. adding V3 flips V2 to "OP-Reschedule Follow up" and locks it,
     // while V3's own repair status becomes the ticket's status below.
-    const previousLatestVisit = !editingVisitId ? visitLogEntries[0] ?? null : null;
+    const previousLatestVisit = !editingVisitId && !pastRecord ? visitLogEntries[0] ?? null : null;
     const supersededVisit: VisitLogEntry | null = previousLatestVisit
       ? { ...previousLatestVisit, repairStatus: "OP-Reschedule Follow up", locked: true }
       : null;
@@ -3119,7 +3167,7 @@ function TicketDetailsPage() {
       if (editingVisitId) {
         await sbUpdateTicketVisit(editingVisitId, visitEntry as any);
       } else {
-        const saved = await sbAddTicketVisit(ticketNo, visitEntry as any);
+        const saved = await sbAddTicketVisit(ticketNo, visitEntry as any, { pastRecordFromEr: pastRecord });
         // adopt the DB-generated id so future edits target the right row
         visitEntry.id = saved.id;
       }
@@ -3137,7 +3185,7 @@ function TicketDetailsPage() {
       // with that older visit's values. Older visits added before the
       // locking feature existed were never retroactively locked, so their
       // Edit button is still clickable — this is the real backstop.
-      const isLatestVisit = !editingVisitId || editingVisitId === visitLogEntries[0]?.id;
+      const isLatestVisit = !pastRecord && (!editingVisitId || editingVisitId === visitLogEntries[0]?.id);
       if (isLatestVisit) {
         // Sync the ticket itself with this visit: schedule date, technician, slot.
         await sbUpdateTicketAssignment(ticketNo, {
@@ -3177,11 +3225,13 @@ function TicketDetailsPage() {
       const withReschedule = supersededVisit
         ? entries.map((entry) => (entry.id === supersededVisit.id ? supersededVisit : entry))
         : entries;
+      // A past record is older than what's logged — it goes below, not on top as the latest.
+      if (pastRecord) return [...withReschedule, visitEntry];
       return [visitEntry, ...withReschedule];
     });
     appendAuditEntry({
       by: currentEditor,
-      action: editingVisitId ? "Updated visit log" : "Added visit log",
+      action: editingVisitId ? "Updated visit log" : pastRecord ? "Added visit log (past record from ER)" : "Added visit log",
       field: "Visit Log",
       before: existingVisit ? summarizeVisitEntry(existingVisit) : "—",
       after: summarizeVisitEntry(visitEntry),
@@ -3224,6 +3274,7 @@ function TicketDetailsPage() {
     setNewVisitNonCompletionReason("");
     setNewVisitTriageNote("");
     setNewVisitSchedNotes("");
+    setNewVisitPastRecord(false);
   };
 
   const openVisitCreateModal = () => {
@@ -5307,8 +5358,13 @@ function TicketDetailsPage() {
       return [...rows, nextRow];
     });
 
-    // Auto-create/update PO in PO Management when part has "Need PO" status or becomes ordered
-    if (nextRow.status === "Need PO" || nextRow.status === "PO Made" || nextRow.poNo.trim()) {
+    // Auto-create/update PO in PO Management when part has "Need PO" status or becomes ordered —
+    // never for a past record from ER (that part was ordered in ER; a PO here would be dated today).
+    const partIsPastRecord = !editingPartId && partPastRecord && erPastRecordAllowed;
+    if (partIsPastRecord) {
+      appendAuditEntry({ by: currentEditor, action: "Part is a past record from ER (no PO created)", field: "Part Transaction", before: "—", after: summarizePartRow(nextRow) });
+      setPartPastRecord(false);
+    } else if (nextRow.status === "Need PO" || nextRow.status === "PO Made" || nextRow.poNo.trim()) {
       const partOrder = createPartOrderFromTicket(ticketNo, nextRow);
       await savePartOrder(partOrder);
     }
@@ -6029,6 +6085,12 @@ function TicketDetailsPage() {
               Cancel
             </button>
           ) : null}
+          {erPastRecordAllowed && !editingPartId && (
+            <label className="mt-1 flex items-center gap-1 text-[10px] text-amber-300 cursor-pointer" title="A part from ER's history: saved as is, no PO is created.">
+              <input type="checkbox" className="accent-amber-500" checked={partPastRecord} onChange={(e) => setPartPastRecord(e.target.checked)} />
+              Past record from ER
+            </label>
+          )}
         </td>
       </tr>
     </>
@@ -6385,6 +6447,16 @@ function TicketDetailsPage() {
                   </div>
                 )}
               </div>
+              {ticket && outOfCoverage && (
+                <div className="mt-3 rounded-md border border-rose-500/40 bg-rose-500/15 px-3 py-2 text-sm font-semibold text-rose-200">
+                  *** Out of Coverage ***{" "}
+                  <span className="font-normal text-rose-200/90">
+                    {/\d/.test(String(ticket.zip ?? ""))
+                      ? `ZIP ${ticket.zip} isn't in our coverage area (Location Management).`
+                      : "This ticket has no ZIP code, so it isn't in any branch's coverage."}
+                  </span>
+                </div>
+              )}
             </div>
         </div>
 
@@ -6504,7 +6576,16 @@ function TicketDetailsPage() {
                       </div>
                       <div>
                         <div className="text-slate-500 font-semibold text-xs">Location</div>
-                        <div className="text-white font-semibold mt-1">{ticket.location || ticket.city || "—"}</div>
+                        <div className="text-white font-semibold mt-1">
+                          {outOfCoverage ? (
+                            <>
+                              <span className="text-rose-300">Out of coverage</span>
+                              {ticket.location && <span className="ml-1 text-xs font-normal text-slate-400">(filed under {ticket.location})</span>}
+                            </>
+                          ) : (
+                            ticket.location || ticket.city || "—"
+                          )}
+                        </div>
                       </div>
                     </div>
                     {/* NSA-specific identifiers shown inside customer card */}
@@ -6578,6 +6659,9 @@ function TicketDetailsPage() {
                     <div>
                       <label className="text-slate-500 font-semibold">State/Zip</label>
                       <div className="text-white mt-1">{ticket.state} {ticket.zip}</div>
+                      {outOfCoverage && (
+                        <span className="mt-1 inline-block rounded bg-rose-700 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-white">Out of coverage</span>
+                      )}
                     </div>
                     <div>
                       <label className="text-slate-500 font-semibold">Home Phone</label>
@@ -7215,14 +7299,27 @@ function TicketDetailsPage() {
                     )}
                   </div>
                   <div>
-                    {/* Cx Preferred Date mirrors Schedule Date (SP) — they
-                        both come from ServicePower's scheduled date. We
-                        show them as separate labels because the customer-
-                        preferred and SP-assigned date can legitimately
-                        differ on rescheduling tickets, but until that
-                        diverges they stay in sync read-only. */}
+                    {/* The customer's own date (tickets.cx_preferred_date,
+                        migration 0408) — it can differ from the schedule
+                        date on reschedules. Tickets from before the field
+                        existed have none, so they still show the schedule
+                        date, marked as such. */}
                     <label className="text-slate-500 font-semibold">Cx Preferred Date</label>
-                    <div className="text-white mt-1">{ticket.scheduleDate || "—"}</div>
+                    {isEditingScheduleInfo ? (
+                      <input
+                        type="date"
+                        value={editedScheduleInfo.cxPreferredDate ?? ""}
+                        onChange={(e) => setEditedScheduleInfo({ ...editedScheduleInfo, cxPreferredDate: e.target.value })}
+                        className="glass-input w-full mt-1"
+                      />
+                    ) : ticket.cxPreferredDate ? (
+                      <div className="text-white mt-1">{ticket.cxPreferredDate}</div>
+                    ) : (
+                      <div className="text-white mt-1">
+                        {ticket.scheduleDate || "—"}
+                        {ticket.scheduleDate && <span className="ml-1 text-xs text-slate-500">(schedule date)</span>}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="text-slate-500 font-semibold">Technician</label>
@@ -8517,6 +8614,18 @@ function TicketDetailsPage() {
                           <textarea id="visit-note-modal" value={newVisitNote} onChange={(event) => setNewVisitNote(event.target.value)} placeholder="Record what happened during the visit" className="min-h-24 w-full rounded-md border border-white/15 bg-slate-950/90 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500" />
                         </div>
                       </fieldset>
+
+                      {erPastRecordAllowed && !editingVisitId && visitFormMode !== "view" && (
+                        <label className="mt-4 flex items-start gap-2 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100 cursor-pointer">
+                          <input type="checkbox" className="mt-0.5 accent-amber-500" checked={newVisitPastRecord} onChange={(e) => setNewVisitPastRecord(e.target.checked)} />
+                          <span>
+                            Past record from ER
+                            <span className="block text-xs text-amber-200/70">
+                              Copies a visit from ER&apos;s history with its real date. The ticket&apos;s status, technician and schedule stay as they are, the latest visit isn&apos;t locked, and it doesn&apos;t count toward tech pay.
+                            </span>
+                          </span>
+                        </label>
+                      )}
 
                       <div className="mt-4 flex flex-wrap gap-2">
                         {visitFormMode === "view" ? (

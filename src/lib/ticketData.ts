@@ -27,6 +27,10 @@ export interface Ticket {
   diagnosed: string;
   technician: string;
   customerPref: string;
+  /** The date the customer asked for, "YYYY-MM-DD" (tickets.cx_preferred_date, migration 0408). Blank on tickets from before it existed. */
+  cxPreferredDate?: string;
+  /** Brought in from ER's history (tickets.er_backfill, migration 0408) — left out of payroll, mileage, attendance and the default ticket list. */
+  erBackfill?: boolean;
   schedule: string;
   /**
    * ServicePower's appointment-time window for the call.

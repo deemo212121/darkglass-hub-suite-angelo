@@ -1,5 +1,7 @@
 -- =====================================================================
--- 0407 — SuperAdmin can edit their OWN profile record.
+-- 0410 — SuperAdmin can edit their OWN profile record.
+-- (Numbered 0407 in Angelo's repo — renumbered here past this repo's own
+-- 0407_hr_trainee_decisions / 0408 / 0409.)
 --
 -- restrict_profile_self_edit_columns (0225/0301/0390) blocked every self-edit
 -- of status, start date, branch, contact info etc. ("You do not have
@@ -10,7 +12,7 @@
 -- everyone else is blocked exactly as before.
 --
 -- Same function as 0390 otherwise, unchanged.
--- Run once in the Supabase SQL Editor. Safe to run twice.
+-- Run once in the Supabase SQL Editor, after 0409. Safe to run twice.
 -- =====================================================================
 
 create or replace function restrict_profile_self_edit_columns()
@@ -26,7 +28,7 @@ begin
   end if;
 
   my_role := old.role; -- the caller's OWN role as of BEFORE this edit
-  -- SuperAdmin / SuperSuperAdmin, primary or extra role (0407).
+  -- SuperAdmin / SuperSuperAdmin, primary or extra role (0410).
   is_super := exists (
     select 1 from unnest(array_append(coalesce(old.extra_roles, '{}'), old.role)) r
     where upper(r) in ('SUPERADMIN', 'SUPERSUPERADMIN')
@@ -42,7 +44,7 @@ begin
     raise exception 'You do not have permission to change that field on your own account.';
   end if;
 
-  -- A SuperAdmin may edit everything else on their own record (0407).
+  -- A SuperAdmin may edit everything else on their own record (0410).
   if is_super then
     return new;
   end if;

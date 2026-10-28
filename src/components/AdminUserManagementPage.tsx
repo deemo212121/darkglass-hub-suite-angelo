@@ -7,7 +7,8 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { type UserManagementRecord } from "@/lib/user-management";
 import { useAuth } from "@/lib/auth";
-import { createCompanyUser, getCompanyUsers, updateCompanyUser, setMustChangePassword, getUserStatusChanges, recordAccountStatusChange, saveProfileEmployeeInfo, type AccountStatusChange, type ProfileRow } from "@/lib/supabase/users";
+import { createCompanyUser, getCompanyUsers, getMyProfileId, updateCompanyUser, setMustChangePassword, getUserStatusChanges, recordAccountStatusChange, saveProfileEmployeeInfo, type AccountStatusChange, type ProfileRow } from "@/lib/supabase/users";
+import { isPhilippinesBranch, notifyHrOfNewPhTrainee } from "@/lib/supabase/hrCandidates";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { useAllRoleOptions } from "@/lib/customRoles";
@@ -21,6 +22,7 @@ import { Switch } from "@/components/ui/switch";
 import { seedOnboardingTasks } from "@/lib/supabase/employeeOnboarding";
 import { ManageWorkingHoursModal } from "@/components/ManageWorkingHoursModal";
 import { getBranchRoleSchedules, type BranchRoleScheduleRow } from "@/lib/supabase/branchSchedules";
+import { getActiveFlashTechDestinationsByProfile, type ActiveFlashTechDestination } from "@/lib/supabase/flashTechTrips";
 
 /** Readable role text for display — e.g. "BIZOPS_MANAGER" -> "BizOps Manager". Falls back to the raw value for anything not in ROLE_LABELS (legacy free-text roles like "CSR Manager" already read fine as-is). */
 function roleDisplay(role: string | null | undefined): string {
@@ -928,6 +930,19 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     loadUsers();
   }, [auth.companyId]);
 
+  // Open Flash Tech trips by profile id — the destination shows under Branch
+  // and Branch Access while the trip is open (the same temporary location
+  // access auth.tsx grants; nothing is saved into branch_access).
+  const [flashTripsByProfile, setFlashTripsByProfile] = useState<Map<string, ActiveFlashTechDestination[]>>(new Map());
+  useEffect(() => {
+    if (!auth.companyId) return;
+    let cancelled = false;
+    getActiveFlashTechDestinationsByProfile()
+      .then((m) => { if (!cancelled) setFlashTripsByProfile(m); })
+      .catch((err) => console.warn("Flash Tech trips skipped:", err));
+    return () => { cancelled = true; };
+  }, [auth.companyId]);
+
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     const matches = users.filter((record) => {
@@ -1407,6 +1422,16 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
           : `User ${newUserForm.userName} was created, but the default password couldn't be applied. Set one in Login Security → Default Password, then use "Reset to default" on this user.`
       );
 
+      // A PH staff trainee → HR is notified.
+      if (newUserForm.isTrainee && isPhilippinesBranch(newUserForm.assignedBranch)) {
+        const traineeName = newUserForm.userName;
+        const position = roleDisplay(primaryRole);
+        const startDate = newUserForm.startDate || null;
+        void getMyProfileId(auth.uid)
+          .then((myProfileId) => notifyHrOfNewPhTrainee({ name: traineeName, position, startDate }, myProfileId, auth.displayName || "Admin"))
+          .catch((err) => console.error("Failed to notify HR of the new PH trainee:", err));
+      }
+
       // Seed HR's post-creation setup checklist for this hire (login handoff,
       // profile detail, off-days, pay rate, onboarding docs, ...) — surfaced
       // on the HR module's To-Do List page. Best-effort; a failure here
@@ -1697,6 +1722,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                     const branchAccess = formatBranchAccess(record.locations);
                     const rowKey = `${record.id}-${record.loginName}`;
                     const branchAccessExpandable = branchAccess.full && branchAccess.full !== branchAccess.short;
+                    const flashTrips = flashTripsByProfile.get(record.profileId) ?? [];
                     return (
                     <tr key={rowKey} className="hover:bg-white/5">
                       <td className="px-2.5 py-2 align-top">{record.id}</td>
@@ -1705,7 +1731,15 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       <td className="px-2.5 py-2 align-top break-words">{roleDisplay(record.type)}</td>
                       <td className="px-2.5 py-2 align-top break-words text-slate-300">{record.email || "—"}</td>
                       <td className="px-2.5 py-2 align-top break-words"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={loginNameByDisplayName.get(record.manager) || record.manager || record.loginName}>{record.manager || "—"}</UserLink></td>
-                      <td className="px-2.5 py-2 align-top break-words text-slate-300">{record.office}</td>
+                      <td className="px-2.5 py-2 align-top break-words text-slate-300">
+                        {record.office}
+                        {flashTrips.map((t) => (
+                          <div key={t.location} className="mt-1 text-[10px] font-semibold leading-snug text-amber-300" title={`On a Flash Tech trip to ${t.location} until ${formatISODate(t.endDate)}`}>
+                            Flash Tech · {t.location}
+                            <div className="font-normal text-amber-300/80 whitespace-nowrap">until {formatISODate(t.endDate, { month: "short", day: "numeric" })}</div>
+                          </div>
+                        ))}
+                      </td>
                       <td className="px-2.5 py-2 align-top text-slate-300">
                         {branchAccessExpandable ? (
                           <HoverCard openDelay={150} closeDelay={100}>
@@ -1720,6 +1754,12 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                         ) : (
                           <span className="block truncate">{branchAccess.short}</span>
                         )}
+                        {flashTrips.map((t) => (
+                          <div key={t.location} className="mt-1 text-[10px] font-semibold leading-snug text-amber-300" title={`Access to ${t.location} for a Flash Tech trip until ${formatISODate(t.endDate)}`}>
+                            + {t.location} (Flash Tech)
+                            <div className="font-normal text-amber-300/80 whitespace-nowrap">until {formatISODate(t.endDate, { month: "short", day: "numeric" })}</div>
+                          </div>
+                        ))}
                       </td>
                       <td className="px-2.5 py-2 align-top">
                         <span

@@ -325,6 +325,7 @@ export function NewTicketPage({ mod, sub }: Props) {
         return override?.repTech || defaultTechnician;
       })(),
       customerPref: form.cxPreferredDate ? "Yes" : "No",
+      cxPreferredDate: form.cxPreferredDate || "",
       redo: form.isRedo ? "Yes" : "No",
       aging: 0,
       calls: 0,

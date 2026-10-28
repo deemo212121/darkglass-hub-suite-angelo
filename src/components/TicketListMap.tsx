@@ -20,6 +20,7 @@
  *    Google API, not just a different-looking basemap.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { localISODate } from "@/lib/localDate";
 import { Link, useSearch } from "@tanstack/react-router";
 import { ChevronLeft, MapPin } from "lucide-react";
 import type * as Leaflet from "leaflet";
@@ -80,7 +81,7 @@ function currentWeekRange(): { start: string; end: string } {
   monday.setDate(today.getDate() - (day - 1));
   const sunday = new Date(monday);
   sunday.setDate(monday.getDate() + 6);
-  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  const fmt = (d: Date) => localISODate(d);
   return { start: fmt(monday), end: fmt(sunday) };
 }
 

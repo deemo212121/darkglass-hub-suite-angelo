@@ -1165,6 +1165,14 @@ const ticketsMod: ModuleDef = {
       fields: [],
       seed: () => ({}),
     },
+    {
+      slug: "no-coverage-tickets",
+      title: "No-Coverage Tickets",
+      description: "Open tickets whose ZIP code isn't in our coverage area.",
+      custom: "no-coverage-tickets" as any,
+      fields: [],
+      seed: () => ({}),
+    },
   ],
 };
 
@@ -1636,6 +1644,17 @@ const reportMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "report-ltp-report",
+      title: "LTP Report",
+      description: "Live per-branch aging snapshot — 7+ day pending tickets and Today's/Monthly LTP%.",
+      // Same page as CSR → LTP Report (dispatch is by `custom` alone); starts
+      // with that page's audience — see BORROWED_DEFAULT_GATES in submoduleAccess.ts.
+      custom: "csr-ltp-report" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
       slug: "report-claims-daily",
       title: "Claims Daily Report",
       description: "Claims completed vs remaining, brand breakdown and pending types.",
@@ -1945,6 +1964,15 @@ const adminMod: ModuleDef = {
       title: "Activity Logs",
       description: "Every department's recent activity in one feed — Claims, Parts, CSR, Triage, BizOps, Technician, HR, Accounting, IT, Admin, or ALL combined.",
       custom: "universal-activity-log",
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      slug: "errors-improvements",
+      title: "Errors & Improvements",
+      description: "What needs doing — errors to fix, improvements and to-dos, with who added each one and a Confirm button once it's done.",
+      custom: "errors-improvements" as any,
       fields: [],
       count: 0,
       seed: () => ({}),

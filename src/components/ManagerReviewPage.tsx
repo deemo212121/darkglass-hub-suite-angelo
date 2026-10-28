@@ -31,7 +31,7 @@ import { brandOf, loadBrandLogo } from "@/lib/formBrand";
  * which document types show the working flow vs. the "not available here
  * yet" fallback.
  */
-import { InlinePdfLink } from "@/components/InlinePdfViewer";
+import { InlinePdfLink, InlinePdfPages } from "@/components/InlinePdfViewer";
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronLeft, Loader2 } from "lucide-react";
@@ -459,37 +459,46 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
               Manager/employer signature for <span className="font-semibold text-foreground">{employeeName}</span>'s {label}.
             </p>
 
-            {doc.documentType === "confidentiality_noncompete_agreement" && (
-              <div className="mb-3">
-                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">Your printed name / title</label>
-                <input
-                  value={printedNameTitle}
-                  onChange={(e) => setPrintedNameTitle(e.target.value)}
-                  placeholder={displayName ? `${displayName}, Title` : "Name, Title"}
-                  className="glass-input w-full text-sm py-1.5 px-2.5 rounded-md"
-                />
+            {/* The form as the employee signed it, to read before countersigning. */}
+            {doc.pdfUrl && (
+              <div className="mb-4">
+                <InlinePdfPages url={doc.pdfUrl} title={label} maxHeight={embedded ? "420px" : "65vh"} />
               </div>
             )}
-            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
-            <canvas
-              {...sigPad.canvasProps}
-              className={`bg-white rounded-md border border-white/15 w-full ${sigPad.canvasProps.className}`}
-            />
-            <div className="flex justify-center mt-2">
-              <SignaturePadControls pad={sigPad} />
+
+            <div className="max-w-lg">
+              {doc.documentType === "confidentiality_noncompete_agreement" && (
+                <div className="mb-3">
+                  <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">Your printed name / title</label>
+                  <input
+                    value={printedNameTitle}
+                    onChange={(e) => setPrintedNameTitle(e.target.value)}
+                    placeholder={displayName ? `${displayName}, Title` : "Name, Title"}
+                    className="glass-input w-full text-sm py-1.5 px-2.5 rounded-md"
+                  />
+                </div>
+              )}
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
+              <canvas
+                {...sigPad.canvasProps}
+                className={`bg-white rounded-md border border-white/15 w-full ${sigPad.canvasProps.className}`}
+              />
+              <div className="flex justify-center mt-2">
+                <SignaturePadControls pad={sigPad} />
+              </div>
+
+              {error && (
+                <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{error}</p>
+              )}
+
+              <button
+                onClick={handleSubmit}
+                disabled={submitting}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white mt-3 disabled:opacity-50"
+              >
+                {submitting ? "Saving…" : "Complete & Sign"}
+              </button>
             </div>
-
-            {error && (
-              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{error}</p>
-            )}
-
-            <button
-              onClick={handleSubmit}
-              disabled={submitting}
-              className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white mt-3 disabled:opacity-50"
-            >
-              {submitting ? "Saving…" : "Complete & Sign"}
-            </button>
           </div>
         )}
     </>
@@ -500,7 +509,7 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
   return (
     <div className="min-h-screen bg-background">
       <AppHeader />
-      <main className="max-w-lg mx-auto p-4">{content}</main>
+      <main className="max-w-3xl mx-auto p-4">{content}</main>
     </div>
   );
 }

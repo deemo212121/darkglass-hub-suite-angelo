@@ -31,8 +31,22 @@ const DASHBOARD_FAMILY_MODULES = new Set(["dashboard", "hr", "accounting", "csr"
  */
 export function resolveSubmoduleAllowedRoles(moduleSlug: string, subSlug: string, explicitModuleOverride: string[] | null): string[] | null {
   if (explicitModuleOverride) return explicitModuleOverride;
+  const borrowed = BORROWED_DEFAULT_GATES[`${moduleSlug}:${subSlug}`];
+  if (borrowed) return resolveSubmoduleAllowedRoles(borrowed.moduleSlug, borrowed.subSlug, null);
   return DASHBOARD_FAMILY_MODULES.has(moduleSlug) ? getDashboardRoleGate(subSlug) : null;
 }
+
+/**
+ * A copy of a page in another module that starts with the ORIGINAL page's
+ * audience (its own Accessibility override, else its hardcoded default)
+ * until the company sets one for the copy itself. Report → LTP Report is
+ * CSR → LTP Report: Admin, CSR Manager and BizOps by default, never the
+ * whole Report module (which every CSR Associate and technician can open).
+ * Keyed "module:submodule", same as Accessibility Management's rows.
+ */
+export const BORROWED_DEFAULT_GATES: Record<string, { moduleSlug: string; subSlug: string }> = {
+  "report:report-ltp-report": { moduleSlug: "csr", subSlug: "ltp-report" },
+};
 
 /**
  * The module's "Whole Module" gate (Accessibility Management's module-level

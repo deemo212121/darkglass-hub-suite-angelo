@@ -1086,8 +1086,17 @@ export default defineConfig({
             // doesn't just relocate the cycle.
             if (normalized.includes("/src/components/ui/rich-text-editor.tsx")) return "vendor";
             if (normalized.includes("/src/components/ui/")) return "ui-kit";
-            if (normalized.includes("/src/components/")) return "app-components";
-            if (normalized.includes("/src/hooks/")) return "app-hooks";
+            // Page components are no longer forced into one shared
+            // "app-components" chunk (2026-10-26): with each module page
+            // lazy-loaded (src/routes/m.$module.$submodule.tsx), Rollup gives
+            // every page its own chunk, so opening one page no longer
+            // downloads all of them. Safe from the cycle hazard above — the
+            // only static src/lib -> src/components import is
+            // rich-text-editor, already folded into "vendor".
+            // src/hooks/ is no longer forced into its own "app-hooks" chunk:
+            // it formed a "Circular chunk: app-hooks -> tanstack -> app-hooks"
+            // (part of an older app-components cycle). The hooks are tiny;
+            // Rollup places them with their importers.
 
             return undefined;
           },

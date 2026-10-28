@@ -355,6 +355,26 @@ export async function getMyProfileId(firebaseUid: string): Promise<string | null
 }
 
 /**
+ * The signed-in person's profile id and company uuid (profiles.company_id),
+ * for inserts into tables whose company_id is a uuid. useAuth().companyId
+ * can be the legacy company code instead (e.g. "COMP001" — what the storage
+ * folders still use), which Postgres rejects as a uuid.
+ */
+export async function getMyProfileAndCompanyIds(firebaseUid: string): Promise<{ profileId: string; companyId: string } | null> {
+  if (!firebaseUid) return null;
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, company_id")
+    .eq("firebase_uid", firebaseUid)
+    .maybeSingle();
+  if (error) {
+    console.error("getMyProfileAndCompanyIds error:", error.message);
+    return null;
+  }
+  return data?.id && data.company_id ? { profileId: data.id, companyId: data.company_id } : null;
+}
+
+/**
  * Resolve the current user's primary role + extra_roles from their Firebase
  * uid. Used by page-level role gates (useAuth().role alone doesn't carry
  * extra_roles — see getProfileForLogin).
@@ -770,6 +790,65 @@ export async function getProfileEmployeeInfo(profileId: string): Promise<Employe
  * row's hire date without paying for employee_info (which can carry a
  * base64 photoDataUrl) on every getCompanyUsers() call.
  */
+/**
+ * Just the Master List Hire Date (employee_info.hireDate) for these
+ * profiles — what PTO balances are anchored to (see pto.ts's ptoYearWindow).
+ * Reads only that one field, so a manager reviewing PTO never pulls anyone's
+ * full employee_info (bank / address) into the browser.
+ */
+export async function getHireDatesByProfileIds(profileIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const uniq = Array.from(new Set(profileIds.filter(Boolean)));
+  for (let i = 0; i < uniq.length; i += 200) {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, hire_date:employee_info->>hireDate")
+      .in("id", uniq.slice(i, i + 200));
+    if (error) {
+      console.error("getHireDatesByProfileIds error:", error.message);
+      return out;
+    }
+    for (const row of (data ?? []) as unknown as { id: string; hire_date: string | null }[]) {
+      if (row.hire_date) out.set(row.id, row.hire_date.slice(0, 10));
+    }
+  }
+  return out;
+}
+
+export interface EmploymentStatusInfo {
+  status: EmployeeInfo["employmentStatus"] | null;
+  statusDate: string | null;
+  terminateDate: string | null;
+}
+
+/**
+ * Master List employment status (Terminated / Resigned / Inactive / Active)
+ * and its dates for these profiles — only those three fields of
+ * employee_info, never the rest of it (bank / address).
+ */
+export async function getEmploymentStatusesByProfileIds(profileIds: string[]): Promise<Map<string, EmploymentStatusInfo>> {
+  const out = new Map<string, EmploymentStatusInfo>();
+  const uniq = Array.from(new Set(profileIds.filter(Boolean)));
+  for (let i = 0; i < uniq.length; i += 200) {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, status:employee_info->>employmentStatus, status_date:employee_info->>employmentStatusDate, terminate_date:employee_info->>terminateDate")
+      .in("id", uniq.slice(i, i + 200));
+    if (error) {
+      console.error("getEmploymentStatusesByProfileIds error:", error.message);
+      return out;
+    }
+    for (const row of (data ?? []) as unknown as { id: string; status: string | null; status_date: string | null; terminate_date: string | null }[]) {
+      out.set(row.id, {
+        status: (row.status as EmploymentStatusInfo["status"]) || null,
+        statusDate: row.status_date?.slice(0, 10) || null,
+        terminateDate: row.terminate_date?.slice(0, 10) || null,
+      });
+    }
+  }
+  return out;
+}
+
 export async function getEmployeeInfoByProfileIds(profileIds: string[]): Promise<Map<string, EmployeeInfo>> {
   const out = new Map<string, EmployeeInfo>();
   const uniq = Array.from(new Set(profileIds.filter(Boolean)));
@@ -1373,7 +1452,7 @@ export async function updateCompanyUser(
     employmentType: "trainee" | "regular";
     /** Trainee daily $100 guarantee window's end date ("YYYY-MM-DD") — every
      *  day from this profile's hireDate through this date is a trainee day
-     *  for payroll purposes. Pass null to clear. See migration 0297. */
+     *  for payroll purposes. Pass null to clear. See migration 0291. */
     trainingEndDate: string | null;
   }>
 ): Promise<void> {

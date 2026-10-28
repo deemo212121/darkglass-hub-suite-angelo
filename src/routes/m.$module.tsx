@@ -331,6 +331,7 @@ function ModuleIndex() {
 
   const ticketsLandingOrder = [
     "ticket-list",
+    "no-coverage-tickets",
     "ticket-details",
     "sms-list",
     "followup",

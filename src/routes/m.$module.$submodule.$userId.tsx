@@ -20,6 +20,7 @@ import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import { RestDayHistoryBox } from "@/components/RestDayHistoryBox";
 import { setProfileSchedule } from "@/lib/supabase/restDayHistory";
 import { zonedDateKey } from "@/lib/serverTime";
+import { formatISODate } from "@/lib/localDate";
 
 const TABS = [
   "General Information",
@@ -864,6 +865,16 @@ function UserDetailsPage() {
                   <div>
                     <h1 className="text-3xl font-bold tracking-tight">{form.displayName || form.username}</h1>
                     <p className="mt-1 text-sm text-slate-400">{form.email}</p>
+                    {/* An active Flash Tech trip, on every tab (the Work Plan tab also marks its branch row). */}
+                    {Object.keys(flashTripByLoc).length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {Object.entries(flashTripByLoc).map(([loc, end]) => (
+                          <span key={loc} className="inline-flex items-center rounded-full border border-amber-400/40 bg-amber-500/10 px-2.5 py-0.5 text-xs font-semibold text-amber-300">
+                            On Flash Tech trip · {loc} · until {formatISODate(end)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <button onClick={handleSave} disabled={saving} className="btn btn-primary disabled:opacity-50">
                     {saving ? "Saving…" : "Save Changes"}

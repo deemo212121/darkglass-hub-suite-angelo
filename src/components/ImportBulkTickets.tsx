@@ -1,15 +1,17 @@
 /**
  * "Import Bulk Tickets" button + popup (Create New Ticket header). Upload a
- * ServicePower ticket export (.csv / .xlsx / .xls), check what's in it,
- * import, then see how many were added vs skipped (and why) — see
- * src/lib/supabase/ticketBulkImport.ts for the mapping and skip rules.
+ * ServicePower / ER ticket export (.csv / .xlsx / .xls), Preview what it
+ * would do (nothing is written), import, then see how many were added vs
+ * skipped (and why) — see src/lib/supabase/ticketBulkImport.ts for the
+ * mapping, matching and skip rules.
  */
 import { useRef, useState, type ReactNode } from "react";
-import { CheckCircle2, FileSpreadsheet, Loader2, Upload, XCircle, SkipForward, RefreshCw, Minus } from "lucide-react";
+import { CheckCircle2, FileSpreadsheet, Loader2, Upload, XCircle, SkipForward, RefreshCw, Minus, Search, Users } from "lucide-react";
 import { AppModal } from "@/components/ui-kit/AppModal";
 import { importTickets, looksLikeTicketExport, readImportFile, type ImportRow, type ImportSummary } from "@/lib/supabase/ticketBulkImport";
 
-type Stage = "pick" | "ready" | "importing" | "done";
+// "previewed": the dry run's summary is on screen and Import is enabled.
+type Stage = "pick" | "ready" | "previewing" | "previewed" | "importing" | "done";
 
 export function ImportBulkTicketsButton() {
   const [open, setOpen] = useState(false);
@@ -33,6 +35,7 @@ function ImportBulkTicketsModal({ onClose }: { onClose: () => void }) {
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [updateTechnicians, setUpdateTechnicians] = useState(false);
+  const [erHistory, setErHistory] = useState(false);
 
   const pickFile = async (file: File | undefined) => {
     if (!file) return;
@@ -46,6 +49,7 @@ function ImportBulkTicketsModal({ onClose }: { onClose: () => void }) {
       }
       setFileName(file.name);
       setRows(parsed);
+      setSummary(null);
       setStage("ready");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't read that file.");
@@ -55,16 +59,37 @@ function ImportBulkTicketsModal({ onClose }: { onClose: () => void }) {
     }
   };
 
+  // A changed option invalidates the preview — it has to be checked again before importing.
+  const changeOption = (apply: () => void) => {
+    apply();
+    if (stage === "previewed") {
+      setSummary(null);
+      setStage("ready");
+    }
+  };
+
+  const runPreview = async () => {
+    setStage("previewing");
+    setError(null);
+    try {
+      setSummary(await importTickets(rows, undefined, { updateTechnicians, erHistory, dryRun: true }));
+      setStage("previewed");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Preview failed.");
+      setStage("ready");
+    }
+  };
+
   const runImport = async () => {
     setStage("importing");
     setError(null);
     try {
-      const result = await importTickets(rows, (done, total) => setProgress({ done, total }), { updateTechnicians });
+      const result = await importTickets(rows, (done, total) => setProgress({ done, total }), { updateTechnicians, erHistory });
       setSummary(result);
       setStage("done");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Import failed.");
-      setStage("ready");
+      setStage("previewed");
     }
   };
 
@@ -77,13 +102,13 @@ function ImportBulkTicketsModal({ onClose }: { onClose: () => void }) {
     setError(null);
   };
 
-  const busy = stage === "importing";
-  const skippedCount = summary ? summary.skippedExisting.length + summary.skippedDuplicate.length + summary.skippedMissing.length + summary.skippedExcelNumbers.length : 0;
+  const busy = stage === "importing" || stage === "previewing";
+  const showSummary = (stage === "previewed" || stage === "done") && summary;
 
   return (
     <AppModal
       title="Import Bulk Tickets"
-      description="Upload a ticket file (.csv, .xlsx or .xls). New ticket numbers are added; ones already in the system get their status and schedule updated."
+      description="Upload a ticket file (.csv, .xlsx or .xls), check the preview, then import. New ticket numbers are added; ones already in the system get their status and schedule updated."
       icon={<FileSpreadsheet className="h-5 w-5" />}
       size="lg"
       busy={busy}
@@ -98,14 +123,24 @@ function ImportBulkTicketsModal({ onClose }: { onClose: () => void }) {
               Done
             </button>
           </>
+        ) : stage === "previewed" || stage === "importing" ? (
+          <>
+            <button type="button" className="btn" onClick={() => changeOption(() => undefined)} disabled={busy}>
+              Back
+            </button>
+            <button type="button" className="btn btn-primary" onClick={() => void runImport()} disabled={busy || !summary || summary.added.length + summary.updated.length === 0}>
+              {stage === "importing" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              {stage === "importing" ? "Importing…" : summary ? `Import — add ${summary.added.length}, update ${summary.updated.length}` : "Import"}
+            </button>
+          </>
         ) : (
           <>
             <button type="button" className="btn" onClick={onClose} disabled={busy}>
               Cancel
             </button>
-            <button type="button" className="btn btn-primary" onClick={() => void runImport()} disabled={stage !== "ready"}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-              {busy ? "Importing…" : `Import ${rows.length} row${rows.length === 1 ? "" : "s"}`}
+            <button type="button" className="btn btn-primary" onClick={() => void runPreview()} disabled={stage !== "ready"}>
+              {stage === "previewing" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+              {stage === "previewing" ? "Checking…" : `Preview ${rows.length} row${rows.length === 1 ? "" : "s"}`}
             </button>
           </>
         )
@@ -121,7 +156,7 @@ function ImportBulkTicketsModal({ onClose }: { onClose: () => void }) {
 
       {error && <div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-500">{error}</div>}
 
-      {(stage === "pick" || stage === "ready") && (
+      {(stage === "pick" || stage === "ready" || stage === "previewing") && (
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
@@ -130,12 +165,12 @@ function ImportBulkTicketsModal({ onClose }: { onClose: () => void }) {
             e.preventDefault();
             void pickFile(e.dataTransfer.files?.[0]);
           }}
-          disabled={reading}
+          disabled={reading || busy}
           className="w-full rounded-xl border-2 border-dashed border-[var(--color-panel-border)] px-4 py-8 text-center hover:bg-[color-mix(in_oklab,var(--color-foreground)_4%,transparent)] transition-colors"
         >
           {reading ? (
             <Loader2 className="mx-auto h-6 w-6 animate-spin text-muted-foreground" />
-          ) : stage === "ready" ? (
+          ) : stage !== "pick" ? (
             <>
               <FileSpreadsheet className="mx-auto h-7 w-7 text-emerald-500" />
               <p className="mt-2 text-sm font-semibold">{fileName}</p>
@@ -153,16 +188,27 @@ function ImportBulkTicketsModal({ onClose }: { onClose: () => void }) {
         </button>
       )}
 
-      {stage === "ready" && (
-        <label className="mt-3 flex items-start gap-2 text-sm cursor-pointer">
-          <input type="checkbox" className="mt-0.5" checked={updateTechnicians} onChange={(e) => setUpdateTechnicians(e.target.checked)} />
-          <span>
-            Also update technician assignments
-            <span className="block text-xs text-muted-foreground">
-              Off: a ticket already assigned keeps its technician (only unassigned tickets get the file&apos;s). On: the file&apos;s technician replaces the current one.
+      {(stage === "ready" || stage === "previewing" || stage === "previewed") && (
+        <div className="mt-3 space-y-2">
+          <label className="flex items-start gap-2 text-sm cursor-pointer">
+            <input type="checkbox" className="mt-0.5" checked={erHistory} disabled={busy} onChange={(e) => changeOption(() => setErHistory(e.target.checked))} />
+            <span>
+              ER history (backfill)
+              <span className="block text-xs text-muted-foreground">
+                New tickets are marked as ER history — left out of payroll, mileage, Ticket Attendance and the default ticket list. Tickets already in the system keep their status, schedule and technician; only their blank fields are filled.
+              </span>
             </span>
-          </span>
-        </label>
+          </label>
+          <label className={`flex items-start gap-2 text-sm ${erHistory ? "opacity-50" : "cursor-pointer"}`}>
+            <input type="checkbox" className="mt-0.5" checked={updateTechnicians && !erHistory} disabled={erHistory || busy} onChange={(e) => changeOption(() => setUpdateTechnicians(e.target.checked))} />
+            <span>
+              Also update technician assignments
+              <span className="block text-xs text-muted-foreground">
+                Off: a ticket already assigned keeps its technician (only unassigned tickets get the file&apos;s). On: the file&apos;s technician replaces the current one.
+              </span>
+            </span>
+          </label>
+        </div>
       )}
 
       {stage === "importing" && (
@@ -181,40 +227,53 @@ function ImportBulkTicketsModal({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
-      {stage === "done" && summary && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-            <Stat icon={<CheckCircle2 className="h-4 w-4" />} label="Added" value={summary.added.length} tone="text-emerald-500" />
-            <Stat icon={<RefreshCw className="h-4 w-4" />} label="Updated" value={summary.updated.length} tone="text-sky-500" />
-            <Stat icon={<Minus className="h-4 w-4" />} label="Unchanged" value={summary.unchanged.length} tone="text-muted-foreground" />
-            <Stat icon={<SkipForward className="h-4 w-4" />} label="Skipped" value={skippedCount} tone="text-amber-500" />
-            <Stat icon={<XCircle className="h-4 w-4" />} label="Failed" value={summary.failed.length} tone={summary.failed.length ? "text-red-500" : "text-muted-foreground"} />
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {summary.totalRows} row{summary.totalRows === 1 ? "" : "s"} in {fileName}.
-          </p>
+      {showSummary && <SummaryView summary={summary} fileName={fileName} preview={stage === "previewed"} />}
+    </AppModal>
+  );
+}
 
-          {summary.skippedExcelNumbers.length > 0 && (
-            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-300">
-              This file was opened or saved in Excel, which changes ticket numbers (it drops leading zeros and turns numbers like 3890096E1 into 38900960).{" "}
-              {summary.skippedExcelNumbers.length} new ticket{summary.skippedExcelNumbers.length === 1 ? " wasn't" : "s weren't"} added because the number may be wrong. Import the file exactly as downloaded, without opening it in Excel, to add {summary.skippedExcelNumbers.length === 1 ? "it" : "them"}.
-            </div>
-          )}
-
-          <div className="space-y-2 text-sm">
-            <Detail title="Not added — number may have been changed by Excel" items={summary.skippedExcelNumbers} danger />
-            <Detail title="Matched to the real ticket (Excel had changed the number)" items={summary.matchedExcelNumbers.map((m) => `${m.fileNo} → ${m.ticketNo}`)} />
-            <Detail title="Updated" items={summary.updated.map((u) => `${u.ticketNo} — ${u.changes.join("; ")}`)} />
-            <Detail title="Already in the system, nothing new" items={summary.unchanged} />
-            <Detail title="Already in the system (added by someone else during the import)" items={summary.skippedExisting} />
-            <Detail title="Repeated in the file (only the first one was used)" items={summary.skippedDuplicate} />
-            <Detail title="No ticket number (spreadsheet rows)" items={summary.skippedMissing.map((n) => `Row ${n}`)} />
-            <Detail title="Failed" items={summary.failed.map((f) => `${f.ticketNo} — ${f.error}`)} danger />
-            <Detail title="Added" items={summary.added} />
-          </div>
+function SummaryView({ summary, fileName, preview }: { summary: ImportSummary; fileName: string; preview: boolean }) {
+  const skippedCount = summary.skippedExisting.length + summary.skippedDuplicate.length + summary.skippedMissing.length + summary.skippedExcelNumbers.length;
+  const would = (done: string, todo: string) => (preview ? todo : done);
+  return (
+    <div className="mt-4 space-y-4">
+      {preview && (
+        <div className="rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm text-sky-700 dark:text-sky-300">
+          Preview only — nothing has been written yet. Check the lists below, then click Import.
         </div>
       )}
-    </AppModal>
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <Stat icon={<CheckCircle2 className="h-4 w-4" />} label={would("Added", "To add")} value={summary.added.length} tone="text-emerald-500" />
+        <Stat icon={<RefreshCw className="h-4 w-4" />} label={would("Updated", "To update")} value={summary.updated.length} tone="text-sky-500" />
+        <Stat icon={<Minus className="h-4 w-4" />} label="Unchanged" value={summary.unchanged.length} tone="text-muted-foreground" />
+        <Stat icon={<SkipForward className="h-4 w-4" />} label="Skipped" value={skippedCount} tone="text-amber-500" />
+        <Stat icon={<XCircle className="h-4 w-4" />} label="Failed" value={summary.failed.length} tone={summary.failed.length ? "text-red-500" : "text-muted-foreground"} />
+      </div>
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Users className="h-3.5 w-3.5" />
+        {summary.totalRows} row{summary.totalRows === 1 ? "" : "s"} in {fileName}. Customers for new tickets: {summary.customersMatched} matched to an existing customer (same phone and address),{" "}
+        {summary.customersCreated} new.
+      </p>
+
+      {summary.skippedExcelNumbers.length > 0 && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-300">
+          This file was opened or saved in Excel, which changes ticket numbers (it drops leading zeros and turns numbers like 3890096E1 into 38900960).{" "}
+          {summary.skippedExcelNumbers.length} new ticket{summary.skippedExcelNumbers.length === 1 ? "" : "s"} {preview ? "won't be" : summary.skippedExcelNumbers.length === 1 ? "wasn't" : "weren't"} added because the number may be wrong. Import the file exactly as downloaded, without opening it in Excel, to add {summary.skippedExcelNumbers.length === 1 ? "it" : "them"}.
+        </div>
+      )}
+
+      <div className="space-y-2 text-sm">
+        <Detail title={would("Not added — number may have been changed by Excel", "Won't be added — number may have been changed by Excel")} items={summary.skippedExcelNumbers} danger />
+        <Detail title="Matched to the real ticket (Excel had changed the number)" items={summary.matchedExcelNumbers.map((m) => `${m.fileNo} → ${m.ticketNo}`)} />
+        <Detail title={would("Updated", "Will be updated")} items={summary.updated.map((u) => `${u.ticketNo} — ${u.changes.join("; ")}`)} />
+        <Detail title="Already in the system, nothing new" items={summary.unchanged} />
+        <Detail title="Already in the system (added by someone else during the import)" items={summary.skippedExisting} />
+        <Detail title="Repeated in the file (only the first one is used)" items={summary.skippedDuplicate} />
+        <Detail title="No ticket number (spreadsheet rows)" items={summary.skippedMissing.map((n) => `Row ${n}`)} />
+        <Detail title="Failed" items={summary.failed.map((f) => `${f.ticketNo} — ${f.error}`)} danger />
+        <Detail title={would("Added", "Will be added")} items={summary.added} />
+      </div>
+    </div>
   );
 }
 

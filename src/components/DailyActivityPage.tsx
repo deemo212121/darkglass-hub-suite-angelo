@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { localISODate } from "@/lib/localDate";
 import { createPortal } from "react-dom";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -136,7 +137,7 @@ function ChartLineFilter({ selected, onChange }: { selected: Set<ActionBucket>; 
 }
 
 function formatDate(date: Date) {
-  return date.toISOString().slice(0, 10);
+  return localISODate(date);
 }
 
 export function DailyActivityPage({

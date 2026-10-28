@@ -127,8 +127,9 @@ export function ptoYearWindow(
 
   return {
     tenureYear,
-    start: start.toISOString().slice(0, 10),
-    end: end.toISOString().slice(0, 10),
+    // Local calendar date, not toisostring() (utc) — that's the previous day for ph staff (utc+8) and the next day for us staff late in the evening.
+    start: localISODate(start),
+    end: localISODate(end),
     allowance: ptoAllowanceForTenureYear(tenureYear),
   };
 }
@@ -199,8 +200,9 @@ export function sickYearWindow(
 
   return {
     tenureYear,
-    start: start.toISOString().slice(0, 10),
-    end: end.toISOString().slice(0, 10),
+    // Local calendar date, not toisostring() (utc) — that's the previous day for ph staff (utc+8) and the next day for us staff late in the evening.
+    start: localISODate(start),
+    end: localISODate(end),
     allowance: SICK_LEAVE_ANNUAL_ALLOWANCE,
   };
 }

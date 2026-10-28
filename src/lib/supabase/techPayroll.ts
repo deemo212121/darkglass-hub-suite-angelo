@@ -22,7 +22,9 @@
  */
 
 import { supabase } from "./client";
+import { selectAllPages } from "./selectAllPages";
 import { mileageEffectiveTotal } from "./mileage";
+import { getErBackfillTicketIds, getErBackfillVisitIds } from "./erBackfill";
 import { statusGroupOf } from "@/lib/ticketData";
 
 /** repair_type value used as the fallback rate for a completed visit with no repair_type set. */
@@ -293,7 +295,9 @@ async function loadTechCompletedCandidates(startDate: string, endDate: string): 
     ticketRows.push(...(page ?? []));
     if (!page || page.length < PAGE_SIZE) break;
   }
-  const completedTickets = ticketRows.filter((t: any) => String(t.technician || "").trim() && isCompletedStatus(t.status));
+  // ER history tickets (migration 0408) were paid in ER — never count them here.
+  const backfillIds = await getErBackfillTicketIds();
+  const completedTickets = ticketRows.filter((t: any) => String(t.technician || "").trim() && isCompletedStatus(t.status) && !backfillIds.has(t.id));
   if (completedTickets.length === 0) return [];
 
   // Batched, same reason every other bulk-by-ticket-id lookup in this app
@@ -402,7 +406,7 @@ export async function getTechCancelledTicketCounts(startDate: string, endDate: s
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data: page, error } = await supabase
       .from("tickets")
-      .select("technician, status, schedule_date")
+      .select("id, technician, status, schedule_date")
       .gte("schedule_date", startDate)
       .lte("schedule_date", endDate)
       .not("technician", "is", null)
@@ -415,9 +419,10 @@ export async function getTechCancelledTicketCounts(startDate: string, endDate: s
     if (!page || page.length < PAGE_SIZE) break;
   }
   const counts = new Map<string, number>();
+  const backfillIds = await getErBackfillTicketIds();
   for (const t of ticketRows) {
     const technician = String(t.technician || "").trim();
-    if (!technician || statusGroupOf(t.status) !== "cancelled") continue;
+    if (!technician || statusGroupOf(t.status) !== "cancelled" || backfillIds.has(t.id)) continue;
     counts.set(technician, (counts.get(technician) ?? 0) + 1);
   }
   return Array.from(counts.entries()).map(([technician, count]) => ({ technician, count }));
@@ -497,11 +502,12 @@ export async function getCarryoverTickets(): Promise<TechCarryoverTicket[]> {
     }
   }
   const excludedTicketIds = new Set((excludedRows ?? []).map((r: any) => r.ticket_id));
+  const backfillIds = await getErBackfillTicketIds();
 
   const out: TechCarryoverTicket[] = [];
   for (const row of carryovers as any[]) {
     const ticket = ticketById.get(row.ticket_id);
-    if (!ticket || ticket.redo || excludedTicketIds.has(row.ticket_id)) continue;
+    if (!ticket || ticket.redo || excludedTicketIds.has(row.ticket_id) || backfillIds.has(row.ticket_id)) continue;
     const repairType = latestRepairTypeByTicketId.get(row.ticket_id) || DEFAULT_REPAIR_TYPE;
     const branch = ticket.location || "";
     out.push({
@@ -605,6 +611,14 @@ function groupExcludedTickets(
   return out;
 }
 
+/** Drops visit rows entered as a past record from ER, or on an ER history ticket (migration 0408) — paid in ER, not here. */
+async function withoutErBackfill<T extends { id: string; ticket_id: string }>(rows: T[]): Promise<T[]> {
+  if (rows.length === 0) return rows;
+  const [ticketIds, visitIds] = await Promise.all([getErBackfillTicketIds(), getErBackfillVisitIds()]);
+  if (ticketIds.size === 0 && visitIds.size === 0) return rows;
+  return rows.filter((r) => !visitIds.has(r.id) && !ticketIds.has(r.ticket_id));
+}
+
 /**
  * How many completed visits within a period had this technician set as the
  * *second* (assisting) technician — visits.second_technician, migration
@@ -620,7 +634,7 @@ export async function getTechSecondCounts(startDate: string, endDate: string): P
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data: page, error } = await supabase
       .from("visits")
-      .select("ticket_id, second_technician")
+      .select("id, ticket_id, second_technician")
       .gte("schedule_date", startDate)
       .lte("schedule_date", endDate)
       .not("second_technician", "is", null)
@@ -632,7 +646,7 @@ export async function getTechSecondCounts(startDate: string, endDate: string): P
     data.push(...(page ?? []));
     if (!page || page.length < PAGE_SIZE) break;
   }
-  const assisted = (data ?? []).filter((r: any) => String(r.second_technician || "").trim());
+  const assisted = await withoutErBackfill((data ?? []).filter((r: any) => String(r.second_technician || "").trim()));
   if (assisted.length === 0) return counts;
 
   // second_technician only ever exists on a Visit Log row (tickets have no
@@ -677,7 +691,7 @@ export async function getTechAssistedTickets(startDate: string, endDate: string)
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data: page, error } = await supabase
       .from("visits")
-      .select("ticket_id, technician, second_technician")
+      .select("id, ticket_id, technician, second_technician")
       .gte("schedule_date", startDate)
       .lte("schedule_date", endDate)
       .not("technician", "is", null)
@@ -690,7 +704,7 @@ export async function getTechAssistedTickets(startDate: string, endDate: string)
     data.push(...(page ?? []));
     if (!page || page.length < PAGE_SIZE) break;
   }
-  const assisted = (data ?? []).filter((r: any) => String(r.second_technician || "").trim());
+  const assisted = await withoutErBackfill((data ?? []).filter((r: any) => String(r.second_technician || "").trim()));
   if (assisted.length === 0) return out;
 
   const ticketIds = Array.from(new Set(assisted.map((r: any) => r.ticket_id).filter(Boolean)));
@@ -738,7 +752,7 @@ export async function getTechSecondTechTickets(startDate: string, endDate: strin
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data: page, error } = await supabase
       .from("visits")
-      .select("ticket_id, technician, second_technician")
+      .select("id, ticket_id, technician, second_technician")
       .gte("schedule_date", startDate)
       .lte("schedule_date", endDate)
       .not("technician", "is", null)
@@ -751,7 +765,7 @@ export async function getTechSecondTechTickets(startDate: string, endDate: strin
     data.push(...(page ?? []));
     if (!page || page.length < PAGE_SIZE) break;
   }
-  const assisted = (data ?? []).filter((r: any) => String(r.second_technician || "").trim());
+  const assisted = await withoutErBackfill((data ?? []).filter((r: any) => String(r.second_technician || "").trim()));
   if (assisted.length === 0) return out;
 
   const ticketIds = Array.from(new Set(assisted.map((r: any) => r.ticket_id).filter(Boolean)));
@@ -797,7 +811,7 @@ export async function getTechAssignedCounts(startDate: string, endDate: string):
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data: page, error } = await supabase
       .from("tickets")
-      .select("technician")
+      .select("id, technician")
       .gte("schedule_date", startDate)
       .lte("schedule_date", endDate)
       .not("technician", "is", null)
@@ -809,9 +823,10 @@ export async function getTechAssignedCounts(startDate: string, endDate: string):
     data.push(...(page ?? []));
     if (!page || page.length < PAGE_SIZE) break;
   }
+  const backfillIds = await getErBackfillTicketIds();
   for (const r of data as any[]) {
     const technician = String(r.technician || "").trim().toLowerCase();
-    if (!technician) continue;
+    if (!technician || backfillIds.has(r.id)) continue;
     counts.set(technician, (counts.get(technician) ?? 0) + 1);
   }
   return counts;
@@ -1051,12 +1066,18 @@ export async function getTechCustomPayItems(
  */
 export async function getAllTechCustomPayItemsForPeriod(periodStart: string, periodEnd: string): Promise<TechCustomPayItem[]> {
   if (!periodStart || !periodEnd) return [];
+  // Paged: one answer stops at 1,000 rows and a period already has ~600
+  // lines (9/27–10/10: 592) — past 1,000, some technicians' commissions,
+  // bonuses and mileage would silently drop out of their gross pay.
   const { data, error } = await withWorkWeekFallback((columns) =>
-    supabase
-      .from("tech_custom_pay_items")
-      .select(columns)
-      .eq("period_start", periodStart)
-      .eq("period_end", periodEnd)
+    selectAllPages<any>(() =>
+      supabase
+        .from("tech_custom_pay_items")
+        .select(columns)
+        .eq("period_start", periodStart)
+        .eq("period_end", periodEnd)
+        .order("id", { ascending: true })
+    )
   );
   if (error) {
     console.error("getAllTechCustomPayItemsForPeriod error:", error.message);

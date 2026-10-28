@@ -72,6 +72,8 @@ import {
   setStaffingTarget,
   logCvForward,
   notifyOnCandidateHired,
+  notifyOnCandidateTraining,
+  notifyHrOfNewPhTrainee,
   type Candidate,
   type CandidateStatus,
   type CvForwardDetail,
@@ -3642,8 +3644,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // ── Generate Employee Warning Form ──────────────────────────────────
   // Fields mirror the company's real paper form exactly (see
   // warningFormTemplate.ts). "Previous Warning(s) Issued" auto-fills from
-  // this employee's actual approved warning history (same data backing the
-  // Warnings & Mistakes tab), frozen into the document at generation time
+  // this employee's actual warning history — approved warnings (same data
+  // backing the Warnings & Mistakes tab) plus forms sent but not yet
+  // confirmed (see warnPreviousWarnings), frozen into the document at generation time
   // so a later new warning never retroactively rewrites a document already
   // out for signature. Sending creates the real warning record (fast-
   // tracked to approved, same as HR submitting directly elsewhere in this
@@ -3698,20 +3701,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setAddPrevWarnOpen(false);
     setAddPrevWarnError(null);
   };
-
-  // Frozen snapshot for the currently-selected employee — approved warnings only (the official record), most recent first, capped at the 3 slots the paper form has.
-  // Sorts/displays by occurredAt when set (backfilled pre-system warnings — see handleAddPreviousWarning below) so a
-  // historical warning entered today doesn't look like the most recent one and bump a genuinely recent warning out of the top 3.
-  const warnPreviousWarnings = useMemo(() => {
-    if (!warnForm.employeeId) return [];
-    return allNotes
-      .filter((n) => n.type === "warning" && n.agentProfileId === warnForm.employeeId && n.status === "approved")
-      .sort((a, b) => (b.occurredAt || b.createdAt).localeCompare(a.occurredAt || a.createdAt))
-      .slice(0, 3)
-      // Listed oldest first, so "1." is the first warning (the 3 most recent are kept).
-      .reverse()
-      .map((n) => ({ cause: n.note, date: n.occurredAt || n.createdAt, issuedBy: n.createdByName || "—" }));
-  }, [allNotes, warnForm.employeeId]);
 
   // ── Backfill a pre-system warning (issued before this app's warning workflow existed) ──
   const [addPrevWarnOpen, setAddPrevWarnOpen] = useState(false);
@@ -3880,6 +3869,39 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
     return map;
   }, [sentWarningForms]);
+
+  // "Previous Warning(s) Issued" for the currently-selected employee, frozen
+  // into the form when it's sent: their approved warnings (the official
+  // record) plus warning forms already sent but not yet confirmed — signed
+  // or still awaiting signatures. Approved alone left a 3rd warning without
+  // its 2nd (or 1st) whenever HR hadn't confirmed the earlier form yet. A
+  // confirmed form is already one of the approved warnings; a cancelled one
+  // is void. Most recent 3 kept, the slots the paper form has. Sorts by
+  // occurredAt when set (backfilled pre-system warnings — see
+  // handleAddPreviousWarning) so a historical warning entered today doesn't
+  // look like the most recent one and bump a genuinely recent warning out of
+  // the top 3. "Issued By" is whoever generated the form, as on the Warnings
+  // & Mistakes tab (falling back to who logged the warning).
+  const warnPreviousWarnings = useMemo(() => {
+    if (!warnForm.employeeId) return [];
+    // The same warnings that satisfy the 2nd/3rd rule (warnPriorWarningCount): approved or still in review.
+    const approved = allNotes
+      .filter(
+        (n) => n.type === "warning" && n.agentProfileId === warnForm.employeeId && (n.status === "approved" || n.status === "pending" || n.status === "manager_approved")
+      )
+      .map((n) => ({ cause: n.note, date: n.occurredAt || n.createdAt, issuedBy: issuerNameByNoteId.get(n.id) || n.createdByName || "—" }));
+    const unconfirmed = sentWarningForms
+      .filter((d) => (d.status === "pending_signature" || d.status === "signed") && (d.formData as unknown as WarningFormData).employeeId === warnForm.employeeId)
+      .map((d) => {
+        const data = d.formData as unknown as WarningFormData;
+        return { cause: buildWarnNoteText(data), date: data.warningDate || d.createdAt, issuedBy: d.createdByName || "—" };
+      });
+    return [...approved, ...unconfirmed]
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 3)
+      // Listed oldest first, so "1." is the first warning (the 3 most recent are kept).
+      .reverse();
+  }, [allNotes, sentWarningForms, issuerNameByNoteId, warnForm.employeeId]);
 
   // Clicking a name in the tracking table previews the form as it stands
   // right now — whichever signatures have been captured so far render in
@@ -16366,6 +16388,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     // should notify (not re-saving the Start Date on someone already
     // hired).
     const wasAlreadyHired = candidates.find((c) => c.id === statusDateDialog.candidateId)?.status === "hired";
+    // Same for Training: a date change on someone already training doesn't notify again.
+    const wasAlreadyTraining = candidates.find((c) => c.id === statusDateDialog.candidateId)?.status === "training";
     try {
       await updateCandidateStatus(
         statusDateDialog.candidateId,
@@ -16387,6 +16411,21 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             )
           )
           .catch((err) => console.error("Failed to send hire notifications:", err));
+      }
+      // Technician / Parts Manager moved to Training → the Senior Managers (Naveen Lakhani, Lou Basco).
+      if (statusDateDialog.status === "training" && !wasAlreadyTraining && uid) {
+        const trainee = candidates.find((c) => c.id === statusDateDialog.candidateId);
+        const trainerName = (statusDateDialog.trainerId && employeesById.get(statusDateDialog.trainerId)?.name) || null;
+        getMyProfileId(uid)
+          .then((myProfileId) =>
+            notifyOnCandidateTraining(
+              { name: statusDateDialog.candidateName, branch: trainee?.branch ?? null, position: trainee?.position ?? null },
+              { startDate: statusDateDialog.date, endDate: statusDateDialog.endDate || null, trainerName },
+              myProfileId,
+              displayName || "HR"
+            )
+          )
+          .catch((err) => console.error("Failed to send training notifications:", err));
       }
       // Trainer isn't part of hr_update_candidate_status() (it's a plain
       // field, not a status-transition side effect like the dates above —
@@ -16953,6 +16992,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     try {
       await updateCompanyUser(id, { employmentType: newType });
       void logActivity({ action: "employee_status_changed", targetType: "employee", targetId: id, targetLabel: employee?.name, details: { employmentType: newType } });
+      // A PH staff member switched to Trainee → the rest of HR is notified.
+      if (newType === "trainee" && prevType !== "trainee" && employee?.country === "PH" && uid) {
+        const position = (employee.position && (ROLE_LABELS[normalizeRole(employee.position)] || employee.position)) || employee.department || null;
+        void getMyProfileId(uid)
+          .then((myProfileId) =>
+            notifyHrOfNewPhTrainee({ name: employee.name, position, startDate: employee.startDate || null }, myProfileId, displayName || "HR")
+          )
+          .catch((err) => console.error("Failed to notify HR of the new PH trainee:", err));
+      }
     } catch (err) {
       setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, employmentType: prevType } : e)));
       setError(err instanceof Error ? err.message : "Failed to update employment type.");
@@ -24137,7 +24185,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </button>
             </div>
             {warnPreviousWarnings.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No prior approved warnings on record for this employee.</p>
+              <p className="text-xs text-muted-foreground">No prior warnings on record for this employee.</p>
             ) : (
               <ul className="text-xs space-y-1">
                 {warnPreviousWarnings.map((w, i) => (
@@ -37000,11 +37048,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-4">
-              {managerReviewDoc.pdfUrl && (
-                <div className="mb-4 rounded-md overflow-hidden border border-white/10 bg-white/5">
-                  <iframe src={managerReviewDoc.pdfUrl} title="Document on file" className="w-full border-0" style={{ height: 380 }} />
-                </div>
-              )}
               <ManagerReviewPage
                 docId={managerReviewDoc.id}
                 embedded

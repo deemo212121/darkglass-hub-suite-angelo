@@ -563,6 +563,27 @@ export async function uploadItTicketScreenshot(companyId: string, ticketKey: str
   return { url, fullPath: snapshot.ref.fullPath };
 }
 
+/**
+ * Upload a picture or file for an Admin → Errors & Improvements item.
+ * Stored under companies/{companyId}/errors-improvements/{itemId}/ — the
+ * caller makes a new item's id before it's inserted, same as the IT ticket
+ * screenshots above. Remove one with deleteAttachmentByUrl.
+ */
+export async function uploadErrorImprovementAttachment(companyId: string, itemId: string, blob: Blob, fileName: string): Promise<{ url: string; fullPath: string }> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/errors-improvements/${itemId}`;
+  const objectName = `${Date.now()}-${sanitizeFileName(fileName)}`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, blob, {
+    contentType: blob.type || "application/octet-stream",
+    customMetadata: { uploadedAt: new Date().toISOString() },
+  });
+  const url = await getDownloadURL(snapshot.ref);
+  return { url, fullPath: snapshot.ref.fullPath };
+}
+
 /** Delete an expense receipt file by its full storage path — best-effort cleanup when a receipt is replaced or removed. */
 export async function deleteExpenseReceiptFile(fullPath: string): Promise<void> {
   if (!isFirebaseReady() || !storage) {

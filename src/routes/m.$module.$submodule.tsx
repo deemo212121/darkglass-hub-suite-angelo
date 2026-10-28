@@ -1,89 +1,18 @@
 import { createFileRoute, Link, Navigate, Outlet, notFound, redirect, useLocation } from "@tanstack/react-router";
+import { lazy, Suspense } from "react";
+import { BrandedLoader } from "@/components/BrandedLoader";
 import { PageTrail } from "@/components/PageTrail";
 import { useRedirectGuard } from "@/lib/useRedirectGuard";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
-import { OverallStatusPage } from "@/components/OverallStatusPage";
-import { RepairForecastPage } from "@/components/RepairForecastPage";
-import { DailyActivityPage } from "@/components/DailyActivityPage";
-import { TriageDashboardPage } from "@/components/TriageDashboardPage";
-import { UniversalActivityLogPage } from "@/components/UniversalActivityLogPage";
-import { ReportsLibraryPage } from "@/components/ReportsLibraryPage";
 import { useAuth } from "@/lib/auth";
 import { getModule, getSubModule, type ModuleDef, type SubModuleDef } from "@/lib/modules";
-import { GenericModulePage } from "@/components/GenericModulePage";
-import { PartReturnStatusPage } from "@/components/PartReturnStatus";
-import { ClaimsPipeline } from "@/components/ClaimsPipeline";
-import { NeedClaimList } from "@/components/NeedClaimList";
-import { ClaimList } from "@/components/ClaimList";
-import { AuthorizationStatus } from "@/components/AuthorizationStatus";
-import { ClaimCalendarMonthly } from "@/components/ClaimCalendarMonthly";
-import { ClaimCalendarWeekly } from "@/components/ClaimCalendarWeekly";
-import { WorkCalendarPage } from "@/components/WorkCalendarPage";
-import { WorkPlannerPage } from "@/components/WorkPlannerPage";
-import { ClaimPlanner } from "@/components/ClaimPlanner";
-import { CreditCardReport } from "@/components/CreditCardReport";
-import { FtfReport } from "@/components/FtfReport";
-import { LtpReport } from "@/components/LtpReport";
-import { TatReport } from "@/components/TatReport";
-import { CsrDailyWork } from "@/components/CsrDailyWork";
-import { DailyActivityReport } from "@/components/DailyActivityReport";
-import { TeamMessenger } from "@/components/TeamMessenger";
-import { LiveChatSupportPage } from "@/components/LiveChatSupportPage";
-import { LoginStatistics } from "@/components/LoginStatistics";
-import { LtpProjectionReport } from "@/components/LtpProjectionReport";
-import { ModelDocuments } from "@/components/ModelDocuments";
-import { OowTicketReport } from "@/components/OowTicketReport";
-import { OpenTicketSummary } from "@/components/OpenTicketSummary";
-import { PartPurchaseReport } from "@/components/PartPurchaseReport";
-import { PartRevenueReport } from "@/components/PartRevenueReport";
-import { PartTransactionReport } from "@/components/PartTransactionReport";
-import { RedoReport } from "@/components/RedoReport";
-import { ServiceLevelReport } from "@/components/ServiceLevelReport";
-import { TaxReport } from "@/components/TaxReport";
-import { TechDailyReport } from "@/components/TechDailyReport";
-import { TechEfficiencyReport } from "@/components/TechEfficiencyReport";
-import { TechPerformanceReport } from "@/components/TechPerformanceReport";
-import { TechWorkOverview } from "@/components/TechWorkOverview";
-import { TimecardReport } from "@/components/TimecardReport";
-import { TriagePerformanceReport } from "@/components/TriagePerformanceReport";
-import { TicketsMapWorkMap } from "@/components/TicketsMapWorkMap";
-import { PartOrder } from "@/components/PartOrder";
-import { PartReceive } from "@/components/PartReceive";
-import { PartFootprintPage } from "@/components/PartFootprintPage";
-import { PartHistoryPage } from "@/components/PartHistoryPage";
-import { PartManagementPage } from "@/components/PartManagementPage";
-import { PoStatusPage } from "@/components/PoStatusPage";
-import { ReturnPickupPage } from "@/components/ReturnPickupPage";
-import { RepairStatusesPage } from "@/components/RepairStatusesPage";
-import { DataMigrationPage } from "@/components/DataMigrationPage";
-import { LoginSecurityPage } from "@/components/LoginSecurityPage";
-import { AccessibilityManagementPage } from "@/components/AccessibilityManagementPage";
-import { ApprovalChainPage } from "@/components/ApprovalChainPage";
-import { FlashTechCalendarPage } from "@/components/FlashTechCalendarPage";
 // Richer parts components pulled from the upstream usapp repo. Where they
 // overlap with the existing *Page wrappers above we prefer the upstream
 // component because it has the full UI; the wrappers remain available as
 // fallbacks and for any spots that still reference them.
-import { PartInventory } from "@/components/PartInventory";
-import { PartDailyPickup } from "@/components/PartDailyPickup";
-import { PartDailyCollection } from "@/components/PartDailyCollection";
-import { PartReturn } from "@/components/PartReturn";
-import { ReservedPartList } from "@/components/ReservedPartList";
-import { PartsDailyReportEbay } from "@/components/PartsDailyReportEbay";
-import { PartsDashboard } from "@/components/PartsDashboard";
-import { PartsOrderDashboard } from "@/components/PartsOrderDashboard";
-import { TicketList } from "@/components/TicketList";
-import { NewTicketPage } from "@/components/NewTicketPage";
-import { TodoListPage } from "@/components/TodoListPage";
-import { AdminUserManagementPage } from "@/components/AdminUserManagementPage";
-import { AccountManagementPage } from "@/components/AccountManagementPage";
-import { LocationManagementPage } from "@/components/LocationManagementPage";
-import { TechnicianWhereaboutsPage } from "@/components/TechnicianWhereaboutsPage";
-import { AddBranchPage } from "@/components/AddBranchPage";
 import { canAccessUserManagement, getUserManagementRecord, canAccessAdminModule } from "@/lib/user-management";
 import { isSubmoduleAllowed, isSubmoduleAllowedForTrainee, isSubmoduleAllowedForFrozen, isCompanySuperAdminRole, isCsrRestrictedRole } from "@/lib/roleLabels";
-import { CompanySettingsPage } from "@/components/CompanySettingsPage";
 import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
 import { useModuleRoleGate, useModuleRoleGateOverrides } from "@/lib/moduleAccess";
 // Roles allowed into the admin module overall, and into User Management /
@@ -94,69 +23,148 @@ import { useModuleRoleGate, useModuleRoleGateOverrides } from "@/lib/moduleAcces
 // decide what to even list) so both surfaces can never drift apart.
 import { ADMIN_MODULE_ROLES, USER_MANAGEMENT_DEFAULT_ROLES, ACTIVITY_LOG_DEFAULT_ROLES, WHEREABOUTS_DEFAULT_ROLES, BIZOPS_GUIDE_DEFAULT_ROLES, PRE_AUTH_DEFAULT_ROLES, resolveSubmoduleAllowedRoles, passesModuleLevelGate } from "@/lib/submoduleAccess";
 import { ROLE_LABELS } from "@/lib/roleLabels";
-import { ReportHRDaily } from "@/components/ReportHRDaily";
-import { HrOnboardingChecklistPage } from "@/components/HrOnboardingChecklistPage";
-import { TechnicianFormChecklistPage } from "@/components/TechnicianFormChecklistPage";
-import { HiringAnalyticsPage } from "@/components/HiringAnalyticsPage";
-import { CandidateReviewsPage } from "@/components/CandidateReviewsPage";
-import { ClockInCodesTab } from "@/components/ClockInCodesTab";
-import { TicketGuidesPage } from "@/components/TicketGuidesPage";
-import { SelfServiceGuidePage } from "@/components/SelfServiceGuidePage";
-import { GettingStartedGuidePage } from "@/components/GettingStartedGuidePage";
-import { ServerStatusPage } from "@/components/ServerStatusPage";
-import { TeamUpdatesPage } from "@/components/TeamUpdatesPanel";
-import { ApproverGuidePage } from "@/components/ApproverGuidePage";
-import { BizOpsGuidePage } from "@/components/BizOpsGuidePage";
-import { PreAuthPage } from "@/components/PreAuthPage";
-import { ClaimsGuidePage } from "@/components/ClaimsGuidePage";
-import { DepartmentGuidePage } from "@/components/DepartmentGuidePage";
 import { guideDepartmentFor } from "@/lib/tours/guideDepartments";
 import { canSeeTicketTour } from "@/lib/tours/ticketTours";
-import { TrainingListPage } from "@/components/TrainingListPage";
-import { AbsentListPage } from "@/components/AbsentListPage";
-import { RepairKnowledgeBase } from "@/components/RepairKnowledgeBase";
-import { TechGuidesPage } from "@/components/TechGuidesPage";
 import { ExpensesModulePage } from "@/components/ExpensesModulePage";import { StaffListPage } from "@/components/StaffListPage";
-import { ReportHR } from "@/components/ReportHR";
-import { ReportCSRDaily } from "@/components/ReportCSRDaily";
-import { ReportClaimsDaily } from "@/components/ReportClaimsDaily";
-import { ReportTriageDaily } from "@/components/ReportTriageDaily";
-import { ReportPartsDaily } from "@/components/ReportPartsDaily";
-import { ReportOperationsDaily } from "@/components/ReportOperationsDaily";
-import { ReportAttendanceMonitoring } from "@/components/ReportAttendanceMonitoring";
-import { ReportAccounting } from "@/components/ReportAccounting";
-import { BranchDailyReportPage } from "@/components/BranchDailyReportPage";
-import { TechnicianPerformanceReport } from "@/components/TechnicianPerformanceReport";
-import { EncompassClaimAuditReport } from "@/components/EncompassClaimAuditReport";
-import { MonthlyPartReport } from "@/components/MonthlyPartReport";
-import { PayrollReport } from "@/components/PayrollReport";
-import { UnclaimedPartsReport } from "@/components/UnclaimedPartsReport";
-import { RepairCodeRestriction } from "@/components/RepairCodeRestriction";
-import { SalesSummaryReport } from "@/components/SalesSummaryReport";
-import { TechPayrollSetup } from "@/components/TechPayrollSetup";
-import { PaymentReport } from "@/components/PaymentReport";
-import { ClosingReport } from "@/components/ClosingReport";
-import { RepairStatusReport } from "@/components/RepairStatusReport";
-import { AccountingDashboard } from "@/components/AccountingDashboard";
-import { AttendanceMonitoringPage } from "@/components/AttendanceMonitoringPage";
-import { PayrollCalculationPage } from "@/components/PayrollCalculationPage";
-import { GeneralInfoPage } from "@/components/GeneralInfoPage";
-import { EmployeeSelfServicePage } from "@/components/EmployeeSelfServicePage";
 import { ItTicketsPage } from "@/components/ItTicketsPage";
-import { CSRMainDashboard } from "@/components/CSRMainDashboard";
-import { CSRTeamDailyReport } from "@/components/CSRTeamDailyReport";
-import { CsrRescheduleRequestsPage } from "@/components/CsrRescheduleRequestsPage";
-import { CsrGhTracker } from "@/components/CsrGhTracker";
-import { CsrLtpReport } from "@/components/CsrLtpReport";
-import { CsrCoachingLogPage } from "@/components/CsrCoachingLogPage";
-import { CSRCallTracker } from "@/components/CSRCallTracker";
-import { CSRStatusSummary } from "@/components/CSRStatusSummary";
-import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
-import { ClaimsDashboard } from "@/components/ClaimsDashboard";
-import { ClaimsDailyReport } from "@/components/ClaimsDailyReport";
-import { OperationsDashboard } from "@/components/OperationsDashboard";
-import { ReceivingStatusPage } from "@/components/ReceivingStatusPage";
-import { TicketOperationReport } from "@/components/TicketOperationReport";
+
+// Each page below is loaded only when it is opened (2026-10-26). They were
+// all imported up front, so opening any module page downloaded every page
+// in the app (~5.7 MB of code, incl. the 36,000-line HR Daily Report).
+const OverallStatusPage = lazy(() => import("@/components/OverallStatusPage").then((m) => ({ default: m.OverallStatusPage })));
+const RepairForecastPage = lazy(() => import("@/components/RepairForecastPage").then((m) => ({ default: m.RepairForecastPage })));
+const DailyActivityPage = lazy(() => import("@/components/DailyActivityPage").then((m) => ({ default: m.DailyActivityPage })));
+const TriageDashboardPage = lazy(() => import("@/components/TriageDashboardPage").then((m) => ({ default: m.TriageDashboardPage })));
+const UniversalActivityLogPage = lazy(() => import("@/components/UniversalActivityLogPage").then((m) => ({ default: m.UniversalActivityLogPage })));
+const ReportsLibraryPage = lazy(() => import("@/components/ReportsLibraryPage").then((m) => ({ default: m.ReportsLibraryPage })));
+const ErrorsImprovementsPage = lazy(() => import("@/components/ErrorsImprovementsPage").then((m) => ({ default: m.ErrorsImprovementsPage })));
+const GenericModulePage = lazy(() => import("@/components/GenericModulePage").then((m) => ({ default: m.GenericModulePage })));
+const PartReturnStatusPage = lazy(() => import("@/components/PartReturnStatus").then((m) => ({ default: m.PartReturnStatusPage })));
+const ClaimsPipeline = lazy(() => import("@/components/ClaimsPipeline").then((m) => ({ default: m.ClaimsPipeline })));
+const NeedClaimList = lazy(() => import("@/components/NeedClaimList").then((m) => ({ default: m.NeedClaimList })));
+const ClaimList = lazy(() => import("@/components/ClaimList").then((m) => ({ default: m.ClaimList })));
+const AuthorizationStatus = lazy(() => import("@/components/AuthorizationStatus").then((m) => ({ default: m.AuthorizationStatus })));
+const ClaimCalendarMonthly = lazy(() => import("@/components/ClaimCalendarMonthly").then((m) => ({ default: m.ClaimCalendarMonthly })));
+const ClaimCalendarWeekly = lazy(() => import("@/components/ClaimCalendarWeekly").then((m) => ({ default: m.ClaimCalendarWeekly })));
+const WorkCalendarPage = lazy(() => import("@/components/WorkCalendarPage").then((m) => ({ default: m.WorkCalendarPage })));
+const WorkPlannerPage = lazy(() => import("@/components/WorkPlannerPage").then((m) => ({ default: m.WorkPlannerPage })));
+const ClaimPlanner = lazy(() => import("@/components/ClaimPlanner").then((m) => ({ default: m.ClaimPlanner })));
+const CreditCardReport = lazy(() => import("@/components/CreditCardReport").then((m) => ({ default: m.CreditCardReport })));
+const FtfReport = lazy(() => import("@/components/FtfReport").then((m) => ({ default: m.FtfReport })));
+const LtpReport = lazy(() => import("@/components/LtpReport").then((m) => ({ default: m.LtpReport })));
+const TatReport = lazy(() => import("@/components/TatReport").then((m) => ({ default: m.TatReport })));
+const CsrDailyWork = lazy(() => import("@/components/CsrDailyWork").then((m) => ({ default: m.CsrDailyWork })));
+const DailyActivityReport = lazy(() => import("@/components/DailyActivityReport").then((m) => ({ default: m.DailyActivityReport })));
+const TeamMessenger = lazy(() => import("@/components/TeamMessenger").then((m) => ({ default: m.TeamMessenger })));
+const LiveChatSupportPage = lazy(() => import("@/components/LiveChatSupportPage").then((m) => ({ default: m.LiveChatSupportPage })));
+const LoginStatistics = lazy(() => import("@/components/LoginStatistics").then((m) => ({ default: m.LoginStatistics })));
+const LtpProjectionReport = lazy(() => import("@/components/LtpProjectionReport").then((m) => ({ default: m.LtpProjectionReport })));
+const ModelDocuments = lazy(() => import("@/components/ModelDocuments").then((m) => ({ default: m.ModelDocuments })));
+const OowTicketReport = lazy(() => import("@/components/OowTicketReport").then((m) => ({ default: m.OowTicketReport })));
+const OpenTicketSummary = lazy(() => import("@/components/OpenTicketSummary").then((m) => ({ default: m.OpenTicketSummary })));
+const PartPurchaseReport = lazy(() => import("@/components/PartPurchaseReport").then((m) => ({ default: m.PartPurchaseReport })));
+const PartRevenueReport = lazy(() => import("@/components/PartRevenueReport").then((m) => ({ default: m.PartRevenueReport })));
+const PartTransactionReport = lazy(() => import("@/components/PartTransactionReport").then((m) => ({ default: m.PartTransactionReport })));
+const RedoReport = lazy(() => import("@/components/RedoReport").then((m) => ({ default: m.RedoReport })));
+const ServiceLevelReport = lazy(() => import("@/components/ServiceLevelReport").then((m) => ({ default: m.ServiceLevelReport })));
+const TaxReport = lazy(() => import("@/components/TaxReport").then((m) => ({ default: m.TaxReport })));
+const TechDailyReport = lazy(() => import("@/components/TechDailyReport").then((m) => ({ default: m.TechDailyReport })));
+const TechEfficiencyReport = lazy(() => import("@/components/TechEfficiencyReport").then((m) => ({ default: m.TechEfficiencyReport })));
+const TechPerformanceReport = lazy(() => import("@/components/TechPerformanceReport").then((m) => ({ default: m.TechPerformanceReport })));
+const TechWorkOverview = lazy(() => import("@/components/TechWorkOverview").then((m) => ({ default: m.TechWorkOverview })));
+const TimecardReport = lazy(() => import("@/components/TimecardReport").then((m) => ({ default: m.TimecardReport })));
+const TriagePerformanceReport = lazy(() => import("@/components/TriagePerformanceReport").then((m) => ({ default: m.TriagePerformanceReport })));
+const TicketsMapWorkMap = lazy(() => import("@/components/TicketsMapWorkMap").then((m) => ({ default: m.TicketsMapWorkMap })));
+const PartOrder = lazy(() => import("@/components/PartOrder").then((m) => ({ default: m.PartOrder })));
+const PartReceive = lazy(() => import("@/components/PartReceive").then((m) => ({ default: m.PartReceive })));
+const PartFootprintPage = lazy(() => import("@/components/PartFootprintPage").then((m) => ({ default: m.PartFootprintPage })));
+const PartHistoryPage = lazy(() => import("@/components/PartHistoryPage").then((m) => ({ default: m.PartHistoryPage })));
+const PartManagementPage = lazy(() => import("@/components/PartManagementPage").then((m) => ({ default: m.PartManagementPage })));
+const PoStatusPage = lazy(() => import("@/components/PoStatusPage").then((m) => ({ default: m.PoStatusPage })));
+const ReturnPickupPage = lazy(() => import("@/components/ReturnPickupPage").then((m) => ({ default: m.ReturnPickupPage })));
+const RepairStatusesPage = lazy(() => import("@/components/RepairStatusesPage").then((m) => ({ default: m.RepairStatusesPage })));
+const DataMigrationPage = lazy(() => import("@/components/DataMigrationPage").then((m) => ({ default: m.DataMigrationPage })));
+const LoginSecurityPage = lazy(() => import("@/components/LoginSecurityPage").then((m) => ({ default: m.LoginSecurityPage })));
+const AccessibilityManagementPage = lazy(() => import("@/components/AccessibilityManagementPage").then((m) => ({ default: m.AccessibilityManagementPage })));
+const ApprovalChainPage = lazy(() => import("@/components/ApprovalChainPage").then((m) => ({ default: m.ApprovalChainPage })));
+const FlashTechCalendarPage = lazy(() => import("@/components/FlashTechCalendarPage").then((m) => ({ default: m.FlashTechCalendarPage })));
+const PartInventory = lazy(() => import("@/components/PartInventory").then((m) => ({ default: m.PartInventory })));
+const PartDailyPickup = lazy(() => import("@/components/PartDailyPickup").then((m) => ({ default: m.PartDailyPickup })));
+const PartDailyCollection = lazy(() => import("@/components/PartDailyCollection").then((m) => ({ default: m.PartDailyCollection })));
+const PartReturn = lazy(() => import("@/components/PartReturn").then((m) => ({ default: m.PartReturn })));
+const ReservedPartList = lazy(() => import("@/components/ReservedPartList").then((m) => ({ default: m.ReservedPartList })));
+const PartsDailyReportEbay = lazy(() => import("@/components/PartsDailyReportEbay").then((m) => ({ default: m.PartsDailyReportEbay })));
+const PartsDashboard = lazy(() => import("@/components/PartsDashboard").then((m) => ({ default: m.PartsDashboard })));
+const PartsOrderDashboard = lazy(() => import("@/components/PartsOrderDashboard").then((m) => ({ default: m.PartsOrderDashboard })));
+const TicketList = lazy(() => import("@/components/TicketList").then((m) => ({ default: m.TicketList })));
+const NewTicketPage = lazy(() => import("@/components/NewTicketPage").then((m) => ({ default: m.NewTicketPage })));
+const TodoListPage = lazy(() => import("@/components/TodoListPage").then((m) => ({ default: m.TodoListPage })));
+const AdminUserManagementPage = lazy(() => import("@/components/AdminUserManagementPage").then((m) => ({ default: m.AdminUserManagementPage })));
+const AccountManagementPage = lazy(() => import("@/components/AccountManagementPage").then((m) => ({ default: m.AccountManagementPage })));
+const LocationManagementPage = lazy(() => import("@/components/LocationManagementPage").then((m) => ({ default: m.LocationManagementPage })));
+const TechnicianWhereaboutsPage = lazy(() => import("@/components/TechnicianWhereaboutsPage").then((m) => ({ default: m.TechnicianWhereaboutsPage })));
+const AddBranchPage = lazy(() => import("@/components/AddBranchPage").then((m) => ({ default: m.AddBranchPage })));
+const CompanySettingsPage = lazy(() => import("@/components/CompanySettingsPage").then((m) => ({ default: m.CompanySettingsPage })));
+const ReportHRDaily = lazy(() => import("@/components/ReportHRDaily").then((m) => ({ default: m.ReportHRDaily })));
+const HrOnboardingChecklistPage = lazy(() => import("@/components/HrOnboardingChecklistPage").then((m) => ({ default: m.HrOnboardingChecklistPage })));
+const TechnicianFormChecklistPage = lazy(() => import("@/components/TechnicianFormChecklistPage").then((m) => ({ default: m.TechnicianFormChecklistPage })));
+const HiringAnalyticsPage = lazy(() => import("@/components/HiringAnalyticsPage").then((m) => ({ default: m.HiringAnalyticsPage })));
+const CandidateReviewsPage = lazy(() => import("@/components/CandidateReviewsPage").then((m) => ({ default: m.CandidateReviewsPage })));
+const ClockInCodesTab = lazy(() => import("@/components/ClockInCodesTab").then((m) => ({ default: m.ClockInCodesTab })));
+const TicketGuidesPage = lazy(() => import("@/components/TicketGuidesPage").then((m) => ({ default: m.TicketGuidesPage })));
+const SelfServiceGuidePage = lazy(() => import("@/components/SelfServiceGuidePage").then((m) => ({ default: m.SelfServiceGuidePage })));
+const GettingStartedGuidePage = lazy(() => import("@/components/GettingStartedGuidePage").then((m) => ({ default: m.GettingStartedGuidePage })));
+const ServerStatusPage = lazy(() => import("@/components/ServerStatusPage").then((m) => ({ default: m.ServerStatusPage })));
+const TeamUpdatesPage = lazy(() => import("@/components/TeamUpdatesPanel").then((m) => ({ default: m.TeamUpdatesPage })));
+const ApproverGuidePage = lazy(() => import("@/components/ApproverGuidePage").then((m) => ({ default: m.ApproverGuidePage })));
+const BizOpsGuidePage = lazy(() => import("@/components/BizOpsGuidePage").then((m) => ({ default: m.BizOpsGuidePage })));
+const PreAuthPage = lazy(() => import("@/components/PreAuthPage").then((m) => ({ default: m.PreAuthPage })));
+const ClaimsGuidePage = lazy(() => import("@/components/ClaimsGuidePage").then((m) => ({ default: m.ClaimsGuidePage })));
+const DepartmentGuidePage = lazy(() => import("@/components/DepartmentGuidePage").then((m) => ({ default: m.DepartmentGuidePage })));
+const TrainingListPage = lazy(() => import("@/components/TrainingListPage").then((m) => ({ default: m.TrainingListPage })));
+const AbsentListPage = lazy(() => import("@/components/AbsentListPage").then((m) => ({ default: m.AbsentListPage })));
+const RepairKnowledgeBase = lazy(() => import("@/components/RepairKnowledgeBase").then((m) => ({ default: m.RepairKnowledgeBase })));
+const TechGuidesPage = lazy(() => import("@/components/TechGuidesPage").then((m) => ({ default: m.TechGuidesPage })));
+const ReportHR = lazy(() => import("@/components/ReportHR").then((m) => ({ default: m.ReportHR })));
+const ReportCSRDaily = lazy(() => import("@/components/ReportCSRDaily").then((m) => ({ default: m.ReportCSRDaily })));
+const ReportClaimsDaily = lazy(() => import("@/components/ReportClaimsDaily").then((m) => ({ default: m.ReportClaimsDaily })));
+const ReportTriageDaily = lazy(() => import("@/components/ReportTriageDaily").then((m) => ({ default: m.ReportTriageDaily })));
+const ReportPartsDaily = lazy(() => import("@/components/ReportPartsDaily").then((m) => ({ default: m.ReportPartsDaily })));
+const ReportOperationsDaily = lazy(() => import("@/components/ReportOperationsDaily").then((m) => ({ default: m.ReportOperationsDaily })));
+const ReportAttendanceMonitoring = lazy(() => import("@/components/ReportAttendanceMonitoring").then((m) => ({ default: m.ReportAttendanceMonitoring })));
+const ReportAccounting = lazy(() => import("@/components/ReportAccounting").then((m) => ({ default: m.ReportAccounting })));
+const BranchDailyReportPage = lazy(() => import("@/components/BranchDailyReportPage").then((m) => ({ default: m.BranchDailyReportPage })));
+const TechnicianPerformanceReport = lazy(() => import("@/components/TechnicianPerformanceReport").then((m) => ({ default: m.TechnicianPerformanceReport })));
+const EncompassClaimAuditReport = lazy(() => import("@/components/EncompassClaimAuditReport").then((m) => ({ default: m.EncompassClaimAuditReport })));
+const MonthlyPartReport = lazy(() => import("@/components/MonthlyPartReport").then((m) => ({ default: m.MonthlyPartReport })));
+const PayrollReport = lazy(() => import("@/components/PayrollReport").then((m) => ({ default: m.PayrollReport })));
+const UnclaimedPartsReport = lazy(() => import("@/components/UnclaimedPartsReport").then((m) => ({ default: m.UnclaimedPartsReport })));
+const RepairCodeRestriction = lazy(() => import("@/components/RepairCodeRestriction").then((m) => ({ default: m.RepairCodeRestriction })));
+const SalesSummaryReport = lazy(() => import("@/components/SalesSummaryReport").then((m) => ({ default: m.SalesSummaryReport })));
+const TechPayrollSetup = lazy(() => import("@/components/TechPayrollSetup").then((m) => ({ default: m.TechPayrollSetup })));
+const PaymentReport = lazy(() => import("@/components/PaymentReport").then((m) => ({ default: m.PaymentReport })));
+const ClosingReport = lazy(() => import("@/components/ClosingReport").then((m) => ({ default: m.ClosingReport })));
+const RepairStatusReport = lazy(() => import("@/components/RepairStatusReport").then((m) => ({ default: m.RepairStatusReport })));
+const AccountingDashboard = lazy(() => import("@/components/AccountingDashboard").then((m) => ({ default: m.AccountingDashboard })));
+const AttendanceMonitoringPage = lazy(() => import("@/components/AttendanceMonitoringPage").then((m) => ({ default: m.AttendanceMonitoringPage })));
+const PayrollCalculationPage = lazy(() => import("@/components/PayrollCalculationPage").then((m) => ({ default: m.PayrollCalculationPage })));
+const GeneralInfoPage = lazy(() => import("@/components/GeneralInfoPage").then((m) => ({ default: m.GeneralInfoPage })));
+const EmployeeSelfServicePage = lazy(() => import("@/components/EmployeeSelfServicePage").then((m) => ({ default: m.EmployeeSelfServicePage })));
+const CSRMainDashboard = lazy(() => import("@/components/CSRMainDashboard").then((m) => ({ default: m.CSRMainDashboard })));
+const CSRTeamDailyReport = lazy(() => import("@/components/CSRTeamDailyReport").then((m) => ({ default: m.CSRTeamDailyReport })));
+const CsrRescheduleRequestsPage = lazy(() => import("@/components/CsrRescheduleRequestsPage").then((m) => ({ default: m.CsrRescheduleRequestsPage })));
+const CsrGhTracker = lazy(() => import("@/components/CsrGhTracker").then((m) => ({ default: m.CsrGhTracker })));
+const CsrLtpReport = lazy(() => import("@/components/CsrLtpReport").then((m) => ({ default: m.CsrLtpReport })));
+const CsrCoachingLogPage = lazy(() => import("@/components/CsrCoachingLogPage").then((m) => ({ default: m.CsrCoachingLogPage })));
+const CSRCallTracker = lazy(() => import("@/components/CSRCallTracker").then((m) => ({ default: m.CSRCallTracker })));
+const CSRStatusSummary = lazy(() => import("@/components/CSRStatusSummary").then((m) => ({ default: m.CSRStatusSummary })));
+const ExpenseTrackingPage = lazy(() => import("@/components/ExpenseTrackingPage").then((m) => ({ default: m.ExpenseTrackingPage })));
+const ClaimsDashboard = lazy(() => import("@/components/ClaimsDashboard").then((m) => ({ default: m.ClaimsDashboard })));
+const ClaimsDailyReport = lazy(() => import("@/components/ClaimsDailyReport").then((m) => ({ default: m.ClaimsDailyReport })));
+const OperationsDashboard = lazy(() => import("@/components/OperationsDashboard").then((m) => ({ default: m.OperationsDashboard })));
+const ReceivingStatusPage = lazy(() => import("@/components/ReceivingStatusPage").then((m) => ({ default: m.ReceivingStatusPage })));
+const NoCoverageTicketsPage = lazy(() => import("@/components/NoCoverageTicketsPage").then((m) => ({ default: m.NoCoverageTicketsPage })));
+const TicketOperationReport = lazy(() => import("@/components/TicketOperationReport").then((m) => ({ default: m.TicketOperationReport })));
 
 const MOVED_SUBMODULES: Record<string, { module: string; submodule: string }> = {
   "tickets/operation": { module: "bizops", submodule: "operation" },
@@ -458,6 +466,7 @@ function SubModule() {
     <>
       <AppHeader />
       <PageTrail mod={mod} sub={sub} />
+      <Suspense fallback={<BrandedLoader label="Loading page..." delayMs={150} />}>
       {sub.slug === "overall-status"
         ? <OverallStatusPage mod={mod} sub={sub} companyId={companyId} />
         : sub.slug === "repair-forecast"
@@ -714,6 +723,8 @@ function SubModule() {
         ? <TicketList mod={mod} sub={sub} />
         : (sub as any).custom === "receiving-status"
         ? <ReceivingStatusPage mod={mod} sub={sub} />
+        : (sub as any).custom === "no-coverage-tickets"
+        ? <NoCoverageTicketsPage mod={mod} sub={sub} />
         : (sub as any).custom === "ticket-operation-report"
         ? <TicketOperationReport mod={mod} sub={sub} />
         : sub.slug === "new-ticket"
@@ -732,9 +743,12 @@ function SubModule() {
         ? <UniversalActivityLogPage mod={mod} sub={sub} />
         : (sub as any).custom === "reports-library"
         ? <ReportsLibraryPage mod={mod} sub={sub} />
+        : (sub as any).custom === "errors-improvements"
+        ? <ErrorsImprovementsPage mod={mod} sub={sub} />
         : (sub as any).custom === "add-branch"
         ? <AddBranchPage mod={mod} sub={sub} />
         : <GenericModulePage mod={mod} sub={sub} />}
+      </Suspense>
       <Footer />
     </>
   );

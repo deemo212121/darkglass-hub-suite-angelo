@@ -34820,6 +34820,17 @@ export function lookupZip(zip: string): ZipCoverageEntry | null {
   return ZIP_COVERAGE_OVERRIDES[clean] || ZIP_COVERAGE[clean] || null;
 }
 
+/**
+ * In our coverage: a ZIP with digits that lookupZip knows (ZIP+4 and a
+ * dropped leading zero are handled). No ZIP counts as not covered — same
+ * check that picks a ticket's branch. Used by Tickets -> No-Coverage Tickets
+ * and the ticket page's Out of Coverage banner.
+ */
+export function isZipCovered(zip: string | null | undefined): boolean {
+  const z = String(zip ?? "");
+  return /\d/.test(z) && lookupZip(z) !== null;
+}
+
 // Get all unique location names (for dropdowns etc)
 export const ALL_LOCATION_NAMES: string[] = LOCATIONS_DATA.map(l => l.location);
 

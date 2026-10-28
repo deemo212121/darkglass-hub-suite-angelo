@@ -12,6 +12,7 @@
 
 import { supabase } from "./client";
 import { getCompanyMapProvider } from "./companySettings";
+import { getErBackfillTicketIds } from "./erBackfill";
 import { computeDailyRouteMiles, getOfficeCoordinates, getElectroluxHuntsvilleMileageOrigin, type MileageTicketInput, type DailyRouteMilesResult } from "@/lib/mapEngine";
 import { todayISO as userTodayISO } from "@/lib/localDate";
 
@@ -757,7 +758,9 @@ async function syncMileageFromTicketsInner(
         all.push(...(data ?? []));
         if (!data || data.length < PAGE_SIZE) break;
       }
-      return { data: all, error: null };
+      // ER history tickets (migration 0408) — the drive was paid in ER, so no mileage entry here.
+      const backfillIds = await getErBackfillTicketIds();
+      return { data: backfillIds.size ? all.filter((t) => !backfillIds.has(t.id)) : all, error: null };
     })(),
     // Unbounded before this fix — Supabase's default 1000-row cap silently
     // truncated it once source=auto rows passed that count (confirmed live:
@@ -1227,11 +1230,13 @@ export async function syncMileageForTicketDay(rawTechnicianName: string, schedul
     // it's never excluded by this.
     const todayISO = userTodayISO();
     const isPermanentlyMissed = (t: any): boolean => !t.onsite_arrived_at && t.schedule_date && t.schedule_date < todayISO;
+    const backfillIds = await getErBackfillTicketIds();
     const groupTickets = (dayTickets ?? []).filter(
       (t: any) =>
         String(t.technician || "").trim().toLowerCase() === trimmedName.toLowerCase() &&
         !rescheduledTicketIds.has(t.id) &&
-        !isPermanentlyMissed(t)
+        !isPermanentlyMissed(t) &&
+        !backfillIds.has(t.id)
     );
     if (groupTickets.length === 0) return;
 

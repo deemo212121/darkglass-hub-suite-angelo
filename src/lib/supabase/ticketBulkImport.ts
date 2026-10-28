@@ -44,16 +44,39 @@
  * through Excel (an .xlsx storing TicketNo as a number, or a row that only
  * matched after undoing Excel's change), a NEW all-digit number isn't trusted
  * — it's listed instead of inserted.
+ *
+ * ER history backfill (2026-10-27):
+ *   - Preview (`dryRun`): runs every check and match below and returns the
+ *     same summary, but writes nothing — the modal shows it before Import.
+ *   - Cleanup: "NULL" / "N/A" / "none" / "-" cells count as blank, and an
+ *     "... Admin" technician (ER's "Memphis Admin") is left unassigned.
+ *   - Customers: a new ticket reuses an existing customer when a phone and
+ *     the street address (+ ZIP when both have one) agree, after tidying
+ *     formats — never email alone (property managers share one email across
+ *     many homes). Rows in the same file for the same customer share one new
+ *     record.
+ *   - `erHistory`: new tickets are marked er_backfill (migration 0408 —
+ *     payroll, mileage, attendance and the default ticket list leave them
+ *     out). Tickets already in AHS keep their status, schedule date and
+ *     technician (a blank technician is still filled); blank fields are
+ *     filled from the file and nothing else changes.
+ *   - cx_preferred_date <- CxPreferredDate (0408; customer_pref stays the yes / no).
  */
 import * as XLSX from "xlsx";
 import { supabase } from "./client";
+import { selectAllPages } from "./selectAllPages";
 import { invalidateCompanyTicketsCache } from "./tickets";
+import { invalidateErBackfillIds } from "./erBackfill";
 
 export type ImportRow = Record<string, string>;
 
 export interface ImportOptions {
   /** Replace a technician already assigned in the system with the file's. Off by default. */
   updateTechnicians?: boolean;
+  /** Check only: run every match and return the summary without writing anything. */
+  dryRun?: boolean;
+  /** ER history backfill: mark new tickets er_backfill; existing tickets only get blanks filled (see the header). */
+  erHistory?: boolean;
 }
 
 export type ImportOutcome =
@@ -76,6 +99,12 @@ export interface ImportSummary {
   /** New all-digit numbers not added because the file went through Excel (they may be changed). */
   skippedExcelNumbers: string[];
   failed: { ticketNo: string; error: string }[];
+  /** New tickets attached to a customer already in AHS (same phone + address). */
+  customersMatched: number;
+  /** New customer records created (or, in a preview, that would be). */
+  customersCreated: number;
+  /** True when nothing was written (Preview). */
+  dryRun: boolean;
 }
 
 /** Reserved row key: this row's TicketNo cell was stored as a number in the .xlsx. */
@@ -174,9 +203,17 @@ export function looksLikeTicketExport(rows: ImportRow[]): boolean {
   return ["TicketNo", "StatusDesc", "CxUserName"].every((c) => cols.includes(c));
 }
 
-/** "22/09/2026 00:00" → "2026-09-22" (the export is day-first). */
+/**
+ * Export date → "YYYY-MM-DD". ServicePower's export is day-first
+ * ("22/09/2026 00:00"); ER's is ISO ("2026-09-22 00:00:00") — before the ISO
+ * form was read, every date in an ER file came in blank (no schedule, no
+ * received date, created "today").
+ */
 function ddmmyyyyToIso(v: string): string | null {
-  const m = (v || "").trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  const s = (v || "").trim();
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) return `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`;
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
   if (!m) return null;
   return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
 }
@@ -186,8 +223,17 @@ const int = (v: string) => {
   return Number.isFinite(n) ? n : 0;
 };
 
+/** Placeholder text exports put in empty cells. */
+const JUNK_VALUE = /^(null|n\/a|na|none|-+)$/i;
+/** Not a real technician — ER's office queue ("Memphis Admin"). */
+const NOT_A_TECHNICIAN = /\badmin\b/i;
+
 function toRecords(r: ImportRow) {
-  const get = (c: string) => (r[c] ?? "").trim();
+  const get = (c: string) => {
+    const v = (r[c] ?? "").trim();
+    return JUNK_VALUE.test(v) ? "" : v;
+  };
+  const techName = NOT_A_TECHNICIAN.test(get("TechName")) ? "" : get("TechName");
   const name = get("CxUserName");
   const account = get("MfgName");
   const refType = get("RefType");
@@ -222,7 +268,7 @@ function toRecords(r: ImportRow) {
     redo: /^y/i.test(get("Redo")),
     schedule_date: ddmmyyyyToIso(get("ScheduleDate")),
     call_received_date: callReceived,
-    technician: get("TechName") || null,
+    technician: techName || null,
     location: get("LocationName") || get("Branch") || null,
     problem_description: get("SymptomByCx") || null,
     internal_note: get("NoteInternal") || null,
@@ -230,6 +276,7 @@ function toRecords(r: ImportRow) {
     aging: int(get("Aging")),
     calls: int(get("nCallAttempt")),
     customer_pref: !!get("CxPreferredDate"),
+    cx_preferred_date: ddmmyyyyToIso(get("CxPreferredDate")),
     created_at: callReceived ? new Date(`${callReceived}T12:00:00`).toISOString() : new Date().toISOString(),
   };
   // rawStatus: the file's own StatusDesc — ticket.status defaults a blank one
@@ -244,20 +291,27 @@ interface ExistingTicket {
   technician: string;
   /** Customer ZIP (first 5) — the check that an Excel-changed number really is this ticket. */
   zip: string;
+  /** ER history mode only: the fillable columns' current values (blank = the file may fill it). */
+  fillable?: Record<string, string>;
 }
+
+/** Columns an ER history import may fill where the ticket has them blank (import_ticket_updates "fill", migration 0408). */
+const FILLABLE_COLUMNS = [
+  "model", "model_version", "serial", "product_type", "warranty", "manufacturer", "account", "account_no",
+  "location", "problem_description", "internal_note", "call_received_date", "cx_preferred_date",
+] as const;
+type FillableColumn = (typeof FILLABLE_COLUMNS)[number];
 
 const zip5 = (v: string | null | undefined) => String(v ?? "").trim().slice(0, 5);
 
 /** The tickets (from `ticketNos`) that already exist in the signed-in company, with the fields an import may update. */
-async function existingTickets(ticketNos: string[]): Promise<Map<string, ExistingTicket>> {
+async function existingTickets(ticketNos: string[], withFillable: boolean): Promise<Map<string, ExistingTicket>> {
   const found = new Map<string, ExistingTicket>();
+  const select = `ticket_no, status, schedule_date, technician, customers(zip)${withFillable ? `, ${FILLABLE_COLUMNS.join(", ")}` : ""}`;
   for (let i = 0; i < ticketNos.length; i += 200) {
-    const { data, error } = await supabase
-      .from("tickets")
-      .select("ticket_no, status, schedule_date, technician, customers(zip)")
-      .in("ticket_no", ticketNos.slice(i, i + 200));
-    if (error) throw new Error(`Couldn't check existing tickets: ${error.message}`);
-    for (const r of (data ?? []) as Array<{ ticket_no: string; status: string | null; schedule_date: string | null; technician: string | null; customers: { zip: string | null } | { zip: string | null }[] | null }>) {
+    const { data, error } = await supabase.from("tickets").select(select).in("ticket_no", ticketNos.slice(i, i + 200));
+    if (error) throw new Error(missingMigrationMessage(error) ?? `Couldn't check existing tickets: ${error.message}`);
+    for (const r of (data ?? []) as unknown as Array<Record<string, unknown> & { ticket_no: string; status: string | null; schedule_date: string | null; technician: string | null; customers: { zip: string | null } | { zip: string | null }[] | null }>) {
       const customer = Array.isArray(r.customers) ? r.customers[0] : r.customers;
       found.set(r.ticket_no, {
         ticketNo: r.ticket_no,
@@ -265,10 +319,18 @@ async function existingTickets(ticketNos: string[]): Promise<Map<string, Existin
         scheduleDate: r.schedule_date ? String(r.schedule_date).slice(0, 10) : "",
         technician: (r.technician ?? "").trim(),
         zip: zip5(customer?.zip),
+        fillable: withFillable ? Object.fromEntries(FILLABLE_COLUMNS.map((c) => [c, String(r[c] ?? "").trim()])) : undefined,
       });
     }
   }
   return found;
+}
+
+/** A clear message when the database doesn't have migration 0408's columns yet (null for any other error). */
+function missingMigrationMessage(err: { code?: string; message?: string }): string | null {
+  return /er_backfill|cx_preferred_date/i.test(err.message ?? "")
+    ? "This needs migration 0408 (ER backfill) in Supabase — run it, then try again."
+    : null;
 }
 
 /**
@@ -293,47 +355,146 @@ function resolveExisting(rec: ReturnType<typeof toRecords>, existing: Map<string
   return null;
 }
 
-type UpdatePayload = { ticket_no: string; status?: string; schedule_date?: string; technician?: string };
+type UpdatePayload = { ticket_no: string; status?: string; schedule_date?: string; technician?: string; fill?: Partial<Record<FillableColumn, string>> };
 
 /** What the file would change on an existing ticket (no changes = nothing new). */
 function diffExisting(rec: ReturnType<typeof toRecords>, cur: ExistingTicket, opts: ImportOptions): { payload: UpdatePayload; changes: string[] } {
   const payload: UpdatePayload = { ticket_no: cur.ticketNo };
   const changes: string[] = [];
-  const fileStatus = rec.rawStatus;
-  if (fileStatus && fileStatus !== cur.status) {
-    payload.status = fileStatus;
-    changes.push(`Status: ${cur.status || "—"} → ${fileStatus}`);
-  }
-  const fileSched = rec.ticket.schedule_date ?? "";
-  if (fileSched && fileSched !== cur.scheduleDate) {
-    payload.schedule_date = fileSched;
-    changes.push(`Schedule: ${cur.scheduleDate || "—"} → ${fileSched}`);
+  // ER history: the ticket's own status and schedule stay — AHS is ahead of an old export.
+  if (!opts.erHistory) {
+    const fileStatus = rec.rawStatus;
+    if (fileStatus && fileStatus !== cur.status) {
+      payload.status = fileStatus;
+      changes.push(`Status: ${cur.status || "—"} → ${fileStatus}`);
+    }
+    const fileSched = rec.ticket.schedule_date ?? "";
+    if (fileSched && fileSched !== cur.scheduleDate) {
+      payload.schedule_date = fileSched;
+      changes.push(`Schedule: ${cur.scheduleDate || "—"} → ${fileSched}`);
+    }
   }
   const fileTech = (rec.ticket.technician ?? "").trim();
-  if (fileTech && fileTech.toLowerCase() !== cur.technician.toLowerCase() && (!cur.technician || opts.updateTechnicians)) {
+  if (fileTech && fileTech.toLowerCase() !== cur.technician.toLowerCase() && (!cur.technician || (opts.updateTechnicians && !opts.erHistory))) {
     payload.technician = fileTech;
     changes.push(`Technician: ${cur.technician || "—"} → ${fileTech}`);
   }
+  if (opts.erHistory && cur.fillable) {
+    const fill: Partial<Record<FillableColumn, string>> = {};
+    for (const col of FILLABLE_COLUMNS) {
+      const v = (rec.ticket as Record<string, unknown>)[col];
+      if (!cur.fillable[col] && typeof v === "string" && v.trim()) fill[col] = v.trim();
+    }
+    const filled = Object.keys(fill);
+    if (filled.length > 0) {
+      payload.fill = fill;
+      changes.push(`Filled: ${filled.join(", ")}`);
+    }
+  }
   return { payload, changes };
+}
+
+// ── Customer matching ───────────────────────────────────────────────────────
+
+/** Last 10 digits — "(205) 555-0101", "+1 205.555.0101" and "2055550101" are one number. */
+const phone10 = (v: string | null | undefined) => {
+  const d = String(v ?? "").replace(/\D/g, "");
+  return d.length >= 10 ? d.slice(-10) : "";
+};
+
+const STREET_WORDS: Record<string, string> = {
+  street: "st", avenue: "ave", av: "ave", road: "rd", drive: "dr", lane: "ln", court: "ct", boulevard: "blvd",
+  circle: "cir", place: "pl", parkway: "pkwy", highway: "hwy", terrace: "ter", trail: "trl", cove: "cv",
+  north: "n", south: "s", east: "e", west: "w", apartment: "apt", suite: "ste",
+};
+/** "1227 Tara Drive." and "1227 TARA DR" → "1227 tara dr". */
+const addressKey = (v: string | null | undefined) =>
+  String(v ?? "")
+    .toLowerCase()
+    .replace(/[.,#]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => STREET_WORDS[w] ?? w)
+    .join(" ");
+
+interface CustomerLite { id: string; address: string; zip: string }
+
+/** Every customer in the company, indexed by phone — one paged read per import. */
+async function loadCustomerIndex(): Promise<Map<string, CustomerLite[]>> {
+  const { data, error } = await selectAllPages<{ id: string; phone: string | null; second_phone: string | null; address: string | null; zip: string | null }>(() =>
+    supabase.from("customers").select("id, phone, second_phone, address, zip").order("id")
+  );
+  if (error) throw new Error(`Couldn't load customers to match: ${error.message}`);
+  const index = new Map<string, CustomerLite[]>();
+  for (const c of data) {
+    const lite: CustomerLite = { id: c.id, address: addressKey(c.address), zip: zip5(c.zip) };
+    if (!lite.address) continue;
+    for (const p of new Set([phone10(c.phone), phone10(c.second_phone)].filter(Boolean))) index.set(p, [...(index.get(p) ?? []), lite]);
+  }
+  return index;
+}
+
+type ImportCustomer = ReturnType<typeof toRecords>["customer"];
+
+/** The existing customer this row is (a phone and the street address agree, ZIP too when both have one). */
+function matchCustomer(c: ImportCustomer, index: Map<string, CustomerLite[]>): string | null {
+  const addr = addressKey(c.address);
+  if (!addr) return null;
+  const zip = zip5(c.zip);
+  for (const p of [phone10(c.phone), phone10(c.second_phone)]) {
+    if (!p) continue;
+    const hit = (index.get(p) ?? []).find((x) => x.address === addr && (!x.zip || !zip || x.zip === zip));
+    if (hit) return hit.id;
+  }
+  return null;
+}
+
+/** Same-customer key for rows in one file that match nobody yet (null = can't tell, always its own record). */
+function newCustomerKey(c: ImportCustomer): string | null {
+  const p = phone10(c.phone) || phone10(c.second_phone);
+  const addr = addressKey(c.address);
+  return p && addr ? `${p}|${addr}|${zip5(c.zip)}` : null;
 }
 
 function isMissingFunction(err: { code?: string; message?: string }): boolean {
   return err.code === "PGRST202" || err.code === "42883" || /import_ticket_updates/i.test(err.message ?? "");
 }
 
-async function insertOne(rec: ReturnType<typeof toRecords>): Promise<ImportOutcome> {
+/** Where a new ticket's customer comes from: one already in AHS, or a new record (shared by `shared` rows of this file). */
+type CustomerPlan = { existingId: string } | { key: string | null; shared: number };
+
+async function insertOne(
+  rec: ReturnType<typeof toRecords>,
+  plan: CustomerPlan,
+  newCustomer: (rec: ReturnType<typeof toRecords>, key: string | null) => Promise<string>,
+  erHistory: boolean
+): Promise<ImportOutcome> {
   const ticketNo = rec.ticket.ticket_no;
-  const { data: cust, error: custErr } = await supabase.from("customers").insert(rec.customer).select("id").single();
-  if (custErr) return { kind: "failed", ticketNo, error: `Customer: ${custErr.message}` };
-  const { error } = await supabase.from("tickets").insert({ ...rec.ticket, customer_id: cust.id });
+  let customerId: string;
+  try {
+    customerId = "existingId" in plan ? plan.existingId : await newCustomer(rec, plan.key);
+  } catch (err) {
+    return { kind: "failed", ticketNo, error: `Customer: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  const { cx_preferred_date, ...ticket } = rec.ticket;
+  const { error } = await supabase.from("tickets").insert({
+    ...ticket,
+    // Only sent when there's something to store, so a file without the column imports before migration 0408 too.
+    ...(cx_preferred_date ? { cx_preferred_date } : {}),
+    ...(erHistory ? { er_backfill: true } : {}),
+    customer_id: customerId,
+  });
   if (error) {
     // Don't leave an orphan customer behind (company staff may delete their
-    // own company's customers — 0001's tenant policy). If that delete fails
-    // too, say so instead of leaving it silently.
-    const { error: delErr } = await supabase.from("customers").delete().eq("id", cust.id);
+    // own company's customers — 0001's tenant policy) — only a record made
+    // for this row alone, never an existing customer or one other rows of
+    // the file share. If that delete fails too, say so instead of leaving it
+    // silently.
+    let delErr: { message: string } | null = null;
+    if (!("existingId" in plan) && plan.shared <= 1) delErr = (await supabase.from("customers").delete().eq("id", customerId)).error;
     const orphanNote = delErr ? ` (its new customer record couldn't be removed: ${delErr.message})` : "";
     if (error.code === "23505" && !delErr) return { kind: "skipped", ticketNo, reason: "exists", line: 0 };
-    return { kind: "failed", ticketNo, error: `${error.code === "23505" ? "Already in the system" : error.message}${orphanNote}` };
+    return { kind: "failed", ticketNo, error: `${error.code === "23505" ? "Already in the system" : missingMigrationMessage(error) ?? error.message}${orphanNote}` };
   }
   return { kind: "added", ticketNo };
 }
@@ -359,6 +520,9 @@ export async function importTickets(
     matchedExcelNumbers: [],
     skippedExcelNumbers: [],
     failed: [],
+    customersMatched: 0,
+    customersCreated: 0,
+    dryRun: !!opts.dryRun,
   };
 
   // An .xlsx that stores any TicketNo as a number has been through Excel.
@@ -389,7 +553,7 @@ export async function importTickets(
     const changed = excelChangedTicketNo(no);
     if (changed) lookupNos.add(changed);
   }
-  const existing = await existingTickets(Array.from(lookupNos));
+  const existing = await existingTickets(Array.from(lookupNos), !!opts.erHistory);
   const resolved = toInsert.map((r) => ({ rec: r, match: resolveExisting(r, existing) }));
   if (resolved.some((x) => x.match?.fileWasChanged)) fileWentThroughExcel = true;
 
@@ -418,13 +582,52 @@ export async function importTickets(
     else updates.push(d);
   }
 
+  // Customers for the new tickets: an existing match, or one new record per same-customer group.
+  const customerIndex = fresh.length > 0 ? await loadCustomerIndex() : new Map<string, CustomerLite[]>();
+  const groupSize = new Map<string, number>();
+  const plans = fresh.map((rec): CustomerPlan => {
+    const existingId = matchCustomer(rec.customer, customerIndex);
+    if (existingId) return { existingId };
+    const key = newCustomerKey(rec.customer);
+    if (key) groupSize.set(key, (groupSize.get(key) ?? 0) + 1);
+    return { key, shared: 1 };
+  });
+  for (const plan of plans) {
+    if ("existingId" in plan) summary.customersMatched++;
+    else if (plan.key) plan.shared = groupSize.get(plan.key) ?? 1;
+  }
+  summary.customersCreated = groupSize.size + plans.filter((p) => !("existingId" in p) && !p.key).length;
+
+  if (opts.dryRun) {
+    summary.added = fresh.map((r) => r.ticket.ticket_no);
+    summary.updated = updates.map((u) => ({ ticketNo: u.payload.ticket_no, changes: u.changes }));
+    return summary;
+  }
+
+  // Rows sharing a key await the same insert, so parallel rows can't each create the customer.
+  const createdByKey = new Map<string, Promise<string>>();
+  const newCustomer = (rec: ReturnType<typeof toRecords>, key: string | null): Promise<string> => {
+    const create = async () => {
+      const { data, error } = await supabase.from("customers").insert(rec.customer).select("id").single();
+      if (error) throw new Error(error.message);
+      return data.id as string;
+    };
+    if (!key) return create();
+    let p = createdByKey.get(key);
+    if (!p) {
+      p = create();
+      createdByKey.set(key, p);
+    }
+    return p;
+  };
+
   const UPDATE_BATCH = 100;
   const total = fresh.length + updates.length;
   let done = 0;
   onProgress?.(0, total);
   const POOL = 4;
   for (let i = 0; i < fresh.length; i += POOL) {
-    const results = await Promise.all(fresh.slice(i, i + POOL).map(insertOne));
+    const results = await Promise.all(fresh.slice(i, i + POOL).map((rec, j) => insertOne(rec, plans[i + j], newCustomer, !!opts.erHistory)));
     for (const res of results) {
       if (res.kind === "added") summary.added.push(res.ticketNo);
       else if (res.kind === "skipped") summary.skippedExisting.push(res.ticketNo);
@@ -455,5 +658,6 @@ export async function importTickets(
   }
 
   if (summary.added.length > 0 || summary.updated.length > 0) invalidateCompanyTicketsCache();
+  if (opts.erHistory && summary.added.length > 0) invalidateErBackfillIds();
   return summary;
 }
