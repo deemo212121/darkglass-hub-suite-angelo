@@ -1757,7 +1757,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           for (let from = 0; ; from += PAGE_SIZE) {
             const { data, error } = await supabase
               .from("profiles")
-              .select("id,company_id,phone_number,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded,is_active,schedule_timezone,employment_type,tier_level,training_end_date")
+              .select("id,company_id,phone_number,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,working_hours,meal_minutes,payroll_excluded,is_active,schedule_timezone,employment_type,tier_level,training_end_date")
               .neq("role", "SUPERSUPERADMIN")
               .range(from, from + PAGE_SIZE - 1);
             if (error) return { data: null, error };
@@ -1830,21 +1830,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
       const runs = (runsRes.data ?? []) as PayrollRun[];
 
-      // Fetched separately, best-effort — working_hours/meal_minutes
-      // (migration 0109) must never be able to break the rest of this
-      // dashboard if that migration hasn't been applied yet.
+      // working_hours/meal_minutes come with the main profiles select above.
+      // They used to be a separate best-effort `.in("id", <every profile>)`
+      // query whose URL outgrew the request limit; when it failed, everyone
+      // silently fell back to Check-In–Check-Out minus meal (8:00–17:00 −
+      // 30 min = 8.5h instead of working_hours 8), so credited PTO hours and
+      // totals changed between refreshes.
       const empIds = ((empRes.data ?? []) as any[]).map((p) => p.id);
-      const workScheduleById = new Map<string, { working_hours: number | null; meal_minutes: number | null }>();
       if (empIds.length > 0) {
-        const { data: extraRows, error: extraError } = await supabase
-          .from("profiles")
-          .select("id,working_hours,meal_minutes")
-          .in("id", empIds);
-        if (extraError) {
-          console.error("Failed to load working_hours/meal_minutes:", extraError.message);
-        } else {
-          for (const r of extraRows ?? []) workScheduleById.set((r as any).id, r as any);
-        }
         getEmployeeInfoByProfileIds(empIds)
           .then(setEmployeeInfoByProfileId)
           .catch((err) => console.error("Failed to load employee bank info:", err));
@@ -1877,8 +1870,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         offDays: p.off_days ?? undefined,
         requiredCheckIn: p.required_check_in ?? undefined,
         requiredCheckOut: p.required_check_out ?? undefined,
-        workingHours: workScheduleById.get(p.id)?.working_hours ?? null,
-        mealMinutes: workScheduleById.get(p.id)?.meal_minutes ?? null,
+        workingHours: p.working_hours ?? null,
+        mealMinutes: p.meal_minutes ?? null,
         scheduleTimezone: (p.schedule_timezone as ScheduleTimezone | null) ?? "CST",
         payrollExcluded: p.payroll_excluded ?? false,
         isActive: p.is_active ?? true,
