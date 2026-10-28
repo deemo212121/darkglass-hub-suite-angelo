@@ -50,6 +50,7 @@ export function TicketPhotos({
   enableOfflineQueue,
   onPhotoClick,
   compactChecklist,
+  onPhotosChange,
 }: {
   ticketNo: string;
   category?: string;
@@ -62,6 +63,8 @@ export function TicketPhotos({
   onPhotoClick?: (photo: TicketPhoto, imagePhotos: TicketPhoto[]) => void;
   /** Narrow spots (Pre-Claim): only the "Missing required" line, not the full photo checklist. */
   compactChecklist?: boolean;
+  /** The ticket's photos once loaded, and again after every upload / delete / type change — Pre-Claim checks them before submitting. */
+  onPhotosChange?: (photos: TicketPhoto[]) => void;
 }) {
   const { companyId, ready } = useAuth();
   const [photos, setPhotos] = useState<TicketPhoto[]>([]);
@@ -120,6 +123,10 @@ export function TicketPhotos({
     })();
     return () => { cancelled = true; };
   }, [ready, cid, ticketPath]);
+
+  useEffect(() => {
+    if (!loading) onPhotosChange?.(photos);
+  }, [photos, loading, onPhotosChange]);
 
   // Reconciles "queued" placeholders with OfflineQueueBadge's background
   // drain (elsewhere in the app) by their queue row ids: a row that's gone

@@ -10,13 +10,14 @@
  * Supported actions:
  *  - getCallInfo: query work orders (calls) from the SOAP Dispatch Web Service.
  *  - test/retrieveClaim/submitClaim/createRFA/retrieveRFA: REST Claims/RFA endpoints.
+ *  - addClaimDocument: REST Add Document to Claim (one file per call).
  *
  * Credentials are read from the passed-in env (Cloudflare binding) or
  * process.env (Node/dev).
  */
 
 interface ServicePowerRequestBody {
-  action: 'test' | 'retrieveClaim' | 'submitClaim' | 'createRFA' | 'retrieveRFA' | 'getCallInfo' | 'getCallNotes' | 'addCallNote';
+  action: 'test' | 'retrieveClaim' | 'submitClaim' | 'addClaimDocument' | 'createRFA' | 'retrieveRFA' | 'getCallInfo' | 'getCallNotes' | 'addCallNote';
   params?: any;
   /** Caller's company_id — used to look up a live-editable credential override (see resolveStoredCredentials below). Optional so existing/legacy callers (e.g. servicepower-test.tsx) keep working off the .env-only fallback. */
   companyId?: string;
@@ -71,6 +72,7 @@ const ENDPOINTS = {
     na: {
       claimsRetrieval: 'https://upgdev.servicepower.com:8443/services/claim/v1/retrieval',
       claimsSubmission: 'https://upgdev.servicepower.com:8443/services/claim/v1/submission',
+      claimsAddDocument: 'https://upgdev.servicepower.com:8443/services/claim/v1/adddocument',
       createRFA: 'https://upgdev.servicepower.com:8443/services/rfa/v2/setdetailssvc',
       retrieveRFA: 'https://upgdev.servicepower.com:8443/services/rfa/v2/getdetails',
     },
@@ -79,6 +81,7 @@ const ENDPOINTS = {
     na: {
       claimsRetrieval: 'https://claimworks.servicepower.com:8443/services/claim/v1/retrieval',
       claimsSubmission: 'https://claimworks.servicepower.com:8443/services/claim/v1/submission',
+      claimsAddDocument: 'https://claimworks.servicepower.com:8443/services/claim/v1/adddocument',
       createRFA: 'https://claimworks.servicepower.com:8443/services/rfa/v2/setdetailssvc',
       retrieveRFA: 'https://claimworks.servicepower.com:8443/services/rfa/v2/getdetails',
     },
@@ -416,6 +419,26 @@ export async function handleServicePowerRequest(
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
+        });
+        const data = await response.json();
+        return json(data);
+      }
+
+      case 'addClaimDocument': {
+        // Claims Submission guide v1.10 §6: one document per call, on an
+        // existing claim (manufacturerName + claimBatchNumber +
+        // claimSequenceNumber + claimNumber, as submitClaim returned them).
+        // document = { category (3, a ServicePower category code),
+        // description (60), filename (100), file (base64) }. Thin
+        // pass-through like submitClaim — the caller builds the document.
+        const endpoint = (ENDPOINTS as any)[envName][region].claimsAddDocument;
+        if (!params?.claim || !params?.document) {
+          return json({ success: false, error: 'params.claim and params.document are required' }, 400);
+        }
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ authentication: { userId, password }, claim: params.claim, document: params.document }),
         });
         const data = await response.json();
         return json(data);
