@@ -3,19 +3,21 @@
  * errors to fix, improvements, to-dos. Every item shows who added it and
  * when, who's handling it, and its pictures / files, and has its own
  * Confirm button (records who confirmed it and when; Undo reopens it),
- * which needs someone handling it first.
- * Add / edit / delete in place; filter by Open / Confirmed, by kind and by
- * who's handling it; search. "Download for Google Docs" saves it as a .docx
- * (pictures included) that opens in Google Docs or Word.
+ * which needs someone handling it first. Filter by Open / Confirmed, by
+ * kind and by who's handling it; search. "Download for Google Docs" saves
+ * it as a .docx (pictures included) that opens in Google Docs or Word.
  *
  * Stored in admin_errors_improvements (migration 0409; Handled by and
  * attachments 0411) — Admin / SuperAdmin only, same as the Admin module
- * gate. IT (main or extra role) gives an item to one of the IT people once
- * it's on the list — from its card, or in Edit — not while adding it;
- * whoever's given it gets a notification. Everyone else sees who's
- * handling it but can't change it. (An IT person also needs Admin or
- * SuperAdmin to open the page.) Pictures can be picked, dropped in, or pasted
- * (Ctrl+V a screenshot); big photos are shrunk before upload.
+ * gate. Everyone who can open the page can add to the list, and delete
+ * what they added (a SuperAdmin can delete anything); only IT (main or
+ * extra role) confirms / undoes, edits, and gives an item to one of the IT
+ * people (from its card or in Edit, once it's on the list — not while
+ * adding it; whoever's given it gets a notification). The database holds
+ * the same lines (0411's trigger, 0412's policies). An IT
+ * person also needs Admin or SuperAdmin to open the page. Pictures can be
+ * picked, dropped in, or pasted (Ctrl+V a screenshot); big photos are
+ * shrunk before upload.
  */
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
 import { useNavigate } from "@tanstack/react-router";
@@ -341,8 +343,12 @@ export function ErrorsImprovementsPage({ mod, sub }: { mod: ModuleDef; sub: SubM
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { uid, companyId, displayName, role, extraRoles } = useAuth();
-  // Only IT chooses who handles an item (also enforced by migration 0411's trigger).
-  const canAssign = [role, ...extraRoles].includes("IT");
+  // Everyone who can open the page can add items; only IT confirms / undoes,
+  // chooses who handles an item and edits; an item is deleted by whoever
+  // added it, or a SuperAdmin (also enforced in the database: 0411's
+  // trigger, 0412's policies).
+  const isIt = [role, ...extraRoles].includes("IT");
+  const isSuperAdmin = [role, ...extraRoles].includes("SUPERADMIN");
   const [profileId, setProfileId] = useState<string | null>(null);
   // The company's uuid for the row's company_id — useAuth's companyId can be
   // the legacy code ("COMP001"), which only names the storage folder.
@@ -503,7 +509,7 @@ export function ErrorsImprovementsPage({ mod, sub }: { mod: ModuleDef; sub: SubM
           <div className="flex-1 min-w-[14rem]">
             <h1 className="text-2xl font-bold">{sub.title}</h1>
             <p className="text-xs text-muted-foreground mt-0.5">
-              What needs doing — errors, improvements and to-dos. Each shows who added it and who's handling it; Confirm it once it's done.
+              What needs doing — errors, improvements and to-dos. Anyone here can add to the list (and delete what they added); IT assigns each one and confirms it once it's done.
             </p>
           </div>
           <button type="button" onClick={() => void download()} disabled={downloading || items.length === 0} className="btn text-sm px-3 py-1.5 flex items-center gap-1.5 disabled:opacity-50" title="Saves a .docx — upload it to Google Drive and open with Google Docs, or open in Word">
@@ -588,12 +594,13 @@ export function ErrorsImprovementsPage({ mod, sub }: { mod: ModuleDef; sub: SubM
             visible.map((item) => {
               const meta = kindMeta(item.kind);
               const busy = busyId === item.id;
+              const canDelete = isSuperAdmin || (!!profileId && item.addedBy === profileId);
               if (editingId === item.id) {
                 return (
                   <div key={item.id} className="panel">
                     <ItemForm
                       initial={draftOf(item)}
-                      showHandledBy={canAssign}
+                      showHandledBy={isIt}
                       initialAssigneeName={item.assignedToName}
                       people={people}
                       myProfileId={profileId}
@@ -660,10 +667,17 @@ export function ErrorsImprovementsPage({ mod, sub }: { mod: ModuleDef; sub: SubM
                           <div className="flex items-center gap-1 font-semibold"><Check className="h-3.5 w-3.5" /> Confirmed</div>
                           <div className="text-green-200/80">{item.confirmedByName || "—"} · {fmtWhen(item.confirmedAt)}</div>
                         </div>
-                        <button type="button" disabled={busy} onClick={() => void run(item.id, async () => replace(await setErrorImprovementConfirmed(item.id, null)))} className="btn text-xs px-2.5 py-1 flex items-center justify-center gap-1 disabled:opacity-50">
-                          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />} Undo
-                        </button>
+                        {isIt && (
+                          <button type="button" disabled={busy} onClick={() => void run(item.id, async () => replace(await setErrorImprovementConfirmed(item.id, null)))} className="btn text-xs px-2.5 py-1 flex items-center justify-center gap-1 disabled:opacity-50">
+                            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />} Undo
+                          </button>
+                        )}
                       </>
+                    ) : !isIt ? (
+                      <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-200">
+                        <div className="font-semibold">Open</div>
+                        <div className="text-amber-200/80">IT confirms it once it's done.</div>
+                      </div>
                     ) : (
                       <>
                         {/* Confirm needs someone handling it first. */}
@@ -676,46 +690,44 @@ export function ErrorsImprovementsPage({ mod, sub }: { mod: ModuleDef; sub: SubM
                         >
                           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Confirm
                         </button>
-                        {!item.assignedTo && (
-                          <p className="text-[10px] leading-snug text-amber-300/90">
-                            {canAssign ? "Pick who's handling it below to confirm." : "IT has to assign someone before it can be confirmed."}
-                          </p>
-                        )}
-                        {canAssign && (
-                          <label className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                            Handled by
-                            <HandledBySelect
-                              value={item.assignedTo}
-                              valueName={item.assignedToName}
-                              people={people}
-                              myProfileId={profileId}
-                              onChange={(assignedTo) => void run(item.id, async () => replace(await saveItem(item, { ...draftOf(item), assignedTo }, [])))}
-                              disabled={busy}
-                              className={`${selectCls} mt-1 w-full font-normal normal-case tracking-normal disabled:opacity-50`}
-                            />
-                          </label>
-                        )}
+                        {!item.assignedTo && <p className="text-[10px] leading-snug text-amber-300/90">Pick who's handling it below to confirm.</p>}
+                        <label className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                          Handled by
+                          <HandledBySelect
+                            value={item.assignedTo}
+                            valueName={item.assignedToName}
+                            people={people}
+                            myProfileId={profileId}
+                            onChange={(assignedTo) => void run(item.id, async () => replace(await saveItem(item, { ...draftOf(item), assignedTo }, [])))}
+                            disabled={busy}
+                            className={`${selectCls} mt-1 w-full font-normal normal-case tracking-normal disabled:opacity-50`}
+                          />
+                        </label>
                       </>
                     )}
-                    <div className="flex justify-end gap-1">
-                      <button type="button" title="Edit" onClick={() => { setEditingId(item.id); setAdding(false); }} className="btn p-1.5"><Pencil className="h-3.5 w-3.5" /></button>
-                      <button
-                        type="button"
-                        title="Delete"
-                        disabled={busy}
-                        onClick={() => {
-                          if (!window.confirm(`Delete "${item.title}"? This can't be undone.`)) return;
-                          void run(item.id, async () => {
-                            await deleteErrorImprovement(item.id);
-                            setItems((cur) => cur.filter((i) => i.id !== item.id));
-                            for (const a of item.attachments) void deleteAttachmentByUrl(a.path || a.url).catch(() => {});
-                          });
-                        }}
-                        className="btn p-1.5 text-red-300 hover:text-red-200 disabled:opacity-50"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
+                    {(isIt || canDelete) && (
+                      <div className="flex justify-end gap-1">
+                        {isIt && <button type="button" title="Edit" onClick={() => { setEditingId(item.id); setAdding(false); }} className="btn p-1.5"><Pencil className="h-3.5 w-3.5" /></button>}
+                        {canDelete && (
+                          <button
+                            type="button"
+                            title="Delete"
+                            disabled={busy}
+                            onClick={() => {
+                              if (!window.confirm(`Delete "${item.title}"? This can't be undone.`)) return;
+                              void run(item.id, async () => {
+                                await deleteErrorImprovement(item.id);
+                                setItems((cur) => cur.filter((i) => i.id !== item.id));
+                                for (const a of item.attachments) void deleteAttachmentByUrl(a.path || a.url).catch(() => {});
+                              });
+                            }}
+                            className="btn p-1.5 text-red-300 hover:text-red-200 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               );

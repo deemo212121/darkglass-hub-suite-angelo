@@ -3,7 +3,9 @@
  * things that need doing — errors to fix, improvements, to-dos — each with
  * who added it, who's handling it, pictures / files, and a Confirm (who
  * confirmed it, when; can be undone). Handled by and attachments are
- * migration 0411. Admin / SuperAdmin only (RLS).
+ * migration 0411. Admin / SuperAdmin read and add (RLS); only IT changes
+ * items, and only IT adds one already confirmed; an item is deleted by
+ * whoever added it or a SuperAdmin (0412).
  */
 import { supabase } from "./client";
 
@@ -24,6 +26,7 @@ export interface ErrorImprovementItem {
   area: string;
   title: string;
   details: string;
+  addedBy: string | null;
   addedByName: string;
   createdAt: string;
   assignedTo: string | null;
@@ -51,6 +54,7 @@ const fromRow = (r: any): ErrorImprovementItem => ({
   area: r.area ?? "",
   title: r.title ?? "",
   details: r.details ?? "",
+  addedBy: r.added_by ?? null,
   addedByName: r.added_by_name ?? "",
   createdAt: r.created_at,
   assignedTo: r.assigned_to ?? null,
@@ -66,10 +70,15 @@ const isMissingTable = (error: { message: string; code?: string }) =>
 const isMissing0411Column = (error: { message: string; code?: string }) =>
   (error.code === "PGRST204" || error.code === "42703") && /assigned_to|attachments/.test(error.message);
 
-/** A plain message when migration 0409 / 0411 hasn't been run yet. */
+const ONLY_IT = "Only IT can change items on this list — anyone can add to it.";
+const ONLY_OWN_DELETE = "You can delete only the items you added — a SuperAdmin can delete any.";
+
+/** A plain message when migration 0409 / 0411 hasn't been run yet, or RLS (0412) turned the change away. */
 function explain(error: { message: string; code?: string }): Error {
   if (isMissingTable(error)) return new Error("This page needs migration 0409 (Errors & Improvements) in Supabase — run it, then reload.");
   if (isMissing0411Column(error)) return new Error("Handled by and attachments need migration 0411 in Supabase — run it, then reload.");
+  // An update RLS doesn't allow matches no row, so .single() finds nothing.
+  if (error.code === "PGRST116") return new Error(ONLY_IT);
   return new Error(error.message);
 }
 
@@ -146,6 +155,8 @@ export async function setErrorImprovementConfirmed(
 }
 
 export async function deleteErrorImprovement(id: string): Promise<void> {
-  const { error } = await supabase.from(TABLE).delete().eq("id", id);
+  const { data, error } = await supabase.from(TABLE).delete().eq("id", id).select("id");
   if (error) throw explain(error);
+  // RLS turns a delete away silently — nothing is removed and no error comes back.
+  if (!data?.length) throw new Error(ONLY_OWN_DELETE);
 }
