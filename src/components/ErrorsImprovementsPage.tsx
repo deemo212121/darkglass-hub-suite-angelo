@@ -9,8 +9,10 @@
  *
  * Stored in admin_errors_improvements (migration 0409; Handled by and
  * attachments 0411) — Admin / SuperAdmin only, same as the Admin module
- * gate, so Handled by only offers those people. Whoever's given an item
- * gets a notification. Pictures can be picked, dropped in, or pasted
+ * gate, so Handled by only offers those people. IT (main or extra role)
+ * gives an item to someone once it's on the list — from its card, or in
+ * Edit — not while adding it; whoever's given it gets a notification.
+ * Everyone else sees who's handling it but can't change it. Pictures can be picked, dropped in, or pasted
  * (Ctrl+V a screenshot); big photos are shrunk before upload.
  */
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
@@ -101,8 +103,10 @@ function HandledBySelect({ value, valueName, people, myProfileId, onChange, clas
   );
 }
 
-function ItemForm({ initial, initialAssigneeName, people, myProfileId, saving, savingLabel, onSave, onCancel }: {
+function ItemForm({ initial, showHandledBy, initialAssigneeName, people, myProfileId, saving, savingLabel, onSave, onCancel }: {
   initial: Draft;
+  /** Off for a new item — it's given to someone once it's on the list. */
+  showHandledBy: boolean;
   initialAssigneeName?: string | null;
   people: Person[];
   myProfileId: string | null;
@@ -201,19 +205,21 @@ function ItemForm({ initial, initialAssigneeName, people, myProfileId, saving, s
         <label className={labelCls}>Details</label>
         <textarea value={draft.details} onChange={(e) => setDraft({ ...draft, details: e.target.value })} rows={3} placeholder="Steps, examples, ticket numbers…" className={`${inputCls} resize-y`} />
       </div>
-      <div className="grid gap-3 sm:grid-cols-[minmax(0,18rem)_1fr]">
-        <div>
-          <label className={labelCls}>Handled by</label>
-          <HandledBySelect
-            value={draft.assignedTo}
-            valueName={initialAssigneeName}
-            people={people}
-            myProfileId={myProfileId}
-            onChange={(assignedTo) => setDraft({ ...draft, assignedTo })}
-            className={inputCls}
-          />
-          <p className="mt-1 text-[10px] text-slate-500">They get a notification. Only people who can open this page are listed.</p>
-        </div>
+      <div className={showHandledBy ? "grid gap-3 sm:grid-cols-[minmax(0,18rem)_1fr]" : ""}>
+        {showHandledBy && (
+          <div>
+            <label className={labelCls}>Handled by</label>
+            <HandledBySelect
+              value={draft.assignedTo}
+              valueName={initialAssigneeName}
+              people={people}
+              myProfileId={myProfileId}
+              onChange={(assignedTo) => setDraft({ ...draft, assignedTo })}
+              className={inputCls}
+            />
+            <p className="mt-1 text-[10px] text-slate-500">They get a notification. Only people who can open this page are listed.</p>
+          </div>
+        )}
         <div>
           <label className={labelCls}>Pictures &amp; files</label>
           <div className="flex flex-wrap items-start gap-2">
@@ -331,7 +337,9 @@ async function uploadAttachment(companyId: string, itemId: string, file: File): 
 export function ErrorsImprovementsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
-  const { uid, companyId, displayName } = useAuth();
+  const { uid, companyId, displayName, role, extraRoles } = useAuth();
+  // Only IT chooses who handles an item (also enforced by migration 0411's trigger).
+  const canAssign = [role, ...extraRoles].includes("IT");
   const [profileId, setProfileId] = useState<string | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const [items, setItems] = useState<ErrorImprovementItem[]>([]);
@@ -508,6 +516,7 @@ export function ErrorsImprovementsPage({ mod, sub }: { mod: ModuleDef; sub: SubM
             </div>
             <ItemForm
               initial={EMPTY_DRAFT}
+              showHandledBy={false}
               people={people}
               myProfileId={profileId}
               saving={busyId === "new"}
@@ -574,6 +583,7 @@ export function ErrorsImprovementsPage({ mod, sub }: { mod: ModuleDef; sub: SubM
                   <div key={item.id} className="panel">
                     <ItemForm
                       initial={draftOf(item)}
+                      showHandledBy={canAssign}
                       initialAssigneeName={item.assignedToName}
                       people={people}
                       myProfileId={profileId}
@@ -649,15 +659,20 @@ export function ErrorsImprovementsPage({ mod, sub }: { mod: ModuleDef; sub: SubM
                         <button type="button" disabled={busy} onClick={() => void run(item.id, async () => replace(await setErrorImprovementConfirmed(item.id, me)))} className="btn text-sm px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50">
                           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Confirm
                         </button>
-                        <HandledBySelect
-                          value={item.assignedTo}
-                          valueName={item.assignedToName}
-                          people={people}
-                          myProfileId={profileId}
-                          onChange={(assignedTo) => void run(item.id, async () => replace(await saveItem(item, { ...draftOf(item), assignedTo }, [])))}
-                          disabled={busy}
-                          className={`${selectCls} w-full disabled:opacity-50`}
-                        />
+                        {canAssign && (
+                          <label className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                            Handled by
+                            <HandledBySelect
+                              value={item.assignedTo}
+                              valueName={item.assignedToName}
+                              people={people}
+                              myProfileId={profileId}
+                              onChange={(assignedTo) => void run(item.id, async () => replace(await saveItem(item, { ...draftOf(item), assignedTo }, [])))}
+                              disabled={busy}
+                              className={`${selectCls} mt-1 w-full font-normal normal-case tracking-normal disabled:opacity-50`}
+                            />
+                          </label>
+                        )}
                       </>
                     )}
                     <div className="flex justify-end gap-1">
