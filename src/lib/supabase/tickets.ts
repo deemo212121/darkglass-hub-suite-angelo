@@ -2097,6 +2097,20 @@ function rowToPart(row: any): UIPartRow {
   };
 }
 
+/**
+ * "Total (Markup)": Part Price × Qty marked up by Markup % — the same
+ * price × (1 + markup%) the Pre-Claim and the claim's part fee use. Always
+ * worked out from those three, never taken as typed: the ticket page's Add
+ * Part used to save the text "140.05 + 25" here, which the numeric column
+ * kept as 140.05.
+ */
+export function partMarkupTotal(part: { partPrice?: string | number | null; quantity?: string | number | null; markup?: string | number | null }): number {
+  const price = numOrNull(part.partPrice) ?? 0;
+  const qty = numOrNull(part.quantity) || 1;
+  const pct = numOrNull(part.markup) ?? 0;
+  return Math.round(price * qty * (1 + pct / 100) * 100) / 100;
+}
+
 // Build the DB column payload from a flat UI part row.
 function partToColumns(part: Partial<UIPartRow>) {
   return {
@@ -2112,7 +2126,7 @@ function partToColumns(part: Partial<UIPartRow>) {
     core_value: numOrNull(part.coreValue) ?? 0,
     ship_cost: numOrNull(part.shipCost) ?? 0,
     markup: numOrNull(part.markup) ?? 0,
-    total_markup: numOrNull(part.totalMarkup) ?? 0,
+    total_markup: partMarkupTotal(part),
     claim_to: part.claimTo ?? null,
     status: part.status ?? null,
     note: part.note ?? null,

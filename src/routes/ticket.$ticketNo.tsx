@@ -65,6 +65,7 @@ import {
   updateTicketPart as sbUpdateTicketPart,
   deleteTicketPart as sbDeleteTicketPart,
   getPartSuggestions,
+  partMarkupTotal,
   getTicketSquaretradeUrl as sbGetTicketSquaretradeUrl,
   setTicketSquaretradeUrl as sbSetTicketSquaretradeUrl,
   type PartSuggestion,
@@ -748,6 +749,12 @@ function partStatusTextClass(status: string): string {
   return PART_STATUS_TEXT_COLOR[status] || "";
 }
 
+/** "Total (Markup)" as shown: Part Price × Qty × (1 + Markup %), "" when there's no price (see partMarkupTotal). */
+function partMarkupTotalText(row: Pick<PartTransactionRow, "partPrice" | "quantity" | "markup">): string {
+  const total = partMarkupTotal(row);
+  return total ? total.toFixed(2) : "";
+}
+
 function summarizePartRow(row: PartTransactionRow) {
   return [
     ["Part No", row.partNo],
@@ -762,7 +769,7 @@ function summarizePartRow(row: PartTransactionRow) {
     ["Core Value", row.coreValue],
     ["Ship Cost", row.shipCost],
     ["Markup", row.markup],
-    ["Total (Markup)", row.totalMarkup],
+    ["Total (Markup)", partMarkupTotalText(row)],
     ["Claim To", row.claimTo],
     ["Status", row.status],
     ["Note", row.note],
@@ -5150,6 +5157,7 @@ function TicketDetailsPage() {
           ...patch,
           lastModifiedBy: currentEditor,
         };
+        after.totalMarkup = partMarkupTotalText(after);
         await sbUpdateTicketPart(rowId, after as any);
         merged.push({ before, after });
       }
@@ -5266,9 +5274,7 @@ function TicketDetailsPage() {
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`);
 
-    const totalMarkup = partDraft.totalMarkup.trim() || [partDraft.partPrice, partDraft.markup]
-      .filter((value) => value.trim())
-      .join(" + ");
+    const totalMarkup = partMarkupTotalText(partDraft);
 
     // Auto-set status to "PO Made" if PO number is provided and status is not already set or is "Need PO"
     let finalStatus = partDraft.status.trim();
@@ -6049,7 +6055,7 @@ function TicketDetailsPage() {
           <input value={partDraft.creditNo} onChange={(e) => setPartDraft((d) => ({ ...d, creditNo: e.target.value }))} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Credit #" />
         </td>
         <td className="px-2 py-1.5 text-slate-400 text-xs whitespace-nowrap">
-          {partDraft.totalMarkup ? `$${partDraft.totalMarkup}` : "—"}
+          {partMarkupTotalText(partDraft) ? `$${partMarkupTotalText(partDraft)}` : "—"}
         </td>
         <td className="px-2 py-1.5 text-center">
           <input type="checkbox" checked={partDraft.hold === "Hold"} onChange={(e) => setPartDraft((d) => ({ ...d, hold: e.target.checked ? "Hold" : "No" }))} className="accent-blue-500" />
@@ -8046,7 +8052,12 @@ function TicketDetailsPage() {
                                 </span>
                               ) : null}
                             </td>
-                            <td className="px-2 py-1.5 text-slate-300">{val("totalMarkup") ? `$${val("totalMarkup")}` : "—"}</td>
+                            <td className="px-2 py-1.5 text-slate-300">
+                              {(() => {
+                                const total = partMarkupTotalText({ partPrice: val("partPrice"), quantity: val("quantity"), markup: val("markup") });
+                                return total ? `$${total}` : "—";
+                              })()}
+                            </td>
                             <td className={cellWrap}>
                               <input type="checkbox" checked={val("hold") === "Hold"} onChange={(e) => set("hold", e.target.checked ? "Hold" : "No")} disabled={partsEditDisabled || !canEditParts} className="accent-blue-500" />
                             </td>
@@ -8123,11 +8134,13 @@ function TicketDetailsPage() {
                   {partRows.length > 0 && (() => {
                     const totals = partRows.reduce((acc, r) => {
                       const qty = parseFloat(r.quantity) || 0;
+                      const price = (parseFloat(r.partPrice) || 0) * (qty || 1);
                       acc.qty += qty;
-                      acc.partPrice += (parseFloat(r.partPrice) || 0) * (qty || 1);
+                      acc.partPrice += price;
                       acc.coreValue += parseFloat(r.coreValue) || 0;
                       acc.shipCost += parseFloat(r.shipCost) || 0;
-                      acc.markup += parseFloat(r.markup) || 0;
+                      // Markup is a percent of the part price, not dollars — to the cent, so it adds up with each row's Total (Markup).
+                      acc.markup += Math.round(price * (parseFloat(r.markup) || 0)) / 100;
                       return acc;
                     }, { qty: 0, partPrice: 0, coreValue: 0, shipCost: 0, markup: 0 });
                     const grand = totals.partPrice + totals.coreValue + totals.shipCost + totals.markup;
@@ -9599,8 +9612,8 @@ function TicketDetailsPage() {
                         {viewingPartEntry.markup ? (
                           <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Markup:</span> {viewingPartEntry.markup}%</div>
                         ) : null}
-                        {viewingPartEntry.totalMarkup ? (
-                          <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Total:</span> ${viewingPartEntry.totalMarkup}</div>
+                        {partMarkupTotalText(viewingPartEntry) ? (
+                          <div className="rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2"><span className="font-semibold text-slate-400">Total:</span> ${partMarkupTotalText(viewingPartEntry)}</div>
                         ) : null}
                       </div>
                     </div>
