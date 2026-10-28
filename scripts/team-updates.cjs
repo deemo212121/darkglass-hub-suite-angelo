@@ -39,7 +39,8 @@ if (!process.argv.includes("--no-fetch")) {
 
 const SEP = "\u001e", END = "\u001f";
 const people = PEOPLE.map((p) => {
-  const ref = `${p.remote}/main`;
+  // Angelo's updates come from this local main — it has the commit being pushed before origin does.
+  const ref = p.remote === "origin" ? "main" : `${p.remote}/main`;
   const raw = git("log", "--no-merges", ...p.authors.map((a) => `--author=${a}`), `--format=%h${SEP}%aI${SEP}%B${END}`, "--shortstat", ref, `^${IMPORT_COMMIT}`);
   const updates = [];
   for (const chunk of raw.split(END)) {
