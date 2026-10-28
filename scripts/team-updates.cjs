@@ -67,18 +67,25 @@ const people = PEOPLE.map((p) => {
 
 // Counted by who actually made the change, not who merged it: Jhon brings
 // everyone's work into his repo by re-committing it under his name ("Merge
-// angelo's branch: …", "Pull deemo212121/…", "sync: upstream fixes …") —
-// those are Angelo's / John Oliver's changes, already counted from their own
-// repos, so they're left out here, along with checkpoints before a pull.
-const BRINGS_IN = /^(\w+:\s*)?(merge|pull|integrate|sync)\b|^sync:|(from|with) upstream|from angelo/i;
-const SOMEONE_ELSE = /angelo|janeyyy|deemo212121|upstream|john oliver/i;
-const isMergeOrSync = (text) => {
+// angelo's branch: …", "Pull deemo212121/…", "sync: upstream fixes …"), and
+// Angelo / John Oliver do the same with his ("Merge rulonajhon/main …",
+// "… (pulled from angelo/main)") — that's the other person's change, already
+// counted from their own repo, so it's left out here, along with checkpoints
+// before a pull. Only the OTHER people's names count ("Built from Angelo's …"
+// in Angelo's own update is his update).
+const BRINGS_IN = /^(\w+:\s*)?(merge|pull|integrate|sync)\b|^sync:|(from|with) upstream|pulled from|from \S+ branch/i;
+const OTHERS = {
+  angelo: /rulonajhon|rulon\/|jhon|janeyyy|john oliver|upstream/i,
+  jhon: /angelo|deemo212121|janeyyy|john oliver|upstream/i,
+  johnoliver: /angelo|deemo212121|rulonajhon|rulon\/|jhon|upstream/i,
+};
+const isMergeOrSync = (personKey, text) => {
   const first = text.split("\n")[0];
-  return /^checkpoint before pulling/i.test(first) || (BRINGS_IN.test(first) && SOMEONE_ELSE.test(first));
+  return /^checkpoint before pulling/i.test(first) || (BRINGS_IN.test(first) && OTHERS[personKey].test(first));
 };
 // This script's own commit of the refreshed list isn't an update either.
 const LIST_REFRESH = /^AHS Updates list refreshed/i;
-for (const p of people) p.updates = p.updates.filter((u) => !isMergeOrSync(u.text) && !LIST_REFRESH.test(u.text));
+for (const p of people) p.updates = p.updates.filter((u) => !isMergeOrSync(p.key, u.text) && !LIST_REFRESH.test(u.text));
 
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, JSON.stringify({ generatedAt: new Date().toISOString(), people }));
