@@ -19,6 +19,8 @@ const KEEP_NAMES_PATHS: RegExp[] = [
   // Accounting's own pages — payroll runs, payslips, disputes and expenses for people who've since left.
   /^\/m\/[^/]+\/accounting-dashboard(\/|$)/,
   /^\/m\/accounting\/expenses(\/|$)/,
+  // Attendance Monitoring Report — its people tables flag them "Deactivated · date".
+  /^\/m\/[^/]+\/report-attendance-monitoring(\/|$)/,
   /^\/payroll-demo(\/|$)/,
   /^\/(fill|sign)-/,
   /^\/sign-(document|bundle|external)/,

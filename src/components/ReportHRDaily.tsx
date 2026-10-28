@@ -38,7 +38,7 @@ import { useAuth } from "@/lib/auth";
 import { nowInTimezone, DEFAULT_ATTENDANCE_TIMEZONE } from "@/lib/attendanceGrace";
 import { normalizeRole, ROLE_LABELS, isJotformHrRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { useAllRoleOptions } from "@/lib/customRoles";
-import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, getProfileCredentialsPreview, setTraineeAccessGranted, getUserStatusChanges, recordAccountStatusChange, type AccountStatusChange, type EmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, getProfileCredentialsPreview, setTraineeAccessGranted, getUserStatusChanges, getFirstDeactivations, recordAccountStatusChange, type AccountStatusChange, type EmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
 import { CorrectionManagerSignModal, CorrectionHrSignModal } from "@/components/CorrectionSignModals";
 import { PtoManagerSignModal, PtoHrSignModal } from "@/components/PtoSignModals";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
@@ -1673,10 +1673,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Log — the reactivation date, who did it and the reason, shown under the
   // Master List's status (written here and by User Management alike).
   const [accountStatusChanges, setAccountStatusChanges] = useState<Map<string, AccountStatusChange>>(new Map());
+  // First time each account was deactivated — the Master List's Deactivated flag next to the name.
+  const [firstDeactivations, setFirstDeactivations] = useState<Map<string, string>>(new Map());
 
   const loadEmployees = async () => {
     setEmployeesLoading(true);
     void getUserStatusChanges().then(setAccountStatusChanges).catch((err) => console.error("Failed to load account status changes:", err));
+    void getFirstDeactivations().then(setFirstDeactivations).catch(() => {});
     try {
       const profiles = await getCompanyUsers();
 
@@ -21168,7 +21171,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   const sick = remainingSickByProfile.get(employee.id);
                   const warnings = approvedWarningCountByProfile.get(employee.id) ?? 0;
                   return (
-                    <tr key={employee.id} className="border-b border-white/5 hover:bg-white/5">
+                    // Not Active rows and deactivated logins keep their real names (the status / Deactivated flag already says so) — see InactiveNameMask.
+                    <tr key={employee.id} data-keep-names={employee.status !== "active" || !employee.accountActive ? "" : undefined} className="border-b border-white/5 hover:bg-white/5">
                       {showBranchColumn && <td className="px-2 py-1 text-muted-foreground whitespace-nowrap">{employee.branch || "—"}</td>}
                       <td className="px-2 py-1">
                         <select
@@ -21244,6 +21248,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         >
                           {employee.name}
                         </button>
+                        {!employee.accountActive && (() => {
+                          const on = firstDeactivations.get(employee.id);
+                          return (
+                            <span className="ml-1.5 rounded-full border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-300">
+                              Deactivated{on ? ` · ${formatISODate(on, { year: "numeric", month: "short", day: "numeric" })}` : ""}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="px-2 py-1">
                         <input

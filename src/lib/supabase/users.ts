@@ -1264,6 +1264,24 @@ export async function getUserStatusChanges(): Promise<Map<string, AccountStatusC
 }
 
 /**
+ * The FIRST time each account was deactivated ("YYYY-MM-DD"), from the same
+ * Activity Log — the day it took effect when one was picked, else the day it
+ * was done. Accounts deactivated, reactivated and deactivated again keep
+ * their first date (Attendance Monitoring Report).
+ */
+export async function getFirstDeactivations(): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const deactivated = await getModuleActivityLogByAction("user-management", "user_deactivated");
+  for (const entry of [...deactivated].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+    if (!entry.targetId || result.has(entry.targetId)) continue;
+    const picked = typeof entry.details?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(entry.details.date) ? entry.details.date : null;
+    const d = new Date(entry.createdAt);
+    result.set(entry.targetId, picked ?? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+  }
+  return result;
+}
+
+/**
  * Log an account Activate / Deactivate in User Management's Activity Log —
  * the record User Management and HR's Master List read the status date and
  * the reactivation reason back from (getUserStatusChanges). Unlike
