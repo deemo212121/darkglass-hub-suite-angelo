@@ -7,7 +7,7 @@
  * desktop. Used by every fill/sign page's "View the completed PDF" link.
  */
 import { useEffect, useRef, useState } from "react";
-import { Download, Loader2, X } from "lucide-react";
+import { Download, Loader2, Maximize2, X } from "lucide-react";
 import { renderPdfPages } from "@/lib/pdfPages";
 
 /** "…/o/companies%2F…%2F1760000000000-Kyong-Shin.pdf?alt=media…" → "Kyong-Shin.pdf" (the stored file's own name, minus its upload-time prefix). */
@@ -31,6 +31,60 @@ export function InlinePdfLink({ url, label, className, fileName }: { url: string
       </button>
       {open && <InlinePdfModal url={url} title={label} fileName={fileName} onClose={() => setOpen(false)} />}
     </>
+  );
+}
+
+/**
+ * The PDF's pages right in the page, in a scrollable box — for reading a form
+ * before signing it (ManagerReviewPage.tsx) — with a Full screen button that
+ * opens the same file in InlinePdfModal.
+ */
+export function InlinePdfPages({ url, title, maxHeight }: { url: string; title: string; maxHeight: string }) {
+  const holderRef = useRef<HTMLDivElement | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [fullScreen, setFullScreen] = useState(false);
+
+  useEffect(() => {
+    const holder = holderRef.current;
+    if (!holder) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const run = renderPdfPages(url, holder, {
+      width: (h) => Math.max(Math.min(h.clientWidth, 900), 260),
+      pageClassName: "block mx-auto mb-2 last:mb-0 bg-white rounded-sm shadow",
+      onFirstPage: () => setLoading(false),
+    });
+    run.done
+      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Couldn't load the PDF."); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => {
+      cancelled = true;
+      run.cancel();
+      holder.replaceChildren();
+    };
+  }, [url]);
+
+  return (
+    <div className="rounded-md border border-white/10 bg-black/20">
+      <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 border-b border-white/10">
+        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide truncate">{title}</p>
+        <button type="button" onClick={() => setFullScreen(true)} className="btn text-[11px] px-2 py-1 flex items-center gap-1 shrink-0">
+          <Maximize2 className="h-3 w-3" /> Full screen
+        </button>
+      </div>
+      <div className="overflow-y-auto p-2" style={{ maxHeight }}>
+        {loading && (
+          <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading the form…
+          </div>
+        )}
+        {error && <p className="py-8 text-center text-sm text-red-300">{error}</p>}
+        <div ref={holderRef} className="w-full" />
+      </div>
+      {fullScreen && <InlinePdfModal url={url} title={title} onClose={() => setFullScreen(false)} />}
+    </div>
   );
 }
 

@@ -37048,11 +37048,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-4">
-              {managerReviewDoc.pdfUrl && (
-                <div className="mb-4 rounded-md overflow-hidden border border-white/10 bg-white/5">
-                  <iframe src={managerReviewDoc.pdfUrl} title="Document on file" className="w-full border-0" style={{ height: 380 }} />
-                </div>
-              )}
               <ManagerReviewPage
                 docId={managerReviewDoc.id}
                 embedded

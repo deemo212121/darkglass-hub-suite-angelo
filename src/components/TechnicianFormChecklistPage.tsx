@@ -1710,10 +1710,10 @@ export function TechnicianFormChecklistPage({
       </div>
     )}
 
-    {/* "Review & Sign" popup — the employee-signed PDF already on file
-        (same one the "view" popup above shows) plus an embedded
-        ManagerReviewPage so HR can add the employer countersignature right
-        here, no navigation to Attendance Monitoring needed. */}
+    {/* "Review & Sign" popup — an embedded ManagerReviewPage (which shows
+        the employee-signed PDF on file above its signature pad) so HR can
+        add the employer countersignature right here, no navigation to
+        Attendance Monitoring needed. */}
     {signDoc && (
       <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => { setSignDoc(null); void loadDocsForActiveTab(); }}>
         <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
@@ -1728,11 +1728,6 @@ export function TechnicianFormChecklistPage({
             </button>
           </div>
           <div className="flex-1 overflow-y-auto p-4">
-            {signDoc.pdfUrl && (
-              <div className="mb-4 rounded-md overflow-hidden border border-white/10 bg-white/5">
-                <iframe src={signDoc.pdfUrl} title="Document on file" className="w-full border-0" style={{ height: 380 }} />
-              </div>
-            )}
             <ManagerReviewPage docId={signDoc.id} embedded onSigned={() => void loadDocsForActiveTab()} />
           </div>
         </div>
