@@ -683,9 +683,16 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     // proximity had it vanish from Montgomery's own board entirely and
     // only ever show on Birmingham's, since the filter used to match on
     // the ticket's stored location alone.
-    const effectiveBranch = (ticket: PlannerTicket) => {
+    //
+    // The ticket's OWN branch still counts too: matching the tech's branch
+    // alone emptied whole boards whose work is all covered from elsewhere
+    // (Savannah by an Asheville tech, Richmond by a Wilmington tech,
+    // Montgomery by Columbus/Huntsville techs). So a covered ticket shows
+    // on both boards.
+    const ticketBranches = (ticket: PlannerTicket) => {
       const techBranch = ticket.technician ? techBranchByName.get(ticket.technician.trim().toLowerCase()) : undefined;
-      return normalizeBranch(techBranch || ticket.location || ticket.city || ticket.branch);
+      const ownBranch = normalizeBranch(ticket.location || ticket.city || ticket.branch);
+      return techBranch ? [normalizeBranch(techBranch), ownBranch] : [ownBranch];
     };
     return plannerTickets.filter((ticket) => {
       // Must have an actual scheduled date — no fallback to created_at.
@@ -694,7 +701,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       if (!ticketDate) return false;
       if (ticketDate !== selectedDate) return false;
       if (isPreScheduleStatus(ticket.status)) return false;
-      if (locations.size > 0 && !locations.has(effectiveBranch(ticket))) return false;
+      if (locations.size > 0 && !ticketBranches(ticket).some((b) => locations.has(b))) return false;
       if (!showRescheduled && String(ticket.status || "").toLowerCase().includes("resched")) return false;
       return true;
     });
