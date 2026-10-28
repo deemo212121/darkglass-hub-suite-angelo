@@ -37,6 +37,7 @@ import { compressImage } from "@/lib/imageCompression";
 import { createNotification } from "@/lib/supabase/notifications";
 import { InlinePdfModal } from "@/components/InlinePdfViewer";
 import { todayISO } from "@/lib/localDate";
+import { randomUuid } from "@/lib/utils";
 
 const KINDS: { id: ErrorImprovementKind; label: string; badge: string }[] = [
   { id: "error", label: "Error", badge: "border-red-500/40 bg-red-500/15 text-red-300" },
@@ -414,7 +415,7 @@ export function ErrorsImprovementsPage({ mod, sub }: { mod: ModuleDef; sub: SubM
    */
   const saveItem = async (existing: ErrorImprovementItem | null, d: Draft, files: File[]): Promise<ErrorImprovementItem> => {
     if (!companyId) throw new Error("No company on this account.");
-    const id = existing?.id ?? crypto.randomUUID();
+    const id = existing?.id ?? randomUuid();
     const uploaded: ErrorImprovementAttachment[] = [];
     let saved: ErrorImprovementItem;
     try {
