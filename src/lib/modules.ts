@@ -2316,7 +2316,7 @@ const guidesMod: ModuleDef = {
   ],
 };
 
-// AHS Server Status — SuperAdmin only (roleLabels.ts SUPERADMIN_ONLY_MODULES).
+// AHS Server Status — Admin and up (roleLabels.ts ADMIN_AND_UP_MODULES).
 // Live status + uptime history of the databases, the hosting and the outside
 // services the app depends on (src/lib/server/serverStatus.ts, migration 0385).
 const serverStatusMod: ModuleDef = {
@@ -2330,6 +2330,17 @@ const serverStatusMod: ModuleDef = {
       title: "Server Status",
       description: "Supabase, Firebase, Cloudflare hosting, scheduled jobs and outside services — live checks, uptime % and 30-day history.",
       custom: "server-status" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
+      // Every update Angelo, Jhon and John Oliver made to the app, from their
+      // own repos (src/lib/teamUpdates.json, built by scripts/team-updates.cjs).
+      slug: "updates",
+      title: "AHS Updates",
+      description: "Every update made to the app — the date, files changed and the full details of each update.",
+      custom: "team-updates" as any,
       fields: [],
       count: 0,
       seed: () => ({}),

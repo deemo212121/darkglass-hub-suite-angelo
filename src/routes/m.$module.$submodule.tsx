@@ -115,6 +115,7 @@ const TicketGuidesPage = lazy(() => import("@/components/TicketGuidesPage").then
 const SelfServiceGuidePage = lazy(() => import("@/components/SelfServiceGuidePage").then((m) => ({ default: m.SelfServiceGuidePage })));
 const GettingStartedGuidePage = lazy(() => import("@/components/GettingStartedGuidePage").then((m) => ({ default: m.GettingStartedGuidePage })));
 const ServerStatusPage = lazy(() => import("@/components/ServerStatusPage").then((m) => ({ default: m.ServerStatusPage })));
+const TeamUpdatesPage = lazy(() => import("@/components/TeamUpdatesPanel").then((m) => ({ default: m.TeamUpdatesPage })));
 const ApproverGuidePage = lazy(() => import("@/components/ApproverGuidePage").then((m) => ({ default: m.ApproverGuidePage })));
 const BizOpsGuidePage = lazy(() => import("@/components/BizOpsGuidePage").then((m) => ({ default: m.BizOpsGuidePage })));
 const PreAuthPage = lazy(() => import("@/components/PreAuthPage").then((m) => ({ default: m.PreAuthPage })));
@@ -644,6 +645,8 @@ function SubModule() {
         ? <GettingStartedGuidePage />
         : (sub as any).custom === "server-status"
         ? <ServerStatusPage />
+        : (sub as any).custom === "team-updates"
+        ? <TeamUpdatesPage />
         : (sub as any).custom === "approver-guide"
         ? <ApproverGuidePage />
         : (sub as any).custom === "bizops-guide"

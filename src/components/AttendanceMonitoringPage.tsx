@@ -46,6 +46,7 @@ import { resolveTeamLeadOrManager, visibleAttendanceProfileIds } from "@/lib/not
 import { correctionIssueLabel, correctionIssueKey, correctionIssueOptions } from "@/lib/exceptionVisitReportTemplate";
 import { chainCanClockIn } from "@/lib/approvalDirectory";
 import { ClockInCodePrompt } from "@/components/ClockInCodePrompt";
+import { PtoReasonCell, PtoPhotoCell } from "@/components/PtoReasonPhotoCells";
 import { CorrectionStageBadges, CorrectionOverallBadge, CorrectionComments } from "@/components/CorrectionStageBadges";
 import { timestampParts, localISODate } from "@/lib/localDate";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
@@ -3190,15 +3191,17 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                         </button>
                       </th>
                       <th className="px-3 py-3 text-center text-xs font-semibold text-slate-400 uppercase">Days</th>
+                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Reason</th>
+                      <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Photo</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
                       <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {loading ? (
-                      <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
+                      <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
                     ) : sortedPtoTableRows.length === 0 ? (
-                      <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">No {ptoStatusTab} PTO requests.</td></tr>
+                      <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-400">No {ptoStatusTab} PTO requests.</td></tr>
                     ) : sortedPtoTableRows.map((request) => {
                       // request.managerId is a snapshot resolved once at
                       // submission time — if the requester's manager_name
@@ -3227,6 +3230,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                         <td className="px-3 py-3 text-slate-300">{request.startDate} to {request.endDate}</td>
                         <td className="px-3 py-3 text-slate-300 whitespace-nowrap">{ptoSubmittedDay(request.createdAt)}</td>
                         <td className="px-3 py-3 text-center text-slate-300">{Math.round(request.hoursRequested / 8)}</td>
+                        <PtoReasonCell request={request} />
+                        <PtoPhotoCell request={request} employeeName={profileName(request.profileId)} />
                         <td className="px-3 py-3">
                           <div className="flex flex-col gap-1">
                             <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${

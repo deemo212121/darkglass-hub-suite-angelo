@@ -1,5 +1,5 @@
 /**
- * AHS Server Status (SuperAdmin only) — live status of every service the
+ * AHS Server Status (Admin and up) — live status of every service the
  * app depends on, with uptime % and a 30-day history. Each load (and every
  * 60 seconds while the page is open) runs the checks live through
  * POST /api/server-status (src/lib/server/serverStatus.ts); the Worker's
@@ -10,7 +10,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { Activity, AlertTriangle, CheckCircle2, ChevronDown, ChevronLeft, Clock, Database, FileSignature, Globe, Loader2, Plug, RefreshCw, Server, XCircle } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
-import { isSuperAdminHolder } from "@/lib/roleLabels";
+import { isAdminOrAboveHolder } from "@/lib/roleLabels";
 import { zonedDateKey } from "@/lib/serverTime";
 import { runBrowserUploadTest } from "@/lib/firebase/storage";
 
@@ -99,7 +99,7 @@ const fmtPct = (v: number | null | undefined) => (v == null ? "—" : v >= 99.99
 export function ServerStatusPage() {
   const navigate = useNavigate();
   const { role, extraRoles, realRole, companyId } = useAuth();
-  const allowed = isSuperAdminHolder(realRole ?? role, extraRoles);
+  const allowed = isAdminOrAboveHolder(realRole ?? role, extraRoles);
 
   const [data, setData] = useState<StatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -236,8 +236,8 @@ export function ServerStatusPage() {
     return (
       <main className="max-w-3xl mx-auto w-full px-6 py-16 text-center">
         <XCircle className="mx-auto h-10 w-10 text-red-400" />
-        <h1 className="mt-3 text-lg font-bold text-white">SuperAdmin only</h1>
-        <p className="mt-1 text-sm text-slate-400">The server status page is only available to SuperAdmin.</p>
+        <h1 className="mt-3 text-lg font-bold text-white">Admin and up only</h1>
+        <p className="mt-1 text-sm text-slate-400">The server status page is only available to Admin and up.</p>
       </main>
     );
   }

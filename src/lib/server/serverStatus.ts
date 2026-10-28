@@ -431,7 +431,7 @@ export async function handleServerStatusRequest(request: Request, rawEnv?: Recor
     const meRes = await sb(env, `profiles?firebase_uid=eq.${encodeURIComponent(claims.sub)}&select=id,role,extra_roles&limit=1`);
     const me = meRes.ok ? ((await meRes.json()) as { id: string; role: string | null; extra_roles: string[] | null }[])[0] : undefined;
     const held = me ? [me.role, ...(me.extra_roles ?? [])].map((r) => String(r ?? "").trim().toUpperCase()) : [];
-    if (!held.includes("SUPERADMIN") && !held.includes("SUPERSUPERADMIN")) return json({ error: "Only SuperAdmin can view the server status." }, 403);
+    if (!held.some((r) => r === "ADMIN" || r === "SUPERADMIN" || r === "SUPERSUPERADMIN")) return json({ error: "Only Admin and up can view the server status." }, 403);
 
     // The page's "Upload from your browser" test file — the browser can't
     // delete it (storage.rules' size check also applies to deletes), so the
