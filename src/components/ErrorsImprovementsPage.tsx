@@ -2,7 +2,8 @@
  * Admin → Errors & Improvements: the running list of what needs doing —
  * errors to fix, improvements, to-dos. Every item shows who added it and
  * when, who's handling it, and its pictures / files, and has its own
- * Confirm button (records who confirmed it and when; Undo reopens it).
+ * Confirm button (records who confirmed it and when; Undo reopens it),
+ * which needs someone handling it first.
  * Add / edit / delete in place; filter by Open / Confirmed, by kind and by
  * who's handling it; search. "Download for Google Docs" saves it as a .docx
  * (pictures included) that opens in Google Docs or Word.
@@ -665,9 +666,21 @@ export function ErrorsImprovementsPage({ mod, sub }: { mod: ModuleDef; sub: SubM
                       </>
                     ) : (
                       <>
-                        <button type="button" disabled={busy} onClick={() => void run(item.id, async () => replace(await setErrorImprovementConfirmed(item.id, me)))} className="btn text-sm px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50">
+                        {/* Confirm needs someone handling it first. */}
+                        <button
+                          type="button"
+                          disabled={busy || !item.assignedTo}
+                          title={item.assignedTo ? undefined : "Assign someone to handle it first"}
+                          onClick={() => void run(item.id, async () => replace(await setErrorImprovementConfirmed(item.id, me)))}
+                          className="btn text-sm px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-green-600"
+                        >
                           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Confirm
                         </button>
+                        {!item.assignedTo && (
+                          <p className="text-[10px] leading-snug text-amber-300/90">
+                            {canAssign ? "Pick who's handling it below to confirm." : "IT has to assign someone before it can be confirmed."}
+                          </p>
+                        )}
                         {canAssign && (
                           <label className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
                             Handled by
