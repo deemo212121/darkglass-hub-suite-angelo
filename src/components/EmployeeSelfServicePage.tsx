@@ -31,6 +31,7 @@ import {
   sickRequestsInYear,
   workingDayCount,
   noLeaveDaysMessage,
+  uploadPtoAttachment,
   leaveFilingDateError,
   earliestLeaveStart,
   setPtoAttachmentUrl,
@@ -717,7 +718,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           };
           const myProfile = companyProfiles.find((p) => p.id === myProfileId) ?? null;
           const managerProfile = myProfile ? await resolveTeamLeadOrManager(myProfile, companyProfiles) : null;
-          await createPtoRequest({
+          const ptoRow = await createPtoRequest({
             profileId: myProfileId,
             ptoType: ptoTypeMap[formData.leaveType] || "vacation",
             startDate: formData.startDate,
@@ -726,6 +727,16 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             requestedBy: myProfileId,
             managerId: managerProfile?.id ?? null,
           });
+          // Optional photo for PTO (Sick / Unpaid Leave require one). The
+          // request is already saved — a failed upload doesn't undo it.
+          if (leaveProof && companyId) {
+            try {
+              await uploadPtoAttachment(ptoRow.id, companyId, leaveProof, myProfileId);
+            } catch (err) {
+              console.error("PTO photo upload failed", err);
+              alert("Your PTO request was submitted, but the photo didn't upload. HR can add it from the request.");
+            }
+          }
           // PTO needs both a manager and an HR approval — ping the resolved
           // manager (if any) plus every HR user; if no manager could be
           // resolved, fall back to notifying ADMIN too so it isn't stranded.
@@ -2385,13 +2396,17 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       </div>
                     </div>
                   )}
-                  {(modalType === "sick" || modalType === "unpaidLeave") && (
+                  {(modalType === "pto" || modalType === "sick" || modalType === "unpaidLeave") && (
                     <div>
                       <label className="text-xs font-semibold text-white block mb-1">
-                        Proof (photo or PDF) <span className="text-red-400">*</span>
+                        {modalType === "pto" ? (
+                          <>Photo or PDF <span className="font-normal text-slate-400">(optional)</span></>
+                        ) : (
+                          <>Proof (photo or PDF) <span className="text-red-400">*</span></>
+                        )}
                       </label>
                       <p className="text-[11px] text-slate-400 mb-2">
-                        {modalType === "sick" ? "e.g. a doctor's note or medical certificate." : "A photo or document supporting this leave."}
+                        {modalType === "sick" ? "e.g. a doctor's note or medical certificate." : modalType === "pto" ? "Anything that supports this request, e.g. a booking or an invitation." : "A photo or document supporting this leave."}
                       </p>
                       <label className="flex cursor-pointer items-center gap-3 rounded border border-dashed border-white/20 bg-slate-800 px-3 py-2.5 text-sm text-slate-300 hover:border-blue-500">
                         <input

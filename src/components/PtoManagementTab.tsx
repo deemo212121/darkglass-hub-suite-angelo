@@ -29,6 +29,7 @@ import {
 } from "@/lib/supabase/pto";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import { PtoManagerSignModal, PtoHrSignModal } from "@/components/PtoSignModals";
+import { PtoReasonCell, PtoPhotoCell } from "@/components/PtoReasonPhotoCells";
 
 // Same split as Attendance Monitoring's PTO Management (Paid Leave / Unpaid Leave).
 const PAID_LEAVE_PTO_TYPES: PtoType[] = ["vacation"];
@@ -288,7 +289,7 @@ export function PtoManagementTab() {
                 >
                   Dates <span className="text-[10px]">{ptoSort.key === "dates" ? (ptoSort.dir === "desc" ? "▼" : "▲") : "↕"}</span>
                 </button>
-              </th>
+              </th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">
                 <button
                   type="button"
@@ -300,15 +301,17 @@ export function PtoManagementTab() {
                 </button>
               </th>
               <th className="px-3 py-3 text-center text-xs font-semibold text-slate-400 uppercase">Days</th>
+              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Reason</th>
+              <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Photo</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Status</th>
               <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
+              <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>
             ) : sortedPtoTableRows.length === 0 ? (
-              <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">No {ptoStatusTab} PTO requests.</td></tr>
+              <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-400">No {ptoStatusTab} PTO requests.</td></tr>
             ) : sortedPtoTableRows.map((request) => {
               const requesterManagerName = profileById.get(request.profileId)?.manager_name ?? null;
               const requesterManagersManagerName = requesterManagerName
@@ -321,6 +324,8 @@ export function PtoManagementTab() {
                 <td className="px-3 py-3 text-slate-300">{request.startDate} to {request.endDate}</td>
                 <td className="px-3 py-3 text-slate-300 whitespace-nowrap">{ptoSubmittedDay(request.createdAt)}</td>
                 <td className="px-3 py-3 text-center text-slate-300">{Math.round(request.hoursRequested / 8)}</td>
+                <PtoReasonCell request={request} />
+                <PtoPhotoCell request={request} employeeName={profileName(request.profileId)} />
                 <td className="px-3 py-3">
                   <div className="flex flex-col gap-1">
                     <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${

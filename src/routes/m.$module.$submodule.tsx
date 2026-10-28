@@ -104,6 +104,7 @@ import { TicketGuidesPage } from "@/components/TicketGuidesPage";
 import { SelfServiceGuidePage } from "@/components/SelfServiceGuidePage";
 import { GettingStartedGuidePage } from "@/components/GettingStartedGuidePage";
 import { ServerStatusPage } from "@/components/ServerStatusPage";
+import { TeamUpdatesPage } from "@/components/TeamUpdatesPanel";
 import { ApproverGuidePage } from "@/components/ApproverGuidePage";
 import { BizOpsGuidePage } from "@/components/BizOpsGuidePage";
 import { PreAuthPage } from "@/components/PreAuthPage";
@@ -635,6 +636,8 @@ function SubModule() {
         ? <GettingStartedGuidePage />
         : (sub as any).custom === "server-status"
         ? <ServerStatusPage />
+        : (sub as any).custom === "team-updates"
+        ? <TeamUpdatesPage />
         : (sub as any).custom === "approver-guide"
         ? <ApproverGuidePage />
         : (sub as any).custom === "bizops-guide"

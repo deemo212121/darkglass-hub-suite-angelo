@@ -363,11 +363,16 @@ export function isCsrRestrictedRole(role: string | null | undefined, extraRoles?
   return everyHeldRoleIn(CSR_RESTRICTED_ROLES, role, extraRoles);
 }
 
-/** Modules only SuperAdmin (primary or extra role) can open — no Accessibility override applies. */
-export const SUPERADMIN_ONLY_MODULES = new Set(["server-status"]);
+/** Modules only Admin and up (Admin / SuperAdmin / SuperSuperAdmin, primary or extra role) can open — no Accessibility override applies. */
+export const ADMIN_AND_UP_MODULES = new Set(["server-status"]);
 
 export function isSuperAdminHolder(role: string | null | undefined, extraRoles?: string[] | null): boolean {
   return allHeldRoles(role, extraRoles).some((r) => r === "SUPERADMIN" || r === "SUPERSUPERADMIN");
+}
+
+/** Admin, SuperAdmin or SuperSuperAdmin — primary or extra role. */
+export function isAdminOrAboveHolder(role: string | null | undefined, extraRoles?: string[] | null): boolean {
+  return allHeldRoles(role, extraRoles).some((r) => r === "ADMIN" || r === "SUPERADMIN" || r === "SUPERSUPERADMIN");
 }
 
 /**
@@ -381,8 +386,8 @@ export function isSuperAdminHolder(role: string | null | undefined, extraRoles?:
  * SUPERADMIN always passes regardless of either check.
  */
 export function isModuleAllowed(role: string | null | undefined, moduleSlug: string, extraRoles?: string[] | null): boolean {
-  // SuperAdmin-only modules (e.g. AHS Server Status) — never opened up by an override.
-  if (SUPERADMIN_ONLY_MODULES.has(moduleSlug)) return isSuperAdminHolder(role, extraRoles);
+  // Admin-and-up modules (AHS Server Status) — never opened up by an override.
+  if (ADMIN_AND_UP_MODULES.has(moduleSlug)) return isAdminOrAboveHolder(role, extraRoles);
   if (normalizeRole(role) !== "SUPERADMIN") {
     const moduleLevelOverride = getModuleRoleGate(moduleSlug, MODULE_LEVEL_GATE_SLUG);
     if (moduleLevelOverride) {
