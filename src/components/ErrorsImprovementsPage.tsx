@@ -9,10 +9,11 @@
  *
  * Stored in admin_errors_improvements (migration 0409; Handled by and
  * attachments 0411) — Admin / SuperAdmin only, same as the Admin module
- * gate, so Handled by only offers those people. IT (main or extra role)
- * gives an item to someone once it's on the list — from its card, or in
- * Edit — not while adding it; whoever's given it gets a notification.
- * Everyone else sees who's handling it but can't change it. Pictures can be picked, dropped in, or pasted
+ * gate. IT (main or extra role) gives an item to one of the IT people once
+ * it's on the list — from its card, or in Edit — not while adding it;
+ * whoever's given it gets a notification. Everyone else sees who's
+ * handling it but can't change it. (An IT person also needs Admin or
+ * SuperAdmin to open the page.) Pictures can be picked, dropped in, or pasted
  * (Ctrl+V a screenshot); big photos are shrunk before upload.
  */
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
@@ -83,7 +84,7 @@ interface PendingFile {
 const labelCls = "mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-500";
 const inputCls = "w-full rounded-md border border-white/15 bg-slate-900/60 px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500";
 
-/** The "Handled by" options — the people who can open this page, plus whoever an item already names (e.g. someone since deactivated). */
+/** The "Handled by" options — the IT people, plus whoever an item already names (e.g. someone since deactivated or no longer IT). */
 function HandledBySelect({ value, valueName, people, myProfileId, onChange, className, disabled }: {
   value: string | null;
   valueName?: string | null;
@@ -218,7 +219,7 @@ function ItemForm({ initial, showHandledBy, initialAssigneeName, people, myProfi
               onChange={(assignedTo) => setDraft({ ...draft, assignedTo })}
               className={inputCls}
             />
-            <p className="mt-1 text-[10px] text-slate-500">They get a notification. Only people who can open this page are listed.</p>
+            <p className="mt-1 text-[10px] text-slate-500">They get a notification. IT people are listed.</p>
           </div>
         )}
         <div>
@@ -369,13 +370,13 @@ export function ErrorsImprovementsPage({ mod, sub }: { mod: ModuleDef; sub: SubM
     });
   }, [uid]);
 
-  // Handled by: the people who can open this page (RLS: Admin / SuperAdmin, main or extra role).
+  // Handled by: IT people (main or extra role).
   useEffect(() => {
     getActiveCompanyUsers()
       .then((rows) =>
         setPeople(
           rows
-            .filter((p) => [p.role, ...(p.extra_roles ?? [])].some((r) => r === "ADMIN" || r === "SUPERADMIN"))
+            .filter((p) => [p.role, ...(p.extra_roles ?? [])].includes("IT"))
             .map((p) => ({ id: p.id, name: p.display_name || p.email }))
             .sort((a, b) => a.name.localeCompare(b.name)),
         ),
