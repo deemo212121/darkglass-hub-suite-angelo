@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Download, DollarSign, Clock, CheckCircle, Wallet, Pencil, Trash2, XCircle, Paperclip, Loader2 } from "lucide-react";
+import { ChevronLeft, Download, DollarSign, Clock, CheckCircle, Wallet, Pencil, Trash2, XCircle, Paperclip, Loader2, Receipt, TrendingUp, Building2, Plane, BedDouble, Car } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
@@ -44,6 +45,32 @@ export function fmtExpenseReviewedAt(iso: string | null): string {
 function isSelfFiledExpense(e: ExpenseRow): boolean {
   return !e.flashTechTripId && !e.expenseSubtype && e.createdBy != null && e.createdBy === e.profileId;
 }
+
+/** Summary card colors — the icon chip, the value, the thin top bar and the border. */
+const KPI_TONES: Record<string, { chip: string; text: string; bar: string; border: string }> = {
+  amber: { chip: "bg-amber-500/15 text-amber-300", text: "text-amber-300", bar: "bg-amber-400/70", border: "border-amber-500/20" },
+  sky: { chip: "bg-sky-500/15 text-sky-300", text: "text-sky-300", bar: "bg-sky-400/70", border: "border-sky-500/20" },
+  emerald: { chip: "bg-emerald-500/15 text-emerald-300", text: "text-emerald-300", bar: "bg-emerald-400/70", border: "border-emerald-500/20" },
+  violet: { chip: "bg-violet-500/15 text-violet-300", text: "text-white", bar: "bg-violet-400/70", border: "border-violet-500/20" },
+};
+
+/** Flash Tech view buttons — each its own color, tinted when off and filled when picked. */
+const FT_VIEW_TONES: Record<"violet" | "sky" | "amber" | "rose" | "emerald", { on: string; off: string; icon: string; countOn: string; countOff: string }> = {
+  violet: { on: "border-violet-400/70 bg-violet-500/25 text-white shadow-[0_0_0_1px_rgba(167,139,250,0.25)]", off: "border-violet-500/30 bg-violet-500/10 text-violet-200 hover:bg-violet-500/20", icon: "text-violet-300", countOn: "bg-violet-400/40 text-white", countOff: "bg-violet-500/20 text-violet-200" },
+  sky: { on: "border-sky-400/70 bg-sky-500/25 text-white shadow-[0_0_0_1px_rgba(56,189,248,0.25)]", off: "border-sky-500/30 bg-sky-500/10 text-sky-200 hover:bg-sky-500/20", icon: "text-sky-300", countOn: "bg-sky-400/40 text-white", countOff: "bg-sky-500/20 text-sky-200" },
+  amber: { on: "border-amber-400/70 bg-amber-500/25 text-white shadow-[0_0_0_1px_rgba(251,191,36,0.25)]", off: "border-amber-500/30 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20", icon: "text-amber-300", countOn: "bg-amber-400/40 text-white", countOff: "bg-amber-500/20 text-amber-200" },
+  rose: { on: "border-rose-400/70 bg-rose-500/25 text-white shadow-[0_0_0_1px_rgba(251,113,133,0.25)]", off: "border-rose-500/30 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20", icon: "text-rose-300", countOn: "bg-rose-400/40 text-white", countOff: "bg-rose-500/20 text-rose-200" },
+  emerald: { on: "border-emerald-400/70 bg-emerald-500/25 text-white shadow-[0_0_0_1px_rgba(52,211,153,0.25)]", off: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20", icon: "text-emerald-300", countOn: "bg-emerald-400/40 text-white", countOff: "bg-emerald-500/20 text-emerald-200" },
+};
+
+/** A Flash Tech / Allowance reimbursement — listed under Flash Tech, not Employee Requests. */
+const isFlashTechAllowance = (e: ExpenseRow) => e.reimbursementType === "Flash Tech Allowance";
+/**
+ * Everything on Expenses → Flash Tech: trip lines, every Hotel and Car Rental
+ * expense (from a trip or added by Accounting) and the Flash Tech /
+ * Allowance requests.
+ */
+const isFlashTechViewExpense = (e: ExpenseRow) => !!e.flashTechTripId || e.category === "Hotel" || e.category === "Car Rental" || isFlashTechAllowance(e);
 
 export function ExpenseTrackingPage({
   mod,
@@ -92,6 +119,22 @@ export function ExpenseTrackingPage({
   const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
   /** Employee Requests only: PH (assigned branch Philippines) or US staff. */
   const [country, setCountry] = useState<"all" | "PH" | "US">("all");
+  /** The employee's assigned branch — "" = every branch. Totals follow it, to see what each branch costs. */
+  const [branch, setBranch] = useState("");
+  // The table's sideways scroll — mirrored by a scrollbar pinned to the bottom of the screen.
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  /** Spend by branch order: biggest spend first, or A → Z. */
+  const [branchSort, setBranchSort] = useState<"amount" | "name">("amount");
+  /** Flash Tech only: trip lines, the Flash Tech / Allowance requests employees send, or both. */
+  const [flashTechView, setFlashTechView] = useState<"all" | "trips" | "hotel" | "carRental" | "allowance">("all");
+  /** Rows whose Description is opened in full (clicked). */
+  const [openDescriptions, setOpenDescriptions] = useState<Set<string>>(new Set());
+  const toggleDescription = (id: string) =>
+    setOpenDescriptions((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
 
   // null = closed; { editing: null } = Add; { editing: row } = Edit.
   const [formState, setFormState] = useState<{ editing: ExpenseRow | null } | null>(null);
@@ -132,9 +175,17 @@ export function ExpenseTrackingPage({
   // Every total/list below reads from this instead of raw `expenses` — the
   // only place flashTechOnly/selfFiledOnly's scoping actually applies.
   const scopedExpenses = useMemo(() => {
-    if (flashTechOnly) return expenses.filter((e) => e.flashTechTripId);
+    if (flashTechOnly) {
+      return expenses.filter((e) =>
+        flashTechView === "trips" ? !!e.flashTechTripId
+          : flashTechView === "hotel" ? e.category === "Hotel"
+          : flashTechView === "carRental" ? e.category === "Car Rental"
+          : flashTechView === "allowance" ? isFlashTechAllowance(e)
+          : isFlashTechViewExpense(e)
+      );
+    }
     if (selfFiledOnly) {
-      return expenses.filter(isSelfFiledExpense).filter((e) => {
+      return expenses.filter((e) => isSelfFiledExpense(e) && !isFlashTechAllowance(e)).filter((e) => {
         if (country === "all") return true;
         const isPh = profileById.get(e.profileId)?.assigned_branch === "Philippines";
         return country === "PH" ? isPh : !isPh;
@@ -142,12 +193,14 @@ export function ExpenseTrackingPage({
     }
     if (categoryOnly) return expenses.filter((e) => e.category === categoryOnly);
     return expenses;
-  }, [expenses, flashTechOnly, selfFiledOnly, categoryOnly, country, profileById]);
+  }, [expenses, flashTechOnly, selfFiledOnly, categoryOnly, country, profileById, flashTechView]);
 
-  // The date range applies to the summary cards, the totals and the list alike.
+  const branchOf = (e: ExpenseRow) => profileById.get(e.profileId)?.assigned_branch || "No branch";
+  const branchOptions = useMemo(() => Array.from(new Set(scopedExpenses.map(branchOf))).sort((a, b) => a.localeCompare(b)), [scopedExpenses, profileById]);
+  // The date range and branch apply to the summary cards, the totals and the list alike.
   const rangeExpenses = useMemo(
-    () => scopedExpenses.filter((e) => (!dateFrom || (e.expenseDate || "") >= dateFrom) && (!dateTo || (e.expenseDate || "") <= dateTo)),
-    [scopedExpenses, dateFrom, dateTo]
+    () => scopedExpenses.filter((e) => (!dateFrom || (e.expenseDate || "") >= dateFrom) && (!dateTo || (e.expenseDate || "") <= dateTo) && (!branch || branchOf(e) === branch)),
+    [scopedExpenses, dateFrom, dateTo, branch, profileById]
   );
 
   const fmtMoney = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -156,9 +209,15 @@ export function ExpenseTrackingPage({
   const reviewerName = (e: ExpenseRow) => (e.status !== "Pending" && e.reviewedBy ? profileName(e.reviewedBy) : "");
   const receiptCount = (e: ExpenseRow) => (e.receiptUrl ? 1 : e.flashTechTripId ? tripReceipts.get(e.flashTechTripId)?.length ?? 0 : 0);
 
+  // Status, Approved / Rejected By and the Pending / Approved / Reimbursed
+  // cards are for employees' own requests — Flash Tech, Hotel and Car Rental
+  // are added straight by Accounting, so those tabs leave them out.
+  // Flash Tech keeps them when it lists Flash Tech / Allowance requests (those need approving).
+  const showStatus = !categoryOnly && (!flashTechOnly || scopedExpenses.some(isSelfFiledExpense));
   // Every column's value as its funnel filter sees it.
-  const COLUMNS: { key: string; label: string; value: (e: ExpenseRow) => string }[] = [
+  const ALL_COLUMNS: { key: string; label: string; value: (e: ExpenseRow) => string }[] = [
     { key: "employee", label: "Employee", value: (e) => profileName(e.profileId) },
+    { key: "branch", label: "Branch", value: (e) => branchOf(e) },
     { key: "category", label: "Category", value: (e) => e.category || "" },
     // Gas / Food / Other on a Reimbursement Form (migration 0401). Every "Other — …" is one filter choice, "Other".
     { key: "type", label: "Type", value: (e) => e.reimbursementType || "—" },
@@ -170,6 +229,7 @@ export function ExpenseTrackingPage({
     { key: "reviewer", label: "Approved / Rejected By", value: (e) => reviewerName(e) },
     { key: "receipt", label: "Receipt", value: (e) => (receiptCount(e) ? "Has receipt" : "No receipt") },
   ];
+  const COLUMNS = showStatus ? ALL_COLUMNS : ALL_COLUMNS.filter((c) => c.key !== "status" && c.key !== "reviewer");
   const matchesSearch = (e: ExpenseRow) =>
     !search || `${profileName(e.profileId)} ${e.createdBy ? profileName(e.createdBy) : ""} ${e.description}`.toLowerCase().includes(search.toLowerCase());
   const matchesColumns = (e: ExpenseRow, skipKey?: string) =>
@@ -187,10 +247,47 @@ export function ExpenseTrackingPage({
   const setColFilter = (key: string, next: Set<string>) => setColFilters((prev) => ({ ...prev, [key]: next }));
   const anyColumnFilter = Object.values(colFilters).some((v) => v.size > 0);
 
+  const flashTechCounts = (() => {
+    const counts = { all: 0, trips: 0, hotel: 0, carRental: 0, allowance: 0 };
+    if (flashTechOnly) {
+      for (const e of expenses) {
+        if ((dateFrom && (e.expenseDate || "") < dateFrom) || (dateTo && (e.expenseDate || "") > dateTo)) continue;
+        if (!isFlashTechViewExpense(e)) continue;
+        counts.all++;
+        if (e.flashTechTripId) counts.trips++;
+        if (e.category === "Hotel") counts.hotel++;
+        if (e.category === "Car Rental") counts.carRental++;
+        if (isFlashTechAllowance(e)) counts.allowance++;
+      }
+    }
+    return counts;
+  })();
+
+  // Largest single expense in view, and how many people it covers (the non-status tabs' cards).
+  const largest = filtered.reduce<ExpenseRow | null>((top, e) => (!top || e.amount > top.amount ? e : top), null);
+  const employeeCount = new Set(filtered.map((e) => e.profileId)).size;
+  // Spend per branch over everything in view except the branch choice itself, biggest first.
+  const branchSpend = (() => {
+    const map = new Map<string, { branch: string; amount: number; count: number }>();
+    for (const e of scopedExpenses) {
+      if ((dateFrom && (e.expenseDate || "") < dateFrom) || (dateTo && (e.expenseDate || "") > dateTo)) continue;
+      if (!matchesSearch(e) || !matchesColumns(e, "branch")) continue;
+      const b = branchOf(e);
+      const row = map.get(b) ?? { branch: b, amount: 0, count: 0 };
+      row.amount += e.amount;
+      row.count += 1;
+      map.set(b, row);
+    }
+    return Array.from(map.values()).sort((a, b) => (branchSort === "name" ? a.branch.localeCompare(b.branch) : b.amount - a.amount || a.branch.localeCompare(b.branch)));
+  })();
+  const maxBranchSpend = branchSpend.reduce((m, b) => Math.max(m, b.amount), 0);
+
   // Summary cards + total follow the date range and the column filters.
-  const totalPending = filtered.filter((e) => e.status === "Pending");
-  const totalApproved = filtered.filter((e) => e.status === "Approved");
-  const totalReimbursed = filtered.filter((e) => e.status === "Reimbursed");
+  // On Flash Tech only the Flash Tech / Allowance requests have a status — trip lines don't.
+  const withStatus = flashTechOnly ? filtered.filter(isSelfFiledExpense) : filtered;
+  const totalPending = withStatus.filter((e) => e.status === "Pending");
+  const totalApproved = withStatus.filter((e) => e.status === "Approved");
+  const totalReimbursed = withStatus.filter((e) => e.status === "Reimbursed");
   const sum = (rows: ExpenseRow[]) => rows.reduce((s, r) => s + r.amount, 0);
   const fmtRangeDate = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
   const rangeLabel =
@@ -325,49 +422,118 @@ export function ExpenseTrackingPage({
             <span className="ml-auto text-xs text-slate-400">Showing: <span className="font-semibold text-white">{rangeLabel}</span></span>
           </div>
 
+          {/* Flash Tech: trip lines vs the Flash Tech / Allowance requests employees send — with counts for the date range. */}
+          {flashTechOnly && (
+            <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Flash Tech view">
+              {([
+                ["all", "All", Receipt, flashTechCounts.all, "violet"],
+                ["trips", "Trips", Plane, flashTechCounts.trips, "sky"],
+                ["hotel", "Hotel", BedDouble, flashTechCounts.hotel, "amber"],
+                ["carRental", "Car Rental", Car, flashTechCounts.carRental, "rose"],
+                ["allowance", "Allowance", Wallet, flashTechCounts.allowance, "emerald"],
+              ] as const).map(([key, label, Icon, count, tone]) => {
+                const on = flashTechView === key;
+                const c = FT_VIEW_TONES[tone];
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    role="tab"
+                    aria-selected={on}
+                    onClick={() => setFlashTechView(key)}
+                    className={`inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-semibold transition ${on ? c.on : c.off}`}
+                  >
+                    <Icon className={`h-4 w-4 ${c.icon}`} />
+                    {label}
+                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] tabular-nums ${on ? c.countOn : c.countOff}`}>{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {/* KPI Cards */}
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-slate-400 uppercase">Pending</p>
-                  <p className="text-2xl font-bold text-yellow-400 mt-2">{loading ? "…" : fmtMoney(sum(totalPending))}</p>
-                  <p className="text-xs text-slate-500 mt-1">{totalPending.length} request{totalPending.length === 1 ? "" : "s"}</p>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {(showStatus
+              ? [
+                  { label: "Pending", value: fmtMoney(sum(totalPending)), sub: `${totalPending.length} request${totalPending.length === 1 ? "" : "s"}`, Icon: Clock, tone: "amber" },
+                  { label: "Approved", value: fmtMoney(sum(totalApproved)), sub: `${totalApproved.length} awaiting reimbursement`, Icon: CheckCircle, tone: "sky" },
+                  { label: "Reimbursed", value: fmtMoney(sum(totalReimbursed)), sub: `${totalReimbursed.length} paid out`, Icon: Wallet, tone: "emerald" },
+                  { label: "Total", value: fmtMoney(sum(filtered)), sub: `${filtered.length} record${filtered.length === 1 ? "" : "s"} · ${rangeLabel}${branch ? ` · ${branch}` : ""}`, Icon: DollarSign, tone: "violet" },
+                ]
+              : [
+                  { label: "Total Spend", value: fmtMoney(sum(filtered)), sub: `${rangeLabel}${branch ? ` · ${branch}` : ""}`, Icon: DollarSign, tone: "violet" },
+                  { label: "Records", value: filtered.length.toLocaleString(), sub: `${employeeCount} employee${employeeCount === 1 ? "" : "s"}`, Icon: Receipt, tone: "sky" },
+                  { label: "Average", value: fmtMoney(filtered.length ? sum(filtered) / filtered.length : 0), sub: "per record", Icon: TrendingUp, tone: "emerald" },
+                  { label: "Largest", value: largest ? fmtMoney(largest.amount) : "—", sub: largest ? `${profileName(largest.profileId)} · ${largest.expenseDate}` : "No records", Icon: Building2, tone: "amber" },
+                ]
+            ).map(({ label, value, sub, Icon, tone }) => (
+              <div key={label} className={`relative overflow-hidden rounded-xl border bg-slate-900/60 p-4 ${KPI_TONES[tone].border}`}>
+                <div className={`pointer-events-none absolute inset-x-0 top-0 h-0.5 ${KPI_TONES[tone].bar}`} />
+                <div className="flex items-start gap-3">
+                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${KPI_TONES[tone].chip}`}>
+                    <Icon className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+                    <p className={`mt-0.5 text-2xl font-bold tabular-nums ${KPI_TONES[tone].text}`}>{loading ? "…" : value}</p>
+                    <p className="mt-0.5 truncate text-xs text-slate-500" title={sub}>{sub}</p>
+                  </div>
                 </div>
-                <Clock className="h-8 w-8 text-yellow-400 opacity-50" />
               </div>
-            </div>
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-slate-400 uppercase">Approved</p>
-                  <p className="text-2xl font-bold text-blue-400 mt-2">{loading ? "…" : fmtMoney(sum(totalApproved))}</p>
-                  <p className="text-xs text-slate-500 mt-1">{totalApproved.length} awaiting reimbursement</p>
-                </div>
-                <CheckCircle className="h-8 w-8 text-blue-400 opacity-50" />
-              </div>
-            </div>
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-slate-400 uppercase">Reimbursed</p>
-                  <p className="text-2xl font-bold text-green-400 mt-2">{loading ? "…" : fmtMoney(sum(totalReimbursed))}</p>
-                  <p className="text-xs text-slate-500 mt-1">{totalReimbursed.length} paid out</p>
-                </div>
-                <Wallet className="h-8 w-8 text-green-400 opacity-50" />
-              </div>
-            </div>
-            <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-slate-400 uppercase">Total</p>
-                  <p className="text-2xl font-bold text-white mt-2">{loading ? "…" : fmtMoney(sum(filtered))}</p>
-                  <p className="text-xs text-slate-500 mt-1">{filtered.length} record{filtered.length === 1 ? "" : "s"} · {rangeLabel}</p>
-                </div>
-                <DollarSign className="h-8 w-8 text-purple-400 opacity-50" />
-              </div>
-            </div>
+            ))}
           </div>
+
+          {/* Spend by branch — what each branch costs in this view; click one to filter to it. */}
+          {!loading && branchSpend.length > 0 && (
+            <div className="rounded-xl border border-white/10 bg-slate-900/60 p-4">
+              <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+                <p className="text-sm font-semibold text-white">Spend by branch</p>
+                <div className="flex items-center gap-3">
+                  <p className="text-xs text-slate-500">{branch ? "Click the branch again to show every branch" : "Click a branch to see only its expenses"}</p>
+                  <div className="flex gap-1" role="group" aria-label="Sort branches">
+                    {([["amount", "Most → least"], ["name", "A → Z"]] as const).map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setBranchSort(key)}
+                        aria-pressed={branchSort === key}
+                        className={`rounded-md px-2 py-1 text-[11px] font-semibold transition ${branchSort === key ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              {/* Reads down the first column, then the second. */}
+              <div
+                className="grid gap-x-6 gap-y-1 md:grid-flow-col"
+                style={{ gridTemplateRows: `repeat(${Math.ceil(branchSpend.length / 2)}, auto)` }}
+              >
+                {branchSpend.map((b) => {
+                  const on = branch === b.branch;
+                  return (
+                    <button
+                      key={b.branch}
+                      type="button"
+                      onClick={() => setBranch(on ? "" : b.branch)}
+                      aria-pressed={on}
+                      className={`group grid grid-cols-[9rem_1fr_7.5rem] items-center gap-3 rounded-md px-2 py-1 text-left text-xs transition ${on ? "bg-blue-500/15 ring-1 ring-blue-500/40" : "hover:bg-white/5"}`}
+                    >
+                      <span className={`truncate ${on ? "font-semibold text-white" : "text-slate-300"}`} title={b.branch}>{b.branch}</span>
+                      <span className="h-2 overflow-hidden rounded-full bg-white/5">
+                        <span className={`block h-full rounded-full ${on ? "bg-blue-400" : "bg-blue-500/60 group-hover:bg-blue-400/80"}`} style={{ width: `${maxBranchSpend > 0 ? Math.max(2, (b.amount / maxBranchSpend) * 100) : 2}%` }} />
+                      </span>
+                      <span className="text-right tabular-nums text-slate-200">
+                        {fmtMoney(b.amount)} <span className="text-slate-500">· {b.count}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Filters */}
           <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
@@ -379,6 +545,15 @@ export function ExpenseTrackingPage({
                 onChange={(e) => setSearch(e.target.value)}
                 className="min-w-[260px] flex-1 bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none"
               />
+              <select
+                value={branch}
+                onChange={(e) => setBranch(e.target.value)}
+                aria-label="Branch"
+                className="rounded-lg border border-white/10 bg-slate-800/50 px-2 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+              >
+                <option value="">All branches</option>
+                {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+              </select>
               {selfFiledOnly && (
                 <div className="flex gap-1" role="group" aria-label="Country">
                   {(["all", "PH", "US"] as const).map((c) => (
@@ -413,13 +588,13 @@ export function ExpenseTrackingPage({
           </div>
 
           {/* Table */}
-          <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
-            <h2 className="text-lg font-bold text-white mb-4">{selfFiledOnly ? "Employee Requests" : "Expense Records"}</h2>
-            <table className="w-full text-sm">
+          <div ref={tableScrollRef} className="bg-slate-900/50 border border-white/10 rounded-lg p-4 max-w-full overflow-x-auto">
+            <h2 className="text-lg font-bold text-white mb-3">{selfFiledOnly ? "Employee Requests" : "Expense Records"}</h2>
+            <table className="w-full min-w-max text-xs">
               <thead>
                 <tr className="border-b border-white/10">
                   {COLUMNS.map((c) => (
-                    <th key={c.key} className={`px-3 py-3 text-xs font-semibold text-slate-400 uppercase ${c.key === "amount" ? "text-right" : "text-left"}`}>
+                    <th key={c.key} className={`px-2 py-2 text-[10px] font-semibold text-slate-400 uppercase whitespace-nowrap ${c.key === "amount" ? "text-right" : "text-left"}`}>
                       <span className={`inline-flex items-center ${c.key === "amount" ? "justify-end" : ""}`}>
                         {c.label}
                         <TicketColumnFilter
@@ -431,35 +606,53 @@ export function ExpenseTrackingPage({
                       </span>
                     </th>
                   ))}
-                  <th className="px-3 py-3 text-left text-xs font-semibold text-slate-400 uppercase">Actions</th>
+                  <th className="px-2 py-1.5 text-left text-xs font-semibold text-slate-400 uppercase">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={11} className="px-3 py-8 text-center text-slate-400">Loading expenses…</td></tr>
+                  <tr><td colSpan={COLUMNS.length + 1} className="px-3 py-8 text-center text-slate-400">Loading expenses…</td></tr>
                 ) : filtered.length === 0 ? (
-                  <tr><td colSpan={11} className="px-3 py-8 text-center text-slate-400">{selfFiledOnly && scopedExpenses.length === 0 ? "No employee has sent an expense request yet." : "No expense records match this filter."}</td></tr>
+                  <tr><td colSpan={COLUMNS.length + 1} className="px-3 py-8 text-center text-slate-400">{selfFiledOnly && scopedExpenses.length === 0 ? "No employee has sent an expense request yet." : "No expense records match this filter."}</td></tr>
                 ) : filtered.map((e) => (
                   <tr key={e.id} className="border-b border-white/5 hover:bg-white/5 transition">
-                    <td className="px-3 py-3 text-white font-medium">{profileName(e.profileId)}</td>
-                    <td className="px-3 py-3 text-slate-300">{e.category}</td>
-                    <td className="px-3 py-3 whitespace-nowrap">
+                    <td className="px-2 py-1.5 text-white font-medium whitespace-nowrap">{profileName(e.profileId)}</td>
+                    <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{branchOf(e)}</td>
+                    <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{e.category}</td>
+                    <td className="px-2 py-1.5 whitespace-nowrap">
                       {e.reimbursementType ? (
-                        <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium border ${e.reimbursementType === "Gas" ? "border-sky-400/40 bg-sky-500/10 text-sky-200" : e.reimbursementType === "Food" ? "border-amber-400/40 bg-amber-500/10 text-amber-200" : "border-violet-400/40 bg-violet-500/10 text-violet-200"}`} title={reimbursementTypeLabel(e)}>
+                        <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium border ${e.reimbursementType === "Gas" ? "border-sky-400/40 bg-sky-500/10 text-sky-200" : e.reimbursementType === "Food" ? "border-amber-400/40 bg-amber-500/10 text-amber-200" : isFlashTechAllowance(e) ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200" : "border-violet-400/40 bg-violet-500/10 text-violet-200"}`} title={reimbursementTypeLabel(e)}>
                           {reimbursementTypeLabel(e)}
                         </span>
                       ) : (
                         <span className="text-slate-600 text-xs">—</span>
                       )}
                     </td>
-                    <td className="px-3 py-3 text-slate-300">{e.expenseDate}</td>
-                    <td className="px-3 py-3 text-right text-slate-200 font-mono">{fmtMoney(e.amount)}</td>
-                    <td className="px-3 py-3 text-slate-400 max-w-xs truncate" title={e.description}>{e.description || "—"}</td>
-                    <td className="px-3 py-3 text-slate-300 whitespace-nowrap">{e.createdBy ? profileName(e.createdBy) : "—"}</td>
-                    <td className="px-3 py-3">
-                      <span className={`inline-block px-2 py-1 rounded text-xs font-semibold border ${expenseStatusColor(e.status)}`}>{e.status}</span>
+                    <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap tabular-nums">{e.expenseDate}</td>
+                    <td className="px-2 py-1.5 text-right text-slate-200 font-mono">{fmtMoney(e.amount)}</td>
+                    <td className="px-2 py-1.5 text-slate-400 w-[260px] max-w-[260px] whitespace-normal">
+                      {e.description ? (
+                        <button
+                          type="button"
+                          onClick={() => toggleDescription(e.id)}
+                          aria-expanded={openDescriptions.has(e.id)}
+                          title={openDescriptions.has(e.id) ? "Click to collapse" : "Click to read it all"}
+                          className={`block w-full text-left hover:text-slate-200 ${openDescriptions.has(e.id) ? "whitespace-pre-wrap break-words text-slate-200" : "truncate"}`}
+                        >
+                          {e.description}
+                        </button>
+                      ) : "—"}
                     </td>
-                    <td className="px-3 py-3 whitespace-nowrap">
+                    <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{e.createdBy ? profileName(e.createdBy) : "—"}</td>
+                    {showStatus && (<>
+                    <td className="px-3 py-3">
+                      {isSelfFiledExpense(e) || !flashTechOnly ? (
+                        <span className={`inline-block px-2 py-1 rounded text-xs font-semibold border ${expenseStatusColor(e.status)}`}>{e.status}</span>
+                      ) : (
+                        <span className="text-slate-600 text-xs">—</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5 whitespace-nowrap">
                       {reviewerName(e) ? (
                         <>
                           <div className="text-slate-200">{reviewerName(e)}</div>
@@ -475,6 +668,7 @@ export function ExpenseTrackingPage({
                         <span className="text-slate-600 text-xs">—</span>
                       )}
                     </td>
+                    </>)}
                     <td className="px-3 py-3">
                       {(() => {
                         // Its own receipt, else the receipts uploaded on its Flash Tech trip.
@@ -488,7 +682,7 @@ export function ExpenseTrackingPage({
                                 type="button"
                                 onClick={() => setPreviewReceiptUrl(url)}
                                 title={e.receiptUrl ? "View receipt" : "View receipt (uploaded on the Flash Tech trip)"}
-                                className="block h-10 w-10 overflow-hidden rounded border border-white/10 bg-slate-800 hover:border-blue-500 transition"
+                                className="block h-8 w-8 overflow-hidden rounded border border-white/10 bg-slate-800 hover:border-blue-500 transition"
                               >
                                 {isPdfReceipt(url) ? (
                                   <span className="flex h-full w-full items-center justify-center text-slate-400">
@@ -505,7 +699,7 @@ export function ExpenseTrackingPage({
                       })()}
                     </td>
                     <td className="px-3 py-3">
-                      <div className="flex flex-wrap gap-1">
+                      <div className="flex flex-nowrap items-center gap-1 whitespace-nowrap">
                         {/* Approve / Reject only on employees' own requests — Flash Tech, Hotel and Car Rental are added straight by Accounting. */}
                         {isSelfFiledExpense(e) && e.status === "Pending" && !canReviewExpenses && (
                           <span className="text-[11px] text-slate-500" title="Only Accounting can approve or reject expenses">Awaiting Accounting</span>
@@ -541,6 +735,8 @@ export function ExpenseTrackingPage({
           </div>
         </div>
       </main>
+
+      <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
 
       {previewReceiptUrl && <ReceiptLightbox url={previewReceiptUrl} onClose={() => setPreviewReceiptUrl(null)} />}
 
@@ -586,7 +782,7 @@ export function ExpenseTrackingPage({
           profiles={profiles}
           createdBy={myProfileId}
           companyId={companyId}
-          defaultCategory={categoryOnly}
+          defaultCategory={categoryOnly ?? (flashTechOnly && flashTechView === "hotel" ? "Hotel" : flashTechOnly && flashTechView === "carRental" ? "Car Rental" : undefined)}
           onClose={() => setFormState(null)}
           onSaved={async () => setExpenses(await getCompanyExpenses())}
         />

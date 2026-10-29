@@ -13,14 +13,23 @@ import { supabase } from "./client";
  */
 export type ExpenseCategory = "Hotel" | "Car Rental" | "Office Supply" | "Reimbursement Form" | "Travel" | "Supplies" | "Meals" | "Other";
 export type ExpenseStatus = "Pending" | "Approved" | "Reimbursed" | "Rejected";
-/** What a Reimbursement Form was for (migration 0401) — Other carries the employee's own words. */
-export const REIMBURSEMENT_TYPES = ["Gas", "Food", "Other"] as const;
+/**
+ * What a Reimbursement Form was for (migration 0401) — Other carries the
+ * employee's own words. Flash Tech Allowance (migration 0413) shows under
+ * Expenses → Flash Tech, not Employee Requests.
+ */
+export const REIMBURSEMENT_TYPES = ["Gas", "Food", "Flash Tech Allowance", "Other"] as const;
 export type ReimbursementType = (typeof REIMBURSEMENT_TYPES)[number];
+
+/** A type's button / badge text — "Flash Tech / Allowance" for the allowance. */
+export function reimbursementTypeName(t: ReimbursementType): string {
+  return t === "Flash Tech Allowance" ? "Flash Tech / Allowance" : t;
+}
 
 /** "Gas", "Food", "Other — Parking", or "" when the expense has no type (not a reimbursement, or sent before 0401). */
 export function reimbursementTypeLabel(e: Pick<ExpenseRow, "reimbursementType" | "reimbursementOther">): string {
   if (!e.reimbursementType) return "";
-  return e.reimbursementType === "Other" && e.reimbursementOther ? `Other — ${e.reimbursementOther}` : e.reimbursementType;
+  return e.reimbursementType === "Other" && e.reimbursementOther ? `Other — ${e.reimbursementOther}` : reimbursementTypeName(e.reimbursementType);
 }
 
 export interface ExpenseRow {

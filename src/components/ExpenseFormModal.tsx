@@ -3,7 +3,7 @@ import { Paperclip, X } from "lucide-react";
 import { randomId } from "@/lib/utils";
 import type { ProfileRow } from "@/lib/supabase/users";
 import { uploadExpenseReceipt, deleteExpenseReceiptFile } from "@/lib/firebase/storage";
-import { createExpense, updateExpense, REIMBURSEMENT_TYPES, type ExpenseRow, type ExpenseCategory, type ReimbursementType } from "@/lib/supabase/expenses";
+import { createExpense, updateExpense, REIMBURSEMENT_TYPES, reimbursementTypeName, type ExpenseRow, type ExpenseCategory, type ReimbursementType } from "@/lib/supabase/expenses";
 import { todayISO } from "@/lib/localDate";
 
 /** What Accounting picks from on Add Expense. */
@@ -91,7 +91,7 @@ export function ExpenseFormModal({
       return;
     }
     if (isReimbursement && !form.reimbursementType) {
-      alert("Please pick the type of reimbursement (Gas, Food or Other).");
+      alert("Please pick the type of reimbursement (Gas, Food, Flash Tech / Allowance or Other).");
       return;
     }
     if (isReimbursement && form.reimbursementType === "Other" && !form.reimbursementOther.trim()) {
@@ -195,7 +195,7 @@ export function ExpenseFormModal({
               <label className="block text-xs text-slate-400 uppercase mb-1">
                 Type of Reimbursement <span className="text-red-400 normal-case">* required</span>
               </label>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {REIMBURSEMENT_TYPES.map((t) => (
                   <button
                     key={t}
@@ -203,7 +203,7 @@ export function ExpenseFormModal({
                     onClick={() => setForm({ ...form, reimbursementType: t })}
                     className={`flex-1 rounded-lg border px-3 py-2 text-sm transition ${form.reimbursementType === t ? "border-blue-500 bg-blue-600/20 text-white" : "border-white/10 bg-slate-800/50 text-slate-300 hover:border-white/30"}`}
                   >
-                    {t === "Other" ? "Other (specify)" : t}
+                    {t === "Other" ? "Other (specify)" : reimbursementTypeName(t)}
                   </button>
                 ))}
               </div>
