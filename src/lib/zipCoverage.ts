@@ -28,6 +28,8 @@ export interface LocationEntry {
   zipCount: string;
   hasZipCoverage: boolean;
   isPhilippines: boolean;
+  /** The Mexico branch — Mexico staff (HR Paperworks → Mexico Staff forms); no zip coverage, like the Philippines. */
+  isMexico?: boolean;
 }
 
 // All 31 locations from Location.csv
@@ -651,6 +653,27 @@ export const LOCATIONS_DATA: LocationEntry[] = [
     "zipCount": "",
     "hasZipCoverage": false,
     "isPhilippines": true
+  },
+  {
+    "id": "61",
+    "location": "Mexico",
+    "address1": "",
+    "address2": "",
+    "city": "Mexico",
+    "state": "",
+    "zipCode": "",
+    "lat": "",
+    "lng": "",
+    "phone": "",
+    "repTech": "",
+    "sms": "Y",
+    "autoTriage": "N",
+    "defaultPartDist": "",
+    "defaultPartAccountNo": "",
+    "zipCount": "",
+    "hasZipCoverage": false,
+    "isPhilippines": false,
+    "isMexico": true
   }
 ];
 

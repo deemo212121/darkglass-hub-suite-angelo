@@ -75,7 +75,7 @@ import type { PartsResponsibilityFormData } from "@/lib/partsResponsibilityFormT
 import { captureHtmlToPdfBlob, loadAssetDataUrl } from "@/lib/pdfCapture";
 import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
 import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, masterW2OfficeUsesAdminHub, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
-import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
+import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, contractorAgreementCountryOf, CONTRACTOR_AGREEMENT_TITLE, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
 import { captureConfidentialityNonCompeteAgreementPdf, confidentialityUsesAdminHub, type ConfidentialityNonCompeteAgreementFormData } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
 import { agreementLogoLoader } from "@/lib/agreementBranding";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
@@ -318,7 +318,7 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
     await signDocument(doc.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
     await confirmSignableDocument(doc.id, null);
 
-    void logActivity({ action: "master_ph_contractor_agreement_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+    void logActivity({ action: contractorAgreementCountryOf(existing) === "mx" ? "master_mx_contractor_agreement_employer_signed" : "master_ph_contractor_agreement_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
     setDoc({ ...doc, status: "confirmed", pdfUrl, formData: merged as unknown as Record<string, any> });
   };
 
@@ -410,7 +410,8 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
   };
 
   const employeeName = doc ? ((doc.formData as { employeeName?: string })?.employeeName || doc.recipientName || "—") : "—";
-  const label = doc ? (TYPE_LABEL[doc.documentType] ?? doc.documentType) : "";
+  // The Mexico version of the contractor agreement is the same type with its own title.
+  const label = !doc ? "" : doc.documentType === "master_ph_contractor_agreement" ? CONTRACTOR_AGREEMENT_TITLE[contractorAgreementCountryOf(doc.formData)] : (TYPE_LABEL[doc.documentType] ?? doc.documentType);
 
   const content = (
     <>

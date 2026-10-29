@@ -103,7 +103,7 @@ import { useSortableSearchTable } from "@/hooks/useSortableSearchTable";
 import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
 import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, masterW2OfficeUsesAdminHub, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
 import { agreementLogoLoader } from "@/lib/agreementBranding";
-import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
+import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, contractorAgreementCountryOf, CONTRACTOR_AGREEMENT_TITLE, CONTRACTOR_AGREEMENT_SHORT_TITLE, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
 import { masterW2ExecutiveAgreementStyles, buildMasterW2ExecutiveAgreementBodyMarkup, type MasterW2ExecutiveAgreementFormData } from "@/lib/masterW2ExecutiveAgreementFormTemplate";
 import { confidentialityNonCompeteAgreementStyles, buildConfidentialityNonCompeteAgreementBodyMarkup, captureConfidentialityNonCompeteAgreementPdf, CNC_CURRENT_TEMPLATE_VERSION, confidentialityAgreementTitle, confidentialityUsesAdminHub, type ConfidentialityNonCompeteAgreementFormData } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
 import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments";
@@ -1150,7 +1150,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "compensationUpdate" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "confidentialityNonCompeteAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList" | "clockInCodes" | "performanceBonusPolicy" | "ahsDirectDeposit" | "ahsValidId" | "ahsPhAgreement" | "ahsConfidentiality" | "ahsW2Office">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "compensationUpdate" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "confidentialityNonCompeteAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList" | "clockInCodes" | "performanceBonusPolicy" | "ahsDirectDeposit" | "ahsValidId" | "ahsPhAgreement" | "ahsConfidentiality" | "ahsW2Office" | "mxContractorAgreement">(paperworksOnly ? "combineForms" : "hiring");
   // HR Paperworks → "AHS Forms PH": the Admin Hub Solutions versions of Direct
   // Deposit, Valid ID, the Master PH Contractor Agreement and the Master
   // Confidentiality agreement; "AHS Forms US" has the Master W-2 Office &
@@ -1160,6 +1160,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // (lib/formBrand.ts). The original tabs list only the US In Home Services copies.
   const isAhsFormsTab = activeTab === "ahsDirectDeposit" || activeTab === "ahsValidId" || activeTab === "ahsPhAgreement" || activeTab === "ahsConfidentiality" || activeTab === "ahsW2Office";
   const isAhsDoc = (d: { formData?: unknown }) => brandOf(d.formData) === "ahs";
+  // New Automation Forms → Mexico Staff: the Mexico version of the Master PH
+  // Contractor Agreement (same type, form_data.country "mx" — see
+  // masterPhContractorAgreementFormTemplate.ts). Its own tab lists only those.
+  const isMxTab = activeTab === "mxContractorAgreement";
+  const isMxDoc = (d: { formData?: unknown }) => contractorAgreementCountryOf(d.formData) === "mx";
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -1186,7 +1191,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [startDateFor, setStartDateFor] = useState<{ id: string; date: string } | null>(null);
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string; viewCvCandidateId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList", "clockInCodes", "ndaForm", "confidentialityNonCompeteAgreement", "performanceBonusPolicy", "ahsDirectDeposit", "ahsValidId", "ahsPhAgreement", "ahsConfidentiality", "ahsW2Office"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList", "clockInCodes", "ndaForm", "confidentialityNonCompeteAgreement", "performanceBonusPolicy", "ahsDirectDeposit", "ahsValidId", "ahsPhAgreement", "ahsConfidentiality", "ahsW2Office", "mxContractorAgreement"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -6626,20 +6631,24 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "masterPhContractorAgreement" || activeTab === "ahsPhAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMasterPhContractorAgreementForms();
+    if (activeTab === "masterPhContractorAgreement" || activeTab === "ahsPhAgreement" || activeTab === "mxContractorAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMasterPhContractorAgreementForms();
   }, [activeTab]);
   const sentMasterPhContractorAgreementAwaitingEmployerCount = useMemo(
-    () => sentMasterPhContractorAgreementForms.filter((d) => !isAhsDoc(d) && isAwaitingEmployerStep(d)).length,
+    () => sentMasterPhContractorAgreementForms.filter((d) => !isAhsDoc(d) && !isMxDoc(d) && isAwaitingEmployerStep(d)).length,
     [sentMasterPhContractorAgreementForms]
   );
   const sentAhsPhAgreementAwaitingEmployerCount = useMemo(
-    () => sentMasterPhContractorAgreementForms.filter((d) => isAhsDoc(d) && isAwaitingEmployerStep(d)).length,
+    () => sentMasterPhContractorAgreementForms.filter((d) => isAhsDoc(d) && !isMxDoc(d) && isAwaitingEmployerStep(d)).length,
+    [sentMasterPhContractorAgreementForms]
+  );
+  const sentMxAgreementAwaitingEmployerCount = useMemo(
+    () => sentMasterPhContractorAgreementForms.filter((d) => isMxDoc(d) && isAwaitingEmployerStep(d)).length,
     [sentMasterPhContractorAgreementForms]
   );
 
   type MasterPhContractorAgreementSortColumn = "employee" | "nationality" | "sentBy" | "status" | "sent";
   const visibleMasterPhContractorAgreementForms = useMemo(
-    () => sentMasterPhContractorAgreementForms.filter((d) => (activeTab === "ahsPhAgreement" ? isAhsDoc(d) : !isAhsDoc(d))),
+    () => sentMasterPhContractorAgreementForms.filter((d) => (isMxTab ? isMxDoc(d) : !isMxDoc(d) && (activeTab === "ahsPhAgreement" ? isAhsDoc(d) : !isAhsDoc(d)))),
     [sentMasterPhContractorAgreementForms, activeTab],
   );
   const masterPhContractorAgreementStatusLabel = (doc: SignableDocument): string =>
@@ -6752,7 +6761,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     try {
       const recipientName = employees.find((e) => e.id === masterPhContractorAgreementRecipientId)?.name || "";
       const logo = await loadBrandLogo(activeTab === "ahsPhAgreement" ? "ahs" : "usihs");
-      const previewData = { ...buildMasterPhContractorAgreementPreviewData(recipientName), ...(activeTab === "ahsPhAgreement" ? { brand: "ahs" as const } : {}) };
+      const previewData = { ...buildMasterPhContractorAgreementPreviewData(recipientName), ...(activeTab === "ahsPhAgreement" ? { brand: "ahs" as const } : {}), ...(isMxTab ? { country: "mx" as const } : {}) };
       const pdfBlob = await captureHtmlToPdfBlob(buildMasterPhContractorAgreementBodyMarkup(previewData, logo), masterPhContractorAgreementStyles);
       const url = URL.createObjectURL(pdfBlob);
       setMasterPhContractorAgreementPreviewPdfUrl(url);
@@ -6772,13 +6781,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       if (!recipient) throw new Error("Select a recipient first.");
 
       const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["master_ph_contractor_agreement"]);
-      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Master PH Contractor Agreement on file. Send another one anyway?`)) {
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Master PH or Mexico Contractor Agreement on file. Send another one anyway?`)) {
         return;
       }
 
       const doc = await createSignableDocument({
         documentType: "master_ph_contractor_agreement",
-        formData: { employeeId: recipient.id, employeeName: recipient.name, ...(activeTab === "ahsPhAgreement" ? { brand: "ahs" } : {}) } as unknown as Record<string, any>,
+        formData: { employeeId: recipient.id, employeeName: recipient.name, ...(activeTab === "ahsPhAgreement" ? { brand: "ahs" } : {}), ...(isMxTab ? { country: "mx" } : {}) } as unknown as Record<string, any>,
         recipientId: masterPhContractorAgreementRecipientId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -6792,10 +6801,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         dmThreadId: thread.id,
         senderId: myProfileId,
         senderName: displayName || "HR",
-        body: `📋 Please complete the Master Philippines Independent Contractor Comprehensive Agreement: ${fillLink}`,
+        body: `📋 Please complete the ${CONTRACTOR_AGREEMENT_TITLE[isMxTab ? "mx" : "ph"]}: ${fillLink}`,
       });
 
-      void logActivity({ action: "master_ph_contractor_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+      void logActivity({ action: isMxTab ? "master_mx_contractor_agreement_sent" : "master_ph_contractor_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
       setMasterPhContractorAgreementRecipientId("");
       setMasterPhContractorAgreementRecipientSearch("");
@@ -6818,7 +6827,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadMasterPhContractorAgreementPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<MasterPhContractorAgreementFormData>).employeeName || doc.recipientName || "master-ph-contractor-agreement";
-    await downloadSignableDocumentPdf(doc.pdfUrl, `Master Philippines Independent Contractor Comprehensive Agreement - ${name}.pdf`);
+    await downloadSignableDocumentPdf(doc.pdfUrl, `${CONTRACTOR_AGREEMENT_TITLE[contractorAgreementCountryOf(doc.formData)]} - ${name}.pdf`);
   };
 
   /** Re-renders this document's PDF from its already-stored data (employee/employer signatures are inline data: URLs in form_data, no CORS resolution needed) — see regenerateSignableDocumentPdf.ts's header comment. */
@@ -6852,7 +6861,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const handleDeleteMasterPhContractorAgreement = async (doc: SignableDocument) => {
-    if (!window.confirm("Permanently delete this Master PH Contractor Agreement request?")) return;
+    if (!window.confirm(`Permanently delete this ${CONTRACTOR_AGREEMENT_SHORT_TITLE[contractorAgreementCountryOf(doc.formData)]} request?`)) return;
     setMasterPhContractorAgreementActionBusyId(doc.id);
     setMasterPhContractorAgreementActionError(null);
     try {
@@ -6917,7 +6926,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       await signDocument(masterPhContractorAgreementEmployerDialog.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
       await confirmSignableDocument(masterPhContractorAgreementEmployerDialog.id, null);
 
-      void logActivity({ action: "master_ph_contractor_agreement_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+      void logActivity({ action: contractorAgreementCountryOf(existing) === "mx" ? "master_mx_contractor_agreement_employer_signed" : "master_ph_contractor_agreement_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
       setMasterPhContractorAgreementEmployerDialog(null);
       await loadSentMasterPhContractorAgreementForms();
     } catch (err) {
@@ -18623,6 +18632,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "validId", label: "Valid ID", count: 0, icon: FileCheck },
   ] as const;
 
+  // "Mexico Staff" — PH Staff's forms for Mexico staff: the Mexico version of
+  // the contractor agreement (its own tab, same document type — see isMxTab),
+  // and the same shared W-8BEN / Direct Deposit / Valid ID tabs.
+  const newAutomationFormsMexicoTabs = [
+    { key: "mxContractorAgreement", label: "Master Mexico Contractor Agreement", count: sentMxAgreementAwaitingEmployerCount, icon: FileCheck },
+    { key: "newW8ben", label: "Form W-8BEN", count: 0, icon: Landmark },
+    { key: "newDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
+    { key: "validId", label: "Valid ID", count: 0, icon: FileCheck },
+  ] as const;
+
   // "New Automation Forms"'s management-tier column — Branch Manager/Senior
   // Branch Manager/Director/Tech Assistant Director forms. Contractor
   // Addendum + W-9 (1099 paperwork) were replaced with the W-2 Executive
@@ -18683,12 +18702,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     ...(paperworksOnly && companyId === "COMP001" ? [{
       group: "New Automation Forms",
       icon: Paperclip,
-      tabs: [...newAutomationFormsGeneralTabs, ...newAutomationFormsTechnicianTabs, ...newAutomationFormsOfficeTabs, ...newAutomationFormsPhTabs, ...newAutomationFormsManagementTabs],
+      tabs: [...newAutomationFormsGeneralTabs, ...newAutomationFormsTechnicianTabs, ...newAutomationFormsOfficeTabs, ...newAutomationFormsPhTabs, ...newAutomationFormsMexicoTabs, ...newAutomationFormsManagementTabs],
       columns: [
         { label: "General", tabs: newAutomationFormsGeneralTabs },
         { label: "New Technician Forms", tabs: newAutomationFormsTechnicianTabs },
         { label: "New Office Forms (US)", tabs: newAutomationFormsOfficeTabs },
         { label: "PH Staff", tabs: newAutomationFormsPhTabs },
+        { label: "Mexico Staff", tabs: newAutomationFormsMexicoTabs },
         { label: "BM, SBS, Tech Director, Tech Assistant Director Forms", tabs: newAutomationFormsManagementTabs },
       ],
     }] : []),
@@ -31626,12 +31646,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
-      {(activeTab === "masterPhContractorAgreement" || activeTab === "ahsPhAgreement") && (
+      {(activeTab === "masterPhContractorAgreement" || activeTab === "ahsPhAgreement" || activeTab === "mxContractorAgreement") && (
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Send Master PH Contractor Agreement Request {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
-          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their info and sign. Once they submit, it lands back here for HR to add the employer signature. Covers the independent-contractor relationship, confidentiality/NDA, the PH off-days & leave policy, and governing law/e-signature terms in one document.</p>
+          <h2 className="font-semibold text-sm">Send {CONTRACTOR_AGREEMENT_SHORT_TITLE[isMxTab ? "mx" : "ph"]} Request {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their info and sign. Once they submit, it lands back here for HR to add the employer signature. Covers the independent-contractor relationship, confidentiality/NDA, the {isMxTab ? "Mexico" : "PH"} off-days & leave policy, and governing law/e-signature terms in one document.</p>
         </div>
         <div className="p-4 flex flex-col md:flex-row gap-6">
           <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
@@ -31697,7 +31717,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 {masterPhContractorAgreementPreviewLoading || !masterPhContractorAgreementPreviewPdfUrl ? (
                   <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
                 ) : (
-                  <iframe src={masterPhContractorAgreementPreviewPdfUrl} title="Master PH Contractor Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
+                  <iframe src={masterPhContractorAgreementPreviewPdfUrl} title={`${CONTRACTOR_AGREEMENT_SHORT_TITLE[isMxTab ? "mx" : "ph"]} Preview`} className="w-full border-0" style={{ height: 560 }} />
                 )}
               </div>
             ) : (
@@ -31711,7 +31731,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Sent Master PH Contractor Agreement Forms {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
+          <h2 className="font-semibold text-sm">Sent {CONTRACTOR_AGREEMENT_SHORT_TITLE[isMxTab ? "mx" : "ph"]} Forms {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the contractor finished — add your signature to finalize.</p>
         </div>
         <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
@@ -31892,8 +31912,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <h3 className="text-lg font-bold mb-2">Add Employer Signature</h3>
             <p className="text-sm text-muted-foreground mb-4">
               Employer representative signature for{" "}
-              <span className="font-semibold text-white">{(masterPhContractorAgreementEmployerDialog.formData as Partial<MasterPhContractorAgreementFormData>).employeeName || "—"}</span>'s
-              Master Philippines Independent Contractor Comprehensive Agreement.
+              <span className="font-semibold text-white">{(masterPhContractorAgreementEmployerDialog.formData as Partial<MasterPhContractorAgreementFormData>).employeeName || "—"}</span>'s{" "}
+              {CONTRACTOR_AGREEMENT_TITLE[contractorAgreementCountryOf(masterPhContractorAgreementEmployerDialog.formData)]}.
             </p>
 
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
