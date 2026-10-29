@@ -43,7 +43,7 @@ import { visibleEmployeeMonitoringProfileIds } from "@/lib/notifyRouting";
 import { getCompanyTimecardEntries, getProfileIdByFirebaseUid, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getCompanyTraineeEntries, type TraineeTimecardEntry } from "@/lib/supabase/traineeTimecards";
 import { getAttendanceNotes, upsertAttendanceNote, upsertAttendanceHrNote, uploadAttendanceNoteAttachment, removeAttendanceNoteAttachment, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
-import { getCompanyPtoRequests, sickYearWindow, sickDaysUsed, SICK_LEAVE_ANNUAL_ALLOWANCE, type PtoRequestRow } from "@/lib/supabase/pto";
+import { getCompanyPtoRequests, sickYearWindow, sickDaysUsed, sickDaysPending, SICK_LEAVE_ANNUAL_ALLOWANCE, type PtoRequestRow } from "@/lib/supabase/pto";
 import { HrCalendarTab } from "@/components/HrCalendarTab";
 import { PtoManagementTab } from "@/components/PtoManagementTab";
 import { EmployeeAttendanceStatusTab } from "@/components/EmployeeAttendanceStatusTab";
@@ -527,8 +527,8 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   }, [pendingExplanationRows]);
 
   // "Exceeded Sick Days" — technician-tier employees who've used (approved
-  // or still-pending — sickDaysUsed counts anything not denied/cancelled,
-  // so a pending request already counts toward "used" here) more Sick
+  // or still-pending — sickDaysUsed + sickDaysPending, so a pending request
+  // already counts toward "used" here) more Sick
   // Leave than their SICK_LEAVE_ANNUAL_ALLOWANCE for their current tenure
   // year (see pto.ts's sickYearWindow/sickDaysUsed — same allowance math
   // HrCalendarTab/Master List already show per person). hasPendingRequest
@@ -572,7 +572,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       const window = sickYearWindow(hireDateByProfileId.get(p.id) || null, p.created_at || null, esdAsOfDate);
       if (!window) continue;
       const myRequests = ptoRequests.filter((r) => r.profileId === p.id && r.ptoType === "sick");
-      const used = sickDaysUsed(myRequests, window);
+      const used = sickDaysUsed(myRequests, window) + sickDaysPending(myRequests, window);
       if (used <= window.allowance) continue;
       const requestsInWindow = myRequests.filter(
         (r) => r.status !== "denied" && r.status !== "cancelled" && r.startDate >= window.start && r.startDate < window.end

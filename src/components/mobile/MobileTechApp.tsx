@@ -135,7 +135,7 @@ import { getModelResources, saveModelResources, type ModelResources } from "@/li
 import { getUndismissedMobilePopupAlerts, dismissTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
 import { createItTicket, getItTickets, type ItTicketRow, type ItTicketPriority } from "@/lib/supabase/itTickets";
 import { createEmployeeRequest, getCompanyEmployeeRequests, updateEmployeeRequestStatus, canReviewTicketDispute, notifyRequestReviewers, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
-import { createPtoRequest, getCompanyPtoRequests, canReviewPtoStage, reviewPtoStage, isEligibleForPto, ptoEligibleDate, ptoYearWindow, ptoDaysUsed, workingDayCount, noLeaveDaysMessage, leaveFilingDateError, earliestLeaveStart, setPtoAttachmentUrl, type PtoType, type PtoRequestRow } from "@/lib/supabase/pto";
+import { createPtoRequest, getCompanyPtoRequests, canReviewPtoStage, reviewPtoStage, isEligibleForPto, ptoEligibleDate, ptoYearWindow, ptoDaysUsed, ptoDaysPending, workingDayCount, noLeaveDaysMessage, leaveFilingDateError, earliestLeaveStart, setPtoAttachmentUrl, type PtoType, type PtoRequestRow } from "@/lib/supabase/pto";
 import {
   createTimecardCorrection,
   getCompanyTimecardCorrections,
@@ -8905,8 +8905,12 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
   const paidLeaveBlocked = isPaidLeave && !ptoEligible;
   // Vacation and Personal both draw on the PTO allowance (ptoRequestsInYear).
   const ptoYear = ptoYearWindow(hireDate, myCreatedAt);
+  // Only approved days come off; pending ones show beside the balance. A new
+  // request still can't go past what's left after the pending ones.
   const ptoRemaining = ptoYear ? Math.max(0, ptoYear.allowance - ptoDaysUsed(requests, ptoYear)) : 0;
-  const ptoUsedUp = ptoEligible && !loading && !!ptoYear && ptoRemaining <= 0;
+  const ptoPending = ptoYear ? ptoDaysPending(requests, ptoYear) : 0;
+  const ptoAvailable = Math.max(0, ptoRemaining - ptoPending);
+  const ptoUsedUp = ptoEligible && !loading && !!ptoYear && ptoAvailable <= 0;
   const myOffDays = companyProfiles.find((p) => p.id === profileId)?.off_days;
   // Declared holidays aren't PTO days — PTO can't be filed for them.
   const holidayNames = useHolidayNames();
@@ -8967,10 +8971,10 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
       setMsg(noLeaveDaysMessage(startDate, endDate, myOffDays, holidayNames));
       return;
     }
-    if (isPaidLeave && ptoYear && requestedDays !== null && requestedDays > ptoRemaining) {
-      setMsg(ptoRemaining <= 0
+    if (isPaidLeave && ptoYear && requestedDays !== null && requestedDays > ptoAvailable) {
+      setMsg(ptoAvailable <= 0
         ? `You have no PTO days left for Year ${ptoYear.tenureYear} — it resets ${ptoYear.end}. Unpaid leave is still available.`
-        : `This request is ${requestedDays} day${requestedDays === 1 ? "" : "s"}, but you only have ${ptoRemaining} of ${ptoYear.allowance} PTO days left for Year ${ptoYear.tenureYear} (resets ${ptoYear.end}).`);
+        : `This request is ${requestedDays} day${requestedDays === 1 ? "" : "s"}, but you only have ${ptoAvailable} of ${ptoYear.allowance} PTO days left${ptoPending > 0 ? ` after your ${ptoPending} pending` : ""} for Year ${ptoYear.tenureYear} (resets ${ptoYear.end}).`);
       return;
     }
     if (!details.trim()) {
@@ -9143,9 +9147,9 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
         <div className="mtech-section-title">End Date</div>
         <input className="mtech-bill-input full" type="date" min={startDate || earliestLeaveStart(leaveType === "Sick" ? "sick" : "vacation")} value={endDate} onChange={(e) => setEndDate(e.target.value)} />
         {isPaidLeave && requestedDays !== null && (
-          <p style={{ marginTop: 6, fontSize: 12, color: ptoYear && requestedDays > ptoRemaining ? "#f87171" : "#94a3b8" }}>
+          <p style={{ marginTop: 6, fontSize: 12, color: ptoYear && requestedDays > ptoAvailable ? "#f87171" : "#94a3b8" }}>
             Counts as {requestedDays} PTO day{requestedDays === 1 ? "" : "s"}. Your rest days (Sat/Sun unless your schedule says otherwise) and company holidays aren't counted.
-            {ptoYear && ` You have ${ptoRemaining} left.`}
+            {ptoYear && ` You have ${ptoRemaining} left${ptoPending > 0 ? ` (${ptoPending} pending)` : ""}.`}
           </p>
         )}
 

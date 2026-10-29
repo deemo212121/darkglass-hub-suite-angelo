@@ -1,7 +1,8 @@
 /**
  * Under a PTO request's Type (PTO Management — Employee Monitoring's tab and
  * Attendance Monitoring's): that employee's balance for the year the request
- * falls in — days approved, days pending, days left — so a reviewer sees
+ * falls in — days approved, days pending, days left (only approved days come
+ * off; pending ones show as "5 days left (3 days pending)") — so a reviewer sees
  * before approving whether it goes past their allowance, and that the extra
  * days would be unpaid.
  *
@@ -96,14 +97,15 @@ export function PtoBalanceSummary({
     const inYear = ptoRequestsInYear(own, year);
     const approved = sum(inYear, "approved");
     const pending = sum(inYear, "pending");
-    const left = year.allowance - approved - pending;
+    // Only approved days come off the balance — pending ones show beside it.
+    const left = year.allowance - approved;
     const over = request.status === "denied" || request.status === "cancelled" ? 0 : overBy(request, inYear, year.allowance);
     return (
       <div className="mt-1" title={`PTO Year ${year.tenureYear}: ${fmtDate(year.start)} – ${fmtDate(year.end)} (resets on the hire anniversary)`}>
         <div className={line}>
           <span className="text-green-300">{fmtDays(approved)} approved</span> · <span className="text-yellow-300">{fmtDays(pending)} pending</span> of {year.allowance}
         </div>
-        <div className={line}>{left >= 0 ? `${fmtDays(left)} left` : `${fmtDays(-left)} over`} · Year {year.tenureYear}</div>
+        <div className={line}>{left >= 0 ? `${fmtDays(left)} left` : `${fmtDays(-left)} over`}{pending > 0 ? ` (${fmtDays(pending)} pending)` : ""} · Year {year.tenureYear}</div>
         {over > 0 && warn(`${fmtDays(over)} past balance — unpaid`)}
       </div>
     );
@@ -121,7 +123,7 @@ export function PtoBalanceSummary({
         <div className={line}>
           <span className="text-green-300">{fmtDays(approved)} approved</span> · <span className="text-yellow-300">{fmtDays(pending)} pending</span> of {year.allowance} sick
         </div>
-        <div className={line}>Unpaid · {fmtDays(Math.max(0, year.allowance - approved - pending))} left</div>
+        <div className={line}>Unpaid · {fmtDays(Math.max(0, year.allowance - approved))} left{pending > 0 ? ` (${fmtDays(pending)} pending)` : ""}</div>
         {over > 0 && warn(`${fmtDays(over)} past the ${year.allowance}-day sick allowance`)}
       </div>
     );

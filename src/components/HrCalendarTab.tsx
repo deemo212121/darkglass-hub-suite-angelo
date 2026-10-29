@@ -32,8 +32,10 @@ import {
   updatePtoRequestStatus,
   ptoYearWindow,
   ptoDaysUsed,
+  ptoDaysPending,
   sickYearWindow,
   sickDaysUsed,
+  sickDaysPending,
   reviewPtoStage,
   canReviewPtoStage,
   uploadPtoAttachment,
@@ -457,7 +459,7 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName, readOnly 
     return map;
   }, [requests]);
   const remainingPtoByProfile = useMemo(() => {
-    const map = new Map<string, { remaining: number; allowance: number } | null>();
+    const map = new Map<string, { remaining: number; allowance: number; pending: number } | null>();
     for (const e of employees) {
       const window = ptoYearWindow(e.startDate, null);
       if (!window) {
@@ -466,12 +468,13 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName, readOnly 
       }
       const combined = [...(requestsByProfile.get(e.id) ?? []), ...(hrPlottedDaysForBalance.get(e.id) ?? [])];
       const used = ptoDaysUsed(combined, window);
-      map.set(e.id, { remaining: Math.max(0, window.allowance - used), allowance: window.allowance });
+      // Only approved days come off; pending ones show beside the balance.
+      map.set(e.id, { remaining: Math.max(0, window.allowance - used), allowance: window.allowance, pending: ptoDaysPending(combined, window) });
     }
     return map;
   }, [employees, requestsByProfile, hrPlottedDaysForBalance]);
   const remainingSickByProfile = useMemo(() => {
-    const map = new Map<string, { remaining: number; allowance: number } | null>();
+    const map = new Map<string, { remaining: number; allowance: number; pending: number } | null>();
     for (const e of employees) {
       const window = sickYearWindow(e.startDate, null);
       if (!window) {
@@ -480,7 +483,8 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName, readOnly 
       }
       const combined = [...(requestsByProfile.get(e.id) ?? []), ...(hrPlottedDaysForBalance.get(e.id) ?? [])];
       const used = sickDaysUsed(combined, window);
-      map.set(e.id, { remaining: Math.max(0, window.allowance - used), allowance: window.allowance });
+      // Only approved days come off; pending ones show beside the balance.
+      map.set(e.id, { remaining: Math.max(0, window.allowance - used), allowance: window.allowance, pending: sickDaysPending(combined, window) });
     }
     return map;
   }, [employees, requestsByProfile, hrPlottedDaysForBalance]);
@@ -983,17 +987,17 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName, readOnly 
                                 {sick && (
                                   <span
                                     className="bg-teal-500/20 text-teal-300 px-1 py-0.5 rounded text-[9px] font-semibold"
-                                    title={`Sick Leave remaining/allowance: ${sick.remaining}/${sick.allowance}`}
+                                    title={`Sick Leave remaining/allowance: ${sick.remaining}/${sick.allowance}${sick.pending > 0 ? ` — ${sick.pending} pending, not deducted until approved` : ""}`}
                                   >
-                                    {sick.remaining}/{sick.allowance}
+                                    {sick.remaining}/{sick.allowance}{sick.pending > 0 && <span className="ml-1 font-normal opacity-80">({sick.pending} pending)</span>}
                                   </span>
                                 )}
                                 {pto && (
                                   <span
                                     className="bg-yellow-500/20 text-yellow-300 px-1 py-0.5 rounded text-[9px] font-semibold"
-                                    title={`Vacation PTO remaining/allowance: ${pto.remaining}/${pto.allowance}`}
+                                    title={`Vacation PTO remaining/allowance: ${pto.remaining}/${pto.allowance}${pto.pending > 0 ? ` — ${pto.pending} pending, not deducted until approved` : ""}`}
                                   >
-                                    {pto.remaining}/{pto.allowance}
+                                    {pto.remaining}/{pto.allowance}{pto.pending > 0 && <span className="ml-1 font-normal opacity-80">({pto.pending} pending)</span>}
                                   </span>
                                 )}
                               </span>
