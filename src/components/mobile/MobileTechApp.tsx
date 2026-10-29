@@ -141,7 +141,11 @@ import {
   getCompanyTimecardCorrections,
   canReviewCorrectionStage,
   reviewCorrectionStage,
-  validateCorrectionTimes,
+  validateCorrectionSelection,
+  CORRECTION_PUNCHES,
+  NO_CORRECTION_PUNCHES,
+  type CorrectionPunch,
+  type CorrectionPunchSelection,
   validateSelfCorrectionDate,
   selfCorrectionEarliestDate,
   getSelfCorrectionWindow,
@@ -9825,6 +9829,9 @@ function MobileTicketTimeDisputeView({ userName, profileId, companyId, role, tec
 // today's entry) so the review queue can show what's being corrected FROM,
 // not just what it's being corrected TO. Same two-stage manager-then-(HR OR
 // Accounting) approval as Time Off, via timecardCorrections.ts.
+/** An unticked Time Correction punch — locked on the timecard's own time. */
+const LOCKED_TIME_STYLE: React.CSSProperties = { opacity: 0.5, cursor: "not-allowed" };
+
 function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefillDate }: { userName: string; profileId: string | null; companyId: string | null; role: string | null; prefillDate?: string | null }) {
   const [requests, setRequests] = useState<TimecardCorrectionRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -9892,16 +9899,31 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
 
   const shiftMinutes = correctionShiftMinutes(correctedCheckIn, correctedCheckOut);
   const mealRequired = shiftMinutes !== null && shiftMinutes > CORRECTION_MEAL_REQUIRED_AFTER_MINUTES;
+  // Which punches the tech is correcting. Unticked fields stay locked on the
+  // timecard's own time for the picked date; ticking one unlocks it.
+  const [fix, setFix] = useState<CorrectionPunchSelection>(NO_CORRECTION_PUNCHES);
+  const [dayEntry, setDayEntry] = useState<{ checkIn?: string; checkOut?: string; mealStart?: string; mealEnd?: string } | null>(null);
+  const setterFor: Record<CorrectionPunch, (v: string) => void> = {
+    checkIn: setCorrectedCheckIn,
+    checkOut: setCorrectedCheckOut,
+    mealStart: setCorrectedMealStart,
+    mealEnd: setCorrectedMealEnd,
+  };
+  const toggleFix = (key: CorrectionPunch, on: boolean) => {
+    setFix((prev) => ({ ...prev, [key]: on }));
+    // Unticking puts the timecard's time back.
+    if (!on) setterFor[key](dayEntry?.[key] || "");
+  };
   // Pre-fill all four fields with what's on the timecard for the picked
   // date (Check In, Check Out, Meal Start, Meal End) — re-filled whenever
-  // the date changes — so nothing gets missed: the tech only changes what's
-  // wrong. A punch that isn't on the timecard stays blank.
+  // the date changes. A punch that isn't on the timecard stays blank.
   useEffect(() => {
     if (!profileId || !correctionDate) return;
     let cancelled = false;
     getEntryForDate(profileId, correctionDate)
       .then((e) => {
         if (cancelled) return;
+        setDayEntry(e ?? null);
         setCorrectedCheckIn(e?.checkIn || "");
         setCorrectedCheckOut(e?.checkOut || "");
         setCorrectedMealStart(e?.mealStart || "");
@@ -9928,7 +9950,7 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
       setMsg(err instanceof Error ? err.message : "That date can't be corrected.");
       return;
     }
-    const timesError = validateCorrectionTimes({
+    const timesError = validateCorrectionSelection(fix, {
       checkIn: correctedCheckIn,
       checkOut: correctedCheckOut,
       mealStart: correctedMealStart,
@@ -10043,6 +10065,7 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
       setCorrectedCheckOut("");
       setCorrectedMealStart("");
       setCorrectedMealEnd("");
+      setFix(NO_CORRECTION_PUNCHES);
       setDetails("");
       setExceptionType("forgot_to_clock");
       setOtherDescription("");
@@ -10070,32 +10093,48 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
       </div>
 
       <div className="mtech-panel" style={{ marginTop: 0 }}>
-        <div className="mtech-section-title" style={{ marginTop: 0 }}>Date</div>
+        <div className="mtech-section-title" style={{ marginTop: 0 }}>Date <span style={{ color: "#f87171" }}>*</span></div>
         <input
           className="mtech-bill-input full"
           type="date"
+          required
           value={correctionDate}
           max={correctionWindow?.today ?? zonedDateKey(new Date(), "CST")}
           min={correctionWindow?.earliest ?? selfCorrectionEarliestDate(zonedDateKey(new Date(), "CST"), false)}
           onChange={(e) => setCorrectionDate(e.target.value)}
           onClick={openNativePicker}
         />
+        {correctionWindow?.clockedInToday && (
+          <p className="mtech-muted" style={{ padding: "0.25rem 0", color: "#fcd34d" }}>
+            You're still clocked in, so today can't be corrected until you clock out.
+          </p>
+        )}
 
-        <div className="mtech-section-title">Corrected Check In</div>
-        <input className="mtech-bill-input full" type="time" value={correctedCheckIn} onChange={(e) => setCorrectedCheckIn(e.target.value)} onClick={openNativePicker} />
+        <div className="mtech-section-title">What needs correcting? <span style={{ color: "#f87171" }}>*</span></div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem 0.75rem", padding: "0.25rem 0" }}>
+          {CORRECTION_PUNCHES.map(({ key, label }) => (
+            <label key={key} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.85rem" }}>
+              <input type="checkbox" checked={fix[key]} onChange={(e) => toggleFix(key, e.target.checked)} />
+              {label}
+            </label>
+          ))}
+        </div>
 
-        <div className="mtech-section-title">Corrected Check Out</div>
-        <input className="mtech-bill-input full" type="time" value={correctedCheckOut} onChange={(e) => setCorrectedCheckOut(e.target.value)} onClick={openNativePicker} />
+        <div className="mtech-section-title">Corrected Clock In <span style={{ color: "#f87171" }}>*</span></div>
+        <input className="mtech-bill-input full" type="time" required disabled={!fix.checkIn} style={fix.checkIn ? undefined : LOCKED_TIME_STYLE} value={correctedCheckIn} onChange={(e) => setCorrectedCheckIn(e.target.value)} onClick={openNativePicker} />
 
-        <div className="mtech-section-title">Corrected Meal Start {mealRequired && <span style={{ color: "#f87171" }}>*</span>}</div>
-        <input className="mtech-bill-input full" type="time" value={correctedMealStart} onChange={(e) => setCorrectedMealStart(e.target.value)} onClick={openNativePicker} />
+        <div className="mtech-section-title">Corrected Clock Out <span style={{ color: "#f87171" }}>*</span></div>
+        <input className="mtech-bill-input full" type="time" required disabled={!fix.checkOut} style={fix.checkOut ? undefined : LOCKED_TIME_STYLE} value={correctedCheckOut} onChange={(e) => setCorrectedCheckOut(e.target.value)} onClick={openNativePicker} />
 
-        <div className="mtech-section-title">Corrected Meal End {mealRequired && <span style={{ color: "#f87171" }}>*</span>}</div>
-        <input className="mtech-bill-input full" type="time" value={correctedMealEnd} onChange={(e) => setCorrectedMealEnd(e.target.value)} onClick={openNativePicker} />
+        <div className="mtech-section-title">Corrected Meal Out {mealRequired && <span style={{ color: "#f87171" }}>*</span>}</div>
+        <input className="mtech-bill-input full" type="time" disabled={!fix.mealStart} style={fix.mealStart ? undefined : LOCKED_TIME_STYLE} value={correctedMealStart} onChange={(e) => setCorrectedMealStart(e.target.value)} onClick={openNativePicker} />
+
+        <div className="mtech-section-title">Corrected Meal In {mealRequired && <span style={{ color: "#f87171" }}>*</span>}</div>
+        <input className="mtech-bill-input full" type="time" disabled={!fix.mealEnd} style={fix.mealEnd ? undefined : LOCKED_TIME_STYLE} value={correctedMealEnd} onChange={(e) => setCorrectedMealEnd(e.target.value)} onClick={openNativePicker} />
 
         <p className="mtech-muted" style={{ padding: "0.25rem 0", color: mealRequired ? "#fcd34d" : undefined }}>
           {shiftMinutes === null
-            ? "Fill in only the punch(es) you need corrected — a blank one keeps what's on your timecard. Meal start/end are required only when the shift is over 6 hours."
+            ? "Tick the punch(es) to correct. The others stay locked on your timecard's times for that day. Meal Out/In are required only when the shift is over 6 hours."
             : mealRequired
             ? `Shift is ${formatShift(shiftMinutes)} — over 6 hours, so meal start and end are required.`
             : `Shift is ${formatShift(shiftMinutes)} — meal break optional (required only over 6 hours).`}

@@ -414,26 +414,24 @@ export function formatShift(minutes: number): string {
 
 /**
  * Rules every Time Correction Request submission must pass (desktop and
- * mobile share this). Every punch is optional — someone still working can
- * correct just their Check In, and a blank punch keeps whatever is on the
- * timecard when the request is approved — but at least one punch must be
- * given. When both check-in and check-out are given, out must be after in
- * and a meal break is required once that shift runs over 6 hours (optional
- * at 6 hours or less). Any meal given must be complete, in order, and
- * inside whatever part of the shift was given.
+ * mobile share this). Check In and Check Out are both required — a day can
+ * only be corrected once it's been clocked out (validateSelfCorrectionDate),
+ * so the full shift is known. Out must be after in, and a meal break is
+ * required once that shift runs over 6 hours (optional at 6 hours or less).
+ * Any meal given must be complete, in order, and inside the shift.
  * Returns an error message to show, or null when valid.
  */
 export function validateCorrectionTimes(t: { checkIn: string; checkOut: string; mealStart: string; mealEnd: string }): string | null {
   const hasMealStart = Boolean(t.mealStart);
   const hasMealEnd = Boolean(t.mealEnd);
-  if (!t.checkIn && !t.checkOut && !hasMealStart && !hasMealEnd) {
-    return "Enter at least one corrected time (Check In, Check Out, or the meal break).";
+  if (!t.checkIn || !t.checkOut) {
+    return "Corrected Check In and Corrected Check Out are both required.";
   }
-  const shift = t.checkIn && t.checkOut ? correctionShiftMinutes(t.checkIn, t.checkOut) : null;
-  if (t.checkIn && t.checkOut && shift === null) {
+  const shift = correctionShiftMinutes(t.checkIn, t.checkOut);
+  if (shift === null) {
     return `Check out (${t.checkOut}) must be after check in (${t.checkIn}). Double-check the AM/PM on the time picker.`;
   }
-  if (shift !== null && shift > CORRECTION_MEAL_REQUIRED_AFTER_MINUTES && (!hasMealStart || !hasMealEnd)) {
+  if (shift > CORRECTION_MEAL_REQUIRED_AFTER_MINUTES && (!hasMealStart || !hasMealEnd)) {
     return "This shift is over 6 hours, so Corrected Meal Start and Corrected Meal End are both required.";
   }
   if (hasMealStart !== hasMealEnd) return "Enter both Corrected Meal Start and Corrected Meal End, or leave both blank.";
@@ -441,11 +439,44 @@ export function validateCorrectionTimes(t: { checkIn: string; checkOut: string; 
     if (correctionShiftMinutes(t.mealStart, t.mealEnd) === null) {
       return `Meal end (${t.mealEnd}) must be after meal start (${t.mealStart}). Double-check the AM/PM on the time picker.`;
     }
-    if ((t.checkIn && timeToMinutes(t.mealStart)! < timeToMinutes(t.checkIn)!) || (t.checkOut && timeToMinutes(t.mealEnd)! > timeToMinutes(t.checkOut)!)) {
+    if (timeToMinutes(t.mealStart)! < timeToMinutes(t.checkIn)! || timeToMinutes(t.mealEnd)! > timeToMinutes(t.checkOut)!) {
       return "The meal break has to fall between the corrected check in and check out.";
     }
   }
   return null;
+}
+
+/** The four punches a correction can change — ticked on the form to unlock that field. */
+export type CorrectionPunch = "checkIn" | "checkOut" | "mealStart" | "mealEnd";
+export type CorrectionPunchSelection = Record<CorrectionPunch, boolean>;
+export const NO_CORRECTION_PUNCHES: CorrectionPunchSelection = { checkIn: false, checkOut: false, mealStart: false, mealEnd: false };
+/** Meal Out = leaving for the meal (meal_start), Meal In = back from it (meal_end) — same words as the time clock. */
+export const CORRECTION_PUNCHES: { key: CorrectionPunch; label: string }[] = [
+  { key: "checkIn", label: "Clock In" },
+  { key: "checkOut", label: "Clock Out" },
+  { key: "mealStart", label: "Meal Out" },
+  { key: "mealEnd", label: "Meal In" },
+];
+
+/**
+ * validateCorrectionTimes plus the checkbox rules: at least one punch ticked,
+ * and a punch the employee needs but that's blank on the timecard (so the
+ * locked, unticked field is empty) points them at the box to tick.
+ */
+export function validateCorrectionSelection(
+  fix: CorrectionPunchSelection,
+  t: { checkIn: string; checkOut: string; mealStart: string; mealEnd: string }
+): string | null {
+  if (!CORRECTION_PUNCHES.some(({ key }) => fix[key])) {
+    return "Tick at least one punch to correct (Clock In, Clock Out, Meal Out or Meal In).";
+  }
+  const shift = correctionShiftMinutes(t.checkIn, t.checkOut);
+  const mealNeeded = shift !== null && shift > CORRECTION_MEAL_REQUIRED_AFTER_MINUTES;
+  for (const { key, label } of CORRECTION_PUNCHES) {
+    const needed = key === "checkIn" || key === "checkOut" || mealNeeded;
+    if (needed && !fix[key] && !t[key]) return `Your timecard has no ${label} for that day. Tick ${label} and enter it.`;
+  }
+  return validateCorrectionTimes(t);
 }
 
 /** Validate against the server clock in the employee's attendance timezone. */
@@ -473,7 +504,8 @@ function shiftIsoDay(iso: string, days: number): string {
  * today they can correct today and the 2 days before it; once today has a
  * Check Out, only today and yesterday. On a Monday with no Saturday or Sunday
  * timecard (`fridayOpen`), Friday is still open too. Returns the earliest
- * work date that's still correctable when it's `today`.
+ * work date that's still correctable when it's `today`. Today itself is
+ * closed while they're still clocked in (validateSelfCorrectionDate).
  * (HR/Admin filing on someone's behalf isn't limited by this.)
  */
 export function selfCorrectionEarliestDate(today: string, clockedOutToday: boolean, fridayOpen = false): string {
@@ -489,19 +521,20 @@ function isMondayIso(iso: string): boolean {
  * real timecard, or (a trainee) on a day still awaiting approval
  * (trainee_timecard_entries, migration 0216). A notes-only row isn't a punch.
  */
-async function getDayPunches(profileId: string, workDates: string[]): Promise<Map<string, { punched: boolean; checkedOut: boolean }>> {
+async function getDayPunches(profileId: string, workDates: string[]): Promise<Map<string, { punched: boolean; checkedIn: boolean; checkedOut: boolean }>> {
   const cols = "work_date, check_in, check_out, meal_start, meal_end";
   const [real, trainee] = await Promise.all([
     supabase.from("timecard_entries").select(cols).eq("profile_id", profileId).in("work_date", workDates),
     supabase.from("trainee_timecard_entries").select(cols).eq("profile_id", profileId).in("work_date", workDates),
   ]);
   if (real.error) throw real.error;
-  const days = new Map<string, { punched: boolean; checkedOut: boolean }>();
+  const days = new Map<string, { punched: boolean; checkedIn: boolean; checkedOut: boolean }>();
   // Non-trainees have no rows there; a failed read just leaves the real timecard's answer.
   for (const r of [...(real.data ?? []), ...(trainee.error ? [] : (trainee.data ?? []))]) {
     const prev = days.get(r.work_date);
     days.set(r.work_date, {
       punched: !!prev?.punched || !!(r.check_in || r.check_out || r.meal_start || r.meal_end),
+      checkedIn: !!prev?.checkedIn || !!r.check_in,
       checkedOut: !!prev?.checkedOut || !!r.check_out,
     });
   }
@@ -512,6 +545,8 @@ export interface SelfCorrectionWindow {
   today: string;
   earliest: string;
   clockedOutToday: boolean;
+  /** Today has a Check In but no Check Out yet — today can't be corrected until they clock out. */
+  clockedInToday: boolean;
   /** Monday with no Saturday or Sunday timecard: Friday can still be corrected. */
   fridayOpen: boolean;
 }
@@ -526,16 +561,20 @@ export async function getSelfCorrectionWindow(profileId: string): Promise<SelfCo
   const sunday = shiftIsoDay(today, -1);
   const days = await getDayPunches(profileId, monday ? [today, saturday, sunday] : [today]);
   const clockedOutToday = !!days.get(today)?.checkedOut;
+  const clockedInToday = !!days.get(today)?.checkedIn && !clockedOutToday;
   // Worked Saturday or Sunday → Friday stays closed.
   const fridayOpen = monday && !days.get(saturday)?.punched && !days.get(sunday)?.punched;
-  return { today, earliest: selfCorrectionEarliestDate(today, clockedOutToday, fridayOpen), clockedOutToday, fridayOpen };
+  return { today, earliest: selfCorrectionEarliestDate(today, clockedOutToday, fridayOpen), clockedOutToday, clockedInToday, fridayOpen };
 }
 
-/** Self-service submit check (desktop Employee Self Service + mobile): no future dates, and within the window above. */
+/** Self-service submit check (desktop Employee Self Service + mobile): no future dates, not today while still clocked in, and within the window above. */
 export async function validateSelfCorrectionDate(profileId: string, workDate: string): Promise<void> {
-  const { today, earliest, clockedOutToday, fridayOpen } = await getSelfCorrectionWindow(profileId);
+  const { today, earliest, clockedOutToday, clockedInToday, fridayOpen } = await getSelfCorrectionWindow(profileId);
   if (workDate > today) {
     throw new Error("Time correction requests cannot be submitted for future dates. Choose today or an earlier date.");
+  }
+  if (workDate === today && clockedInToday) {
+    throw new Error("You're still clocked in today. Clock out first, then send the time correction for today.");
   }
   if (workDate < earliest) {
     throw new Error(
