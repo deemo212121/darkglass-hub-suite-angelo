@@ -11,7 +11,8 @@ import { useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
-const WIDTH = { sm: "max-w-sm", md: "max-w-lg", lg: "max-w-2xl", xl: "max-w-4xl" } as const;
+/** "full" is nearly the whole screen — for reading a document (e.g. a Warning Form PDF). */
+const WIDTH = { sm: "max-w-sm", md: "max-w-lg", lg: "max-w-2xl", xl: "max-w-4xl", full: "max-w-[96vw]" } as const;
 
 export function AppModal({
   title,
@@ -53,7 +54,7 @@ export function AppModal({
       <div
         role="dialog"
         aria-modal="true"
-        className={`flex max-h-[85vh] w-full ${WIDTH[size]} flex-col overflow-hidden rounded-xl border bg-[var(--color-card)] text-[var(--color-foreground)] shadow-2xl animate-in zoom-in-95 duration-150 ${
+        className={`flex ${size === "full" ? "h-[94vh] max-h-[94vh]" : "max-h-[85vh]"} w-full ${WIDTH[size]} flex-col overflow-hidden rounded-xl border bg-[var(--color-card)] text-[var(--color-foreground)] shadow-2xl animate-in zoom-in-95 duration-150 ${
           tone === "warning" ? "border-amber-500/40" : "border-[var(--color-panel-border)]"
         }`}
         onClick={(e) => e.stopPropagation()}
