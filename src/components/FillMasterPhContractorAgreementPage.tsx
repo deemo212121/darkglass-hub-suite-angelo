@@ -32,6 +32,7 @@ import {
   buildMasterPhContractorAgreementBodyMarkup,
   type MasterPhContractorAgreementFormData,
   contractorAgreementCountryOf,
+  contractorNationalityChoices,
   CONTRACTOR_AGREEMENT_TITLE,
 } from "@/lib/masterPhContractorAgreementFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
@@ -190,7 +191,7 @@ export function FillMasterPhContractorAgreementPage({ docId }: Props) {
         .catch((err) => console.error("[master-ph-contractor-agreement] hr notify check failed:", err));
 
       setDoc({ ...doc, status: "signed", pdfUrl, formData: finalData as unknown as Record<string, any>, signatures: { employee: entry }, signedAt });
-      void logActivity({ action: contractorAgreementCountryOf(doc.formData) === "mx" ? "master_mx_contractor_agreement_signed" : "master_ph_contractor_agreement_signed", targetType: "employee", targetLabel: employeeName });
+      void logActivity({ action: `master_${contractorAgreementCountryOf(doc.formData)}_contractor_agreement_signed`, targetType: "employee", targetLabel: employeeName });
       setSubmitted(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to submit form.");
@@ -200,9 +201,9 @@ export function FillMasterPhContractorAgreementPage({ docId }: Props) {
   };
 
   const isRecipient = !!doc && !!myProfileId && doc.recipientId === myProfileId;
-  // The Mexico version (HR Paperworks → Mexico Staff) — same form, Mexico in place of the Philippines.
+  // The Mexico version (HR Paperworks → Mexico Staff) and the US one (AHS Forms US) — same form, their country in place of the Philippines.
   const country = contractorAgreementCountryOf(doc?.formData);
-  const countryName = country === "mx" ? "Mexico" : "Philippines";
+  const heading = { ph: "Master Philippines Independent Contractor Agreement", mx: "Master Mexico Independent Contractor Agreement", us: "Master United States Independent Contractor Agreement" }[country];
 
   return (
     <div className="min-h-screen bg-background">
@@ -232,7 +233,7 @@ export function FillMasterPhContractorAgreementPage({ docId }: Props) {
           </div>
         ) : (
           <div className="panel p-4">
-            <h1 className="text-lg font-bold mb-1">{country === "mx" ? "Master Mexico Independent Contractor Agreement" : "Master Philippines Independent Contractor Agreement"}</h1>
+            <h1 className="text-lg font-bold mb-1">{heading}</h1>
             <p className="text-xs text-muted-foreground mb-4">
               Fill in your information below, read the agreement, then sign and submit.
             </p>
@@ -257,8 +258,7 @@ export function FillMasterPhContractorAgreementPage({ docId }: Props) {
                 <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">Nationality</label>
                 <select className="glass-input text-sm py-1.5 px-3 rounded-md w-full" value={form.nationality} onChange={(e) => updateField("nationality", e.target.value)}>
                   <option value="">Select…</option>
-                  <option value={countryName}>{countryName}</option>
-                  <option value="USA">USA</option>
+                  {contractorNationalityChoices(country).map((c) => <option key={c} value={c}>{c}</option>)}
                   <option value="Other">Other</option>
                 </select>
               </div>
