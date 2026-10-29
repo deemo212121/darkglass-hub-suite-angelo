@@ -11,7 +11,7 @@ interface Props { mod: ModuleDef; sub: SubModuleDef; }
 const PO_DATE_TYPES = ["P/O Date","Received Date","Return Date"];
 const PARTS = ["Motor Assembly","Pump Assembly","Control Board","Door Latch","Thermostat","Heating Element","Belt","Drain Hose","Water Valve","Timer","Lid Switch","Agitator"];
 const TRANS_TYPES = ["Order","Return","Transfer","Adjustment","Received"];
-const TECHS = ["Damon Ottley","Marc James","Nathan Wagner","Christian Clark","Gabriel Talley","Jaylon Yarbrough","Andres Mota","Jordan Davis","Josh Malloch","Justin Alvarez"];
+const TECHS = ["Damon Ottley","Marc James","Nathan Wagner","Christian Clark","Gabriel Talley","Jaylon Yarbrough","Andres Mota","Jordan Davis","Joshua Malloch","Justin Alvarez"];
 
 function generateRows(count = 80) {
   const locs = LOCATIONS.slice(1);

@@ -11,7 +11,7 @@ const Chev=({o}:{o:boolean})=><svg className={`h-3.5 w-3.5 shrink-0 text-muted-f
 function useP(open:boolean){const ref=useRef<HTMLButtonElement>(null);const [pos,setPos]=useState<any>(null);const r=useCallback(()=>{if(!ref.current)return;const b=ref.current.getBoundingClientRect();setPos({top:b.bottom+2,left:b.left,width:b.width});},[]);useLayoutEffect(()=>{if(open)r();},[open,r]);useEffect(()=>{if(!open)return;window.addEventListener("scroll",r,true);window.addEventListener("resize",r);return()=>{window.removeEventListener("scroll",r,true);window.removeEventListener("resize",r);};},[open,r]);return{ref,pos};}
 
 const ds=(o:number)=>{const d=new Date();d.setDate(d.getDate()+o);return localISODate(d);};
-const TECHS=["Bryeshawn Butler","Seven Grinis","Josh Malloch","Memphis Admin","Percy Smith","Troy Willis","Christian Newson","A. Reyes"];
+const TECHS=["Bryeshawn Butler","Seven Grinis","Joshua Malloch","Memphis Admin","Percy Smith","Troy Willis","Christian Newson","A. Reyes"];
 const PART_DISTS=["Encompass","Marcone-162468","GE","LG","Samsung"];
 const REPAIR_STATUSES_SAMPLE=["CL-Ready to Complete","OP-Reschedule Follow up"];
 const PART_STATUSES_SAMPLE=["Used","Not Used & Stocked","CX Home","PO Made","Part Ready","Hold for next visit","Not received"];

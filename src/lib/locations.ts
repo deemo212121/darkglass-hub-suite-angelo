@@ -172,7 +172,7 @@ export const TECHNICIANS_BY_LOCATION: Record<string, readonly string[]> = {
   Savannah: ["Carlos Ramirez", "Dustin Earls", "Lance Novak"],
   "St. Louis": ["Demarkco Cody", "Derious Nichols", "Jacob Rhodes", "Memphis Admin", "Tony Nguyen", "Troy Willis"],
   Tallahassee: ["Hunter Burch", "Matthew Mccrary"],
-  Wilmington: ["Brye'shawn Butler", "Jordan Davis", "Josh Malloch", "Justin Alverez"],
+  Wilmington: ["Brye'shawn Butler", "Jordan Davis", "Joshua Malloch", "Justin Alverez"],
   Asheville: ["Jordan Koetsier"],
   Philippines: [],
 };

@@ -227,13 +227,23 @@ const int = (v: string) => {
 const JUNK_VALUE = /^(null|n\/a|na|none|-+)$/i;
 /** Not a real technician — ER's office queue ("Memphis Admin"). */
 const NOT_A_TECHNICIAN = /\badmin\b/i;
+/**
+ * ER spells some technicians differently from their AHS account — the file's
+ * name is swapped for the account's, so the ticket shows under the real
+ * person (ER's "Josh Malloch" made a second "technician" next to Joshua
+ * Malloch on the Ticket Attendance report).
+ */
+const ER_TECH_NAME_ALIASES: Record<string, string> = {
+  "josh malloch": "Joshua Malloch",
+};
+const ahsTechName = (name: string) => ER_TECH_NAME_ALIASES[name.trim().toLowerCase()] ?? name;
 
 function toRecords(r: ImportRow) {
   const get = (c: string) => {
     const v = (r[c] ?? "").trim();
     return JUNK_VALUE.test(v) ? "" : v;
   };
-  const techName = NOT_A_TECHNICIAN.test(get("TechName")) ? "" : get("TechName");
+  const techName = NOT_A_TECHNICIAN.test(get("TechName")) ? "" : ahsTechName(get("TechName"));
   const name = get("CxUserName");
   const account = get("MfgName");
   const refType = get("RefType");
