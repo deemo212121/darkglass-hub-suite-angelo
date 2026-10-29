@@ -41,7 +41,11 @@ import { uploadPtoRequestAttachment, deleteExpenseReceiptFile } from "@/lib/fire
 import {
   getCompanyTimecardCorrections,
   createTimecardCorrection,
-  validateCorrectionTimes,
+  validateCorrectionSelection,
+  CORRECTION_PUNCHES,
+  NO_CORRECTION_PUNCHES,
+  type CorrectionPunch,
+  type CorrectionPunchSelection,
   correctionShiftMinutes,
   formatShift,
   CORRECTION_MEAL_REQUIRED_AFTER_MINUTES,
@@ -267,16 +271,31 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   // Over 6 hours: meal fields unlocked and required. 6 hours or less (or
   // not both punches entered yet): locked — a meal on a short shift is unpaid.
   const correctionMealRequired = correctionShift !== null && correctionShift > CORRECTION_MEAL_REQUIRED_AFTER_MINUTES;
+  // Which punches the employee is correcting. Unticked fields stay locked on
+  // the timecard's own time for the picked date; ticking one unlocks it.
+  const [correctionFix, setCorrectionFix] = useState<CorrectionPunchSelection>(NO_CORRECTION_PUNCHES);
+  const [correctionDayEntry, setCorrectionDayEntry] = useState<{ checkIn?: string; checkOut?: string; mealStart?: string; mealEnd?: string } | null>(null);
+  const correctionFieldFor: Record<CorrectionPunch, "correctedCheckIn" | "correctedCheckOut" | "correctedMealStart" | "correctedMealEnd"> = {
+    checkIn: "correctedCheckIn",
+    checkOut: "correctedCheckOut",
+    mealStart: "correctedMealStart",
+    mealEnd: "correctedMealEnd",
+  };
+  const toggleCorrectionFix = (key: CorrectionPunch, on: boolean) => {
+    setCorrectionFix((prev) => ({ ...prev, [key]: on }));
+    // Unticking puts the timecard's time back.
+    if (!on) setFormData((prev) => ({ ...prev, [correctionFieldFor[key]]: correctionDayEntry?.[key] || "" }));
+  };
   // Pre-fill all four fields with what's on the timecard for the picked
   // date (Check In, Check Out, Meal Start, Meal End) — re-filled whenever
-  // the date changes — so nothing gets missed: the employee only changes
-  // what's wrong. A punch that isn't on the timecard stays blank.
+  // the date changes. A punch that isn't on the timecard stays blank.
   useEffect(() => {
     if (!myProfileId || !formData.correctionDate) return;
     let cancelled = false;
     getEntryForDate(myProfileId, formData.correctionDate)
       .then((e) => {
         if (cancelled) return;
+        setCorrectionDayEntry(e ?? null);
         setFormData((prev) =>
           prev.correctionDate !== formData.correctionDate
             ? prev
@@ -297,6 +316,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [correctionWindow, setCorrectionWindow] = useState<SelfCorrectionWindow | null>(null);
   useEffect(() => {
     if (!showModal || modalType !== "correction" || !myProfileId) return;
+    setCorrectionFix(NO_CORRECTION_PUNCHES);
     let cancelled = false;
     getSelfCorrectionWindow(myProfileId)
       .then((w) => { if (!cancelled) setCorrectionWindow(w); })
@@ -988,7 +1008,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
           const punched = myProfileId ? await getEntryForDate(myProfileId, formData.correctionDate).catch(() => null) : null;
           const submittedMealStart = formData.correctedMealStart;
           const submittedMealEnd = formData.correctedMealEnd;
-          const correctionTimesError = validateCorrectionTimes({
+          const correctionTimesError = validateCorrectionSelection(correctionFix, {
             checkIn: formData.correctedCheckIn,
             checkOut: formData.correctedCheckOut,
             mealStart: submittedMealStart,
@@ -2218,10 +2238,11 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   {modalType === "correction" && (
                     <>
                       <div data-tour="ess-form-corr-date">
-                        <label className="text-xs font-semibold text-white block mb-1">Date</label>
+                        <label className="text-xs font-semibold text-white block mb-1">Date <span className="text-red-400">*</span></label>
                         <input
                           type="date"
                           title="Date"
+                          required
                           max={correctionWindow?.today ?? zonedDateKey(new Date(), companyProfiles.find((p) => p.id === myProfileId)?.schedule_timezone === "EST" ? "EST" : "CST")}
                           min={correctionWindow?.earliest ?? selfCorrectionEarliestDate(zonedDateKey(new Date(), companyProfiles.find((p) => p.id === myProfileId)?.schedule_timezone === "EST" ? "EST" : "CST"), false)}
                           value={formData.correctionDate}
@@ -2229,7 +2250,9 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                           className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
                         />
                         <p className="text-[11px] text-slate-500 mt-1">
-                          {correctionWindow?.fridayOpen
+                          {correctionWindow?.clockedInToday
+                            ? "You're still clocked in, so today can't be corrected until you clock out. You can still correct the 2 days before. Older days: contact HR."
+                            : correctionWindow?.fridayOpen
                             ? "You have no Saturday or Sunday timecard, so you can still correct back to Friday. Older days: contact HR."
                             : correctionWindow?.clockedOutToday
                               ? "You've clocked out today, so you can correct today or yesterday. Older days: contact HR."
@@ -2248,55 +2271,77 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       </div>
                       <div data-tour="ess-form-corr-times" className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="text-xs font-semibold text-white block mb-1">Corrected Check In</label>
+                          <label className="text-xs font-semibold text-white block mb-1">Corrected Clock In <span className="text-red-400">*</span></label>
                           <input
                             type="time"
                             step="1"
                             title="Corrected Check In"
+                            required
+                            disabled={!correctionFix.checkIn}
                             value={formData.correctedCheckIn}
                             onChange={(e) => setFormData({ ...formData, correctedCheckIn: e.target.value })}
-                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                           />
                         </div>
                         <div>
-                          <label className="text-xs font-semibold text-white block mb-1">Corrected Check Out</label>
+                          <label className="text-xs font-semibold text-white block mb-1">Corrected Clock Out <span className="text-red-400">*</span></label>
                           <input
                             type="time"
                             step="1"
                             title="Corrected Check Out"
+                            required
+                            disabled={!correctionFix.checkOut}
                             value={formData.correctedCheckOut}
                             onChange={(e) => setFormData({ ...formData, correctedCheckOut: e.target.value })}
-                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                           />
                         </div>
                       </div>
                       <div data-tour="ess-form-corr-meal" className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="text-xs font-semibold text-white block mb-1">Corrected Meal Start {correctionMealRequired && <span className="text-red-400">*</span>}</label>
+                          <label className="text-xs font-semibold text-white block mb-1">Corrected Meal Out {correctionMealRequired && <span className="text-red-400">*</span>}</label>
                           <input
                             type="time"
                             step="1"
                             title="Corrected Meal Start"
+                            disabled={!correctionFix.mealStart}
                             value={formData.correctedMealStart}
                             onChange={(e) => setFormData({ ...formData, correctedMealStart: e.target.value })}
-                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                           />
                         </div>
                         <div>
-                          <label className="text-xs font-semibold text-white block mb-1">Corrected Meal End {correctionMealRequired && <span className="text-red-400">*</span>}</label>
+                          <label className="text-xs font-semibold text-white block mb-1">Corrected Meal In {correctionMealRequired && <span className="text-red-400">*</span>}</label>
                           <input
                             type="time"
                             step="1"
                             title="Corrected Meal End"
+                            disabled={!correctionFix.mealEnd}
                             value={formData.correctedMealEnd}
                             onChange={(e) => setFormData({ ...formData, correctedMealEnd: e.target.value })}
-                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                            className="w-full px-3 py-2 bg-slate-800 border border-white/10 rounded text-white text-sm focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                           />
+                        </div>
+                      </div>
+                      <div data-tour="ess-form-corr-fix">
+                        <label className="text-xs font-semibold text-white block mb-1">What needs correcting? <span className="text-red-400">*</span></label>
+                        <div className="grid grid-cols-4 gap-2">
+                          {CORRECTION_PUNCHES.map(({ key, label }) => (
+                            <label key={key} className="flex items-center gap-1.5 text-xs text-slate-200 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={correctionFix[key]}
+                                onChange={(e) => toggleCorrectionFix(key, e.target.checked)}
+                                className="h-3.5 w-3.5 accent-blue-500"
+                              />
+                              {label}
+                            </label>
+                          ))}
                         </div>
                       </div>
                       <p className={`text-[10px] ${correctionMealRequired ? "text-amber-300" : "text-slate-500"}`}>
                         {correctionShift === null
-                          ? "Fill in only the punch(es) you need corrected — a blank one keeps what's on your timecard. Meal start/end are required only when the shift is over 6 hours."
+                          ? "Tick the punch(es) to correct. The others stay locked on your timecard's times for that day. Meal Out/In are required only when the shift is over 6 hours."
                           : correctionMealRequired
                           ? `Shift is ${formatShift(correctionShift)} — over 6 hours, so meal start and end are required.`
                           : `Shift is ${formatShift(correctionShift)} — meal break optional (required only over 6 hours).`}
