@@ -45,6 +45,7 @@ import {
   getTicketVisits,
   updateTicketVisit,
   updateTicketStatus,
+  updateTicketFields,
   getLatestVisitTechnicianByTicketIds,
   getSecondTechnicianAssignments,
   getTicketParts,
@@ -92,7 +93,8 @@ import {
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
-import { isAttendanceFullAccessRole, isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
+import { isAttendanceFullAccessRole, isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, getRoleDepartmentBreakdown, canSetCancelledStatus } from "@/lib/roleLabels";
+import { CANCEL_REASONS } from "@/lib/operationsBranchMetrics";
 import { buildCorrectionSubmissionPdf } from "@/lib/timecardCorrectionPdf";
 import { buildPtoSubmissionPdf } from "@/lib/ptoExceptionReportPdf";
 import { EXCEPTION_TYPE_LABELS, CORRECTION_ISSUE_LABELS, type ExceptionType, type CorrectionIssueType } from "@/lib/exceptionVisitReportTemplate";
@@ -3675,6 +3677,12 @@ function TechTipsTab({ ticket, authorName }: { ticket: Ticket; authorName: strin
 }
 
 function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string }) {
+  // CL-Cancelled only for BizOps Manager+ (main or secondary role; a trainee
+  // once granted access) — same rule and required Cancellation Reason as the
+  // desktop ticket page. Everyone else flags CL-Need Cancel.
+  const { role: authRole, extraRoles: authExtraRoles, isTrainee: authIsTrainee } = useAuth();
+  const canCancel = canSetCancelledStatus(authRole, authExtraRoles, authIsTrainee);
+  const [editCancelReason, setEditCancelReason] = useState("");
   const [visits, setVisits] = useState<NonNullable<Ticket["visits"]>>([]);
   const [loading, setLoading] = useState(true);
   // Per-visit inline edit state. Techs can edit Repair Status, Cause
@@ -3776,6 +3784,7 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
   };
 
   const cancelEdit = () => {
+    setEditCancelReason("");
     setEditVisitId(null);
     setEditDraft({ repairStatus: "", diagnosis: "", service: composeServicePerformed(emptyServicePerformed()), nonCompletionReason: "" });
     setRepairStatusInvalid(false);
@@ -3784,6 +3793,15 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
   };
 
   const saveEdit = async (visitId: string) => {
+    const cancelling = editDraft.repairStatus === "CL-Cancelled" && visits.find((row) => row.id === visitId)?.repairStatus !== "CL-Cancelled";
+    if (cancelling && !canCancel) {
+      alert("Only a BizOps Manager can set Repair Status to CL-Cancelled — pick CL-Need Cancel instead.");
+      return;
+    }
+    if (cancelling && !editCancelReason) {
+      alert("A cancellation reason is required when Repair Status is CL-Cancelled.");
+      return;
+    }
     const repairStatusMissing = !editDraft.repairStatus.trim();
     const diagnosisMissing = !editDraft.diagnosis.trim();
     const serviceMissing = !parseServicePerformed(editDraft.service).notes.trim();
@@ -3837,6 +3855,11 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
     try {
       if (isManualOfflineModeActive()) throw new Error("Offline mode simulator is on — skipping real write");
       await updateTicketVisit(visitId, payload);
+      // Same as the desktop ticket page: the ticket goes to CL-Cancelled with its reason in its own column.
+      if (cancelling) {
+        await updateTicketStatus(ticket.ticketNo, "CL-Cancelled").catch((e) => console.warn("status update skipped:", e));
+        await updateTicketFields(ticket.ticketNo, { cancellationReason: editCancelReason }).catch((e) => console.warn("cancellation reason update skipped:", e));
+      }
     } catch (err) {
       console.warn("Visit edit write failed, queuing for later sync", err);
       await enqueueVisitSave({ visitId, visit: payload }).catch((qErr) => {
@@ -4006,10 +4029,21 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
                     onChange={(e) => { setEditDraft((d) => ({ ...d, repairStatus: e.target.value })); if (e.target.value.trim()) setRepairStatusInvalid(false); }}
                   >
                     <option value="">— select —</option>
-                    {MOBILE_REPAIR_STATUSES.map((s) => (
+                    {MOBILE_REPAIR_STATUSES.filter((s) => s !== "CL-Cancelled" || canCancel || editDraft.repairStatus === "CL-Cancelled").map((s) => (
                       <option key={s} value={s}>{s}</option>
                     ))}
                   </select>
+                  {editDraft.repairStatus === "CL-Cancelled" && canCancel && (
+                    <>
+                      <label className="mtech-visit-edit-label">Cancellation Reason <span className="text-rose-400">*</span></label>
+                      <select className="mtech-visit-edit-input" value={editCancelReason} onChange={(e) => setEditCancelReason(e.target.value)}>
+                        <option value="">— select —</option>
+                        {CANCEL_REASONS.map((reason) => (
+                          <option key={reason} value={reason}>{reason}</option>
+                        ))}
+                      </select>
+                    </>
+                  )}
                   <label className="mtech-visit-edit-label">Non-Completion Reason</label>
                   <textarea
                     className="mtech-visit-edit-input"

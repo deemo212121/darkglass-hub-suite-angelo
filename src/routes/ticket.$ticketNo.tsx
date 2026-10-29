@@ -75,7 +75,7 @@ import { getTicketAlerts, addTicketAlert, removeTicketAlert, type TicketAlert } 
 import { getModelResources, saveModelResources } from "@/lib/supabase/modelResources";
 import { parseServicePerformed, composeServicePerformed, emptyServicePerformed } from "@/lib/servicePerformedNotes";
 import { usePersistedTab } from "@/lib/usePersistedTab";
-import { canManageMisdiagnosed } from "@/lib/roleLabels";
+import { canManageMisdiagnosed, canSetCancelledStatus } from "@/lib/roleLabels";
 import { todayISO } from "@/lib/localDate";
 
 // Product category options for the ticket Product Information dropdown.
@@ -1276,7 +1276,7 @@ export const Route = createFileRoute("/ticket/$ticketNo")({
 function TicketDetailsPage() {
   const { ticketNo } = Route.useParams();
   const navigate = useNavigate();
-  const { email: currentUserEmail, ready: authReady, displayName: currentUserName, role: currentUserRole, extraRoles: currentUserExtraRoles, companyId: currentCompanyId, uid, isFrozen } = useAuth();
+  const { email: currentUserEmail, ready: authReady, displayName: currentUserName, role: currentUserRole, extraRoles: currentUserExtraRoles, companyId: currentCompanyId, uid, isFrozen, isTrainee: currentUserIsTrainee } = useAuth();
   // Tech-only required-field gating: technicians (and anyone using the mobile
   // tech app) must fill Cause of Failure + Service Performed before saving a
   // visit. On desktop / web for other roles these stay optional.
@@ -4808,15 +4808,11 @@ function TicketDetailsPage() {
   // record its Cancellation Reason. A CSR can still flag CL-Need Cancel and
   // explain why in the free-text Internal Note — but the actual cancel + the
   // structured reason only happen after BizOps verifies it.
-  const CANCEL_ROLES = useMemo(
-    () => new Set(["BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "ADMIN", "SUPERADMIN"]),
-    [],
+  // Main or secondary role; a trainee only once HR has granted access (roleLabels.ts).
+  const canSetCancelled = useMemo(
+    () => canSetCancelledStatus(currentUserRole, currentUserExtraRoles, currentUserIsTrainee),
+    [currentUserRole, currentUserExtraRoles, currentUserIsTrainee],
   );
-  const canSetCancelled = useMemo(() => {
-    const primary = String(currentUserRole || "").toUpperCase();
-    if (CANCEL_ROLES.has(primary)) return true;
-    return currentUserExtraRoles.some((r) => CANCEL_ROLES.has(String(r).toUpperCase()));
-  }, [currentUserRole, currentUserExtraRoles, CANCEL_ROLES]);
 
   const notifyUnauthorizedPartEdit = useCallback(async (attemptedRow: PartTransactionRow | null) => {
     if (!currentCompanyId) return;
