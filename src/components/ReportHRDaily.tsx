@@ -16385,6 +16385,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // Hiring and the Master List are the same person when the emails match
+  // (the Account Status column's rule): Hired there means Regular here,
+  // and Trainee → Regular here moves a Training candidate to Hired.
+  const employeeForCandidate = (c: Candidate): Employee | null => {
+    const email = c.email?.trim().toLowerCase();
+    return email ? employees.find((e) => e.email?.trim().toLowerCase() === email) ?? null : null;
+  };
+  const trainingCandidateForEmployee = (e: Employee): Candidate | null => {
+    const email = e.email?.trim().toLowerCase();
+    return email ? candidates.find((c) => c.status === "training" && c.email?.trim().toLowerCase() === email) ?? null : null;
+  };
+  const notifyHired = (c: Candidate, startDate: string) => {
+    if (!uid) return;
+    getMyProfileId(uid)
+      .then((myProfileId) =>
+        notifyOnCandidateHired({ id: c.id, name: c.name, branch: c.branch ?? null, position: c.position ?? null }, startDate, myProfileId, displayName || "HR")
+      )
+      .catch((err) => console.error("Failed to send hire notifications:", err));
+  };
+  /** Trainee → Regular and the Master List Start Date — what Hired in Hiring means for their account. */
+  const makeEmployeeRegular = async (employee: Employee, startDate: string) => {
+    if (employee.employmentType === "trainee") await handleUpdateEmploymentType(employee.id, "regular");
+    if (startDate && startDate !== employee.startDate) await handleUpdateStartDate(employee.id, startDate);
+  };
+
   const handleConfirmStatusDate = async () => {
     if (!statusDateDialog) return;
     // Captured before the update — only a genuine transition INTO Hired
@@ -16402,18 +16427,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         statusDateDialog.status === "interviewing" ? statusDateDialog.time || undefined : undefined,
         statusDateDialog.status === "interviewing" ? statusDateDialog.timezone : undefined
       );
-      if (statusDateDialog.status === "hired" && !wasAlreadyHired && uid) {
+      if (statusDateDialog.status === "hired" && !wasAlreadyHired) {
         const hiredCandidate = candidates.find((c) => c.id === statusDateDialog.candidateId);
-        getMyProfileId(uid)
-          .then((myProfileId) =>
-            notifyOnCandidateHired(
-              { id: statusDateDialog.candidateId, name: statusDateDialog.candidateName, branch: hiredCandidate?.branch ?? null, position: hiredCandidate?.position ?? null },
-              statusDateDialog.date,
-              myProfileId,
-              displayName || "HR"
-            )
-          )
-          .catch((err) => console.error("Failed to send hire notifications:", err));
+        if (hiredCandidate) notifyHired(hiredCandidate, statusDateDialog.date);
+      }
+      // Hired here = Regular on the Master List, from this start date (when they already have an account).
+      if (statusDateDialog.status === "hired") {
+        const hiredCandidate = candidates.find((c) => c.id === statusDateDialog.candidateId);
+        const employee = hiredCandidate ? employeeForCandidate(hiredCandidate) : null;
+        if (employee) await makeEmployeeRegular(employee, statusDateDialog.date);
       }
       // Technician / Parts Manager moved to Training → the Senior Managers (Naveen Lakhani, Lou Basco).
       if (statusDateDialog.status === "training" && !wasAlreadyTraining && uid) {
@@ -16988,7 +17010,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   // Trainee vs Regular — a separate classification from Account Status
   // above, no confirmation needed (unlike terminating/resigning someone).
-  const handleUpdateEmploymentType = async (id: string, newType: "trainee" | "regular") => {
+  const handleUpdateEmploymentType = async (id: string, newType: "trainee" | "regular"): Promise<boolean> => {
     const employee = employees.find((e) => e.id === id);
     const prevType = employee?.employmentType ?? "regular";
     setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, employmentType: newType } : e)));
@@ -17004,9 +17026,47 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           )
           .catch((err) => console.error("Failed to notify HR of the new PH trainee:", err));
       }
+      return true;
     } catch (err) {
       setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, employmentType: prevType } : e)));
       setError(err instanceof Error ? err.message : "Failed to update employment type.");
+      return false;
+    }
+  };
+
+  // Trainee → Regular asks for the start date first: it becomes the Master
+  // List Start Date, and a Training candidate with the same email moves to
+  // Hired from that date (same as picking Hired in Hiring).
+  const [regularDialog, setRegularDialog] = useState<{ employeeId: string; name: string; date: string; candidateId: string | null } | null>(null);
+  const [regularDialogSaving, setRegularDialogSaving] = useState(false);
+  const handleEmploymentTypeSelect = (employee: Employee, newType: "trainee" | "regular") => {
+    if (newType === "regular" && employee.employmentType === "trainee") {
+      const candidate = trainingCandidateForEmployee(employee);
+      setRegularDialog({ employeeId: employee.id, name: employee.name, date: candidate?.startDate || today, candidateId: candidate?.id ?? null });
+      return;
+    }
+    void handleUpdateEmploymentType(employee.id, newType);
+  };
+  const handleConfirmRegular = async () => {
+    if (!regularDialog?.date) return;
+    const { employeeId, date, candidateId } = regularDialog;
+    setRegularDialogSaving(true);
+    try {
+      if (!(await handleUpdateEmploymentType(employeeId, "regular"))) return;
+      await handleUpdateStartDate(employeeId, date);
+      const candidate = candidateId ? candidates.find((c) => c.id === candidateId) : null;
+      if (candidate && candidate.status === "training") {
+        await updateCandidateStatus(candidate.id, "hired", date);
+        notifyHired(candidate, date);
+        void logActivity({ action: "candidate_status_changed", targetType: "candidate", targetId: candidate.id, targetLabel: candidate.name, details: { status: "hired", date, via: "master_list" } });
+        await loadCandidates();
+      }
+      setRegularDialog(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Saved as Regular, but couldn't move their Hiring record to Hired.");
+      setRegularDialog(null);
+    } finally {
+      setRegularDialogSaving(false);
     }
   };
 
@@ -21430,7 +21490,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       <td className="px-2 py-1">
                         <select
                           value={employee.employmentType}
-                          onChange={(e) => void handleUpdateEmploymentType(employee.id, e.target.value as "trainee" | "regular")}
+                          onChange={(e) => handleEmploymentTypeSelect(employee, e.target.value as "trainee" | "regular")}
                           className="text-[10px] font-semibold px-1.5 py-0.5 rounded border-0 bg-slate-700 text-slate-100"
                         >
                           <option value="regular">Regular</option>
@@ -36651,6 +36711,38 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
+      {/* Master List Trainee → Regular: the start date, and the Hiring record moves to Hired */}
+      {regularDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">Make Regular</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              <span className="font-semibold text-white">{regularDialog.name}</span> — set the start date:
+            </p>
+            <input
+              type="date"
+              value={regularDialog.date}
+              onChange={(e) => setRegularDialog({ ...regularDialog, date: e.target.value })}
+              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mb-2"
+            />
+            <p className="text-[11px] text-muted-foreground mb-4">
+              Saved as their Start Date here.{" "}
+              {regularDialog.candidateId ? "Their Hiring record moves from Training to Hired from this date." : "No Training candidate with their email in Hiring, so Hiring isn't changed."}
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setRegularDialog(null)} disabled={regularDialogSaving} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={() => void handleConfirmRegular()}
+                disabled={!regularDialog.date || regularDialogSaving}
+                className="btn text-sm px-4 py-2 text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {regularDialogSaving ? "Saving…" : "Make Regular"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Interviewing/Training require a date — collected here before the status actually saves */}
       {statusDateDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -36663,8 +36755,19 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               type="date"
               value={statusDateDialog.date}
               onChange={(e) => setStatusDateDialog({ ...statusDateDialog, date: e.target.value })}
-              className={`glass-input text-sm py-1.5 px-3 rounded-md w-full ${statusDateDialog.status === "interviewing" || statusDateDialog.status === "training" ? "mb-3" : "mb-4"}`}
+              className={`glass-input text-sm py-1.5 px-3 rounded-md w-full ${statusDateDialog.status === "interviewing" || statusDateDialog.status === "training" || statusDateDialog.status === "hired" ? "mb-3" : "mb-4"}`}
             />
+            {statusDateDialog.status === "hired" && (() => {
+              const hiredCandidate = candidates.find((c) => c.id === statusDateDialog.candidateId);
+              const employee = hiredCandidate ? employeeForCandidate(hiredCandidate) : null;
+              return (
+                <p className="text-[11px] text-muted-foreground mb-4">
+                  {employee
+                    ? `On the Master List, ${employee.name} becomes Regular with this Start Date.`
+                    : "They don't have an account yet — create it from Account Status."}
+                </p>
+              );
+            })()}
             {statusDateDialog.status === "interviewing" && (
               <>
                 <p className="text-sm text-muted-foreground mb-1">Interview time (optional):</p>
