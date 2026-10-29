@@ -602,10 +602,16 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     () => (myPtoYear ? ptoRequestsInYear(myPtoRequests, myPtoYear) : []),
     [myPtoRequests, myPtoYear]
   );
-  const myPtoUsed = myPtoYearRequests.reduce((sum, r) => sum + r.hoursRequested / 8, 0);
+  // Only approved days come off the balance; pending ones show beside it
+  // ("5 of 5 days (3 pending)"). A new request still can't go past what's
+  // left after the pending ones (myPtoAvailable), so two requests can't both
+  // claim the same days.
+  const myPtoUsed = myPtoYearRequests.filter((r) => r.status === "approved").reduce((sum, r) => sum + r.hoursRequested / 8, 0);
+  const myPtoPending = myPtoYearRequests.filter((r) => r.status === "pending").reduce((sum, r) => sum + r.hoursRequested / 8, 0);
   const myPtoRemaining = myPtoYear ? Math.max(0, myPtoYear.allowance - myPtoUsed) : 0;
+  const myPtoAvailable = Math.max(0, myPtoRemaining - myPtoPending);
   // Every PTO day this year is approved or pending — the PTO Request button locks until the anniversary reset.
-  const myPtoUsedUp = ptoEligible && !!myPtoYear && myPtoRemaining <= 0;
+  const myPtoUsedUp = ptoEligible && !!myPtoYear && myPtoAvailable <= 0;
   const myPtoYearRequestIds = useMemo(
     () => new Set(myPtoYearRequests.map((r) => `pto-${r.id}`)),
     [myPtoYearRequests]
@@ -620,8 +626,10 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     () => (mySickYear ? sickRequestsInYear(myPtoRequests, mySickYear) : []),
     [myPtoRequests, mySickYear]
   );
-  const mySickUsed = mySickYearRequests.reduce((sum, r) => sum + r.hoursRequested / 8, 0);
+  const mySickUsed = mySickYearRequests.filter((r) => r.status === "approved").reduce((sum, r) => sum + r.hoursRequested / 8, 0);
+  const mySickPending = mySickYearRequests.filter((r) => r.status === "pending").reduce((sum, r) => sum + r.hoursRequested / 8, 0);
   const mySickRemaining = mySickYear ? Math.max(0, mySickYear.allowance - mySickUsed) : 0;
+  const mySickAvailable = Math.max(0, mySickRemaining - mySickPending);
   const mySickYearRequestIds = useMemo(
     () => new Set(mySickYearRequests.map((r) => `pto-${r.id}`)),
     [mySickYearRequests]
@@ -708,8 +716,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             setSubmitting(false);
             return;
           }
-          if (myPtoYear && requestedDays > myPtoRemaining) {
-            alert(`This request is ${requestedDays} day${requestedDays === 1 ? "" : "s"}, but you only have ${myPtoRemaining} of ${myPtoYear.allowance} days left for Year ${myPtoYear.tenureYear} (resets ${myPtoYear.end}).`);
+          if (myPtoYear && requestedDays > myPtoAvailable) {
+            alert(`This request is ${requestedDays} day${requestedDays === 1 ? "" : "s"}, but you only have ${myPtoAvailable} of ${myPtoYear.allowance} days left${myPtoPending > 0 ? ` after your ${myPtoPending} pending` : ""} for Year ${myPtoYear.tenureYear} (resets ${myPtoYear.end}).`);
             setSubmitting(false);
             return;
           }
@@ -784,8 +792,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             setSubmitting(false);
             return;
           }
-          if (mySickYear && requestedDays > mySickRemaining) {
-            alert(`This request is ${requestedDays} day${requestedDays === 1 ? "" : "s"}, but you only have ${mySickRemaining} of ${mySickYear.allowance} Sick Leave day(s) left for Year ${mySickYear.tenureYear} (resets ${mySickYear.end}).`);
+          if (mySickYear && requestedDays > mySickAvailable) {
+            alert(`This request is ${requestedDays} day${requestedDays === 1 ? "" : "s"}, but you only have ${mySickAvailable} of ${mySickYear.allowance} Sick Leave day(s) left${mySickPending > 0 ? ` after your ${mySickPending} pending` : ""} for Year ${mySickYear.tenureYear} (resets ${mySickYear.end}).`);
             setSubmitting(false);
             return;
           }
@@ -1406,7 +1414,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-2">PTO Remaining</p>
                 <p className="text-2xl font-bold text-blue-300">
-                  {myPtoYear ? `${myPtoRemaining} of ${myPtoYear.allowance} days` : "—"}
+                  {myPtoYear ? `${myPtoRemaining} of ${myPtoYear.allowance} days` : "—"}{myPtoYear && myPtoPending > 0 && <span className="ml-1 text-sm font-medium text-yellow-300">({myPtoPending} pending)</span>}
                 </p>
                 <p className="text-xs text-slate-400 mt-1">
                   {myPtoYear ? `Year ${myPtoYear.tenureYear} · resets ${myPtoYear.end}` : "Not yet eligible"}
@@ -1814,7 +1822,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
               >
                 <p className="text-xs text-slate-400 mb-1">PTO Remaining</p>
                 <p className="text-2xl font-bold text-blue-300">
-                  {myPtoYear ? `${myPtoRemaining} of ${myPtoYear.allowance}` : "—"}
+                  {myPtoYear ? `${myPtoRemaining} of ${myPtoYear.allowance}` : "—"}{myPtoYear && myPtoPending > 0 && <span className="ml-1 text-sm font-medium text-yellow-300">({myPtoPending} pending)</span>}
                 </p>
                 <p className="text-xs text-slate-500 mt-1">
                   {myPtoYear ? `Year ${myPtoYear.tenureYear} · resets ${myPtoYear.end}` : "Not yet eligible"}
@@ -1827,7 +1835,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
               >
                 <p className="text-xs text-slate-400 mb-1">Sick Leave Remaining</p>
                 <p className="text-2xl font-bold text-teal-300">
-                  {mySickYear ? `${mySickRemaining} of ${mySickYear.allowance}` : "—"}
+                  {mySickYear ? `${mySickRemaining} of ${mySickYear.allowance}` : "—"}{mySickYear && mySickPending > 0 && <span className="ml-1 text-sm font-medium text-yellow-300">({mySickPending} pending)</span>}
                 </p>
                 <p className="text-xs text-slate-500 mt-1">
                   {mySickYear ? `Year ${mySickYear.tenureYear} · resets ${mySickYear.end}` : "—"}
@@ -2218,9 +2226,9 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       {modalType === "pto" && formData.startDate && formData.endDate && formData.startDate <= formData.endDate && (() => {
                         const days = workingDayCount(formData.startDate, formData.endDate, companyProfiles.find((p) => p.id === myProfileId)?.off_days, holidayNames);
                         return (
-                          <p className={`text-xs ${myPtoYear && days > myPtoRemaining ? "text-red-300" : "text-slate-400"}`}>
+                          <p className={`text-xs ${myPtoYear && days > myPtoAvailable ? "text-red-300" : "text-slate-400"}`}>
                             Counts as {days} PTO day{days === 1 ? "" : "s"}. Your rest days (Sat/Sun unless your schedule says otherwise) and company holidays aren't counted.
-                            {myPtoYear && ` You have ${myPtoRemaining} left.`}
+                            {myPtoYear && ` You have ${myPtoRemaining} left${myPtoPending > 0 ? ` (${myPtoPending} pending)` : ""}.`}
                           </p>
                         );
                       })()}

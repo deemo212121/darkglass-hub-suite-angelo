@@ -229,7 +229,7 @@ interface CoeHistoryRow {
   source: "legacy" | "signable";
 }
 import { subscribeTableChanges } from "@/lib/supabase/realtime";
-import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, sickYearWindow, sickDaysUsed, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
+import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, ptoDaysPending, sickYearWindow, sickDaysUsed, sickDaysPending, reviewPtoStage, canReviewPtoStage, type PtoRequestRow, type PtoType, type PtoStage } from "@/lib/supabase/pto";
 import { getAttendanceNotes, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
 import { getCompanyTimecardEntries, calcWorkedHours, hoursDiff, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getCompanyTimecardCorrections, reviewCorrectionStage, canReviewCorrectionStage, type TimecardCorrectionRow, type CorrectionStage } from "@/lib/supabase/timecardCorrections";
@@ -17599,7 +17599,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   }, [hrBalanceNotes, ptoRequestsByProfile]);
 
   const remainingPtoByProfile = useMemo(() => {
-    const map = new Map<string, { remaining: number; allowance: number } | null>();
+    const map = new Map<string, { remaining: number; allowance: number; pending: number } | null>();
     for (const e of employees) {
       const window = ptoYearWindow(e.startDate, null);
       if (!window) {
@@ -17608,7 +17608,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       }
       const combined = [...(ptoRequestsByProfile.get(e.id) ?? []), ...(hrPlottedDaysForBalance.get(e.id) ?? [])];
       const used = ptoDaysUsed(combined, window);
-      map.set(e.id, { remaining: Math.max(0, window.allowance - used), allowance: window.allowance });
+      // Only approved days come off; pending ones show beside the balance.
+      map.set(e.id, { remaining: Math.max(0, window.allowance - used), allowance: window.allowance, pending: ptoDaysPending(combined, window) });
     }
     return map;
   }, [employees, ptoRequestsByProfile, hrPlottedDaysForBalance]);
@@ -17621,7 +17622,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Leave is its own separate accrual bucket (see pto.ts's isPaidPtoType/
   // sickYearWindow), not drawn from the same pool as vacation/personal.
   const remainingSickByProfile = useMemo(() => {
-    const map = new Map<string, { remaining: number; allowance: number } | null>();
+    const map = new Map<string, { remaining: number; allowance: number; pending: number } | null>();
     for (const e of employees) {
       const window = sickYearWindow(e.startDate, null);
       if (!window) {
@@ -17630,7 +17631,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       }
       const combined = [...(ptoRequestsByProfile.get(e.id) ?? []), ...(hrPlottedDaysForBalance.get(e.id) ?? [])];
       const used = sickDaysUsed(combined, window);
-      map.set(e.id, { remaining: Math.max(0, window.allowance - used), allowance: window.allowance });
+      // Only approved days come off; pending ones show beside the balance.
+      map.set(e.id, { remaining: Math.max(0, window.allowance - used), allowance: window.allowance, pending: sickDaysPending(combined, window) });
     }
     return map;
   }, [employees, ptoRequestsByProfile, hrPlottedDaysForBalance]);
@@ -18079,11 +18081,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     mealTime: (e) => (e.mealMinutes != null ? String(e.mealMinutes) : ""),
     sickLeave: (e) => {
       const s = remainingSickByProfile.get(e.id);
-      return s ? `${s.remaining}/${s.allowance}` : "";
+      return s ? `${s.remaining}/${s.allowance}${s.pending > 0 ? ` (${s.pending} pending)` : ""}` : "";
     },
     vacationLeave: (e) => {
       const p = remainingPtoByProfile.get(e.id);
-      return p ? `${p.remaining}/${p.allowance}` : "";
+      return p ? `${p.remaining}/${p.allowance}${p.pending > 0 ? ` (${p.pending} pending)` : ""}` : "";
     },
     tierLevel: (e) => e.tierLevel || "",
     employmentStatus: (e) => (e.employmentType === "trainee" ? "Trainee" : "Regular"),
@@ -21396,8 +21398,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         {!sick ? (
                           <span className="text-muted-foreground text-[10px]">—</span>
                         ) : (
-                          <span className="bg-teal-500/20 text-teal-300 px-1.5 py-0.5 rounded text-[10px] font-semibold" title="Remaining / Allowance">
-                            {sick.remaining}/{sick.allowance}
+                          <span className="bg-teal-500/20 text-teal-300 px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap" title="Remaining / Allowance — pending requests aren't deducted until approved">
+                            {sick.remaining}/{sick.allowance}{sick.pending > 0 && <span className="ml-1 font-normal opacity-80">({sick.pending} pending)</span>}
                           </span>
                         )}
                       </td>
@@ -21405,7 +21407,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         {!pto ? (
                           <span className="text-muted-foreground text-[10px]" title="Not yet eligible — PTO starts after 1 year of tenure.">—</span>
                         ) : (
-                          <span className="bg-yellow-500/20 text-yellow-300 px-1.5 py-0.5 rounded text-[10px] font-semibold">{pto.remaining}/{pto.allowance}</span>
+                          <span className="bg-yellow-500/20 text-yellow-300 px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap" title="Remaining / Allowance — pending requests aren't deducted until approved">{pto.remaining}/{pto.allowance}{pto.pending > 0 && <span className="ml-1 font-normal opacity-80">({pto.pending} pending)</span>}</span>
                         )}
                       </td>
                       {showTierColumn && (

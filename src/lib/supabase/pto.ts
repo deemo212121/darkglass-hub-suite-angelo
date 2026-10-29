@@ -155,12 +155,24 @@ export function ptoRequestsInYear<T extends Pick<PtoRequestRow, "ptoType" | "sta
   );
 }
 
-/** Days already spoken for (pending or approved) inside a PTO (vacation) year window. */
+/**
+ * Days APPROVED inside a PTO (vacation) year window — what comes off the
+ * balance. A pending request isn't deducted until it's approved; it shows
+ * next to the balance instead ("5 left (3 pending)", ptoDaysPending).
+ */
 export function ptoDaysUsed(
   requests: Pick<PtoRequestRow, "ptoType" | "status" | "startDate" | "hoursRequested">[],
   window: Pick<PtoYearWindow, "start" | "end">
 ): number {
-  return ptoRequestsInYear(requests, window).reduce((sum, r) => sum + r.hoursRequested / 8, 0);
+  return ptoRequestsInYear(requests, window).filter((r) => r.status === "approved").reduce((sum, r) => sum + r.hoursRequested / 8, 0);
+}
+
+/** Days still PENDING inside a PTO (vacation) year window — not deducted yet. */
+export function ptoDaysPending(
+  requests: Pick<PtoRequestRow, "ptoType" | "status" | "startDate" | "hoursRequested">[],
+  window: Pick<PtoYearWindow, "start" | "end">
+): number {
+  return ptoRequestsInYear(requests, window).filter((r) => r.status === "pending").reduce((sum, r) => sum + r.hoursRequested / 8, 0);
 }
 
 /**
@@ -222,12 +234,20 @@ export function sickRequestsInYear<T extends Pick<PtoRequestRow, "ptoType" | "st
   );
 }
 
-/** Sick Leave days already spoken for (pending or approved) inside a Sick Leave year window. */
+/** Sick Leave days APPROVED inside a Sick Leave year window — pending ones aren't deducted until approved (sickDaysPending). */
 export function sickDaysUsed(
   requests: Pick<PtoRequestRow, "ptoType" | "status" | "startDate" | "hoursRequested">[],
   window: Pick<SickYearWindow, "start" | "end">
 ): number {
-  return sickRequestsInYear(requests, window).reduce((sum, r) => sum + r.hoursRequested / 8, 0);
+  return sickRequestsInYear(requests, window).filter((r) => r.status === "approved").reduce((sum, r) => sum + r.hoursRequested / 8, 0);
+}
+
+/** Sick Leave days still PENDING inside a Sick Leave year window — not deducted yet. */
+export function sickDaysPending(
+  requests: Pick<PtoRequestRow, "ptoType" | "status" | "startDate" | "hoursRequested">[],
+  window: Pick<SickYearWindow, "start" | "end">
+): number {
+  return sickRequestsInYear(requests, window).filter((r) => r.status === "pending").reduce((sum, r) => sum + r.hoursRequested / 8, 0);
 }
 
 export interface PtoRequestRow {
