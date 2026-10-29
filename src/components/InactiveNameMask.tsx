@@ -1,5 +1,5 @@
 /**
- * Shows deactivated people's names as "— (Deactivated User)" on screen (see lib/inactiveNames.ts
+ * Flags deactivated people's names on screen — "Jane Doe (Deactivated)" (see lib/inactiveNames.ts
  * for where they're kept). Works on the rendered page — text and tooltips —
  * so it covers every screen without touching what's stored, and PDFs (built
  * in their own iframe) are never affected. A dropdown option that is only a

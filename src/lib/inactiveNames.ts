@@ -1,17 +1,19 @@
 /**
- * Deactivated accounts' names are hidden across the app — shown as
- * "— (Deactivated User)" — everywhere except Payroll, the Accounting Dashboard and Expenses, HR Paperworks and the
- * signing pages (the papers they signed), plus User Management so an admin can still find and
- * reactivate them. Nothing stored is changed: this is display-only (see
- * components/InactiveNameMask.tsx), so reactivating an account brings the
- * name back everywhere.
+ * Deactivated accounts are flagged across the app — their name shows as
+ * "Jane Doe (Deactivated)" — everywhere except Payroll, the Accounting
+ * Dashboard and Expenses, HR Paperworks and the signing pages (the papers
+ * they signed), plus User Management, which show the name as is (most of
+ * them have their own Deactivated badge). Nothing stored is changed: this is
+ * display-only (see components/InactiveNameMask.tsx), so reactivating an
+ * account drops the flag everywhere.
  *
  * Only full names (two words or more) are masked, and never a name an active
  * person also has — a single word like "Mark" would hit "Mark as read".
  */
 import type { ProfileRow } from "@/lib/supabase/users";
 
-export const INACTIVE_NAME_PLACEHOLDER = "— (Deactivated User)";
+/** Added after a deactivated person's name on screen. */
+export const INACTIVE_NAME_FLAG = " (Deactivated)";
 
 /** Pages where deactivated people keep their names. */
 const KEEP_NAMES_PATHS: RegExp[] = [
@@ -56,7 +58,7 @@ export function setInactiveNamesFromRoster(rows: Pick<ProfileRow, "display_name"
         `(?<![\\p{L}\\p{N}])(?:${[...next]
           .sort((a, b) => b.length - a.length)
           .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "\\s+"))
-          .join("|")})(?![\\p{L}\\p{N}])`,
+          .join("|")})(?![\\p{L}\\p{N}])(?!\\s*\\(Deactivated\\))`,
         "giu",
       )
     : null;
@@ -73,11 +75,16 @@ export function isInactiveName(name: string | null | undefined): boolean {
   return !!name && names.has(normalize(name));
 }
 
-/** The text with every deactivated person's name replaced by the placeholder; null when nothing changed. */
+/**
+ * The text with every deactivated person's name flagged — "Jane Doe" →
+ * "Jane Doe (Deactivated)"; null when nothing changed. A name already
+ * followed by the flag is left alone (the pattern's lookahead), so running
+ * it again on its own output changes nothing.
+ */
 export function maskInactiveNames(text: string): string | null {
   if (!pattern || text.length < 5) return null;
   pattern.lastIndex = 0;
   if (!pattern.test(text)) return null;
   pattern.lastIndex = 0;
-  return text.replace(pattern, INACTIVE_NAME_PLACEHOLDER);
+  return text.replace(pattern, (name) => `${name}${INACTIVE_NAME_FLAG}`);
 }
