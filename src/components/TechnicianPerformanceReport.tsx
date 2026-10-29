@@ -100,6 +100,7 @@ import {
 } from "@/lib/supabase/technicianPerformanceOverrides";
 import { getSeniorBranchManagerAssignments, type SbmBranchAssignment } from "@/lib/supabase/seniorBranchManagerAssignments";
 import { todayISO, localISODate } from "@/lib/localDate";
+import { aliasTechName, nameMatchKey, namesOverlap } from "@/lib/techNameMatch";
 
 const TOOLTIP_STYLE = {
   background: "#ffffff",
@@ -379,7 +380,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const [hoursListFor, setHoursListFor] = useState<{ id: string; name: string } | null>(null);
   const [importing, setImporting] = useState(false);
   const [templateGenerating, setTemplateGenerating] = useState(false);
-  const [importResult, setImportResult] = useState<{ rowsApplied: number; skipped: string[] } | null>(null);
+  /** `matched` = sheet names imported under a differently-spelled technician ("Josh Malloch → Joshua Malloch"), listed so they can be checked. */
+  const [importResult, setImportResult] = useState<{ rowsApplied: number; skipped: string[]; matched: string[] } | null>(null);
 
   const [search, setSearch] = useState("");
   const [locationFilter, setLocationFilter] = useState<string[]>([]);
@@ -1654,11 +1656,38 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         // Name -> matching technician(s) currently on the report; Location
         // disambiguates when a name alone isn't unique.
         const byName = new Map<string, TechPerfRow[]>();
+        const byMatchKey = new Map<string, TechPerfRow[]>();
         for (const r of rows) {
           const key = r.name.trim().toLowerCase();
           if (!byName.has(key)) byName.set(key, []);
           byName.get(key)!.push(r);
+          const mk = nameMatchKey(r.name);
+          if (!byMatchKey.has(mk)) byMatchKey.set(mk, []);
+          byMatchKey.get(mk)!.push(r);
         }
+        // Sheets spell people differently from their account (lib/techNameMatch.ts):
+        // a known nickname (Josh → Joshua Malloch), apostrophes / case / a
+        // garbled "�" (Adejaun = A'Dejaun), then a name whose parts all
+        // appear in one technician's (Erick Guzman Juarez = Erick Guzman). A
+        // tie is settled by the other names in the same sheet — "Jacob Reed"
+        // isn't Jacob Samuel Reed when he has his own rows. Each such match
+        // is listed after the import.
+        const sheetNames = new Set<string>();
+        for (let i = 1; i < aoa.length; i++) sheetNames.add(String(aoa[i]?.[nameIdx] ?? "").trim().toLowerCase());
+        const matchedAs = new Map<string, string>();
+        const looseMatch = (name: string): TechPerfRow[] => {
+          const alias = aliasTechName(name);
+          const exactAlias = alias !== name ? byName.get(alias.trim().toLowerCase()) : undefined;
+          if (exactAlias?.length) return exactAlias;
+          const sameKey = byMatchKey.get(nameMatchKey(name));
+          if (sameKey?.length) return sameKey;
+          let overlap = rows.filter((r) => namesOverlap(name, r.name));
+          if (overlap.length > 1) {
+            const notInSheet = overlap.filter((r) => !sheetNames.has(r.name.trim().toLowerCase()));
+            if (notInSheet.length === 1) overlap = notInSheet;
+          }
+          return overlap;
+        };
 
         const cellToStr = (v: unknown): string => {
           if (v instanceof Date) return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, "0")}-${String(v.getDate()).padStart(2, "0")}`;
@@ -1701,6 +1730,10 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { skipped.push(`${name} (bad date "${date}")`); continue; }
           const nameKey = name.trim().toLowerCase();
           let candidates = byName.get(nameKey) ?? byName.get(nameKey.replace(/\s*\(trainee\)\s*$/, "")) ?? [];
+          if (candidates.length === 0) {
+            candidates = looseMatch(name.replace(/\s*\(trainee\)\s*$/i, ""));
+            if (candidates.length === 1) matchedAs.set(name, candidates[0].name);
+          }
           if (candidates.length > 1 && locationIdx !== -1) {
             const loc = cellToStr(cells[locationIdx]).toLowerCase();
             const narrowed = candidates.filter((c) => c.location.trim().toLowerCase() === loc);
@@ -1734,7 +1767,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           throw new Error(`No usable rows found — every row was either unmatched or had no values to import.${why}`);
         }
         await bulkUpsertTechnicianPerformanceOverrides(toWrite, displayName || "HR");
-        setImportResult({ rowsApplied: toWrite.length, skipped });
+        setImportResult({ rowsApplied: toWrite.length, skipped, matched: [...matchedAs].map(([from, to]) => `${from} → ${to}`) });
         await load();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to import the file.");
@@ -1839,6 +1872,9 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
               Imported {importResult.rowsApplied} day{importResult.rowsApplied === 1 ? "" : "s"} of corrections.
               {importResult.skipped.length > 0 && (
                 <> {importResult.skipped.length} row{importResult.skipped.length === 1 ? "" : "s"} skipped: {importResult.skipped.slice(0, 5).join(", ")}{importResult.skipped.length > 5 ? `, +${importResult.skipped.length - 5} more` : ""}.</>
+              )}
+              {importResult.matched.length > 0 && (
+                <div className="mt-1 text-amber-200">Matched by a different spelling — check these are the right people: {importResult.matched.join(", ")}.</div>
               )}
             </div>
           )}
