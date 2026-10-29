@@ -90,6 +90,8 @@ export function ExpenseTrackingPage({
   const [dateTo, setDateTo] = useState("");
   /** One funnel filter per column (TicketColumnFilter): column key → selected values; empty = no filter. */
   const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
+  /** Employee Requests only: PH (assigned branch Philippines) or US staff. */
+  const [country, setCountry] = useState<"all" | "PH" | "US">("all");
 
   // null = closed; { editing: null } = Add; { editing: row } = Edit.
   const [formState, setFormState] = useState<{ editing: ExpenseRow | null } | null>(null);
@@ -131,10 +133,16 @@ export function ExpenseTrackingPage({
   // only place flashTechOnly/selfFiledOnly's scoping actually applies.
   const scopedExpenses = useMemo(() => {
     if (flashTechOnly) return expenses.filter((e) => e.flashTechTripId);
-    if (selfFiledOnly) return expenses.filter(isSelfFiledExpense);
+    if (selfFiledOnly) {
+      return expenses.filter(isSelfFiledExpense).filter((e) => {
+        if (country === "all") return true;
+        const isPh = profileById.get(e.profileId)?.assigned_branch === "Philippines";
+        return country === "PH" ? isPh : !isPh;
+      });
+    }
     if (categoryOnly) return expenses.filter((e) => e.category === categoryOnly);
     return expenses;
-  }, [expenses, flashTechOnly, selfFiledOnly, categoryOnly]);
+  }, [expenses, flashTechOnly, selfFiledOnly, categoryOnly, country, profileById]);
 
   // The date range applies to the summary cards, the totals and the list alike.
   const rangeExpenses = useMemo(
@@ -371,6 +379,21 @@ export function ExpenseTrackingPage({
                 onChange={(e) => setSearch(e.target.value)}
                 className="min-w-[260px] flex-1 bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none"
               />
+              {selfFiledOnly && (
+                <div className="flex gap-1" role="group" aria-label="Country">
+                  {(["all", "PH", "US"] as const).map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setCountry(c)}
+                      aria-pressed={country === c}
+                      className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${country === c ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-200 hover:bg-slate-700"}`}
+                    >
+                      {c === "all" ? "All" : c}
+                    </button>
+                  ))}
+                </div>
+              )}
               {anyColumnFilter && (
                 <button type="button" onClick={() => setColFilters({})} className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700">
                   Clear column filters
@@ -483,10 +506,11 @@ export function ExpenseTrackingPage({
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex flex-wrap gap-1">
-                        {e.status === "Pending" && !canReviewExpenses && (
+                        {/* Approve / Reject only on employees' own requests — Flash Tech, Hotel and Car Rental are added straight by Accounting. */}
+                        {isSelfFiledExpense(e) && e.status === "Pending" && !canReviewExpenses && (
                           <span className="text-[11px] text-slate-500" title="Only Accounting can approve or reject expenses">Awaiting Accounting</span>
                         )}
-                        {e.status === "Pending" && canReviewExpenses && (
+                        {isSelfFiledExpense(e) && e.status === "Pending" && canReviewExpenses && (
                           <>
                             <button onClick={() => handleStatusChange(e.id, "Approved")} disabled={statusChangingId === e.id} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
                               {statusChangingId === e.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />} Approve
