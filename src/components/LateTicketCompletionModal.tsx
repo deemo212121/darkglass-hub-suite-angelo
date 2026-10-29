@@ -19,6 +19,7 @@ import { getMyProfileId } from "@/lib/supabase/users";
 import {
   getPendingLateTicketCompletions,
   resolveLateTicketCompletion,
+  resolveLateTicketCompletions,
   AlreadyResolvedError,
   type LateTicketCompletion,
 } from "@/lib/supabase/lateTicketCompletions";
@@ -40,6 +41,9 @@ export function LateTicketCompletionModal() {
   const [profileId, setProfileId] = useState<string | null>(null);
   const [rows, setRows] = useState<LateTicketCompletion[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Row ids ticked for Confirm / Reject selected.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const eligible = isClaimsRole(role, extraRoles);
 
@@ -71,6 +75,7 @@ export function LateTicketCompletionModal() {
         });
       }
       setRows((prev) => (prev ?? []).filter((r) => r.id !== row.id));
+      setSelected((prev) => { const next = new Set(prev); next.delete(row.id); return next; });
     } catch (err) {
       if (err instanceof AlreadyResolvedError) {
         // Someone else on the Claims team already acted on this exact
@@ -85,6 +90,47 @@ export function LateTicketCompletionModal() {
       }
     } finally {
       setBusyId(null);
+    }
+  };
+
+  const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
+  const toggleRow = (id: string, on: boolean) =>
+    setSelected((prev) => { const next = new Set(prev); if (on) next.add(id); else next.delete(id); return next; });
+  const toggleAll = (on: boolean) => setSelected(on ? new Set(rows.map((r) => r.id)) : new Set());
+
+  const handleResolveSelected = async (status: "confirmed" | "rejected") => {
+    const picked = rows.filter((r) => selected.has(r.id));
+    if (picked.length === 0) return;
+    const verb = status === "confirmed" ? "Confirm" : "Reject";
+    if (!window.confirm(`${verb} ${picked.length} ticket${picked.length === 1 ? "" : "s"}?`)) return;
+    setBulkBusy(true);
+    try {
+      const resolvedIds = new Set(await resolveLateTicketCompletions(picked.map((r) => r.id), status, profileId, displayName));
+      const resolvedRows = picked.filter((r) => resolvedIds.has(r.id));
+      if (status === "confirmed" && resolvedRows.length > 0) {
+        // One summary alert for the batch, not one per ticket.
+        const preview = resolvedRows.slice(0, 10).map((r) => r.ticketNo).join(", ");
+        await notifyRequestReviewers({
+          body:
+            resolvedRows.length === 1
+              ? `Ticket ${resolvedRows[0].ticketNo} under ${resolvedRows[0].technicianName || "(unknown technician)"} (${formatPeriod(resolvedRows[0])}) has been marked Claimed/Completed after the fact. Please verify and add to the next payroll.`
+              : `${resolvedRows.length} tickets were marked Claimed/Completed after the fact (${preview}${resolvedRows.length > 10 ? ", …" : ""}). Please verify and add them to the next payroll.`,
+          linkTo: "/accounting-dashboard?tab=payroll",
+          senderId: profileId,
+          senderName: displayName || "Claims",
+        });
+      }
+      // Rows someone else already reviewed drop out too — they're no longer pending.
+      const pickedIds = new Set(picked.map((r) => r.id));
+      setRows((prev) => (prev ?? []).filter((r) => !pickedIds.has(r.id)));
+      setSelected(new Set());
+      const skipped = picked.length - resolvedRows.length;
+      if (skipped > 0) alert(`${skipped} of the selected tickets were already reviewed by someone else and were left as they were.`);
+    } catch (err) {
+      console.error("LateTicketCompletionModal: failed to resolve selected", err);
+      alert("Something went wrong — please try again.");
+    } finally {
+      setBulkBusy(false);
     }
   };
 
@@ -105,11 +151,50 @@ export function LateTicketCompletionModal() {
           </div>
         </div>
 
-        <div className="mt-4 max-h-80 overflow-y-auto rounded-lg border border-white/10 bg-slate-900/50">
+        <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-slate-900/50 px-3 py-2">
+          <label className="flex cursor-pointer select-none items-center gap-2 text-xs font-semibold text-slate-300">
+            <input
+              type="checkbox"
+              checked={allSelected}
+              disabled={bulkBusy}
+              onChange={(e) => toggleAll(e.target.checked)}
+              className="h-4 w-4 accent-emerald-500"
+            />
+            {selected.size > 0 ? `${selected.size} selected` : "Select all"}
+          </label>
+          <div className="flex shrink-0 gap-2">
+            <button
+              type="button"
+              disabled={bulkBusy || selected.size === 0}
+              onClick={() => handleResolveSelected("rejected")}
+              className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-300 hover:bg-red-500/20 disabled:opacity-40"
+            >
+              Reject selected
+            </button>
+            <button
+              type="button"
+              disabled={bulkBusy || selected.size === 0}
+              onClick={() => handleResolveSelected("confirmed")}
+              className="rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/25 disabled:opacity-40"
+            >
+              {bulkBusy ? "Saving…" : "Confirm selected"}
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-2 max-h-80 overflow-y-auto rounded-lg border border-white/10 bg-slate-900/50">
           <ul className="divide-y divide-white/5">
             {rows.map((row) => (
               <li key={row.id} className="flex items-center justify-between gap-3 px-3 py-3">
-                <div className="min-w-0">
+                <input
+                  type="checkbox"
+                  checked={selected.has(row.id)}
+                  disabled={bulkBusy}
+                  onChange={(e) => toggleRow(row.id, e.target.checked)}
+                  aria-label={`Select ticket ${row.ticketNo}`}
+                  className="h-4 w-4 shrink-0 accent-emerald-500"
+                />
+                <div className="min-w-0 flex-1">
                   <Link
                     to="/ticket/$ticketNo"
                     params={{ ticketNo: row.ticketNo }}
