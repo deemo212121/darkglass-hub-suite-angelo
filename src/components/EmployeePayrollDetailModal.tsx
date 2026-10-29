@@ -34,6 +34,7 @@ import {
   fixedSalaryIsGuarantee,
   perCutoffSalary,
   monthlySalary,
+  mixedPeriodFixedPay,
   type SalaryEntryRow,
   type SalaryChangeReason,
   type CompensationType,
@@ -104,6 +105,8 @@ interface Props {
     items: PayrollAdjustment[];
     /** The payroll table's gross pay for this employee and period. */
     grossPay: number | null;
+    /** How gross pay was made up, when it's worth showing (hourly days + fixed days ÷ 10). */
+    grossBreakdown?: { label: string; amount: number }[];
     createdByName?: string | null;
     onChanged: () => void | Promise<void>;
   };
@@ -918,7 +921,44 @@ export function EmployeePayrollDetailModal({
     return map;
   }, [attendance, rateHistory, dailyHoursSplitByDate, otMultiplier, traineeWindow.start, traineeWindow.end]);
 
+  // Hourly ↔ fixed switch inside the viewed range: hourly days by the hour +
+  // fixed days ÷ 10, same rule as the payroll table (mixedPeriodFixedPay).
+  const mixedFixed = useMemo(
+    () =>
+      mixedPeriodFixedPay(
+        rangeStart,
+        rangeEnd,
+        [...dailyHoursSplitByDate.entries()].filter(([, h]) => h.regular + h.overtime > 0.0005).map(([date]) => date),
+        (date) => {
+          const e = entryEffectiveOn(rateHistory, date);
+          return e ? { type: e.compensationType === "fixed" ? "fixed" : "hourly", annualSalary: e.annualSalary ?? null } : null;
+        },
+        isPhPayroll
+      ),
+    [rangeStart, rangeEnd, dailyHoursSplitByDate, rateHistory, isPhPayroll]
+  );
+
   const payViewTotals = useMemo(() => {
+    if (mixedFixed) {
+      const totals = {
+        calculated: { regularPay: mixedFixed.fixedPay, overtimePay: 0, total: 0 },
+        compliant: { regularPay: mixedFixed.fixedPay, overtimePay: 0, total: 0 },
+      };
+      for (const row of attendance) {
+        // Fixed days are in fixedPay — no state floor on top of the salary.
+        if (entryEffectiveOn(rateHistory, row.date)?.compensationType === "fixed") continue;
+        const rate = rateEffectiveOn(rateHistory, row.date);
+        const { regular, overtime } = dailyHoursSplitByDate.get(row.date) ?? { regular: 0, overtime: 0 };
+        const effectiveRate = dailyPayByDate.get(row.date)?.effectiveRate ?? rate;
+        totals.calculated.regularPay += regular * rate;
+        totals.calculated.overtimePay += overtime * rate * otMultiplier;
+        totals.compliant.regularPay += regular * effectiveRate;
+        totals.compliant.overtimePay += overtime * effectiveRate * otMultiplier;
+      }
+      totals.calculated.total = totals.calculated.regularPay + totals.calculated.overtimePay;
+      totals.compliant.total = totals.compliant.regularPay + totals.compliant.overtimePay;
+      return totals;
+    }
     if (isCurrentlyFixed && currentEntry?.annualSalary) {
       // perCutoffSalary (annual / 26), not monthlySalary (annual / 12) — this
       // tile is scoped to the same biweekly cutoff period as everywhere else
@@ -947,7 +987,7 @@ export function EmployeePayrollDetailModal({
     totals.calculated.total = totals.calculated.regularPay + totals.calculated.overtimePay;
     totals.compliant.total = totals.compliant.regularPay + totals.compliant.overtimePay;
     return totals;
-  }, [attendance, rateHistory, dailyHoursSplitByDate, dailyPayByDate, isCurrentlyFixed, currentEntry, otMultiplier, isPhPayroll]);
+  }, [attendance, rateHistory, dailyHoursSplitByDate, dailyPayByDate, isCurrentlyFixed, currentEntry, otMultiplier, isPhPayroll, mixedFixed]);
   const downloadAttendanceExcel = async () => {
     if (downloadingAttendance || loading || attendance.length === 0 || attendanceEditing || savingRates || pendingRateChanges.length > 0) return;
     setDownloadingAttendance(true);
@@ -1389,7 +1429,12 @@ export function EmployeePayrollDetailModal({
                 )}
               </div>
               <p className="text-lg font-bold text-green-300 mt-1">${displayedPayFlat.toFixed(2)}</p>
-              {!isCurrentlyFixed && (
+              {mixedFixed && (
+                <p className="text-xs text-amber-300 mt-0.5">
+                  Hourly days ${(displayedPayFlat - mixedFixed.fixedPay).toFixed(2)} + fixed ${mixedFixed.dailyRate.toFixed(2)} × {mixedFixed.fixedDays} day{mixedFixed.fixedDays === 1 ? "" : "s"} = ${mixedFixed.fixedPay.toFixed(2)}
+                </p>
+              )}
+              {!isCurrentlyFixed && !mixedFixed && (
                 <p className="text-xs text-slate-400 mt-0.5" title="Flat — every hour (regular and overtime alike) at the same rate, no 1.5× multiplier. The Tech Activity Report step computes the real Hourly + OT total, including the FLSA weighted-regular-rate overtime premium once this period's incentive/bonus pay is folded in — this tile is just the state-floor check, not that final figure.">
                   {(totalHoursSplit.regular + totalHoursSplit.overtime).toFixed(3)} hrs flat = ${displayedPayFlat.toFixed(2)}
                 </p>
@@ -1608,6 +1653,7 @@ export function EmployeePayrollDetailModal({
               periodEnd={adjustments.periodEnd}
               items={adjustments.items}
               grossPay={adjustments.grossPay}
+              grossBreakdown={adjustments.grossBreakdown}
               createdByName={adjustments.createdByName}
               onChanged={adjustments.onChanged}
             />

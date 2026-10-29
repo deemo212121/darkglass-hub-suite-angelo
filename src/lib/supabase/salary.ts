@@ -178,6 +178,59 @@ export function perCutoffSalary(annualSalary: number, isPH: boolean = false): nu
   return annualSalary / (isPH ? PH_CUTOFFS_PER_YEAR : CUTOFFS_PER_YEAR);
 }
 
+/** Working days a fixed salary's per-cutoff amount covers (biweekly: 2 × 5) — the "÷ 10" pro-rata rule. */
+export const FIXED_WORKING_DAYS_PER_CUTOFF = 10;
+
+export interface MixedPeriodFixedPay {
+  /** Days worked while on the fixed salary. */
+  fixedDays: number;
+  /** Per-cutoff salary ÷ FIXED_WORKING_DAYS_PER_CUTOFF. */
+  dailyRate: number;
+  perCutoff: number;
+  /** dailyRate × fixedDays, never more than perCutoff. */
+  fixedPay: number;
+}
+
+/**
+ * A period that switches between hourly and a fixed salary part-way (e.g.
+ * fixed from the 4th day of a cutoff) isn't paid the whole per-cutoff
+ * salary: the hourly days are paid by the hour (the caller's own day-by-day
+ * rate pay, which already pays a fixed day $0), and the fixed days pro rata —
+ * per-cutoff ÷ 10 × fixed days worked, capped at the full per-cutoff amount.
+ * Same ÷ 10 rule as a deactivated fixed employee. Returns null when every
+ * day of the period has the same pay type (no split — existing rules apply).
+ */
+export function mixedPeriodFixedPay(
+  periodStart: string,
+  periodEnd: string,
+  workedDates: Iterable<string>,
+  compOn: (date: string) => { type: "hourly" | "fixed"; annualSalary: number | null } | null,
+  isPH: boolean
+): MixedPeriodFixedPay | null {
+  if (!periodStart || !periodEnd || periodStart > periodEnd) return null;
+  const types = new Set<string>();
+  const [y, m, d] = periodStart.split("-").map(Number);
+  for (let day = new Date(Date.UTC(y, m - 1, d)); ; day.setUTCDate(day.getUTCDate() + 1)) {
+    const iso = day.toISOString().slice(0, 10);
+    if (iso > periodEnd) break;
+    types.add(compOn(iso)?.type ?? "hourly");
+  }
+  if (types.size < 2) return null;
+  let fixedDays = 0;
+  let raw = 0;
+  let perCutoff = 0;
+  for (const date of workedDates) {
+    if (date < periodStart || date > periodEnd) continue;
+    const comp = compOn(date);
+    if (comp?.type !== "fixed" || !comp.annualSalary) continue;
+    const pc = perCutoffSalary(comp.annualSalary, isPH);
+    fixedDays += 1;
+    raw += pc / FIXED_WORKING_DAYS_PER_CUTOFF;
+    perCutoff = Math.max(perCutoff, pc);
+  }
+  return { fixedDays, dailyRate: perCutoff / FIXED_WORKING_DAYS_PER_CUTOFF, perCutoff, fixedPay: Math.min(perCutoff, raw) };
+}
+
 /** Monthly pay for a fixed annual salary — annual / 12. */
 export function monthlySalary(annualSalary: number): number {
   return annualSalary / MONTHS_PER_YEAR;
