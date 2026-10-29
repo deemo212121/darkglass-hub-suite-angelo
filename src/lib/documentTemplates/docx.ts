@@ -12,7 +12,7 @@ import {
 } from "docx";
 import { ELEMENT_REGISTRY, type CustomFormField } from "@/lib/formElements";
 import type { CustomForm, CustomFormResponseValue, CustomFormSubmission } from "@/lib/supabase/customForms";
-import { DISPLAY_TYPES, HEADING_SIZES, SKIPPED_IN_DOCUMENT, fillDisplayHtml, formatFieldValue, loadDocumentLogo, toDataUrl } from "./generate";
+import { DISPLAY_TYPES, HEADING_SIZES, SKIPPED_IN_DOCUMENT, fillDisplayHtml, formatFieldValue, hasOwnLetterhead, loadDocumentLogo, toDataUrl } from "./generate";
 
 const INK = "111827";
 const MUTED = "4B5563";
@@ -28,6 +28,42 @@ type Fmt = { bold?: boolean; italics?: boolean; underline?: boolean };
 async function dataUrlToBytes(dataUrl: string): Promise<Uint8Array> {
   const res = await fetch(dataUrl);
   return new Uint8Array(await res.arrayBuffer());
+}
+
+function naturalSize(dataUrl: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth || 100, height: img.naturalHeight || 100 });
+    img.onerror = () => resolve({ width: 100, height: 100 });
+    img.src = dataUrl;
+  });
+}
+
+/** An Image element (e.g. a letterhead logo) at its set size, like the PDF — a side left unset keeps the image's own proportions. */
+async function imageParagraphs(field: CustomFormField): Promise<Paragraph[]> {
+  const c = field.config ?? {};
+  if (!c.url) return [];
+  const dataUrl = await toDataUrl(String(c.url));
+  const kind = /^data:image\/png/i.test(dataUrl) ? "png" : /^data:image\/jpe?g/i.test(dataUrl) ? "jpg" : /^data:image\/gif/i.test(dataUrl) ? "gif" : null;
+  if (!kind) return [];
+  const natural = await naturalSize(dataUrl);
+  const ratio = natural.height / natural.width;
+  let width = Number(c.width) || 0;
+  let height = Number(c.height) || 0;
+  if (width && !height) height = width * ratio;
+  else if (height && !width) width = height / ratio;
+  else if (!width && !height) {
+    height = Math.min(natural.height, 160);
+    width = height / ratio;
+  }
+  if (width > 624) {
+    height = (height * 624) / width;
+    width = 624;
+  }
+  const alignment = ALIGN[c.alignment] ?? AlignmentType.LEFT;
+  const out = [new Paragraph({ alignment, spacing: { after: c.caption ? 40 : 120 }, children: [new ImageRun({ type: kind, data: await dataUrlToBytes(dataUrl), transformation: { width: Math.round(width), height: Math.round(height) } })] })];
+  if (c.caption) out.push(new Paragraph({ alignment, spacing: { after: 120 }, children: [new TextRun({ text: String(c.caption), size: 18, color: MUTED })] }));
+  return out;
 }
 
 function isFileValue(value: CustomFormResponseValue | undefined): value is { url: string; fileName?: string; mimeType?: string } {
@@ -144,7 +180,7 @@ export async function generateSubmissionDocx(form: Pick<CustomForm, "title" | "f
   const fields = form.fields.filter((f) => !f.hidden && !SKIPPED_IN_DOCUMENT.has(f.type));
   const body: (Paragraph | Table)[] = [];
 
-  const logo = await loadDocumentLogo();
+  const logo = hasOwnLetterhead(fields) ? "" : await loadDocumentLogo();
   if (logo) body.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 120 }, children: [new ImageRun({ type: "png", data: await dataUrlToBytes(logo), transformation: { width: 100, height: 100 } })] }));
   if (!fields.some((f) => f.type === "heading")) {
     body.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 200 }, children: [new TextRun({ text: form.title, bold: true, size: 28, color: INK })] }));
@@ -161,6 +197,11 @@ export async function generateSubmissionDocx(form: Pick<CustomForm, "title" | "f
     row = [];
   };
   for (const field of fields) {
+    if (field.type === "image") {
+      await flushRow();
+      body.push(...(await imageParagraphs(field)));
+      continue;
+    }
     if (DISPLAY_TYPES.has(field.type)) {
       await flushRow();
       body.push(...displayParagraphs(field, valuesByName, fieldsByName));

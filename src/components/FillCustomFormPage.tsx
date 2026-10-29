@@ -26,6 +26,7 @@ import { ELEMENT_REGISTRY } from "@/lib/formElements";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { companySignerNames, notifyCustomFormSigned } from "@/lib/customFormCompletion";
 import { CustomFormRenderer, type CustomFormRendererValue } from "@/components/CustomFormRenderer";
+import { hasOwnLetterhead } from "@/lib/documentTemplates/generate";
 import usihsLogo from "@/assets/us-in-home-services-logo.png";
 
 interface Props {
@@ -173,7 +174,7 @@ export function FillCustomFormPage({ formId }: Props) {
               paper={{
                 header: (
                   <>
-                    <img src={usihsLogo} alt="US In Home Services" className="h-[100px] w-[100px] mx-auto mb-5" />
+                    {!hasOwnLetterhead(form.fields) && <img src={usihsLogo} alt="US In Home Services" className="h-[100px] w-[100px] mx-auto mb-5" />}
                     {/* The PDF prints the form's title only when the form has no heading of its own. */}
                     {!form.fields.some((f) => f.type === "heading" && !f.hidden) && <h2 className="text-center mb-4">{form.title}</h2>}
                   </>

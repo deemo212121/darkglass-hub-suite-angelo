@@ -55,6 +55,21 @@ const STATUS_BADGE: Record<string, string> = {
 };
 
 /** A form with several company signers: the parts not signed yet (e.g. "HUMAN RESOURCES"). Empty for a single company part. */
+/**
+ * Who a form is for — most are made for one person (the employee's name
+ * pre-filled on their own part, e.g. "Employee Printed Name" = Daven Hodge),
+ * else the name after the title's dash ("… — Kenny Shin (Birmingham)").
+ * Empty for a form anyone fills in.
+ */
+function formPersonName(form: CustomForm): string {
+  const named = form.fields.find(
+    (fl) => fl.fillBy !== "company" && typeof fl.defaultValue === "string" && fl.defaultValue.trim() && /name/i.test(`${fl.name} ${fl.label}`),
+  );
+  if (named) return String(named.defaultValue).trim();
+  const dash = form.title.match(/\s[—–]\s(.+)$/);
+  return dash ? dash[1].replace(/\s*\(.*\)\s*$/, "").trim() : "";
+}
+
 function pendingSignerNames(form: CustomForm | undefined, submission: CustomFormSubmission): string {
   if (!form) return "";
   const sections = splitSignerSections(companyFields(form));
@@ -210,6 +225,13 @@ export function CustomFormsPanel() {
     }
   };
   useEffect(() => { void loadDeleted(); }, []);
+
+  const [formsSearch, setFormsSearch] = useState("");
+  const visibleForms = useMemo(() => {
+    const q = formsSearch.trim().toLowerCase();
+    if (!q) return forms;
+    return forms.filter((f) => f.title.toLowerCase().includes(q) || formPersonName(f).toLowerCase().includes(q));
+  }, [forms, formsSearch]);
 
   const [search, setSearch] = useState("");
   const [formFilter, setFormFilter] = useState("");
@@ -560,14 +582,21 @@ export function CustomFormsPanel() {
             <h2 className="font-semibold text-sm flex items-center gap-1.5"><FileText className="h-4 w-4 text-blue-300" /> Custom Forms</h2>
             <p className="text-[10px] text-muted-foreground mt-0.5">Build your own forms — public ones can be filled out by anyone with the link, no AHS login needed; internal ones need an AHS login and have their own shareable link too.</p>
           </div>
-          <button type="button" onClick={() => { setEditingForm(null); setBuilderOpen(true); }} className="btn text-sm px-3 py-1.5 flex items-center gap-1.5 shrink-0">
-            <Plus className="h-3.5 w-3.5" /> New Form
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+              <input type="text" value={formsSearch} onChange={(e) => setFormsSearch(e.target.value)} placeholder="Name or title…" className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-52" />
+            </div>
+            <button type="button" onClick={() => { setEditingForm(null); setBuilderOpen(true); }} className="btn text-sm px-3 py-1.5 flex items-center gap-1.5 shrink-0">
+              <Plus className="h-3.5 w-3.5" /> New Form
+            </button>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Name</th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Title</th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Access</th>
                 <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Status</th>
@@ -577,12 +606,15 @@ export function CustomFormsPanel() {
             </thead>
             <tbody>
               {formsLoading ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading…</td></tr>
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">Loading…</td></tr>
               ) : forms.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">No forms yet — click "New Form" to build one.</td></tr>
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No forms yet — click "New Form" to build one.</td></tr>
+              ) : visibleForms.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">No form matches "{formsSearch.trim()}".</td></tr>
               ) : (
-                forms.map((f) => (
+                visibleForms.map((f) => (
                   <tr key={f.id} className="border-b border-white/5 hover:bg-white/5">
+                    <td className="px-4 py-3 whitespace-nowrap">{formPersonName(f) || <span className="text-muted-foreground">—</span>}</td>
                     <td className="px-4 py-3 font-medium">{f.title}</td>
                     <td className="px-4 py-3 text-muted-foreground capitalize">{f.access}</td>
                     <td className="px-4 py-3">
