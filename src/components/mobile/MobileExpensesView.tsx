@@ -14,6 +14,8 @@ import {
   type ExpenseRow,
   type ExpenseCategory,
   type ReimbursementType,
+  type ExpenseReceipt,
+  MAX_EXPENSE_RECEIPTS,
 } from "@/lib/supabase/expenses";
 import { EMPLOYEE_EXPENSE_CATEGORY } from "@/components/ExpenseFormModal";
 import { ReceiptLightbox } from "@/components/ReceiptLightbox";
@@ -55,15 +57,17 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
   const [filter, setFilter] = useState<"all" | ExpenseRow["status"]>("all");
 
   const [form, setForm] = useState(emptyForm);
-  // A new receipt picked on this phone (uploaded on submit), or — when
-  // editing — the one already on the expense.
-  const [receiptFile, setReceiptFile] = useState<File | null>(null);
-  const [existingReceipt, setExistingReceipt] = useState<{ url: string; path: string | null } | null>(null);
+  // New receipts picked on this phone (uploaded on submit), and — when
+  // editing — the ones already on the expense. Up to MAX_EXPENSE_RECEIPTS in all.
+  const [receiptFiles, setReceiptFiles] = useState<File[]>([]);
+  const [existingReceipts, setExistingReceipts] = useState<ExpenseReceipt[]>([]);
+  const receiptRoom = MAX_EXPENSE_RECEIPTS - existingReceipts.length - receiptFiles.length;
   const [editing, setEditing] = useState<ExpenseRow | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null);
+  const [previewReceiptList, setPreviewReceiptList] = useState<string[]>([]);
 
   // Flash Tech trip expenses (company-booked hotel/travel) aren't the
   // employee's to claim back — same filter as desktop My Expenses.
@@ -94,8 +98,8 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
 
   const resetForm = () => {
     setForm(emptyForm());
-    setReceiptFile(null);
-    setExistingReceipt(null);
+    setReceiptFiles([]);
+    setExistingReceipts([]);
     setEditing(null);
   };
 
@@ -112,8 +116,8 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
       reimbursementType: e.reimbursementType ?? "",
       reimbursementOther: e.reimbursementOther || "",
     });
-    setReceiptFile(null);
-    setExistingReceipt(e.receiptUrl ? { url: e.receiptUrl, path: e.receiptPath } : null);
+    setReceiptFiles([]);
+    setExistingReceipts(e.receipts);
     setMsg("");
     document.querySelector('[data-tour="m-view-expenses"]')?.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -126,23 +130,21 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
     if (!form.expenseDate) { setMsg("Please pick the date."); return; }
     if (!form.reimbursementType) { setMsg("Please pick the type of reimbursement (Gas, Food, Flash Tech / Allowance or Other)."); return; }
     if (form.reimbursementType === "Other" && !form.reimbursementOther.trim()) { setMsg("Please specify what the Other reimbursement is for."); return; }
-    if (!receiptFile && !existingReceipt) { setMsg("Please attach a receipt (photo or PDF)."); return; }
+    if (receiptFiles.length === 0 && existingReceipts.length === 0) { setMsg("Please attach a receipt (photo or PDF)."); return; }
     setSubmitting(true);
     try {
-      let receiptUrl = existingReceipt?.url ?? null;
-      let receiptPath = existingReceipt?.path ?? null;
-      if (receiptFile) {
-        const up = await uploadExpenseReceipt(companyId || "COMP001", editing?.id ?? randomId(), receiptFile);
-        receiptUrl = up.url;
-        receiptPath = up.fullPath;
+      const receipts: ExpenseReceipt[] = [...existingReceipts];
+      const folder = editing?.id ?? randomId();
+      for (const file of receiptFiles) {
+        const up = await uploadExpenseReceipt(companyId || "COMP001", folder, file);
+        receipts.push({ url: up.url, path: up.fullPath });
       }
       const fields = {
         category: form.category,
         expenseDate: form.expenseDate,
         amount,
         description: form.description,
-        receiptUrl,
-        receiptPath,
+        receipts,
         orNumber: form.orNumber,
         fromLocation: form.fromLocation,
         toLocation: form.toLocation,
@@ -150,10 +152,11 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
         reimbursementOther: form.reimbursementOther,
       };
       if (editing) {
-        await updateExpense(editing.id, fields);
-        // A replaced receipt's old file is cleaned up once the save has worked.
-        if (receiptFile && editing.receiptPath && editing.receiptPath !== receiptPath) {
-          deleteExpenseReceiptFile(editing.receiptPath).catch((err) => console.error("old receipt cleanup failed", err));
+        await updateExpense(editing.id, { ...fields, hadExtraReceipts: editing.receipts.length > 1 });
+        // Removed receipts' files are cleaned up once the save has worked.
+        const kept = new Set(receipts.map((r) => r.path));
+        for (const r of editing.receipts) {
+          if (r.path && !kept.has(r.path)) deleteExpenseReceiptFile(r.path).catch((err) => console.error("old receipt cleanup failed", err));
         }
       } else {
         await createExpense({ profileId, createdBy: profileId, ...fields });
@@ -175,7 +178,7 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
     setDeletingId(e.id);
     try {
       await deleteExpense(e.id);
-      if (e.receiptPath) deleteExpenseReceiptFile(e.receiptPath).catch((err) => console.error("receipt cleanup failed", err));
+      for (const r of e.receipts) if (r.path) deleteExpenseReceiptFile(r.path).catch((err) => console.error("receipt cleanup failed", err));
       if (editing?.id === e.id) resetForm();
       await refresh();
     } catch (err) {
@@ -197,8 +200,9 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
     </button>
   );
 
-  const previewSrc = useMemo(() => (receiptFile && receiptFile.type.startsWith("image/") ? URL.createObjectURL(receiptFile) : null), [receiptFile]);
-  useEffect(() => () => { if (previewSrc) URL.revokeObjectURL(previewSrc); }, [previewSrc]);
+  const previewSrcs = useMemo(() => receiptFiles.map((f) => (f.type.startsWith("image/") ? URL.createObjectURL(f) : null)), [receiptFiles]);
+  useEffect(() => () => { for (const src of previewSrcs) if (src) URL.revokeObjectURL(src); }, [previewSrcs]);
+  const isPdf = (s: string) => /\.pdf(\?|$)/i.test(s);
 
   return (
     <div data-tour="m-view-expenses" className="mtech-scroll">
@@ -265,27 +269,54 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
         <div className="mtech-section-title">Description</div>
         <textarea className="mtech-bill-input full" rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} style={{ resize: "none" }} />
 
-        <div className="mtech-section-title">Receipt (photo or PDF) *</div>
-        <label className="mtech-bill-input full" style={{ display: "flex", alignItems: "center", gap: "0.6rem", cursor: "pointer", borderStyle: "dashed" }}>
-          <input
-            type="file"
-            accept="image/*,application/pdf"
-            style={{ display: "none" }}
-            disabled={submitting}
-            onChange={(e) => { const f = e.target.files?.[0] ?? null; if (f) setReceiptFile(f); e.target.value = ""; }}
-          />
-          {previewSrc ? (
-            <img src={previewSrc} alt="" style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 6 }} />
-          ) : (
+        <div className="mtech-section-title">
+          Receipts (photos or PDFs) *{existingReceipts.length + receiptFiles.length > 0 && ` · ${existingReceipts.length + receiptFiles.length}/${MAX_EXPENSE_RECEIPTS}`}
+        </div>
+        {existingReceipts.length + receiptFiles.length > 0 && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "0.4rem", marginBottom: "0.4rem" }}>
+            {existingReceipts.map((r, i) => (
+              <div key={r.url} style={{ position: "relative", aspectRatio: "1", borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.12)", background: "rgba(15,23,42,0.6)" }}>
+                {isPdf(r.path || r.url) ? (
+                  <div style={{ display: "flex", height: "100%", alignItems: "center", justifyContent: "center", fontSize: 12, color: "#94a3b8" }}>📎 PDF</div>
+                ) : (
+                  <img src={r.url} alt={`Receipt ${i + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                )}
+                <button type="button" onClick={() => setExistingReceipts((list) => list.filter((x) => x.url !== r.url))} aria-label={`Remove receipt ${i + 1}`} style={{ position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,0.7)", color: "#fff", borderRadius: 999, width: 20, height: 20, fontSize: 12, lineHeight: "20px" }}>✕</button>
+              </div>
+            ))}
+            {receiptFiles.map((f, i) => (
+              <div key={`${f.name}-${i}`} style={{ position: "relative", aspectRatio: "1", borderRadius: 8, overflow: "hidden", border: "1px solid rgba(59,130,246,0.5)", background: "rgba(15,23,42,0.6)" }}>
+                {previewSrcs[i] ? (
+                  <img src={previewSrcs[i]!} alt={f.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                ) : (
+                  <div style={{ display: "flex", height: "100%", alignItems: "center", justifyContent: "center", fontSize: 12, color: "#94a3b8", padding: 4, textAlign: "center", wordBreak: "break-all" }}>📎 {f.name}</div>
+                )}
+                <button type="button" onClick={() => setReceiptFiles((list) => list.filter((_, j) => j !== i))} aria-label={`Remove ${f.name}`} style={{ position: "absolute", top: 2, right: 2, background: "rgba(0,0,0,0.7)", color: "#fff", borderRadius: 999, width: 20, height: 20, fontSize: 12, lineHeight: "20px" }}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+        {receiptRoom > 0 && (
+          <label className="mtech-bill-input full" style={{ display: "flex", alignItems: "center", gap: "0.6rem", cursor: "pointer", borderStyle: "dashed" }}>
+            <input
+              type="file"
+              accept="image/*,application/pdf"
+              multiple
+              style={{ display: "none" }}
+              disabled={submitting}
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? []);
+                if (files.length > receiptRoom) setMsg(`Only ${receiptRoom} more receipt${receiptRoom === 1 ? "" : "s"} can be added (up to ${MAX_EXPENSE_RECEIPTS}).`);
+                if (files.length) setReceiptFiles((list) => [...list, ...files.slice(0, receiptRoom)]);
+                e.target.value = "";
+              }}
+            />
             <span aria-hidden="true">📎</span>
-          )}
-          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {receiptFile ? receiptFile.name : existingReceipt ? "Receipt attached — tap to replace" : "Take a photo or choose a file…"}
-          </span>
-          {receiptFile && (
-            <button type="button" onClick={(e) => { e.preventDefault(); setReceiptFile(null); }} aria-label="Remove receipt" style={{ padding: "0.2rem 0.4rem" }}>✕</button>
-          )}
-        </label>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              {existingReceipts.length + receiptFiles.length > 0 ? "Add more photos or files…" : "Take photos or choose files — one or several…"}
+            </span>
+          </label>
+        )}
 
         <button type="button" data-tour="m-expense-submit" className="mtech-save-btn" onClick={submit} disabled={submitting}>
           {submitting ? "Sending…" : editing ? "Save Changes" : "Send to Accounting"}
@@ -343,8 +374,10 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
                     </p>
                   )}
                   <div style={{ display: "flex", gap: "0.9rem", paddingTop: "0.35rem", fontSize: 13 }}>
-                    {e.receiptUrl && (
-                      <button type="button" onClick={() => setPreviewReceiptUrl(e.receiptUrl)} style={{ color: "#93c5fd", fontWeight: 600 }}>📎 View receipt</button>
+                    {e.receipts.length > 0 && (
+                      <button type="button" onClick={() => { setPreviewReceiptList(e.receipts.map((r) => r.url)); setPreviewReceiptUrl(e.receipts[0].url); }} style={{ color: "#93c5fd", fontWeight: 600 }}>
+                        📎 View receipt{e.receipts.length > 1 ? `s (${e.receipts.length})` : ""}
+                      </button>
                     )}
                     {canChange && (
                       <>
@@ -362,7 +395,7 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
         </div>
       )}
 
-      {previewReceiptUrl && <ReceiptLightbox url={previewReceiptUrl} onClose={() => setPreviewReceiptUrl(null)} />}
+      {previewReceiptUrl && <ReceiptLightbox url={previewReceiptUrl} urls={previewReceiptList} onClose={() => setPreviewReceiptUrl(null)} />}
     </div>
   );
 }

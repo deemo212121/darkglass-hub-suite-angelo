@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // receiptUrl is a Firebase Storage download URL — the original filename
 // (with extension) survives in its path component, before the "?" query
@@ -15,16 +15,42 @@ export function isPdfReceipt(url: string): boolean {
  * zoom/pan mechanics as TicketPhotos.tsx's lightbox (scroll/pinch/
  * double-click to zoom, drag to pan when zoomed).
  */
-export function ReceiptLightbox({ url, onClose }: { url: string; onClose: () => void }) {
+export function ReceiptLightbox({
+  url: startUrl,
+  urls,
+  onClose,
+}: {
+  url: string;
+  /** Every receipt on the expense — adds Previous / Next (and ← / → keys) when there's more than one. */
+  urls?: string[];
+  onClose: () => void;
+}) {
+  const list = urls && urls.length > 1 ? urls : [startUrl];
+  const [index, setIndex] = useState(() => Math.max(0, list.indexOf(startUrl)));
+  const url = list[index] ?? startUrl;
   const [zoomScale, setZoomScale] = useState(1);
   const [zoomPos, setZoomPos] = useState({ x: 0, y: 0 });
   const lastTouchDist = useRef<number | null>(null);
+  const go = (step: number) => {
+    setIndex((i) => (i + step + list.length) % list.length);
+    setZoomScale(1);
+    setZoomPos({ x: 0, y: 0 });
+  };
+  useEffect(() => {
+    if (list.length < 2) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowRight") go(1);
+      else if (e.key === "ArrowLeft") go(-1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [list.length]);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center" onClick={onClose}>
       {/* Toolbar */}
       <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-black/60 z-10">
-        <div className="text-sm text-slate-200 truncate max-w-xs">Receipt</div>
+        <div className="text-sm text-slate-200 truncate max-w-xs">Receipt{list.length > 1 ? ` ${index + 1} of ${list.length}` : ""}</div>
         <div className="flex items-center gap-2">
           {!isPdfReceipt(url) && (
             <>
@@ -106,6 +132,27 @@ export function ReceiptLightbox({ url, onClose }: { url: string; onClose: () => 
             }}
           />
         </div>
+      )}
+
+      {list.length > 1 && (
+        <>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); go(-1); }}
+            className="absolute left-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/60 px-3 py-2 text-2xl text-white hover:bg-black/80"
+            aria-label="Previous receipt"
+          >
+            ‹
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); go(1); }}
+            className="absolute right-3 top-1/2 z-10 -translate-y-1/2 rounded-full bg-black/60 px-3 py-2 text-2xl text-white hover:bg-black/80"
+            aria-label="Next receipt"
+          >
+            ›
+          </button>
+        </>
       )}
 
       {/* Caption */}

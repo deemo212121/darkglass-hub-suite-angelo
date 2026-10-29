@@ -3,7 +3,7 @@ import { Paperclip, X } from "lucide-react";
 import { randomId } from "@/lib/utils";
 import type { ProfileRow } from "@/lib/supabase/users";
 import { uploadExpenseReceipt, deleteExpenseReceiptFile } from "@/lib/firebase/storage";
-import { createExpense, updateExpense, REIMBURSEMENT_TYPES, reimbursementTypeName, type ExpenseRow, type ExpenseCategory, type ReimbursementType } from "@/lib/supabase/expenses";
+import { createExpense, updateExpense, REIMBURSEMENT_TYPES, reimbursementTypeName, MAX_EXPENSE_RECEIPTS, type ExpenseRow, type ExpenseCategory, type ExpenseReceipt, type ReimbursementType } from "@/lib/supabase/expenses";
 import { todayISO } from "@/lib/localDate";
 
 /** What Accounting picks from on Add Expense. */
@@ -48,8 +48,7 @@ export function ExpenseFormModal({
     expenseDate: editing?.expenseDate ?? todayISO(),
     amount: editing ? String(editing.amount) : "",
     description: editing?.description ?? "",
-    receiptUrl: editing?.receiptUrl ?? (null as string | null),
-    receiptPath: editing?.receiptPath ?? (null as string | null),
+    receipts: (editing?.receipts ?? []) as ExpenseReceipt[],
     orNumber: editing?.orNumber || "",
     fromLocation: editing?.fromLocation || "",
     toLocation: editing?.toLocation || "",
@@ -62,22 +61,34 @@ export function ExpenseFormModal({
   // row id yet, so a client-generated key stands in until it's saved; an
   // existing expense being edited just uses its own real id.
   const [folderKey] = useState(() => editing?.id ?? randomId());
-  // The receipt path this expense had BEFORE this edit session, so a
-  // replace/remove can clean up the old Storage file once the save succeeds.
-  const originalReceiptPath = editing?.receiptPath ?? null;
-  const [uploadingReceipt, setUploadingReceipt] = useState(false);
+  // The receipt files this expense had BEFORE this edit session, so removed
+  // ones can be cleaned up from Storage once the save succeeds.
+  const originalReceiptPaths = (editing?.receipts ?? []).map((r) => r.path).filter((p): p is string => !!p);
+  const [uploadingReceipt, setUploadingReceipt] = useState(0);
   const [saving, setSaving] = useState(false);
 
-  const handleReceiptSelect = async (file: File) => {
-    setUploadingReceipt(true);
-    try {
-      const { url, fullPath } = await uploadExpenseReceipt(companyId || "COMP001", folderKey, file);
-      setForm((f) => ({ ...f, receiptUrl: url, receiptPath: fullPath }));
-    } catch (error) {
-      alert(`Failed to upload receipt: ${error instanceof Error ? error.message : "Unknown error"}`);
-    } finally {
-      setUploadingReceipt(false);
+  // Several photos / PDFs at once — each uploaded as its own file, up to MAX_EXPENSE_RECEIPTS.
+  const handleReceiptSelect = async (files: File[]) => {
+    const room = MAX_EXPENSE_RECEIPTS - form.receipts.length;
+    if (room <= 0) {
+      alert(`An expense can have up to ${MAX_EXPENSE_RECEIPTS} receipts.`);
+      return;
     }
+    const picked = files.slice(0, room);
+    if (files.length > room) alert(`Only ${room} more receipt${room === 1 ? "" : "s"} can be added (up to ${MAX_EXPENSE_RECEIPTS}).`);
+    setUploadingReceipt(picked.length);
+    const failed: string[] = [];
+    for (const file of picked) {
+      try {
+        const { url, fullPath } = await uploadExpenseReceipt(companyId || "COMP001", folderKey, file);
+        setForm((f) => ({ ...f, receipts: [...f.receipts, { url, path: fullPath }] }));
+      } catch (error) {
+        failed.push(`${file.name}: ${error instanceof Error ? error.message : "Unknown error"}`);
+      } finally {
+        setUploadingReceipt((n) => n - 1);
+      }
+    }
+    if (failed.length) alert(`Failed to upload:\n${failed.join("\n")}`);
   };
 
   const handleSubmit = async () => {
@@ -98,7 +109,7 @@ export function ExpenseFormModal({
       alert("Please specify what the Other reimbursement is for.");
       return;
     }
-    if (requireReceipt && !form.receiptUrl) {
+    if (requireReceipt && form.receipts.length === 0) {
       alert("Please attach a receipt (image or PDF).");
       return;
     }
@@ -114,8 +125,8 @@ export function ExpenseFormModal({
           expenseDate: form.expenseDate,
           amount,
           description: form.description,
-          receiptUrl: form.receiptUrl,
-          receiptPath: form.receiptPath,
+          receipts: form.receipts,
+          hadExtraReceipts: (editing.receipts?.length ?? 0) > 1,
           orNumber: form.orNumber,
           fromLocation: form.fromLocation,
           toLocation: form.toLocation,
@@ -129,18 +140,18 @@ export function ExpenseFormModal({
           amount,
           description: form.description,
           createdBy,
-          receiptUrl: form.receiptUrl,
-          receiptPath: form.receiptPath,
+          receipts: form.receipts,
           orNumber: form.orNumber,
           fromLocation: form.fromLocation,
           toLocation: form.toLocation,
           ...typeFields,
         });
       }
-      // Best-effort: if a receipt was replaced or removed during this edit,
-      // clean up the old Storage file now that the save succeeded.
-      if (originalReceiptPath && originalReceiptPath !== form.receiptPath) {
-        deleteExpenseReceiptFile(originalReceiptPath).catch((err) => console.error("Failed to delete old receipt file:", err));
+      // Best-effort: receipts removed during this edit — clean up their
+      // Storage files now that the save succeeded.
+      const kept = new Set(form.receipts.map((r) => r.path));
+      for (const path of originalReceiptPaths) {
+        if (!kept.has(path)) deleteExpenseReceiptFile(path).catch((err) => console.error("Failed to delete old receipt file:", err));
       }
       await onSaved();
       onClose();
@@ -245,29 +256,53 @@ export function ExpenseFormModal({
           </div>
           <div>
             <label className="block text-xs text-slate-400 uppercase mb-1">
-              Receipt{requireReceipt && <span className="text-red-400 normal-case"> * required</span>}
+              Receipts{requireReceipt && <span className="text-red-400 normal-case"> * required</span>}
+              {form.receipts.length > 0 && <span className="ml-1 normal-case text-slate-500">({form.receipts.length}/{MAX_EXPENSE_RECEIPTS})</span>}
             </label>
-            {form.receiptUrl ? (
-              <div className="flex items-center justify-between gap-2 bg-slate-800/50 border border-white/10 rounded-lg p-2">
-                <a href={form.receiptUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-sm text-blue-300 hover:text-blue-200 truncate">
-                  <Paperclip className="h-4 w-4 shrink-0" /> View attached receipt
-                </a>
-                <button type="button" onClick={() => setForm((f) => ({ ...f, receiptUrl: null, receiptPath: null }))} className="text-slate-400 hover:text-white shrink-0" title="Remove receipt">
-                  <X className="h-4 w-4" />
-                </button>
+            {form.receipts.length > 0 && (
+              <div className="mb-2 grid grid-cols-4 gap-2">
+                {form.receipts.map((r, i) => (
+                  <div key={r.url} className="group relative aspect-square overflow-hidden rounded-lg border border-white/10 bg-slate-800/50">
+                    <a href={r.url} target="_blank" rel="noopener noreferrer" title={`Open receipt ${i + 1}`} className="block h-full w-full">
+                      {/\.pdf(\?|$)/i.test(r.path || r.url) ? (
+                        <span className="flex h-full w-full flex-col items-center justify-center gap-1 text-slate-400">
+                          <Paperclip className="h-5 w-5" />
+                          <span className="text-[10px]">PDF</span>
+                        </span>
+                      ) : (
+                        <img src={r.url} alt={`Receipt ${i + 1}`} className="h-full w-full object-cover" />
+                      )}
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => setForm((f) => ({ ...f, receipts: f.receipts.filter((x) => x.url !== r.url) }))}
+                      className="absolute right-1 top-1 rounded-full bg-black/70 p-0.5 text-slate-200 hover:text-white"
+                      title="Remove this receipt"
+                      aria-label={`Remove receipt ${i + 1}`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
               </div>
-            ) : (
+            )}
+            {form.receipts.length < MAX_EXPENSE_RECEIPTS && (
               <label className="flex items-center justify-center gap-2 bg-slate-800/50 border border-dashed border-white/20 rounded-lg p-3 text-sm text-slate-400 hover:border-blue-500 hover:text-slate-300 cursor-pointer transition">
                 <Paperclip className="h-4 w-4" />
-                {uploadingReceipt ? "Uploading…" : "Attach a receipt (image or PDF)"}
+                {uploadingReceipt > 0
+                  ? `Uploading ${uploadingReceipt} file${uploadingReceipt === 1 ? "" : "s"}…`
+                  : form.receipts.length > 0
+                    ? "Add more receipts (images or PDFs)"
+                    : "Attach receipts — pick one or several (images or PDFs)"}
                 <input
                   type="file"
                   accept="image/*,.pdf"
+                  multiple
                   className="hidden"
-                  disabled={uploadingReceipt}
+                  disabled={uploadingReceipt > 0}
                   onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) void handleReceiptSelect(file);
+                    const files = Array.from(e.target.files ?? []);
+                    if (files.length) void handleReceiptSelect(files);
                     e.target.value = "";
                   }}
                 />
@@ -276,7 +311,7 @@ export function ExpenseFormModal({
           </div>
         </div>
         <div className="flex gap-3">
-          <button onClick={handleSubmit} disabled={uploadingReceipt || saving} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition font-semibold text-sm">{saving ? "Saving…" : editing ? "Save Changes" : "Submit"}</button>
+          <button onClick={handleSubmit} disabled={uploadingReceipt > 0 || saving} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition font-semibold text-sm">{saving ? "Saving…" : editing ? "Save Changes" : "Submit"}</button>
           <button onClick={onClose} className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition font-semibold text-sm">Cancel</button>
         </div>
       </div>

@@ -32,6 +32,14 @@ export function reimbursementTypeLabel(e: Pick<ExpenseRow, "reimbursementType" |
   return e.reimbursementType === "Other" && e.reimbursementOther ? `Other — ${e.reimbursementOther}` : reimbursementTypeName(e.reimbursementType);
 }
 
+/** One attached receipt — its Firebase Storage download URL and full path (to delete the file). */
+export interface ExpenseReceipt {
+  url: string;
+  path: string | null;
+}
+/** How many photos / PDFs one expense can carry. */
+export const MAX_EXPENSE_RECEIPTS = 10;
+
 export interface ExpenseRow {
   id: string;
   profileId: string;
@@ -47,6 +55,8 @@ export interface ExpenseRow {
   receiptUrl: string | null;
   /** Full Firebase Storage path for the receipt (needed to delete it if replaced/removed). */
   receiptPath: string | null;
+  /** Every receipt on the expense, the one above first, then extra_receipts (migration 0415). */
+  receipts: ExpenseReceipt[];
   /** The Official Receipt / transaction number printed on the receipt itself — see migration 0132. */
   orNumber: string | null;
   /** Origin/destination text, carried over from a Flash Tech trip's locations when auto-created — see migration 0136. */
@@ -80,6 +90,12 @@ function mapRow(row: any): ExpenseRow {
     reviewedAt: row.reviewed_at ?? null,
     receiptUrl: row.receipt_url ?? null,
     receiptPath: row.receipt_path ?? null,
+    receipts: [
+      ...(row.receipt_url ? [{ url: row.receipt_url as string, path: (row.receipt_path ?? null) as string | null }] : []),
+      ...(Array.isArray(row.extra_receipts) ? row.extra_receipts : [])
+        .filter((r: any) => r && typeof r.url === "string")
+        .map((r: any) => ({ url: r.url as string, path: typeof r.path === "string" ? r.path : null })),
+    ],
     orNumber: row.or_number ?? null,
     fromLocation: row.from_location ?? null,
     toLocation: row.to_location ?? null,
@@ -103,11 +119,13 @@ const EXPENSE_COLUMNS = "id, profile_id, category, expense_date, amount, descrip
 let reviewNoteColumnMissing = false;
 // Same for reimbursement_type / reimbursement_other (migration 0401).
 let reimbursementColumnsMissing = false;
+// Same for extra_receipts (migration 0415).
+let extraReceiptsColumnMissing = false;
 
 async function selectExpensePages(filter: (query: any) => any): Promise<ExpenseRow[]> {
   const all: ExpenseRow[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
-    const columns = `${EXPENSE_COLUMNS}${reviewNoteColumnMissing ? "" : ", review_note"}${reimbursementColumnsMissing ? "" : ", reimbursement_type, reimbursement_other"}`;
+    const columns = `${EXPENSE_COLUMNS}${reviewNoteColumnMissing ? "" : ", review_note"}${reimbursementColumnsMissing ? "" : ", reimbursement_type, reimbursement_other"}${extraReceiptsColumnMissing ? "" : ", extra_receipts"}`;
     const { data, error } = await filter(supabase.from("expenses").select(columns)).range(from, from + PAGE_SIZE - 1);
     if (error) {
       if (!reviewNoteColumnMissing && /review_note/.test(error.message)) {
@@ -117,6 +135,11 @@ async function selectExpensePages(filter: (query: any) => any): Promise<ExpenseR
       }
       if (!reimbursementColumnsMissing && /reimbursement_/.test(error.message)) {
         reimbursementColumnsMissing = true;
+        from -= PAGE_SIZE;
+        continue;
+      }
+      if (!extraReceiptsColumnMissing && /extra_receipts/.test(error.message)) {
+        extraReceiptsColumnMissing = true;
         from -= PAGE_SIZE;
         continue;
       }
@@ -137,7 +160,25 @@ function reimbursementFields(f: { reimbursementType?: ReimbursementType | null; 
   };
 }
 const reimbursementError = (msg: string) =>
-  /reimbursement_/.test(msg) ? "Saving the reimbursement type needs migration 0401 — run it in the Supabase SQL Editor first." : msg;
+  /reimbursement_/.test(msg) ? "Saving the reimbursement type needs migration 0401 — run it in the Supabase SQL Editor first."
+    : /extra_receipts/.test(msg) ? "Saving more than one receipt needs migration 0415 — run it in the Supabase SQL Editor first."
+    : msg;
+
+/**
+ * The receipt columns from a list of receipts: the first in receipt_url /
+ * receipt_path, the rest in extra_receipts (migration 0415). extra_receipts is
+ * only sent when there's more than one, or to clear old extras — so a single
+ * receipt still saves before 0415 is run.
+ */
+function receiptFields(receipts: ExpenseReceipt[] | undefined, clearExtras: boolean) {
+  if (!receipts) return {};
+  const [first, ...rest] = receipts;
+  return {
+    receipt_url: first?.url ?? null,
+    receipt_path: first?.path ?? null,
+    ...(rest.length > 0 || clearExtras ? { extra_receipts: rest.map((r) => ({ url: r.url, path: r.path })) } : {}),
+  };
+}
 
 /** All expenses for the caller's company (RLS-scoped), newest first. */
 export async function getCompanyExpenses(): Promise<ExpenseRow[]> {
@@ -184,6 +225,8 @@ export async function createExpense(input: {
   createdBy: string | null;
   receiptUrl?: string | null;
   receiptPath?: string | null;
+  /** Every receipt (first one becomes receiptUrl / receiptPath) — overrides those two when given. */
+  receipts?: ExpenseReceipt[];
   orNumber?: string | null;
   fromLocation?: string | null;
   toLocation?: string | null;
@@ -212,6 +255,7 @@ export async function createExpense(input: {
       flash_tech_trip_id: input.flashTechTripId ?? null,
       expense_subtype: input.expenseSubtype ?? null,
       ...reimbursementFields(input),
+      ...receiptFields(input.receipts, false),
     })
     .select("id")
     .single();
@@ -232,6 +276,10 @@ export async function updateExpense(
     description: string;
     receiptUrl?: string | null;
     receiptPath?: string | null;
+    /** Every receipt (first one becomes receiptUrl / receiptPath) — overrides those two when given. */
+    receipts?: ExpenseReceipt[];
+    /** The expense had extra receipts before this edit — clear them even if none are left. */
+    hadExtraReceipts?: boolean;
     orNumber?: string | null;
     fromLocation?: string | null;
     toLocation?: string | null;
@@ -252,6 +300,7 @@ export async function updateExpense(
       from_location: fields.fromLocation || null,
       to_location: fields.toLocation || null,
       ...reimbursementFields(fields),
+      ...receiptFields(fields.receipts, !!fields.hadExtraReceipts),
     })
     .eq("id", id);
   if (error) {

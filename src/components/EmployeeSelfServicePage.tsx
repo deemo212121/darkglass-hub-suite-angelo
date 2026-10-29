@@ -234,6 +234,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const [expenseForm, setExpenseForm] = useState<{ editing: ExpenseRow | null } | null>(null);
   const [deletingExpenseId, setDeletingExpenseId] = useState<string | null>(null);
   const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null);
+  const [previewReceiptList, setPreviewReceiptList] = useState<string[]>([]);
   const [summaryModal, setSummaryModal] = useState<"pending" | "approved" | "rejected" | "closed" | "pto" | "sick" | null>(null);
 
   const [formData, setFormData] = useState({
@@ -501,7 +502,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     setDeletingExpenseId(row.id);
     try {
       await deleteExpense(row.id);
-      if (row.receiptPath) deleteExpenseReceiptFile(row.receiptPath).catch((err) => console.error("Failed to delete receipt file:", err));
+      for (const r of row.receipts) if (r.path) deleteExpenseReceiptFile(r.path).catch((err) => console.error("Failed to delete receipt file:", err));
       await refreshExpenses(myProfileId);
     } catch (err) {
       alert(`Failed to delete expense: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -2127,9 +2128,9 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                               </div>
                             )}
                             <div className="flex flex-wrap items-center gap-3 mt-2">
-                              {e.receiptUrl && (
-                                <button type="button" onClick={() => setPreviewReceiptUrl(e.receiptUrl)} className="inline-flex items-center gap-1.5 text-xs text-blue-300 hover:text-blue-200">
-                                  <Paperclip className="h-3.5 w-3.5" /> View receipt
+                              {e.receipts.length > 0 && (
+                                <button type="button" onClick={() => { setPreviewReceiptList(e.receipts.map((r) => r.url)); setPreviewReceiptUrl(e.receipts[0].url); }} className="inline-flex items-center gap-1.5 text-xs text-blue-300 hover:text-blue-200">
+                                  <Paperclip className="h-3.5 w-3.5" /> View receipt{e.receipts.length > 1 ? `s (${e.receipts.length})` : ""}
                                 </button>
                               )}
                               {canChange && (
@@ -2678,7 +2679,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
       )}
 
       {/* Last, so it opens above the Request Summary modal too */}
-      {previewReceiptUrl && <ReceiptLightbox url={previewReceiptUrl} onClose={() => setPreviewReceiptUrl(null)} />}
+      {previewReceiptUrl && <ReceiptLightbox url={previewReceiptUrl} urls={previewReceiptList} onClose={() => setPreviewReceiptUrl(null)} />}
     </div>
   );
 }
