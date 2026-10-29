@@ -382,8 +382,8 @@ export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
         <tr>
           <td class="amount">${employee.compensationType === "fixed" && employee.annualSalary ? `$${employee.annualSalary.toLocaleString()}/yr ($${perCutoffSalary(employee.annualSalary, !employee.isUS).toFixed(2)}/cutoff)` : `$${employee.hourlyRate.toFixed(2)}`}</td>
           <td class="amount">${employee.counts}</td>
-          <td class="amount">${employee.totalHours.toFixed(2)}</td>
-          <td class="amount">${employee.average.toFixed(2)}</td>
+          <td class="amount">${employee.totalHours.toFixed(3)}</td>
+          <td class="amount">${employee.average.toFixed(3)}</td>
           <td class="amount">${employee.offDays}</td>
           <td class="amount">${employee.ptoUsed}</td>
           <td class="amount">${employee.sickLeave}</td>
@@ -414,7 +414,7 @@ export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
             <td>${formatClockTime(r.mealStart)}</td>
             <td>${formatClockTime(r.mealEnd)}</td>
             <td>${formatClockTime(r.clockOut)}</td>
-            <td class="amount">${r.hours.toFixed(2)}</td>
+            <td class="amount">${r.hours.toFixed(3)}</td>
             <td class="amount">$${r.rate.toFixed(2)}</td>
             <td class="amount">$${r.amount.toFixed(2)}</td>
           </tr>
