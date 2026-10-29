@@ -143,6 +143,8 @@ export function ExpenseTrackingPage({
   // Receipt clicked in the table's dedicated Receipt column — shown in a
   // lightbox instead of navigating away.
   const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null);
+  // Every receipt on the expense being viewed — Previous / Next in the lightbox.
+  const [previewReceiptList, setPreviewReceiptList] = useState<string[]>([]);
   /** Flash Tech trip id → receipts uploaded on the trip, for its expense lines with no receipt of their own. */
   const [tripReceipts, setTripReceipts] = useState<Map<string, string[]>>(new Map());
 
@@ -207,7 +209,9 @@ export function ExpenseTrackingPage({
 
   /** "Approved / Rejected By" — who approved or rejected it; blank while Pending. */
   const reviewerName = (e: ExpenseRow) => (e.status !== "Pending" && e.reviewedBy ? profileName(e.reviewedBy) : "");
-  const receiptCount = (e: ExpenseRow) => (e.receiptUrl ? 1 : e.flashTechTripId ? tripReceipts.get(e.flashTechTripId)?.length ?? 0 : 0);
+  // Its own receipts (several since migration 0414), else the ones uploaded on its Flash Tech trip.
+  const receiptUrlsOf = (e: ExpenseRow) => (e.receipts.length ? e.receipts.map((r) => r.url) : e.flashTechTripId ? tripReceipts.get(e.flashTechTripId) ?? [] : []);
+  const receiptCount = (e: ExpenseRow) => receiptUrlsOf(e).length;
 
   // Status, Approved / Rejected By and the Pending / Approved / Reimbursed
   // cards are for employees' own requests — Flash Tech, Hotel and Car Rental
@@ -332,8 +336,8 @@ export function ExpenseTrackingPage({
     setDeletingId(row.id);
     try {
       await deleteExpense(row.id);
-      if (row.receiptPath) {
-        deleteExpenseReceiptFile(row.receiptPath).catch((err) => console.error("Failed to delete receipt file:", err));
+      for (const r of row.receipts) {
+        if (r.path) deleteExpenseReceiptFile(r.path).catch((err) => console.error("Failed to delete receipt file:", err));
       }
       setExpenses(await getCompanyExpenses());
     } catch (error) {
@@ -671,8 +675,7 @@ export function ExpenseTrackingPage({
                     </>)}
                     <td className="px-3 py-3">
                       {(() => {
-                        // Its own receipt, else the receipts uploaded on its Flash Tech trip.
-                        const urls = e.receiptUrl ? [e.receiptUrl] : e.flashTechTripId ? tripReceipts.get(e.flashTechTripId) ?? [] : [];
+                        const urls = receiptUrlsOf(e);
                         if (urls.length === 0) return <span className="text-slate-600 text-xs">—</span>;
                         return (
                           <div className="flex items-center gap-1">
@@ -680,8 +683,8 @@ export function ExpenseTrackingPage({
                               <button
                                 key={url}
                                 type="button"
-                                onClick={() => setPreviewReceiptUrl(url)}
-                                title={e.receiptUrl ? "View receipt" : "View receipt (uploaded on the Flash Tech trip)"}
+                                onClick={() => { setPreviewReceiptList(urls); setPreviewReceiptUrl(url); }}
+                                title={e.receipts.length ? `View receipt${urls.length > 1 ? `s (${urls.length})` : ""}` : "View receipt (uploaded on the Flash Tech trip)"}
                                 className="block h-8 w-8 overflow-hidden rounded border border-white/10 bg-slate-800 hover:border-blue-500 transition"
                               >
                                 {isPdfReceipt(url) ? (
@@ -693,7 +696,16 @@ export function ExpenseTrackingPage({
                                 )}
                               </button>
                             ))}
-                            {urls.length > 2 && <span className="text-[11px] text-slate-400">+{urls.length - 2}</span>}
+                            {urls.length > 2 && (
+                              <button
+                                type="button"
+                                onClick={() => { setPreviewReceiptList(urls); setPreviewReceiptUrl(urls[2]); }}
+                                className="rounded bg-slate-800 px-1.5 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-700 hover:text-white"
+                                title={`View all ${urls.length} receipts`}
+                              >
+                                +{urls.length - 2}
+                              </button>
+                            )}
                           </div>
                         );
                       })()}
@@ -738,7 +750,7 @@ export function ExpenseTrackingPage({
 
       <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
 
-      {previewReceiptUrl && <ReceiptLightbox url={previewReceiptUrl} onClose={() => setPreviewReceiptUrl(null)} />}
+      {previewReceiptUrl && <ReceiptLightbox url={previewReceiptUrl} urls={previewReceiptList} onClose={() => setPreviewReceiptUrl(null)} />}
 
       {rejecting && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => statusChangingId !== rejecting.id && setRejecting(null)}>

@@ -175,6 +175,8 @@ function mapExpenseRow(row: any): ExpenseRow {
     reviewedAt: row.reviewed_at ?? null,
     receiptUrl: row.receipt_url ?? null,
     receiptPath: row.receipt_path ?? null,
+    // Trip expense lines carry at most their own one receipt (the trip's are read from the trip).
+    receipts: row.receipt_url ? [{ url: row.receipt_url, path: row.receipt_path ?? null }] : [],
     orNumber: row.or_number ?? null,
     fromLocation: row.from_location ?? null,
     toLocation: row.to_location ?? null,
