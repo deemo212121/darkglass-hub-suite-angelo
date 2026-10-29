@@ -10,6 +10,7 @@ import {
   deleteExpense,
   REIMBURSEMENT_TYPES,
   reimbursementTypeLabel,
+  reimbursementTypeName,
   type ExpenseRow,
   type ExpenseCategory,
   type ReimbursementType,
@@ -123,7 +124,7 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
     const amount = Number(form.amount);
     if (form.amount.trim() === "" || !Number.isFinite(amount) || amount <= 0) { setMsg("Please enter the amount (more than $0)."); return; }
     if (!form.expenseDate) { setMsg("Please pick the date."); return; }
-    if (!form.reimbursementType) { setMsg("Please pick the type of reimbursement (Gas, Food or Other)."); return; }
+    if (!form.reimbursementType) { setMsg("Please pick the type of reimbursement (Gas, Food, Flash Tech / Allowance or Other)."); return; }
     if (form.reimbursementType === "Other" && !form.reimbursementOther.trim()) { setMsg("Please specify what the Other reimbursement is for."); return; }
     if (!receiptFile && !existingReceipt) { setMsg("Please attach a receipt (photo or PDF)."); return; }
     setSubmitting(true);
@@ -221,7 +222,7 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
         <div className="mtech-bill-input full" style={{ opacity: 0.8 }}>{EMPLOYEE_EXPENSE_CATEGORY}</div>
 
         <div className="mtech-section-title">Type of Reimbursement *</div>
-        <div style={{ display: "flex", gap: "0.4rem" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem" }}>
           {REIMBURSEMENT_TYPES.map((t) => {
             const on = form.reimbursementType === t;
             return (
@@ -232,7 +233,7 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
                 className="mtech-bill-input"
                 style={{ flex: 1, textAlign: "center", cursor: "pointer", borderColor: on ? "#3b82f6" : undefined, background: on ? "rgba(59,130,246,0.2)" : undefined, color: on ? "#fff" : undefined, fontWeight: on ? 700 : 500 }}
               >
-                {t === "Other" ? "Other (specify)" : t}
+                {t === "Other" ? "Other (specify)" : reimbursementTypeName(t)}
               </button>
             );
           })}

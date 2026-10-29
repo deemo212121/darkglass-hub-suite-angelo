@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { BedDouble, Car, ChevronLeft, Plane, Receipt } from "lucide-react";
+import { ChevronLeft, Plane, Receipt } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
@@ -13,15 +13,15 @@ import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
  * list via ExpenseTrackingPage's flashTechOnly prop); Employee Requests
  * holds the expenses employees send themselves from Employee Self-Service
  * → My Requests (selfFiledOnly). More expense categories land here
- * as their own tabs later without restructuring this page.
+ * as their own tabs later without restructuring this page. Hotel and Car
+ * Rental live inside Flash Tech (its All / Trips / Hotel / Car Rental /
+ * Allowance buttons), not as tabs of their own.
  */
-type ExpensesTab = "flashTech" | "employeeRequests" | "hotel" | "carRental";
+type ExpensesTab = "flashTech" | "employeeRequests";
 
 const TABS: { key: ExpensesTab; label: string; icon: typeof Plane }[] = [
   { key: "flashTech", label: "Flash Tech", icon: Plane },
   { key: "employeeRequests", label: "Employee Requests", icon: Receipt },
-  { key: "hotel", label: "Hotel", icon: BedDouble },
-  { key: "carRental", label: "Car Rental", icon: Car },
 ];
 
 export function ExpensesModulePage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
@@ -58,8 +58,6 @@ export function ExpensesModulePage({ mod, sub }: { mod: ModuleDef; sub: SubModul
 
         {tab === "flashTech" && <ExpenseTrackingPage mod={mod} sub={sub} embedded flashTechOnly />}
         {tab === "employeeRequests" && <ExpenseTrackingPage mod={mod} sub={sub} embedded selfFiledOnly />}
-        {tab === "hotel" && <ExpenseTrackingPage mod={mod} sub={sub} embedded categoryOnly="Hotel" />}
-        {tab === "carRental" && <ExpenseTrackingPage mod={mod} sub={sub} embedded categoryOnly="Car Rental" />}
       </div>
     </main>
   );
