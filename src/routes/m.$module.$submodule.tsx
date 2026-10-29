@@ -1,3 +1,4 @@
+import { RouteLoadError } from "@/components/RouteLoadError";
 import { createFileRoute, Link, Navigate, Outlet, notFound, redirect, useLocation } from "@tanstack/react-router";
 import { lazy, Suspense } from "react";
 import { BrandedLoader } from "@/components/BrandedLoader";
@@ -196,12 +197,14 @@ export const Route = createFileRoute("/m/$module/$submodule")({
     </div>
   ),
   errorComponent: ({ error }) => (
+    <RouteLoadError error={error}>
     <div className="min-h-screen flex items-center justify-center">
       <div className="panel text-center max-w-md">
         <h1 className="text-xl font-semibold">Couldn't load page</h1>
         <p className="text-sm text-muted-foreground mt-2">{error.message}</p>
       </div>
     </div>
+    </RouteLoadError>
   ),
 });
 

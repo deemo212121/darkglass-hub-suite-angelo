@@ -29,6 +29,8 @@ import { ViewAsRoleBanner } from "@/components/ViewAsRoleBanner";
 import { TechnicianLocationTracker } from "@/components/TechnicianLocationTracker";
 import { LiveLocationProvider } from "@/lib/liveLocationContext";
 import { InactiveNameMask } from "@/components/InactiveNameMask";
+import { RouteLoadError } from "@/components/RouteLoadError";
+import { installStaleChunkReload } from "@/lib/staleChunkReload";
 
 import appCss from "../styles.css?url";
 import faviconUrl from "@/assets/Admin Hub Solutions Logo no Text.png";
@@ -54,6 +56,7 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   console.error(error);
   const router = useRouter();
   return (
+    <RouteLoadError error={error}>
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="panel max-w-md text-center">
         <h1 className="text-xl font-semibold">This page didn't load</h1>
@@ -64,6 +67,7 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
         </div>
       </div>
     </div>
+    </RouteLoadError>
   );
 }
 
@@ -158,6 +162,8 @@ function RootComponent() {
   // no Firebase session, so the authenticated chrome below can't render.
   const isSignExternalPage = location.pathname.startsWith("/sign-external/");
   const hideChrome = isLandingPage || isSuperAdminPage || isMobilePage || isApplyPage || isSignExternalPage;
+  // A page file from before the last deploy → reload once to the new version (lib/staleChunkReload.ts).
+  useEffect(() => installStaleChunkReload(), []);
   
   return (
     <QueryClientProvider client={queryClient}>
