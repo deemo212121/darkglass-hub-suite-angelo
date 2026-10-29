@@ -97,7 +97,7 @@ import { TicketTimeDisputesTab } from "@/components/TicketTimeDisputesTab";
 import { BranchManagerCommissionTab } from "@/components/BranchManagerCommissionTab";
 import { ReviewedPeriodsTab } from "@/components/ReviewedPeriodsTab";
 import { PayrollHistoryTab } from "@/components/PayrollHistoryTab";
-import { upsertPayrollReviewBreakdown } from "@/lib/supabase/payrollReviewBreakdowns";
+import { upsertPayrollReviewBreakdown, type PayrollReviewAmounts } from "@/lib/supabase/payrollReviewBreakdowns";
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, linkPayrollDisputeCustomPayItem, modifyPayrollDispute, restorePayrollDisputeOriginal, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
@@ -442,6 +442,8 @@ export interface EmployeePayrollRow {
   /** Set when the period switches between hourly and a fixed salary part-way
    *  (mixedPeriodFixedPay): hourly days by the hour + fixed days ÷ 10. */
   mixedPay?: MixedPeriodFixedPay & { hourlyHours: number; hourlyPay: number };
+  /** Tech row only: grossPay split into Finance's summary columns (Reviewed Periods). */
+  techSummary?: PayrollReviewAmounts;
 }
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
@@ -2745,8 +2747,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // several of those days before being let go. Their pay for that period
     // shouldn't silently vanish just because their account is inactive today;
     // the row is labeled "(Deactivated)" (see EmployeePayrollRow.employee.isActive)
-    // so it's still obvious they're no longer active.
-    const payrollRows: EmployeePayrollRow[] = employees.filter((emp) => emp.isActive || hoursMap.has(emp.id)).flatMap((emp) => {
+    // so it's still obvious they're no longer active. Same for one with no
+    // hours but Tech Activity Report lines this period (deductions, a redo,
+    // reimbursements) — those are still their pay, and Reviewed Periods needs
+    // their real total.
+    const payrollRows: EmployeePayrollRow[] = employees.filter((emp) => emp.isActive || hoursMap.has(emp.id) || techCustomItemsByProfile.has(emp.id)).flatMap((emp) => {
       const comp = latestCompMap.get(emp.id);
       const isFixed = comp?.compensation_type === "fixed";
       const hourlyRate = isFixed ? 0 : comp?.hourly_rate ?? emp.hourly_rate ?? 0;
@@ -3031,21 +3036,22 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       const regularColumn = techRegularHourly + techTraineeMatch + techHolidayPremium;
       const otColumn = isFixed ? 0 : techHourlyPay - techRegularHourly;
       const reimbursementColumn = effectiveMileagePay + customColumns.reimbursement;
-      const techGrossPay = includeTech
-        ? centsSummaryTotal({
-            regularPay: regularColumn,
-            otPay: otColumn,
-            bonus: customColumns.bonus,
-            commission:
-              techGrossPayExact - regularColumn - otColumn - customColumns.bonus - reimbursementColumn +
-              customColumns.deduction + customColumns.pretaxInsurance - techGuaranteedSalaryMatch,
-            ptoPay: 0,
-            deduction: customColumns.deduction,
-            mileageOtherReimb: reimbursementColumn,
-            pretaxInsurance: customColumns.pretaxInsurance,
-            salaryMatch: techGuaranteedSalaryMatch,
-          })
-        : 0;
+      // Finance's summary columns, live — also what Reviewed Periods compares
+      // its saved row against (techSummary).
+      const techSummary: PayrollReviewAmounts = {
+        regularPay: regularColumn,
+        otPay: otColumn,
+        bonus: customColumns.bonus,
+        commission:
+          techGrossPayExact - regularColumn - otColumn - customColumns.bonus - reimbursementColumn +
+          customColumns.deduction + customColumns.pretaxInsurance - techGuaranteedSalaryMatch,
+        ptoPay: 0,
+        deduction: customColumns.deduction,
+        mileageOtherReimb: reimbursementColumn,
+        pretaxInsurance: customColumns.pretaxInsurance,
+        salaryMatch: techGuaranteedSalaryMatch,
+      };
+      const techGrossPay = includeTech ? centsSummaryTotal(techSummary) : 0;
 
       const techRow: EmployeePayrollRow | null =
         includeTech && (isTechRole(emp) || techGrossPay > 0)
@@ -3095,6 +3101,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               grossPay: techGrossPay,
               grossPayUSD: techGrossPay,
               isTechPortion: true,
+              techSummary,
             }
           : null;
 
@@ -6218,6 +6225,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             myProfileId={myProfileId}
             myName={displayName || email || null}
             actualTotals={new Map(payrollRows.filter((r) => r.isTechPortion).map((r) => [r.employee.id, r.grossPay]))}
+            actualBreakdowns={new Map(payrollRows.filter((r) => r.isTechPortion && r.techSummary).map((r) => [r.employee.id, r.techSummary!]))}
             actualTotalsLoading={periodDataLoading > 0 || loading}
             onPeriodChange={(start, end) => { setGenStart(start); setGenEnd(end); }}
           />

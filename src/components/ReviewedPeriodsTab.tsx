@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, Loader2, Plus, Trash2 } from "lucide-react";
+import { Download, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   deletePayrollReviewBreakdown,
@@ -53,6 +53,7 @@ export function ReviewedPeriodsTab({
   myProfileId,
   myName,
   actualTotals,
+  actualBreakdowns,
   actualTotalsLoading,
   onPeriodChange,
 }: {
@@ -63,6 +64,8 @@ export function ReviewedPeriodsTab({
   myName: string | null;
   /** Each technician's actual Gross Pay from the Payroll page, for the dashboard's current period. */
   actualTotals: Map<string, number>;
+  /** The same actual pay split into this tab's columns, live from the timecard and Tech Activity Report. */
+  actualBreakdowns: Map<string, PayrollReviewAmounts>;
   actualTotalsLoading: boolean;
   /** Switches the dashboard's period so actualTotals covers the period picked here. */
   onPeriodChange: (start: string, end: string) => void;
@@ -107,6 +110,39 @@ export function ReviewedPeriodsTab({
     return actual ?? reviewBreakdownTotal(r);
   };
   const isActual = (r: PayrollReviewBreakdown) => actualReady && actualTotals.has(r.profileId);
+  /** Actual total − what the saved columns add up to; null until the actual total is known. */
+  const notInColumns = (r: PayrollReviewBreakdown): number | null => {
+    if (!isActual(r)) return null;
+    const d = Math.round((totalOf(r) - reviewBreakdownTotal(r)) * 100) / 100;
+    return Math.abs(d) < 0.01 ? 0 : d;
+  };
+  /** Live column values rounded to the cent — what Update writes into the row. */
+  const liveAmounts = (r: PayrollReviewBreakdown): PayrollReviewAmounts | null => {
+    const live = actualReady ? actualBreakdowns.get(r.profileId) : undefined;
+    if (!live) return null;
+    const out = { ...ZERO };
+    for (const c of COLUMNS) out[c.key] = Math.round(live[c.key] * 100) / 100;
+    return out;
+  };
+  /** Which columns moved since the row was saved, e.g. "Regular Hours $: $442.64 → $635.28". */
+  const changedColumns = (r: PayrollReviewBreakdown): string[] => {
+    const live = liveAmounts(r);
+    if (!live) return [];
+    return COLUMNS.filter((c) => Math.abs(live[c.key] - r[c.key]) >= 0.01).map((c) => `${c.label}: ${money(r[c.key])} → ${money(live[c.key])}`);
+  };
+  const syncRow = async (row: PayrollReviewBreakdown) => {
+    const live = liveAmounts(row);
+    if (!live) return;
+    setSavingKey(`${row.id}:sync`);
+    try {
+      await updatePayrollReviewBreakdown(row.id, live, myProfileId, myName);
+      setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, ...live, updatedByName: myName } : r)));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update.");
+    } finally {
+      setSavingKey(null);
+    }
+  };
 
   const [rows, setRows] = useState<PayrollReviewBreakdown[]>([]);
   const [loading, setLoading] = useState(false);
@@ -199,16 +235,16 @@ export function ReviewedPeriodsTab({
     const ExcelJS = await import("exceljs");
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Reviewed Period", { properties: { tabColor: { argb: "FF0F766E" } } });
-    const lastCol = COLUMNS.length + 3; // A name, B branch, C..K amounts, L total
+    const lastCol = COLUMNS.length + 4; // A name, B branch, C..K amounts, L not in columns, M total
     const colLetter = (i: number) => String.fromCharCode(64 + i);
     const fill = (argb: string) => ({ type: "pattern" as const, pattern: "solid" as const, fgColor: { argb } });
     const thin = { style: "thin" as const, color: { argb: "FFD9E1EC" } };
     const moneyFmt = '"$"#,##0.00;[Red]-"$"#,##0.00;"–"';
     // Header colour per column group: earnings / deductions / reimbursements / salary / total.
-    const groupColor = (key: keyof PayrollReviewAmounts | "total" | "name") =>
+    const groupColor = (key: keyof PayrollReviewAmounts | "notInColumns" | "total" | "name") =>
       key === "deduction" || key === "pretaxInsurance" ? "FFB91C1C"
         : key === "mileageOtherReimb" ? "FF6D28D9"
-        : key === "salaryMatch" ? "FFB45309"
+        : key === "salaryMatch" || key === "notInColumns" ? "FFB45309"
         : key === "total" ? "FF15803D"
         : key === "name" ? "FF1E3A5F"
         : "FF0F766E";
@@ -232,11 +268,12 @@ export function ReviewedPeriodsTab({
 
     // Column headers (label + its "Including …" notes in one wrapped cell)
     const headerRow = 4;
-    const headers: { text: string; key: keyof PayrollReviewAmounts | "total" | "name" }[] = [
+    const headers: { text: string; key: keyof PayrollReviewAmounts | "notInColumns" | "total" | "name" }[] = [
       { text: "Technician", key: "name" },
       { text: "Branch", key: "name" },
       ...COLUMNS.map((c) => ({ text: [c.label, ...(c.sub ?? [])].join("\n"), key: c.key })),
-      { text: "Total", key: "total" },
+      { text: "Not in Columns\nTotal − columns", key: "notInColumns" },
+      { text: "Total\nTimecard + Tech Activity Report", key: "total" },
     ];
     headers.forEach((h, i) => {
       const cell = ws.getCell(headerRow, i + 1);
@@ -254,7 +291,7 @@ export function ReviewedPeriodsTab({
       const n = first + i;
       const row = ws.getRow(n);
       // Total = the technician's actual pay (Payroll Gross Pay), as on the tab.
-      row.values = [nameOf(r), r.branch ?? "", ...COLUMNS.map((c) => r[c.key]), Math.round(totalOf(r) * 100) / 100];
+      row.values = [nameOf(r), r.branch ?? "", ...COLUMNS.map((c) => r[c.key]), notInColumns(r) ?? 0, Math.round(totalOf(r) * 100) / 100];
       row.height = 18;
       for (let c = 1; c <= lastCol; c++) {
         const cell = row.getCell(c);
@@ -415,15 +452,22 @@ export function ReviewedPeriodsTab({
                   {c.sub?.map((sub) => <div key={sub} className="font-normal text-[9px] text-slate-500">{sub}</div>)}
                 </th>
               ))}
-              <th className="text-right px-2 py-1.5 font-semibold align-top">Total</th>
+              <th className="text-right px-2 py-1.5 font-semibold align-top leading-tight max-w-[92px]">
+                Not in Columns
+                <div className="font-normal text-[9px] text-slate-500">Total − columns</div>
+              </th>
+              <th className="text-right px-2 py-1.5 font-semibold align-top leading-tight">
+                Total
+                <div className="font-normal text-[9px] text-slate-500">Timecard + Tech Activity Report</div>
+              </th>
               <th className="px-1 py-1.5" />
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={COLUMNS.length + 4} className="px-3 py-6 text-center text-slate-400"><Loader2 className="inline h-4 w-4 animate-spin mr-2" />Loading…</td></tr>
+              <tr><td colSpan={COLUMNS.length + 5} className="px-3 py-6 text-center text-slate-400"><Loader2 className="inline h-4 w-4 animate-spin mr-2" />Loading…</td></tr>
             ) : visible.length === 0 ? (
-              <tr><td colSpan={COLUMNS.length + 4} className="px-3 py-6 text-center text-slate-400">No technicians reviewed for this period yet. Mark one Done in the Payroll tab, or add one above.</td></tr>
+              <tr><td colSpan={COLUMNS.length + 5} className="px-3 py-6 text-center text-slate-400">No technicians reviewed for this period yet. Mark one Done in the Payroll tab, or add one above.</td></tr>
             ) : visible.map((r) => (
               <tr key={r.id} className="border-t border-white/5 hover:bg-white/[0.03]">
                 <td className="sticky left-0 z-10 bg-slate-900 px-2 py-1 text-white whitespace-nowrap">
@@ -450,25 +494,53 @@ export function ReviewedPeriodsTab({
                   </td>
                 ))}
                 {(() => {
-                  const total = totalOf(r);
-                  const sum = reviewBreakdownTotal(r);
-                  const off = isActual(r) && Math.abs(total - sum) > 0.01;
+                  const diff = notInColumns(r);
+                  const changed = changedColumns(r);
+                  const canSync = changed.length > 0 && !!liveAmounts(r);
                   return (
                     <td
-                      className={`px-2 py-1 text-right font-semibold tabular-nums whitespace-nowrap ${isActual(r) ? "text-emerald-300" : "text-slate-400 italic"}`}
+                      className="px-2 py-1 text-right tabular-nums whitespace-nowrap"
                       title={
-                        !isActual(r)
-                          ? "Sum of the columns — the actual Payroll total loads once this period finishes loading on the Payroll page."
-                          : off
-                          ? `Actual pay (Payroll Gross Pay). The columns add up to ${money(sum)} — ${money(total - sum)} isn't in any column.`
-                          : "Actual pay (Payroll Gross Pay)."
+                        diff == null
+                          ? "Shows once this period's actual pay finishes loading on the Payroll page."
+                          : changed.length
+                          ? `The columns were saved at Done; the timecard / Tech Activity Report has changed since:\n${changed.join("\n")}${canSync ? "\n\nClick ↻ to update the columns to these amounts." : ""}`
+                          : diff !== 0
+                          ? "Pay that has no column of its own."
+                          : "The columns add up to the total."
                       }
                     >
-                      {off && <span className="mr-1 text-amber-400">⚠</span>}
-                      {money(total)}
+                      {diff == null ? (
+                        <span className="text-slate-600">—</span>
+                      ) : diff === 0 ? (
+                        <span className="text-slate-500">$0.00</span>
+                      ) : (
+                        <span className="font-semibold text-amber-300">{money(diff)}</span>
+                      )}
+                      {canSync && (
+                        <button
+                          type="button"
+                          onClick={() => void syncRow(r)}
+                          disabled={savingKey === `${r.id}:sync`}
+                          aria-label={`Update ${nameOf(r)}'s columns to the actual pay`}
+                          className="ml-1 align-middle text-sky-400 hover:text-sky-300 disabled:opacity-40"
+                        >
+                          <RefreshCw className={`inline h-3 w-3 ${savingKey === `${r.id}:sync` ? "animate-spin" : ""}`} />
+                        </button>
+                      )}
                     </td>
                   );
                 })()}
+                <td
+                  className={`px-2 py-1 text-right font-semibold tabular-nums whitespace-nowrap ${isActual(r) ? "text-emerald-300" : "text-slate-400 italic"}`}
+                  title={
+                    isActual(r)
+                      ? "Actual pay from the timecard and Tech Activity Report (Payroll Gross Pay)."
+                      : "Sum of the columns — the actual total loads once this period finishes loading on the Payroll page."
+                  }
+                >
+                  {money(totalOf(r))}
+                </td>
                 <td className="px-1 py-1 text-right">
                   <button
                     type="button"
@@ -489,6 +561,7 @@ export function ReviewedPeriodsTab({
                 <td className="sticky left-0 z-10 bg-slate-900 px-2 py-1.5">Total ({visible.length})</td>
                 <td className="bg-slate-900" />
                 {COLUMNS.map((c) => <td key={c.key} className="bg-slate-900 px-1 py-1.5 text-right tabular-nums whitespace-nowrap">{money(totals[c.key])}</td>)}
+                <td className="bg-slate-900 px-2 py-1.5 text-right tabular-nums text-amber-300 whitespace-nowrap">{money(visible.reduce((s0, r) => s0 + (notInColumns(r) ?? 0), 0))}</td>
                 <td className="bg-slate-900 px-2 py-1.5 text-right tabular-nums text-emerald-300 whitespace-nowrap">{money(visible.reduce((s0, r) => s0 + totalOf(r), 0))}</td>
                 <td className="bg-slate-900" />
               </tr>
