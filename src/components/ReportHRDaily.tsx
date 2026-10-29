@@ -4041,11 +4041,28 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
     return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
   }, [warningBucketPopup, sentWarningForms, warningCountByEmployee]);
+  // A sent 2nd warning with no 1st listed under Previous Warning(s), or a 3rd
+  // with fewer than two — flagged in the list. (Forms made before 2026-10-27
+  // could be sent that way; newer ones can't be generated without them.)
+  const missingPriorWarnings = (doc: SignableDocument): number => {
+    const data = doc.formData as unknown as WarningFormData;
+    const required = data.level === "2nd" ? 1 : data.level === "3rd" ? 2 : 0;
+    const listed = (data.previousWarnings ?? []).filter((w) => (w?.cause ?? "").trim()).length;
+    return Math.max(0, required - listed);
+  };
+  const [onlyMissingPrior, setOnlyMissingPrior] = useState(false);
+  const missingPriorCount = useMemo(
+    () => sentWarningForms.filter((d) => d.status !== "cancelled" && missingPriorWarnings(d) > 0).length,
+    [sentWarningForms],
+  );
   const warningFormsInBucket = useMemo(
-    () => warningBucketPick == null
-      ? sentWarningForms
-      : sentWarningForms.filter((d) => warningBucketOf(warningCountByEmployee.get(warningEmployeeKey(d)) ?? 0) === warningBucketPick),
-    [sentWarningForms, warningCountByEmployee, warningBucketPick],
+    () => {
+      const inBucket = warningBucketPick == null
+        ? sentWarningForms
+        : sentWarningForms.filter((d) => warningBucketOf(warningCountByEmployee.get(warningEmployeeKey(d)) ?? 0) === warningBucketPick);
+      return onlyMissingPrior ? inBucket.filter((d) => d.status !== "cancelled" && missingPriorWarnings(d) > 0) : inBucket;
+    },
+    [sentWarningForms, warningCountByEmployee, warningBucketPick, onlyMissingPrior],
   );
   const {
     search: warningFormSentSearch,
@@ -24464,8 +24481,19 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>,
             document.body,
           )}
-          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
-            {sortedSentWarningForms.length}{warningFormSentSearch || warningBucketPick != null ? ` of ${sentWarningForms.length}` : ""} forms
+          {(missingPriorCount > 0 || onlyMissingPrior) && (
+            <button
+              type="button"
+              onClick={() => setOnlyMissingPrior((v) => !v)}
+              aria-pressed={onlyMissingPrior}
+              className={`mb-1.5 ml-auto rounded-md border px-2.5 py-1 text-xs font-semibold transition ${onlyMissingPrior ? "border-red-400/70 bg-red-500/25 text-white" : "border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20"}`}
+              title="2nd warnings with no 1st listed, or 3rd warnings with fewer than two — click to show only those"
+            >
+              ⚠ {missingPriorCount} missing a previous warning{onlyMissingPrior ? " · showing only these" : ""}
+            </button>
+          )}
+          <span className={`text-xs text-muted-foreground mb-1.5 ${missingPriorCount > 0 || onlyMissingPrior ? "" : "ml-auto"}`}>
+            {sortedSentWarningForms.length}{warningFormSentSearch || warningBucketPick != null || onlyMissingPrior ? ` of ${sentWarningForms.length}` : ""} forms
           </span>
         </div>
         {warnActionError && (
@@ -24553,6 +24581,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         <button type="button" onClick={() => handleViewWarnForm(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                           {data.employeeName}
                         </button>
+                        {doc.status !== "cancelled" && missingPriorWarnings(doc) > 0 && (
+                          <div
+                            className="mt-1 inline-flex items-center gap-1 rounded border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-red-300"
+                            title="Add it with Edit Warnings 1-3 — the PDF is regenerated with the signatures already collected"
+                          >
+                            ⚠ {data.level} warning — {data.level === "2nd" ? "no 1st warning listed" : `${missingPriorWarnings(doc) === 2 ? "no previous warnings" : "only one previous warning"} listed`}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
                       <td className="px-4 py-3 text-muted-foreground">

@@ -22,7 +22,7 @@
 import { chainCanApprove } from "@/lib/approvalDirectory";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearch } from "@tanstack/react-router";
-import type { ProfileRow } from "@/lib/supabase/users";
+import { getFirstDeactivations, type ProfileRow } from "@/lib/supabase/users";
 import { calcWorkedHours } from "@/lib/supabase/timecards";
 import { ROLE_LABELS, normalizeRole, isAttendanceFullAccessRole, isTraineeFallbackReviewerRole } from "@/lib/roleLabels";
 import { getServerNow, zonedDateKey } from "@/lib/serverTime";
@@ -37,7 +37,7 @@ import {
   updateTraineeDayTimes,
   type TraineeTimecardEntry,
 } from "@/lib/supabase/traineeTimecards";
-import { todayISO } from "@/lib/localDate";
+import { todayISO, formatISODate } from "@/lib/localDate";
 
 /** Fixed rejection categories the user asked for — "Other" reveals a required free-text field. */
 const REJECT_REASON_OPTIONS = ["On Field", "Termination", "Absent", "Quit", "Other"] as const;
@@ -172,13 +172,19 @@ export function TraineeAttendanceTab({
       .then((rows) => setPendingFormerTraineeIds(new Set(rows.filter((r) => r.status === "pending").map((r) => r.profileId))))
       .catch(() => setPendingFormerTraineeIds(new Set()));
   }, []);
+  // When each deactivated trainee was first deactivated — their "Deactivated · date" flag.
+  const [firstDeactivations, setFirstDeactivations] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    getFirstDeactivations().then(setFirstDeactivations).catch(() => {});
+  }, []);
   const visibleTrainees = useMemo(
     () =>
       profiles.filter(
         (p) =>
           (p.employment_type === "trainee" || pendingFormerTraineeIds.has(p.id)) &&
-          // Deactivated accounts don't show up here.
-          p.is_active &&
+          // Deactivated trainees stay listed for the days they punched (still
+          // reviewable — e.g. a pending day), flagged "Deactivated · date"; they
+          // just don't get a "hasn't clocked in" row (see rows below).
           (showAll
             ? teamScopedIds === null || teamScopedIds.has(p.id) || isTraineeFallbackReviewerRole(role, extraRoles)
             : (viewerName !== "" && (p.manager_name || "").trim().toLowerCase() === viewerName) ||
@@ -217,7 +223,7 @@ export function TraineeAttendanceTab({
     const withoutEntry: Row[] = visibleTrainees
       // Former trainees (now Regular) are only here for their leftover
       // pending days — no "hasn't clocked in" placeholder for them.
-      .filter((p) => p.employment_type === "trainee" && !punchedIds.has(p.id))
+      .filter((p) => p.employment_type === "trainee" && p.is_active && !punchedIds.has(p.id))
       .map((p) => ({ kind: "placeholder", entry: null, profileId: p.id }));
     return [...withEntry, ...withoutEntry].sort((a, b) => {
       // Newest day first, then by trainee name; placeholders last.
@@ -495,8 +501,10 @@ export function TraineeAttendanceTab({
             ) : (
               filteredRows.map((row) => {
                 const profile = profileById.get(row.profileId);
+                const deactivatedOn = profile && profile.is_active === false ? firstDeactivations.get(profile.id) ?? null : null;
                 const nameCell = (
-                  <td className="px-3 py-3 text-white font-medium">
+                  // A deactivated trainee keeps their real name here — the flag already says they've left.
+                  <td className="px-3 py-3 text-white font-medium" data-keep-names={profile?.is_active === false ? "" : undefined}>
                     {profile?.display_name ? (
                       <Link
                         to="/m/$module/$submodule"
@@ -509,6 +517,11 @@ export function TraineeAttendanceTab({
                       </Link>
                     ) : "—"}
                     <p className="text-[11px] text-slate-500 font-normal">{roleLabel(profile?.role)}{profile?.assigned_branch ? ` · ${profile.assigned_branch}` : ""}</p>
+                    {profile?.is_active === false && (
+                      <span className="mt-1 inline-block rounded-full border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-300">
+                        Deactivated{deactivatedOn ? ` · ${formatISODate(deactivatedOn, { year: "numeric", month: "short", day: "numeric" })}` : ""}
+                      </span>
+                    )}
                   </td>
                 );
                 const requiredCell = (

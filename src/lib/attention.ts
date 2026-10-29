@@ -30,6 +30,8 @@ import { getCompanyPtoRequests, canReviewPtoStage } from "@/lib/supabase/pto";
 import { getCompanyTimecardCorrections, canReviewCorrectionStage } from "@/lib/supabase/timecardCorrections";
 import { getCompanyEmployeeRequests, canReviewTicketDispute } from "@/lib/supabase/employeeRequests";
 import { getCorrectionExemptions } from "@/lib/supabase/correctionExemptions";
+import { getSignableDocuments } from "@/lib/supabase/signableDocuments";
+import { collectTimeCardWarnings } from "@/lib/timeCardWarnings";
 import { getMyNotifications } from "@/lib/supabase/notifications";
 import { getUnreadCounts } from "@/lib/supabase/messaging";
 import { getCoachingWaitingCount } from "@/lib/supabase/csrCoachingLogs";
@@ -193,7 +195,13 @@ async function compute(who: Who): Promise<Attention> {
       if (!c.workDate.startsWith(month) || c.status === "rejected" || exempt.has(c.id)) continue;
       perPerson.set(c.profileId, (perPerson.get(c.profileId) ?? 0) + 1);
     }
-    const over = Array.from(perPerson.values()).filter((n) => n > MAX_CORRECTIONS_PER_MONTH).length;
+    // Someone already sent a time-card warning for this month no longer counts (Exceeded → Time Corrections' Warning Form column).
+    const warned = new Set(
+      collectTimeCardWarnings(await getSignableDocuments("warning_form").catch(() => []))
+        .filter((w) => w.day.startsWith(month))
+        .map((w) => w.employeeId)
+    );
+    const over = Array.from(perPerson.entries()).filter(([id, n]) => n > MAX_CORRECTIONS_PER_MONTH && !warned.has(id)).length;
     if (over > 0) {
       tabCounts["absent-list:exceeded"] = over;
       tabCounts["absent-list:timeCorrections"] = over;
