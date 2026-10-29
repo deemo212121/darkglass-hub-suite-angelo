@@ -5,7 +5,7 @@
  * only (see payrollAdjustmentsEligible).
  * Net pay = gross − tax + reimbursements − deductions; the payslip lists each line.
  */
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   addPayrollAdjustment,
@@ -48,6 +48,7 @@ export function PayrollAdjustmentsSection({
   periodEnd,
   items,
   grossPay,
+  grossBreakdown,
   createdByName,
   onChanged,
 }: {
@@ -57,6 +58,8 @@ export function PayrollAdjustmentsSection({
   items: PayrollAdjustment[];
   /** Gross pay for the same period — tax is worked out from it, and it's the start of the Net line. */
   grossPay?: number | null;
+  /** Lines shown under Gross pay that add up to it (e.g. hourly days + fixed days ÷ 10). */
+  grossBreakdown?: { label: string; amount: number }[];
   createdByName?: string | null;
   onChanged: () => void | Promise<void>;
 }) {
@@ -240,6 +243,12 @@ export function PayrollAdjustmentsSection({
       {(lines.length > 0 || grossPay != null) && (
         <div className="mt-3 grid grid-cols-[1fr_auto] gap-x-6 gap-y-0.5 border-t border-white/10 pt-2 text-xs tabular-nums">
           {grossPay != null && (<><span className="text-slate-400">Gross pay</span><span className="text-right text-slate-200">{money(grossPay)}</span></>)}
+          {grossPay != null && grossBreakdown?.map((b) => (
+            <Fragment key={b.label}>
+              <span className="pl-3 text-slate-500">· {b.label}</span>
+              <span className="text-right text-slate-500">{money(b.amount)}</span>
+            </Fragment>
+          ))}
           {sums.tax > 0 && (<><span className="text-slate-400">− Tax</span><span className="text-right text-amber-300">{money3(sums.tax)}</span></>)}
           <span className="text-slate-400">+ Reimbursements</span><span className="text-right text-emerald-300">{money(sums.reimbursements)}</span>
           <span className="text-slate-400">− Deductions</span><span className="text-right text-red-300">{money(sums.deductions)}</span>

@@ -16,6 +16,7 @@
  * paid once.
  */
 import { supabase } from "./client";
+import { selectAllPages } from "./selectAllPages";
 
 export interface LateTicketCompletion {
   id: string;
@@ -53,11 +54,15 @@ function mapRow(r: any): LateTicketCompletion {
 
 /** Every still-open row for the current user's company (RLS-scoped) — what LateTicketCompletionModal shows a Claims-role viewer. */
 export async function getPendingLateTicketCompletions(): Promise<LateTicketCompletion[]> {
-  const { data, error } = await supabase
-    .from("late_ticket_completions")
-    .select("*")
-    .eq("status", "pending")
-    .order("created_at", { ascending: true });
+  // Paged: a single select stops at the API's 1000-row cap.
+  const { data, error } = await selectAllPages<any>(() =>
+    supabase
+      .from("late_ticket_completions")
+      .select("*")
+      .eq("status", "pending")
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+  );
   if (error) {
     console.error("getPendingLateTicketCompletions error:", error.message);
     throw new Error(error.message);
@@ -125,6 +130,37 @@ export async function resolveLateTicketCompletion(
     }
     throw new AlreadyResolvedError(current.status as "confirmed" | "rejected", current.reviewed_by_name);
   }
+}
+
+/**
+ * Bulk version of resolveLateTicketCompletion (the popup's Confirm / Reject
+ * selected). Same `.eq("status", "pending")` guard, so rows someone else
+ * already resolved are left alone. Returns the ids THIS call resolved; the
+ * caller treats the rest as already reviewed. Chunked to keep each request
+ * URL small.
+ */
+export async function resolveLateTicketCompletions(
+  ids: string[],
+  status: "confirmed" | "rejected",
+  reviewedBy: string | null,
+  reviewedByName: string | null
+): Promise<string[]> {
+  const resolved: string[] = [];
+  const reviewedAt = new Date().toISOString();
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await supabase
+      .from("late_ticket_completions")
+      .update({ status, reviewed_by: reviewedBy, reviewed_by_name: reviewedByName, reviewed_at: reviewedAt })
+      .in("id", ids.slice(i, i + 100))
+      .eq("status", "pending")
+      .select("id");
+    if (error) {
+      console.error("resolveLateTicketCompletions error:", error.message);
+      throw new Error(error.message);
+    }
+    resolved.push(...(data ?? []).map((r) => r.id as string));
+  }
+  return resolved;
 }
 
 /** Stamps the rows actually included in a just-generated payroll run so they're never paid twice. */
