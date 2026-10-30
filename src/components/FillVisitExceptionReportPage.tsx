@@ -303,8 +303,7 @@ export function FillVisitExceptionReportPage({ docId }: Props) {
         .then(({ taxForms }) => {
           if (!taxForms) return;
           const excludeIds = doc.createdBy ? [doc.createdBy] : [];
-          // Reviewed in Employee Monitoring, not HR Paperworks — so every HR user, not just HR Paperworks' people.
-          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📄 Employee Attendance & Visit Exception Report for ${form.employeeName} has been signed — the Manager/SBM signature is ready to be added.`, { everyHr: true });
+          void notifyHrRoleUsers(myProfileId, displayName || "Employee", excludeIds, `📄 Employee Attendance & Visit Exception Report for ${form.employeeName} has been signed — the Manager/SBM signature is ready to be added.`);
         })
         .catch((err) => console.error("[visit-exception-report] hr notify check failed:", err));
 

@@ -613,8 +613,6 @@ export async function deleteSignableDocument(id: string): Promise<void> {
   if (doc.agentNoteId) {
     await deleteAgentNote(doc.agentNoteId).catch((err) => console.error("Failed to retract warning note on delete:", err));
   }
-  // A delete the row policy refuses (migration 0417 — HR Paperworks' people only) removes nothing without an error.
-  const { data, error } = await supabase.from("hr_signable_documents").delete().eq("id", id).select("id");
+  const { error } = await supabase.from("hr_signable_documents").delete().eq("id", id);
   if (error) throw new Error(error.message);
-  if (!data || data.length === 0) throw new Error("You don't have permission to delete this paper.");
 }

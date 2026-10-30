@@ -25,7 +25,7 @@ export const Route = createFileRoute("/home")({
 });
 
 function Home() {
-  const { ready, email, uid, companyId, role, extraRoles, isTrainee, isFrozen } = useAuth();
+  const { ready, email, role, extraRoles, isTrainee, isFrozen } = useAuth();
   // Re-render when an admin changes module access live (the tile filters
   // below read the override cache synchronously).
   useModuleRoleGateOverrides();
@@ -85,7 +85,7 @@ function Home() {
         <h2 className="home-section-title">Your modules</h2>
         <div data-tour="home-modules" className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
           {MODULES.filter((m) => isModuleAllowed(role, m.slug, extraRoles) && isModuleAllowedForTrainee(isTrainee, m.slug) && isModuleAllowedForFrozen(isFrozen, m.slug)).map((m) => {
-            const visibleSubmodules = m.submodules.filter((s) => !s.hiddenFromGrid && canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee, isFrozen, { uid, companyId }));
+            const visibleSubmodules = m.submodules.filter((s) => !s.hiddenFromGrid && canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee, isFrozen));
             const Icon = moduleIcon(m.slug);
             const moduleCount = visibleSubmodules.reduce((n, s) => n + (pageCounts[`${m.slug}/${s.slug}`] ?? 0), 0);
             return (

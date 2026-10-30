@@ -1,7 +1,7 @@
 import { brandOf, loadBrandLogo } from "@/lib/formBrand";
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
-import { Link, Navigate, useSearch, useNavigate } from "@tanstack/react-router";
+import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, KeyRound, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, UserPlus, Search, Bell, Download, Forward, History, FileText, ClipboardList, ClipboardCheck, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, ShieldCheck, GraduationCap, LogOut, PhoneCall, Briefcase, Star, Route as RouteIcon, RefreshCw } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
@@ -18699,14 +18699,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // list; `columns: undefined` on the other groups keeps every tabGroups
   // entry's inferred shape consistent so `section.columns` type-checks
   // uniformly across the array. ──
-  // HR Paperworks' own groups (its page only — see tabGroups below).
-  const paperworkTabGroups = [
+  const tabGroups = [
     // Automated Forms (COE, Warning Form, tax forms, Jotform docs, and the
     // technician-facing acknowledgment forms) now lives only under its own
     // HR Paperworks module entry (custom: "hr-paperworks") — not inside HR &
     // Recruitment Dashboard's sidebar anymore. Still AH Solutions-only for
     // now — other companies don't use these forms.
-    ...(companyId === "COMP001" ? [{
+    ...(paperworksOnly && companyId === "COMP001" ? [{
       group: "Automated Forms",
       icon: Paperclip,
       tabs: [...automatedFormsGeneralTabs, ...automatedFormsTechnicianTabs, ...automatedFormsManagementTabs],
@@ -18723,7 +18722,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     // W-8ben deliberately excluded since I-9 and W-8ben already live
     // directly under New Technician Forms, and Action Plan isn't part of
     // this group at all. Termination Notice Form IS included.
-    ...(companyId === "COMP001" ? [{
+    ...(paperworksOnly && companyId === "COMP001" ? [{
       group: "New Automation Forms",
       icon: Paperclip,
       tabs: [...newAutomationFormsGeneralTabs, ...newAutomationFormsTechnicianTabs, ...newAutomationFormsOfficeTabs, ...newAutomationFormsPhTabs, ...newAutomationFormsMexicoTabs, ...newAutomationFormsManagementTabs],
@@ -18745,7 +18744,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     // groups above (those forms are AH Solutions-specific) — Onboarding
     // Documents was available to every company before this move, and stays
     // that way, just relocated.
-    {
+    ...(paperworksOnly ? [{
       group: "Onboarding",
       icon: Paperclip,
       tabs: [
@@ -18753,9 +18752,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         { key: "newOnboardingDocuments", label: "New Onboarding Documents", count: 0, icon: Paperclip },
       ] as const,
       columns: undefined,
-    },
+    }] : []),
     // AHS Forms PH — the Admin Hub Solutions versions (see isAhsFormsTab).
-    ...(companyId === "COMP001" ? [{
+    ...(paperworksOnly && companyId === "COMP001" ? [{
       group: "AHS Forms PH",
       icon: Paperclip,
       tabs: [
@@ -18773,7 +18772,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     // carried over from New Office Forms (US) (no company name on them, so no
     // separate AHS version — same tabs as there). The Confidentiality tab is
     // the same one as in AHS Forms PH: one list of every AHS copy.
-    ...(companyId === "COMP001" ? [{
+    ...(paperworksOnly && companyId === "COMP001" ? [{
       group: "AHS Forms US",
       icon: Paperclip,
       tabs: [
@@ -18787,14 +18786,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       ] as const,
       columns: undefined,
     }] : []),
-  ] as const;
-  // Every tab that belongs to HR Paperworks. Opened anywhere else (HR To Do
-  // List's ?tab= links, sign notifications, Hiring's "Send →"), it goes to
-  // the HR Paperworks page instead, where its access list applies
-  // (hrPaperworksAccess.ts) — see the redirect before this page's return.
-  const paperworkTabKeys = new Set<string>(paperworkTabGroups.flatMap((g) => g.tabs.map((t) => t.key)));
-  const tabGroups = [
-    ...(paperworksOnly ? paperworkTabGroups : []),
     ...(!paperworksOnly ? [
       {
         group: "Generate Reports",
@@ -18945,10 +18936,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       </button>
     );
   };
-
-  if (!paperworksOnly && paperworkTabKeys.has(activeTab)) {
-    return <Navigate to="/m/$module/$submodule" params={{ module: "hr", submodule: "hr-paperworks" } as any} search={{ ...hrSearchParams, tab: activeTab } as any} replace />;
-  }
 
   return (
     <div className="min-h-screen flex flex-col">

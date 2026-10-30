@@ -9,27 +9,22 @@
  * Recipients are whoever carries the HR role — as their primary `role` OR
  * as one of their `extra_roles` — so an Admin, Manager, or Technician can
  * be looped in just by tagging them with the HR secondary role, without
- * this helper needing its own separate "who's an Admin" concept. They're
- * HR Paperworks forms, so only those of them who can open HR Paperworks
- * (hrPaperworksAccess.ts) — unless the caller passes everyHr.
+ * this helper needing its own separate "who's an Admin" concept.
  */
 import { supabase } from "./client";
 import { getOrCreateDmThread, sendMessage } from "./messaging";
-import { passesHrPaperworksPeopleGate } from "@/lib/hrPaperworksAccess";
 
-async function getCompanyHrRoleProfileIds(everyHr: boolean): Promise<string[]> {
+async function getCompanyHrRoleProfileIds(): Promise<string[]> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, role, extra_roles, firebase_uid, company_id")
+    .select("id, role, extra_roles")
     .eq("is_active", true)
     .or("role.eq.HR,extra_roles.cs.{HR}");
   if (error) {
     console.error("getCompanyHrRoleProfileIds error:", error.message);
     return [];
   }
-  return (data ?? [])
-    .filter((p) => everyHr || passesHrPaperworksPeopleGate({ uid: p.firebase_uid, companyId: p.company_id, role: p.role, extraRoles: p.extra_roles }))
-    .map((p) => p.id as string);
+  return (data ?? []).map((p) => p.id as string);
 }
 
 /**
@@ -40,8 +35,8 @@ async function getCompanyHrRoleProfileIds(everyHr: boolean): Promise<string[]> {
  * expected to fire this off without awaiting it (matches the rest of this
  * app's "notify" calls).
  */
-export async function notifyHrRoleUsers(senderId: string, senderName: string, excludeIds: string[], body: string, opts?: { everyHr?: boolean }): Promise<void> {
-  const hrIds = await getCompanyHrRoleProfileIds(!!opts?.everyHr);
+export async function notifyHrRoleUsers(senderId: string, senderName: string, excludeIds: string[], body: string): Promise<void> {
+  const hrIds = await getCompanyHrRoleProfileIds();
   const targets = hrIds.filter((id) => id !== senderId && !excludeIds.includes(id));
   await Promise.all(
     targets.map(async (hrId) => {

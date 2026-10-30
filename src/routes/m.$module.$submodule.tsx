@@ -26,7 +26,6 @@ import { ADMIN_MODULE_ROLES, USER_MANAGEMENT_DEFAULT_ROLES, ACTIVITY_LOG_DEFAULT
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import { guideDepartmentFor } from "@/lib/tours/guideDepartments";
 import { canSeeTicketTour } from "@/lib/tours/ticketTours";
-import { passesHrPaperworksPeopleGate } from "@/lib/hrPaperworksAccess";
 import { ExpensesModulePage } from "@/components/ExpensesModulePage";import { StaffListPage } from "@/components/StaffListPage";
 import { ItTicketsPage } from "@/components/ItTicketsPage";
 
@@ -426,11 +425,6 @@ function SubModule() {
   const hasCompanySettingsAccess = isCompanySuperAdminRole(role, extraRoles);
 
   if (sub.custom === "company-settings" && !hasCompanySettingsAccess) {
-    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
-  }
-
-  // HR Paperworks: at AH Solutions only the people in hrPaperworksAccess.ts, plus Super Admin.
-  if ((sub as any).custom === "hr-paperworks" && !passesHrPaperworksPeopleGate({ uid, companyId, role, extraRoles })) {
     return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
