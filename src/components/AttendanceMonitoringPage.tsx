@@ -1,7 +1,7 @@
 import { getAttendanceStartByProfile } from "@/lib/supabase/attendanceStart";
 import { getRestDayHistory } from "@/lib/supabase/restDayHistory";
 import { isRestDayOn, requiredTimesOn, type RestDayHistory } from "@/lib/restDays";
-import { AlertCircle, AlertTriangle, Compass, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, ChevronRight, ChevronDown, Download, Calendar, FileText, CheckCircle, XCircle, Loader2, Settings } from "lucide-react";
+import { AlertCircle, AlertTriangle, Compass, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, ChevronRight, ChevronDown, Download, Calendar, FileText, CheckCircle, XCircle, Loader2, Settings, Undo2 } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
 import { PtoBalanceSummary, usePtoHireDates } from "@/components/PtoBalanceSummary";
 import { toast } from "sonner";
@@ -15,7 +15,7 @@ import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, type ProfileRow } from "@/lib/supabase/users";
 import { resolvePresenceStatus, PRESENCE_DOT_CLASS, PRESENCE_LABEL } from "@/lib/presence";
-import { getRoleDepartmentBreakdown, normalizeRole, isAttendanceManagerTierRole, TECHNICIAN_PAY_ROLES, isCompanySuperAdminRole, isFinanceRole } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, normalizeRole, isAttendanceManagerTierRole, TECHNICIAN_PAY_ROLES, isCompanySuperAdminRole, isFinanceRole, isAttendanceFullAccessRole } from "@/lib/roleLabels";
 import { getPendingCheckoutProposals, approveCheckoutProposal, type CheckoutProposal } from "@/lib/supabase/technicianCheckoutProposals";
 import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
 import { RequestedTime } from "@/components/CorrectionRequestedTime";
@@ -72,6 +72,7 @@ import {
   getCompanyTimecardCorrectionHistory,
   reviewCorrectionStage,
   canReviewCorrectionStage,
+  undoCorrectionRejection,
   type TimecardCorrectionRow,
   type TimecardCorrectionHistoryRow,
   type CorrectionStage,
@@ -2081,6 +2082,25 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     setCorrectionHistory(await getCompanyTimecardCorrectionHistory());
   };
 
+  // Undo a rejection — whoever rejected it, or Admin / HR / Super Admin
+  // (full attendance access). The rejected stage goes back to pending.
+  const [undoingCorrectionId, setUndoingCorrectionId] = useState<string | null>(null);
+  const canUndoCorrectionRejection = (c: TimecardCorrectionRow) =>
+    isAttendanceFullAccessRole(role, extraRoles) ||
+    (!!myProfileId && [c.managerStatus === "rejected" ? c.managerReviewedBy : null, c.hrStatus === "rejected" ? c.hrReviewedBy : null, c.accountingStatus === "rejected" ? c.accountingReviewedBy : null].includes(myProfileId));
+  const handleUndoCorrectionRejection = async (c: TimecardCorrectionRow) => {
+    if (!confirm(`Undo the rejection of ${profileName(c.profileId)}'s ${c.workDate} correction? It goes back to review.`)) return;
+    setUndoingCorrectionId(c.id);
+    try {
+      await undoCorrectionRejection(c, myProfileId || "", displayName || "Reviewer");
+      await refreshCorrections();
+    } catch (err) {
+      alert(`Couldn't undo the rejection: ${err instanceof Error ? err.message : "unknown error"}`);
+    } finally {
+      setUndoingCorrectionId(null);
+    }
+  };
+
   const handleCorrectionStageAction = async (stage: CorrectionStage, decision: "approved" | "rejected") => {
     if (!selectedCorrection) return;
     setCorrectionStageBusy(true);
@@ -3594,7 +3614,20 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               View Timecard
                             </button>
                           ) : (
-                            <CorrectionOverallBadge status={correction.status} size="md" />
+                            <div className="flex flex-col items-start gap-1.5">
+                              <CorrectionOverallBadge status={correction.status} size="md" />
+                              {correction.status === "rejected" && canUndoCorrectionRejection(correction) && (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleUndoCorrectionRejection(correction)}
+                                  disabled={undoingCorrectionId === correction.id}
+                                  className="inline-flex items-center gap-1 rounded border border-white/15 bg-white/5 px-2 py-0.5 text-[11px] font-semibold text-slate-200 hover:bg-white/10 disabled:opacity-50"
+                                  title="Put it back in review — the rejected stage goes back to pending"
+                                >
+                                  {undoingCorrectionId === correction.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Undo2 className="h-3 w-3" />} Undo
+                                </button>
+                              )}
+                            </div>
                           )}
                         </td>
                       </tr>

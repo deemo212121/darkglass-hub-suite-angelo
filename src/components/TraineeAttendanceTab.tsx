@@ -38,6 +38,9 @@ import {
   type TraineeTimecardEntry,
 } from "@/lib/supabase/traineeTimecards";
 import { todayISO, formatISODate } from "@/lib/localDate";
+import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
+import { Bell, BellRing, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
 /** Fixed rejection categories the user asked for — "Other" reveals a required free-text field. */
 const REJECT_REASON_OPTIONS = ["On Field", "Termination", "Absent", "Quit", "Other"] as const;
@@ -213,6 +216,50 @@ export function TraineeAttendanceTab({
   // resolveTeamLeadOrManager reads at punch time), not entry.managerId — a
   // placeholder row has no entry to read a managerId off.
   const managerNameOf = (profileId: string) => profileById.get(profileId)?.manager_name?.trim() || "Unassigned";
+
+  // 🔔 Remind the trainee's manager to review a pending day — a direct
+  // message on Messenger from whoever clicked. The manager is the trainee's
+  // current manager_name (active account), else whoever was stamped on the day.
+  const [remindingId, setRemindingId] = useState<string | null>(null);
+  const [remindedIds, setRemindedIds] = useState<Set<string>>(new Set());
+  const managerIdFor = (entry: TraineeTimecardEntry): string | null => {
+    const name = (profileById.get(entry.profileId)?.manager_name || "").trim().toLowerCase();
+    const byName = name ? profiles.find((p) => p.is_active && (p.display_name || "").trim().toLowerCase() === name)?.id ?? null : null;
+    return byName ?? entry.managerId ?? null;
+  };
+  const remindManager = async (entry: TraineeTimecardEntry) => {
+    const managerId = managerIdFor(entry);
+    if (!managerId) {
+      toast.error("This trainee has no manager on file to remind.");
+      return;
+    }
+    if (!myProfileId) {
+      toast.error("Your account isn't linked to an employee profile, so a message can't be sent.");
+      return;
+    }
+    if (managerId === myProfileId) {
+      toast.info("You're this trainee's manager — open View Timecard to review it.");
+      return;
+    }
+    const trainee = profileById.get(entry.profileId)?.display_name || "A trainee";
+    const me = profileById.get(myProfileId)?.display_name || "Attendance Monitoring";
+    setRemindingId(entry.id);
+    try {
+      const thread = await getOrCreateDmThread(myProfileId, managerId);
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: me,
+        body: `🔔 Reminder: ${trainee}'s trainee day ${entry.workDate} is still pending your review — Attendance Monitoring → Trainee Attendance.`,
+      });
+      setRemindedIds((prev) => new Set(prev).add(entry.id));
+      toast.success(`Reminder sent to ${profileById.get(managerId)?.display_name || "the manager"} on Messenger.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't send the reminder.");
+    } finally {
+      setRemindingId(null);
+    }
+  };
 
   // A real punch row per (trainee, day) that has one, PLUS a placeholder for
   // any visible trainee with zero punches in the selected range — otherwise
@@ -582,13 +629,27 @@ export function TraineeAttendanceTab({
                       )}
                     </td>
                     <td className="px-3 py-3">
-                      {canApprove ? (
-                        <button onClick={() => openEntry(entry)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs transition">
-                          View Timecard
-                        </button>
-                      ) : (
-                        <span className="text-slate-400 text-xs">{STATUS_LABEL[entry.status]}</span>
-                      )}
+                      <div className="flex items-center gap-1.5">
+                        {canApprove ? (
+                          <button onClick={() => openEntry(entry)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs transition">
+                            View Timecard
+                          </button>
+                        ) : (
+                          <span className="text-slate-400 text-xs">{STATUS_LABEL[entry.status]}</span>
+                        )}
+                        {entry.status === "pending" && (
+                          <button
+                            type="button"
+                            onClick={() => void remindManager(entry)}
+                            disabled={remindingId === entry.id}
+                            className={`inline-flex h-7 w-7 items-center justify-center rounded border transition disabled:opacity-50 ${remindedIds.has(entry.id) ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : "border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"}`}
+                            title={remindedIds.has(entry.id) ? `Reminded — click to remind ${managerNameOf(entry.profileId)} again` : `Remind ${managerNameOf(entry.profileId)} to review this day`}
+                            aria-label="Remind the manager"
+                          >
+                            {remindingId === entry.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : remindedIds.has(entry.id) ? <BellRing className="h-3.5 w-3.5" /> : <Bell className="h-3.5 w-3.5" />}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
