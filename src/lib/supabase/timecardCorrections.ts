@@ -754,28 +754,7 @@ export async function reviewCorrectionStage(
     // A blank corrected Check In/Out (e.g. someone still working who only
     // fixed their Check In) keeps the punch already on the timecard —
     // including a Check Out made after the request was sent.
-    const { data: existing } = await supabase
-      .from("timecard_entries")
-      .select("check_in, check_out, meal_start, meal_end, notes")
-      .eq("profile_id", correction.profileId)
-      .eq("work_date", correction.workDate)
-      .maybeSingle();
-    const { error: upsertError } = await supabase.from("timecard_entries").upsert(
-      {
-        profile_id: correction.profileId,
-        work_date: correction.workDate,
-        check_in: updated.correctedCheckIn || existing?.check_in || null,
-        check_out: updated.correctedCheckOut || existing?.check_out || null,
-        meal_start: updated.correctedMealStart || existing?.meal_start || null,
-        meal_end: updated.correctedMealEnd || existing?.meal_end || null,
-        notes: existing?.notes ?? null,
-      },
-      { onConflict: "profile_id,work_date" }
-    );
-    if (upsertError) {
-      console.error("reviewCorrectionStage timecard upsert error:", upsertError.message);
-      throw new Error(upsertError.message);
-    }
+    await applyCorrectionToTimecard(updated);
     await createNotification({
       recipientId: correction.profileId,
       senderId: reviewerId,
@@ -851,6 +830,101 @@ async function signCorrectionAsAccounting(correctionId: string, reviewerName: st
     accountingSignatureDataUrl: signed.dataUrl,
   });
   return { url: accountingSignatureUrl, pdfUrl, comments: signed.comments };
+}
+
+/**
+ * Merge an approved correction's corrected punch into the real timecard row.
+ * A corrected meal time overrides what's there; a blank corrected Check In /
+ * Out keeps the punch already on the timecard (incl. one made after the
+ * request was sent); notes are kept.
+ */
+async function applyCorrectionToTimecard(
+  c: Pick<TimecardCorrectionRow, "profileId" | "workDate" | "correctedCheckIn" | "correctedCheckOut" | "correctedMealStart" | "correctedMealEnd">
+): Promise<void> {
+  const { data: existing } = await supabase
+    .from("timecard_entries")
+    .select("check_in, check_out, meal_start, meal_end, notes")
+    .eq("profile_id", c.profileId)
+    .eq("work_date", c.workDate)
+    .maybeSingle();
+  const { error } = await supabase.from("timecard_entries").upsert(
+    {
+      profile_id: c.profileId,
+      work_date: c.workDate,
+      check_in: c.correctedCheckIn || existing?.check_in || null,
+      check_out: c.correctedCheckOut || existing?.check_out || null,
+      meal_start: c.correctedMealStart || existing?.meal_start || null,
+      meal_end: c.correctedMealEnd || existing?.meal_end || null,
+      notes: existing?.notes ?? null,
+    },
+    { onConflict: "profile_id,work_date" }
+  );
+  if (error) {
+    console.error("applyCorrectionToTimecard error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
+/** The stages of a correction that are currently "rejected". */
+export function rejectedCorrectionStages(c: Pick<TimecardCorrectionRow, "managerStatus" | "hrStatus" | "accountingStatus">): CorrectionStage[] {
+  return (["manager", "hr", "accounting"] as const).filter((s) =>
+    (s === "manager" ? c.managerStatus : s === "hr" ? c.hrStatus : c.accountingStatus) === "rejected"
+  );
+}
+
+/**
+ * Undo a rejection — every rejected stage goes back to pending (its reviewer,
+ * time and note cleared), so it can be reviewed again. The DB trigger
+ * re-derives the overall status: back to pending, or — when the other
+ * stages had already approved it (e.g. HR rejected a fully approved one) —
+ * approved again, in which case the corrected punch is put back on the
+ * timecard. The undo is noted in review_note and the employee is told.
+ */
+export async function undoCorrectionRejection(
+  c: Pick<TimecardCorrectionRow, "id" | "profileId" | "workDate" | "managerStatus" | "hrStatus" | "accountingStatus">,
+  undoneById: string,
+  undoneByName: string
+): Promise<TimecardCorrectionRow> {
+  const stages = rejectedCorrectionStages(c);
+  if (stages.length === 0) throw new Error("This correction isn't rejected.");
+  const payload: Record<string, unknown> = {};
+  for (const s of stages) {
+    payload[`${s}_status`] = "pending";
+    payload[`${s}_reviewed_by`] = null;
+    payload[`${s}_reviewed_at`] = null;
+    if (!stageNotesMissing) payload[`${s}_note`] = null;
+  }
+  const stageNames = stages.map((s) => (s === "manager" ? "Manager" : s === "hr" ? "HR" : "Accounting")).join(" / ");
+  const { data: prev } = await supabase.from("timecard_corrections").select("review_note").eq("id", c.id).maybeSingle();
+  const line = `Rejection (${stageNames}) undone by ${undoneByName} — back in review`;
+  payload.review_note = prev?.review_note ? `${prev.review_note}\n${line}` : line;
+
+  let { data, error } = await supabase.from("timecard_corrections").update(payload).eq("id", c.id).select(noteColumnMissing ? SELECT_COLUMNS_NO_NOTE : SELECT_COLUMNS).single();
+  if (isStageNoteError(error)) {
+    stageNotesMissing = true;
+    for (const s of stages) delete payload[`${s}_note`];
+    ({ data, error } = await supabase.from("timecard_corrections").update(payload).eq("id", c.id).select(noteColumnMissing ? SELECT_COLUMNS_NO_NOTE : SELECT_COLUMNS).single());
+  }
+  if (error && /review_note/.test(error.message)) {
+    delete payload.review_note;
+    ({ data, error } = await supabase.from("timecard_corrections").update(payload).eq("id", c.id).select(SELECT_COLUMNS_NO_NOTE).single());
+  }
+  if (error) {
+    console.error("undoCorrectionRejection error:", error.message);
+    throw new Error(error.message);
+  }
+  const updated = mapRow(data);
+  if (updated.status === "approved") await applyCorrectionToTimecard(updated);
+  await createNotification({
+    recipientId: c.profileId,
+    senderId: undoneById,
+    senderName: undoneByName,
+    body: updated.status === "approved"
+      ? `✅ The rejection of your time correction for ${c.workDate} was undone — it's approved and on your timecard.`
+      : `↩️ The rejection of your time correction for ${c.workDate} was undone — it's back in review.`,
+    linkTo: "/m/dashboard/employee-self-service?tab=requests",
+  }).catch((err) => console.error("Failed to notify correction un-rejection:", err));
+  return updated;
 }
 
 /**
