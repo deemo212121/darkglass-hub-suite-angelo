@@ -39,6 +39,7 @@
  */
 import { getGoogleAccessToken, uploadFileToStorage } from "./jotformBridge";
 import { describeDevice } from "@/lib/deviceLabel";
+import { passesHrPaperworksPeopleGate } from "@/lib/hrPaperworksAccess";
 
 function sv(s: string) {
   return { stringValue: s };
@@ -119,7 +120,8 @@ interface NotifyProfileRow {
 async function fetchHrRoleAndCreatorFirebaseUids(
   env: EnvBag,
   companyId: string,
-  createdByProfileId: string | null
+  createdByProfileId: string | null,
+  everyHr: boolean
 ): Promise<{ creatorFirebaseUid: string | null; hrFirebaseUids: string[] }> {
   const idFilter = createdByProfileId ? `id.eq.${encodeURIComponent(createdByProfileId)},` : "";
   const url =
@@ -128,7 +130,10 @@ async function fetchHrRoleAndCreatorFirebaseUids(
     `&or=(${idFilter}role.eq.HR,extra_roles.cs.{HR})`;
   const res = await fetch(url, { headers: { apikey: env.supabaseServiceKey, Authorization: `Bearer ${env.supabaseServiceKey}` } });
   if (!res.ok) throw new Error(`profiles lookup failed (${res.status}): ${await res.text()}`);
-  const rows = (await res.json()) as NotifyProfileRow[];
+  // The notification opens HR Paperworks — only people who can open it (hrPaperworksAccess.ts), unless everyHr.
+  const rows = ((await res.json()) as NotifyProfileRow[]).filter((r) =>
+    everyHr || passesHrPaperworksPeopleGate({ uid: r.firebase_uid, companyId, role: r.role, extraRoles: r.extra_roles })
+  );
   const creatorRow = createdByProfileId ? rows.find((r) => r.id === createdByProfileId) : undefined;
   const isHrRole = (r: NotifyProfileRow) =>
     r.role?.toUpperCase() === "HR" || (r.extra_roles ?? []).some((x) => x.toUpperCase() === "HR");
@@ -348,7 +353,8 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
         link: ahsLabel ? `/m/hr/hr-paperworks?tab=${ahsLabel.tab}` : `/m/hr/hr-dashboard?tab=${docLabel.tab}`,
       };
       const [{ creatorFirebaseUid, hrFirebaseUids }, notifyHrEnabled] = await Promise.all([
-        fetchHrRoleAndCreatorFirebaseUids(envBag, doc.company_id, doc.created_by),
+        // The Visit Exception Report is reviewed in Employee Monitoring, not HR Paperworks — every HR user.
+        fetchHrRoleAndCreatorFirebaseUids(envBag, doc.company_id, doc.created_by, doc.document_type === "visit_exception_report"),
         fetchNotifyHrOnWarningFormSetting(envBag, doc.company_id),
       ]);
 

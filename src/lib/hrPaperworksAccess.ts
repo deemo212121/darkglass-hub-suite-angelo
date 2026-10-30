@@ -10,11 +10,13 @@
  * Checked by the page route (m.$module.$submodule.tsx), the tiles that list
  * it (canAccessSubmodule), and ReportHRDaily.tsx, which sends a paperwork
  * tab opened anywhere else (HR To Do List's ?tab= links, sign notifications)
- * to the HR Paperworks page.
+ * to the HR Paperworks page. The "form signed" notifications go only to
+ * these people too (hrRoleNotify.ts, signableDocumentsBridge.ts).
  */
 import { isCompanySuperAdminRole } from "./roleLabels";
 
-const LIMITED_COMPANY = "COMP001";
+/** AH Solutions — by its code (useAuth's companyId) or its id (profiles.company_id). */
+const LIMITED_COMPANY = new Set(["COMP001", "b86acc43-08df-4ef3-aae0-1653cb5a1fcd"]);
 
 const HR_PAPERWORKS_PEOPLE: Record<string, string> = {
   ujnXwUP5RAUZY4JL2A8FsDGSQ8s2: "Wincel Franz Carusca",
@@ -33,7 +35,7 @@ export function passesHrPaperworksPeopleGate(who: {
   role: string | null | undefined;
   extraRoles: string[] | null | undefined;
 }): boolean {
-  if (who.companyId && who.companyId !== LIMITED_COMPANY) return true;
+  if (who.companyId && !LIMITED_COMPANY.has(who.companyId)) return true;
   if (isCompanySuperAdminRole(who.role, who.extraRoles)) return true;
   return !!who.uid && Object.prototype.hasOwnProperty.call(HR_PAPERWORKS_PEOPLE, who.uid);
 }
