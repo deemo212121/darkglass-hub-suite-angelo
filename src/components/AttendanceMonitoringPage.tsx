@@ -1513,8 +1513,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         // "—", not counted toward workingDays/pct) rather than "off" (which
         // would read as a scheduled rest day for someone already employed).
         if (iso > todayISO || isBeforeHireFor(p.id, iso)) return "future" as const;
-        workingDays++;
         const entry = entriesByKey.get(`${p.id}|${iso}`);
+        // Approved leave or a company holiday with no punch — excused, not absent, and not a working day.
+        if (!entry?.checkIn && (isOnLeaveFor(p.id, iso) || isCompanyHolidayFor(iso))) return (isOnLeaveFor(p.id, iso) ? "leave" : "holiday") as "leave" | "holiday";
+        workingDays++;
         const present = Boolean(entry?.checkIn);
         if (present) presentCount++;
         if (present) return "present" as const;
@@ -1524,7 +1526,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const pct = workingDays > 0 ? Math.round((presentCount / workingDays) * 100) : 100;
       return { profileId: p.id, name: p.display_name || p.email, cells, presentCount, workingDays, pct };
     });
-  }, [summaryProfiles, weekDates, entriesByKey, traineePendingByKey, todayISO, isBeforeHireFor, isRestDayFor, requiredFor]);
+  }, [summaryProfiles, weekDates, entriesByKey, traineePendingByKey, todayISO, isBeforeHireFor, isRestDayFor, requiredFor, isOnLeaveFor, isCompanyHolidayFor]);
 
   // Narrows weeklySummary to rows matching the selected day + status (e.g.
   // "who was absent on Wednesday") — "all" for either just shows everyone,
@@ -1545,7 +1547,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       for (let d = new Date(monthStart); d <= today; d.setDate(d.getDate() + 1)) {
         const iso = toISODate(d);
         const dow = d.getDay();
-        if (isRestDayFor(p, iso) || isBeforeHireFor(p.id, iso)) continue;
+        if (isRestDayFor(p, iso) || isBeforeHireFor(p.id, iso) || isCompanyHolidayFor(iso) || isOnLeaveFor(p.id, iso)) continue;
         workingDays++;
         const entry = entriesByKey.get(`${p.id}|${iso}`);
         const checkIn = entry?.checkIn || "";
@@ -1561,7 +1563,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const status = pct >= 90 ? "Good" : pct >= 70 ? "Warning" : "Poor";
       return { profileId: p.id, name: p.display_name || p.email, workingDays, present, absent, late, pct, status };
     });
-  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor, isRestDayFor, requiredFor]);
+  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor, isRestDayFor, requiredFor, isCompanyHolidayFor, isOnLeaveFor]);
 
   // ---- Custom-range summary — same shape as monthlySummary above, just
   // over whatever [customRangeStart, customRangeEnd] the user picked instead
@@ -1578,7 +1580,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         const iso = toISODate(d);
         if (iso > todayISO) break; // don't count days that haven't happened yet as absences
         const dow = d.getDay();
-        if (isRestDayFor(p, iso) || isBeforeHireFor(p.id, iso)) continue;
+        if (isRestDayFor(p, iso) || isBeforeHireFor(p.id, iso) || isCompanyHolidayFor(iso) || isOnLeaveFor(p.id, iso)) continue;
         workingDays++;
         const entry = customEntriesByKey.get(`${p.id}|${iso}`);
         const checkIn = entry?.checkIn || "";
@@ -1592,7 +1594,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const status = pct >= 90 ? "Good" : pct >= 70 ? "Warning" : "Poor";
       return { profileId: p.id, name: p.display_name || p.email, workingDays, present, absent, late, pct, status };
     });
-  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor, isRestDayFor, requiredFor]);
+  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor, isRestDayFor, requiredFor, isCompanyHolidayFor, isOnLeaveFor]);
 
   // Day-by-day breakdown behind the Custom Attendance Summary's Present/
   // Absent/Late numbers — same day-iteration/off-day rules as customSummary
@@ -1616,7 +1618,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       const iso = toISODate(d);
       if (iso > todayISO) break;
-      if (isRestDayFor(p, iso) || isBeforeHireFor(p.id, iso)) continue;
+      if (isRestDayFor(p, iso) || isBeforeHireFor(p.id, iso) || isCompanyHolidayFor(iso) || isOnLeaveFor(p.id, iso)) continue;
       const entry = customEntriesByKey.get(`${p.id}|${iso}`);
       const checkIn = entry?.checkIn || "";
       const checkOut = entry?.checkOut || "";
@@ -2983,6 +2985,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               <span className="inline-block px-2 py-1 rounded bg-slate-700/50 text-slate-400">OFF</span>
                             ) : cell === "future" ? (
                               <span className="text-slate-600">—</span>
+                            ) : cell === "leave" ? (
+                              <span className="inline-block px-2 py-1 rounded bg-violet-500/20 text-violet-300" title="Approved leave">Leave</span>
+                            ) : cell === "holiday" ? (
+                              <span className="inline-block px-2 py-1 rounded bg-sky-500/20 text-sky-300" title="Company holiday">Holiday</span>
                             ) : cell === "present" ? (
                               <span className="inline-block px-2 py-1 rounded bg-green-500/20 text-green-300">✓</span>
                             ) : cell === "pending" ? (
