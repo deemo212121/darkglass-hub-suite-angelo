@@ -36,6 +36,7 @@ import { ItTicketsPage } from "@/components/ItTicketsPage";
 const OverallStatusPage = lazy(() => import("@/components/OverallStatusPage").then((m) => ({ default: m.OverallStatusPage })));
 const RepairForecastPage = lazy(() => import("@/components/RepairForecastPage").then((m) => ({ default: m.RepairForecastPage })));
 const DailyActivityPage = lazy(() => import("@/components/DailyActivityPage").then((m) => ({ default: m.DailyActivityPage })));
+const PaystubsPage = lazy(() => import("@/components/PaystubsPage").then((m) => ({ default: m.PaystubsPage })));
 const TriageDashboardPage = lazy(() => import("@/components/TriageDashboardPage").then((m) => ({ default: m.TriageDashboardPage })));
 const UniversalActivityLogPage = lazy(() => import("@/components/UniversalActivityLogPage").then((m) => ({ default: m.UniversalActivityLogPage })));
 const ReportsLibraryPage = lazy(() => import("@/components/ReportsLibraryPage").then((m) => ({ default: m.ReportsLibraryPage })));
@@ -672,6 +673,8 @@ function SubModule() {
         ? <FlashTechCalendarPage mod={mod} sub={sub} />
         : (sub as any).custom === "expenses"
         ? <ExpensesModulePage mod={mod} sub={sub} />
+        : (sub as any).custom === "paystubs"
+        ? <PaystubsPage mod={mod} sub={sub} />
         : sub.custom === "staff-list"
         ? <StaffListPage mod={mod} sub={sub} />
         : sub.custom === "work-map"

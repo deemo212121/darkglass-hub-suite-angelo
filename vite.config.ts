@@ -952,6 +952,11 @@ export default defineConfig({
           manualChunks(id) {
             const normalized = id.replace(/\\/g, "/");
 
+            // Rollup's shared CommonJS helpers (commonjsRequire etc.) — pinned
+            // to "vendor", or they land in the first lazy chunk that needs
+            // them (tesseract) and every other one (exceljs) has to load it.
+            if (normalized.includes("commonjsHelpers") || normalized.includes("commonjs-dynamic-modules")) return "vendor";
+
             if (normalized.includes("/node_modules/")) {
               // Leaflet is browser-only (touches `window` at module load, not
               // just when called) and is only ever reached via a dynamic
@@ -1027,6 +1032,12 @@ export default defineConfig({
               // environment — this "exceljs" bucket now really is just
               // exceljs.
               if (normalized.includes("/node_modules/exceljs/")) return "exceljs";
+              // tesseract.js (Accounting → Paystubs reads the payee name off
+              // each stub — paystubPdf.ts) — same story. Only reached via a
+              // dynamic import(), but the server build resolves its Node entry,
+              // whose top-level code reads __dirname; left in "vendor", the
+              // Worker crashed at startup ("__dirname is not defined").
+              if (normalized.includes("/node_modules/tesseract.js/") || normalized.includes("/node_modules/tesseract.js-core/")) return "tesseract";
               // pdf-lib is left in "vendor": it's pure JS PDF manipulation
               // with no DOM dependency, so it's SSR-safe.
               if (normalized.includes("/node_modules/@tanstack/")) return "tanstack";

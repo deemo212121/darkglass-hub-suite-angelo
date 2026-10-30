@@ -27,6 +27,9 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   // visibleAttendanceProfileIds) — ADMIN/HR/FINANCE/SUPERADMIN see everyone.
   "attendance-monitoring": ["ADMIN", "HR", "FINANCE", "TECHNICAL_ASSISTANT_DIRECTOR", ...ATTENDANCE_MANAGER_TIER_ROLES_ARRAY],
   "payroll-calculation": ["ADMIN", "FINANCE"],
+  // Accounting → Paystubs (custom: "paystubs", migration 0418) — same as
+  // Payroll. The rows themselves are Finance / HR / Admin only (RLS).
+  "paystubs": ["ADMIN", "FINANCE"],
   "expense-tracking": ["ADMIN", "FINANCE"],
   // View access matches expense-tracking (SUPERADMIN always bypasses per
   // hasDashboardAccess) — write access (scheduling/editing a trip) is

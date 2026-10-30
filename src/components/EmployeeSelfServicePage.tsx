@@ -1,4 +1,5 @@
 import { ChevronLeft, Compass, DollarSign, Clock, ListTodo, Download, Eye, EyeOff, TrendingUp, AlertCircle, CheckCircle2, XCircle, Plus, FileText, X, Paperclip, Receipt, Pencil, Trash2, Loader2 } from "lucide-react";
+import { MyFilesTab } from "@/components/MyFilesTab";
 import { useHolidayNames } from "@/hooks/useHolidayNames";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { runTour, takeQueuedTour } from "@/lib/tours/runTour";
@@ -158,9 +159,9 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const { email, uid, role, extraRoles, displayName, companyId } = useAuth();
   const search = (useSearch({ strict: false }) as { tab?: string }) ?? {};
 
-  const [activeTab, setActiveTab] = usePersistedTab<"dashboard" | "payroll" | "attendance" | "requests" | "expenses">(
+  const [activeTab, setActiveTab] = usePersistedTab<"dashboard" | "payroll" | "attendance" | "requests" | "expenses" | "files">(
     "ahs:employee-self-service-active-tab",
-    ["dashboard", "payroll", "attendance", "requests", "expenses"],
+    ["dashboard", "payroll", "attendance", "requests", "expenses", "files"],
     "dashboard",
   );
   const [expandedPayslip, setExpandedPayslip] = useState<string | null>(null);
@@ -663,7 +664,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   useEffect(() => {
     const tab = search.tab;
     if (!tab) return;
-    if (["dashboard", "payroll", "attendance", "requests", "expenses"].includes(tab)) {
+    if (["dashboard", "payroll", "attendance", "requests", "expenses", "files"].includes(tab)) {
       setActiveTab(tab as typeof activeTab);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -675,6 +676,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     { id: "attendance", label: "My Attendance", icon: Clock },
     { id: "requests", label: "My Requests", icon: ListTodo },
     { id: "expenses", label: "My Expenses", icon: Receipt },
+    { id: "files", label: "My Files", icon: FileText },
   ];
 
   const getStatusColor = (status: string) => {
@@ -2157,6 +2159,10 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             </div>
           </div>
         )}
+
+        {/* My Files Tab — paystubs Accounting published from Accounting →
+            Paystubs (migration 0418); only this employee's own. */}
+        {activeTab === "files" && <MyFilesTab profileId={myProfileId} />}
       </main>
 
       {/* Request Modal */}
