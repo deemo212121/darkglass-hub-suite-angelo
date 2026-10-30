@@ -94,6 +94,7 @@ import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { isAttendanceFullAccessRole, isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, getRoleDepartmentBreakdown, canSetCancelledStatus } from "@/lib/roleLabels";
+import { useOnClCancelList } from "@/lib/supabase/clCancelPeople";
 import { CANCEL_REASONS } from "@/lib/operationsBranchMetrics";
 import { buildCorrectionSubmissionPdf } from "@/lib/timecardCorrectionPdf";
 import { buildPtoSubmissionPdf } from "@/lib/ptoExceptionReportPdf";
@@ -3681,7 +3682,8 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
   // once granted access) — same rule and required Cancellation Reason as the
   // desktop ticket page. Everyone else flags CL-Need Cancel.
   const { role: authRole, extraRoles: authExtraRoles, isTrainee: authIsTrainee } = useAuth();
-  const canCancel = canSetCancelledStatus(authRole, authExtraRoles, authIsTrainee);
+  const onClCancelList = useOnClCancelList();
+  const canCancel = canSetCancelledStatus(authRole, authExtraRoles, authIsTrainee, onClCancelList);
   const [editCancelReason, setEditCancelReason] = useState("");
   const [visits, setVisits] = useState<NonNullable<Ticket["visits"]>>([]);
   const [loading, setLoading] = useState(true);

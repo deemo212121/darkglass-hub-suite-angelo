@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { canSetCancelledStatus as canSetCancelled } from "@/lib/roleLabels";
+import { useOnClCancelList } from "@/lib/supabase/clCancelPeople";
 import { createPortal } from "react-dom";
 import { CalendarDays, ChevronLeft, ChevronRight, ChevronDown, MapPin, X } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
@@ -430,7 +431,8 @@ export function WorkPlannerPage({ mod, sub }: Props) {
   // ticket.$ticketNo.tsx's own Visit Log editor — see REPAIR_STATUS_CODES
   // above.
   // Same rule as the ticket page (roleLabels.ts): main or secondary role; a trainee only once granted access.
-  const canSetCancelledStatus = useMemo(() => canSetCancelled(role, extraRoles, isTrainee), [role, extraRoles, isTrainee]);
+  const onClCancelList = useOnClCancelList();
+  const canSetCancelledStatus = useMemo(() => canSetCancelled(role, extraRoles, isTrainee, onClCancelList), [role, extraRoles, isTrainee, onClCancelList]);
   const repairStatusOptions = useMemo(
     () => (canSetCancelledStatus ? ["CL-Cancelled", ...REPAIR_STATUS_CODES] : [...REPAIR_STATUS_CODES]),
     [canSetCancelledStatus],

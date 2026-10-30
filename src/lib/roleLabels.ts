@@ -496,15 +496,18 @@ export function canManageMisdiagnosed(role: string | null | undefined, extraRole
 
 /**
  * Who may move a ticket to CL-Cancelled (and record its Cancellation
- * Reason): BizOps Manager / BizOps Senior Manager, plus Admin / SuperAdmin —
- * as the main role or a secondary one. Everyone else flags CL-Need Cancel
- * for BizOps to verify. A trainee only once HR has granted them access
- * (Master List → Grant access) — useAuth's isTrainee is false from then on.
+ * Reason): BizOps Team Leader / Manager / Senior Manager, plus Admin / Super
+ * Admin / Super Super Admin — as the main role or a secondary one. Everyone
+ * else flags CL-Need Cancel for BizOps to verify. A trainee only once HR has
+ * granted them access (Master List → Grant access) — useAuth's isTrainee is
+ * false from then on. `onList`: the person is on Approval Chain →
+ * Philippines → "Who can set CL-Cancelled" (clCancelPeople.ts) — allowed
+ * whatever their user type, trainee or not.
  * Same rule on the ticket page, Work Planner and the mobile app.
  */
-export const CANCEL_STATUS_ROLES = new Set(["BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "ADMIN", "SUPERADMIN"]);
-export function canSetCancelledStatus(role: string | null | undefined, extraRoles?: string[] | null, isTrainee = false): boolean {
-  return !isTrainee && anyHeldRoleIn(CANCEL_STATUS_ROLES, role, extraRoles);
+export const CANCEL_STATUS_ROLES = new Set(["BIZOPS_TEAM_LEADER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"]);
+export function canSetCancelledStatus(role: string | null | undefined, extraRoles?: string[] | null, isTrainee = false, onList = false): boolean {
+  return onList || (!isTrainee && anyHeldRoleIn(CANCEL_STATUS_ROLES, role, extraRoles));
 }
 
 /**

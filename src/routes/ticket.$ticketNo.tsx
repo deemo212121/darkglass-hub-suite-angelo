@@ -76,6 +76,7 @@ import { getModelResources, saveModelResources } from "@/lib/supabase/modelResou
 import { parseServicePerformed, composeServicePerformed, emptyServicePerformed } from "@/lib/servicePerformedNotes";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { canManageMisdiagnosed, canSetCancelledStatus } from "@/lib/roleLabels";
+import { useOnClCancelList } from "@/lib/supabase/clCancelPeople";
 import { todayISO } from "@/lib/localDate";
 
 // Product category options for the ticket Product Information dropdown.
@@ -4809,9 +4810,11 @@ function TicketDetailsPage() {
   // explain why in the free-text Internal Note — but the actual cancel + the
   // structured reason only happen after BizOps verifies it.
   // Main or secondary role; a trainee only once HR has granted access (roleLabels.ts).
+  // …or on Approval Chain → Philippines → "Who can set CL-Cancelled".
+  const onClCancelList = useOnClCancelList();
   const canSetCancelled = useMemo(
-    () => canSetCancelledStatus(currentUserRole, currentUserExtraRoles, currentUserIsTrainee),
-    [currentUserRole, currentUserExtraRoles, currentUserIsTrainee],
+    () => canSetCancelledStatus(currentUserRole, currentUserExtraRoles, currentUserIsTrainee, onClCancelList),
+    [currentUserRole, currentUserExtraRoles, currentUserIsTrainee, onClCancelList],
   );
 
   const notifyUnauthorizedPartEdit = useCallback(async (attemptedRow: PartTransactionRow | null) => {
