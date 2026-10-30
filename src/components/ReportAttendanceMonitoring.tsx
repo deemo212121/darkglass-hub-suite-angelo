@@ -14,6 +14,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, ChevronRight, Users, UserCheck, UserX, Clock, Loader2, Download } from "lucide-react";
 import { BrandedLoader } from "@/components/BrandedLoader";
+import { AppModal } from "@/components/ui-kit/AppModal";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -87,6 +88,24 @@ const EMPLOYEE_COLUMNS: { label: string; left?: boolean }[] = [
   { label: "Rejected" },
   { label: "Warnings" },
 ];
+
+// Leave type names for the "on leave" breakdown.
+const LEAVE_TYPE_LABEL: Record<string, string> = {
+  vacation: "PTO",
+  sick: "Sick Leave",
+  personal: "Personal",
+  holiday: "Holiday",
+  unpaid: "Unpaid Leave",
+  bereavement: "Bereavement",
+};
+const LEAVE_TYPE_CLASS: Record<string, string> = {
+  vacation: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
+  sick: "border-sky-500/40 bg-sky-500/10 text-sky-300",
+  unpaid: "border-slate-400/40 bg-slate-500/10 text-slate-300",
+  bereavement: "border-violet-500/40 bg-violet-500/10 text-violet-300",
+};
+const leaveTypeLabel = (t: string) => LEAVE_TYPE_LABEL[t] ?? t.charAt(0).toUpperCase() + t.slice(1);
+const fmtShortDate = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
 const todayIso = () => todayISO();
 const daysAgoIso = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return localISODate(d); };
@@ -355,6 +374,8 @@ export function ReportAttendanceMonitoring({
     return { remaining: Math.max(0, window.allowance - used), allowance: window.allowance, used, pending: ptoDaysPending(mine, window) };
   };
   const fmtDays = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+  // "N on leave" → which leave it was (type, dates, reason).
+  const [leaveView, setLeaveView] = useState<{ profileId: string; name: string } | null>(null);
   const onLeaveOn = (p: ProfileRow, d: string) => (approvedLeaveByProfile.get(p.id) ?? []).some((r) => r.startDate <= d && r.endDate >= d);
   // Not counted absent: a rest day, a deactivated day, or a day of approved leave.
   const offOn = (p: ProfileRow, d: string) => restOrGoneOn(p, d) || onLeaveOn(p, d);
@@ -373,6 +394,20 @@ export function ReportAttendanceMonitoring({
     while (d <= end) { dates.push(localISODate(d)); d.setDate(d.getDate() + 1); }
     return dates;
   }, [dateFrom, dateTo]);
+
+  const leaveViewRows = useMemo(() => {
+    if (!leaveView) return [];
+    const person = profiles.find((x) => x.id === leaveView.profileId);
+    return (approvedLeaveByProfile.get(leaveView.profileId) ?? [])
+      .filter((r) => r.startDate <= dateTo && (r.endDate || r.startDate) >= dateFrom)
+      .sort((a, b) => a.startDate.localeCompare(b.startDate))
+      .map((r) => {
+        // Days of it inside the picked dates, rest days / days after leaving left out (same as the column).
+        const inRange = person ? dateRange.filter((d) => d >= r.startDate && d <= (r.endDate || r.startDate) && !restOrGoneOn(person, d)).length : 0;
+        return { ...r, inRange };
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leaveView, approvedLeaveByProfile, profiles, dateFrom, dateTo, dateRange, restHistory, statusChanges]);
 
   // Role-level summary across the date range — this is a system-wide
   // report, not a per-employee attribution tool (that's what Attendance
@@ -891,7 +926,16 @@ export function ReportAttendanceMonitoring({
                                   ) : (
                                     <span className="text-muted-foreground/60 text-[10px]">Not eligible</span>
                                   )}
-                                  {e.leaveDays > 0 && <span className="block text-[9px] text-violet-300">{e.leaveDays} on leave</span>}
+                                  {e.leaveDays > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={(ev) => { ev.stopPropagation(); setLeaveView({ profileId: e.profileId, name: e.name }); }}
+                                      className="block mx-auto text-[9px] text-violet-300 underline decoration-dotted underline-offset-2 hover:text-violet-200"
+                                      title="See which leave"
+                                    >
+                                      {e.leaveDays} on leave
+                                    </button>
+                                  )}
                                 </td>
                                 <td className="px-2.5 py-1.5 text-center">{e.corrections > 0 ? <span className="px-1.5 py-0.5 rounded text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30">{e.corrections}</span> : "—"}</td>
                                 <td className="px-2.5 py-1.5 text-center tabular-nums">{e.correctionsApproved || "—"}</td>
@@ -954,6 +998,36 @@ export function ReportAttendanceMonitoring({
         )}
         </>
         )}
+      {leaveView && (
+        <AppModal
+          title={`Leave — ${leaveView.name}`}
+          description={`Approved leave between ${fmtShortDate(dateFrom)} and ${fmtShortDate(dateTo)}`}
+          onClose={() => setLeaveView(null)}
+        >
+          {leaveViewRows.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">No approved leave in these dates.</p>
+          ) : (
+            <div className="space-y-2">
+              {leaveViewRows.map((r) => (
+                <div key={r.id} className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${LEAVE_TYPE_CLASS[r.ptoType] ?? "border-amber-500/40 bg-amber-500/10 text-amber-300"}`}>
+                      {leaveTypeLabel(r.ptoType)}
+                    </span>
+                    <span className="text-sm text-slate-200">
+                      {fmtShortDate(r.startDate)}{r.endDate && r.endDate !== r.startDate ? ` – ${fmtShortDate(r.endDate)}` : ""}
+                    </span>
+                    <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                      {r.inRange} day{r.inRange === 1 ? "" : "s"} in these dates
+                    </span>
+                  </div>
+                  {r.reason?.trim() && <p className="mt-1.5 text-xs text-muted-foreground">"{r.reason.trim()}"</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </AppModal>
+      )}
     </>
   );
 
