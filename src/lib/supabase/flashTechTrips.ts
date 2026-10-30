@@ -180,6 +180,8 @@ function mapExpenseRow(row: any): ExpenseRow {
     orNumber: row.or_number ?? null,
     fromLocation: row.from_location ?? null,
     toLocation: row.to_location ?? null,
+    pickupDate: row.pickup_date ?? null,
+    returnDate: row.return_date ?? null,
     flashTechTripId: row.flash_tech_trip_id ?? null,
     expenseSubtype: row.expense_subtype ?? null,
     reviewNote: row.review_note ?? null,

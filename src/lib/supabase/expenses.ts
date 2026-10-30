@@ -62,6 +62,9 @@ export interface ExpenseRow {
   /** Origin/destination text, carried over from a Flash Tech trip's locations when auto-created — see migration 0136. */
   fromLocation: string | null;
   toLocation: string | null;
+  /** Car Rental only (migration 0420). */
+  pickupDate: string | null;
+  returnDate: string | null;
   /** Set when this expense was auto-created from a Flash Tech Calendar trip — see migration 0130. */
   flashTechTripId: string | null;
   /** "hotel" | "transportation" on an expense auto-created from a Flash Tech trip — stays set even after
@@ -99,6 +102,8 @@ function mapRow(row: any): ExpenseRow {
     orNumber: row.or_number ?? null,
     fromLocation: row.from_location ?? null,
     toLocation: row.to_location ?? null,
+    pickupDate: row.pickup_date ?? null,
+    returnDate: row.return_date ?? null,
     flashTechTripId: row.flash_tech_trip_id ?? null,
     expenseSubtype: row.expense_subtype ?? null,
     reviewNote: row.review_note ?? null,
@@ -121,11 +126,13 @@ let reviewNoteColumnMissing = false;
 let reimbursementColumnsMissing = false;
 // Same for extra_receipts (migration 0415).
 let extraReceiptsColumnMissing = false;
+// Same for pickup_date / return_date (migration 0420).
+let rentalDatesColumnMissing = false;
 
 async function selectExpensePages(filter: (query: any) => any): Promise<ExpenseRow[]> {
   const all: ExpenseRow[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
-    const columns = `${EXPENSE_COLUMNS}${reviewNoteColumnMissing ? "" : ", review_note"}${reimbursementColumnsMissing ? "" : ", reimbursement_type, reimbursement_other"}${extraReceiptsColumnMissing ? "" : ", extra_receipts"}`;
+    const columns = `${EXPENSE_COLUMNS}${reviewNoteColumnMissing ? "" : ", review_note"}${reimbursementColumnsMissing ? "" : ", reimbursement_type, reimbursement_other"}${extraReceiptsColumnMissing ? "" : ", extra_receipts"}${rentalDatesColumnMissing ? "" : ", pickup_date, return_date"}`;
     const { data, error } = await filter(supabase.from("expenses").select(columns)).range(from, from + PAGE_SIZE - 1);
     if (error) {
       if (!reviewNoteColumnMissing && /review_note/.test(error.message)) {
@@ -140,6 +147,11 @@ async function selectExpensePages(filter: (query: any) => any): Promise<ExpenseR
       }
       if (!extraReceiptsColumnMissing && /extra_receipts/.test(error.message)) {
         extraReceiptsColumnMissing = true;
+        from -= PAGE_SIZE;
+        continue;
+      }
+      if (!rentalDatesColumnMissing && /pickup_date|return_date/.test(error.message)) {
+        rentalDatesColumnMissing = true;
         from -= PAGE_SIZE;
         continue;
       }
@@ -159,8 +171,14 @@ function reimbursementFields(f: { reimbursementType?: ReimbursementType | null; 
     reimbursement_other: f.reimbursementType === "Other" ? f.reimbursementOther?.trim() || null : null,
   };
 }
+/** Car Rental pick-up / return dates, only when given — other expenses still save before migration 0420 is run. */
+function rentalFields(f: { pickupDate?: string | null; returnDate?: string | null }) {
+  if (f.pickupDate === undefined && f.returnDate === undefined) return {};
+  return { pickup_date: f.pickupDate || null, return_date: f.returnDate || null };
+}
 const reimbursementError = (msg: string) =>
-  /reimbursement_/.test(msg) ? "Saving the reimbursement type needs migration 0401 — run it in the Supabase SQL Editor first."
+  /pickup_date|return_date/.test(msg) ? "Saving the pick-up and return dates needs migration 0420 — run it in the Supabase SQL Editor first."
+    : /reimbursement_/.test(msg) ? "Saving the reimbursement type needs migration 0401 — run it in the Supabase SQL Editor first."
     : /extra_receipts/.test(msg) ? "Saving more than one receipt needs migration 0415 — run it in the Supabase SQL Editor first."
     : msg;
 
@@ -183,7 +201,8 @@ function receiptFields(receipts: ExpenseReceipt[] | undefined, clearExtras: bool
 /** All expenses for the caller's company (RLS-scoped), newest first. */
 export async function getCompanyExpenses(): Promise<ExpenseRow[]> {
   try {
-    return await selectExpensePages((q) => q.not("profile_id", "is", null).order("expense_date", { ascending: false }));
+    // Newest added first (then by expense date) — a just-added expense lands at the top.
+    return await selectExpensePages((q) => q.not("profile_id", "is", null).order("created_at", { ascending: false }).order("expense_date", { ascending: false }));
   } catch (error) {
     console.error("getCompanyExpenses error:", error instanceof Error ? error.message : error);
     return [];
@@ -193,7 +212,7 @@ export async function getCompanyExpenses(): Promise<ExpenseRow[]> {
 /** One employee's expenses (Employee Self-Service → My Requests), newest first. */
 export async function getProfileExpenses(profileId: string): Promise<ExpenseRow[]> {
   try {
-    return await selectExpensePages((q) => q.eq("profile_id", profileId).order("expense_date", { ascending: false }).order("created_at", { ascending: false }));
+    return await selectExpensePages((q) => q.eq("profile_id", profileId).order("created_at", { ascending: false }).order("expense_date", { ascending: false }));
   } catch (error) {
     console.error("getProfileExpenses error:", error instanceof Error ? error.message : error);
     throw error;
@@ -230,6 +249,9 @@ export async function createExpense(input: {
   orNumber?: string | null;
   fromLocation?: string | null;
   toLocation?: string | null;
+  /** Car Rental only (migration 0420). */
+  pickupDate?: string | null;
+  returnDate?: string | null;
   /** Set when this expense was auto-created from a Flash Tech Calendar trip — see migration 0130/flashTechTrips.ts. Never set from the ordinary Expense Tracking "Add Expense" form. */
   flashTechTripId?: string | null;
   expenseSubtype?: "hotel" | "transportation" | null;
@@ -255,6 +277,7 @@ export async function createExpense(input: {
       flash_tech_trip_id: input.flashTechTripId ?? null,
       expense_subtype: input.expenseSubtype ?? null,
       ...reimbursementFields(input),
+      ...rentalFields(input),
       ...receiptFields(input.receipts, false),
     })
     .select("id")
@@ -283,6 +306,8 @@ export async function updateExpense(
     orNumber?: string | null;
     fromLocation?: string | null;
     toLocation?: string | null;
+    pickupDate?: string | null;
+    returnDate?: string | null;
     reimbursementType?: ReimbursementType | null;
     reimbursementOther?: string | null;
   }
@@ -300,6 +325,7 @@ export async function updateExpense(
       from_location: fields.fromLocation || null,
       to_location: fields.toLocation || null,
       ...reimbursementFields(fields),
+      ...rentalFields(fields),
       ...receiptFields(fields.receipts, !!fields.hadExtraReceipts),
     })
     .eq("id", id);

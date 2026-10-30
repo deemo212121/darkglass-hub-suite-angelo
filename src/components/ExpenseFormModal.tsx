@@ -52,11 +52,15 @@ export function ExpenseFormModal({
     orNumber: editing?.orNumber || "",
     fromLocation: editing?.fromLocation || "",
     toLocation: editing?.toLocation || "",
+    pickupDate: editing?.pickupDate || "",
+    returnDate: editing?.returnDate || "",
     reimbursementType: (editing?.reimbursementType ?? "") as ReimbursementType | "",
     reimbursementOther: editing?.reimbursementOther || "",
   }));
   // A Reimbursement Form says what it was for: Gas, Food or Other (specify).
   const isReimbursement = form.category === EMPLOYEE_EXPENSE_CATEGORY;
+  // A Car Rental records when the car was picked up and returned.
+  const isCarRental = form.category === "Car Rental";
   // Storage folder key for the receipt upload — a brand-new expense has no
   // row id yet, so a client-generated key stands in until it's saved; an
   // existing expense being edited just uses its own real id.
@@ -109,6 +113,10 @@ export function ExpenseFormModal({
       alert("Please specify what the Other reimbursement is for.");
       return;
     }
+    if (isCarRental && form.pickupDate && form.returnDate && form.returnDate < form.pickupDate) {
+      alert("The return date can't be before the pick-up date.");
+      return;
+    }
     if (requireReceipt && form.receipts.length === 0) {
       alert("Please attach a receipt (image or PDF).");
       return;
@@ -117,6 +125,10 @@ export function ExpenseFormModal({
     const typeFields = isReimbursement
       ? { reimbursementType: form.reimbursementType || null, reimbursementOther: form.reimbursementOther }
       : editing?.reimbursementType ? { reimbursementType: null } : {};
+    // Only a Car Rental carries pick-up / return dates; other categories clear them.
+    const rentalFields = isCarRental
+      ? { pickupDate: form.pickupDate || null, returnDate: form.returnDate || null }
+      : editing?.pickupDate || editing?.returnDate ? { pickupDate: null, returnDate: null } : {};
     setSaving(true);
     try {
       if (editing) {
@@ -131,6 +143,7 @@ export function ExpenseFormModal({
           fromLocation: form.fromLocation,
           toLocation: form.toLocation,
           ...typeFields,
+          ...rentalFields,
         });
       } else {
         await createExpense({
@@ -145,6 +158,7 @@ export function ExpenseFormModal({
           fromLocation: form.fromLocation,
           toLocation: form.toLocation,
           ...typeFields,
+          ...rentalFields,
         });
       }
       // Best-effort: receipts removed during this edit — clean up their
@@ -250,6 +264,18 @@ export function ExpenseFormModal({
               <input type="text" value={form.toLocation} onChange={(e) => setForm({ ...form, toLocation: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
             </div>
           </div>
+          {isCarRental && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-slate-400 uppercase mb-1">Pick-up Date</label>
+                <input type="date" value={form.pickupDate} max={form.returnDate || undefined} onChange={(e) => setForm({ ...form, pickupDate: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 uppercase mb-1">Return Date</label>
+                <input type="date" value={form.returnDate} min={form.pickupDate || undefined} onChange={(e) => setForm({ ...form, returnDate: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
+              </div>
+            </div>
+          )}
           <div>
             <label className="block text-xs text-slate-400 uppercase mb-1">Description</label>
             <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none resize-none" />
