@@ -15,7 +15,7 @@ import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, ChevronRight, Users, UserCheck, UserX, Clock, Loader2, Download } from "lucide-react";
 import { BrandedLoader } from "@/components/BrandedLoader";
 import { AppModal } from "@/components/ui-kit/AppModal";
-import { writeAttendanceWorkbook, type AttendanceSheetSpec } from "@/lib/attendanceReportWorkbook";
+import { writeAttendanceWorkbook, FILL_GREEN, FILL_RED, FILL_AMBER, type AttendanceSheetSpec, type AttendanceTable } from "@/lib/attendanceReportWorkbook";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getCompanyUsers, getSeparations, preloadSeparations, getHireDatesByProfileIds, type ProfileRow, type Separation } from "@/lib/supabase/users";
@@ -642,106 +642,102 @@ export function ReportAttendanceMonitoring({
     const period = `${fmtShortDate(dateFrom)} – ${fmtShortDate(dateTo)}`;
     const subtitle = `${period}   •   ${departmentFilter || "All Departments"}`;
     const leftName = (name: string, label: string, on: string | null) => `${name} (${label}${on ? " · " + fmtShortDate(on) : ""})`;
-    const sheets: AttendanceSheetSpec[] = [
-      {
-        name: "Overview",
-        title: "Attendance Monitoring Report",
-        note: "Today's numbers are for today only; the Daily Trend covers every day in the period.",
-        headers: ["Today", "Count"],
-        textCols: 1,
-        rows: [
-          { cells: ["Total Employees", filteredProfiles.length] },
-          { cells: ["Present Today", todayKpi.present] },
-          { cells: ["Absent Today", todayKpi.absent] },
-          { cells: ["Late Today", todayKpi.late] },
-          { cells: ["PTO Pending", ptoPending] },
-          { cells: ["Corrections Pending", correctionsPending] },
-          { cells: ["Warnings", warningsCount] },
-        ],
-        widths: { 0: 28, 1: 14 },
-      },
-      {
-        name: "Daily Trend",
-        title: "Daily Trend",
-        headers: ["Date", "Present", "Absent", "Late"],
-        textCols: 1,
-        rows: trendData.map((t) => ({ cells: [t.date, t.present, t.absent, t.late] })),
-        greenCols: [1],
-        redCols: [2],
-        amberCols: [3],
-        totalCols: [1, 2, 3],
-        widths: { 0: 16 },
-      },
-    ];
-    if (groupBy === "employee") {
-      sheets.push({
-        name: "Daily Attendance",
-        title: "Daily Attendance",
-        headers: ["Name", "Role", "Date", "Clock In", "Required In", "Clock Out", "Required Out", "Hours", "Status"],
-        textCols: 3,
-        rows: dailyEmployeeRows.map((r) => ({
-          cells: [r.name, r.role, r.date, r.clockIn || "—", r.requiredCheckIn || "—", r.clockOut || "—", r.requiredCheckOut || "—", Number(r.hours.toFixed(2)), STATUS_LABEL[r.status]],
+    // One sheet, same order as the page: period totals, Department Summary,
+    // each department's people by name, Trainees, Daily Trend.
+    const sum = (k: "present" | "absent" | "late") => trendData.reduce((n, t) => n + (t[k] ?? 0), 0);
+    const summaryTable: AttendanceTable = {
+      heading: "Summary — whole period",
+      headers: ["", "Total Employees", "Days Present", "Absences", "Lates", "PTO Pending", "Corrections Pending", "Warnings"],
+      textCols: 1,
+      rows: [{ cells: ["Count", filteredProfiles.length, sum("present"), sum("absent"), sum("late"), ptoPending, correctionsPending, warningsCount] }],
+      headerFills: { 2: FILL_GREEN, 3: FILL_RED, 4: FILL_AMBER },
+      greenCols: [2],
+      redCols: [3],
+      amberCols: [4, 5, 6, 7],
+    };
+    const trendTable: AttendanceTable = {
+      heading: "Daily Trend",
+      headers: ["Date", "Present", "Absent", "Late"],
+      textCols: 1,
+      rows: trendData.map((t) => ({ cells: [t.date, t.present, t.absent, t.late] })),
+      headerFills: { 1: FILL_GREEN, 2: FILL_RED, 3: FILL_AMBER },
+      greenCols: [1],
+      redCols: [2],
+      amberCols: [3],
+      totalCols: [1, 2, 3],
+    };
+    const departmentTable: AttendanceTable = {
+      heading: "Department Summary — regular employees",
+      headers: ["Department", "Active Employees", "Deactivated", "Days Present", "Absences", "Total Hours"],
+      textCols: 1,
+      rows: roleSummary.map((r) => ({ cells: [r.role, r.count - r.inactive, r.inactive, r.present, r.absent, Number(r.hours.toFixed(1))] })),
+      headerFills: { 1: FILL_GREEN, 2: FILL_RED },
+      greenCols: [1],
+      redCols: [2, 4],
+      formats: { 5: "#,##0.0" },
+      totalCols: [1, 2, 3, 4, 5],
+    };
+    // Each department's people — the same table the page opens under a department.
+    const peopleTables: AttendanceTable[] = roleSummary.map((r) => {
+      const people = employeesByRole.get(r.role) ?? [];
+      const active = people.filter((e) => !e.inactive).length;
+      return {
+        heading: `${r.role} — ${people.length} ${people.length === 1 ? "person" : "people"} (${active} active${people.length - active ? `, ${people.length - active} deactivated` : ""})`,
+        headers: EMPLOYEE_COLUMNS.map((c) => c.label),
+        textCols: 4,
+        rows: people.map((e) => ({
+          tone: e.inactive ? ("left" as const) : undefined,
+          cells: [
+            e.inactive ? leftName(e.name, e.leftLabel, e.deactivatedOn) : e.name, e.department, e.branch, e.manager,
+            e.daysWorked, Number(e.hours.toFixed(2)), e.daysWorked ? Number((e.hours / e.daysWorked).toFixed(2)) : 0,
+            e.absent, e.missingTimeOut,
+            e.pto ? `${fmtDays(e.pto.remaining)}/${e.pto.allowance}${e.leaveDays ? ` · ${e.leaveDays} on leave` : ""}` : e.leaveDays ? `Not eligible · ${e.leaveDays} on leave` : "Not eligible",
+            e.corrections, e.correctionsApproved, e.correctionsPending, e.correctionsRejected, e.warnings,
+          ] as (string | number)[],
         })),
-        formats: { 7: "0.00" },
-      });
-    } else {
-      sheets.push(
-        {
-          name: "Departments",
-          title: "Department Summary",
-          note: "Regular employees only — trainees are on their own sheet. Deactivated people count while they were still here during the period.",
-          headers: ["Department", "Active Employees", "Deactivated", "Days Present", "Absences", "Total Hours"],
-          textCols: 1,
-          rows: roleSummary.map((r) => ({ cells: [r.role, r.count - r.inactive, r.inactive, r.present, r.absent, Number(r.hours.toFixed(1))] })),
-          greenCols: [1],
-          redCols: [2, 4],
-          formats: { 5: "#,##0.0" },
-          totalCols: [1, 2, 3, 4, 5],
-          widths: { 0: 24 },
-        },
-        {
-          name: "Employees",
-          title: "Employees",
-          note: "Absences leave out rest days, approved leave and days after someone left. PTO Left is remaining / total for their PTO year.",
-          headers: EMPLOYEE_COLUMNS.map((c) => c.label),
-          textCols: 4,
-          rows: roleSummary.flatMap((r) => [
-            { cells: [`${r.role}  ·  ${(employeesByRole.get(r.role) ?? []).length} people`], tone: "group" as const },
-            ...(employeesByRole.get(r.role) ?? []).map((e) => ({
-              tone: e.inactive ? ("left" as const) : undefined,
-              cells: [
-                e.inactive ? leftName(e.name, e.leftLabel, e.deactivatedOn) : e.name, e.department, e.branch, e.manager,
-                e.daysWorked, Number(e.hours.toFixed(2)), e.daysWorked ? Number((e.hours / e.daysWorked).toFixed(2)) : 0,
-                e.absent, e.missingTimeOut,
-                e.pto ? `${fmtDays(e.pto.remaining)}/${e.pto.allowance}${e.leaveDays ? ` · ${e.leaveDays} on leave` : ""}` : e.leaveDays ? `Not eligible · ${e.leaveDays} on leave` : "Not eligible",
-                e.corrections, e.correctionsApproved, e.correctionsPending, e.correctionsRejected, e.warnings,
-              ] as (string | number)[],
-            })),
-          ]),
-          formats: { 5: "0.00", 6: "0.00" },
-          redCols: [7, 13, 14],
-          amberCols: [8, 12],
-          greenCols: [11],
-          widths: { 0: 34, 9: 22 },
-        },
-        {
-          name: "Trainees",
-          title: "Trainees",
-          note: "From Trainee Attendance. Pending Days = punched days still waiting for the manager's review.",
-          headers: ["Trainee", "Department", "Branch", "Manager", "Days Present", "Absences", "Pending Days", "Total Hours"],
-          textCols: 4,
-          rows: traineeSummary.map((t) => ({
+        formats: { 5: "0.00", 6: "0.00" },
+        redCols: [7, 13, 14],
+        amberCols: [8, 12],
+        greenCols: [11],
+        totalCols: [4, 5, 7, 8, 10, 11, 12, 13, 14],
+      };
+    });
+    const traineeTable: AttendanceTable = {
+      heading: `Trainees — ${traineeSummary.length} (from Trainee Attendance; Pending Days = waiting for the manager's review)`,
+      headers: ["Trainee", "Department", "Branch", "Manager", "Days Present", "Absences", "Pending Days", "Total Hours"],
+      textCols: 4,
+      rows: traineeSummary.length
+        ? traineeSummary.map((t) => ({
             tone: t.inactive ? ("left" as const) : undefined,
             cells: [t.inactive ? leftName(t.name, t.leftLabel, t.leftOn) : t.name, t.department, t.branch, t.manager, t.present, t.absent, t.pending, Number(t.hours.toFixed(2))],
-          })),
-          redCols: [5],
-          amberCols: [6],
-          formats: { 7: "0.00" },
-          totalCols: [4, 5, 6, 7],
-          widths: { 0: 34 },
-        },
-      );
-    }
+          }))
+        : [{ cells: ["No trainees in these dates", "", "", "", "", "", "", ""] }],
+      redCols: [5],
+      amberCols: [6],
+      formats: { 7: "0.00" },
+      totalCols: traineeSummary.length ? [4, 5, 6, 7] : undefined,
+    };
+    const dailyTable: AttendanceTable = {
+      heading: "Daily Attendance",
+      headers: ["Name", "Role", "Date", "Clock In", "Required In", "Clock Out", "Required Out", "Hours", "Status"],
+      textCols: 3,
+      rows: dailyEmployeeRows.map((r) => ({
+        cells: [r.name, r.role, r.date, r.clockIn || "—", r.requiredCheckIn || "—", r.clockOut || "—", r.requiredCheckOut || "—", Number(r.hours.toFixed(2)), STATUS_LABEL[r.status]],
+      })),
+      formats: { 7: "0.00" },
+    };
+    const sheets: AttendanceSheetSpec[] = [
+      {
+        name: "Attendance Report",
+        title: "Attendance Monitoring Report",
+        note: "Absences leave out rest days, approved leave and days after someone left. PTO Left = PTO days remaining / total for their PTO year.",
+        sections:
+          groupBy === "employee"
+            ? [summaryTable, dailyTable, trendTable]
+            : [summaryTable, departmentTable, ...peopleTables, traineeTable, trendTable],
+        widths: { 0: 34, 1: 16, 2: 16, 3: 22, 9: 24 },
+      },
+    ];
     setExporting(true);
     try {
       await writeAttendanceWorkbook(`attendance-monitoring-report_${dateFrom}_to_${dateTo}.xlsx`, subtitle, sheets);
