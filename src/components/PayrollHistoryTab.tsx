@@ -242,8 +242,13 @@ export function PayrollHistoryTab({
         if (!li) {
           // Not in the saved run — the reviewed breakdown is the only pay record.
           const total = review ? reviewBreakdownTotal(review) : null;
-          const tax = total != null ? (taxLines.get(id) ?? []).reduce((sum, t) => sum + taxLineAmount(t, total), 0) : 0;
-          return { ...base, rate: 0, regularPay: 0, overtimePay: 0, annualSalary: null, grossPay: total, extraPay: 0, adjustments: [], totalPay: total != null ? total - tax : null };
+          const taxes = total != null
+            ? (taxLines.get(id) ?? [])
+                .map((t) => ({ kind: "tax", description: t.label.trim() || "Tax", amount: taxLineAmount(t, total), percent: t.mode === "percent" ? t.amount : null }))
+                .filter((t) => Math.abs(t.amount) >= 0.005)
+            : [];
+          const tax = taxes.reduce((sum, t) => sum + t.amount, 0);
+          return { ...base, rate: 0, regularPay: 0, overtimePay: 0, annualSalary: null, grossPay: total, extraPay: 0, adjustments: taxes, totalPay: total != null ? total - tax : null };
         }
         const grossPay = li.gross_pay;
         const extraPay = (li.extra_pay || 0);
@@ -520,6 +525,21 @@ function PayBreakdown({
           <div className="text-xs text-amber-300/80 py-1">
             No saved payroll line for this period. They were reviewed, but their pay was never saved, or was removed when payroll was regenerated without them ticked. To fix: on the Payroll tab, pick this period, tick them, and click Generate Payroll.
             {review ? " Until then, the pay shown here comes from their reviewed breakdown." : ""}
+            {r.grossPay != null && (
+              <div className="mt-2 text-sm">
+                <Line label="Gross pay" detail="reviewed breakdown total" amount={gross} strong />
+                {r.adjustments.map((a, i) => (
+                  <Line
+                    key={i}
+                    label={a.description || "Tax"}
+                    detail={a.percent != null ? `tax · ${a.percent}% of gross` : "tax"}
+                    amount={Math.abs(a.amount)}
+                    negative
+                  />
+                ))}
+                <Line label="Total pay" amount={r.totalPay ?? 0} strong />
+              </div>
+            )}
           </div>
         )}
         <div className="mt-2 text-xs text-slate-500">
