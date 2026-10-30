@@ -41,6 +41,7 @@ import { todayISO, formatISODate } from "@/lib/localDate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { TRAINEE_ATTENDANCE_LINK } from "@/lib/supabase/traineeTimecards";
 import { Bell, BellRing, Loader2 } from "lucide-react";
+import { AppModal } from "@/components/ui-kit/AppModal";
 import { toast } from "sonner";
 
 /** Fixed rejection categories the user asked for — "Other" reveals a required free-text field. */
@@ -343,6 +344,77 @@ export function TraineeAttendanceTab({
   const daysAgo = (date: string) => Math.round((Date.parse(companyToday) - Date.parse(date)) / 86_400_000);
   const pendingDayLabel = (date: string) => new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
+  // 🔔 Remind all — every pending day before today in the current view,
+  // grouped into ONE Messenger message per manager (each day a link that
+  // opens it). A confirm popup shows who gets what first.
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkSending, setBulkSending] = useState(false);
+  const bulkPlan = useMemo(() => {
+    const byManager = new Map<string, TraineeTimecardEntry[]>();
+    const noManager: TraineeTimecardEntry[] = [];
+    const mine: TraineeTimecardEntry[] = [];
+    for (const row of filteredRows) {
+      const e = row.entry;
+      if (row.kind !== "entry" || !e || e.status !== "pending" || e.workDate >= companyToday) continue;
+      const managerId = managerIdFor(e);
+      if (!managerId) noManager.push(e);
+      else if (managerId === myProfileId) mine.push(e);
+      else {
+        if (!byManager.has(managerId)) byManager.set(managerId, []);
+        byManager.get(managerId)!.push(e);
+      }
+    }
+    const groups = [...byManager.entries()]
+      .map(([managerId, days]) => ({
+        managerId,
+        managerName: profileById.get(managerId)?.display_name || "Manager",
+        days: [...days].sort((a, b) => a.workDate.localeCompare(b.workDate) || (profileById.get(a.profileId)?.display_name || "").localeCompare(profileById.get(b.profileId)?.display_name || "")),
+      }))
+      .sort((a, b) => b.days.length - a.days.length || a.managerName.localeCompare(b.managerName));
+    return { groups, noManager, mine, total: groups.reduce((n, g) => n + g.days.length, 0) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredRows, companyToday, myProfileId, profileById, profiles]);
+
+  const sendBulkReminders = async () => {
+    if (!myProfileId) {
+      toast.error("Your account isn't linked to an employee profile, so a message can't be sent.");
+      return;
+    }
+    const me = profileById.get(myProfileId)?.display_name || "Attendance Monitoring";
+    setBulkSending(true);
+    let sent = 0;
+    const failed: string[] = [];
+    for (const g of bulkPlan.groups) {
+      const MAX_LINES = 25;
+      const lines = g.days.slice(0, MAX_LINES).map((e) => {
+        const trainee = profileById.get(e.profileId)?.display_name || "A trainee";
+        return `• ${trainee} — ${e.workDate} [Open](app:${TRAINEE_ATTENDANCE_LINK}&review=${encodeURIComponent(e.id)}&date=${e.workDate})`;
+      });
+      const more = g.days.length > MAX_LINES ? `\n…and ${g.days.length - MAX_LINES} more — see Trainee Attendance.` : "";
+      try {
+        const thread = await getOrCreateDmThread(myProfileId, g.managerId);
+        await sendMessage({
+          dmThreadId: thread.id,
+          senderId: myProfileId,
+          senderName: me,
+          body: `🔔 Reminder: ${g.days.length} trainee day${g.days.length === 1 ? " is" : "s are"} still pending your review.\n${lines.join("\n")}${more}`,
+        });
+        sent++;
+        setRemindedIds((prev) => {
+          const next = new Set(prev);
+          for (const e of g.days) next.add(e.id);
+          return next;
+        });
+      } catch {
+        failed.push(g.managerName);
+      }
+    }
+    setBulkSending(false);
+    setBulkOpen(false);
+    if (sent > 0) toast.success(`Reminders sent to ${sent} manager${sent === 1 ? "" : "s"} on Messenger.`);
+    if (failed.length > 0) toast.error(`Couldn't message: ${failed.join(", ")}`);
+  };
+
   const pendingCount = filteredRows.filter((r) => r.kind === "entry" && r.entry!.status === "pending").length;
   const hasActiveFilter = search.trim() !== "" || statusFilter !== "all" || branchFilter !== "all" || managerFilter !== "all" || !!pendingDay;
 
@@ -548,6 +620,17 @@ export function TraineeAttendanceTab({
             </div>
           </div>
           <div className="flex items-end justify-end gap-2 md:col-span-2">
+            {bulkPlan.total > 0 && (
+              <button
+                type="button"
+                onClick={() => setBulkOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm font-semibold text-amber-300 hover:bg-amber-500/20 transition"
+                title="Remind every manager about their pending days before today in this view"
+              >
+                <Bell className="h-4 w-4" />
+                Remind all ({bulkPlan.total})
+              </button>
+            )}
             <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-2 text-sm">
               <span className="text-yellow-300/80">Pending: </span>
               <span className="font-semibold text-yellow-300">{pendingCount}</span>
@@ -857,6 +940,61 @@ export function TraineeAttendanceTab({
             </div>
           </div>
         </div>
+      )}
+      {bulkOpen && (
+        <AppModal
+          title="Remind managers"
+          description={`${bulkPlan.total} pending day${bulkPlan.total === 1 ? "" : "s"} before today · one Messenger message per manager, from you`}
+          onClose={() => setBulkOpen(false)}
+          busy={bulkSending}
+          size="lg"
+          footer={
+            <div className="flex items-center justify-end gap-2">
+              <button type="button" onClick={() => setBulkOpen(false)} disabled={bulkSending} className="px-3 py-1.5 rounded-lg border border-white/10 text-sm text-slate-300 hover:bg-white/5 disabled:opacity-50">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void sendBulkReminders()}
+                disabled={bulkSending || bulkPlan.groups.length === 0}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-sm font-semibold disabled:opacity-50"
+              >
+                {bulkSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bell className="h-4 w-4" />}
+                Send to {bulkPlan.groups.length} manager{bulkPlan.groups.length === 1 ? "" : "s"}
+              </button>
+            </div>
+          }
+        >
+          <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+            {bulkPlan.groups.map((g) => (
+              <div key={g.managerId} className="rounded-lg border border-white/10 bg-white/[0.03]">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+                  <span className="font-semibold text-sm text-white">{g.managerName}</span>
+                  <span className="text-xs text-amber-300">{g.days.length} day{g.days.length === 1 ? "" : "s"}</span>
+                </div>
+                <ul className="px-3 py-2 space-y-1">
+                  {g.days.map((e) => (
+                    <li key={e.id} className="flex items-center justify-between gap-3 text-xs">
+                      <span className="text-slate-200">{profileById.get(e.profileId)?.display_name || "A trainee"}</span>
+                      <span className="text-slate-400 tabular-nums">{formatISODate(e.workDate, { month: "short", day: "numeric", year: "numeric" })}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+            {bulkPlan.mine.length > 0 && (
+              <p className="text-xs text-slate-400">
+                Not sent — {bulkPlan.mine.length} day{bulkPlan.mine.length === 1 ? " is" : "s are"} for your own trainees; review them with View Timecard.
+              </p>
+            )}
+            {bulkPlan.noManager.length > 0 && (
+              <p className="text-xs text-amber-300/90">
+                Not sent — {bulkPlan.noManager.length} day{bulkPlan.noManager.length === 1 ? " has" : "s have"} no manager on file:{" "}
+                {[...new Set(bulkPlan.noManager.map((e) => profileById.get(e.profileId)?.display_name || "A trainee"))].join(", ")}.
+              </p>
+            )}
+          </div>
+        </AppModal>
       )}
     </div>
   );
