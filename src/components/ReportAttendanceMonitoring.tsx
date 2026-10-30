@@ -667,7 +667,7 @@ export function ReportAttendanceMonitoring({
       totalCols: [1, 2, 3],
     };
     const departmentTable: AttendanceTable = {
-      heading: "Department Summary — regular employees",
+      heading: "Department Summary — Full Period",
       headers: ["Department", "Active Employees", "Deactivated", "Days Present", "Absences", "Total Hours"],
       textCols: 1,
       rows: roleSummary.map((r) => ({ cells: [r.role, r.count - r.inactive, r.inactive, r.present, r.absent, Number(r.hours.toFixed(1))] })),

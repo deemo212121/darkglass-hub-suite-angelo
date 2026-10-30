@@ -72,6 +72,17 @@ const isFlashTechAllowance = (e: ExpenseRow) => e.reimbursementType === "Flash T
  */
 const isFlashTechViewExpense = (e: ExpenseRow) => !!e.flashTechTripId || e.category === "Hotel" || e.category === "Car Rental" || isFlashTechAllowance(e);
 
+// Car Rental pick-up / return (migration 0420) — "Nov 2 → Nov 7, 2026" and the number of days.
+const fmtRentalDate = (d: string, withYear: boolean) =>
+  new Date(d + "T00:00:00").toLocaleDateString("en-US", withYear ? { month: "short", day: "numeric", year: "numeric" } : { month: "short", day: "numeric" });
+const rentalLabel = (e: ExpenseRow): string => {
+  if (!e.pickupDate && !e.returnDate) return "";
+  if (e.pickupDate && e.returnDate) return fmtRentalDate(e.pickupDate, false) + " → " + fmtRentalDate(e.returnDate, true);
+  return e.pickupDate ? "Picked up " + fmtRentalDate(e.pickupDate, true) : "Returned " + fmtRentalDate(e.returnDate!, true);
+};
+const rentalDays = (e: ExpenseRow): number | null =>
+  e.pickupDate && e.returnDate ? Math.max(0, Math.round((Date.parse(e.returnDate) - Date.parse(e.pickupDate)) / 86_400_000)) : null;
+
 export function ExpenseTrackingPage({
   mod,
   sub,
@@ -226,6 +237,7 @@ export function ExpenseTrackingPage({
     // Gas / Food / Other on a Reimbursement Form (migration 0401). Every "Other — …" is one filter choice, "Other".
     { key: "type", label: "Type", value: (e) => e.reimbursementType || "—" },
     { key: "date", label: "Date", value: (e) => e.expenseDate || "" },
+    { key: "rental", label: "Pick-up / Return", value: (e) => rentalLabel(e) || "—" },
     { key: "amount", label: "Amount", value: (e) => fmtMoney(e.amount) },
     { key: "description", label: "Description", value: (e) => e.description || "" },
     { key: "sentBy", label: "Sent By", value: (e) => (e.createdBy ? profileName(e.createdBy) : "") },
@@ -233,7 +245,9 @@ export function ExpenseTrackingPage({
     { key: "reviewer", label: "Approved / Rejected By", value: (e) => reviewerName(e) },
     { key: "receipt", label: "Receipt", value: (e) => (receiptCount(e) ? "Has receipt" : "No receipt") },
   ];
-  const COLUMNS = showStatus ? ALL_COLUMNS : ALL_COLUMNS.filter((c) => c.key !== "status" && c.key !== "reviewer");
+  // Pick-up / Return only when the view has Car Rentals in it.
+  const showRental = scopedExpenses.some((e) => e.category === "Car Rental");
+  const COLUMNS = ALL_COLUMNS.filter((c) => (showStatus || (c.key !== "status" && c.key !== "reviewer")) && (showRental || c.key !== "rental"));
   const matchesSearch = (e: ExpenseRow) =>
     !search || `${profileName(e.profileId)} ${e.createdBy ? profileName(e.createdBy) : ""} ${e.description}`.toLowerCase().includes(search.toLowerCase());
   const matchesColumns = (e: ExpenseRow, skipKey?: string) =>
@@ -349,12 +363,14 @@ export function ExpenseTrackingPage({
 
   const handleDownload = () => {
     const q = (s: string) => `"${s.replace(/"/g, '""')}"`;
-    let csv = "Employee,Category,Date,Amount,Description,Status,Sent By,Approved / Rejected By,Reviewed On,Rejection Reason\n";
+    let csv = "Employee,Category,Date,Pick-up,Return,Amount,Description,Status,Sent By,Approved / Rejected By,Reviewed On,Rejection Reason\n";
     filtered.forEach((e) => {
       csv += [
         q(profileName(e.profileId)),
         q(e.category),
         q(e.expenseDate),
+        q(e.pickupDate ?? ""),
+        q(e.returnDate ?? ""),
         q(e.amount.toFixed(2)),
         q(e.description),
         q(e.status),
@@ -633,6 +649,18 @@ export function ExpenseTrackingPage({
                       )}
                     </td>
                     <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap tabular-nums">{e.expenseDate}</td>
+                    {showRental && (
+                      <td className="px-2 py-1.5 whitespace-nowrap tabular-nums">
+                        {rentalLabel(e) ? (
+                          <>
+                            <div className="text-slate-200">{rentalLabel(e)}</div>
+                            {rentalDays(e) != null && <div className="text-[11px] text-slate-500">{rentalDays(e)} day{rentalDays(e) === 1 ? "" : "s"}</div>}
+                          </>
+                        ) : (
+                          <span className="text-slate-600 text-xs">—</span>
+                        )}
+                      </td>
+                    )}
                     <td className="px-2 py-1.5 text-right text-slate-200 font-mono">{fmtMoney(e.amount)}</td>
                     <td className="px-2 py-1.5 text-slate-400 w-[260px] max-w-[260px] whitespace-normal">
                       {e.description ? (
