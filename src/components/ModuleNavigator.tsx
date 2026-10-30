@@ -30,7 +30,7 @@ import { ROLE_OPTIONS, isModuleAllowed, isModuleAllowedForTrainee, isModuleAllow
 const SUPER_ROLES = new Set(["SUPERADMIN", "SUPERSUPERADMIN"]);
 
 export function ModuleNavigator() {
-  const { ready, email, role, extraRoles, isTrainee, isFrozen, realRole, viewAsRole, setViewAsRole } = useAuth();
+  const { ready, email, uid, companyId, role, extraRoles, isTrainee, isFrozen, realRole, viewAsRole, setViewAsRole } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [activeModule, setActiveModule] = useState<ModuleDef | null>(null);
   const closeTimer = useRef<number | null>(null);
@@ -55,7 +55,7 @@ export function ModuleNavigator() {
   const visibleSubmodulesFor = (m: ModuleDef): SubModuleDef[] =>
     m.submodules.filter((s) => {
       if (s.hiddenFromGrid) return false;
-      return canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee, isFrozen);
+      return canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee, isFrozen, { uid, companyId });
     });
 
   // Same module-level "Whole Module" front-door gate home.tsx's tile grid

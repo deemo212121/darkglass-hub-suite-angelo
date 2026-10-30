@@ -16,6 +16,7 @@ import { getDashboardRoleGate, hasDashboardAccess } from "./dashboardAccess";
 import { getModuleRoleGate, MODULE_LEVEL_GATE_SLUG } from "./moduleAccess";
 import { canSeeTicketTour } from "./tours/ticketTours";
 import { guideDepartmentFor } from "./tours/guideDepartments";
+import { passesHrPaperworksPeopleGate } from "./hrPaperworksAccess";
 
 const DASHBOARD_FAMILY_MODULES = new Set(["dashboard", "hr", "accounting", "csr"]);
 
@@ -100,7 +101,9 @@ export function canAccessSubmodule(
   moduleSlug: string,
   sub: { slug: string; custom?: string },
   isTrainee?: boolean,
-  isFrozen?: boolean
+  isFrozen?: boolean,
+  /** Who is asking — HR Paperworks is limited to named people (hrPaperworksAccess.ts); without this it's listed for Super Admin only. */
+  person?: { uid: string | null; companyId: string | null }
 ): boolean {
   if (isTrainee && !isSubmoduleAllowedForTrainee(isTrainee, moduleSlug, sub.slug)) return false;
   if (isFrozen && !isSubmoduleAllowedForFrozen(isFrozen, moduleSlug, sub.slug)) return false;
@@ -136,6 +139,7 @@ export function canAccessSubmodule(
   if (isActivityLogSubmodule && !hasDashboardAccess(explicitModuleOverride ?? ACTIVITY_LOG_DEFAULT_ROLES, role, extraRoles)) return false;
   if (isWhereaboutsSubmodule && !hasDashboardAccess(explicitModuleOverride ?? WHEREABOUTS_DEFAULT_ROLES, role, extraRoles)) return false;
   if (sub.custom === "company-settings" && !isCompanySuperAdminRole(role, extraRoles)) return false;
+  if (sub.custom === "hr-paperworks" && !passesHrPaperworksPeopleGate({ uid: person?.uid, companyId: person?.companyId, role, extraRoles })) return false;
   if (sub.custom === "bizops-guide" && !hasDashboardAccess(explicitModuleOverride ?? BIZOPS_GUIDE_DEFAULT_ROLES, role, extraRoles)) return false;
   if ((sub.custom === "pre-auth" || sub.custom === "claims-guide") && !hasDashboardAccess(explicitModuleOverride ?? PRE_AUTH_DEFAULT_ROLES, role, extraRoles)) return false;
   // Guides → department tiles: that department's roles only (Admin / SuperAdmin see every one).

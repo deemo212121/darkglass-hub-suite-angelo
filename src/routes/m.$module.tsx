@@ -511,7 +511,7 @@ function ModuleIndex() {
               // submodule route itself enforces, so a restricted tile is
               // never shown here only to land on "Access restricted" once
               // clicked.
-              .filter((s: SubModuleDef) => canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee, isFrozen))
+              .filter((s: SubModuleDef) => canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee, isFrozen, { uid, companyId }))
               // Alphabetical, same as every other module's grid below.
               .sort((a: SubModuleDef, b: SubModuleDef) => submoduleSortKey(a.title).localeCompare(submoduleSortKey(b.title)))
               .map((s: SubModuleDef) => (
@@ -537,7 +537,7 @@ function ModuleIndex() {
             {submodules
               // Full gate (see submoduleAccess.ts) — the same check the
               // submodule route itself enforces.
-              .filter((s: SubModuleDef) => canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee, isFrozen))
+              .filter((s: SubModuleDef) => canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee, isFrozen, { uid, companyId }))
               .sort((a: SubModuleDef, b: SubModuleDef) => submoduleSortKey(a.title).localeCompare(submoduleSortKey(b.title)))
               .map((s: SubModuleDef) => (
               <Link
