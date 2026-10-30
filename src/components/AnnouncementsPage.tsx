@@ -17,7 +17,7 @@ import { CheckCheck, Megaphone, Pause, Play, Radio, Search, Send, Trash2 } from 
 import { toast } from "sonner";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
-import { canManageChannelsRole } from "@/lib/roleLabels";
+import { canManageChannelsRole, anyHeldRoleIn } from "@/lib/roleLabels";
 import {
   type ChannelRow,
   type MessageRow,
@@ -160,7 +160,8 @@ export function AnnouncementsPage(_: Props) {
   const isTickerOn = usingSamples ? sampleTickerEnabled() : tickerOn;
 
   const currentUserName = displayName || email || "Current User";
-  const canPost = HIGHER_UP_ROLES.has(String(role || "").toUpperCase());
+  // Primary or secondary user type.
+  const canPost = anyHeldRoleIn(HIGHER_UP_ROLES, role, extraRoles);
 
   // Resolve profile id, the announcements channel, and titles.
   useEffect(() => {

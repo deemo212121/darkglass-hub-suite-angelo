@@ -296,7 +296,7 @@ function allHeldRoles(role: string | null | undefined, extraRoles?: string[] | n
  * qualifies is just as good as a primary one, so holding multiple roles can
  * only ever widen what someone can do, never narrow it.
  */
-function anyHeldRoleIn(roleSet: Set<string>, role: string | null | undefined, extraRoles?: string[] | null): boolean {
+export function anyHeldRoleIn(roleSet: Set<string>, role: string | null | undefined, extraRoles?: string[] | null): boolean {
   return allHeldRoles(role, extraRoles).some((r) => roleSet.has(r));
 }
 
@@ -496,13 +496,14 @@ export function canManageMisdiagnosed(role: string | null | undefined, extraRole
 
 /**
  * Who may move a ticket to CL-Cancelled (and record its Cancellation
- * Reason): BizOps Manager / BizOps Senior Manager, plus Admin / SuperAdmin —
+ * Reason): BizOps Manager / BizOps Senior Manager, plus Admin / SuperAdmin /
+ * Super Super Admin —
  * as the main role or a secondary one. Everyone else flags CL-Need Cancel
  * for BizOps to verify. A trainee only once HR has granted them access
  * (Master List → Grant access) — useAuth's isTrainee is false from then on.
  * Same rule on the ticket page, Work Planner and the mobile app.
  */
-export const CANCEL_STATUS_ROLES = new Set(["BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "ADMIN", "SUPERADMIN"]);
+export const CANCEL_STATUS_ROLES = new Set(["BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"]);
 export function canSetCancelledStatus(role: string | null | undefined, extraRoles?: string[] | null, isTrainee = false): boolean {
   return !isTrainee && anyHeldRoleIn(CANCEL_STATUS_ROLES, role, extraRoles);
 }
