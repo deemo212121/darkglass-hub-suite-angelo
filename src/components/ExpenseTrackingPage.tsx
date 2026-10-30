@@ -245,7 +245,11 @@ export function ExpenseTrackingPage({
   ];
   // Pick-up Date / Return Date only when the view has Car Rentals in it.
   const showRental = scopedExpenses.some((e) => e.category === "Car Rental");
-  const COLUMNS = ALL_COLUMNS.filter((c) => (showStatus || (c.key !== "status" && c.key !== "reviewer")) && (showRental || (c.key !== "pickup" && c.key !== "return")));
+  // A Car Rental-only view shows Pick-up Date / Return Date instead of Date (a Car Rental's Date is its pick-up date).
+  const carRentalOnly = categoryOnly === "Car Rental" || (!!flashTechOnly && flashTechView === "carRental");
+  const COLUMNS = ALL_COLUMNS.filter(
+    (c) => (showStatus || (c.key !== "status" && c.key !== "reviewer")) && (showRental || (c.key !== "pickup" && c.key !== "return")) && !(carRentalOnly && c.key === "date")
+  );
   const matchesSearch = (e: ExpenseRow) =>
     !search || `${profileName(e.profileId)} ${e.createdBy ? profileName(e.createdBy) : ""} ${e.description}`.toLowerCase().includes(search.toLowerCase());
   const matchesColumns = (e: ExpenseRow, skipKey?: string) =>
@@ -361,13 +365,13 @@ export function ExpenseTrackingPage({
 
   const handleDownload = () => {
     const q = (s: string) => `"${s.replace(/"/g, '""')}"`;
-    let csv = "Date Created,Employee,Category,Date,Pick-up Date,Return Date,Amount,Description,Status,Sent By,Approved / Rejected By,Reviewed On,Rejection Reason\n";
+    let csv = `Date Created,Employee,Category,${carRentalOnly ? "" : "Date,"}Pick-up Date,Return Date,Amount,Description,Status,Sent By,Approved / Rejected By,Reviewed On,Rejection Reason\n`;
     filtered.forEach((e) => {
       csv += [
         q(createdDay(e)),
         q(profileName(e.profileId)),
         q(e.category),
-        q(e.expenseDate),
+        ...(carRentalOnly ? [] : [q(e.expenseDate)]),
         q(e.pickupDate ?? ""),
         q(e.returnDate ?? ""),
         q(e.amount.toFixed(2)),
@@ -657,7 +661,7 @@ export function ExpenseTrackingPage({
                         <span className="text-slate-600 text-xs">—</span>
                       )}
                     </td>
-                    <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap tabular-nums">{e.expenseDate}</td>
+                    {!carRentalOnly && <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap tabular-nums">{e.expenseDate}</td>}
                     {showRental && (<>
                       <td className="px-2 py-1.5 whitespace-nowrap tabular-nums">
                         {e.pickupDate ? <span className="text-slate-200">{e.pickupDate}</span> : <span className="text-slate-600 text-xs">—</span>}
