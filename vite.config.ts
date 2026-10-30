@@ -953,9 +953,14 @@ export default defineConfig({
             const normalized = id.replace(/\\/g, "/");
 
             // Rollup's shared CommonJS helpers (commonjsRequire etc.) — pinned
-            // to "vendor", or they land in the first lazy chunk that needs
+            // to "react", or they land in the first lazy chunk that needs
             // them (tesseract) and every other one (exceljs) has to load it.
-            if (normalized.includes("commonjsHelpers") || normalized.includes("commonjs-dynamic-modules")) return "vendor";
+            // NOT "vendor": React's own CommonJS code needs them, so "react"
+            // then imported "vendor" while "vendor" imports "react" — a cycle
+            // that left React undefined when "icons" ran, and the whole app
+            // rendered blank (production, 2026-10-30: "Cannot read properties
+            // of undefined (reading 'createContext')"). "react" imports nothing.
+            if (normalized.includes("commonjsHelpers") || normalized.includes("commonjs-dynamic-modules")) return "react";
 
             if (normalized.includes("/node_modules/")) {
               // Leaflet is browser-only (touches `window` at module load, not
