@@ -410,13 +410,16 @@ export function TicketsMapWorkMap({ mod, sub }: { mod: ModuleDef; sub: SubModule
   }, [liveTechnicians]);
 
   const dayTickets = useMemo(() => {
-    const effectiveBranch = (ticket: (typeof tickets)[number]) => {
+    // The ticket's own branch still counts too, so a branch covered entirely
+    // by techs from elsewhere doesn't come up empty (same as Work Planner).
+    const ticketBranches = (ticket: (typeof tickets)[number]) => {
       const techName = String((ticket as any).technician_name || ticket.technician || "").trim();
       const techBranch = techName ? techBranchByName.get(techName.toLowerCase()) : undefined;
-      return normalizeLocationName(techBranch || ticket.location || ticket.customer_city || ticket.city || "Richmond, VA");
+      const ownBranch = normalizeLocationName(ticket.location || ticket.customer_city || ticket.city || "Richmond, VA");
+      return techBranch ? [normalizeLocationName(techBranch), ownBranch] : [ownBranch];
     };
     const filtered = selectedLocation
-      ? tickets.filter((ticket) => effectiveBranch(ticket) === selectedLocation)
+      ? tickets.filter((ticket) => ticketBranches(ticket).includes(selectedLocation))
       : tickets;
 
     // What counts as "pending" — i.e. work that hasn't been closed out.

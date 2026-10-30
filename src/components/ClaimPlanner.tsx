@@ -11,7 +11,7 @@ import { localISODate } from "@/lib/localDate";
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
 const CLAIM_COMPANIES = ["Samsung","LG","Whirlpool","GE Appliances","Bosch","Electrolux"];
-const TECHS = ["Damon Ottley","Marc James","Nathan Wagner","Christian Clark","Gabriel Talley","Josh Malloch"];
+const TECHS = ["Damon Ottley","Marc James","Nathan Wagner","Christian Clark","Gabriel Talley","Joshua Malloch"];
 
 const ALL_ROWS = Array.from({length:40},(_,i)=>{
   const d = new Date(); d.setDate(d.getDate()+(i%14)-7);

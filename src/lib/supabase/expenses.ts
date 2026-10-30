@@ -15,7 +15,7 @@ export type ExpenseCategory = "Hotel" | "Car Rental" | "Office Supply" | "Reimbu
 export type ExpenseStatus = "Pending" | "Approved" | "Reimbursed" | "Rejected";
 /**
  * What a Reimbursement Form was for (migration 0401) — Other carries the
- * employee's own words. Flash Tech Allowance (migration 0413) shows under
+ * employee's own words. Flash Tech Allowance (migration 0414 — 0413 in Angelo's repo) shows under
  * Expenses → Flash Tech, not Employee Requests.
  */
 export const REIMBURSEMENT_TYPES = ["Gas", "Food", "Flash Tech Allowance", "Other"] as const;
@@ -55,7 +55,7 @@ export interface ExpenseRow {
   receiptUrl: string | null;
   /** Full Firebase Storage path for the receipt (needed to delete it if replaced/removed). */
   receiptPath: string | null;
-  /** Every receipt on the expense, the one above first, then extra_receipts (migration 0414). */
+  /** Every receipt on the expense, the one above first, then extra_receipts (migration 0415). */
   receipts: ExpenseReceipt[];
   /** The Official Receipt / transaction number printed on the receipt itself — see migration 0132. */
   orNumber: string | null;
@@ -119,7 +119,7 @@ const EXPENSE_COLUMNS = "id, profile_id, category, expense_date, amount, descrip
 let reviewNoteColumnMissing = false;
 // Same for reimbursement_type / reimbursement_other (migration 0401).
 let reimbursementColumnsMissing = false;
-// Same for extra_receipts (migration 0414).
+// Same for extra_receipts (migration 0415).
 let extraReceiptsColumnMissing = false;
 
 async function selectExpensePages(filter: (query: any) => any): Promise<ExpenseRow[]> {
@@ -161,14 +161,14 @@ function reimbursementFields(f: { reimbursementType?: ReimbursementType | null; 
 }
 const reimbursementError = (msg: string) =>
   /reimbursement_/.test(msg) ? "Saving the reimbursement type needs migration 0401 — run it in the Supabase SQL Editor first."
-    : /extra_receipts/.test(msg) ? "Saving more than one receipt needs migration 0414 — run it in the Supabase SQL Editor first."
+    : /extra_receipts/.test(msg) ? "Saving more than one receipt needs migration 0415 — run it in the Supabase SQL Editor first."
     : msg;
 
 /**
  * The receipt columns from a list of receipts: the first in receipt_url /
- * receipt_path, the rest in extra_receipts (migration 0414). extra_receipts is
+ * receipt_path, the rest in extra_receipts (migration 0415). extra_receipts is
  * only sent when there's more than one, or to clear old extras — so a single
- * receipt still saves before 0414 is run.
+ * receipt still saves before 0415 is run.
  */
 function receiptFields(receipts: ExpenseReceipt[] | undefined, clearExtras: boolean) {
   if (!receipts) return {};

@@ -911,8 +911,15 @@ export async function getAttendanceForRange(
     // real times to show, rendering as a misleading green "Present" next
     // to blank Clock In/Out cells instead of the missing-data status a
     // day with no `row` at all already gets (see the `!row` branch above).
+    // An empty row on an approved leave day is still that leave, same as
+    // the `!row` branch above — payroll (computeHoursMap) skips punchless
+    // rows and credits the PTO, so reading it as "absent" here showed a
+    // leave day as a missed shift (e.g. a rate/state edit leaving an empty
+    // row on an approved PTO day).
+    const emptyIsUnpaidLeave = !entry.checkIn && !entry.checkOut && !isOffDay && !isHoliday && unpaidType != null;
+    const emptyIsPaidLeave = !entry.checkIn && !entry.checkOut && !emptyIsUnpaidLeave && !isOffDay && !isHoliday && leaveType != null && scheduledNetHours > 0;
     let status: AttendanceRow["status"] = "present";
-    if (!entry.checkIn && !entry.checkOut) status = isOffDay ? "day-off" : isHoliday ? "holiday" : "absent";
+    if (!entry.checkIn && !entry.checkOut) status = isOffDay ? "day-off" : isHoliday ? "holiday" : emptyIsUnpaidLeave ? "unpaid-leave" : emptyIsPaidLeave ? "paid-leave" : "absent";
     else if (entry.checkIn && !entry.checkOut) status = "missing-out";
     else if (!entry.checkIn && entry.checkOut) status = "missing-in";
     else if (entry.checkIn && entry.checkOut && hoursBetween(entry.checkIn, entry.checkOut) > 6 && !(entry.mealStart && entry.mealEnd)) status = "missing-meal";
@@ -931,8 +938,9 @@ export async function getAttendanceForRange(
       clockOut: entry.checkOut,
       mealStart: entry.mealStart,
       mealEnd: entry.mealEnd,
-      hoursWorked: calcWorkedHours(entry),
+      hoursWorked: emptyIsPaidLeave ? scheduledNetHours : calcWorkedHours(entry),
       status,
+      ...(emptyIsPaidLeave || emptyIsUnpaidLeave ? { leaveType } : {}),
       ...(row.state ? { state: row.state as string } : {}),
       clockedInBy: (row.clocked_in_by as string | null) ?? null,
       notes: (row.notes as string | null) ?? "",

@@ -97,11 +97,11 @@ import { TicketTimeDisputesTab } from "@/components/TicketTimeDisputesTab";
 import { BranchManagerCommissionTab } from "@/components/BranchManagerCommissionTab";
 import { ReviewedPeriodsTab } from "@/components/ReviewedPeriodsTab";
 import { PayrollHistoryTab } from "@/components/PayrollHistoryTab";
-import { upsertPayrollReviewBreakdown } from "@/lib/supabase/payrollReviewBreakdowns";
+import { upsertPayrollReviewBreakdown, type PayrollReviewAmounts } from "@/lib/supabase/payrollReviewBreakdowns";
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, linkPayrollDisputeCustomPayItem, modifyPayrollDispute, restorePayrollDisputeOriginal, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
-import { perCutoffSalary, getSalaryHistory } from "@/lib/supabase/salary";
+import { perCutoffSalary, getSalaryHistory, mixedPeriodFixedPay, FIXED_WORKING_DAYS_PER_CUTOFF, type MixedPeriodFixedPay } from "@/lib/supabase/salary";
 import { getPayrollReviewMarks, markPayrollReviewed, clearPayrollReviewMark, type PayrollReviewMark } from "@/lib/supabase/payrollReviewMarks";
 import { cents, centsSummaryTotal, groupCustomPayLines } from "@/lib/payRounding";
 import { getPayrollAdjustmentsForPeriod, payrollAdjustmentsEligible, resolveAdjustmentLines, sumPayrollAdjustments, type PayrollAdjustment } from "@/lib/supabase/payrollAdjustments";
@@ -439,6 +439,11 @@ export interface EmployeePayrollRow {
   /** Fixed salary paid pro rata for a deactivated employee: days worked of
    *  FIXED_WORKING_DAYS_PER_CUTOFF. Unset when the full per-cutoff salary is paid. */
   fixedDaysWorked?: number;
+  /** Set when the period switches between hourly and a fixed salary part-way
+   *  (mixedPeriodFixedPay): hourly days by the hour + fixed days ÷ 10. */
+  mixedPay?: MixedPeriodFixedPay & { hourlyHours: number; hourlyPay: number };
+  /** Tech row only: grossPay split into Finance's summary columns (Reviewed Periods). */
+  techSummary?: PayrollReviewAmounts;
 }
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
@@ -896,8 +901,6 @@ function mileageStatusStyle(status: string, rows: RepairStatus[]): { color: stri
 // A fixed-salary row's hourlyRateUSD is always 0 (see payrollRows above) —
 // shown instead as its annual salary so the Rate column/filter/export never
 // display a misleading "$0.00" for these employees.
-/** Working days a fixed salary's per-cutoff amount covers (biweekly: 2 × 5). */
-const FIXED_WORKING_DAYS_PER_CUTOFF = 10;
 
 function rateLabel(row: EmployeePayrollRow): string {
   if (row.compensationType === "fixed" && row.annualSalary) return `Fixed $${row.annualSalary.toLocaleString()}/yr`;
@@ -1763,7 +1766,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           for (let from = 0; ; from += PAGE_SIZE) {
             const { data, error } = await supabase
               .from("profiles")
-              .select("id,company_id,phone_number,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,payroll_excluded,is_active,schedule_timezone,employment_type,tier_level,training_end_date")
+              .select("id,company_id,phone_number,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,working_hours,meal_minutes,payroll_excluded,is_active,schedule_timezone,employment_type,tier_level,training_end_date")
               .neq("role", "SUPERSUPERADMIN")
               .range(from, from + PAGE_SIZE - 1);
             if (error) return { data: null, error };
@@ -1836,21 +1839,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
       const runs = (runsRes.data ?? []) as PayrollRun[];
 
-      // Fetched separately, best-effort — working_hours/meal_minutes
-      // (migration 0109) must never be able to break the rest of this
-      // dashboard if that migration hasn't been applied yet.
+      // working_hours/meal_minutes come with the main profiles select above.
+      // They used to be a separate best-effort `.in("id", <every profile>)`
+      // query whose URL outgrew the request limit; when it failed, everyone
+      // silently fell back to Check-In–Check-Out minus meal (8:00–17:00 −
+      // 30 min = 8.5h instead of working_hours 8), so credited PTO hours and
+      // totals changed between refreshes.
       const empIds = ((empRes.data ?? []) as any[]).map((p) => p.id);
-      const workScheduleById = new Map<string, { working_hours: number | null; meal_minutes: number | null }>();
       if (empIds.length > 0) {
-        const { data: extraRows, error: extraError } = await supabase
-          .from("profiles")
-          .select("id,working_hours,meal_minutes")
-          .in("id", empIds);
-        if (extraError) {
-          console.error("Failed to load working_hours/meal_minutes:", extraError.message);
-        } else {
-          for (const r of extraRows ?? []) workScheduleById.set((r as any).id, r as any);
-        }
         getEmployeeInfoByProfileIds(empIds)
           .then(setEmployeeInfoByProfileId)
           .catch((err) => console.error("Failed to load employee bank info:", err));
@@ -1883,8 +1879,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         offDays: p.off_days ?? undefined,
         requiredCheckIn: p.required_check_in ?? undefined,
         requiredCheckOut: p.required_check_out ?? undefined,
-        workingHours: workScheduleById.get(p.id)?.working_hours ?? null,
-        mealMinutes: workScheduleById.get(p.id)?.meal_minutes ?? null,
+        workingHours: p.working_hours ?? null,
+        mealMinutes: p.meal_minutes ?? null,
         scheduleTimezone: (p.schedule_timezone as ScheduleTimezone | null) ?? "CST",
         payrollExcluded: p.payroll_excluded ?? false,
         isActive: p.is_active ?? true,
@@ -2460,16 +2456,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       if (list) list.push(se);
       else salaryEntriesByProfile.set(se.profile_id, [se]);
     }
-    const hourlyRateOnDate = (profileId: string, date: string, fallbackRate: number): number => {
-      const entries = salaryEntriesByProfile.get(profileId);
-      if (!entries) return fallbackRate;
+    const salaryEntryOnDate = (profileId: string, date: string): SalaryEntry | null => {
       let best: SalaryEntry | null = null;
-      for (const se of entries) {
+      for (const se of salaryEntriesByProfile.get(profileId) ?? []) {
         if (se.effective_date > date) continue;
         if (!best || se.effective_date > best.effective_date || (se.effective_date === best.effective_date && se.created_at > best.created_at)) {
           best = se;
         }
       }
+      return best;
+    };
+    const hourlyRateOnDate = (profileId: string, date: string, fallbackRate: number): number => {
+      const best = salaryEntryOnDate(profileId, date);
       return best ? (best.compensation_type === "hourly" ? best.hourly_rate : 0) : fallbackRate;
     };
 
@@ -2749,8 +2747,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // several of those days before being let go. Their pay for that period
     // shouldn't silently vanish just because their account is inactive today;
     // the row is labeled "(Deactivated)" (see EmployeePayrollRow.employee.isActive)
-    // so it's still obvious they're no longer active.
-    const payrollRows: EmployeePayrollRow[] = employees.filter((emp) => emp.isActive || hoursMap.has(emp.id)).flatMap((emp) => {
+    // so it's still obvious they're no longer active. Same for one with no
+    // hours but Tech Activity Report lines this period (deductions, a redo,
+    // reimbursements) — those are still their pay, and Reviewed Periods needs
+    // their real total.
+    const payrollRows: EmployeePayrollRow[] = employees.filter((emp) => emp.isActive || hoursMap.has(emp.id) || techCustomItemsByProfile.has(emp.id)).flatMap((emp) => {
       const comp = latestCompMap.get(emp.id);
       const isFixed = comp?.compensation_type === "fixed";
       const hourlyRate = isFixed ? 0 : comp?.hourly_rate ?? emp.hourly_rate ?? 0;
@@ -3035,21 +3036,22 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       const regularColumn = techRegularHourly + techTraineeMatch + techHolidayPremium;
       const otColumn = isFixed ? 0 : techHourlyPay - techRegularHourly;
       const reimbursementColumn = effectiveMileagePay + customColumns.reimbursement;
-      const techGrossPay = includeTech
-        ? centsSummaryTotal({
-            regularPay: regularColumn,
-            otPay: otColumn,
-            bonus: customColumns.bonus,
-            commission:
-              techGrossPayExact - regularColumn - otColumn - customColumns.bonus - reimbursementColumn +
-              customColumns.deduction + customColumns.pretaxInsurance - techGuaranteedSalaryMatch,
-            ptoPay: 0,
-            deduction: customColumns.deduction,
-            mileageOtherReimb: reimbursementColumn,
-            pretaxInsurance: customColumns.pretaxInsurance,
-            salaryMatch: techGuaranteedSalaryMatch,
-          })
-        : 0;
+      // Finance's summary columns, live — also what Reviewed Periods compares
+      // its saved row against (techSummary).
+      const techSummary: PayrollReviewAmounts = {
+        regularPay: regularColumn,
+        otPay: otColumn,
+        bonus: customColumns.bonus,
+        commission:
+          techGrossPayExact - regularColumn - otColumn - customColumns.bonus - reimbursementColumn +
+          customColumns.deduction + customColumns.pretaxInsurance - techGuaranteedSalaryMatch,
+        ptoPay: 0,
+        deduction: customColumns.deduction,
+        mileageOtherReimb: reimbursementColumn,
+        pretaxInsurance: customColumns.pretaxInsurance,
+        salaryMatch: techGuaranteedSalaryMatch,
+      };
+      const techGrossPay = includeTech ? centsSummaryTotal(techSummary) : 0;
 
       const techRow: EmployeePayrollRow | null =
         includeTech && (isTechRole(emp) || techGrossPay > 0)
@@ -3099,6 +3101,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               grossPay: techGrossPay,
               grossPayUSD: techGrossPay,
               isTechPortion: true,
+              techSummary,
             }
           : null;
 
@@ -3121,11 +3124,33 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // the period, never more than the full amount (Finance, 2026-10-26: Raul
       // Bayuyos Jr. was getting the whole $576.92 for 37.6 hours). Active
       // fixed-salary staff still get the full per-cutoff amount.
-      const fixedDaysWorked = isFixed && annualSalary && !emp.isActive
-        ? (dailyHoursByEmployeeId.get(emp.id) ?? []).filter((d) => (!genStart || d.date >= genStart) && (!genEnd || d.date <= genEnd) && d.regular + d.overtime > 0.0005).length
+      const workedDays = (dailyHoursByEmployeeId.get(emp.id) ?? []).filter((d) => (!genStart || d.date >= genStart) && (!genEnd || d.date <= genEnd) && d.regular + d.overtime > 0.0005);
+      // Hourly ↔ fixed switch inside the period (e.g. fixed salary from the
+      // 4th day of the cutoff): hourly days by the hour (officeDailyPay pays a
+      // fixed day $0) + fixed days ÷ 10 — not the whole per-cutoff salary
+      // (Finance, 2026-10-29). See mixedPeriodFixedPay.
+      const mixedFixed = mixedPeriodFixedPay(
+        genStart,
+        genEnd,
+        workedDays.map((d) => d.date),
+        (date) => {
+          const se = salaryEntryOnDate(emp.id, date);
+          return se ? { type: se.compensation_type === "fixed" ? "fixed" : "hourly", annualSalary: se.annual_salary ?? null } : null;
+        },
+        emp.country === "PH"
+      );
+      const mixedPay = mixedFixed
+        ? {
+            ...mixedFixed,
+            hourlyHours: workedDays.filter((d) => salaryEntryOnDate(emp.id, d.date)?.compensation_type !== "fixed").reduce((s, d) => s + d.regular + d.overtime, 0),
+            hourlyPay: cents(cents(officeDailyPay.regularPay) + cents(officeDailyPay.overtimePayAt1_5x)),
+          }
         : undefined;
+      const fixedDaysWorked = !mixedPay && isFixed && annualSalary && !emp.isActive ? workedDays.length : undefined;
       const fullCutoffSalary = isFixed && annualSalary ? perCutoffSalary(annualSalary, emp.country === "PH") : 0;
-      const officeGrossPay = isFixed && annualSalary
+      const officeGrossPay = mixedPay
+        ? cents(mixedPay.hourlyPay + mixedPay.fixedPay)
+        : isFixed && annualSalary
         ? cents(fixedDaysWorked != null ? Math.min(fullCutoffSalary, (fullCutoffSalary / FIXED_WORKING_DAYS_PER_CUTOFF) * fixedDaysWorked) : fullCutoffSalary)
         : cents(cents(officeDailyPay.regularPay) + cents(officeDailyPay.overtimePayAt1_5x));
       const officeRow: EmployeePayrollRow = {
@@ -3162,6 +3187,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         grossPayUSD: officeGrossPay,
         isTechPortion: false,
         ...(fixedDaysWorked != null ? { fixedDaysWorked } : {}),
+        ...(mixedPay ? { mixedPay } : {}),
       };
       return techRow ? [officeRow, techRow] : [officeRow];
     })
@@ -5360,6 +5386,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 {row.fixedDaysWorked != null && (
                                   <div className="text-[10px] text-amber-300">Pro rata · {row.fixedDaysWorked} of {FIXED_WORKING_DAYS_PER_CUTOFF} days</div>
                                 )}
+                                {row.mixedPay && (
+                                  <div className="text-[10px] text-amber-300" title={`Hourly days ${row.mixedPay.hourlyHours.toFixed(3)} hrs = $${row.mixedPay.hourlyPay.toFixed(2)} + fixed $${row.mixedPay.perCutoff.toFixed(2)} ÷ ${FIXED_WORKING_DAYS_PER_CUTOFF} × ${row.mixedPay.fixedDays} days = $${row.mixedPay.fixedPay.toFixed(2)}`}>
+                                    Hourly + {row.mixedPay.fixedDays} of {FIXED_WORKING_DAYS_PER_CUTOFF} fixed days
+                                  </div>
+                                )}
                               </td>
                               <td className="px-3 py-2 text-right font-semibold text-green-300">
                                 {/* With adjustments the Net (below) is the payout, so it's the green one and gross is muted. */}
@@ -6194,6 +6225,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             myProfileId={myProfileId}
             myName={displayName || email || null}
             actualTotals={new Map(payrollRows.filter((r) => r.isTechPortion).map((r) => [r.employee.id, r.grossPay]))}
+            actualBreakdowns={new Map(payrollRows.filter((r) => r.isTechPortion && r.techSummary).map((r) => [r.employee.id, r.techSummary!]))}
             actualTotalsLoading={periodDataLoading > 0 || loading}
             onPeriodChange={(start, end) => { setGenStart(start); setGenEnd(end); }}
           />
@@ -6695,6 +6727,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   periodEnd: genEnd,
                   items: adjustmentsByProfile.get(detailEmployee.id) ?? [],
                   grossPay: payrollRows.find((r) => r.employee.id === detailEmployee.id && !r.isTechPortion)?.grossPayUSD ?? null,
+                  grossBreakdown: (() => {
+                    const m = payrollRows.find((r) => r.employee.id === detailEmployee.id && !r.isTechPortion)?.mixedPay;
+                    return m
+                      ? [
+                          { label: `Hourly days: ${m.hourlyHours.toFixed(3)} hrs`, amount: m.hourlyPay },
+                          { label: `Fixed salary: $${m.perCutoff.toFixed(2)}/cutoff ÷ ${FIXED_WORKING_DAYS_PER_CUTOFF} × ${m.fixedDays} day${m.fixedDays === 1 ? "" : "s"} worked`, amount: m.fixedPay },
+                        ]
+                      : undefined;
+                  })(),
                   createdByName: displayName || email || null,
                   onChanged: loadAdjustments,
                 }

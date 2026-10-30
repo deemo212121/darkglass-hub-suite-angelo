@@ -46,9 +46,12 @@ export type PtoStage = "manager" | "hr" | "accounting";
 export type PtoExceptionReportType = "missed_workday" | "late_early" | "missed_visit" | "other";
 export type PtoHrPaperworkStatus = "pending" | "approved" | "additional_review_required";
 
-/** Sick Leave is always unpaid and never credited to payroll — separate from every other leave type, which defaults to paid unless explicitly `unpaid`. */
+/** Only Vacation is paid PTO (it draws on the PTO balance) and is credited to
+ *  payroll. Sick, Personal, Unpaid, Holiday and Bereavement are unpaid time
+ *  off, same as PtoBalanceSummary shows them — Personal used to count as paid
+ *  here, crediting a Personal day as a full scheduled day of pay. */
 export function isPaidPtoType(ptoType: PtoType): boolean {
-  return ptoType !== "unpaid" && ptoType !== "sick";
+  return ptoType === "vacation";
 }
 
 /**

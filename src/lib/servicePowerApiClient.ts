@@ -105,6 +105,31 @@ export async function retrieveClaim(params: {
  * servicePowerClaimPayload.ts, which assembles one from a ticket's already-
  * captured data so nothing has to be manually retyped per claim.
  */
+/** ServicePower's reply to Add Document to Claim — responseCode "OK" with the new documentId, or "ER" with messages (e.g. "Invalid category"). */
+export interface AddClaimDocumentResponse {
+  responseCode?: string;
+  transactionId?: string;
+  documentId?: number | string;
+  messages?: { message: string }[];
+}
+
+/** Adds one file to an existing claim (Claims Submission guide §6). `file` is base64, no data: prefix. */
+export async function addClaimDocument(
+  claim: { manufacturerName: string; claimBatchNumber: number; claimSequenceNumber: number; claimNumber: string },
+  document: { category: string; description: string; filename: string; file: string },
+): Promise<AddClaimDocumentResponse> {
+  const response = await fetch('/api/servicepower', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'addClaimDocument', params: { claim, document } }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || `ServicePower didn't take the file (HTTP ${response.status}).`);
+  }
+  return response.json() as Promise<AddClaimDocumentResponse>;
+}
+
 export async function submitClaim(claims: ClaimSubmissionClaim[]): Promise<ClaimSubmissionResponse> {
   const { runWithApiHealth } = await import("./apiHealth");
   return runWithApiHealth(

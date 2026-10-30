@@ -98,7 +98,7 @@ const SAMPLE_BRANCHES: BranchLine[] = [
   },
   {
     branch: "Wilmington", code: "WM", total: 7, notCollected: 7, partsOut: false,
-    techs: [{ name: "Josh Malloch", count: 7, presence: { kind: "rest", text: "Rest day" } }],
+    techs: [{ name: "Joshua Malloch", count: 7, presence: { kind: "rest", text: "Rest day" } }],
     partsPresence: [{ name: "David Lopez", presence: { kind: "in", text: "Clocked in 7:48 AM" } }],
   },
   ...["Atlanta", "Asheville", "Birmingham", "Chattanooga", "Destin", "Huntsville"].map((branch) => ({

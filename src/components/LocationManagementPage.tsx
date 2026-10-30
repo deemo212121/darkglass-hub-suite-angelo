@@ -344,7 +344,7 @@ const TECHNICIAN_OPTIONS = [
   "Jordan Koetsier",
   "Jordan Stanley",
   "Joseph Wease",
-  "Josh Malloch",
+  "Joshua Malloch",
   "Joshua Rhinehart",
   "Joshua Silva",
   "Joshua Williamson",

@@ -1,3 +1,4 @@
+import { RouteLoadError } from "@/components/RouteLoadError";
 import { PartsDoneBanner } from "@/components/PartsDoneBanner";
 import { useAttention, badgeText } from "@/lib/attention";
 import { moduleIcon } from "@/lib/moduleIcons";
@@ -70,12 +71,14 @@ export const Route = createFileRoute("/m/$module")({
     </div>
   ),
   errorComponent: ({ error }) => (
+    <RouteLoadError error={error}>
     <div className="min-h-screen flex items-center justify-center">
       <div className="panel text-center max-w-md">
         <h1 className="text-xl font-semibold">Couldn't load module</h1>
         <p className="text-sm text-muted-foreground mt-2">{error.message}</p>
       </div>
     </div>
+    </RouteLoadError>
   ),
 });
 

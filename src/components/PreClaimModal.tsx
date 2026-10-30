@@ -19,6 +19,7 @@ import { useAuth } from "@/lib/auth";
 import { getMyProfileId } from "@/lib/supabase/users";
 import { buildServicePowerClaimPayload, isClaimablePart } from "@/lib/servicePowerClaimPayload";
 import { isWrongManufacturerName, spClaimLookupNames } from "@/lib/spClaimLookup";
+import { claimPhotoRule, isImagePhoto, isSppnClaim, sendClaimPhotosToServicePower, SP_PHOTO_DOCUMENT_CATEGORY } from "@/lib/spClaimPhotos";
 
 interface Props {
   ticket: Ticket;
@@ -132,7 +133,10 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
   const [form, setForm] = useState<FormState>(emptyForm());
   /** Photo shown in the right-side preview panel (opened by clicking a picture); closed when the ticket changes. */
   const [sidePreview, setSidePreview] = useState<{ photos: TicketPhoto[]; index: number } | null>(null);
-  useEffect(() => { setSidePreview(null); setConfirmSpSubmit(false); }, [ticket.ticketNo]);
+  // The ticket's pictures, as the Pictures section loaded them (null until then) — Square Trade / SPPN claims need them (lib/spClaimPhotos.ts).
+  const [ticketPhotos, setTicketPhotos] = useState<TicketPhoto[] | null>(null);
+  const [sendingPhotos, setSendingPhotos] = useState(false);
+  useEffect(() => { setSidePreview(null); setConfirmSpSubmit(false); setTicketPhotos(null); }, [ticket.ticketNo]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [customerComplaint, setCustomerComplaint] = useState("");
@@ -270,15 +274,21 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
   const claimFieldsToSave = (): Partial<FormState> => {
     // What ServicePower paid (migration 0397) is read back by the paid-claim
     // check / Claim List Sync Status, never edited here — left out of the save.
+    // sp_documents is written only when pictures go to ServicePower; the
+    // SPPN boxes (0413) only once they exist on the row or are ticked.
     const {
       servicePerformed: savedEdit,
+      spDocuments: _docs, spUnrepairable, spSerialMismatch,
       spPaidTotal: _pt, spPaidLabor: _pl, spPaidParts: _pp, spPaidShipping: _ps, spPaidMileage: _pm,
       spPaidOther: _po, spPaidTax: _tx, spPaymentDate: _pd, spReceivedDate: _rd, spClaimCheckedAt: _ca,
       ...rest
     } = form;
+    const flags = spUnrepairable !== undefined || spSerialMismatch !== undefined
+      ? { spUnrepairable: !!spUnrepairable, spSerialMismatch: !!spSerialMismatch }
+      : {};
     const edited = servicePerformed.trim() !== visitServicePerformed.trim() ? servicePerformed : "";
-    if (edited || savedEdit) return { ...rest, servicePerformed: edited };
-    return rest;
+    if (edited || savedEdit) return { ...rest, ...flags, servicePerformed: edited };
+    return { ...rest, ...flags };
   };
 
   const currentIndex = ticketNumbers.indexOf(ticket.ticketNo);
@@ -307,6 +317,11 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
   const jobCodeRule = jobCodesFor(ticket.account, ticket.claimCompany, ticket.manufacturer, (ticket as { brand?: string | null }).brand);
   // Mileage (round trip) is miles, not money — not part of the total (extraMileFee is the Mileage Amount $).
   const claimTotal = form.laborFee + partFee + form.otherFee + form.shippingFee + form.extraMileFee;
+  // Square Trade: pictures with every claim; SPPN: when the unit is unrepairable or the serial # doesn't match.
+  const isSppn = isSppnClaim(ticket);
+  const photoRule = claimPhotoRule(ticket, { unrepairable: form.spUnrepairable, serialMismatch: form.spSerialMismatch });
+  const claimImages = (ticketPhotos ?? []).filter(isImagePhoto);
+  const unsentImages = claimImages.filter((p) => !(form.spDocuments ?? []).some((d) => d.path === p.fullPath));
 
   // Checked in the "Submit this claim to ServicePower?" window before
   // anything is sent. `required` = what ServicePower has sent claims back
@@ -345,6 +360,14 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
       else blank.push(jobCodeLabel);
     }
     if (isBlank(ticket.callReceivedDate)) required.push("Call received date on the ticket — it's sent as the request date.");
+    if (photoRule) {
+      const who = photoRule === "square_trade" ? "Square Trade needs the ticket's pictures with the claim" : "SPPN needs pictures when the unit is unrepairable or the serial # doesn't match";
+      if (ticketPhotos === null) required.push("Pictures — still loading, wait a moment.");
+      else if (claimImages.length === 0) required.push(`Pictures — ${who}. Add them under Pictures.`);
+      if (photoRule === "sppn" && form.spSerialMismatch && ticketPhotos !== null && !claimImages.some((p) => p.photoType === "model_serial")) {
+        required.push("A \"Model and Serial Number\" picture — it shows the serial # that doesn't match.");
+      }
+    }
 
     if (isBlank(form.resolutionCode)) blank.push("Resolution/Repair Code");
     if (isBlank(form.repairCategory)) blank.push("Repair Category");
@@ -369,7 +392,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
       .filter((e) => e.partNumber && claimable.some((p) => p.partNo === e.partNumber))
       .map((e) => `Part ${e.partNumber}: "${e.errorDescription}"`);
     return { required, blank, rejectedParts };
-  }, [form, parts, ticket, customerComplaint, servicePerformed, modelCode, serialNo]);
+  }, [form, parts, ticket, customerComplaint, servicePerformed, modelCode, serialNo, photoRule, ticketPhotos]);
 
   const setField = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -419,6 +442,51 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
   // it to ServicePower, and stores the returned batch/sequence/status back
   // onto this ticket's claim details so a later resubmission updates the
   // same claim instead of creating a duplicate.
+  /**
+   * Sends the pictures that aren't on the ServicePower claim yet and records
+   * them (sp_documents), so a resubmission doesn't send them twice. Returns a
+   * sentence for the message line.
+   */
+  const sendPhotosToClaim = async (claim: { manufacturerName: string; claimBatchNumber: number; claimSequenceNumber: number; claimNumber: string }): Promise<string> => {
+    if (!photoRule || unsentImages.length === 0) return "";
+    if (!SP_PHOTO_DOCUMENT_CATEGORY) return " Pictures weren't sent — upload them to the claim in HUB (AHS doesn't have ServicePower's picture category yet).";
+    setSendingPhotos(true);
+    try {
+      const already = form.spDocuments ?? [];
+      const { sent, failed } = await sendClaimPhotosToServicePower(claim, ticketPhotos ?? [], already);
+      let note = sent.length ? ` ${sent.length} picture${sent.length === 1 ? "" : "s"} sent to the claim.` : "";
+      if (sent.length) {
+        try {
+          const updated = await upsertTicketClaimDetails(ticket.ticketNo, { spDocuments: [...already, ...sent] }, myProfileId);
+          setForm((prev) => ({ ...prev, ...updated }));
+          onSaved(ticket.ticketNo, updated);
+        } catch (err) {
+          note += ` (Couldn't note which ones were sent: ${err instanceof Error ? err.message : "unknown error"})`;
+        }
+      }
+      if (failed.length) note += ` Pictures not sent: ${failed.join("; ")}.`;
+      return note;
+    } finally {
+      setSendingPhotos(false);
+    }
+  };
+
+  /** "Send pictures to ServicePower" on a claim that's already there (e.g. pictures added after it was submitted). */
+  const handleSendPhotosOnly = async () => {
+    const last = (form.spLastResponse as { claims?: Array<{ manufacturerName?: string; claimNumber?: string }> } | null)?.claims?.[0];
+    if (!last?.manufacturerName || !form.spClaimBatchNumber || !form.spClaimSequenceNumber) {
+      setSpMessage({ type: "error", text: "Submit the claim to ServicePower first — the pictures go onto that claim." });
+      return;
+    }
+    const note = await sendPhotosToClaim({
+      manufacturerName: last.manufacturerName,
+      claimBatchNumber: Number(form.spClaimBatchNumber),
+      claimSequenceNumber: Number(form.spClaimSequenceNumber),
+      claimNumber: last.claimNumber || ticket.ticketNo,
+    });
+    setSpMessage({ type: /not sent|weren't sent|Couldn't/.test(note) ? "error" : "success", text: note.trim() || "Every picture is already on the claim." });
+  };
+
   const handleSubmitToServicePower = async () => {
     if (spChecks.required.length > 0) return;
     setConfirmSpSubmit(false);
@@ -517,12 +585,20 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
             statusNote = ` (Couldn't set the ticket to CL-Claimed: ${statusErr instanceof Error ? statusErr.message : "unknown error"} — set it on the ticket page.)`;
           }
         }
+        // Square Trade / SPPN: the pictures go onto the claim ServicePower just took.
+        const photoNote = await sendPhotosToClaim({
+          manufacturerName: result.manufacturerName || claim.manufacturerName,
+          claimBatchNumber: Number(result.claimBatchNumber),
+          claimSequenceNumber: Number(result.claimSequenceNumber),
+          claimNumber: result.claimNumber || claim.claimNumber,
+        });
         setSpMessage({
-          type: errorTexts.length > 0 ? "error" : "success",
+          type: errorTexts.length > 0 || /not sent|weren't sent/.test(photoNote) ? "error" : "success",
           text:
             `Submitted — ServicePower status: ${result.claimStatusDescription || result.claimStatusCode || "OK"}` +
             (errorTexts.length > 0 ? `. Needs correction: ${errorTexts.join("; ")}.` : ".") +
             statusNote +
+            photoNote +
             warnText,
         });
       } else {
@@ -860,6 +936,38 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
               </div>
               <div>
                 <p className={labelCls}>Pictures</p>
+                {isSppn && (
+                  <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-200">
+                    <label className="flex items-center gap-1.5">
+                      <input type="checkbox" checked={!!form.spUnrepairable} onChange={(e) => setField("spUnrepairable", e.target.checked)} className="accent-blue-500" />
+                      Unrepairable
+                    </label>
+                    <label className="flex items-center gap-1.5">
+                      <input type="checkbox" checked={!!form.spSerialMismatch} onChange={(e) => setField("spSerialMismatch", e.target.checked)} className="accent-blue-500" />
+                      Serial # doesn't match
+                    </label>
+                  </div>
+                )}
+                {photoRule && (
+                  <div className="mb-2 rounded-md border border-fuchsia-400/30 bg-fuchsia-500/10 px-2.5 py-1.5 text-[11px] text-fuchsia-200">
+                    {photoRule === "square_trade" ? "Square Trade needs these pictures with the claim." : "SPPN needs pictures for an unrepairable unit or a serial # that doesn't match."}{" "}
+                    {!SP_PHOTO_DOCUMENT_CATEGORY
+                      ? "Upload them to the claim in HUB too — AHS can't send them yet."
+                      : (form.spDocuments ?? []).length > 0
+                        ? `${(form.spDocuments ?? []).length} on the ServicePower claim${unsentImages.length ? `, ${unsentImages.length} not sent yet` : ""}.`
+                        : "They're sent with Submit to ServicePower."}
+                    {SP_PHOTO_DOCUMENT_CATEGORY && form.spClaimBatchNumber && unsentImages.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => void handleSendPhotosOnly()}
+                        disabled={sendingPhotos || submittingToSP}
+                        className="ml-1 rounded border border-fuchsia-300/40 px-1.5 py-0.5 font-semibold hover:bg-fuchsia-500/20 disabled:opacity-50"
+                      >
+                        {sendingPhotos ? "Sending…" : "Send pictures to ServicePower"}
+                      </button>
+                    )}
+                  </div>
+                )}
                 {/* Same category as the ticket detail page's own Attachments
                     section (ticket.$ticketNo.tsx) — deliberately NOT a
                     separate "claim" category, so Pre-Claim always shows the
@@ -872,6 +980,7 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
                   uploadedBy={displayName || email || undefined}
                   compactChecklist
                   onPhotoClick={(photo, all) => setSidePreview({ photos: all, index: Math.max(0, all.findIndex((p) => p.fullPath === photo.fullPath)) })}
+                  onPhotosChange={setTicketPhotos}
                 />
               </div>
             </div>
@@ -1088,7 +1197,10 @@ export function PreClaimModal({ ticket, ticketNumbers, onSaved, onStatusChanged,
                                 {PART_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                               </select>
                             </td>
-                            <td className="px-2 py-1.5">{p.invoiceNo}</td>
+                            <td className="px-2 py-1.5">
+                              {/* ServicePower takes 20 characters at most (servicePowerClaimPayload clips the rest). */}
+                              <input key={`invoice:${p.id}:${p.invoiceNo}`} defaultValue={p.invoiceNo} maxLength={20} disabled={saving} onBlur={(e) => handlePartFieldBlur(p, "invoiceNo", e.target.value.trim())} className={`${inputCls} py-1 w-32`} />
+                            </td>
                             <td className="px-2 py-1.5 text-right">
                               <input key={`price:${p.id}:${p.partPrice}`} defaultValue={p.partPrice} disabled={saving} onBlur={(e) => handlePartFieldBlur(p, "partPrice", e.target.value)} className={`${inputCls} py-1 text-right w-20`} />
                             </td>

@@ -6,7 +6,9 @@
  *   node scripts/team-updates.cjs          (fetches the three remotes first)
  *   node scripts/team-updates.cjs --no-fetch
  *
- * Needs the remotes: origin (Angelo), rulonajhon (Jhon), janeyyy16 (John Oliver).
+ * Needs a remote for each repo — found by its GitHub address, whatever it's
+ * called (Angelo's copy: origin / rulonajhon / janeyyy16; Jhon's: angelo /
+ * darkglass / upstream). Falls back to the names above if none matches.
  *
  * Run on every push, after the work is committed, then commit the list on
  * its own as "AHS Updates list refreshed" (left out of the list below) so
@@ -26,10 +28,23 @@ const git = (...args) => execFileSync("git", args, { cwd: ROOT, encoding: "utf8"
 const IMPORT_COMMIT = "69d6747a";
 
 const PEOPLE = [
-  { key: "angelo", name: "Angelo", remote: "origin", authors: ["mendozaangelo321123@gmail.com", "deemo212121@github.com"] },
-  { key: "jhon", name: "Jhon", remote: "rulonajhon", authors: ["rulonajhon"] },
-  { key: "johnoliver", name: "John Oliver", remote: "janeyyy16", authors: ["johnoliverblanciadegamo@gmail.com"] },
+  { key: "angelo", name: "Angelo", repo: "deemo212121/darkglass-hub-suite-angelo", remote: "origin", authors: ["mendozaangelo321123@gmail.com", "deemo212121@github.com"] },
+  { key: "jhon", name: "Jhon", repo: "rulonajhon/darkglass-hub-suite", remote: "rulonajhon", authors: ["rulonajhon"] },
+  { key: "johnoliver", name: "John Oliver", repo: "janeyyy16/usapp", remote: "janeyyy16", authors: ["johnoliverblanciadegamo@gmail.com"] },
 ];
+
+// Each person's remote by its GitHub address ("owner/repo"), so the names in this copy don't matter.
+const repoOf = (u) => String(u || "").trim().replace(/\.git$/, "").replace(/^.*github\.com[/:]/i, "").toLowerCase();
+const remotes = {};
+for (const line of git("remote", "-v").split("\n")) {
+  const [name, u, kind] = line.trim().split(/\s+/);
+  if (name && kind === "(fetch)") remotes[name] = repoOf(u);
+}
+for (const p of PEOPLE) {
+  const found = Object.keys(remotes).find((name) => remotes[name] === p.repo.toLowerCase());
+  if (found) p.remote = found;
+  else console.warn(`No remote for ${p.repo} — trying "${p.remote}".`);
+}
 
 if (!process.argv.includes("--no-fetch")) {
   for (const p of PEOPLE) {

@@ -612,10 +612,23 @@ async function fetchCompanyUsersUncached(): Promise<ProfileRow[]> {
     // query errors out as a whole and would silently null out
     // working_hours/meal_minutes too (they've existed since 0109 and may
     // have real data) even though only the newer columns are missing.
+    // Chunked: one `.in("id", <every profile>)` puts ~37 chars per id in the
+    // URL and outgrew the request limit (~360 profiles ≈ 13.5KB), failing
+    // intermittently — and silently nulling working_hours, so scheduled
+    // hours (PTO credit, leave labels) flipped between refreshes.
+    const byChunks = async (columns: string) => {
+      const out: any[] = [];
+      for (let i = 0; i < ids.length; i += 100) {
+        const { data, error } = await supabase.from("profiles").select(columns).in("id", ids.slice(i, i + 100));
+        if (error) return { data: null, error };
+        out.push(...(data ?? []));
+      }
+      return { data: out, error: null };
+    };
     const [{ data: hoursRows, error: hoursError }, { data: staffListRows, error: staffListError }, { data: presenceRows, error: presenceError }] = await Promise.all([
-      supabase.from("profiles").select("id, working_hours, meal_minutes, schedule_timezone, master_list_extra_departments").in("id", ids),
-      supabase.from("profiles").select("id, personal_email, work_phone, tier_level, staff_note").in("id", ids),
-      supabase.from("profiles").select("id, presence_seen_at, presence_active_at").in("id", ids),
+      byChunks("id, working_hours, meal_minutes, schedule_timezone, master_list_extra_departments"),
+      byChunks("id, personal_email, work_phone, tier_level, staff_note"),
+      byChunks("id, presence_seen_at, presence_active_at"),
     ]);
     if (hoursError) {
       console.error("getCompanyUsers (working_hours/meal_minutes/schedule_timezone/master_list_extra_departments) error:", hoursError.message);

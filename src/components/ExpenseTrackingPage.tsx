@@ -209,7 +209,7 @@ export function ExpenseTrackingPage({
 
   /** "Approved / Rejected By" — who approved or rejected it; blank while Pending. */
   const reviewerName = (e: ExpenseRow) => (e.status !== "Pending" && e.reviewedBy ? profileName(e.reviewedBy) : "");
-  // Its own receipts (several since migration 0414), else the ones uploaded on its Flash Tech trip.
+  // Its own receipts (several since migration 0415), else the ones uploaded on its Flash Tech trip.
   const receiptUrlsOf = (e: ExpenseRow) => (e.receipts.length ? e.receipts.map((r) => r.url) : e.flashTechTripId ? tripReceipts.get(e.flashTechTripId) ?? [] : []);
   const receiptCount = (e: ExpenseRow) => receiptUrlsOf(e).length;
 

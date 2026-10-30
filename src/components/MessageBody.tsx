@@ -118,6 +118,7 @@ type Part =
   | { kind: "ticket"; value: string; trailing: string }
   | { kind: "namedLink"; label: string; url: string }
   | { kind: "candidateReviewLink"; label: string; candidateId: string }
+  | { kind: "appLink"; label: string; module: string; submodule: string; search: Record<string, string> }
   | { kind: "mention"; name: string };
 
 // Optional named-link syntax `[label](https://...)` — e.g. for forwarding a
@@ -134,6 +135,11 @@ const NAMED_LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
 // be in HR shouldn't get bounced through a full page reload) instead of
 // falling through to NAMED_LINK_RE's plain <a target="_blank"> anchor.
 const CANDIDATE_REVIEW_LINK_RE = /\[([^\]]+)\]\(candidate-review:([^\s)]+)\)/g;
+
+// An in-app button — `[label](app:/m/{module}/{submodule}?a=1&b=2)` — routes
+// client-side to that page with those filters (e.g. the Trainee Attendance
+// reminder opening the exact day). Same idea as candidate-review: above.
+const APP_LINK_RE = /\[([^\]]+)\]\(app:\/m\/([^/\s)?]+)\/([^/\s)?]+)(?:\?([^\s)]*))?\)/g;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -215,6 +221,11 @@ export function MessageBody({ text, className, mentionNames }: Props) {
     const idx = m.index ?? 0;
     wholeStringMatches.push({ start: idx, end: idx + m[0].length, part: { kind: "namedLink", label: m[1], url: m[2] } });
   }
+  for (const m of text.matchAll(APP_LINK_RE)) {
+    const idx = m.index ?? 0;
+    const search = Object.fromEntries(new URLSearchParams(m[4] ?? "").entries());
+    wholeStringMatches.push({ start: idx, end: idx + m[0].length, part: { kind: "appLink", label: m[1], module: m[2], submodule: m[3], search } });
+  }
   for (const m of text.matchAll(CANDIDATE_REVIEW_LINK_RE)) {
     const idx = m.index ?? 0;
     wholeStringMatches.push({ start: idx, end: idx + m[0].length, part: { kind: "candidateReviewLink", label: m[1], candidateId: m[2] } });
@@ -281,6 +292,19 @@ export function MessageBody({ text, className, mentionNames }: Props) {
               className="inline-flex items-center gap-1 text-blue-300 underline decoration-blue-300/40 hover:text-blue-200"
             >
               🔗 {p.label}
+            </Link>
+          );
+        }
+        if (p.kind === "appLink") {
+          return (
+            <Link
+              key={i}
+              to="/m/$module/$submodule"
+              params={{ module: p.module, submodule: p.submodule }}
+              search={p.search as any}
+              className="mt-1 inline-flex items-center gap-1 rounded-md border border-blue-400/40 bg-blue-500/15 px-2 py-1 text-xs font-semibold text-blue-200 no-underline hover:bg-blue-500/25"
+            >
+              {p.label} →
             </Link>
           );
         }

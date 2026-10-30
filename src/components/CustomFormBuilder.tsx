@@ -32,6 +32,7 @@ import {
 import { createCustomForm, updateCustomForm, publishCustomForm, sendDiscordTestMessage, type CustomForm, type CustomFormAccess } from "@/lib/supabase/customForms";
 import { DocumentTemplateEditor } from "./DocumentTemplateEditor";
 import { normalizeDocumentBlock, type DocumentBlock } from "@/lib/documentTemplates/types";
+import { hasOwnLetterhead } from "@/lib/documentTemplates/generate";
 import { StyleFields } from "./StyleFields";
 import { NotifyRecipientsPicker } from "./NotifyRecipientsPicker";
 
@@ -539,8 +540,8 @@ export function CustomFormBuilder({ initial, onSaved, onCancel }: Props) {
 
             {/* Represents the actual fill-out page, always on a white background — text must stay dark regardless of the app's own light/dark theme rather than inheriting its (theme-dependent) foreground color. */}
             <div className="flex-1 min-w-0 bg-white rounded-lg shadow-xl p-6" style={{ color: "#111827" }} onClick={() => setSelectedId(null)}>
-              {/* Same logo the fill pages show above the title (FillCustomFormPage / ApplyFormPage). */}
-              <img src={usihsLogo} alt="US In Home Services" className="h-16 w-16 mx-auto mb-3" />
+              {/* Same logo the fill pages show above the title (FillCustomFormPage / ApplyFormPage) — none when the form starts with its own Image letterhead. */}
+              {!hasOwnLetterhead(fields) && <img src={usihsLogo} alt="US In Home Services" className="h-16 w-16 mx-auto mb-3" />}
               <h2 className="text-lg font-bold text-slate-900">{title || "Untitled Form"}</h2>
               {description && <p className="text-sm text-slate-500 mt-1">{description}</p>}
 

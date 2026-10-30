@@ -18,11 +18,84 @@ import { BRAND_COMPANY, brandOf } from "@/lib/formBrand";
  * have neither a US driver's license nor a US SSN, so one photo covers
  * whichever ID they actually have) moved out to its own standalone form —
  * see validIdFormTemplate.ts.
+ *
+ * Also the Mexico version (form_data.country "mx" — HR Paperworks → New
+ * Automation Forms → Mexico Staff): the same document type and text, with
+ * the Philippines-specific wording swapped (COUNTRY_TEXT below). Its
+ * Mexico-side terms (labor law, IMSS / INFONAVIT / SAT, the leave section)
+ * are a straight swap of the PH ones, for HR to confirm.
+ *
+ * And the US version (form_data.country "us" — HR Paperworks → AHS Forms
+ * US, always the Admin Hub Solutions brand): a contractor under U.S. law
+ * instead of a local labor code, self-employment Social Security / Medicare
+ * taxes in place of the national contributions, US Staff / US Managers in
+ * the leave section — also for HR to confirm.
  */
+
+/**
+ * Which country this copy is — "mx" = Mexico, "us" = United States; absent
+ * = the original Philippines one. A copy keeps its version for good,
+ * including when its PDF is regenerated.
+ */
+export type ContractorAgreementCountry = "ph" | "mx" | "us";
+export function contractorAgreementCountryOf(formData: unknown): ContractorAgreementCountry {
+  const country = (formData as { country?: string } | null | undefined)?.country;
+  return country === "mx" || country === "us" ? country : "ph";
+}
+export const CONTRACTOR_AGREEMENT_TITLE: Record<ContractorAgreementCountry, string> = {
+  ph: "Master Philippines Independent Contractor Comprehensive Agreement",
+  mx: "Master Mexico Independent Contractor Comprehensive Agreement",
+  us: "Master United States Independent Contractor Comprehensive Agreement",
+};
+/** The short name HR Paperworks lists it under. */
+export const CONTRACTOR_AGREEMENT_SHORT_TITLE: Record<ContractorAgreementCountry, string> = {
+  ph: "Master PH Contractor Agreement",
+  mx: "Master Mexico Contractor Agreement",
+  us: "Master US Contractor Agreement",
+};
+
+/** The only wording that differs between the versions — the PH strings are the original text, unchanged. */
+const COUNTRY_TEXT: Record<ContractorAgreementCountry, { country: string; heading: string; employmentLaws: string; contributions: string; staff: string; managers: string; newHires: string }> = {
+  ph: {
+    country: "Philippines",
+    heading: "MASTER PHILIPPINES INDEPENDENT CONTRACTOR COMPREHENSIVE AGREEMENT",
+    employmentLaws: "local Philippine labor codes or U.S. employment laws",
+    contributions: "SSS, PhilHealth, and Pag-IBIG",
+    staff: "PH Staff",
+    managers: "PH Managers",
+    newHires: "non-manager PH employees",
+  },
+  mx: {
+    country: "Mexico",
+    heading: "MASTER MEXICO INDEPENDENT CONTRACTOR COMPREHENSIVE AGREEMENT",
+    employmentLaws: "local Mexican labor laws or U.S. employment laws",
+    contributions: "IMSS, INFONAVIT, and SAT filings",
+    staff: "Mexico Staff",
+    managers: "Mexico Managers",
+    newHires: "non-manager Mexico staff",
+  },
+  us: {
+    country: "USA",
+    heading: "MASTER UNITED STATES INDEPENDENT CONTRACTOR COMPREHENSIVE AGREEMENT",
+    employmentLaws: "U.S. federal or state employment laws",
+    contributions: "self-employment Social Security and Medicare taxes",
+    staff: "US Staff",
+    managers: "US Managers",
+    newHires: "non-manager US staff",
+  },
+};
+
+/** The Nationality choices before "Other" — the country's own, then USA (just USA on the US version). */
+export function contractorNationalityChoices(country: ContractorAgreementCountry): string[] {
+  const own = COUNTRY_TEXT[country].country;
+  return own === "USA" ? ["USA"] : [own, "USA"];
+}
 
 export interface MasterPhContractorAgreementFormData {
   /** "ahs" = the Admin Hub Solutions version (HR Paperworks → AHS FORMS PH); absent = the original US In Home Services version. */
   brand?: "ahs";
+  /** "mx" = the Mexico version, "us" = the US one (see contractorAgreementCountryOf); absent = Philippines. */
+  country?: "mx" | "us";
   /** The contractor's actual profile id — not shown on the document itself, just carried alongside for lookups. */
   employeeId: string;
   /** Derived display name — [firstName, middleName, lastName].filter(Boolean).join(" "). */
@@ -30,7 +103,7 @@ export interface MasterPhContractorAgreementFormData {
   firstName: string;
   middleName: string;
   lastName: string;
-  /** "Philippines" | "USA" | "Other" — paired with nationalityOther when "Other". */
+  /** "Philippines" (or "Mexico" on the Mexico version) | "USA" | "Other" — paired with nationalityOther when "Other". The US version offers only "USA" | "Other". */
   nationality: string;
   nationalityOther: string;
   addressStreet: string;
@@ -116,12 +189,14 @@ function signRow(label: string, name: string, dateSigned: string, sigDataUrl: st
 export function buildMasterPhContractorAgreementBodyMarkup(data: MasterPhContractorAgreementFormData, logoDataUrl: string): string {
   const brand = brandOf(data);
   const company = BRAND_COMPANY[brand];
+  const country = contractorAgreementCountryOf(data);
+  const t = COUNTRY_TEXT[country];
   return `
     <div class="mphc-container">
       <div class="mphc-header">
         <div>
           <h1>${company.toUpperCase()}</h1>
-          <h2>MASTER PHILIPPINES INDEPENDENT CONTRACTOR COMPREHENSIVE AGREEMENT</h2>
+          <h2>${t.heading}</h2>
         </div>
         ${logoDataUrl ? `<img src="${logoDataUrl}" alt="${company}" />` : ""}
       </div>
@@ -129,7 +204,7 @@ export function buildMasterPhContractorAgreementBodyMarkup(data: MasterPhContrac
       <div class="mphc-section-title">1. Contractor &amp; Personal Information</div>
       <div class="mphc-toprow">
         <div><span class="mphc-label">Full Legal Name:</span> <strong>${blank(data.employeeName)}</strong></div>
-        <div><span class="mphc-label">Nationality:</span> <strong>${checkbox(data.nationality === "Philippines")} Philippines &nbsp; ${checkbox(data.nationality === "USA")} USA &nbsp; ${checkbox(data.nationality === "Other")} Other: ${blank(data.nationalityOther)}</strong></div>
+        <div><span class="mphc-label">Nationality:</span> <strong>${contractorNationalityChoices(country).map((c) => `${checkbox(data.nationality === c)} ${c}`).join(" &nbsp; ")} &nbsp; ${checkbox(data.nationality === "Other")} Other: ${blank(data.nationalityOther)}</strong></div>
       </div>
       <div class="mphc-toprow">
         <div style="flex:2"><span class="mphc-label">Current Address:</span> <strong>${blank(data.addressStreet)}, ${blank(data.addressCity)}, ${blank(data.addressState)} ${blank(data.addressZip)}, ${blank(data.addressCountry)}</strong></div>
@@ -152,8 +227,8 @@ export function buildMasterPhContractorAgreementBodyMarkup(data: MasterPhContrac
       </div>
 
       <div class="mphc-section-title">Section 1. Independent Contractor Relationship</div>
-      <div class="mphc-bullet"><b>Business-to-Business Status:</b> You are engaged and contracted strictly as an independent contractor providing remote back-office, administrative, or technical support services to ${company}, and not as a regular employee under local Philippine labor codes or U.S. employment laws.</div>
-      <div class="mphc-bullet"><b>Tax &amp; Statutory Independence:</b> As an independent contractor, you are solely responsible for all personal income taxes, local filings, and national contributions (such as SSS, PhilHealth, and Pag-IBIG). No local statutory benefits or U.S. employee withholdings are deducted by the Company.</div>
+      <div class="mphc-bullet"><b>Business-to-Business Status:</b> You are engaged and contracted strictly as an independent contractor providing remote back-office, administrative, or technical support services to ${company}, and not as a regular employee under ${t.employmentLaws}.</div>
+      <div class="mphc-bullet"><b>Tax &amp; Statutory Independence:</b> As an independent contractor, you are solely responsible for all personal income taxes, local filings, and national contributions (such as ${t.contributions}). No local statutory benefits or U.S. employee withholdings are deducted by the Company.</div>
 
       <div class="mphc-section-title">Section 2. Confidentiality &amp; Non-Disclosure (NDA)</div>
       <div class="mphc-bullet"><b>Confidential Information:</b> You acknowledge that the Company may disclose certain confidential or proprietary information during your engagement. Confidential Information includes, but is not limited to:</div>
@@ -164,8 +239,8 @@ export function buildMasterPhContractorAgreementBodyMarkup(data: MasterPhContrac
       <div class="mphc-sub">Any non-public information shared orally, in writing, or electronically</div>
       <div class="mphc-bullet"><b>Strict Obligation:</b> You agree to keep all Confidential Information strictly secret and use it solely for the performance of your designated job responsibilities.</div>
 
-      <div class="mphc-section-title">Section 3. Off Days &amp; Leave Policy (PH Staff)</div>
-      <div class="mphc-bullet"><b>Paid Time Off (PTO):</b> Paid Time Off is available for designated US Staff and PH Managers only, granted upon the completion of one (1) year of continuous service and resetting annually (1 Year: 5 days; 2 Years: 6 days; 3 Years: 7 days). Unused PTO does not carry over. Newly hired non-manager PH employees are not eligible for PTO.</div>
+      <div class="mphc-section-title">Section 3. Off Days &amp; Leave Policy (${t.staff})</div>
+      <div class="mphc-bullet"><b>Paid Time Off (PTO):</b> Paid Time Off is available for designated US Staff and ${t.managers} only, granted upon the completion of one (1) year of continuous service and resetting annually (1 Year: 5 days; 2 Years: 6 days; 3 Years: 7 days). Unused PTO does not carry over. Newly hired ${t.newHires} are not eligible for PTO.</div>
       <div class="mphc-bullet"><b>Unpaid Sick Days:</b> Eligible employees may take up to 5 unpaid sick days per year starting three (3) months after their hire date, which require a doctor's note for validation.</div>
       <div class="mphc-bullet"><b>Half-Day Schedules:</b> Manager approval is required for all half-day work schedules or early departures due to personal or health reasons, and only the remaining unworked hours are treated as unpaid.</div>
 
@@ -174,7 +249,7 @@ export function buildMasterPhContractorAgreementBodyMarkup(data: MasterPhContrac
       <div class="mphc-bullet"><b>Electronic Signatures:</b> Electronic signatures, digital form submissions, and online verifications carry the exact same legal force and effect as original handwritten signatures.</div>
 
       <div class="mphc-section-title" style="margin-top:20px;">Contractor Acknowledgment &amp; Signature</div>
-      <p style="font-style:italic;">By signing below, I certify that I have read, understood, and voluntarily agree to all the terms, policies, and conditions outlined in this Master Philippines Independent Contractor Comprehensive Agreement (including Personal Data, Confidentiality, and Leave Policies).</p>
+      <p style="font-style:italic;">By signing below, I certify that I have read, understood, and voluntarily agree to all the terms, policies, and conditions outlined in this ${CONTRACTOR_AGREEMENT_TITLE[country]} (including Personal Data, Confidentiality, and Leave Policies).</p>
 
       ${signRow("Contractor Signature", data.employeeName, data.contractorDateSigned, data.contractorSignatureDataUrl)}
       ${signRow(brand === "ahs" ? "Employer Representative Signature (Admin Hub Solutions)" : "Employer Representative Signature", data.employerName || "", data.employerDateSigned, data.employerSignatureDataUrl)}

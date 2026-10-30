@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { canSetCancelledStatus as canSetCancelled } from "@/lib/roleLabels";
 import { createPortal } from "react-dom";
 import { CalendarDays, ChevronLeft, ChevronRight, ChevronDown, MapPin, X } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
@@ -89,7 +90,7 @@ const LOCATION_OPTIONS = LOCATIONS;
 // different short codes for a different purpose). Kept in sync by hand
 // since ticket.$ticketNo.tsx's own list is inline JSX, not an exported
 // constant; CL-Cancelled is appended separately, gated the same way that
-// page gates it (BizOps Manager+ only — see CANCEL_ROLES there).
+// page gates it (BizOps Manager+ only — roleLabels.ts's canSetCancelledStatus).
 const REPAIR_STATUS_CODES = [
   "CL-Claimed",
   "CL-Data-Closed",
@@ -108,9 +109,6 @@ const REPAIR_STATUS_CODES = [
   "TR-Need PO",
   "TR-Need Triage",
 ] as const;
-// Same role gate as ticket.$ticketNo.tsx's CANCEL_ROLES — only these roles
-// may set a ticket to CL-Cancelled from here either.
-const CANCEL_STATUS_ROLES = new Set(["BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "ADMIN", "SUPERADMIN"]);
 // Daily schedule columns: each time frame, plus an ANYTIME catch-all.
 const TIME_SLOTS: Array<PlannerTicket["slot"]> = [...TIME_FRAMES, "ANYTIME"];
 const SLOT_TIMES: Record<string, string> = FRAME_START_TIME;
@@ -389,7 +387,7 @@ function LocationMultiSelect({ options, selected, onChange }: { options: string[
 export function WorkPlannerPage({ mod, sub }: Props) {
   const navigate = useNavigate();
   const goBackToTickets = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
-  const { email, ready, allowedLocations, role, extraRoles } = useAuth();
+  const { email, ready, allowedLocations, role, extraRoles, isTrainee } = useAuth();
   const locationChoices = allowedLocations === null
     ? (LOCATION_OPTIONS as unknown as string[])
     : (LOCATION_OPTIONS as unknown as string[]).filter((l) => allowedLocations.includes(l));
@@ -431,10 +429,8 @@ export function WorkPlannerPage({ mod, sub }: Props) {
   // Same real status codes + cancellation permission gate as
   // ticket.$ticketNo.tsx's own Visit Log editor — see REPAIR_STATUS_CODES
   // above.
-  const canSetCancelledStatus = useMemo(() => {
-    const heldRoles = [role, ...extraRoles].map((r) => String(r || "").toUpperCase());
-    return heldRoles.some((r) => CANCEL_STATUS_ROLES.has(r));
-  }, [role, extraRoles]);
+  // Same rule as the ticket page (roleLabels.ts): main or secondary role; a trainee only once granted access.
+  const canSetCancelledStatus = useMemo(() => canSetCancelled(role, extraRoles, isTrainee), [role, extraRoles, isTrainee]);
   const repairStatusOptions = useMemo(
     () => (canSetCancelledStatus ? ["CL-Cancelled", ...REPAIR_STATUS_CODES] : [...REPAIR_STATUS_CODES]),
     [canSetCancelledStatus],
@@ -683,9 +679,16 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     // proximity had it vanish from Montgomery's own board entirely and
     // only ever show on Birmingham's, since the filter used to match on
     // the ticket's stored location alone.
-    const effectiveBranch = (ticket: PlannerTicket) => {
+    //
+    // The ticket's OWN branch still counts too: matching the tech's branch
+    // alone emptied whole boards whose work is all covered from elsewhere
+    // (Savannah by an Asheville tech, Richmond by a Wilmington tech,
+    // Montgomery by Columbus/Huntsville techs). So a covered ticket shows
+    // on both boards.
+    const ticketBranches = (ticket: PlannerTicket) => {
       const techBranch = ticket.technician ? techBranchByName.get(ticket.technician.trim().toLowerCase()) : undefined;
-      return normalizeBranch(techBranch || ticket.location || ticket.city || ticket.branch);
+      const ownBranch = normalizeBranch(ticket.location || ticket.city || ticket.branch);
+      return techBranch ? [normalizeBranch(techBranch), ownBranch] : [ownBranch];
     };
     return plannerTickets.filter((ticket) => {
       // Must have an actual scheduled date — no fallback to created_at.
@@ -694,7 +697,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
       if (!ticketDate) return false;
       if (ticketDate !== selectedDate) return false;
       if (isPreScheduleStatus(ticket.status)) return false;
-      if (locations.size > 0 && !locations.has(effectiveBranch(ticket))) return false;
+      if (locations.size > 0 && !ticketBranches(ticket).some((b) => locations.has(b))) return false;
       if (!showRescheduled && String(ticket.status || "").toLowerCase().includes("resched")) return false;
       return true;
     });

@@ -14,7 +14,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, ChevronRight, Users, UserCheck, UserX, Clock, Loader2, Download } from "lucide-react";
 import { BrandedLoader } from "@/components/BrandedLoader";
-import { Bar, BarChart, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getCompanyUsers, getFirstDeactivations, type ProfileRow } from "@/lib/supabase/users";
@@ -659,15 +659,16 @@ export function ReportAttendanceMonitoring({
         <div className="panel p-3 mb-3">
           <p className="text-sm font-semibold mb-3">Daily Attendance Trend</p>
           <ResponsiveContainer width="100%" height={220} debounce={200}>
-            <BarChart data={trendData} margin={{ left: -10 }}>
+            <LineChart data={trendData} margin={{ left: -10, right: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
               <XAxis dataKey="date" tick={{ fill: "#94a3b8", fontSize: 10 }} />
               <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
               <Tooltip contentStyle={TOOLTIP_STYLE} />
               <Legend wrapperStyle={LEGEND_STYLE} />
-              <Bar dataKey="present" fill="#34d399" radius={[4, 4, 0, 0]} name="Present" />
-              <Bar dataKey="late" fill="#facc15" radius={[4, 4, 0, 0]} name="Late" />
-              <Bar dataKey="absent" fill="#f87171" radius={[4, 4, 0, 0]} name="Absent" />
-            </BarChart>
+              <Line type="monotone" dataKey="present" stroke="#34d399" strokeWidth={2} dot={{ r: 3 }} name="Present" />
+              <Line type="monotone" dataKey="late" stroke="#facc15" strokeWidth={2} dot={{ r: 3 }} name="Late" />
+              <Line type="monotone" dataKey="absent" stroke="#f87171" strokeWidth={2} dot={{ r: 3 }} name="Absent" />
+            </LineChart>
           </ResponsiveContainer>
         </div>
         )}

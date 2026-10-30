@@ -17,7 +17,7 @@ export const MANAGERS = [
 ];
 export const TECHS_FULL = [
   "Damon Ottley","Marc James","Nathan Wagner","Christian Clark","Gabriel Talley",
-  "Jaylon Yarbrough","Andres Mota","Jordan Davis","Josh Malloch","Justin Alvarez",
+  "Jaylon Yarbrough","Andres Mota","Jordan Davis","Joshua Malloch","Justin Alvarez",
   "Edward Lindsey","Zachary Gonzalez","Andre Riddle","Cole Mushinsky","Cooper Shaffett",
   "Corey Cage","Darius Brown","Jonathan Knox","Joseph Wease","Kurt Merckel",
 ];

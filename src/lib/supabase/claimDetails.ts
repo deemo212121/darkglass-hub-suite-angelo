@@ -8,6 +8,16 @@
 import { supabase } from "./client";
 import { getTicketId } from "./tickets";
 
+/** A ticket picture sent to the ServicePower claim with Add Document to Claim (migration 0413). */
+export interface SpClaimDocument {
+  /** Firebase Storage path of the picture. */
+  path: string;
+  name: string;
+  /** ServicePower's id for the document on the claim. */
+  documentId: string;
+  sentAt: string;
+}
+
 export interface TicketClaimDetails {
   id: string;
   ticketId: string;
@@ -65,6 +75,15 @@ export interface TicketClaimDetails {
   /** YYYY-MM-DD — when ServicePower received the claim. */
   spReceivedDate: string;
   spClaimCheckedAt: string;
+  /**
+   * SPPN: the unit is unrepairable / its serial # doesn't match (migration
+   * 0413) — either one means the claim needs pictures. undefined = column
+   * not there yet, so it's never sent back on save.
+   */
+  spUnrepairable?: boolean;
+  spSerialMismatch?: boolean;
+  /** Pictures already sent to the ServicePower claim (migration 0413); undefined = column not there yet. */
+  spDocuments?: SpClaimDocument[];
   updatedAt: string;
 }
 
@@ -114,6 +133,9 @@ function rowToClaimDetails(row: any): TicketClaimDetails {
     spPaymentDate: row.sp_payment_date ?? "",
     spReceivedDate: row.sp_received_date ?? "",
     spClaimCheckedAt: row.sp_claim_checked_at ?? "",
+    spUnrepairable: "sp_unrepairable" in row ? !!row.sp_unrepairable : undefined,
+    spSerialMismatch: "sp_serial_mismatch" in row ? !!row.sp_serial_mismatch : undefined,
+    spDocuments: "sp_documents" in row ? (Array.isArray(row.sp_documents) ? row.sp_documents : []) : undefined,
     updatedAt: row.updated_at ?? "",
   };
 }
@@ -207,6 +229,9 @@ export async function upsertTicketClaimDetails(
   if (fields.spPaymentDate !== undefined) payload.sp_payment_date = fields.spPaymentDate || null;
   if (fields.spReceivedDate !== undefined) payload.sp_received_date = fields.spReceivedDate || null;
   if (fields.spClaimCheckedAt !== undefined) payload.sp_claim_checked_at = fields.spClaimCheckedAt || null;
+  if (fields.spUnrepairable !== undefined) payload.sp_unrepairable = fields.spUnrepairable;
+  if (fields.spSerialMismatch !== undefined) payload.sp_serial_mismatch = fields.spSerialMismatch;
+  if (fields.spDocuments !== undefined) payload.sp_documents = fields.spDocuments;
 
   const { data, error } = await supabase
     .from("ticket_claim_details")
@@ -217,6 +242,9 @@ export async function upsertTicketClaimDetails(
     console.error("upsertTicketClaimDetails error:", error.message);
     if (/sp_paid_|sp_payment_date|sp_received_date|sp_claim_checked_at/.test(error.message)) {
       throw new Error("Saving what ServicePower paid needs migration 0397 (claim details paid amounts) — run it in Supabase first.");
+    }
+    if (/sp_unrepairable|sp_serial_mismatch|sp_documents/.test(error.message)) {
+      throw new Error("The SPPN Unrepairable / Serial # boxes and sending pictures to ServicePower need migration 0413 (claim details pictures) — run it in Supabase first.");
     }
     if (/service_performed/.test(error.message)) {
       throw new Error("Saving an edited Service Performed needs migration 0330 (ticket_claim_details.service_performed) — run it in Supabase first.");

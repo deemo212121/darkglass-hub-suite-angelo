@@ -41,6 +41,7 @@ import { useAuth } from "@/lib/auth";
 import { Switch } from "@/components/ui/switch";
 import { ManagerReviewPage, SUPPORTED_TYPES as EMPLOYER_SIGN_SUPPORTED_TYPES } from "@/components/ManagerReviewPage";
 import { getCompanyUsers, getEmploymentStatusesByProfileIds, getMyProfileId, getUserStatusChanges, setProfileFrozen, type AccountStatusChange, type EmploymentStatusInfo, type ProfileRow } from "@/lib/supabase/users";
+import { getActiveFlashTechDestinationsByProfile, type ActiveFlashTechDestination } from "@/lib/supabase/flashTechTrips";
 import { formatISODate, localISODate } from "@/lib/localDate";
 import { isEligibleForTechnicianFormChecklist, isBmAndUpRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { getSignableDocumentsByTypes, getExistingActiveDocuments, createSignableDocument, updateSignableDocumentPdfUrl, confirmSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
@@ -50,6 +51,7 @@ import {
   NEW_TECHNICIAN_FORM_TYPES,
   OFFICE_STAFF_US_FORM_TYPES,
   PH_STAFF_FORM_TYPES,
+  MEXICO_STAFF_FORM_TYPES,
   BM_AND_UP_FORM_TYPES,
   getDocumentReviewStatus,
   isTechnicianExemptFromForm,
@@ -69,6 +71,7 @@ import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getAppUrl } from "@/lib/appUrl";
 import { onTabVisible } from "@/lib/pageVisibility";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
+import { contractorAgreementCountryOf, CONTRACTOR_AGREEMENT_SHORT_TITLE, type ContractorAgreementCountry } from "@/lib/masterPhContractorAgreementFormTemplate";
 import { uploadW4Form } from "@/lib/firebase/storage";
 import { fillW4Pdf } from "@/lib/w4PdfFill";
 import type { W4FormData } from "@/lib/w4FormTemplate";
@@ -79,8 +82,11 @@ import { CONTRACTOR_ADDENDUM_POSITION_LEVELS } from "@/lib/contractorAddendumFor
 // the Philippines subset of LOCATIONS_DATA.
 const PH_BRANCH_NAMES = new Set(LOCATIONS_DATA.filter((l) => l.isPhilippines).map((l) => l.location));
 const isPhBranch = (u: ProfileRow) => PH_BRANCH_NAMES.has(u.assigned_branch || "");
+// Mexico Staff — the same idea: anyone assigned to the Mexico branch.
+const MX_BRANCH_NAMES = new Set(LOCATIONS_DATA.filter((l) => l.isMexico).map((l) => l.location));
+const isMxBranch = (u: ProfileRow) => MX_BRANCH_NAMES.has(u.assigned_branch || "");
 
-type ChecklistTabKey = "technician" | "newTechnician" | "officeStaffUs" | "officeStaffUsAhs" | "phStaff" | "ahsPhStaff" | "bmAndUp";
+type ChecklistTabKey = "technician" | "newTechnician" | "officeStaffUs" | "officeStaffUsAhs" | "phStaff" | "ahsPhStaff" | "mexicoStaff" | "bmAndUp";
 
 /**
  * The AHS Forms PH forms that come in two versions — the original US In Home
@@ -124,6 +130,20 @@ interface ChecklistTabConfig {
   brand?: FormBrand;
   /** The forms this tab sends in their Admin Hub Solutions version (brand "ahs" tabs). */
   ahsFormTypes?: ReadonlySet<SignableDocumentType>;
+  /** Which country version of the contractor agreement this tab counts and sends — Mexico Staff "mx"; unset = the Philippines one. */
+  country?: ContractorAgreementCountry;
+}
+
+/** Whether a copy counts on this tab: the agreements naming the employer in the tab's brand, the contractor agreement in its country. */
+function countsOnTab(d: Pick<SignableDocument, "documentType" | "formData">, config: ChecklistTabConfig): boolean {
+  if (config.brand && VERSION_REQUIRED_FORM_TYPES.has(d.documentType) && brandOf(d.formData) !== config.brand) return false;
+  if (d.documentType === "master_ph_contractor_agreement" && contractorAgreementCountryOf(d.formData) !== (config.country ?? "ph")) return false;
+  return true;
+}
+/** The form's name on this tab — the contractor agreement is the Master Mexico Contractor Agreement on Mexico Staff. */
+function formLabelOnTab(type: SignableDocumentType, config: ChecklistTabConfig): string {
+  if (type === "master_ph_contractor_agreement") return CONTRACTOR_AGREEMENT_SHORT_TITLE[config.country ?? "ph"];
+  return SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type;
 }
 
 /**
@@ -191,7 +211,7 @@ const CHECKLIST_TABS: ChecklistTabConfig[] = [
     key: "officeStaffUs",
     label: "Office Staff (US)",
     formTypes: OFFICE_STAFF_US_FORM_TYPES,
-    isEligible: (u) => !isPhBranch(u) && !isBmAndUpRole(u.role) && !isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
+    isEligible: (u) => !isPhBranch(u) && !isMxBranch(u) && !isBmAndUpRole(u.role) && !isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
     noun: "office staff",
     formSourceBucket: "new",
     // The US In Home Services agreements — AHS copies count on Office Staff (US) AHS instead.
@@ -204,7 +224,7 @@ const CHECKLIST_TABS: ChecklistTabConfig[] = [
     key: "officeStaffUsAhs",
     label: "Office Staff (US) AHS",
     formTypes: OFFICE_STAFF_US_FORM_TYPES,
-    isEligible: (u) => !isPhBranch(u) && !isBmAndUpRole(u.role) && !isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
+    isEligible: (u) => !isPhBranch(u) && !isMxBranch(u) && !isBmAndUpRole(u.role) && !isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
     noun: "office staff",
     formSourceBucket: "new",
     brand: "ahs",
@@ -229,6 +249,17 @@ const CHECKLIST_TABS: ChecklistTabConfig[] = [
     formSourceBucket: "new",
     brand: "ahs",
     ahsFormTypes: BRANDED_FORM_TYPES,
+  },
+  {
+    // Like PH Staff, with the Mexico version of the contractor agreement.
+    key: "mexicoStaff",
+    label: "Mexico Staff",
+    formTypes: MEXICO_STAFF_FORM_TYPES,
+    isEligible: (u) => isMxBranch(u),
+    noun: "Mexico staff",
+    formSourceBucket: "new",
+    brand: "usihs",
+    country: "mx",
   },
   {
     key: "bmAndUp",
@@ -258,6 +289,8 @@ interface TechRow {
   isDeactivated: boolean;
   /** Badge beside the name for someone who left: "Terminated · Oct 3, 2026", "Resigned · …" or "Deactivated · …" (see leftBadgeFor). */
   leftBadge: { label: string; title: string } | null;
+  /** Flash Tech trips open right now (same rule as the Flash Tech Tracker and User Management) — destination and last day, shown under the name. */
+  flashTrips: ActiveFlashTechDestination[];
 }
 
 /**
@@ -386,6 +419,7 @@ export function TechnicianFormChecklistPage({
   const [allUsers, setAllUsers] = useState<ProfileRow[]>(() => readCachedUsers() ?? []);
   const [employmentStatuses, setEmploymentStatuses] = useState<Map<string, EmploymentStatusInfo>>(new Map());
   const [statusChanges, setStatusChanges] = useState<Map<string, AccountStatusChange>>(new Map());
+  const [flashTripsByProfile, setFlashTripsByProfile] = useState<Map<string, ActiveFlashTechDestination[]>>(new Map());
   const [latestByKey, setLatestByKey] = useState<Map<string, SignableDocument>>(() => readCachedDocs("newTechnician") ?? new Map());
   const [exemptions, setExemptions] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -523,13 +557,16 @@ export function TechnicianFormChecklistPage({
       const users = await getCompanyUsers() as ProfileRow[];
       setAllUsers(users);
       writeCachedUsers(users);
-      // Terminated / Resigned / Deactivated + date for the badge (best-effort — the badge just says Deactivated without it).
-      const [statuses, changes] = await Promise.all([
+      // Terminated / Resigned / Deactivated + date for the badge (best-effort — the badge just says Deactivated without it),
+      // and open Flash Tech trips (best-effort — no Flash Tech line without them).
+      const [statuses, changes, flashTrips] = await Promise.all([
         getEmploymentStatusesByProfileIds(users.map((u) => u.id)).catch(() => new Map<string, EmploymentStatusInfo>()),
         getUserStatusChanges().catch(() => new Map<string, AccountStatusChange>()),
+        getActiveFlashTechDestinationsByProfile().catch(() => new Map<string, ActiveFlashTechDestination[]>()),
       ]);
       setEmploymentStatuses(statuses);
       setStatusChanges(changes);
+      setFlashTripsByProfile(flashTrips);
     } catch (err) {
       console.error("Staff form checklist: failed to load users:", err);
     } finally {
@@ -585,8 +622,8 @@ export function TechnicianFormChecklistPage({
         // without this, e.g. New Technician's W-4 row showed "done" off an
         // old-flow W-4 submission it never actually sent.
         if (SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) && isNewAutomationDoc(d) !== (activeConfig.formSourceBucket === "new")) continue;
-        // The Master PH Contractor Agreement counts on its own version's tab only (Direct Deposit / Valid ID carry over).
-        if (activeConfig.brand && VERSION_REQUIRED_FORM_TYPES.has(d.documentType) && brandOf(d.formData) !== activeConfig.brand) continue;
+        // The Master PH Contractor Agreement counts on its own version's tab only (Direct Deposit / Valid ID carry over) — and its own country's.
+        if (!countsOnTab(d, activeConfig)) continue;
         const key = `${personId}|${d.documentType}`;
         const arr = byKey.get(key);
         if (arr) arr.push(d);
@@ -677,9 +714,10 @@ export function TechnicianFormChecklistPage({
         isTrainee: u.employment_type === "trainee",
         isDeactivated: !u.is_active,
         leftBadge: leftBadgeFor(u, employmentStatuses.get(u.id), statusChanges.get(u.id)),
+        flashTrips: flashTripsByProfile.get(u.id) ?? [],
       };
     });
-  }, [allUsers, latestByKey, exemptions, activeConfig, employmentStatuses, statusChanges]);
+  }, [allUsers, latestByKey, exemptions, activeConfig, employmentStatuses, statusChanges, flashTripsByProfile]);
 
   // Auto-(re)select a row to expand whenever the underlying row list changes
   // (data refresh OR switching tabs) — keeps the current selection if it's
@@ -717,7 +755,7 @@ export function TechnicianFormChecklistPage({
   );
 
   const formOptions = useMemo(
-    () => activeConfig.formTypes.map((type) => ({ type, label: SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type })),
+    () => activeConfig.formTypes.map((type) => ({ type, label: formLabelOnTab(type, activeConfig) })),
     [activeConfig]
   );
 
@@ -817,12 +855,12 @@ export function TechnicianFormChecklistPage({
       const alreadySent = alreadySentRaw.filter(
         (d) =>
           (!SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) || isNewAutomationDoc(d) === (activeConfig.formSourceBucket === "new")) &&
-          (!activeConfig.brand || !VERSION_REQUIRED_FORM_TYPES.has(d.documentType) || brandOf(d.formData) === activeConfig.brand) &&
+          countsOnTab(d, activeConfig) &&
           // Signed in an old wording: sending the new version is the point, not a duplicate.
           !isOutdatedDocument(d)
       );
       if (alreadySent.length > 0) {
-        setActionError(`${personName} already has a ${SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type} on file (most likely just sent from another session) — refreshing to show its current status.`);
+        setActionError(`${personName} already has a ${formLabelOnTab(type, activeConfig)} on file (most likely just sent from another session) — refreshing to show its current status.`);
         await loadDocsForActiveTab();
         return;
       }
@@ -848,7 +886,7 @@ export function TechnicianFormChecklistPage({
       const versionTag = currentVersion ? { templateVersion: currentVersion } : {};
       const doc = await createSignableDocument({
         documentType: type,
-        formData: { employeeId: personId, employeeName: personName, ...formSourceTag, ...contractorAddendumFields, ...versionTag, ...(activeConfig.ahsFormTypes?.has(type) ? { brand: "ahs" } : {}) },
+        formData: { employeeId: personId, employeeName: personName, ...formSourceTag, ...contractorAddendumFields, ...versionTag, ...(activeConfig.ahsFormTypes?.has(type) ? { brand: "ahs" } : {}), ...(activeConfig.country === "mx" && type === "master_ph_contractor_agreement" ? { country: "mx" } : {}) },
         recipientId: personId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -860,7 +898,7 @@ export function TechnicianFormChecklistPage({
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "HR",
-          body: `📋 Please complete the ${type === "confidentiality_noncompete_agreement" ? confidentialityAgreementTitle(CNC_CURRENT_TEMPLATE_VERSION) : SIGNABLE_DOCUMENT_REGISTRY[type].label}: ${fillLink}`,
+          body: `📋 Please complete the ${type === "confidentiality_noncompete_agreement" ? confidentialityAgreementTitle(CNC_CURRENT_TEMPLATE_VERSION) : formLabelOnTab(type, activeConfig)}: ${fillLink}`,
         });
       }
       void logActivity({ action: `${type}_sent`, targetType: "employee", targetId: personId, targetLabel: personName });
@@ -904,7 +942,7 @@ export function TechnicianFormChecklistPage({
         new Set(
           alreadyActiveRaw
             .filter((d) => !SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) || isNewAutomationDoc(d) === (activeConfig.formSourceBucket === "new"))
-            .filter((d) => !activeConfig.brand || !VERSION_REQUIRED_FORM_TYPES.has(d.documentType) || brandOf(d.formData) === activeConfig.brand)
+            .filter((d) => countsOnTab(d, activeConfig))
             .map((d) => d.documentType)
         )
       );
@@ -928,6 +966,7 @@ export function TechnicianFormChecklistPage({
               employeeName: r.name,
               ...formSourceTag,
               ...(activeConfig.ahsFormTypes?.has(type) ? { brand: "ahs" } : {}),
+              ...(activeConfig.country === "mx" && type === "master_ph_contractor_agreement" ? { country: "mx" } : {}),
               // Same reasoning as handleSendForm above — only applies to the
               // contractor_addendum entry in this bundle, if present.
               ...(type === "contractor_addendum" && contractorAddendumInfo
@@ -1018,7 +1057,7 @@ export function TechnicianFormChecklistPage({
           dmThreadId: thread.id,
           senderId: myProfileId,
           senderName: displayName || "HR",
-          body: `⏰ Reminder — please complete the ${SIGNABLE_DOCUMENT_REGISTRY[type].label}: ${fillLink}`,
+          body: `⏰ Reminder — please complete the ${formLabelOnTab(type, activeConfig)}: ${fillLink}`,
         });
       }
     } catch (err) {
@@ -1265,6 +1304,11 @@ export function TechnicianFormChecklistPage({
                         {r.frozen && <span className="shrink-0 rounded-full border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-300">Frozen</span>}
                       </p>
                       <p className="text-[11px] text-slate-400">{r.roleLabel} · {r.branch}</p>
+                      {r.flashTrips.map((t) => (
+                        <p key={t.location} className="text-[11px] font-semibold text-amber-300" title={`On a Flash Tech trip to ${t.location} until ${formatISODate(t.endDate)}`}>
+                          Flash Tech · {t.location} · until {formatISODate(t.endDate, { month: "short", day: "numeric", year: "numeric" })}
+                        </p>
+                      ))}
                     </div>
                     <span className={`shrink-0 text-xs font-semibold ${r.doneCount === total ? "text-emerald-400" : "text-slate-300"}`}>
                       {r.doneCount}/{total}
@@ -1354,7 +1398,7 @@ export function TechnicianFormChecklistPage({
                         const awaitingHr = reviewStatus === "awaiting_hr";
                         // Signed in an old wording (Master Confidentiality before the new version): needs the new one sent.
                         const outdated = reviewStatus === "outdated";
-                        const label = SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type;
+                        const label = formLabelOnTab(type, activeConfig);
                         const key = `${r.profileId}|${type}`;
                         const busy = actionKey === key;
                         const statusText = na

@@ -226,6 +226,9 @@ export function TimeClockButtons() {
   // An approved PTO day needs no punches at all — block Time In outright so
   // a manager approving PTO after the fact (or the employee clocking in
   // before it's approved) can't both happen for the same day going forward.
+  // Only Time In: someone already timed in that day (from the mobile app or
+  // the Timecard page, which don't check PTO) can still take a meal and time
+  // out, instead of being stuck with an open day (MaryGrace Cosio, 10/29).
   useEffect(() => {
     if (!profileId) return;
     let cancelled = false;
@@ -514,8 +517,8 @@ export function TimeClockButtons() {
           <button
             type="button"
             onClick={handleMealIn}
-            disabled={saving || locked || !entry.checkIn || !!entry.checkOut || onApprovedPtoToday}
-            title={onApprovedPtoToday ? "You have an approved PTO for today" : "Meal In"}
+            disabled={saving || locked || !entry.checkIn || !!entry.checkOut}
+            title={onApprovedPtoToday ? "You have an approved PTO for today — you're timed in, so you can still finish the day" : "Meal In"}
             className={`${btnClass} text-orange-300 hover:bg-orange-500/15 ${blockedDim}`}
           >
             {savingField === "mealStart" ? "Saving…" : "Meal In"}
@@ -529,8 +532,8 @@ export function TimeClockButtons() {
           <button
             type="button"
             onClick={handleMealOut}
-            disabled={saving || locked || !!entry.checkOut || !entry.mealStart || onApprovedPtoToday}
-            title={onApprovedPtoToday ? "You have an approved PTO for today" : "Meal Out"}
+            disabled={saving || locked || !!entry.checkOut || !entry.mealStart}
+            title={onApprovedPtoToday ? "You have an approved PTO for today — you're timed in, so you can still finish the day" : "Meal Out"}
             className={`${btnClass} text-orange-300 hover:bg-orange-500/15 ${blockedDim}`}
           >
             {savingField === "mealEnd" ? "Saving…" : "Meal Out"}
@@ -543,8 +546,8 @@ export function TimeClockButtons() {
         <button
           type="button"
           onClick={handleTimeOut}
-          disabled={saving || locked || !entry.checkIn || onApprovedPtoToday}
-          title={onApprovedPtoToday ? "You have an approved PTO for today" : "Time Out"}
+          disabled={saving || locked || !entry.checkIn}
+          title={onApprovedPtoToday ? "You have an approved PTO for today — you're timed in, so you can still finish the day" : "Time Out"}
           className={`${btnClass} text-red-300 hover:bg-red-500/15 ${blockedDim}`}
         >
           {savingField === "checkOut" ? "Saving…" : "Time Out"}

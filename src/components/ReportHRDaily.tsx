@@ -103,7 +103,7 @@ import { useSortableSearchTable } from "@/hooks/useSortableSearchTable";
 import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
 import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, masterW2OfficeUsesAdminHub, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
 import { agreementLogoLoader } from "@/lib/agreementBranding";
-import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
+import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, contractorAgreementCountryOf, CONTRACTOR_AGREEMENT_TITLE, CONTRACTOR_AGREEMENT_SHORT_TITLE, type ContractorAgreementCountry, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
 import { masterW2ExecutiveAgreementStyles, buildMasterW2ExecutiveAgreementBodyMarkup, type MasterW2ExecutiveAgreementFormData } from "@/lib/masterW2ExecutiveAgreementFormTemplate";
 import { confidentialityNonCompeteAgreementStyles, buildConfidentialityNonCompeteAgreementBodyMarkup, captureConfidentialityNonCompeteAgreementPdf, CNC_CURRENT_TEMPLATE_VERSION, confidentialityAgreementTitle, confidentialityUsesAdminHub, type ConfidentialityNonCompeteAgreementFormData } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
 import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments";
@@ -1150,7 +1150,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "compensationUpdate" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "confidentialityNonCompeteAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList" | "clockInCodes" | "performanceBonusPolicy" | "ahsDirectDeposit" | "ahsValidId" | "ahsPhAgreement" | "ahsConfidentiality" | "ahsW2Office">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "compensationUpdate" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "confidentialityNonCompeteAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList" | "clockInCodes" | "performanceBonusPolicy" | "ahsDirectDeposit" | "ahsValidId" | "ahsPhAgreement" | "ahsConfidentiality" | "ahsW2Office" | "mxContractorAgreement" | "usContractorAgreement">(paperworksOnly ? "combineForms" : "hiring");
   // HR Paperworks → "AHS Forms PH": the Admin Hub Solutions versions of Direct
   // Deposit, Valid ID, the Master PH Contractor Agreement and the Master
   // Confidentiality agreement; "AHS Forms US" has the Master W-2 Office &
@@ -1158,8 +1158,14 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // the original tabs, but they send (and list) only AHS copies — every copy
   // is tagged form_data.brand = "ahs" and keeps that version for good
   // (lib/formBrand.ts). The original tabs list only the US In Home Services copies.
-  const isAhsFormsTab = activeTab === "ahsDirectDeposit" || activeTab === "ahsValidId" || activeTab === "ahsPhAgreement" || activeTab === "ahsConfidentiality" || activeTab === "ahsW2Office";
+  const isAhsFormsTab = activeTab === "ahsDirectDeposit" || activeTab === "ahsValidId" || activeTab === "ahsPhAgreement" || activeTab === "ahsConfidentiality" || activeTab === "ahsW2Office" || activeTab === "usContractorAgreement";
   const isAhsDoc = (d: { formData?: unknown }) => brandOf(d.formData) === "ahs";
+  // New Automation Forms → Mexico Staff and AHS Forms US: the Mexico and US
+  // versions of the Master PH Contractor Agreement (same type,
+  // form_data.country "mx" / "us" — see masterPhContractorAgreementFormTemplate.ts;
+  // the US one is always Admin Hub Solutions). Each tab lists only its own copies.
+  const contractorTabCountry: ContractorAgreementCountry = activeTab === "mxContractorAgreement" ? "mx" : activeTab === "usContractorAgreement" ? "us" : "ph";
+  const contractorDocCountry = (d: { formData?: unknown }) => contractorAgreementCountryOf(d.formData);
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -1186,7 +1192,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [startDateFor, setStartDateFor] = useState<{ id: string; date: string } | null>(null);
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string; viewCvCandidateId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList", "clockInCodes", "ndaForm", "confidentialityNonCompeteAgreement", "performanceBonusPolicy", "ahsDirectDeposit", "ahsValidId", "ahsPhAgreement", "ahsConfidentiality", "ahsW2Office"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList", "clockInCodes", "ndaForm", "confidentialityNonCompeteAgreement", "performanceBonusPolicy", "ahsDirectDeposit", "ahsValidId", "ahsPhAgreement", "ahsConfidentiality", "ahsW2Office", "mxContractorAgreement", "usContractorAgreement"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -6643,20 +6649,28 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "masterPhContractorAgreement" || activeTab === "ahsPhAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMasterPhContractorAgreementForms();
+    if (activeTab === "masterPhContractorAgreement" || activeTab === "ahsPhAgreement" || activeTab === "mxContractorAgreement" || activeTab === "usContractorAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMasterPhContractorAgreementForms();
   }, [activeTab]);
   const sentMasterPhContractorAgreementAwaitingEmployerCount = useMemo(
-    () => sentMasterPhContractorAgreementForms.filter((d) => !isAhsDoc(d) && isAwaitingEmployerStep(d)).length,
+    () => sentMasterPhContractorAgreementForms.filter((d) => !isAhsDoc(d) && contractorDocCountry(d) === "ph" && isAwaitingEmployerStep(d)).length,
     [sentMasterPhContractorAgreementForms]
   );
   const sentAhsPhAgreementAwaitingEmployerCount = useMemo(
-    () => sentMasterPhContractorAgreementForms.filter((d) => isAhsDoc(d) && isAwaitingEmployerStep(d)).length,
+    () => sentMasterPhContractorAgreementForms.filter((d) => isAhsDoc(d) && contractorDocCountry(d) === "ph" && isAwaitingEmployerStep(d)).length,
+    [sentMasterPhContractorAgreementForms]
+  );
+  const sentMxAgreementAwaitingEmployerCount = useMemo(
+    () => sentMasterPhContractorAgreementForms.filter((d) => contractorDocCountry(d) === "mx" && isAwaitingEmployerStep(d)).length,
+    [sentMasterPhContractorAgreementForms]
+  );
+  const sentUsAgreementAwaitingEmployerCount = useMemo(
+    () => sentMasterPhContractorAgreementForms.filter((d) => contractorDocCountry(d) === "us" && isAwaitingEmployerStep(d)).length,
     [sentMasterPhContractorAgreementForms]
   );
 
   type MasterPhContractorAgreementSortColumn = "employee" | "nationality" | "sentBy" | "status" | "sent";
   const visibleMasterPhContractorAgreementForms = useMemo(
-    () => sentMasterPhContractorAgreementForms.filter((d) => (activeTab === "ahsPhAgreement" ? isAhsDoc(d) : !isAhsDoc(d))),
+    () => sentMasterPhContractorAgreementForms.filter((d) => contractorDocCountry(d) === contractorTabCountry && (contractorTabCountry !== "ph" || (activeTab === "ahsPhAgreement" ? isAhsDoc(d) : !isAhsDoc(d)))),
     [sentMasterPhContractorAgreementForms, activeTab],
   );
   const masterPhContractorAgreementStatusLabel = (doc: SignableDocument): string =>
@@ -6768,8 +6782,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setMasterPhContractorAgreementPreviewLoading(true);
     try {
       const recipientName = employees.find((e) => e.id === masterPhContractorAgreementRecipientId)?.name || "";
-      const logo = await loadBrandLogo(activeTab === "ahsPhAgreement" ? "ahs" : "usihs");
-      const previewData = { ...buildMasterPhContractorAgreementPreviewData(recipientName), ...(activeTab === "ahsPhAgreement" ? { brand: "ahs" as const } : {}) };
+      const ahsCopy = activeTab === "ahsPhAgreement" || contractorTabCountry === "us";
+      const logo = await loadBrandLogo(ahsCopy ? "ahs" : "usihs");
+      const previewData = { ...buildMasterPhContractorAgreementPreviewData(recipientName), ...(ahsCopy ? { brand: "ahs" as const } : {}), ...(contractorTabCountry !== "ph" ? { country: contractorTabCountry } : {}) };
       const pdfBlob = await captureHtmlToPdfBlob(buildMasterPhContractorAgreementBodyMarkup(previewData, logo), masterPhContractorAgreementStyles);
       const url = URL.createObjectURL(pdfBlob);
       setMasterPhContractorAgreementPreviewPdfUrl(url);
@@ -6789,13 +6804,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       if (!recipient) throw new Error("Select a recipient first.");
 
       const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["master_ph_contractor_agreement"]);
-      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Master PH Contractor Agreement on file. Send another one anyway?`)) {
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Master Contractor Agreement (PH, Mexico or US) on file. Send another one anyway?`)) {
         return;
       }
 
       const doc = await createSignableDocument({
         documentType: "master_ph_contractor_agreement",
-        formData: { employeeId: recipient.id, employeeName: recipient.name, ...(activeTab === "ahsPhAgreement" ? { brand: "ahs" } : {}) } as unknown as Record<string, any>,
+        formData: { employeeId: recipient.id, employeeName: recipient.name, ...(activeTab === "ahsPhAgreement" || contractorTabCountry === "us" ? { brand: "ahs" } : {}), ...(contractorTabCountry !== "ph" ? { country: contractorTabCountry } : {}) } as unknown as Record<string, any>,
         recipientId: masterPhContractorAgreementRecipientId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -6809,10 +6824,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         dmThreadId: thread.id,
         senderId: myProfileId,
         senderName: displayName || "HR",
-        body: `📋 Please complete the Master Philippines Independent Contractor Comprehensive Agreement: ${fillLink}`,
+        body: `📋 Please complete the ${CONTRACTOR_AGREEMENT_TITLE[contractorTabCountry]}: ${fillLink}`,
       });
 
-      void logActivity({ action: "master_ph_contractor_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+      void logActivity({ action: `master_${contractorTabCountry}_contractor_agreement_sent`, targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
       setMasterPhContractorAgreementRecipientId("");
       setMasterPhContractorAgreementRecipientSearch("");
@@ -6835,7 +6850,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const handleDownloadMasterPhContractorAgreementPdf = async (doc: SignableDocument) => {
     if (!doc.pdfUrl) return;
     const name = (doc.formData as Partial<MasterPhContractorAgreementFormData>).employeeName || doc.recipientName || "master-ph-contractor-agreement";
-    await downloadSignableDocumentPdf(doc.pdfUrl, `Master Philippines Independent Contractor Comprehensive Agreement - ${name}.pdf`);
+    await downloadSignableDocumentPdf(doc.pdfUrl, `${CONTRACTOR_AGREEMENT_TITLE[contractorAgreementCountryOf(doc.formData)]} - ${name}.pdf`);
   };
 
   /** Re-renders this document's PDF from its already-stored data (employee/employer signatures are inline data: URLs in form_data, no CORS resolution needed) — see regenerateSignableDocumentPdf.ts's header comment. */
@@ -6869,7 +6884,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
 
   const handleDeleteMasterPhContractorAgreement = async (doc: SignableDocument) => {
-    if (!window.confirm("Permanently delete this Master PH Contractor Agreement request?")) return;
+    if (!window.confirm(`Permanently delete this ${CONTRACTOR_AGREEMENT_SHORT_TITLE[contractorAgreementCountryOf(doc.formData)]} request?`)) return;
     setMasterPhContractorAgreementActionBusyId(doc.id);
     setMasterPhContractorAgreementActionError(null);
     try {
@@ -6934,7 +6949,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       await signDocument(masterPhContractorAgreementEmployerDialog.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
       await confirmSignableDocument(masterPhContractorAgreementEmployerDialog.id, null);
 
-      void logActivity({ action: "master_ph_contractor_agreement_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+      void logActivity({ action: `master_${contractorAgreementCountryOf(existing)}_contractor_agreement_employer_signed`, targetType: "employee", targetLabel: existing.employeeName || "" });
       setMasterPhContractorAgreementEmployerDialog(null);
       await loadSentMasterPhContractorAgreementForms();
     } catch (err) {
@@ -16402,6 +16417,31 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // Hiring and the Master List are the same person when the emails match
+  // (the Account Status column's rule): Hired there means Regular here,
+  // and Trainee → Regular here moves a Training candidate to Hired.
+  const employeeForCandidate = (c: Candidate): Employee | null => {
+    const email = c.email?.trim().toLowerCase();
+    return email ? employees.find((e) => e.email?.trim().toLowerCase() === email) ?? null : null;
+  };
+  const trainingCandidateForEmployee = (e: Employee): Candidate | null => {
+    const email = e.email?.trim().toLowerCase();
+    return email ? candidates.find((c) => c.status === "training" && c.email?.trim().toLowerCase() === email) ?? null : null;
+  };
+  const notifyHired = (c: Candidate, startDate: string) => {
+    if (!uid) return;
+    getMyProfileId(uid)
+      .then((myProfileId) =>
+        notifyOnCandidateHired({ id: c.id, name: c.name, branch: c.branch ?? null, position: c.position ?? null }, startDate, myProfileId, displayName || "HR")
+      )
+      .catch((err) => console.error("Failed to send hire notifications:", err));
+  };
+  /** Trainee → Regular and the Master List Start Date — what Hired in Hiring means for their account. */
+  const makeEmployeeRegular = async (employee: Employee, startDate: string) => {
+    if (employee.employmentType === "trainee") await handleUpdateEmploymentType(employee.id, "regular");
+    if (startDate && startDate !== employee.startDate) await handleUpdateStartDate(employee.id, startDate);
+  };
+
   const handleConfirmStatusDate = async () => {
     if (!statusDateDialog) return;
     // Captured before the update — only a genuine transition INTO Hired
@@ -16419,18 +16459,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         statusDateDialog.status === "interviewing" ? statusDateDialog.time || undefined : undefined,
         statusDateDialog.status === "interviewing" ? statusDateDialog.timezone : undefined
       );
-      if (statusDateDialog.status === "hired" && !wasAlreadyHired && uid) {
+      if (statusDateDialog.status === "hired" && !wasAlreadyHired) {
         const hiredCandidate = candidates.find((c) => c.id === statusDateDialog.candidateId);
-        getMyProfileId(uid)
-          .then((myProfileId) =>
-            notifyOnCandidateHired(
-              { id: statusDateDialog.candidateId, name: statusDateDialog.candidateName, branch: hiredCandidate?.branch ?? null, position: hiredCandidate?.position ?? null },
-              statusDateDialog.date,
-              myProfileId,
-              displayName || "HR"
-            )
-          )
-          .catch((err) => console.error("Failed to send hire notifications:", err));
+        if (hiredCandidate) notifyHired(hiredCandidate, statusDateDialog.date);
+      }
+      // Hired here = Regular on the Master List, from this start date (when they already have an account).
+      if (statusDateDialog.status === "hired") {
+        const hiredCandidate = candidates.find((c) => c.id === statusDateDialog.candidateId);
+        const employee = hiredCandidate ? employeeForCandidate(hiredCandidate) : null;
+        if (employee) await makeEmployeeRegular(employee, statusDateDialog.date);
       }
       // Technician / Parts Manager moved to Training → the Senior Managers (Naveen Lakhani, Lou Basco).
       if (statusDateDialog.status === "training" && !wasAlreadyTraining && uid) {
@@ -17005,7 +17042,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   // Trainee vs Regular — a separate classification from Account Status
   // above, no confirmation needed (unlike terminating/resigning someone).
-  const handleUpdateEmploymentType = async (id: string, newType: "trainee" | "regular") => {
+  const handleUpdateEmploymentType = async (id: string, newType: "trainee" | "regular"): Promise<boolean> => {
     const employee = employees.find((e) => e.id === id);
     const prevType = employee?.employmentType ?? "regular";
     setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, employmentType: newType } : e)));
@@ -17021,9 +17058,47 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           )
           .catch((err) => console.error("Failed to notify HR of the new PH trainee:", err));
       }
+      return true;
     } catch (err) {
       setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, employmentType: prevType } : e)));
       setError(err instanceof Error ? err.message : "Failed to update employment type.");
+      return false;
+    }
+  };
+
+  // Trainee → Regular asks for the start date first: it becomes the Master
+  // List Start Date, and a Training candidate with the same email moves to
+  // Hired from that date (same as picking Hired in Hiring).
+  const [regularDialog, setRegularDialog] = useState<{ employeeId: string; name: string; date: string; candidateId: string | null } | null>(null);
+  const [regularDialogSaving, setRegularDialogSaving] = useState(false);
+  const handleEmploymentTypeSelect = (employee: Employee, newType: "trainee" | "regular") => {
+    if (newType === "regular" && employee.employmentType === "trainee") {
+      const candidate = trainingCandidateForEmployee(employee);
+      setRegularDialog({ employeeId: employee.id, name: employee.name, date: candidate?.startDate || today, candidateId: candidate?.id ?? null });
+      return;
+    }
+    void handleUpdateEmploymentType(employee.id, newType);
+  };
+  const handleConfirmRegular = async () => {
+    if (!regularDialog?.date) return;
+    const { employeeId, date, candidateId } = regularDialog;
+    setRegularDialogSaving(true);
+    try {
+      if (!(await handleUpdateEmploymentType(employeeId, "regular"))) return;
+      await handleUpdateStartDate(employeeId, date);
+      const candidate = candidateId ? candidates.find((c) => c.id === candidateId) : null;
+      if (candidate && candidate.status === "training") {
+        await updateCandidateStatus(candidate.id, "hired", date);
+        notifyHired(candidate, date);
+        void logActivity({ action: "candidate_status_changed", targetType: "candidate", targetId: candidate.id, targetLabel: candidate.name, details: { status: "hired", date, via: "master_list" } });
+        await loadCandidates();
+      }
+      setRegularDialog(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Saved as Regular, but couldn't move their Hiring record to Hired.");
+      setRegularDialog(null);
+    } finally {
+      setRegularDialogSaving(false);
     }
   };
 
@@ -18580,6 +18655,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { key: "validId", label: "Valid ID", count: 0, icon: FileCheck },
   ] as const;
 
+  // "Mexico Staff" — PH Staff's forms for Mexico staff: the Mexico version of
+  // the contractor agreement (its own tab, same document type — see contractorTabCountry),
+  // and the same shared W-8BEN / Direct Deposit / Valid ID tabs.
+  const newAutomationFormsMexicoTabs = [
+    { key: "mxContractorAgreement", label: "Master Mexico Contractor Agreement", count: sentMxAgreementAwaitingEmployerCount, icon: FileCheck },
+    { key: "newW8ben", label: "Form W-8BEN", count: 0, icon: Landmark },
+    { key: "newDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
+    { key: "validId", label: "Valid ID", count: 0, icon: FileCheck },
+  ] as const;
+
   // "New Automation Forms"'s management-tier column — Branch Manager/Senior
   // Branch Manager/Director/Tech Assistant Director forms. Contractor
   // Addendum + W-9 (1099 paperwork) were replaced with the W-2 Executive
@@ -18640,12 +18725,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     ...(paperworksOnly && companyId === "COMP001" ? [{
       group: "New Automation Forms",
       icon: Paperclip,
-      tabs: [...newAutomationFormsGeneralTabs, ...newAutomationFormsTechnicianTabs, ...newAutomationFormsOfficeTabs, ...newAutomationFormsPhTabs, ...newAutomationFormsManagementTabs],
+      tabs: [...newAutomationFormsGeneralTabs, ...newAutomationFormsTechnicianTabs, ...newAutomationFormsOfficeTabs, ...newAutomationFormsPhTabs, ...newAutomationFormsMexicoTabs, ...newAutomationFormsManagementTabs],
       columns: [
         { label: "General", tabs: newAutomationFormsGeneralTabs },
         { label: "New Technician Forms", tabs: newAutomationFormsTechnicianTabs },
         { label: "New Office Forms (US)", tabs: newAutomationFormsOfficeTabs },
         { label: "PH Staff", tabs: newAutomationFormsPhTabs },
+        { label: "Mexico Staff", tabs: newAutomationFormsMexicoTabs },
         { label: "BM, SBS, Tech Director, Tech Assistant Director Forms", tabs: newAutomationFormsManagementTabs },
       ],
     }] : []),
@@ -18691,6 +18777,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       icon: Paperclip,
       tabs: [
         { key: "ahsW2Office", label: "Master W-2 Office & Logistics Agreement", count: sentAhsW2OfficeAwaitingEmployerCount, icon: FileCheck },
+        // The US version of the contractor agreement (form_data.country "us" — see contractorTabCountry).
+        { key: "usContractorAgreement", label: "Master US Contractor Agreement", count: sentUsAgreementAwaitingEmployerCount, icon: FileCheck },
         { key: "newW4", label: "Form W-4", count: 0, icon: Landmark },
         { key: "newI9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2CountNew, icon: FileCheck },
         { key: "newDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
@@ -21447,7 +21535,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       <td className="px-2 py-1">
                         <select
                           value={employee.employmentType}
-                          onChange={(e) => void handleUpdateEmploymentType(employee.id, e.target.value as "trainee" | "regular")}
+                          onChange={(e) => handleEmploymentTypeSelect(employee, e.target.value as "trainee" | "regular")}
                           className="text-[10px] font-semibold px-1.5 py-0.5 rounded border-0 bg-slate-700 text-slate-100"
                         >
                           <option value="regular">Regular</option>
@@ -31602,12 +31690,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
-      {(activeTab === "masterPhContractorAgreement" || activeTab === "ahsPhAgreement") && (
+      {(activeTab === "masterPhContractorAgreement" || activeTab === "ahsPhAgreement" || activeTab === "mxContractorAgreement" || activeTab === "usContractorAgreement") && (
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Send Master PH Contractor Agreement Request {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
-          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their info and sign. Once they submit, it lands back here for HR to add the employer signature. Covers the independent-contractor relationship, confidentiality/NDA, the PH off-days & leave policy, and governing law/e-signature terms in one document.</p>
+          <h2 className="font-semibold text-sm">Send {CONTRACTOR_AGREEMENT_SHORT_TITLE[contractorTabCountry]} Request {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their info and sign. Once they submit, it lands back here for HR to add the employer signature. Covers the independent-contractor relationship, confidentiality/NDA, the {{ ph: "PH", mx: "Mexico", us: "US" }[contractorTabCountry]} off-days & leave policy, and governing law/e-signature terms in one document.</p>
         </div>
         <div className="p-4 flex flex-col md:flex-row gap-6">
           <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
@@ -31673,7 +31761,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 {masterPhContractorAgreementPreviewLoading || !masterPhContractorAgreementPreviewPdfUrl ? (
                   <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
                 ) : (
-                  <iframe src={masterPhContractorAgreementPreviewPdfUrl} title="Master PH Contractor Agreement Preview" className="w-full border-0" style={{ height: 560 }} />
+                  <iframe src={masterPhContractorAgreementPreviewPdfUrl} title={`${CONTRACTOR_AGREEMENT_SHORT_TITLE[contractorTabCountry]} Preview`} className="w-full border-0" style={{ height: 560 }} />
                 )}
               </div>
             ) : (
@@ -31687,7 +31775,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Sent Master PH Contractor Agreement Forms {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
+          <h2 className="font-semibold text-sm">Sent {CONTRACTOR_AGREEMENT_SHORT_TITLE[contractorTabCountry]} Forms {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the contractor finished — add your signature to finalize.</p>
         </div>
         <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
@@ -31868,8 +31956,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <h3 className="text-lg font-bold mb-2">Add Employer Signature</h3>
             <p className="text-sm text-muted-foreground mb-4">
               Employer representative signature for{" "}
-              <span className="font-semibold text-white">{(masterPhContractorAgreementEmployerDialog.formData as Partial<MasterPhContractorAgreementFormData>).employeeName || "—"}</span>'s
-              Master Philippines Independent Contractor Comprehensive Agreement.
+              <span className="font-semibold text-white">{(masterPhContractorAgreementEmployerDialog.formData as Partial<MasterPhContractorAgreementFormData>).employeeName || "—"}</span>'s{" "}
+              {CONTRACTOR_AGREEMENT_TITLE[contractorAgreementCountryOf(masterPhContractorAgreementEmployerDialog.formData)]}.
             </p>
 
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
@@ -36687,6 +36775,38 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
+      {/* Master List Trainee → Regular: the start date, and the Hiring record moves to Hired */}
+      {regularDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">Make Regular</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              <span className="font-semibold text-white">{regularDialog.name}</span> — set the start date:
+            </p>
+            <input
+              type="date"
+              value={regularDialog.date}
+              onChange={(e) => setRegularDialog({ ...regularDialog, date: e.target.value })}
+              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mb-2"
+            />
+            <p className="text-[11px] text-muted-foreground mb-4">
+              Saved as their Start Date here.{" "}
+              {regularDialog.candidateId ? "Their Hiring record moves from Training to Hired from this date." : "No Training candidate with their email in Hiring, so Hiring isn't changed."}
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setRegularDialog(null)} disabled={regularDialogSaving} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={() => void handleConfirmRegular()}
+                disabled={!regularDialog.date || regularDialogSaving}
+                className="btn text-sm px-4 py-2 text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {regularDialogSaving ? "Saving…" : "Make Regular"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Interviewing/Training require a date — collected here before the status actually saves */}
       {statusDateDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -36699,8 +36819,19 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               type="date"
               value={statusDateDialog.date}
               onChange={(e) => setStatusDateDialog({ ...statusDateDialog, date: e.target.value })}
-              className={`glass-input text-sm py-1.5 px-3 rounded-md w-full ${statusDateDialog.status === "interviewing" || statusDateDialog.status === "training" ? "mb-3" : "mb-4"}`}
+              className={`glass-input text-sm py-1.5 px-3 rounded-md w-full ${statusDateDialog.status === "interviewing" || statusDateDialog.status === "training" || statusDateDialog.status === "hired" ? "mb-3" : "mb-4"}`}
             />
+            {statusDateDialog.status === "hired" && (() => {
+              const hiredCandidate = candidates.find((c) => c.id === statusDateDialog.candidateId);
+              const employee = hiredCandidate ? employeeForCandidate(hiredCandidate) : null;
+              return (
+                <p className="text-[11px] text-muted-foreground mb-4">
+                  {employee
+                    ? `On the Master List, ${employee.name} becomes Regular with this Start Date.`
+                    : "They don't have an account yet — create it from Account Status."}
+                </p>
+              );
+            })()}
             {statusDateDialog.status === "interviewing" && (
               <>
                 <p className="text-sm text-muted-foreground mb-1">Interview time (optional):</p>

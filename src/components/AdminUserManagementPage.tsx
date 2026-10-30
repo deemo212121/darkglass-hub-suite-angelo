@@ -115,6 +115,8 @@ const LOCATIONS = [
   "Memphis", "Mobile", "Montgomery", "Nashville", "New Orleans", "Norfolk",
   "Richmond", "Raleigh", "San Antonio", "St. Louis", "Savannah",
   "Tallahassee", "Wilmington", "Philippines",
+  // Mexico staff (HR Paperworks → Mexico Staff forms) — not a service branch.
+  "Mexico",
 ];
 
 // Sentinel for the "All Locations" entry in Branch Access. Picking this clears

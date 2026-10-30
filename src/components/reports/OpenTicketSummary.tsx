@@ -13,7 +13,7 @@ const MANAGER_TECH_MAP: Record<string, string[]> = {
   "Alexxis Henry": ["Damon Ottley","Marc James"],
   "Annan Odongo": ["Nathan Wagner"],
   "Brandon Phillips": ["Christian Clark","Gabriel Talley","Jaylon Yarbrough"],
-  "Brya'shawn Butler": ["Andres Mota","Jordan Davis","Josh Malloch","Justin Alvarez"],
+  "Brya'shawn Butler": ["Andres Mota","Jordan Davis","Joshua Malloch","Justin Alvarez"],
   "Chris Simpson": ["Edward Lindsey","Zachary Gonzalez"],
   "Danny Thornton": ["Andre Riddle","Cole Mushinsky","Cooper Shaffett","Corey Cage","Darius Brown","Jonathan Knox","Joseph Wease","Kurt Merckel","Lashamus Dowell","Mikkel Brown","Nocona Detten"],
 };

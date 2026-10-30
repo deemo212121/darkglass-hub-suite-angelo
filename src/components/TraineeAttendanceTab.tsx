@@ -39,6 +39,7 @@ import {
 } from "@/lib/supabase/traineeTimecards";
 import { todayISO, formatISODate } from "@/lib/localDate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
+import { TRAINEE_ATTENDANCE_LINK } from "@/lib/supabase/traineeTimecards";
 import { Bell, BellRing, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -250,7 +251,8 @@ export function TraineeAttendanceTab({
         dmThreadId: thread.id,
         senderId: myProfileId,
         senderName: me,
-        body: `🔔 Reminder: ${trainee}'s trainee day ${entry.workDate} is still pending your review — Attendance Monitoring → Trainee Attendance.`,
+        // The button opens Trainee Attendance on that date with this day's timecard open (?review=…&date=…, the deep link below).
+        body: `🔔 Reminder: ${trainee}'s trainee day ${entry.workDate} is still pending your review.\n[View in Trainee Attendance](app:${TRAINEE_ATTENDANCE_LINK}&review=${encodeURIComponent(entry.id)}&date=${entry.workDate})`,
       });
       setRemindedIds((prev) => new Set(prev).add(entry.id));
       toast.success(`Reminder sent to ${profileById.get(managerId)?.display_name || "the manager"} on Messenger.`);

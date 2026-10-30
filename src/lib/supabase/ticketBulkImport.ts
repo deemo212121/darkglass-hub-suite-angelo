@@ -67,6 +67,7 @@ import { supabase } from "./client";
 import { selectAllPages } from "./selectAllPages";
 import { invalidateCompanyTicketsCache } from "./tickets";
 import { invalidateErBackfillIds } from "./erBackfill";
+import { aliasTechName } from "@/lib/techNameMatch";
 
 export type ImportRow = Record<string, string>;
 
@@ -227,13 +228,20 @@ const int = (v: string) => {
 const JUNK_VALUE = /^(null|n\/a|na|none|-+)$/i;
 /** Not a real technician — ER's office queue ("Memphis Admin"). */
 const NOT_A_TECHNICIAN = /\badmin\b/i;
+/**
+ * ER spells some technicians differently from their AHS account — the file's
+ * name is swapped for the account's (lib/techNameMatch.ts), so the ticket
+ * shows under the real person (ER's "Josh Malloch" made a second
+ * "technician" next to Joshua Malloch on the Ticket Attendance report).
+ */
+const ahsTechName = aliasTechName;
 
 function toRecords(r: ImportRow) {
   const get = (c: string) => {
     const v = (r[c] ?? "").trim();
     return JUNK_VALUE.test(v) ? "" : v;
   };
-  const techName = NOT_A_TECHNICIAN.test(get("TechName")) ? "" : get("TechName");
+  const techName = NOT_A_TECHNICIAN.test(get("TechName")) ? "" : ahsTechName(get("TechName"));
   const name = get("CxUserName");
   const account = get("MfgName");
   const refType = get("RefType");

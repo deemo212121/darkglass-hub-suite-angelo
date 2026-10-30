@@ -495,6 +495,19 @@ export function canManageMisdiagnosed(role: string | null | undefined, extraRole
 }
 
 /**
+ * Who may move a ticket to CL-Cancelled (and record its Cancellation
+ * Reason): BizOps Manager / BizOps Senior Manager, plus Admin / SuperAdmin —
+ * as the main role or a secondary one. Everyone else flags CL-Need Cancel
+ * for BizOps to verify. A trainee only once HR has granted them access
+ * (Master List → Grant access) — useAuth's isTrainee is false from then on.
+ * Same rule on the ticket page, Work Planner and the mobile app.
+ */
+export const CANCEL_STATUS_ROLES = new Set(["BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "ADMIN", "SUPERADMIN"]);
+export function canSetCancelledStatus(role: string | null | undefined, extraRoles?: string[] | null, isTrainee = false): boolean {
+  return !isTrainee && anyHeldRoleIn(CANCEL_STATUS_ROLES, role, extraRoles);
+}
+
+/**
  * Is this the per-company SUPERADMIN role (primary or extra)? Mirrors the
  * SQL is_company_superadmin() helper (0099_role_hierarchy_split.sql) —
  * SUPERSUPERADMIN (the platform-level role) also passes, since it can

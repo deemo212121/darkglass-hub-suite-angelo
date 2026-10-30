@@ -323,6 +323,7 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
         contractor_addendum: { name: "Master Independent Contractor Subcontractor Agreement Addendum", tab: "contractorAddendum" },
         confidentiality_noncompete_agreement: { name: "Master Confidentiality, Non-Solicitation & Affirmative Duty Agreement", tab: "confidentialityNonCompeteAgreement" },
         master_w2_office_agreement: { name: "Master W-2 Office & Logistics Agreement", tab: "masterW2OfficeAgreement" },
+        master_ph_contractor_agreement: { name: "Master PH Contractor Agreement", tab: "masterPhContractorAgreement" },
       };
       // Admin Hub Solutions copies (form_data.brand = "ahs", sent from HR Paperworks → AHS Forms PH) open their own AHS tab there.
       const AHS_FORM_TABS: Record<string, { name: string; tab: string }> = {
@@ -332,7 +333,14 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
         direct_deposit: { name: "Direct Deposit Authorization (AHS)", tab: "ahsDirectDeposit" },
         valid_id_form: { name: "Valid ID (AHS)", tab: "ahsValidId" },
       };
-      const ahsLabel = (doc.form_data as { brand?: string } | null)?.brand === "ahs" ? AHS_FORM_TABS[doc.document_type] : undefined;
+      // The Mexico and US versions of the contractor agreement (form_data.country "mx" — HR Paperworks → New Automation Forms → Mexico Staff; "us" — AHS Forms US) open their own tabs.
+      const agreementCountry = doc.document_type === "master_ph_contractor_agreement" ? (doc.form_data as { country?: string } | null)?.country : undefined;
+      const countryLabel = agreementCountry === "mx"
+        ? { name: "Master Mexico Contractor Agreement", tab: "mxContractorAgreement" }
+        : agreementCountry === "us"
+        ? { name: "Master US Contractor Agreement", tab: "usContractorAgreement" }
+        : undefined;
+      const ahsLabel = countryLabel ?? ((doc.form_data as { brand?: string } | null)?.brand === "ahs" ? AHS_FORM_TABS[doc.document_type] : undefined);
       const docLabel = ahsLabel ?? DOC_TYPE_LABELS[doc.document_type] ?? DOC_TYPE_LABELS.warning_form;
       const notifyFields = {
         title: `Signed by ${doc.recipient_name ?? "recipient"}`,
