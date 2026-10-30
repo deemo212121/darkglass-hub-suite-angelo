@@ -296,7 +296,7 @@ function allHeldRoles(role: string | null | undefined, extraRoles?: string[] | n
  * qualifies is just as good as a primary one, so holding multiple roles can
  * only ever widen what someone can do, never narrow it.
  */
-function anyHeldRoleIn(roleSet: Set<string>, role: string | null | undefined, extraRoles?: string[] | null): boolean {
+export function anyHeldRoleIn(roleSet: Set<string>, role: string | null | undefined, extraRoles?: string[] | null): boolean {
   return allHeldRoles(role, extraRoles).some((r) => roleSet.has(r));
 }
 

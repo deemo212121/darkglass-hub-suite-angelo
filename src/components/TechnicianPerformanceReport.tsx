@@ -91,7 +91,9 @@ import {
 } from "@/components/techPerformanceGrading";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
-import { TECHNICIAN_PAY_ROLES, normalizeRole, isMealAlwaysPaidRole, isFinanceRole, isCompanySuperAdminRole } from "@/lib/roleLabels";
+import { TECHNICIAN_PAY_ROLES, normalizeRole, isMealAlwaysPaidRole, isFinanceRole, isCompanySuperAdminRole, anyHeldRoleIn } from "@/lib/roleLabels";
+/** Can import the Technician Performance file — primary or secondary user type. */
+const IMPORT_ADMIN_ROLES = new Set(["ADMIN", "SUPERADMIN"]);
 import { exportToCSV } from "@/lib/csvExport";
 import {
   getTechnicianPerformanceOverrides,
@@ -1744,7 +1746,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     })();
   };
 
-  const canImport = role === "ADMIN" || role === "SUPERADMIN" || isFinanceRole(role, extraRoles) || isCompanySuperAdminRole(role, extraRoles);
+  const canImport = anyHeldRoleIn(IMPORT_ADMIN_ROLES, role, extraRoles) || isFinanceRole(role, extraRoles) || isCompanySuperAdminRole(role, extraRoles);
 
 
   const thClass = "px-3 py-2 text-left text-xs text-muted-foreground uppercase cursor-pointer select-none hover:text-foreground";

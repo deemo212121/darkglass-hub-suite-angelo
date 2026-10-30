@@ -4,7 +4,7 @@ import { AccountPageShell } from "@/components/AccountPageShell";
 import { useAuth } from "@/lib/auth";
 import { Save, Lock, Eye, EyeOff, Loader2, Check } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
-import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
+import { ROLE_LABELS, normalizeRole, anyHeldRoleIn } from "@/lib/roleLabels";
 import { getMyFullProfile, updateCompanyUser, clearMyMustChangePassword } from "@/lib/supabase/users";
 import { supabase } from "@/lib/supabase/client";
 import { logModuleActivity, getModuleActivityLogForTarget, type ModuleActivityLogEntry } from "@/lib/supabase/moduleActivityLog";
@@ -98,14 +98,15 @@ function PasswordRequirement({ met, label }: { met: boolean; label: string }) {
 }
 
 function ProfilePage() {
-  const { email, uid, role, displayName, mustChangePassword, clearMustChangePasswordFlag } = useAuth();
-  const canEditSchedule = SCHEDULE_EDIT_ROLES.has(String(role || "").toUpperCase());
+  const { email, uid, role, extraRoles, displayName, mustChangePassword, clearMustChangePasswordFlag } = useAuth();
+  // Primary or secondary user type.
+  const canEditSchedule = anyHeldRoleIn(SCHEDULE_EDIT_ROLES, role, extraRoles);
   // Gates Role/Department self-edits — Role determines every permission
   // check in the app, so that one stays admin-tier only. Email used to be
   // gated by this too (see ACCOUNT_FIELD_EDIT_ROLES above); it's now
   // editable by everyone, changed via /api/admin-update-email's
   // self-service branch.
-  const canEditAccountFields = ACCOUNT_FIELD_EDIT_ROLES.has(String(role || "").toUpperCase());
+  const canEditAccountFields = anyHeldRoleIn(ACCOUNT_FIELD_EDIT_ROLES, role, extraRoles);
   // Timezone is locked tighter than Check-In/Out Time — HR sets it from
   // Master List (bulk, company-wide view of who's on which zone); the only
   // edit allowed directly on someone's own My Profile is a SUPERADMIN

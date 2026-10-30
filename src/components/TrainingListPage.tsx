@@ -64,6 +64,10 @@ import { getCompanyTraineeEntries } from "@/lib/supabase/traineeTimecards";
 import { getCompanyTimecardEntries } from "@/lib/supabase/timecards";
 import { getServerNow } from "@/lib/serverTime";
 import { todayISO } from "@/lib/localDate";
+import { anyHeldRoleIn } from "@/lib/roleLabels";
+
+/** Branch Manager picker — primary or secondary user type. */
+const BRANCH_MANAGER_PICK_ROLES = new Set(["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER"]);
 
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
 
@@ -810,7 +814,7 @@ function UnifiedBranchTable({
       Array.from(
         new Set(
           profiles
-            .filter((p) => p.is_active && p.assigned_branch !== "Philippines" && SENIOR_MANAGER_ROLES.has(p.role))
+            .filter((p) => p.is_active && p.assigned_branch !== "Philippines" && anyHeldRoleIn(SENIOR_MANAGER_ROLES, p.role, p.extra_roles))
             .map((p) => p.display_name || p.email)
             .filter(Boolean)
         )
@@ -825,7 +829,7 @@ function UnifiedBranchTable({
       Array.from(
         new Set(
           profiles
-            .filter((p) => p.is_active && p.assigned_branch !== "Philippines" && (p.role === "BRANCH_MANAGER" || p.role === "SENIOR_BRANCH_MANAGER"))
+            .filter((p) => p.is_active && p.assigned_branch !== "Philippines" && anyHeldRoleIn(BRANCH_MANAGER_PICK_ROLES, p.role, p.extra_roles))
             .map((p) => p.display_name || p.email)
             .filter(Boolean)
         )

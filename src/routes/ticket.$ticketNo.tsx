@@ -74,7 +74,7 @@ import { getTicketAlerts, addTicketAlert, removeTicketAlert, type TicketAlert } 
 import { getModelResources, saveModelResources } from "@/lib/supabase/modelResources";
 import { parseServicePerformed, composeServicePerformed, emptyServicePerformed } from "@/lib/servicePerformedNotes";
 import { usePersistedTab } from "@/lib/usePersistedTab";
-import { canManageMisdiagnosed } from "@/lib/roleLabels";
+import { canManageMisdiagnosed, normalizeRole } from "@/lib/roleLabels";
 import { todayISO } from "@/lib/localDate";
 
 // Product category options for the ticket Product Information dropdown.
@@ -4788,14 +4788,15 @@ function TicketDetailsPage() {
   // explain why in the free-text Internal Note — but the actual cancel + the
   // structured reason only happen after BizOps verifies it.
   const CANCEL_ROLES = useMemo(
-    () => new Set(["BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "ADMIN", "SUPERADMIN"]),
+    () => new Set(["BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"]),
     [],
   );
-  const canSetCancelled = useMemo(() => {
-    const primary = String(currentUserRole || "").toUpperCase();
-    if (CANCEL_ROLES.has(primary)) return true;
-    return currentUserExtraRoles.some((r) => CANCEL_ROLES.has(String(r).toUpperCase()));
-  }, [currentUserRole, currentUserExtraRoles, CANCEL_ROLES]);
+  // Primary or any secondary user type (User Management → User Type), in the
+  // standard code form — "BizOps Manager" / "bizops_manager" count as BIZOPS_MANAGER.
+  const canSetCancelled = useMemo(
+    () => [currentUserRole, ...(currentUserExtraRoles ?? [])].some((r) => CANCEL_ROLES.has(normalizeRole(r))),
+    [currentUserRole, currentUserExtraRoles, CANCEL_ROLES],
+  );
 
   const notifyUnauthorizedPartEdit = useCallback(async (attemptedRow: PartTransactionRow | null) => {
     if (!currentCompanyId) return;

@@ -17,7 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/lib/auth";
-import { canManageChannelsRole } from "@/lib/roleLabels";
+import { canManageChannelsRole, anyHeldRoleIn } from "@/lib/roleLabels";
 import {
   type ChannelRow,
   type MessageRow,
@@ -152,7 +152,8 @@ export function AnnouncementsMenu({ onViewAll }: AnnouncementsMenuProps = {}) {
       .slice(0, 20);
   }, [messages]);
 
-  const canPost = HIGHER_UP_ROLES.has(String(role || "").toUpperCase());
+  // Primary or secondary user type.
+  const canPost = anyHeldRoleIn(HIGHER_UP_ROLES, role, extraRoles);
 
   // markThreadRead always marks the whole channel read up to now (there's no
   // per-message read pointer), so opening any one announcement clears the
