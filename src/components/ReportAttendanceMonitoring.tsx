@@ -15,8 +15,8 @@ import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, ChevronRight, Users, UserCheck, UserX, Clock, Loader2, Download } from "lucide-react";
 import { BrandedLoader } from "@/components/BrandedLoader";
 import { AppModal } from "@/components/ui-kit/AppModal";
+import { writeAttendanceWorkbook, type AttendanceSheetSpec } from "@/lib/attendanceReportWorkbook";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getCompanyUsers, getSeparations, preloadSeparations, getHireDatesByProfileIds, type ProfileRow, type Separation } from "@/lib/supabase/users";
 import { getCompanyTimecardEntries, calcWorkedHours, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
@@ -634,56 +634,122 @@ export function ReportAttendanceMonitoring({
     });
   }, [dateRange, filteredProfiles, entriesByProfileDate, restHistory, statusChanges, approvedLeaveByProfile]);
 
-  const exportToXlsx = () => {
-    const sheet: (string | number)[][] = [
-      ["Attendance Monitoring Report"],
-      [`Period: ${dateFrom} to ${dateTo}`],
-      [`Generated: ${new Date().toLocaleString()}`],
-      [],
-      ["Summary — Today", ],
-      ["Metric", "Value"],
-      ["Total Employees", filteredProfiles.length],
-      ["Present Today", todayKpi.present],
-      ["Absent Today", todayKpi.absent],
-      ["Late Today", todayKpi.late],
-      ["PTO Pending", ptoPending],
-      ["Corrections Pending", correctionsPending],
-      ["Warnings", warningsCount],
-      [],
-      ["Daily Trend"],
-      ["Date", "Present", "Absent", "Late"],
-      ...trendData.map((t) => [t.date, t.present, t.absent, t.late]),
-      [],
-      ...(groupBy === "employee"
-        ? [
-            ["Daily Attendance"],
-            ["Name", "Role", "Date", "Clock In", "Required In", "Clock Out", "Required Out", "Hours", "Status"],
-            ...dailyEmployeeRows.map((r) => [r.name, r.role, r.date, r.clockIn || "—", r.requiredCheckIn || "—", r.clockOut || "—", r.requiredCheckOut || "—", r.hours.toFixed(2), STATUS_LABEL[r.status]]),
-          ]
-        : [
-            ["Department Summary — Full Period"],
-            ["Department", "Active Employees", "Deactivated Employees", "Days Present", "Absences", "Total Hours"],
-            ...roleSummary.map((r) => [r.role, r.count - r.inactive, r.inactive, r.present, r.absent, r.hours.toFixed(1)]),
-            [],
-            ["Employees — Full Period"],
-            EMPLOYEE_COLUMNS.map((c) => c.label),
-            ...roleSummary.flatMap((r) => (employeesByRole.get(r.role) ?? []).map((e) => [
-              e.inactive ? `${e.name} (${e.leftLabel}${e.deactivatedOn ? " " + e.deactivatedOn : ""})` : e.name, e.department, e.branch, e.manager, e.daysWorked, e.hours.toFixed(2),
-              e.daysWorked ? (e.hours / e.daysWorked).toFixed(2) : "0.00",
-              e.absent, e.missingTimeOut, e.pto ? `${fmtDays(e.pto.remaining)}/${e.pto.allowance}` : "Not eligible", e.corrections, e.correctionsApproved, e.correctionsPending, e.correctionsRejected, e.warnings,
-            ])),
-            [],
-            ["Trainees — Full Period"],
-            ["Trainee", "Department", "Branch", "Manager", "Days Present", "Absences", "Pending Days", "Total Hours"],
-            ...traineeSummary.map((t) => [
-              t.inactive ? `${t.name} (${t.leftLabel}${t.leftOn ? " " + t.leftOn : ""})` : t.name, t.department, t.branch, t.manager, t.present, t.absent, t.pending, t.hours.toFixed(2),
-            ]),
-          ]),
+  // Styled workbook (attendanceReportWorkbook.ts): Overview (today's numbers
+  // + daily trend), then Departments / Employees / Trainees — or Daily
+  // Attendance when grouped by employee.
+  const [exporting, setExporting] = useState(false);
+  const exportToXlsx = async () => {
+    const period = `${fmtShortDate(dateFrom)} – ${fmtShortDate(dateTo)}`;
+    const subtitle = `${period}   •   ${departmentFilter || "All Departments"}`;
+    const leftName = (name: string, label: string, on: string | null) => `${name} (${label}${on ? " · " + fmtShortDate(on) : ""})`;
+    const sheets: AttendanceSheetSpec[] = [
+      {
+        name: "Overview",
+        title: "Attendance Monitoring Report",
+        note: "Today's numbers are for today only; the Daily Trend covers every day in the period.",
+        headers: ["Today", "Count"],
+        textCols: 1,
+        rows: [
+          { cells: ["Total Employees", filteredProfiles.length] },
+          { cells: ["Present Today", todayKpi.present] },
+          { cells: ["Absent Today", todayKpi.absent] },
+          { cells: ["Late Today", todayKpi.late] },
+          { cells: ["PTO Pending", ptoPending] },
+          { cells: ["Corrections Pending", correctionsPending] },
+          { cells: ["Warnings", warningsCount] },
+        ],
+        widths: { 0: 28, 1: 14 },
+      },
+      {
+        name: "Daily Trend",
+        title: "Daily Trend",
+        headers: ["Date", "Present", "Absent", "Late"],
+        textCols: 1,
+        rows: trendData.map((t) => ({ cells: [t.date, t.present, t.absent, t.late] })),
+        greenCols: [1],
+        redCols: [2],
+        amberCols: [3],
+        totalCols: [1, 2, 3],
+        widths: { 0: 16 },
+      },
     ];
-    const worksheet = XLSX.utils.aoa_to_sheet(sheet);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Attendance Report");
-    XLSX.writeFile(workbook, `attendance-monitoring-report_${dateFrom}_to_${dateTo}.xlsx`);
+    if (groupBy === "employee") {
+      sheets.push({
+        name: "Daily Attendance",
+        title: "Daily Attendance",
+        headers: ["Name", "Role", "Date", "Clock In", "Required In", "Clock Out", "Required Out", "Hours", "Status"],
+        textCols: 3,
+        rows: dailyEmployeeRows.map((r) => ({
+          cells: [r.name, r.role, r.date, r.clockIn || "—", r.requiredCheckIn || "—", r.clockOut || "—", r.requiredCheckOut || "—", Number(r.hours.toFixed(2)), STATUS_LABEL[r.status]],
+        })),
+        formats: { 7: "0.00" },
+      });
+    } else {
+      sheets.push(
+        {
+          name: "Departments",
+          title: "Department Summary",
+          note: "Regular employees only — trainees are on their own sheet. Deactivated people count while they were still here during the period.",
+          headers: ["Department", "Active Employees", "Deactivated", "Days Present", "Absences", "Total Hours"],
+          textCols: 1,
+          rows: roleSummary.map((r) => ({ cells: [r.role, r.count - r.inactive, r.inactive, r.present, r.absent, Number(r.hours.toFixed(1))] })),
+          greenCols: [1],
+          redCols: [2, 4],
+          formats: { 5: "#,##0.0" },
+          totalCols: [1, 2, 3, 4, 5],
+          widths: { 0: 24 },
+        },
+        {
+          name: "Employees",
+          title: "Employees",
+          note: "Absences leave out rest days, approved leave and days after someone left. PTO Left is remaining / total for their PTO year.",
+          headers: EMPLOYEE_COLUMNS.map((c) => c.label),
+          textCols: 4,
+          rows: roleSummary.flatMap((r) => [
+            { cells: [`${r.role}  ·  ${(employeesByRole.get(r.role) ?? []).length} people`], tone: "group" as const },
+            ...(employeesByRole.get(r.role) ?? []).map((e) => ({
+              tone: e.inactive ? ("left" as const) : undefined,
+              cells: [
+                e.inactive ? leftName(e.name, e.leftLabel, e.deactivatedOn) : e.name, e.department, e.branch, e.manager,
+                e.daysWorked, Number(e.hours.toFixed(2)), e.daysWorked ? Number((e.hours / e.daysWorked).toFixed(2)) : 0,
+                e.absent, e.missingTimeOut,
+                e.pto ? `${fmtDays(e.pto.remaining)}/${e.pto.allowance}${e.leaveDays ? ` · ${e.leaveDays} on leave` : ""}` : e.leaveDays ? `Not eligible · ${e.leaveDays} on leave` : "Not eligible",
+                e.corrections, e.correctionsApproved, e.correctionsPending, e.correctionsRejected, e.warnings,
+              ] as (string | number)[],
+            })),
+          ]),
+          formats: { 5: "0.00", 6: "0.00" },
+          redCols: [7, 13, 14],
+          amberCols: [8, 12],
+          greenCols: [11],
+          widths: { 0: 34, 9: 22 },
+        },
+        {
+          name: "Trainees",
+          title: "Trainees",
+          note: "From Trainee Attendance. Pending Days = punched days still waiting for the manager's review.",
+          headers: ["Trainee", "Department", "Branch", "Manager", "Days Present", "Absences", "Pending Days", "Total Hours"],
+          textCols: 4,
+          rows: traineeSummary.map((t) => ({
+            tone: t.inactive ? ("left" as const) : undefined,
+            cells: [t.inactive ? leftName(t.name, t.leftLabel, t.leftOn) : t.name, t.department, t.branch, t.manager, t.present, t.absent, t.pending, Number(t.hours.toFixed(2))],
+          })),
+          redCols: [5],
+          amberCols: [6],
+          formats: { 7: "0.00" },
+          totalCols: [4, 5, 6, 7],
+          widths: { 0: 34 },
+        },
+      );
+    }
+    setExporting(true);
+    try {
+      await writeAttendanceWorkbook(`attendance-monitoring-report_${dateFrom}_to_${dateTo}.xlsx`, subtitle, sheets);
+    } catch (err) {
+      console.error("Attendance report export failed:", err);
+    } finally {
+      setExporting(false);
+    }
   };
 
   const content = (
@@ -755,8 +821,12 @@ export function ReportAttendanceMonitoring({
               )}
             </div>
           )}
-          <button onClick={exportToXlsx} disabled={loading} className="btn text-xs px-2.5 py-1 mb-0.5 flex items-center gap-1.5 disabled:opacity-50">
-            <Download className="h-3.5 w-3.5" /> Download XLSX
+          <button
+            onClick={() => void exportToXlsx()}
+            disabled={loading || exporting}
+            className="group flex items-center gap-1.5 px-3 py-1.5 mb-0.5 bg-gradient-to-br from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white rounded-lg transition shadow-lg hover:shadow-blue-500/50 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Download className="h-4 w-4 group-hover:scale-110 transition transform" /> Download Attendance Report
           </button>
         </div></div>
 
