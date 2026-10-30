@@ -10,10 +10,11 @@
  * (primary, or extra within the same department); an Admin can set an
  * explicit list per department here — e.g. both CSR managers.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowRight, ChevronRight, Pencil } from "lucide-react";
 import type { ProfileRow } from "@/lib/supabase/users";
 import { setPhDepartmentManagers } from "@/lib/supabase/approvalAreas";
+import { getClCancelPeopleIds, setClCancelPeopleIds, isClCancelPeopleMissing } from "@/lib/supabase/clCancelPeople";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { isPhGoverned, isPhDepartmentManager, phDepartmentOf, type ChainData } from "@/lib/approvalDirectory";
 
@@ -55,6 +56,20 @@ export function PhApprovalChainPanel({
     [profiles]
   );
 
+  // "Who can set CL-Cancelled" (migration 0416) — people allowed whatever
+  // their user type, on top of BizOps Team Leader+ / Admin (roleLabels.ts).
+  const [clIds, setClIds] = useState<string[]>([]);
+  const [clMissing, setClMissing] = useState(false);
+  const [clEditing, setClEditing] = useState(false);
+  const [clDraft, setClDraft] = useState<Set<string>>(new Set());
+  const [clSearch, setClSearch] = useState("");
+  const loadCl = () => {
+    getClCancelPeopleIds().then(setClIds).catch(() => {});
+    isClCancelPeopleMissing().then(setClMissing).catch(() => {});
+  };
+  useEffect(loadCl, []);
+  const clPeople = useMemo(() => profiles.filter((p) => clIds.includes(p.id)).sort((a, b) => nameOf(a).localeCompare(nameOf(b))), [profiles, clIds]);
+
   const startEdit = (dept: string, current: ProfileRow[]) => {
     setDraft(new Set(current.map((p) => p.id)));
     setSearch("");
@@ -93,6 +108,77 @@ export function PhApprovalChainPanel({
             </span>
           ))}
         </div>
+      </div>
+
+      <div className="panel p-4">
+        <div className="flex items-center gap-2 mb-1">
+          <div className="text-xs uppercase tracking-wide text-slate-400">Who can set CL-Cancelled</div>
+          <span className="text-[10px] text-slate-500">· on top of BizOps Team Leader / Manager / Senior Manager and Admin (by user type)</span>
+          {!clEditing && (
+            <button
+              type="button"
+              onClick={() => { setClDraft(new Set(clIds)); setClSearch(""); setClEditing(true); }}
+              disabled={busy || clMissing}
+              title={clMissing ? "Run migration 0416 first" : "Edit who can set CL-Cancelled"}
+              className="ml-auto p-1 rounded text-slate-400 hover:text-white hover:bg-white/10 disabled:opacity-40"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+        {clMissing ? (
+          <div className="mt-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+            Run migration <code>0416_cl_cancel_people.sql</code> in Supabase to turn this list on.
+          </div>
+        ) : clEditing ? (
+          <div className="mt-1.5 space-y-2">
+            <input value={clSearch} onChange={(e) => setClSearch(e.target.value)} placeholder="Search people…" className="glass-input text-sm py-1 px-2 rounded-md w-full" />
+            <div className="max-h-56 overflow-y-auto rounded border border-white/10 p-2">
+              {phPool
+                .filter((p) => !clSearch.trim() || nameOf(p).toLowerCase().includes(clSearch.trim().toLowerCase()))
+                .sort((a, b) => Number(clDraft.has(b.id)) - Number(clDraft.has(a.id)) || Number(isPhGoverned(b)) - Number(isPhGoverned(a)))
+                .map((p) => (
+                  <label key={p.id} className="flex items-center gap-2 py-0.5 text-sm text-slate-200 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={clDraft.has(p.id)}
+                      onChange={() =>
+                        setClDraft((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(p.id)) next.delete(p.id);
+                          else next.add(p.id);
+                          return next;
+                        })
+                      }
+                    />
+                    {nameOf(p)} <span className="text-slate-500 text-xs">· {roleLabel(p)}{isPhGoverned(p) ? " · PH" : ""}</span>
+                  </label>
+                ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => run(async () => { await setClCancelPeopleIds([...clDraft]); setClEditing(false); loadCl(); })}
+                className="btn text-sm px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                Save ({clDraft.size})
+              </button>
+              <button type="button" onClick={() => setClEditing(false)} className="btn text-sm px-3 py-1.5">Cancel</button>
+            </div>
+          </div>
+        ) : clPeople.length === 0 ? (
+          <div className="mt-1 text-xs text-slate-500">No one added — only the user types above can set CL-Cancelled.</div>
+        ) : (
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {clPeople.map((m) => (
+              <span key={m.id} className="text-xs text-slate-100 rounded border border-rose-500/30 bg-rose-500/10 px-2 py-0.5">
+                {nameOf(m)} <span className="text-slate-400">· {roleLabel(m)}</span>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="mt-2 text-[11px] text-slate-500">People here see CL-Cancelled on a ticket's visit form, Work Planner and the mobile app whatever their user type, trainee or not. They reload the page after a change.</div>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
