@@ -22,7 +22,7 @@
 import { chainCanApprove } from "@/lib/approvalDirectory";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearch } from "@tanstack/react-router";
-import { getFirstDeactivations, type ProfileRow } from "@/lib/supabase/users";
+import { getSeparations, preloadSeparations, type ProfileRow, type Separation } from "@/lib/supabase/users";
 import { calcWorkedHours } from "@/lib/supabase/timecards";
 import { ROLE_LABELS, normalizeRole, isAttendanceFullAccessRole, isTraineeFallbackReviewerRole } from "@/lib/roleLabels";
 import { getServerNow, zonedDateKey } from "@/lib/serverTime";
@@ -102,12 +102,16 @@ export function TraineeAttendanceTab({
   const browserTodayGuess = useMemo(() => todayISO(), []);
   const [dateFrom, setDateFrom] = useState(browserTodayGuess);
   const [dateTo, setDateTo] = useState(browserTodayGuess);
+  // The company's own today (CST) — today's days are still being worked, so
+  // they get no reminder bell and stay off "Pending by date".
+  const [companyToday, setCompanyToday] = useState(browserTodayGuess);
   useEffect(() => {
     let cancelled = false;
     getServerNow()
       .then((serverNow) => {
         if (cancelled) return;
         const realToday = zonedDateKey(serverNow, "CST");
+        setCompanyToday(realToday);
         if (realToday === browserTodayGuess) return;
         // Only correct if the manager hasn't already changed the filter
         // away from the initial guess — never stomp a date they picked.
@@ -127,6 +131,8 @@ export function TraineeAttendanceTab({
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [branchFilter, setBranchFilter] = useState("all");
   const [managerFilter, setManagerFilter] = useState("all");
+  // A day picked from "Pending by date" — shows only that day's pending rows.
+  const [pendingDay, setPendingDay] = useState<string | null>(null);
 
   // View Timecard modal
   const [selected, setSelected] = useState<Selected | null>(null);
@@ -176,11 +182,16 @@ export function TraineeAttendanceTab({
       .then((rows) => setPendingFormerTraineeIds(new Set(rows.filter((r) => r.status === "pending").map((r) => r.profileId))))
       .catch(() => setPendingFormerTraineeIds(new Set()));
   }, []);
-  // When each deactivated trainee was first deactivated — their "Deactivated · date" flag.
-  const [firstDeactivations, setFirstDeactivations] = useState<Map<string, string>>(new Map());
+  // When and why each deactivated trainee left — their "Resigned · date" / "Deactivated · date" flag
+  // (Master List status date first, else the first account deactivation — getSeparations).
+  const [separations, setSeparations] = useState<Map<string, Separation>>(new Map());
+  useEffect(preloadSeparations, []);
   useEffect(() => {
-    getFirstDeactivations().then(setFirstDeactivations).catch(() => {});
-  }, []);
+    if (profiles.length === 0) return;
+    let cancelled = false;
+    getSeparations(profiles).then((m) => { if (!cancelled) setSeparations(m); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [profiles]);
   const visibleTrainees = useMemo(
     () =>
       profiles.filter(
@@ -292,22 +303,48 @@ export function TraineeAttendanceTab({
     [visibleTrainees, profileById]
   );
 
-  const filteredRows = useMemo(() => {
+  // Search / Branch / Manager — shared by the table and "Pending by date".
+  const matchesPeopleFilters = (row: Row) => {
     const q = search.trim().toLowerCase();
+    const profile = profileById.get(row.profileId);
+    if (q && !(profile?.display_name || "").toLowerCase().includes(q)) return false;
+    if (branchFilter !== "all" && profile?.assigned_branch !== branchFilter) return false;
+    if (managerFilter !== "all" && managerNameOf(row.profileId) !== managerFilter) return false;
+    return true;
+  };
+
+  const filteredRows = useMemo(() => {
     return rows.filter((row) => {
-      const profile = profileById.get(row.profileId);
-      if (q && !(profile?.display_name || "").toLowerCase().includes(q)) return false;
-      if (branchFilter !== "all" && profile?.assigned_branch !== branchFilter) return false;
-      if (managerFilter !== "all" && managerNameOf(row.profileId) !== managerFilter) return false;
+      if (!matchesPeopleFilters(row)) return false;
+      if (pendingDay) return row.kind === "entry" && row.entry!.status === "pending" && row.entry!.workDate === pendingDay;
       if (statusFilter === "nopunch") return row.kind === "placeholder";
       if (statusFilter !== "all") return row.kind === "entry" && row.entry!.status === statusFilter;
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, search, branchFilter, managerFilter, statusFilter, profileById]);
+  }, [rows, search, branchFilter, managerFilter, statusFilter, pendingDay, profileById]);
+
+  // Days before today still waiting for review, newest first, with counts.
+  const pendingByDate = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      if (row.kind !== "entry" || row.entry!.status !== "pending" || row.entry!.workDate >= companyToday) continue;
+      if (!matchesPeopleFilters(row)) continue;
+      counts.set(row.entry!.workDate, (counts.get(row.entry!.workDate) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort(([a], [b]) => b.localeCompare(a));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, search, branchFilter, managerFilter, companyToday, profileById]);
+  // A picked day that no longer has pending rows clears itself.
+  useEffect(() => {
+    if (pendingDay && !pendingByDate.some(([d]) => d === pendingDay)) setPendingDay(null);
+  }, [pendingDay, pendingByDate]);
+  const [showAllPendingDays, setShowAllPendingDays] = useState(false);
+  const daysAgo = (date: string) => Math.round((Date.parse(companyToday) - Date.parse(date)) / 86_400_000);
+  const pendingDayLabel = (date: string) => new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
   const pendingCount = filteredRows.filter((r) => r.kind === "entry" && r.entry!.status === "pending").length;
-  const hasActiveFilter = search.trim() !== "" || statusFilter !== "all" || branchFilter !== "all" || managerFilter !== "all";
+  const hasActiveFilter = search.trim() !== "" || statusFilter !== "all" || branchFilter !== "all" || managerFilter !== "all" || !!pendingDay;
 
   // A placeholder row has no entry yet to read a managerId off — same
   // authority check as canApproveTraineeDay, matched against the trainee's
@@ -476,7 +513,7 @@ export function TraineeAttendanceTab({
           </div>
           <div>
             <label className="block text-xs text-slate-400 uppercase mb-2">Filter by Status</label>
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} className={INPUT_CLASS}>
+            <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value as StatusFilter); setPendingDay(null); }} className={INPUT_CLASS}>
               <option value="all">All Statuses</option>
               <option value="pending">Pending</option>
               <option value="approved">Approved</option>
@@ -522,6 +559,52 @@ export function TraineeAttendanceTab({
           </div>
         </div>
 
+        {pendingByDate.length > 0 && (
+          <div className="mb-4 rounded-lg border border-white/10 bg-slate-800/30 px-3 py-2.5">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-xs uppercase text-slate-400">Pending by date</span>
+              <span className="text-[11px] text-slate-500">
+                {pendingByDate.reduce((sum, [, n]) => sum + n, 0)} day{pendingByDate.reduce((sum, [, n]) => sum + n, 0) === 1 ? "" : "s"} before today still waiting · click a date to see who
+              </span>
+              {pendingDay && (
+                <button type="button" onClick={() => setPendingDay(null)} className="ml-auto text-[11px] text-blue-300 hover:text-blue-200">
+                  Clear date
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {(showAllPendingDays ? pendingByDate : pendingByDate.slice(0, 14)).map(([date, count]) => {
+                const age = daysAgo(date);
+                const tone =
+                  pendingDay === date
+                    ? "border-blue-400 bg-blue-500/25 text-white"
+                    : age > 14
+                      ? "border-red-500/40 bg-red-500/10 text-red-200 hover:bg-red-500/20"
+                      : age > 7
+                        ? "border-amber-500/40 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20"
+                        : "border-white/15 bg-white/5 text-slate-200 hover:bg-white/10";
+                return (
+                  <button
+                    key={date}
+                    type="button"
+                    onClick={() => setPendingDay((prev) => (prev === date ? null : date))}
+                    title={`${date} · ${count} pending · ${age} day${age === 1 ? "" : "s"} ago`}
+                    className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition ${tone}`}
+                  >
+                    {pendingDayLabel(date)}
+                    <span className="rounded bg-black/30 px-1.5 text-[11px] font-semibold tabular-nums">{count}</span>
+                  </button>
+                );
+              })}
+              {pendingByDate.length > 14 && (
+                <button type="button" onClick={() => setShowAllPendingDays((v) => !v)} className="text-xs text-blue-300 hover:text-blue-200 px-1">
+                  {showAllPendingDays ? "Show fewer" : `Show all ${pendingByDate.length}`}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-white/10">
@@ -550,7 +633,8 @@ export function TraineeAttendanceTab({
             ) : (
               filteredRows.map((row) => {
                 const profile = profileById.get(row.profileId);
-                const deactivatedOn = profile && profile.is_active === false ? firstDeactivations.get(profile.id) ?? null : null;
+                const separation = profile && profile.is_active === false ? separations.get(profile.id) ?? null : null;
+                const deactivatedOn = separation?.date ?? null;
                 const nameCell = (
                   // A deactivated trainee keeps their real name here — the flag already says they've left.
                   <td className="px-3 py-3 text-white font-medium" data-keep-names={profile?.is_active === false ? "" : undefined}>
@@ -568,7 +652,7 @@ export function TraineeAttendanceTab({
                     <p className="text-[11px] text-slate-500 font-normal">{roleLabel(profile?.role)}{profile?.assigned_branch ? ` · ${profile.assigned_branch}` : ""}</p>
                     {profile?.is_active === false && (
                       <span className="mt-1 inline-block rounded-full border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-300">
-                        Deactivated{deactivatedOn ? ` · ${formatISODate(deactivatedOn, { year: "numeric", month: "short", day: "numeric" })}` : ""}
+                        {separation?.label ?? "Deactivated"}{deactivatedOn ? ` · ${formatISODate(deactivatedOn, { year: "numeric", month: "short", day: "numeric" })}` : ""}
                       </span>
                     )}
                   </td>
@@ -639,7 +723,7 @@ export function TraineeAttendanceTab({
                         ) : (
                           <span className="text-slate-400 text-xs">{STATUS_LABEL[entry.status]}</span>
                         )}
-                        {entry.status === "pending" && (
+                        {entry.status === "pending" && entry.workDate < companyToday && (
                           <button
                             type="button"
                             onClick={() => void remindManager(entry)}
