@@ -9,7 +9,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ArrowRight, CheckCheck, Hash, Mail, MailOpen, MessageCircle } from "lucide-react";
+import { ArrowRight, CheckCheck, Hash, Mail, MailOpen, MessageCircle, Star } from "lucide-react";
 import { toast } from "sonner";
 import { Avatar, GroupLabel, MenuEmpty, MenuHeader, fullTime, groupByDay, previewText, shortTime } from "@/components/header/menuKit";
 import {
@@ -30,6 +30,7 @@ import {
   markThreadRead,
   markThreadUnread,
 } from "@/lib/supabase/messaging";
+import { useImportantMessages } from "@/lib/supabase/messageExtras";
 import { subscribeMessagesBus } from "@/lib/supabase/realtimeMessagesBus";
 import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
 import { supabase } from "@/lib/supabase/client";
@@ -80,6 +81,13 @@ export function MessagesMenu() {
   // coworkers doesn't ding everyone else in the company who happens to have
   // this menu mounted. Channels don't need this check: they're company-wide.
   const myDmThreadIdsRef = useRef<Set<string>>(new Set());
+  // Messages I marked as important (migration 0421), shown on the Important tab.
+  const important = useImportantMessages(profileId);
+  const [tab, setTab] = useState<"all" | "important">("all");
+  // "c:<channel id>" / "d:<dm thread id>" -> the conversation's name (and
+  // for a DM, the other person), so an important message can say where it
+  // is and open there.
+  const [threadInfo, setThreadInfo] = useState<Map<string, { label: string; otherProfileId?: string }>>(new Map());
 
   const refresh = async (pid: string) => {
     try {
@@ -96,6 +104,14 @@ export function MessagesMenu() {
 
       const byProfile = new Map<string, ProfileRow>();
       for (const u of users) byProfile.set(u.id, u);
+      const info = new Map<string, { label: string; otherProfileId?: string }>();
+      for (const ch of channels) info.set(`c:${ch.id}`, { label: ch.title });
+      for (const row of (dmRowsRes.data || []) as Array<{ id: string; participant_a: string; participant_b: string }>) {
+        const otherId = row.participant_a === pid ? row.participant_b : row.participant_a;
+        const other = byProfile.get(otherId);
+        info.set(`d:${row.id}`, { label: other?.display_name || other?.email || "Direct message", otherProfileId: otherId });
+      }
+      setThreadInfo(info);
 
       // 2. "Latest message per thread" — one query instead of one per
       // channel/DM (was N+1: a user with 10 channels + 20 DMs fired 30
@@ -333,6 +349,22 @@ export function MessagesMenu() {
     });
   };
 
+  // An important message: open its conversation on the Important filter, scrolled to that message.
+  const goToImportant = (m: MessageRow) => {
+    const info = threadInfo.get(m.channel_id ? `c:${m.channel_id}` : `d:${m.dm_thread_id}`);
+    const thread = m.channel_id ? `channel=${m.channel_id}` : info?.otherProfileId ? `dm=${info.otherProfileId}` : "";
+    navigate({
+      to: "/m/$module/$submodule",
+      params: { module: "admin", submodule: "internal-message-support" },
+      ...(thread ? { hash: `${thread}&msg=${m.id}&important=1` } : {}),
+    });
+  };
+  // Newest message first, so the Today / Yesterday / Earlier groups read in order.
+  const importantList = useMemo(
+    () => [...important.items].sort((a, b) => b.message.created_at.localeCompare(a.message.created_at)),
+    [important.items]
+  );
+
   if (!ready || !email) return null;
 
   return (
@@ -357,6 +389,7 @@ export function MessagesMenu() {
           icon={<MessageCircle />}
           title="Messages"
           unread={unreadTotal}
+          note={important.items.length > 0 ? `${important.items.length} important` : undefined}
           actions={
             unreadTotal > 0 ? (
               <button type="button" className="hm-action" onClick={(e) => { e.stopPropagation(); void markAllRead(); }}>
@@ -365,8 +398,62 @@ export function MessagesMenu() {
             ) : undefined
           }
         />
+        <div className="hm-tabs" role="tablist">
+          <button type="button" role="tab" aria-selected={tab === "all"} className={`hm-tab ${tab === "all" ? "hm-tab--on" : ""}`} onClick={() => setTab("all")}>
+            All
+          </button>
+          <button type="button" role="tab" aria-selected={tab === "important"} className={`hm-tab ${tab === "important" ? "hm-tab--on" : ""}`} onClick={() => setTab("important")}>
+            <Star fill={tab === "important" ? "currentColor" : "none"} /> Important <span className="hm-tab-n">{important.items.length}</span>
+          </button>
+        </div>
         <div className="hm-scroll">
-          {recent.length === 0 ? (
+          {tab === "important" ? (
+            importantList.length === 0 ? (
+              <MenuEmpty icon={<Star />} text="Nothing marked as important yet. Use ⋯ › Mark as important on any message." />
+            ) : (
+              groupByDay(importantList, (i) => i.message.created_at).map((g) => (
+                <div key={g.label}>
+                  <GroupLabel>{g.label}</GroupLabel>
+                  {g.items.map(({ message: m }) => {
+                    const fromMe = !!profileId && m.sender_id === profileId;
+                    const where = threadInfo.get(m.channel_id ? `c:${m.channel_id}` : `d:${m.dm_thread_id}`)?.label;
+                    // Channel: "Ana in #general". DM: the other person's name, or "You to Ana" for my own.
+                    const name = m.channel_id
+                      ? `${fromMe ? "You" : m.sender_name || "—"} in ${where ?? "a channel"}`
+                      : fromMe
+                        ? `You to ${where ?? "a direct message"}`
+                        : m.sender_name || where || "—";
+                    return (
+                      <DropdownMenuItem key={m.id} onSelect={() => goToImportant(m)} className="hm-row hm-row--read">
+                        <Avatar name={m.sender_name} />
+                        <span className="hm-row-body">
+                          <span className="hm-row-top">
+                            <span className="hm-row-name">{name}</span>
+                            <span className="hm-row-time" title={fullTime(m.created_at)}>{shortTime(m.created_at)}</span>
+                          </span>
+                          <span className="hm-row-text">{previewText(m.body, m.sender_name)}</span>
+                        </span>
+                        <button
+                          type="button"
+                          className="hm-row-toggle hm-row-toggle--imp"
+                          title="Unmark as important"
+                          aria-label="Unmark as important"
+                          onClick={(e) => {
+                            // Don't open the conversation — just take the mark off.
+                            e.preventDefault();
+                            e.stopPropagation();
+                            void important.toggle(m);
+                          }}
+                        >
+                          <Star fill="currentColor" />
+                        </button>
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </div>
+              ))
+            )
+          ) : recent.length === 0 ? (
             <MenuEmpty icon={<MessageCircle />} text="No conversations yet." />
           ) : (
             groupByDay(recent, (p) => p.lastMessage?.created_at ?? "1970-01-01T00:00:00Z").map((g) => (

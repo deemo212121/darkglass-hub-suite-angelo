@@ -15,7 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Avatar } from "@/components/header/menuKit";
 import { ReceiptMark } from "@/components/ReceiptMark";
 import { receiptFor, useDmReceipt } from "@/lib/supabase/readReceipts";
-import { ChevronLeft, Copy, CornerUpLeft, Forward, Hash, Home, Lock, MessageCircle, MoreHorizontal, Plus, Search, Send, UserPlus, Users2, X } from "lucide-react";
+import { ChevronLeft, Copy, CornerUpLeft, Forward, Hash, Home, Lock, MessageCircle, MoreHorizontal, Plus, Search, Send, Star, UserPlus, Users2, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppModal } from "@/components/ui-kit/AppModal";
 import {
@@ -25,10 +25,11 @@ import {
   saveMessageLink,
   subscribeReactions,
   toggleReaction,
+  useImportantMessages,
   type MessageLink,
   type ReactionGroup,
 } from "@/lib/supabase/messageExtras";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
@@ -110,6 +111,19 @@ function initials(name: string) {
     .join("");
 }
 
+/**
+ * The thread the URL hash points at: channel=<id> or dm=<other profile id>,
+ * plus msg=<message id>&important=1 when opened from the header menu's
+ * Important list.
+ */
+function readThreadHash() {
+  const params = new URLSearchParams(typeof window !== "undefined" ? window.location.hash.replace(/^#/, "") : "");
+  return { channelId: params.get("channel"), dmProfileId: params.get("dm"), msgId: params.get("msg"), important: params.get("important") === "1" };
+}
+
+/** "c:<channel id>" or "d:<dm thread id>" — which conversation a message is in. */
+const threadKeyOf = (m: Pick<MessageRow, "channel_id" | "dm_thread_id">) => (m.channel_id ? `c:${m.channel_id}` : `d:${m.dm_thread_id}`);
+
 export function TeamMessenger({ mod, sub }: Props) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
@@ -122,10 +136,14 @@ export function TeamMessenger({ mod, sub }: Props) {
   // with no DM history yet keep getCompanyUsers()'s own display_name order
   // (see filteredContacts' sort below).
   const [dmLastActivityByProfileId, setDmLastActivityByProfileId] = useState<Map<string, string>>(new Map());
+  // My DM thread id -> the other person, so an important DM message can be
+  // traced back to the person it's with.
+  const [dmProfileByThreadId, setDmProfileByThreadId] = useState<Map<string, string>>(new Map());
   const refreshDmInbox = async () => {
     if (!profileId) return;
     try {
       const inbox = await listMyDmInbox(profileId);
+      setDmProfileByThreadId(new Map(inbox.map((entry) => [entry.threadId, entry.otherProfileId])));
       // Excludes threads with no real message yet — listMyDmInbox falls
       // back to the THREAD's own created_at (i.e. the moment it was
       // opened, not messaged) when lastMessageSenderId is null, which
@@ -152,6 +170,26 @@ export function TeamMessenger({ mod, sub }: Props) {
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef<HTMLTextAreaElement>(null);
+  // "Mark as important" (migration 0421) — my own marks, and the Important
+  // filter that narrows the sidebar and the open conversation to them.
+  const important = useImportantMessages(profileId);
+  const [importantOnly, setImportantOnly] = useState(false);
+  // A message to scroll to once it's on screen, and briefly highlight
+  // (opened from the header menu's Important list).
+  const focusMsgRef = useRef<string | null>(null);
+  const [flashId, setFlashId] = useState<string | null>(null);
+  // The header menu navigates with the router (pushState), which doesn't fire
+  // "hashchange" — so also follow the router's hash. The last hash already
+  // acted on is remembered so a channel/contact reload doesn't re-open it.
+  const locationHash = useLocation({ select: (l) => l.hash });
+  const handledHashRef = useRef<string | null>(null);
+  const applyHashFocus = (h: ReturnType<typeof readThreadHash>) => {
+    if (h.important) setImportantOnly(true);
+    if (h.msgId) {
+      focusMsgRef.current = h.msgId;
+      setFlashId(h.msgId);
+    }
+  };
 
   const currentUserName = displayName || email || "Current User";
   const canPostAnnouncement = [role, ...extraRoles].some((r) => HIGHER_UP_ROLES.has(String(r || "").toUpperCase()));
@@ -199,6 +237,7 @@ export function TeamMessenger({ mod, sub }: Props) {
     Promise.all([listChannels(canManageChannelsRole(role, extraRoles)), getCompanyUsers()])
       .then(async ([chans, users]) => {
         if (cancelled) return;
+        handledHashRef.current = window.location.hash.replace(/^#/, "");
         setChannels(chans);
         // Hide myself from the contact list.
         const others = users.filter((u) => u.id !== profileId && u.is_active);
@@ -207,23 +246,23 @@ export function TeamMessenger({ mod, sub }: Props) {
 
         // If the URL hash points to a specific thread (#channel=… or #dm=…)
         // open it; otherwise default to the first channel.
-        const hash = typeof window !== "undefined" ? window.location.hash : "";
-        if (hash.startsWith("#channel=")) {
-          const id = hash.slice("#channel=".length);
-          const ch = chans.find((c) => c.id === id);
+        const h = readThreadHash();
+        if (h.channelId) {
+          const ch = chans.find((c) => c.id === h.channelId);
           if (ch) {
             setActive({ kind: "channel", id: ch.id, channel: ch });
+            applyHashFocus(h);
             return;
           }
         }
-        if (hash.startsWith("#dm=")) {
-          const otherId = hash.slice("#dm=".length);
-          const other = others.find((u) => u.id === otherId);
+        if (h.dmProfileId) {
+          const other = others.find((u) => u.id === h.dmProfileId);
           if (other) {
             try {
               const { getOrCreateDmThread } = await import("@/lib/supabase/messaging");
               const thread = await getOrCreateDmThread(profileId, other.id);
               setActive({ kind: "dm", id: thread.id, participant: other });
+              applyHashFocus(h);
               return;
             } catch { /* fall through to default */ }
           }
@@ -265,29 +304,38 @@ export function TeamMessenger({ mod, sub }: Props) {
   useEffect(() => {
     if (!profileId) return;
     const handleHash = async () => {
-      const hash = window.location.hash.replace(/^#/, "");
-      if (!hash) return;
-      if (hash.startsWith("channel=")) {
-        const id = hash.slice("channel=".length);
-        const ch = channels.find((c) => c.id === id);
-        if (ch) setActive({ kind: "channel", id: ch.id, channel: ch });
+      const h = readThreadHash();
+      if (h.channelId) {
+        const ch = channels.find((c) => c.id === h.channelId);
+        if (ch) {
+          setActive({ kind: "channel", id: ch.id, channel: ch });
+          applyHashFocus(h);
+        }
         return;
       }
-      if (hash.startsWith("dm=")) {
-        const otherId = hash.slice("dm=".length);
-        const other = contacts.find((u) => u.id === otherId);
+      if (h.dmProfileId) {
+        const other = contacts.find((u) => u.id === h.dmProfileId);
         if (!other) return;
         try {
           const thread = await getOrCreateDmThread(profileId, other.id);
           setActive({ kind: "dm", id: thread.id, participant: other });
+          applyHashFocus(h);
         } catch (err) {
           setError(err instanceof Error ? err.message : String(err));
         }
       }
     };
-    window.addEventListener("hashchange", handleHash);
-    return () => window.removeEventListener("hashchange", handleHash);
-  }, [profileId, channels, contacts]);
+    const onHash = () => {
+      const raw = window.location.hash.replace(/^#/, "");
+      if (!raw || raw === handledHashRef.current) return;
+      handledHashRef.current = raw;
+      void handleHash();
+    };
+    // Still null until the first load has run — that load opens the starting hash itself.
+    if (handledHashRef.current !== null) onHash();
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, [profileId, channels, contacts, locationHash]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!active) return;
     setLoadingThread(true);
@@ -397,10 +445,63 @@ export function TeamMessenger({ mod, sub }: Props) {
     return () => { cancelled = true; };
   }, [active?.id, active?.kind]);
 
-  // Scroll to bottom whenever new messages arrive.
+  // How many messages I marked important per conversation, and what the open
+  // conversation shows: everything, or (Important filter) just my marked
+  // ones — those come from the marks themselves, so one older than the
+  // 200 loaded messages still shows.
+  const importantCountByThread = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const i of important.items) counts.set(threadKeyOf(i.message), (counts.get(threadKeyOf(i.message)) ?? 0) + 1);
+    return counts;
+  }, [important.items]);
+  const dmThreadIdByProfileId = useMemo(() => new Map([...dmProfileByThreadId].map(([threadId, otherId]) => [otherId, threadId])), [dmProfileByThreadId]);
+  const importantCountForContact = (otherId: string) => {
+    const threadId = active?.kind === "dm" && active.participant.id === otherId ? active.id : dmThreadIdByProfileId.get(otherId);
+    return threadId ? importantCountByThread.get(`d:${threadId}`) ?? 0 : 0;
+  };
+  const shownMessages = useMemo(() => {
+    if (!importantOnly || !active) return messages;
+    const key = active.kind === "channel" ? `c:${active.id}` : `d:${active.id}`;
+    return important.items
+      .filter((i) => threadKeyOf(i.message) === key)
+      .map((i) => i.message)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  }, [importantOnly, active?.id, active?.kind, important.items, messages]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Scroll to the newest message — or, when opened on a particular message,
+  // to that one once it's on screen.
   useEffect(() => {
+    const target = focusMsgRef.current ? document.getElementById(`msg-${focusMsgRef.current}`) : null;
+    if (target) {
+      focusMsgRef.current = null;
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length, active?.id]);
+  }, [shownMessages.length, active?.id, importantOnly]);
+  useEffect(() => {
+    if (!flashId) return;
+    const t = window.setTimeout(() => setFlashId(null), 3000);
+    return () => window.clearTimeout(t);
+  }, [flashId]);
+
+  // Turning the Important filter on: if the open conversation has nothing
+  // marked, open the one with my latest mark instead of an empty chat.
+  const showImportant = () => {
+    setImportantOnly(true);
+    const openKey = active ? (active.kind === "channel" ? `c:${active.id}` : `d:${active.id}`) : "";
+    if (importantCountByThread.get(openKey)) return;
+    const latest = important.items[0]?.message;
+    if (!latest) return;
+    if (latest.channel_id) {
+      const ch = channels.find((c) => c.id === latest.channel_id);
+      if (ch) setActive({ kind: "channel", id: ch.id, channel: ch });
+      return;
+    }
+    const otherId = latest.dm_thread_id ? dmProfileByThreadId.get(latest.dm_thread_id) : undefined;
+    const other = otherId ? contacts.find((c) => c.id === otherId) : undefined;
+    if (other && latest.dm_thread_id) setActive({ kind: "dm", id: latest.dm_thread_id, participant: other });
+  };
 
   const filteredContacts = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -529,6 +630,8 @@ export function TeamMessenger({ mod, sub }: Props) {
       });
       // Optimistically append; the realtime subscription will dedupe by id.
       setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+      // Back to the full conversation, or the Important filter would hide what was just sent.
+      setImportantOnly(false);
       if (replyTo) {
         const replyToId = replyTo.id;
         setReplyTo(null);
@@ -768,6 +871,15 @@ export function TeamMessenger({ mod, sub }: Props) {
             <Search className="h-4 w-4 shrink-0 text-[var(--color-muted-foreground)]" />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search people or channels" />
           </label>
+          <div className="tm-filters">
+            <button type="button" onClick={() => setImportantOnly(false)} className={`ann-chip ${!importantOnly ? "ann-chip--on" : ""}`}>
+              All
+            </button>
+            <button type="button" onClick={showImportant} className={`ann-chip ${importantOnly ? "ann-chip--on" : ""}`} title="Only the messages you marked as important">
+              <Star className="mr-1 h-3 w-3" fill={importantOnly ? "currentColor" : "none"} />
+              Important <span className="ml-1 opacity-60">{important.items.length}</span>
+            </button>
+          </div>
 
           <div className="tm-side-scroll">
             <div className="tm-section">
@@ -787,6 +899,8 @@ export function TeamMessenger({ mod, sub }: Props) {
             </div>
             {channels.map((ch) => {
               const isActive = active?.kind === "channel" && active.id === ch.id;
+              const importantCount = importantCountByThread.get(`c:${ch.id}`) ?? 0;
+              if (importantOnly && importantCount === 0) return null;
               return (
                 <button key={ch.id} onClick={() => setActive({ kind: "channel", id: ch.id, channel: ch })} className={`tm-item ${isActive ? "tm-item--on" : ""}`}>
                   <span className="tm-chan-icon" aria-hidden>
@@ -799,10 +913,18 @@ export function TeamMessenger({ mod, sub }: Props) {
                     </span>
                     {ch.subtitle && <span className="block truncate text-[11px] text-[var(--color-muted-foreground)]">{ch.subtitle}</span>}
                   </span>
+                  {importantOnly && (
+                    <span className="tm-imp-count" title={`${importantCount} important`}>
+                      <Star /> {importantCount}
+                    </span>
+                  )}
                 </button>
               );
             })}
-            {channels.length === 0 && <div className="px-3 py-2 text-xs text-[var(--color-muted-foreground)]">Loading channels…</div>}
+            {channels.length === 0 && !importantOnly && <div className="px-3 py-2 text-xs text-[var(--color-muted-foreground)]">Loading channels…</div>}
+            {importantOnly && !channels.some((ch) => importantCountByThread.has(`c:${ch.id}`)) && (
+              <div className="px-3 py-2 text-xs text-[var(--color-muted-foreground)]">No important channel messages.</div>
+            )}
 
             <div className="tm-section mt-3">
               <span className="flex items-center gap-1.5">
@@ -812,6 +934,8 @@ export function TeamMessenger({ mod, sub }: Props) {
             {filteredContacts.map((r) => {
               const isActive = active?.kind === "dm" && active.participant.id === r.id;
               const status = resolvePresenceStatus(r);
+              const importantCount = importantOnly ? importantCountForContact(r.id) : 0;
+              if (importantOnly && importantCount === 0) return null;
               return (
                 <button key={r.id} onClick={() => openDm(r)} className={`tm-item ${isActive ? "tm-item--on" : ""}`}>
                   <span className="relative shrink-0">
@@ -825,10 +949,18 @@ export function TeamMessenger({ mod, sub }: Props) {
                       {r.assigned_branch ? ` · ${r.assigned_branch}` : ""}
                     </span>
                   </span>
+                  {importantOnly && (
+                    <span className="tm-imp-count" title={`${importantCount} important`}>
+                      <Star /> {importantCount}
+                    </span>
+                  )}
                 </button>
               );
             })}
             {filteredContacts.length === 0 && <div className="px-3 py-2 text-xs text-[var(--color-muted-foreground)]">No teammates match that search.</div>}
+            {importantOnly && filteredContacts.length > 0 && !filteredContacts.some((r) => importantCountForContact(r.id) > 0) && (
+              <div className="px-3 py-2 text-xs text-[var(--color-muted-foreground)]">No important direct messages.</div>
+            )}
           </div>
         </aside>
 
@@ -853,12 +985,25 @@ export function TeamMessenger({ mod, sub }: Props) {
           </header>
 
           <div className="tm-messages">
-            {loadingThread && <div className="tm-note">Loading messages…</div>}
-            {!loadingThread && active && messages.length === 0 && <div className="tm-note">No messages yet. Be the first to say hi.</div>}
-            {messages.map((m, i) => {
+            {importantOnly && active && (
+              <div className="tm-filterbar">
+                <Star className="h-3.5 w-3.5 shrink-0" fill="currentColor" />
+                <span className="min-w-0">
+                  {shownMessages.length === 0
+                    ? "Nothing marked as important in this conversation."
+                    : `Showing the ${shownMessages.length === 1 ? "1 message" : `${shownMessages.length} messages`} you marked as important.`}
+                </span>
+                <button type="button" onClick={() => setImportantOnly(false)}>
+                  Show all messages
+                </button>
+              </div>
+            )}
+            {loadingThread && !importantOnly && <div className="tm-note">Loading messages…</div>}
+            {!loadingThread && !importantOnly && active && messages.length === 0 && <div className="tm-note">No messages yet. Be the first to say hi.</div>}
+            {shownMessages.map((m, i) => {
               const isMe = m.sender_id === profileId;
               const isSystem = m.kind === "system";
-              const prev = messages[i - 1];
+              const prev = shownMessages[i - 1];
               const newDay = !prev || new Date(prev.created_at).toDateString() !== new Date(m.created_at).toDateString();
               const grouped =
                 !newDay && !!prev && prev.kind !== "system" && !isSystem && prev.sender_id === m.sender_id && new Date(m.created_at).getTime() - new Date(prev.created_at).getTime() < 5 * 60_000;
@@ -907,9 +1052,14 @@ export function TeamMessenger({ mod, sub }: Props) {
                           );
                         })()}
                         <div className="tm-bubble-row">
-                          <div className="tm-bubble" id={`msg-${m.id}`} title={formatTimestamp(m.created_at)}>
+                          <div className={`tm-bubble ${flashId === m.id ? "tm-bubble--flash" : ""}`} id={`msg-${m.id}`} title={formatTimestamp(m.created_at)}>
                             <MessageBody text={m.body} className="whitespace-pre-wrap" mentionNames={active?.kind === "channel" ? mentionNames : undefined} />
                           </div>
+                          {important.ids.has(m.id) && (
+                            <span className="tm-imp" title="You marked this as important">
+                              <Star />
+                            </span>
+                          )}
                           <div className="relative">
                             <button type="button" className={`tm-more ${menuFor === m.id ? "tm-more--open" : ""}`} onClick={() => setMenuFor(menuFor === m.id ? null : m.id)} aria-label="Message actions" title="More">
                               <MoreHorizontal />
@@ -931,6 +1081,10 @@ export function TeamMessenger({ mod, sub }: Props) {
                                 </button>
                                 <button type="button" role="menuitem" className="tm-menu-item" onClick={() => void copyText(m)}>
                                   <Copy /> Copy text
+                                </button>
+                                <button type="button" role="menuitem" className="tm-menu-item" onClick={() => { setMenuFor(null); void important.toggle(m); }}>
+                                  <Star className={important.ids.has(m.id) ? "tm-menu-star--on" : undefined} />
+                                  {important.ids.has(m.id) ? "Unmark as important" : "Mark as important"}
                                 </button>
                               </div>
                             )}

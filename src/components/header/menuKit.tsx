@@ -126,8 +126,8 @@ export function KindIcon({ body }: { body: string }) {
   );
 }
 
-/** Drop-down header: icon, title, unread count, actions on the right. */
-export function MenuHeader({ icon, title, unread, actions }: { icon: ReactNode; title: string; unread: number; actions?: ReactNode }) {
+/** Drop-down header: icon, title, unread count (plus an optional note after it), actions on the right. */
+export function MenuHeader({ icon, title, unread, note, actions }: { icon: ReactNode; title: string; unread: number; note?: string; actions?: ReactNode }) {
   return (
     <div className="hm-header">
       <span className="hm-header-icon" aria-hidden>
@@ -135,7 +135,10 @@ export function MenuHeader({ icon, title, unread, actions }: { icon: ReactNode; 
       </span>
       <div className="min-w-0">
         <div className="hm-header-title">{title}</div>
-        <div className="hm-header-sub">{unread > 0 ? `${unread} unread` : "All caught up"}</div>
+        <div className="hm-header-sub">
+          {unread > 0 ? `${unread} unread` : "All caught up"}
+          {note ? ` · ${note}` : ""}
+        </div>
       </div>
       {actions && <div className="ml-auto flex items-center gap-1.5">{actions}</div>}
     </div>

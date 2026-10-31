@@ -16,7 +16,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ReceiptMark } from "@/components/ReceiptMark";
 import { getDmReceipts, receiptFor, useDmReceipt, type DmReceiptState } from "@/lib/supabase/readReceipts";
 import { useNavigate } from "@tanstack/react-router";
-import { MessageCircle, X, Send, Search, ChevronLeft, ExternalLink, MoreHorizontal, CornerUpLeft, Forward, Copy, Mail, MailOpen } from "lucide-react";
+import { MessageCircle, X, Send, Search, ChevronLeft, ExternalLink, MoreHorizontal, CornerUpLeft, Forward, Copy, Mail, MailOpen, Star } from "lucide-react";
 import { toast } from "sonner";
 import {
   QUICK_REACTIONS,
@@ -25,6 +25,7 @@ import {
   saveMessageLink,
   subscribeReactions,
   toggleReaction,
+  useImportantMessages,
   type MessageLink,
   type ReactionGroup,
 } from "@/lib/supabase/messageExtras";
@@ -112,6 +113,8 @@ export function FloatingMessenger() {
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [forwardMsg, setForwardMsg] = useState<MessageRow | null>(null);
   const [forwardSearch, setForwardSearch] = useState("");
+  // "Mark as important" (migration 0421) — same marks as the Team Messenger page.
+  const important = useImportantMessages(profileId);
   const [sending, setSending] = useState(false);
   const [knock, setKnock] = useState<Knock | null>(null);
   // Channel unreads never show in this DM-only panel's list, but the badge
@@ -672,6 +675,11 @@ export function FloatingMessenger() {
                         <div id={`fm-msg-${m.id}`} className={`max-w-[75%] min-w-0 rounded-2xl px-3 py-1.5 text-sm ${mine ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-100"}`}>
                           <MessageBody text={m.body} className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]" />
                         </div>
+                          {important.ids.has(m.id) && (
+                            <span className="tm-imp" title="You marked this as important">
+                              <Star />
+                            </span>
+                          )}
                           <div className="relative">
                             <button type="button" className={`tm-more ${menuFor === m.id ? "tm-more--open" : ""}`} onClick={() => setMenuFor(menuFor === m.id ? null : m.id)} aria-label="Message actions">
                               <MoreHorizontal />
@@ -701,6 +709,10 @@ export function FloatingMessenger() {
                                   }}
                                 >
                                   <Copy /> Copy text
+                                </button>
+                                <button type="button" role="menuitem" className="tm-menu-item" onClick={() => { setMenuFor(null); void important.toggle(m); }}>
+                                  <Star className={important.ids.has(m.id) ? "tm-menu-star--on" : undefined} />
+                                  {important.ids.has(m.id) ? "Unmark as important" : "Mark as important"}
                                 </button>
                               </div>
                             )}
