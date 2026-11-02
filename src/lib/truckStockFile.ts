@@ -60,13 +60,37 @@ export type StockChange = {
   changed: string[];
 };
 
+/**
+ * How parts Truck Stock already has are treated: "update" gives them the
+ * file's values, "addOnly" leaves them alone, "clear" makes the file's
+ * branches hold exactly what the file lists (everything else there is removed).
+ */
+export type ImportMode = "update" | "addOnly" | "clear";
+
+/** A part the import would add that looks like one already there. */
+export type PossibleDuplicate = {
+  /** Stable id for the checklist tick box. */
+  key: string;
+  /** "ours": looks like a part Truck Stock has; "file": the file lists it twice, spelled differently. */
+  kind: "ours" | "file";
+  branch: string;
+  part: { partNo: string; quantity: number; storageLocation: string };
+  like: { partNo: string; quantity: number; storageLocation: string };
+};
+
 export type ImportPlan = {
   /** Adds and updates carry the full row to save, spelled the way the app's row is (so the upsert hits it). */
   changes: StockChange[];
   unchanged: number;
+  /** Parts the file lists that Truck Stock has, left as they are ("addOnly"). */
+  kept: number;
   /** Parts the app has at the file's branches that the file doesn't list. */
   missing: number;
+  /** Parts the app has at the file's branches, all told. */
+  atBranches: number;
   branches: string[];
+  /** Ticked (not in `separate`) = same part: it updates / joins the one it looks like instead of being added. */
+  duplicates: PossibleDuplicate[];
 };
 
 const clean = (v: unknown) => String(v ?? "").replace(/\s+/g, " ").trim();
@@ -75,6 +99,22 @@ const upper = (v: unknown) => clean(v).toUpperCase();
 const partKey = (branch: string, partNo: string) => `${branch.trim().toLowerCase()}\u0000${partNo.trim().toLowerCase()}`;
 /** Same, also ignoring runs of spaces: a workbook tab's "WE1M300 BEARING" is the app's "WE1M300  BEARING" (tab cells are tidied). */
 const looseKey = (branch: string, partNo: string) => partKey(clean(branch), clean(partNo));
+
+/** A part number without spaces, punctuation or leading zeros. */
+const squash = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^0+/, "");
+
+/**
+ * Keys under which two part numbers are probably the same part: the whole
+ * number, and the first word with a digit in it, both squashed.
+ * "DA81-06403A (4)" ~ "da8106403a", "WR55X31994-REED SWITCH *" ~
+ * "WR55X31994 REED SWITCH", "00010664460001" ~ "10664460001" (Excel drops the
+ * zeros). Short ones ("BOX 5") aren't compared.
+ */
+function lookAlikeKeys(branch: string, partNo: string): string[] {
+  const first = partNo.split(/[\s(,]+/).find((t) => /\d/.test(t));
+  const b = clean(branch).toLowerCase();
+  return [...new Set([squash(partNo), first ? squash(first) : ""])].filter((k) => k.length >= 5).map((k) => `${b}\u0000${k}`);
+}
 
 const PART_HEADERS = new Set(["PART", "PART #", "PART NO", "PART NUMBER", "PARTNUMBER", "PARTNO", "PART#"]);
 const isPartHeader = (v: unknown) => PART_HEADERS.has(upper(v).replace(/[._]/g, "").replace(/-/g, " "));
@@ -384,14 +424,22 @@ const FIELDS: [keyof StockFields, string][] = [
 /**
  * What importing `parts` would do to `existing`. Parts match by branch + part
  * number ignoring case (then ignoring spacing, for a row nothing else
- * matched). The file's Qty always wins; its blank cells keep what the app has
- * (and workbook notes only fill empty Notes). `fallbackBranch` is used for
- * parts the file gives no branch.
+ * matched). A part that would be added but looks like one already there
+ * (lookAlikeKeys) is a possible duplicate: unless its key is in `separate` it
+ * takes that row instead (or joins the file's other spelling of it).
+ *
+ * "update": the file's Qty always wins; its blank cells keep what the app has
+ * (and workbook notes only fill empty Notes). "addOnly": parts the app has
+ * are left alone. "clear": the file's branches end up holding exactly the
+ * file — matched rows take every value from it and the rest are removed
+ * (saved in place rather than deleted and re-added, so a failed save never
+ * leaves a branch empty). `fallbackBranch` is used for parts the file gives
+ * no branch.
  */
 export function planTruckStockImport(
   parts: ImportPart[],
   existing: TruckStockRow[],
-  opts: { fallbackBranch: string; removeMissing: boolean },
+  opts: { fallbackBranch: string; mode: ImportMode; separate?: Set<string> },
 ): ImportPlan {
   const exact = new Map(existing.map((r) => [partKey(r.branch, r.partNo), r]));
   const loose = new Map<string, TruckStockRow[]>();
@@ -440,9 +488,60 @@ export function planTruckStockImport(
     }
   }
 
+  // Possible duplicates among the parts that would be added. A look-alike the
+  // app has comes first (not when clearing: that row goes anyway), then
+  // another spelling in the file — preferring one that matched a row.
+  const duplicates: PossibleDuplicate[] = [];
+  const absorbed = new Set<ImportPart>();
+  const ours = new Map<string, TruckStockRow[]>();
+  if (opts.mode !== "clear") {
+    existing.forEach((r) => lookAlikeKeys(r.branch, r.partNo).forEach((k) => ours.set(k, [...(ours.get(k) ?? []), r])));
+  }
+  const inFile = new Map<string, ImportPart>();
+  const register = (p: ImportPart) => lookAlikeKeys(p.branch, p.partNo).forEach((k) => inFile.has(k) || inFile.set(k, p));
+  const brief = (x: { partNo: string; quantity: number; storageLocation: string }) => ({ partNo: x.partNo, quantity: x.quantity, storageLocation: x.storageLocation });
+  [...merged.values()].filter((p) => matched.has(p)).forEach(register);
+  for (const [k, p] of merged) {
+    if (matched.has(p) || !p.canAdd) continue;
+    const keys = lookAlikeKeys(p.branch, p.partNo);
+    // "DA81-06403A" before "DA81-06403A (4)" when both look like the file's "da81 06403a".
+    const r = keys
+      .flatMap((x) => ours.get(x) ?? [])
+      .filter((x) => !used.has(x.id))
+      .sort((a, b) => Number(squash(a.partNo) !== squash(p.partNo)) - Number(squash(b.partNo) !== squash(p.partNo)))[0];
+    if (r) {
+      const key = `ours:${k}`;
+      duplicates.push({ key, kind: "ours", branch: p.branch, part: brief(p), like: brief(r) });
+      if (!opts.separate?.has(key)) {
+        matched.set(p, r);
+        used.add(r.id);
+      }
+      register(p);
+      continue;
+    }
+    const q = keys.map((x) => inFile.get(x)).find(Boolean);
+    if (q) {
+      const key = `file:${k}`;
+      duplicates.push({ key, kind: "file", branch: p.branch, part: brief(p), like: brief(q) });
+      if (!opts.separate?.has(key)) {
+        absorbed.add(p);
+        q.quantity += p.quantity;
+        q.storageLocation ||= p.storageLocation;
+        q.description ||= p.description;
+        q.manufacturer ||= p.manufacturer;
+        q.notes ||= p.notes;
+        q.status ??= p.status;
+        continue;
+      }
+    }
+    register(p);
+  }
+
   const changes: StockChange[] = [];
   let unchanged = 0;
+  let kept = 0;
   for (const p of merged.values()) {
+    if (absorbed.has(p)) continue;
     const before = matched.get(p);
     if (!before) {
       if (!p.canAdd) continue;
@@ -459,16 +558,37 @@ export function planTruckStockImport(
       changes.push({ kind: "add", after, changed: [] });
       continue;
     }
-    const after: StockFields = {
-      branch: before.branch,
-      partNo: before.partNo,
-      quantity: p.quantity,
-      storageLocation: p.storageLocation || before.storageLocation,
-      description: p.description || before.description,
-      manufacturer: p.manufacturer || before.manufacturer,
-      notes: p.source === "list" ? p.notes || before.notes : before.notes || p.notes,
-      status: p.status ?? before.status,
-    };
+    if (opts.mode === "addOnly") {
+      kept++;
+      continue;
+    }
+    if (opts.mode === "clear" && !p.canAdd) {
+      // Only listed as Used / Sold …: an emptied branch wouldn't get it back.
+      changes.push({ kind: "remove", before, after: before, changed: [] });
+      continue;
+    }
+    const after: StockFields =
+      opts.mode === "clear"
+        ? {
+            branch: before.branch,
+            partNo: before.partNo,
+            quantity: p.quantity,
+            storageLocation: p.storageLocation,
+            description: p.description,
+            manufacturer: p.manufacturer,
+            notes: p.notes,
+            status: p.status ?? "in_stock",
+          }
+        : {
+            branch: before.branch,
+            partNo: before.partNo,
+            quantity: p.quantity,
+            storageLocation: p.storageLocation || before.storageLocation,
+            description: p.description || before.description,
+            manufacturer: p.manufacturer || before.manufacturer,
+            notes: p.source === "list" ? p.notes || before.notes : before.notes || p.notes,
+            status: p.status ?? before.status,
+          };
     const changed = FIELDS.filter(([f]) => clean(after[f]) !== clean(before[f])).map(([, label]) => label);
     if (changed.length === 0) {
       unchanged++;
@@ -478,13 +598,17 @@ export function planTruckStockImport(
   }
 
   const branches = new Set([...merged.values()].map((p) => p.branch.toLowerCase()));
-  const missing = existing.filter((r) => branches.has(r.branch.toLowerCase()) && !used.has(r.id));
-  if (opts.removeMissing) missing.forEach((r) => changes.push({ kind: "remove", before: r, after: r, changed: [] }));
+  const atBranches = existing.filter((r) => branches.has(r.branch.toLowerCase()));
+  const missing = atBranches.filter((r) => !used.has(r.id));
+  if (opts.mode === "clear") missing.forEach((r) => changes.push({ kind: "remove", before: r, after: r, changed: [] }));
   return {
     changes,
     unchanged,
+    kept,
     missing: missing.length,
+    atBranches: atBranches.length,
     branches: [...new Set([...merged.values()].map((p) => p.branch))].sort((a, b) => a.localeCompare(b)),
+    duplicates,
   };
 }
 

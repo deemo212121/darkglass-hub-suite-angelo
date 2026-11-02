@@ -38,7 +38,7 @@ import {
   TRUCK_STOCK_EXPORT_HEADERS,
   type ParsedImport,
 } from "@/lib/truckStockFile";
-import { TruckStockImportModal } from "@/components/TruckStockImportModal";
+import { TruckStockImportModal, type ImportSave } from "@/components/TruckStockImportModal";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 const PAGE_SIZE_OPTIONS = [25, 50, 75, 100, 125] as const;
@@ -48,6 +48,21 @@ function formatDateAdded(iso?: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString();
+}
+
+/** Rows in TRUCK_STOCK_EXPORT_HEADERS order (Export, and the copy Clear first downloads). */
+function exportData(rows: TruckStockRow[]): (string | number)[][] {
+  return rows.map((r) => [
+    r.branch,
+    r.partNo,
+    r.storageLocation,
+    r.description,
+    r.manufacturer,
+    r.quantity,
+    r.status === "in_use" ? "In Use" : "In Stock",
+    r.notes,
+    r.createdAt ? formatDateAdded(r.createdAt) : "",
+  ]);
 }
 
 /** Days since the row was added — how long a part has been sitting in stock. */
@@ -243,11 +258,13 @@ export function TruckStockPanel() {
     }
   };
 
-  const handleApplyImport = async (
-    save: { upserts: Array<Omit<TruckStockRow, "id" | "createdAt" | "updatedAt">>; removeIds: string[]; added: number; updated: number },
-    onProgress: (done: number, total: number) => void,
-  ) => {
+  const handleApplyImport = async (save: ImportSave, onProgress: (done: number, total: number) => void) => {
     const fileName = importFile?.name ?? "the file";
+    // Clear first: download what the branches hold now before touching them (throws, saving nothing, if it can't).
+    if (save.backup) {
+      const where = save.backup.branches.length === 1 ? `_${save.backup.branches[0].replace(/[^A-Za-z0-9]+/g, "_")}` : "";
+      await downloadTruckStockXlsx(`truck_stock_before_import${where}`, exportData(save.backup.rows));
+    }
     const { errors } = await bulkUpsertTruckStock(save.upserts, { chunkSize: 500, onProgress });
     // Only remove once everything else saved, so a failed batch never leaves a branch emptier than the file.
     if (errors.length === 0 && save.removeIds.length > 0) await deleteTruckStockRows(save.removeIds);
@@ -263,17 +280,7 @@ export function TruckStockPanel() {
   // Export: the rows the search and filters show, every page — same columns Import reads back.
   const handleExport = (kind: "xlsx" | "csv") => {
     const name = `truck_stock${branchFilter ? `_${branchFilter.replace(/[^A-Za-z0-9]+/g, "_")}` : ""}`;
-    const data = filteredRows.map((r) => [
-      r.branch,
-      r.partNo,
-      r.storageLocation,
-      r.description,
-      r.manufacturer,
-      r.quantity,
-      r.status === "in_use" ? "In Use" : "In Stock",
-      r.notes,
-      r.createdAt ? formatDateAdded(r.createdAt) : "",
-    ]);
+    const data = exportData(filteredRows);
     if (kind === "csv") exportToCSV(name, TRUCK_STOCK_EXPORT_HEADERS, data);
     else void downloadTruckStockXlsx(name, data).catch((err) => setImportNote({ ok: false, text: `Export failed: ${err instanceof Error ? err.message : String(err)}` }));
   };
