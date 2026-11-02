@@ -45,6 +45,14 @@ async function checkAndHandleSession(
   isInteractiveLogin: boolean,
   onSuperseded: () => void
 ): Promise<boolean> {
+  // Local dev (npm run dev) stays out of the one-session rule, so the same
+  // account can be signed in on localhost and the live site at once: it
+  // never claims the session (which would sign the live site out) and is
+  // never signed out by the live site's login.
+  if (import.meta.env.DEV) {
+    await refreshSupabaseSession(firebaseUser, { recordLogin: false });
+    return false;
+  }
   await refreshSupabaseSession(firebaseUser, { recordLogin: isInteractiveLogin });
   const serverSessionId = getCurrentSessionId();
   if (!serverSessionId || typeof window === "undefined") return false;
