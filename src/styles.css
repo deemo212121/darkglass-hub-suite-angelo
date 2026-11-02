@@ -14703,14 +14703,33 @@ button.home-attn:focus-visible { outline: 2px solid var(--tone); outline-offset:
   border-radius: 10px; border-left: 3px solid var(--color-primary);
   background: color-mix(in oklab, var(--color-primary) 8%, var(--color-panel));
 }
-/* Floating messenger: the ⋯ menu opens under the message (the panel is narrow). */
+/* Floating messenger: the ⋯ menu opens under the message row (the panel is narrow), lined up with the bubble's edge — above it near the bottom of the list. */
 .fm-menu { top: calc(100% + 4px); left: 0; right: auto; transform: none; }
 .fm-menu--mine { left: auto; right: 0; }
+.fm-menu--up { top: auto; bottom: calc(100% + 4px); }
 .fm-msg .tm-more { width: 1.5rem; height: 1.5rem; }
 .fm-msg .tm-reactions { margin-top: 0.2rem; }
 .fm-forward { border-top: 1px solid var(--color-panel-border); background: var(--color-card); }
 .fm-msg:hover .tm-more { opacity: 1; }
 .fm-msg--mine .tm-reactions { justify-content: flex-end; }
+/* Mark as important: the star beside a marked bubble, the All / Important chips, the per-conversation count, and the filter bar. */
+.tm-imp { display: grid; place-items: center; flex-shrink: 0; color: #f59e0b; }
+.tm-imp svg { width: 0.85rem; height: 0.85rem; fill: currentColor; }
+.tm-menu-item svg.tm-menu-star--on { color: #f59e0b; fill: currentColor; }
+.tm-filters { display: flex; gap: 0.4rem; margin: 0 0.75rem 0.4rem; }
+.tm-filters .ann-chip { display: inline-flex; align-items: center; height: 1.75rem; padding: 0 0.7rem; font-size: 0.75rem; }
+.tm-imp-count { display: inline-flex; align-items: center; gap: 0.2rem; flex-shrink: 0; font-size: 0.72rem; font-weight: 700; color: #f59e0b; font-variant-numeric: tabular-nums; }
+.tm-imp-count svg { width: 0.7rem; height: 0.7rem; fill: currentColor; }
+.tm-filterbar {
+  position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; padding: 0.45rem 0.75rem;
+  border-radius: 10px; border: 1px solid rgba(245, 158, 11, 0.35); font-size: 0.78rem;
+  color: color-mix(in oklab, var(--color-foreground) 88%, transparent); background: color-mix(in oklab, #f59e0b 10%, var(--color-card));
+}
+.tm-filterbar > svg { color: #f59e0b; }
+.tm-filterbar button { margin-left: auto; flex-shrink: 0; font-weight: 600; color: var(--color-primary); }
+.tm-filterbar button:hover { text-decoration: underline; }
+.tm-bubble--flash { animation: tm-flash 3s ease-out; }
+@keyframes tm-flash { 0%, 45% { box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.8); } 100% { box-shadow: 0 0 0 3px rgba(245, 158, 11, 0); } }
 
 /* ── Mobile Home redesign: hero card, round punch buttons, round shortcuts (keep last) ── */
 .mh-hero {
@@ -15137,6 +15156,20 @@ button.home-attn:focus-visible { outline: 2px solid var(--tone); outline-offset:
 .hm-row-toggle:focus-visible { opacity: 1; }
 .hm-row-toggle:hover { color: var(--color-foreground); background: color-mix(in oklab, var(--color-foreground) 10%, transparent); }
 @media (hover: none) { .hm-row-toggle { opacity: 1; } }
+/* Messages drop-down: All / Important tabs, and the always-visible star that unmarks an important message. */
+.hm-tabs { display: flex; gap: 0.35rem; padding: 0.55rem 0.9rem; border-bottom: 1px solid var(--color-panel-border); }
+.hm-tab {
+  display: inline-flex; align-items: center; gap: 0.3rem; height: 1.65rem; padding: 0 0.7rem; border-radius: 999px;
+  border: 1px solid var(--color-panel-border); font-size: 0.72rem; font-weight: 600; color: var(--color-muted-foreground);
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.hm-tab:hover { color: var(--color-foreground); }
+.hm-tab--on { color: var(--color-foreground); border-color: color-mix(in oklab, var(--color-primary) 55%, transparent); background: color-mix(in oklab, var(--color-primary) 14%, transparent); }
+.hm-tab svg { width: 0.75rem; height: 0.75rem; }
+.hm-tab--on svg { color: #f59e0b; }
+.hm-tab-n { opacity: 0.65; font-variant-numeric: tabular-nums; }
+.hm-row-toggle--imp { opacity: 1; color: #f59e0b; }
+.hm-row-toggle--imp:hover { color: #fbbf24; }
 
 /* ─── Paper view — custom forms' fill page (CustomFormRenderer `paper`) ────
    The form as a white document page, like the HR forms that are signed on

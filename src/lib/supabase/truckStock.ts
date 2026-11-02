@@ -130,6 +130,29 @@ export async function deleteTruckStockRow(id: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+/** Gives rows a new part number (Import: a look-alike takes the file's tidier spelling). Run before the upsert that then hits them. */
+export async function renameTruckStockRows(renames: Array<{ id: string; partNo: string }>): Promise<void> {
+  for (let i = 0; i < renames.length; i += 10) {
+    const results = await Promise.all(
+      renames
+        .slice(i, i + 10)
+        .filter((r) => /^[0-9a-f-]{36}$/i.test(r.id))
+        .map((r) => supabase.from("truck_stock").update({ part_no: r.partNo.trim() }).eq("id", r.id)),
+    );
+    const failed = results.find((r) => r.error);
+    if (failed?.error) throw new Error(failed.error.message);
+  }
+}
+
+/** Deletes many rows (Clear first: parts at the branch that aren't in the file), 200 ids per request. */
+export async function deleteTruckStockRows(ids: string[]): Promise<void> {
+  const valid = ids.filter((id) => /^[0-9a-f-]{36}$/i.test(id));
+  for (let i = 0; i < valid.length; i += 200) {
+    const { error } = await supabase.from("truck_stock").delete().in("id", valid.slice(i, i + 200));
+    if (error) throw new Error(error.message);
+  }
+}
+
 /**
  * Find in-house stock for a specific part number across all branches.
  *
@@ -157,13 +180,12 @@ export async function findTruckStockForPart(partNo: string): Promise<TruckStockR
 
 
 /**
- * Bulk insert / update truck_stock rows in chunks. Used by the
- * "Import workbook" button on the Truck Stock page to load 7k+ rows from
- * the parsed inventory spreadsheet.
+ * Bulk insert / update truck_stock rows in chunks. Used by the Import
+ * button on the Truck Stock page (src/lib/truckStockFile.ts plans the rows).
  *
- * Uses Postgres upsert on (company_id, branch, part_no) so re-running the
- * import bumps quantities for existing rows instead of erroring on the
- * unique constraint.
+ * Uses Postgres upsert on (company_id, branch, part_no) so a row that
+ * already exists is overwritten with the given values instead of erroring
+ * on the unique constraint.
  */
 export async function bulkUpsertTruckStock(
   rows: Array<Omit<TruckStockRow, "id" | "updatedAt">>,
@@ -200,6 +222,106 @@ export async function bulkUpsertTruckStock(
   return { inserted, errors };
 }
 
+
+/**
+ * A part used on a ticket (truck_stock_used, migration 0422): what the
+ * inventory workbook marks Used, kept apart from truck_stock so it never
+ * counts as stock. Listed under "Used" on the Truck Stock page.
+ */
+export type TruckStockUsedRow = {
+  id: string;
+  branch: string;
+  partNo: string;
+  /** "" when the sheet gave none. */
+  ticketNo: string;
+  quantity: number;
+  /** yyyy-mm-dd, or "". */
+  usedDate: string;
+  tech: string;
+  storageLocation: string;
+  description: string;
+  notes: string;
+  createdAt?: string;
+};
+
+function usedFromDb(r: any): TruckStockUsedRow {
+  return {
+    id: r.id,
+    branch: r.branch ?? "",
+    partNo: r.part_no ?? "",
+    ticketNo: r.ticket_no ?? "",
+    quantity: Number(r.quantity ?? 0),
+    usedDate: r.used_date ?? "",
+    tech: r.tech ?? "",
+    storageLocation: r.storage_location ?? "",
+    description: r.description ?? "",
+    notes: r.notes ?? "",
+    createdAt: r.created_at ?? undefined,
+  };
+}
+
+/** Every used row for the caller's company, newest use first. Throws when migration 0422 hasn't been run. */
+export async function getTruckStockUsed(): Promise<TruckStockUsedRow[]> {
+  const pageSize = 1000;
+  const all: TruckStockUsedRow[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from("truck_stock_used")
+      .select("*")
+      .order("used_date", { ascending: false, nullsFirst: false })
+      .order("branch", { ascending: true })
+      .order("part_no", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(error.message);
+    const chunk = (data ?? []).map(usedFromDb);
+    all.push(...chunk);
+    if (chunk.length < pageSize) break;
+  }
+  return all;
+}
+
+/** Insert / update used rows (Import), on (company_id, branch, part_no, ticket_no), 500 per request. */
+export async function bulkUpsertTruckStockUsed(
+  rows: Array<Omit<TruckStockUsedRow, "id" | "createdAt">>,
+  onProgress?: (done: number, total: number) => void,
+): Promise<{ errors: string[] }> {
+  const errors: string[] = [];
+  for (let i = 0; i < rows.length; i += 500) {
+    const chunk = rows.slice(i, i + 500).map((r) => ({
+      branch: r.branch.trim(),
+      part_no: r.partNo.trim(),
+      ticket_no: r.ticketNo.trim(),
+      quantity: Number.isFinite(r.quantity) ? Math.max(0, Math.trunc(r.quantity)) : 1,
+      used_date: r.usedDate || null,
+      tech: r.tech.trim() || null,
+      storage_location: r.storageLocation.trim() || null,
+      description: r.description.trim() || null,
+      notes: r.notes.trim() || null,
+    }));
+    const { error } = await supabase.from("truck_stock_used").upsert(chunk, { onConflict: "company_id,branch,part_no,ticket_no" });
+    if (error) errors.push(`Used chunk ${i / 500 + 1}: ${error.message}`);
+    onProgress?.(Math.min(i + 500, rows.length), rows.length);
+  }
+  return { errors };
+}
+
+export async function deleteTruckStockUsedRow(id: string): Promise<void> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return;
+  const { error } = await supabase.from("truck_stock_used").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/** Which of `ticketNos` are tickets in the app (so the Used list only links those). */
+export async function ticketNosInApp(ticketNos: string[]): Promise<Set<string>> {
+  const found = new Set<string>();
+  const unique = [...new Set(ticketNos.filter(Boolean))];
+  for (let i = 0; i < unique.length; i += 200) {
+    const { data, error } = await supabase.from("tickets").select("ticket_no").in("ticket_no", unique.slice(i, i + 200));
+    if (error) throw new Error(error.message);
+    (data ?? []).forEach((t: { ticket_no: string }) => found.add(t.ticket_no));
+  }
+  return found;
+}
 
 /**
  * Pull `qty` units of a part from a specific branch's truck stock.

@@ -43,7 +43,7 @@ import { visibleEmployeeMonitoringProfileIds } from "@/lib/notifyRouting";
 import { getCompanyTimecardEntries, getProfileIdByFirebaseUid, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getCompanyTraineeEntries, type TraineeTimecardEntry } from "@/lib/supabase/traineeTimecards";
 import { getAttendanceNotes, upsertAttendanceNote, upsertAttendanceHrNote, uploadAttendanceNoteAttachment, removeAttendanceNoteAttachment, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
-import { getCompanyPtoRequests, sickYearWindow, sickDaysUsed, sickDaysPending, SICK_LEAVE_ANNUAL_ALLOWANCE, type PtoRequestRow } from "@/lib/supabase/pto";
+import { getCompanyPtoRequests, sickYearWindow, sickDaysUsed, sickDaysPending, SICK_LEAVE_ANNUAL_ALLOWANCE, HR_STATUS_TO_PTO_TYPE, type PtoRequestRow, type PtoType } from "@/lib/supabase/pto";
 import { HrCalendarTab } from "@/components/HrCalendarTab";
 import { PtoManagementTab } from "@/components/PtoManagementTab";
 import { EmployeeAttendanceStatusTab } from "@/components/EmployeeAttendanceStatusTab";
@@ -58,6 +58,9 @@ import { getPendingCorrectionsInRange, type TimecardCorrectionRow } from "@/lib/
 import { PendingItemDetailModal, type PendingItem } from "@/components/PendingItemDetailModal";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
 import { todayISO } from "@/lib/localDate";
+
+// Absent List HR Status label for each leave type ("vacation" → "Vacation").
+const HR_STATUS_FOR_PTO_TYPE = Object.fromEntries(Object.entries(HR_STATUS_TO_PTO_TYPE).map(([label, type]) => [type, label])) as Partial<Record<PtoType, string>>;
 
 // Employee Monitoring → Attendance Status asks for the viewer's own login password (PasswordGateModal).
 const ATTENDANCE_STATUS_GATE = "employee-monitoring-attendance-status";
@@ -674,6 +677,16 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     // Captured before the save so the activity log can show the actual
     // transition (e.g. "Absent → Sick"), not just the new value in isolation.
     const previousHrNote = notes.find((n) => n.profileId === profileId && n.noteDate === noteDate)?.hrNote || "";
+    // An approved leave request decides this day's pay and keeps its mark in
+    // step (migration 0423) — changing the mark alone doesn't change the pay.
+    const covering = ptoRequests.find((r) => r.profileId === profileId && r.status === "approved" && r.startDate <= noteDate && noteDate <= r.endDate);
+    const coveringLabel = covering ? HR_STATUS_FOR_PTO_TYPE[covering.ptoType] : undefined;
+    if (covering && coveringLabel && hrNote !== coveringLabel) {
+      const ok = confirm(
+        `${noteDate} is covered by an approved ${coveringLabel} request (${covering.startDate} to ${covering.endDate}). Payroll pays that request, not this mark.\n\nTo change how this day is paid, edit or cancel the request in PTO Management instead.\n\nSave "${hrNote || "(none)"}" here anyway?`
+      );
+      if (!ok) return;
+    }
     setSavingHrNoteId(key);
     try {
       await upsertAttendanceHrNote(profileId, noteDate, hrNote, myProfileId, companyId);

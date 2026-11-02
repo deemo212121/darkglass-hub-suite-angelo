@@ -3,10 +3,12 @@
  * Tickets, and User Management — one table (migration 0115), partitioned by
  * the `module` column. Each page only ever fetches its own module, so in
  * practice every page's log is dedicated to that page, not a mixed feed.
+ * Truck Stock Import ("truck-stock", migration 0424) has no log of its own —
+ * it shows on Admin → Activity Logs under Parts.
  */
 import { supabase } from "./client";
 
-export type ActivityLogModule = "accounting" | "payroll" | "attendance-monitoring" | "it-tickets" | "user-management" | "absent-list";
+export type ActivityLogModule = "accounting" | "payroll" | "attendance-monitoring" | "it-tickets" | "user-management" | "absent-list" | "truck-stock";
 
 /** Human-readable label for each action code — new codes just show as-is (title-cased) if not listed here. */
 export const MODULE_ACTIVITY_ACTION_LABELS: Record<string, string> = {
@@ -43,7 +45,12 @@ export const MODULE_ACTIVITY_ACTION_LABELS: Record<string, string> = {
   password_self_changed: "Changed own password",
   weekly_password_reset_enabled: "Turned on weekly forced password change",
   weekly_password_reset_disabled: "Turned off weekly forced password change",
+  truck_stock_imported: "Imported a Truck Stock file",
+  truck_stock_import_blocked: "Tried to import Truck Stock without Admin access",
 };
+
+/** Actions Activity Logs flags as an alert (red) — someone tried something they don't have access to. */
+export const MODULE_ACTIVITY_ALERT_ACTIONS = new Set(["truck_stock_import_blocked"]);
 
 export function moduleActivityActionLabel(action: string): string {
   return MODULE_ACTIVITY_ACTION_LABELS[action] ?? action.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());

@@ -68,6 +68,7 @@ import { selectAllPages } from "./selectAllPages";
 import { invalidateCompanyTicketsCache } from "./tickets";
 import { invalidateErBackfillIds } from "./erBackfill";
 import { aliasTechName } from "@/lib/techNameMatch";
+import { parseCsv } from "@/lib/csvParse";
 
 export type ImportRow = Record<string, string>;
 
@@ -128,39 +129,6 @@ export function excelOriginalTicketNos(no: string): string[] {
   if (e) out.push(`${e[1]}E${e[2].length}`);
   if (/^[1-9]\d{8,10}$/.test(no)) out.push(no.padStart(12, "0"));
   return out;
-}
-
-/** Same CSV rules as gen-ticket-sql.mjs: only a quote at the start of a field opens a quoted field (stray quotes inside CSR notes are literal). */
-function parseCsv(text: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = "";
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (inQuotes) {
-      if (c === '"') {
-        if (text[i + 1] === '"') {
-          field += '"';
-          i++;
-        } else inQuotes = false;
-      } else field += c;
-    } else if (c === '"' && field.length === 0) inQuotes = true;
-    else if (c === ",") {
-      row.push(field);
-      field = "";
-    } else if (c === "\n") {
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = "";
-    } else if (c !== "\r") field += c;
-  }
-  if (field.length > 0 || row.length > 0) {
-    row.push(field);
-    rows.push(row);
-  }
-  return rows.filter((r) => r.length > 1 || (r[0] && r[0].trim() !== ""));
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");

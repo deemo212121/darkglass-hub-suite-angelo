@@ -1,9 +1,10 @@
 /**
  * Maps the spreadsheet's short branch codes (AV, ATL, BM, …) to the full
- * branch names defined in `src/lib/locations.ts`. Used during the
- * "Import workbook" step on the Truck Stock page so the rows show up
- * grouped under recognisable city names instead of the cryptic 2- to
- * 3-letter codes the inventory spreadsheet uses internally.
+ * branch names defined in `src/lib/locations.ts`. Used by Import on the
+ * Truck Stock page (src/lib/truckStockFile.ts: workbook tab names, "… - AV.csv"
+ * file names, Branch cells) so the rows show up grouped under recognisable
+ * city names instead of the cryptic 2- to 3-letter codes the inventory
+ * spreadsheet uses internally.
  *
  * Verified mappings (cross-checked against the technicians-by-location
  * roster — e.g. CT contained 91 references to Chattanooga techs):

@@ -14,7 +14,7 @@
 import { supabase } from "./client";
 import { getOrCreateDmThread, sendMessage } from "./messaging";
 
-async function getCompanyHrRoleProfileIds(): Promise<string[]> {
+export async function getCompanyHrRoleProfileIds(): Promise<string[]> {
   const { data, error } = await supabase
     .from("profiles")
     .select("id, role, extra_roles")

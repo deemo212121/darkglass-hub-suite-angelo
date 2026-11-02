@@ -11,8 +11,9 @@ import {
   pickAuthoritativeDocument,
 } from "@/lib/signableDocumentRegistry";
 import { isCompletedPaper } from "@/lib/completedPapers";
+import { checksIdentityFields, documentOwner } from "@/lib/formConsistency";
 
-export type SignableDocumentType = "performance_bonus_policy" | "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "contractor_data_us" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening" | "flash_technician_travel" | "nda_form" | "vehicle_use_agreement" | "contractor_addendum" | "master_w2_agreement" | "master_w2_office_agreement" | "master_ph_contractor_agreement" | "master_w2_executive_agreement" | "confidentiality_noncompete_agreement" | "certificate_of_employment" | "ssn_card_form" | "drivers_license_form" | "valid_id_form" | "visit_exception_report" | "compensation_update";
+export type SignableDocumentType = "performance_bonus_policy" | "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "contractor_data_us" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening" | "flash_technician_travel" | "nda_form" | "vehicle_use_agreement" | "contractor_addendum" | "master_w2_agreement" | "master_w2_office_agreement" | "master_ph_contractor_agreement" | "master_w2_executive_agreement" | "confidentiality_noncompete_agreement" | "certificate_of_employment" | "ssn_card_form" | "drivers_license_form" | "valid_id_form" | "visit_exception_report" | "compensation_update" | "ph_anti_cloning_agreement";
 /** "executive" only applies to promotion_form documents (see migration 0166) — every other document type just never uses that slot. */
 export type SignatureSlot = "employee" | "manager" | "senior_manager" | "hr_staff" | "executive";
 export type SignableDocumentStatus = "pending_signature" | "signed" | "confirmed" | "cancelled";
@@ -472,6 +473,18 @@ async function signDocumentInner(id: string, slot: SignatureSlot, entry: Signatu
 
   if (slot === "employee" && doc.recipientId && TECHNICIAN_FORM_TYPES.includes(doc.documentType)) {
     await maybeAutoUnfreezeTechnician(doc.recipientId);
+  }
+
+  // Cross-check the person's other signed forms (name, SSN, address, …) —
+  // HR is told in the bell if this one disagrees with all of them. In the
+  // background: it never holds up or fails the signature.
+  if (slot === "employee" && checksIdentityFields(doc.documentType)) {
+    const owner = documentOwner({ formData: formData ?? doc.formData, recipientId: doc.recipientId });
+    if (owner) {
+      void import("./formConsistencyReviews")
+        .then((m) => m.notifyHrOfNewInconsistencies({ docId: id, profileId: owner, signerName: entry.name }))
+        .catch((err) => console.error("[signDocument] form cross-check didn't run:", err));
+    }
   }
 }
 

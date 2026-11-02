@@ -9,26 +9,51 @@
  * part before placing a new PO.
  *
  * Wired to the `truck_stock` table via src/lib/supabase/truckStock.ts.
+ * Import / Export files: src/lib/truckStockFile.ts + TruckStockImportModal.
+ * The Used view lists parts used on a ticket (truck_stock_used, filled by
+ * Import from the workbook's Used rows) — they never count as stock.
+ * Import is Admin and above only: every import, and every attempt by anyone
+ * else (as an alert), goes on Admin → Activity Logs under Parts.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Plus, Pencil, Trash2, Save, X, Upload, ArrowRightLeft } from "lucide-react";
+import { Plus, Pencil, Trash2, Save, X, Upload, Download, ChevronDown, ArrowRightLeft, Lock } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { isAdminOrAboveHolder, normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
+import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import {
   getTruckStock,
   upsertTruckStockRow,
   deleteTruckStockRow,
+  deleteTruckStockRows,
+  renameTruckStockRows,
   bulkUpsertTruckStock,
   decrementTruckStock,
+  getTruckStockUsed,
+  bulkUpsertTruckStockUsed,
+  deleteTruckStockUsedRow,
+  ticketNosInApp,
   type TruckStockRow,
   type TruckStockStatus,
+  type TruckStockUsedRow,
 } from "@/lib/supabase/truckStock";
 import { createTruckStockTransferRequest } from "@/lib/supabase/truckStockTransfers";
 import { notifyPartsManagerOfTransferRequest } from "@/lib/truckStockNotify";
 import { getLocations, type LocationRow } from "@/lib/supabase/locationManagement";
-import { resolveTruckStockBranch } from "@/lib/truckStockBranchMap";
 import { getPartTransactionsByPartNo, type PartUsageRow } from "@/lib/supabase/tickets";
+import { exportToCSV } from "@/lib/csvExport";
+import {
+  readTruckStockFile,
+  parseTruckStockTables,
+  downloadTruckStockXlsx,
+  TRUCK_STOCK_EXPORT_HEADERS,
+  TRUCK_STOCK_USED_EXPORT_HEADERS,
+  usedDateText,
+  type ParsedImport,
+} from "@/lib/truckStockFile";
+import { TruckStockImportModal, type ImportSave } from "@/components/TruckStockImportModal";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 const PAGE_SIZE_OPTIONS = [25, 50, 75, 100, 125] as const;
 
@@ -37,6 +62,26 @@ function formatDateAdded(iso?: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString();
+}
+
+/** Rows in TRUCK_STOCK_EXPORT_HEADERS order (Export, and the copy Clear first downloads). */
+function exportData(rows: TruckStockRow[]): (string | number)[][] {
+  return rows.map((r) => [
+    r.branch,
+    r.partNo,
+    r.storageLocation,
+    r.description,
+    r.manufacturer,
+    r.quantity,
+    r.status === "in_use" ? "In Use" : "In Stock",
+    r.notes,
+    r.createdAt ? formatDateAdded(r.createdAt) : "",
+  ]);
+}
+
+/** Used rows in TRUCK_STOCK_USED_EXPORT_HEADERS order; Status "Used" so Import reads them back as used parts. */
+function exportUsedData(rows: TruckStockUsedRow[]): (string | number)[][] {
+  return rows.map((r) => [r.branch, r.partNo, r.ticketNo, r.quantity, usedDateText(r.usedDate), r.tech, r.storageLocation, r.description, r.notes, "Used"]);
 }
 
 /** Days since the row was added — how long a part has been sitting in stock. */
@@ -66,8 +111,16 @@ const emptyDraft = (): TruckStockRow => ({
 });
 
 export function TruckStockPanel() {
-  const { displayName } = useAuth();
+  const { displayName, role, realRole, extraRoles } = useAuth();
+  // Import is Admin / SuperAdmin / SuperSuperAdmin (primary or extra role) — the real role, so a "View as" preview doesn't change it.
+  const canImport = isAdminOrAboveHolder(realRole ?? role, extraRoles);
   const [rows, setRows] = useState<TruckStockRow[]>([]);
+  // Parts used on a ticket (migration 0422). null until loaded, or when the table isn't there yet (usedError).
+  const [usedRows, setUsedRows] = useState<TruckStockUsedRow[] | null>(null);
+  const [usedError, setUsedError] = useState<string | null>(null);
+  const [view, setView] = useState<"stock" | "used">("stock");
+  /** Ticket numbers on the Used list that are tickets in the app (linked); null until looked up. */
+  const [ticketsInApp, setTicketsInApp] = useState<Set<string> | null>(null);
   const [locations, setLocations] = useState<LocationRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -83,9 +136,10 @@ export function TruckStockPanel() {
   const [pageSize, setPageSize] = useState<number | "all">(100);
   const [currentPage, setCurrentPage] = useState(1);
   const [draft, setDraft] = useState<TruckStockRow | null>(null);
-  const [importBusy, setImportBusy] = useState(false);
-  const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
-  const [importResult, setImportResult] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [readingFile, setReadingFile] = useState(false);
+  const [importFile, setImportFile] = useState<{ name: string; parsed: ParsedImport } | null>(null);
+  const [importNote, setImportNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [usagePartNo, setUsagePartNo] = useState<string | null>(null);
   const [showTransferForm, setShowTransferForm] = useState(false);
 
@@ -110,6 +164,23 @@ export function TruckStockPanel() {
     };
   }, []);
 
+  useEffect(() => {
+    getTruckStockUsed()
+      .then(setUsedRows)
+      .catch((err) => setUsedError(err instanceof Error ? err.message : String(err)));
+  }, []);
+
+  useEffect(() => {
+    if (view !== "used" || !usedRows || ticketsInApp) return;
+    let alive = true;
+    ticketNosInApp(usedRows.map((r) => r.ticketNo))
+      .then((found) => alive && setTicketsInApp(found))
+      .catch(() => alive && setTicketsInApp(new Set()));
+    return () => {
+      alive = false;
+    };
+  }, [view, usedRows, ticketsInApp]);
+
   // Branches = union of saved Location records + any branches already
   // present on a truck_stock row (handles rows entered before a Location
   // record exists). Sorted alphabetically.
@@ -117,8 +188,9 @@ export function TruckStockPanel() {
     const set = new Set<string>();
     locations.forEach((l) => l.location && set.add(l.location));
     rows.forEach((r) => r.branch && set.add(r.branch));
+    usedRows?.forEach((r) => r.branch && set.add(r.branch));
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [locations, rows]);
+  }, [locations, rows, usedRows]);
 
   // Aggregate quantity per part across all branches — drives the
   // "cross-branch availability" chip on each row.
@@ -149,18 +221,39 @@ export function TruckStockPanel() {
     });
   }, [rows, search, branchFilter, statusFilter]);
 
+  const filteredUsed = useMemo(() => {
+    const s = search.trim().toLowerCase();
+    return (usedRows ?? []).filter((r) => {
+      if (branchFilter && r.branch !== branchFilter) return false;
+      if (!s) return true;
+      return [r.partNo, r.ticketNo, r.description, r.tech, r.storageLocation, r.notes].some((v) => v.toLowerCase().includes(s));
+    });
+  }, [usedRows, search, branchFilter]);
+
   // Any filter changing invalidates whatever page we were on.
   useEffect(() => {
     setCurrentPage(1);
-  }, [search, branchFilter, statusFilter]);
+  }, [search, branchFilter, statusFilter, view]);
 
-  const totalPages = pageSize === "all" ? 1 : Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const listLength = view === "used" ? filteredUsed.length : filteredRows.length;
+  const totalPages = pageSize === "all" ? 1 : Math.max(1, Math.ceil(listLength / pageSize));
   const safePage = Math.min(currentPage, totalPages);
   const pagedRows = useMemo(() => {
     if (pageSize === "all") return filteredRows;
     const start = (safePage - 1) * pageSize;
     return filteredRows.slice(start, start + pageSize);
   }, [filteredRows, safePage, pageSize]);
+
+  const groupedUsed = useMemo(() => {
+    const paged = pageSize === "all" ? filteredUsed : filteredUsed.slice((safePage - 1) * pageSize, safePage * pageSize);
+    const map = new Map<string, TruckStockUsedRow[]>();
+    paged.forEach((r) => {
+      const key = r.branch || "Unassigned";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(r);
+    });
+    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [filteredUsed, safePage, pageSize]);
 
   const groupedByBranch = useMemo(() => {
     const map = new Map<string, TruckStockRow[]>();
@@ -211,44 +304,106 @@ export function TruckStockPanel() {
     }
   };
 
-  const handleImport = async () => {
-    if (!confirm(
-      "Import the company inventory workbook?\n\n" +
-      "This will bulk-load every Truck Stock part from the PROJECT A USAPP " +
-      "inventory spreadsheet across every branch. Existing rows are merged " +
-      "(quantities update) rather than duplicated.",
-    )) return;
-    setImportBusy(true);
-    setImportResult(null);
-    setImportProgress({ done: 0, total: 0 });
+  const handleDeleteUsed = async (row: TruckStockUsedRow) => {
+    if (!confirm(`Remove ${row.partNo}${row.ticketNo ? ` (ticket ${row.ticketNo})` : ""} from the Used list at ${row.branch}?`)) return;
+    setBusy(true);
     try {
-      const mod = await import("@/lib/truckStockSeed.json");
-      const rawSeed = (mod.default ?? mod) as Array<Omit<TruckStockRow, "id" | "updatedAt">>;
-      // Translate the spreadsheet's 2-3 letter branch codes (AV, ATL, BM,
-      // …) to the full city names from src/lib/locations.ts so the rows
-      // show up grouped under recognisable labels.
-      const seed = rawSeed.map((r) => ({
-        ...r,
-        branch: resolveTruckStockBranch(r.branch),
-      }));
-      setImportProgress({ done: 0, total: seed.length });
-      const { inserted, errors } = await bulkUpsertTruckStock(seed, {
-        chunkSize: 500,
-        onProgress: (done, total) => setImportProgress({ done, total }),
-      });
-      if (errors.length > 0) {
-        setImportResult(`Imported ${inserted} rows with ${errors.length} chunk error(s). First: ${errors[0]}`);
-      } else {
-        setImportResult(`Imported ${inserted} rows from the workbook.`);
-      }
-      // Reload the page data so the imported rows show up.
-      const fresh = await getTruckStock();
-      setRows(fresh);
+      await deleteTruckStockUsedRow(row.id);
+      setUsedRows((prev) => (prev ?? []).filter((r) => r.id !== row.id));
     } catch (err) {
-      setImportResult(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
+      alert(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
-      setImportBusy(false);
+      setBusy(false);
     }
+  };
+
+  // Import is locked to Admin and above: anyone else is told so, and the
+  // attempt goes on the Activity Log (Parts) as an alert.
+  const handleImportClick = () => {
+    if (canImport) return fileInputRef.current?.click();
+    setImportNote({ ok: false, text: "Admin access required: only an Admin (or above) can import Truck Stock. Ask an Admin to import the file." });
+    void logModuleActivity({
+      module: "truck-stock",
+      actorName: displayName,
+      action: "truck_stock_import_blocked",
+      targetType: "truck_stock",
+      targetLabel: `Truck Stock Import (Admin and above only) — role: ${[realRole ?? role, ...extraRoles].filter(Boolean).map((r) => ROLE_LABELS[normalizeRole(r)] ?? r).join(", ") || "none"}`,
+      details: { role: realRole ?? role, extraRoles },
+    });
+  };
+
+  // Import: read the picked file (this page's export, the inventory workbook,
+  // or one tab of it as CSV), then show the preview — nothing is saved until
+  // the user confirms there.
+  const handleImportFile = async (file: File) => {
+    setImportNote(null);
+    setReadingFile(true);
+    try {
+      const parsed = parseTruckStockTables(await readTruckStockFile(file));
+      if (parsed.parts.length === 0 && parsed.used.length === 0) {
+        setImportNote({ ok: false, text: `Nothing to import from ${file.name}: no Part # column or Truck Stock section found.` });
+        return;
+      }
+      setImportFile({ name: file.name, parsed });
+    } catch (err) {
+      setImportNote({ ok: false, text: `Couldn't read ${file.name}: ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      setReadingFile(false);
+    }
+  };
+
+  const handleApplyImport = async (save: ImportSave, onProgress: (done: number, total: number) => void) => {
+    const fileName = importFile?.name ?? "the file";
+    // Clear first: download what the branches hold now before touching them (throws, saving nothing, if it can't).
+    if (save.backup) {
+      const where = save.backup.branches.length === 1 ? `_${save.backup.branches[0].replace(/[^A-Za-z0-9]+/g, "_")}` : "";
+      await downloadTruckStockXlsx(`truck_stock_before_import${where}`, exportData(save.backup.rows));
+    }
+    // Look-alikes taking the file's part number first, so the upsert below hits the renamed rows (throws, saving nothing, if it can't).
+    if (save.renames.length > 0) await renameTruckStockRows(save.renames);
+    const total = save.upserts.length + save.usedUpserts.length;
+    const { errors } = await bulkUpsertTruckStock(save.upserts, { chunkSize: 500, onProgress: (done) => onProgress(done, total) });
+    // Only remove once everything else saved, so a failed batch never leaves a branch emptier than the file.
+    if (errors.length === 0 && save.removeIds.length > 0) await deleteTruckStockRows(save.removeIds);
+    let usedErrors: string[] = [];
+    if (save.usedUpserts.length > 0) {
+      usedErrors = (await bulkUpsertTruckStockUsed(save.usedUpserts, (done) => onProgress(save.upserts.length + done, total))).errors;
+      setUsedRows(await getTruckStockUsed());
+      setTicketsInApp(null);
+    }
+    setRows(await getTruckStock());
+    setImportFile(null);
+    const branches = [...new Set([...save.upserts.map((r) => r.branch), ...save.usedUpserts.map((r) => r.branch), ...(save.backup?.branches ?? [])])].sort();
+    const removed = errors.length === 0 ? save.removeIds.length : 0;
+    void logModuleActivity({
+      module: "truck-stock",
+      actorName: displayName,
+      action: "truck_stock_imported",
+      targetType: "truck_stock",
+      targetLabel: `${fileName} (${branches.join(", ") || "no branch"}) — ${save.added} added, ${save.updated} updated${removed ? `, ${removed} removed` : ""}${save.backup ? ", cleared first" : ""}${save.usedUpserts.length ? `, used parts ${save.usedAdded} added / ${save.usedUpdated} updated` : ""}${errors.length || usedErrors.length ? `; ${errors.length + usedErrors.length} batch(es) failed` : ""}`,
+      details: { fileName, branches, added: save.added, updated: save.updated, renamed: save.renames.length, removed, clearedFirst: !!save.backup, usedAdded: save.usedAdded, usedUpdated: save.usedUpdated, failedBatches: errors.length + usedErrors.length },
+    });
+    const usedText = save.usedUpserts.length ? `; used parts: ${save.usedAdded} added, ${save.usedUpdated} updated` : "";
+    setImportNote(
+      errors.length > 0
+        ? { ok: false, text: `${fileName}: ${errors.length} batch(es) didn't save (${errors[0]})${save.removeIds.length ? "; nothing was removed" : ""}. Import it again to retry.` }
+        : usedErrors.length > 0
+          ? { ok: false, text: `${fileName}: stock saved, but ${usedErrors.length} batch(es) of used parts didn't (${usedErrors[0]}). Import it again to retry.` }
+          : { ok: true, text: `Imported ${fileName}: ${save.added} added, ${save.updated} updated${save.removeIds.length ? `, ${save.removeIds.length} removed` : ""}${usedText}.` },
+    );
+  };
+
+  // Export: the rows the search and filters show, every page — same columns Import reads back.
+  const handleExport = (kind: "xlsx" | "csv") => {
+    const used = view === "used";
+    const name = `truck_stock${used ? "_used" : ""}${branchFilter ? `_${branchFilter.replace(/[^A-Za-z0-9]+/g, "_")}` : ""}`;
+    const headers = used ? TRUCK_STOCK_USED_EXPORT_HEADERS : TRUCK_STOCK_EXPORT_HEADERS;
+    const data = used ? exportUsedData(filteredUsed) : exportData(filteredRows);
+    if (kind === "csv") exportToCSV(name, headers, data);
+    else
+      void downloadTruckStockXlsx(name, data, headers, used ? "Used" : "Truck Stock").catch((err) =>
+        setImportNote({ ok: false, text: `Export failed: ${err instanceof Error ? err.message : String(err)}` }),
+      );
   };
 
   // Sends `qty` of an existing in-stock part from one branch to another —
@@ -289,7 +444,7 @@ export function TruckStockPanel() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
         <button
           type="button"
           onClick={() => setShowTransferForm(true)}
@@ -299,20 +454,59 @@ export function TruckStockPanel() {
         >
           <ArrowRightLeft className="h-4 w-4" /> Request Transfer
         </button>
-        <button
-          type="button"
-          onClick={handleImport}
-          disabled={importBusy || busy}
-          title="Bulk-import the PROJECT A USAPP inventory workbook"
-          className="inline-flex items-center gap-1 rounded-md border border-amber-400/40 bg-amber-500/15 px-3 py-2 text-sm font-medium text-amber-200 hover:bg-amber-500/25 disabled:opacity-40"
-        >
-          <Upload className="h-4 w-4" />
-          {importBusy
-            ? importProgress
-              ? `Importing… ${importProgress.done}/${importProgress.total}`
-              : "Importing…"
-            : "Import workbook"}
-        </button>
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              disabled={loading || listLength === 0}
+              title="Download the rows shown (search and filters apply) — edit them and bring them back with Import"
+              className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/5 px-3 py-2 text-sm font-medium text-slate-200 hover:bg-white/10 disabled:opacity-40"
+            >
+              <Download className="h-4 w-4" /> Export <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[200px]">
+            <DropdownMenuItem onSelect={() => handleExport("xlsx")} className="cursor-pointer flex-col items-start gap-0">
+              Excel (.xlsx)
+              <span className="text-[11px] text-muted-foreground">Keeps long part numbers intact</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => handleExport("csv")} className="cursor-pointer">
+              CSV (.csv)
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {canImport ? (
+          <button
+            type="button"
+            onClick={handleImportClick}
+            disabled={readingFile || busy || loading || (usedRows === null && !usedError)}
+            title="Import a Truck Stock export, the PROJECT A USAPP inventory workbook, or one of its tabs saved as CSV — you'll see every change before anything is saved"
+            className="inline-flex items-center gap-1 rounded-md border border-amber-400/40 bg-amber-500/15 px-3 py-2 text-sm font-medium text-amber-200 hover:bg-amber-500/25 disabled:opacity-40"
+          >
+            <Upload className="h-4 w-4" /> {readingFile ? "Reading…" : "Import"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={handleImportClick}
+            title="Import is for Admin and above"
+            className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/5 px-3 py-2 text-sm font-medium text-slate-400 hover:bg-white/10"
+          >
+            <Lock className="h-4 w-4" /> Import
+          </button>
+        )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv,.xlsx,.xls,text/csv"
+          className="hidden"
+          aria-label="Truck Stock import file"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) void handleImportFile(file);
+          }}
+        />
         <button
           type="button"
           onClick={() => setDraft(emptyDraft())}
@@ -323,17 +517,35 @@ export function TruckStockPanel() {
         </button>
       </div>
 
-      {importResult ? (
-          <div className="rounded border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
-            {importResult}
+      {importNote ? (
+          <div className={`flex items-start justify-between gap-3 rounded border px-3 py-2 text-xs ${importNote.ok ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-100" : "border-rose-500/40 bg-rose-500/10 text-rose-200"}`}>
+            <span>{importNote.text}</span>
+            <button type="button" onClick={() => setImportNote(null)} className="rounded p-0.5 opacity-70 hover:opacity-100" aria-label="Dismiss">
+              <X className="h-3.5 w-3.5" />
+            </button>
           </div>
         ) : null}
 
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
+          <div className="inline-flex rounded-md border border-white/15 bg-slate-950 p-0.5 text-sm" role="tablist" aria-label="Truck Stock view">
+            {(["stock", "used"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                role="tab"
+                aria-selected={view === v}
+                onClick={() => setView(v)}
+                title={v === "used" ? "Parts used on a ticket, with the ticket number (from Import) — not counted as stock" : "Parts in stock at each branch"}
+                className={`rounded px-3 py-1 font-medium ${view === v ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-white/10"}`}
+              >
+                {v === "stock" ? "Stock" : `Used${usedRows ? ` (${usedRows.length.toLocaleString()})` : ""}`}
+              </button>
+            ))}
+          </div>
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search part #, description, brand, or bin"
+            placeholder={view === "used" ? "Search part #, ticket #, description, tech, or bin" : "Search part #, description, brand, or bin"}
             className="min-w-[240px] flex-1 rounded border border-white/15 bg-slate-950 px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
           />
           <select
@@ -350,6 +562,7 @@ export function TruckStockPanel() {
           </select>
           <select
             title="Filter by status"
+            hidden={view === "used"}
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value === "in_use" ? "in_use" : e.target.value === "in_stock" ? "in_stock" : "")}
             className="rounded border border-white/15 bg-slate-950 px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
@@ -359,17 +572,20 @@ export function TruckStockPanel() {
             <option value="in_use">In Use</option>
           </select>
           <div className="text-xs text-slate-400">
-            {filteredRows.length} of {rows.length} rows · {branchOptions.length} branches
+            {view === "used"
+              ? `${filteredUsed.length} of ${(usedRows ?? []).length} used parts`
+              : `${filteredRows.length} of ${rows.length} rows`}{" "}
+            · {branchOptions.length} branches
           </div>
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400">
           <span>
-            {filteredRows.length === 0
+            {listLength === 0
               ? "Showing 0 rows"
               : pageSize === "all"
-              ? `Showing all ${filteredRows.length} of ${filteredRows.length} rows`
-              : `Showing ${(safePage - 1) * pageSize + 1}–${Math.min(safePage * pageSize, filteredRows.length)} of ${filteredRows.length} rows`}
+              ? `Showing all ${listLength} of ${listLength} rows`
+              : `Showing ${(safePage - 1) * pageSize + 1}–${Math.min(safePage * pageSize, listLength)} of ${listLength} rows`}
           </span>
           <div className="flex items-center gap-1.5">
             <span>Show:</span>
@@ -404,13 +620,33 @@ export function TruckStockPanel() {
             so there's no need to scroll back up just to change a field. */}
         {draft && !draft.id ? <DraftEditor draft={draft} setDraft={setDraft} onSave={handleSave} onCancel={() => setDraft(null)} branchOptions={branchOptions} busy={busy} /> : null}
 
-        {loading ? (
+        {view === "used" ? (
+          usedRows === null ? (
+            <div className="rounded border border-white/10 bg-white/5 p-6 text-center text-sm text-slate-400">
+              {usedError
+                ? /truck_stock_used|schema cache|does not exist/i.test(usedError)
+                  ? "The Used list isn't set up yet: migration 0422 (supabase/migrations/0422_truck_stock_used.sql) needs running in Supabase."
+                  : `Couldn't load the Used list: ${usedError}`
+                : "Loading…"}
+            </div>
+          ) : groupedUsed.length === 0 ? (
+            <div className="rounded border border-white/10 bg-white/5 p-6 text-center text-sm text-slate-400">
+              {usedRows.length === 0
+                ? "No used parts yet. Import the inventory workbook or a branch tab: its Used rows come in here with their ticket numbers."
+                : "No used parts match the search."}
+            </div>
+          ) : (
+            groupedUsed.map(([branch, branchRows]) => (
+              <UsedBranchSection key={branch} branch={branch} rows={branchRows} ticketsInApp={ticketsInApp} onDelete={handleDeleteUsed} busy={busy} />
+            ))
+          )
+        ) : loading ? (
           <div className="rounded border border-white/10 bg-white/5 p-6 text-center text-sm text-slate-400">
             Loading…
           </div>
         ) : groupedByBranch.length === 0 ? (
           <div className="rounded border border-white/10 bg-white/5 p-6 text-center text-sm text-slate-400">
-            No stock rows yet. Click "Add stock" to register the first part.
+            No stock rows yet. Click "Add stock" to register the first part, or Import a file.
           </div>
         ) : (
           groupedByBranch.map(([branch, branchRows]) => (
@@ -463,6 +699,18 @@ export function TruckStockPanel() {
             busy={busy}
             onSubmit={handleRequestTransfer}
             onClose={() => setShowTransferForm(false)}
+          />
+        ) : null}
+
+        {importFile ? (
+          <TruckStockImportModal
+            fileName={importFile.name}
+            parsed={importFile.parsed}
+            existing={rows}
+            existingUsed={usedRows}
+            branchOptions={branchOptions}
+            onApply={handleApplyImport}
+            onClose={() => setImportFile(null)}
           />
         ) : null}
     </div>
@@ -678,6 +926,91 @@ function BranchSection({
                 </tr>
               );
             })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/** One branch's used parts: what went on which ticket. Ticket numbers that are tickets in the app link to them. */
+function UsedBranchSection({
+  branch,
+  rows,
+  ticketsInApp,
+  onDelete,
+  busy,
+}: {
+  branch: string;
+  rows: TruckStockUsedRow[];
+  ticketsInApp: Set<string> | null;
+  onDelete: (r: TruckStockUsedRow) => void;
+  busy: boolean;
+}) {
+  const units = rows.reduce((sum, r) => sum + r.quantity, 0);
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/5">
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/10">
+        <h2 className="text-sm font-semibold text-white">{branch}</h2>
+        <span className="text-xs text-slate-400">
+          {rows.length} used parts · {units} units
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs text-white">
+          <thead className="bg-slate-900/60 text-slate-300">
+            <tr>
+              <th className="px-3 py-2 text-left">Part No</th>
+              <th className="px-3 py-2 text-left">Ticket #</th>
+              <th className="px-3 py-2 text-right">Qty</th>
+              <th className="px-3 py-2 text-left">Date Used</th>
+              <th className="px-3 py-2 text-left">Tech</th>
+              <th className="px-3 py-2 text-left">Stored At</th>
+              <th className="px-3 py-2 text-left">Description</th>
+              <th className="px-3 py-2 text-left">Notes</th>
+              <th className="px-3 py-2 w-12"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id} className="border-t border-white/5 hover:bg-white/5">
+                <td className="px-3 py-2 font-mono">{row.partNo}</td>
+                <td className="px-3 py-2 font-mono whitespace-nowrap">
+                  {!row.ticketNo ? (
+                    <span className="font-sans text-slate-500">—</span>
+                  ) : ticketsInApp?.has(row.ticketNo) ? (
+                    <Link to="/ticket/$ticketNo" params={{ ticketNo: row.ticketNo }} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline">
+                      {row.ticketNo}
+                    </Link>
+                  ) : (
+                    <span title={ticketsInApp ? "Not a ticket in the app (from the sheet)" : undefined}>{row.ticketNo}</span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-right font-semibold">{row.quantity}</td>
+                <td className="px-3 py-2 text-slate-300 whitespace-nowrap">{usedDateText(row.usedDate) || "—"}</td>
+                <td className="px-3 py-2 text-slate-300">{row.tech || "—"}</td>
+                <td className="px-3 py-2">
+                  {row.storageLocation ? (
+                    <span className="inline-flex items-center rounded border border-sky-400/30 bg-sky-500/10 px-2 py-0.5 text-[11px] font-medium text-sky-200">{row.storageLocation}</span>
+                  ) : (
+                    <span className="text-slate-500">—</span>
+                  )}
+                </td>
+                <td className="px-3 py-2">{row.description || "—"}</td>
+                <td className="px-3 py-2 text-slate-300">{row.notes}</td>
+                <td className="px-3 py-2 text-right">
+                  <button
+                    type="button"
+                    onClick={() => onDelete(row)}
+                    disabled={busy}
+                    className="rounded p-1 text-rose-300 hover:bg-rose-500/15 hover:text-rose-200 disabled:opacity-40"
+                    title="Remove from the Used list"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

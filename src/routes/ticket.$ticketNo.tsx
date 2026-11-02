@@ -106,11 +106,10 @@ const CLAIM_COMPANY_OPTIONS = [
 ];
 
 // Part Transaction's "Dist." (distributor) options. Most are national/
-// company-wide, but a location can have its own dedicated distributor
-// branch instead — when it does, only that location's own entries show,
-// not the generic list too (e.g. Birmingham and Montgomery both route
-// through the same shared Marcone/Encompass branch, so their tickets
-// should only ever see those two, never the unrelated national ones).
+// company-wide, and a location can also have its own dedicated distributor
+// branch — when it does, that location's own entries show first, followed
+// by the full company-wide list (e.g. Birmingham and Montgomery share a
+// Marcone/Encompass branch, listed at the top of their tickets' dropdown).
 const UNIVERSAL_PART_DISTRIBUTORS = [
   "AIG", "Electrolux", "Encompass", "GE", "LG", "Marcone-162468", "Midea",
   "Miele", "NSA", "OW", "SB", "Sharp", "SP", "Squaretrade", "SS",
@@ -130,7 +129,7 @@ function stockSummary(total: number, warehouses: { name?: string; qty: number }[
 }
 
 function partDistOptionsForLocation(location: string | null | undefined): string[] {
-  return LOCATION_PART_DISTRIBUTORS[(location || "").trim()] ?? UNIVERSAL_PART_DISTRIBUTORS;
+  return [...(LOCATION_PART_DISTRIBUTORS[(location || "").trim()] ?? []), ...UNIVERSAL_PART_DISTRIBUTORS];
 }
 
 // Map a ServicePower "Warranty Info" value to our AHS Warranty Type dropdown.

@@ -985,6 +985,17 @@ export async function uploadConfidentialityNonCompeteAgreementForm(companyId: st
   return getDownloadURL(snapshot.ref);
 }
 
+export async function uploadPhAntiCloningAgreementForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
+  if (!isFirebaseReady() || !storage) {
+    throw new Error("Firebase Storage not configured");
+  }
+  const folder = `companies/${companyId}/ph-anti-cloning-agreement-forms`;
+  const objectName = `${Date.now()}-${sanitizeFileName(employeeName || "ph-anti-cloning-agreement")}.pdf`;
+  const objectRef = ref(storage, `${folder}/${objectName}`);
+  const snapshot = await uploadBytes(objectRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(snapshot.ref);
+}
+
 export async function uploadMasterPhContractorAgreementForm(companyId: string, employeeName: string, pdfBlob: Blob): Promise<string> {
   if (!isFirebaseReady() || !storage) {
     throw new Error("Firebase Storage not configured");

@@ -16,7 +16,8 @@
  *   change is legitimately both "activity in that ticket's stage" and
  *   "this technician's activity."
  * - Parts: parts_done_activity_log (getPartsDoneActivity) — already a
- *   clean, purpose-built feed.
+ *   clean, purpose-built feed — plus module_activity_log's "truck-stock"
+ *   (Truck Stock imports, and blocked import attempts as alerts).
  * - HR: hr_activity_log (getActivityLog) — already a clean, purpose-built
  *   feed.
  * - Accounting/Payroll/Attendance/IT/User Management: module_activity_log
@@ -38,7 +39,7 @@ import { getCompanyUsers, type ProfileRow } from "./users";
 import { getAllAgentNotes } from "./csrAgentNotes";
 import { getPartsDoneActivity } from "./partsDoneActivityLog";
 import { getActivityLog as getHrActivityLog, activityActionLabel as hrActivityActionLabel } from "./hrActivityLog";
-import { getModuleActivityLog, moduleActivityActionLabel, type ActivityLogModule } from "./moduleActivityLog";
+import { getModuleActivityLog, moduleActivityActionLabel, MODULE_ACTIVITY_ALERT_ACTIONS, type ActivityLogModule } from "./moduleActivityLog";
 import { getMileageEntries } from "./mileage";
 import { normalizeRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { classify as classifyTicketAction, BUCKET_LABEL as TICKET_ACTION_LABEL } from "@/lib/ticketActivityBuckets";
@@ -71,6 +72,8 @@ export interface UniversalActivityEntry {
   actorName: string;
   action: string;
   targetLabel: string;
+  /** Someone tried something they don't have access to (e.g. Truck Stock Import without Admin) — shown in red. */
+  alert?: boolean;
 }
 
 // The real department string getRoleDepartmentBreakdown() returns (e.g.
@@ -131,7 +134,7 @@ export interface GetUniversalActivityLogOptions {
 export async function getUniversalActivityLog(opts: GetUniversalActivityLogOptions): Promise<UniversalActivityEntry[]> {
   const { startDate, endDate } = opts;
   const limit = opts.limitPerSource ?? 500;
-  const moduleNames: ActivityLogModule[] = ["accounting", "payroll", "attendance-monitoring", "it-tickets", "user-management"];
+  const moduleNames: ActivityLogModule[] = ["accounting", "payroll", "attendance-monitoring", "it-tickets", "user-management", "truck-stock"];
 
   const [tickets, profiles, auditRows, agentNotes, partsDone, hrRows, mileageEntries, moduleLogs] = await Promise.all([
     getCompanyTickets(),
@@ -224,7 +227,7 @@ export async function getUniversalActivityLog(opts: GetUniversalActivityLogOptio
     });
   }
 
-  // ── module_activity_log → Accounting / Admin / IT ──
+  // ── module_activity_log → Accounting / Admin / IT / Parts ──
   const MODULE_TO_DEPT: Record<ActivityLogModule, ActivityDepartment> = {
     accounting: "accounting",
     payroll: "accounting",
@@ -232,6 +235,7 @@ export async function getUniversalActivityLog(opts: GetUniversalActivityLogOptio
     "user-management": "admin",
     "it-tickets": "it",
     "absent-list": "hr",
+    "truck-stock": "parts",
   };
   moduleNames.forEach((moduleName, i) => {
     for (const r of moduleLogs[i]) {
@@ -243,6 +247,7 @@ export async function getUniversalActivityLog(opts: GetUniversalActivityLogOptio
         actorName: r.actorName || "System",
         action: moduleActivityActionLabel(r.action),
         targetLabel: r.targetLabel || "",
+        alert: MODULE_ACTIVITY_ALERT_ACTIONS.has(r.action),
       });
     }
   });
