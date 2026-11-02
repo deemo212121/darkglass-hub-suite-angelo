@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { isCompletedPaper, canViewCompletedPapers } from "@/lib/completedPapers";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, KeyRound, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, UserPlus, Search, Bell, Download, Forward, History, FileText, ClipboardList, ClipboardCheck, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, ShieldCheck, GraduationCap, LogOut, PhoneCall, Briefcase, Star, Route as RouteIcon, RefreshCw } from "lucide-react";
+import { ChevronLeft, KeyRound, ShieldAlert, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, UserPlus, Search, Bell, Download, Forward, History, FileText, ClipboardList, ClipboardCheck, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, ShieldCheck, GraduationCap, LogOut, PhoneCall, Briefcase, Star, Route as RouteIcon, RefreshCw } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import { StickyHorizontalScrollbar } from "@/components/StickyHorizontalScrollbar";
@@ -204,6 +204,7 @@ import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 // this page's own tab bar already provides that navigation context.
 import { FlashTechCalendarPage } from "@/components/FlashTechCalendarPage";
 import { TechnicianFormChecklistPage } from "@/components/TechnicianFormChecklistPage";
+import { FormInconsistenciesPanel } from "@/components/FormInconsistenciesPanel";
 import { TrainingListPage } from "@/components/TrainingListPage";
 import { ClockInCodesTab } from "@/components/ClockInCodesTab";
 import {
@@ -1151,7 +1152,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "compensationUpdate" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "confidentialityNonCompeteAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList" | "clockInCodes" | "performanceBonusPolicy" | "ahsDirectDeposit" | "ahsValidId" | "ahsPhAgreement" | "ahsConfidentiality" | "ahsW2Office" | "mxContractorAgreement" | "usContractorAgreement">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "compensationUpdate" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "confidentialityNonCompeteAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList" | "clockInCodes" | "performanceBonusPolicy" | "ahsDirectDeposit" | "ahsValidId" | "ahsPhAgreement" | "ahsConfidentiality" | "ahsW2Office" | "mxContractorAgreement" | "usContractorAgreement" | "formInconsistencies">(paperworksOnly ? "combineForms" : "hiring");
   // HR Paperworks → "AHS Forms PH": the Admin Hub Solutions versions of Direct
   // Deposit, Valid ID, the Master PH Contractor Agreement and the Master
   // Confidentiality agreement; "AHS Forms US" has the Master W-2 Office &
@@ -1170,6 +1171,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Completed papers (completedPapers.ts): no Delete button, and only HR Paperworks' named
   // people + Super Admin can View / Download them. Papers still in progress are unchanged.
   const canViewCompleted = canViewCompletedPapers({ uid, companyId, role: myRole, extraRoles: myExtraRoles });
+  // Form Inconsistencies (SSNs, addresses across forms) — HR / Admin / Super Admin, same as form_consistency_reviews' RLS (migration 0425).
+  const canSeeFormInconsistencies = heldRoles.some((r) => r === "HR" || r === "ADMIN" || r === "SUPERADMIN" || r === "SUPERSUPERADMIN");
   const canViewPaper = (doc: SignableDocument) => canViewCompleted || !isCompletedPaper(doc);
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -1197,7 +1200,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [startDateFor, setStartDateFor] = useState<{ id: string; date: string } | null>(null);
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string; viewCvCandidateId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList", "clockInCodes", "ndaForm", "confidentialityNonCompeteAgreement", "performanceBonusPolicy", "ahsDirectDeposit", "ahsValidId", "ahsPhAgreement", "ahsConfidentiality", "ahsW2Office", "mxContractorAgreement", "usContractorAgreement"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList", "clockInCodes", "ndaForm", "confidentialityNonCompeteAgreement", "performanceBonusPolicy", "ahsDirectDeposit", "ahsValidId", "ahsPhAgreement", "ahsConfidentiality", "ahsW2Office", "mxContractorAgreement", "usContractorAgreement", "formInconsistencies"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -18792,6 +18795,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       ] as const,
       columns: undefined,
     }] : []),
+    // Form Inconsistencies — each person's signed forms cross-checked against
+    // each other (FormInconsistenciesPanel.tsx). Its own single-tab group so
+    // it's a plain button in the bar.
+    ...(paperworksOnly && canSeeFormInconsistencies ? [{
+      group: "Form Inconsistencies",
+      icon: ShieldAlert,
+      tabs: [
+        { key: "formInconsistencies", label: "Form Inconsistencies", count: 0, icon: ShieldAlert },
+      ] as const,
+      columns: undefined,
+    }] : []),
     ...(!paperworksOnly ? [
       {
         group: "Generate Reports",
@@ -22488,6 +22502,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       {/* ── Custom Forms — the in-house Form Maker, runs alongside Jotform ── */}
       {activeTab === "customForms" && <CustomFormsPanel />}
+
+      {/* ── Form Inconsistencies — signed forms cross-checked against each other ── */}
+      {activeTab === "formInconsistencies" && canSeeFormInconsistencies && <FormInconsistenciesPanel canViewCompleted={canViewCompleted} />}
 
       {/* ── Applicant Documents preview modal ── */}
       {jotformPreview && (
