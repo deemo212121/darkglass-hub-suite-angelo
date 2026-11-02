@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import * as XLSX from "xlsx";
-import { ChevronLeft, Loader2, Download, Search } from "lucide-react";
+import { ChevronLeft, Loader2, Download, Search, ShieldAlert } from "lucide-react";
 import { BrandedLoader } from "@/components/BrandedLoader";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import {
@@ -34,7 +34,7 @@ function downloadXlsx(rows: UniversalActivityEntry[], dateFrom: string, dateTo: 
     When: new Date(r.when).toLocaleString(),
     Department: DEPARTMENT_LABEL[r.department],
     Actor: r.actorName,
-    Action: r.action,
+    Action: r.alert ? `ALERT: ${r.action}` : r.action,
     Target: r.targetLabel,
   }));
   const worksheet = XLSX.utils.json_to_sheet(data);
@@ -174,7 +174,7 @@ export function UniversalActivityLogPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   {filteredRows.length === 0 ? (
                     <tr><td colSpan={activeTab === "all" ? 5 : 4} className="px-3 py-8 text-center text-muted-foreground">No activity in this range.</td></tr>
                   ) : filteredRows.map((r) => (
-                    <tr key={r.id} className="border-b border-white/5 hover:bg-white/5">
+                    <tr key={r.id} className={`border-b border-white/5 ${r.alert ? "bg-rose-500/10 hover:bg-rose-500/15" : "hover:bg-white/5"}`}>
                       <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">{new Date(r.when).toLocaleString()}</td>
                       {activeTab === "all" && (
                         <td className="px-3 py-2">
@@ -182,7 +182,14 @@ export function UniversalActivityLogPage({ mod, sub }: { mod: ModuleDef; sub: Su
                         </td>
                       )}
                       <td className="px-3 py-2 font-medium">{r.actorName}</td>
-                      <td className="px-3 py-2">{r.action}</td>
+                      <td className={`px-3 py-2 ${r.alert ? "text-rose-200" : ""}`}>
+                        {r.alert && (
+                          <span className="mr-1.5 inline-flex items-center gap-1 rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-200">
+                            <ShieldAlert className="h-3 w-3" /> Alert
+                          </span>
+                        )}
+                        {r.action}
+                      </td>
                       <td className="px-3 py-2 text-muted-foreground">{r.targetLabel}</td>
                     </tr>
                   ))}

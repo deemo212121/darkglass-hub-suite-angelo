@@ -12,12 +12,16 @@
  * Import / Export files: src/lib/truckStockFile.ts + TruckStockImportModal.
  * The Used view lists parts used on a ticket (truck_stock_used, filled by
  * Import from the workbook's Used rows) — they never count as stock.
+ * Import is Admin and above only: every import, and every attempt by anyone
+ * else (as an alert), goes on Admin → Activity Logs under Parts.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Plus, Pencil, Trash2, Save, X, Upload, Download, ChevronDown, ArrowRightLeft } from "lucide-react";
+import { Plus, Pencil, Trash2, Save, X, Upload, Download, ChevronDown, ArrowRightLeft, Lock } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { isAdminOrAboveHolder, normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
+import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import {
   getTruckStock,
   upsertTruckStockRow,
@@ -107,7 +111,9 @@ const emptyDraft = (): TruckStockRow => ({
 });
 
 export function TruckStockPanel() {
-  const { displayName } = useAuth();
+  const { displayName, role, realRole, extraRoles } = useAuth();
+  // Import is Admin / SuperAdmin / SuperSuperAdmin (primary or extra role) — the real role, so a "View as" preview doesn't change it.
+  const canImport = isAdminOrAboveHolder(realRole ?? role, extraRoles);
   const [rows, setRows] = useState<TruckStockRow[]>([]);
   // Parts used on a ticket (migration 0422). null until loaded, or when the table isn't there yet (usedError).
   const [usedRows, setUsedRows] = useState<TruckStockUsedRow[] | null>(null);
@@ -311,6 +317,21 @@ export function TruckStockPanel() {
     }
   };
 
+  // Import is locked to Admin and above: anyone else is told so, and the
+  // attempt goes on the Activity Log (Parts) as an alert.
+  const handleImportClick = () => {
+    if (canImport) return fileInputRef.current?.click();
+    setImportNote({ ok: false, text: "Admin access required: only an Admin (or above) can import Truck Stock. Ask an Admin to import the file." });
+    void logModuleActivity({
+      module: "truck-stock",
+      actorName: displayName,
+      action: "truck_stock_import_blocked",
+      targetType: "truck_stock",
+      targetLabel: `Truck Stock Import (Admin and above only) — role: ${[realRole ?? role, ...extraRoles].filter(Boolean).map((r) => ROLE_LABELS[normalizeRole(r)] ?? r).join(", ") || "none"}`,
+      details: { role: realRole ?? role, extraRoles },
+    });
+  };
+
   // Import: read the picked file (this page's export, the inventory workbook,
   // or one tab of it as CSV), then show the preview — nothing is saved until
   // the user confirms there.
@@ -352,6 +373,16 @@ export function TruckStockPanel() {
     }
     setRows(await getTruckStock());
     setImportFile(null);
+    const branches = [...new Set([...save.upserts.map((r) => r.branch), ...save.usedUpserts.map((r) => r.branch), ...(save.backup?.branches ?? [])])].sort();
+    const removed = errors.length === 0 ? save.removeIds.length : 0;
+    void logModuleActivity({
+      module: "truck-stock",
+      actorName: displayName,
+      action: "truck_stock_imported",
+      targetType: "truck_stock",
+      targetLabel: `${fileName} (${branches.join(", ") || "no branch"}) — ${save.added} added, ${save.updated} updated${removed ? `, ${removed} removed` : ""}${save.backup ? ", cleared first" : ""}${save.usedUpserts.length ? `, used parts ${save.usedAdded} added / ${save.usedUpdated} updated` : ""}${errors.length || usedErrors.length ? `; ${errors.length + usedErrors.length} batch(es) failed` : ""}`,
+      details: { fileName, branches, added: save.added, updated: save.updated, renamed: save.renames.length, removed, clearedFirst: !!save.backup, usedAdded: save.usedAdded, usedUpdated: save.usedUpdated, failedBatches: errors.length + usedErrors.length },
+    });
     const usedText = save.usedUpserts.length ? `; used parts: ${save.usedAdded} added, ${save.usedUpdated} updated` : "";
     setImportNote(
       errors.length > 0
@@ -444,15 +475,26 @@ export function TruckStockPanel() {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={readingFile || busy || loading || (usedRows === null && !usedError)}
-          title="Import a Truck Stock export, the PROJECT A USAPP inventory workbook, or one of its tabs saved as CSV — you'll see every change before anything is saved"
-          className="inline-flex items-center gap-1 rounded-md border border-amber-400/40 bg-amber-500/15 px-3 py-2 text-sm font-medium text-amber-200 hover:bg-amber-500/25 disabled:opacity-40"
-        >
-          <Upload className="h-4 w-4" /> {readingFile ? "Reading…" : "Import"}
-        </button>
+        {canImport ? (
+          <button
+            type="button"
+            onClick={handleImportClick}
+            disabled={readingFile || busy || loading || (usedRows === null && !usedError)}
+            title="Import a Truck Stock export, the PROJECT A USAPP inventory workbook, or one of its tabs saved as CSV — you'll see every change before anything is saved"
+            className="inline-flex items-center gap-1 rounded-md border border-amber-400/40 bg-amber-500/15 px-3 py-2 text-sm font-medium text-amber-200 hover:bg-amber-500/25 disabled:opacity-40"
+          >
+            <Upload className="h-4 w-4" /> {readingFile ? "Reading…" : "Import"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={handleImportClick}
+            title="Import is for Admin and above"
+            className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/5 px-3 py-2 text-sm font-medium text-slate-400 hover:bg-white/10"
+          >
+            <Lock className="h-4 w-4" /> Import
+          </button>
+        )}
         <input
           ref={fileInputRef}
           type="file"
