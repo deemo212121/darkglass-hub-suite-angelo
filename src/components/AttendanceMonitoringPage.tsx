@@ -2018,18 +2018,23 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   };
 
   const ptoFormCreatedAt = profiles.find((p) => p.id === ptoForm.profileId)?.created_at ?? null;
-  // Sick Leave has no 1-year wait — it's available from day 1 — so the
-  // vacation-PTO eligibility gate only applies to every other leave type.
-  const ptoFormEligible = ptoForm.ptoType === "sick" || !ptoForm.profileId || isEligibleForPto(ptoFormHireDate, ptoFormCreatedAt);
+  // Only Vacation (paid PTO) needs 1 year of tenure — Sick, Personal, Unpaid
+  // etc. are unpaid and open from day 1. Under a year, Vacation is locked in
+  // the Type dropdown below.
+  const ptoFormTenureOk = !ptoForm.profileId || isEligibleForPto(ptoFormHireDate, ptoFormCreatedAt);
+  const ptoFormEligible = ptoForm.ptoType !== "vacation" || ptoFormTenureOk;
   const ptoFormEligibleOn = ptoEligibleDate(ptoFormHireDate, ptoFormCreatedAt);
+  useEffect(() => {
+    if (!ptoFormTenureOk && ptoForm.ptoType === "vacation") setPtoForm((f) => ({ ...f, ptoType: "personal" }));
+  }, [ptoFormTenureOk, ptoForm.ptoType]);
 
   const handleSubmitPtoRequest = async () => {
     if (!ptoForm.profileId || !ptoForm.startDate || !ptoForm.endDate) {
       alert("Please fill in employee, start date, and end date.");
       return;
     }
-    if (ptoForm.ptoType !== "sick" && !isEligibleForPto(ptoFormHireDate, ptoFormCreatedAt)) {
-      alert(`${profileName(ptoForm.profileId)} isn't eligible for PTO yet — employees need 1 year of tenure first. Eligible starting ${ptoFormEligibleOn}.`);
+    if (ptoForm.ptoType === "vacation" && !isEligibleForPto(ptoFormHireDate, ptoFormCreatedAt)) {
+      alert(`${profileName(ptoForm.profileId)} isn't eligible for Vacation (paid PTO) yet — employees need 1 year of tenure first. Eligible starting ${ptoFormEligibleOn}.`);
       return;
     }
     setSubmittingPto(true);
@@ -3736,9 +3741,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                       <option key={p.id} value={p.id}>{p.display_name || p.email}</option>
                     ))}
                   </select>
-                  {ptoForm.profileId && ptoForm.ptoType !== "sick" && !ptoFormEligible && (
+                  {ptoForm.profileId && !ptoFormTenureOk && (
                     <p className="text-xs text-amber-300 mt-1">
-                      Not yet eligible for PTO — needs 1 year of tenure first (eligible starting {ptoFormEligibleOn}).
+                      Vacation (paid PTO) is locked until {ptoFormEligibleOn} — needs 1 year of tenure. Sick, Personal and Unpaid Leave are available (unpaid).
                     </p>
                   )}
                 </div>
@@ -3746,7 +3751,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   <label className="block text-xs text-slate-400 uppercase mb-1">Type</label>
                   <select value={ptoForm.ptoType} onChange={(e) => setPtoForm({ ...ptoForm, ptoType: e.target.value as PtoType })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none">
                     {(Object.keys(PTO_TYPE_LABELS) as PtoType[]).map((t) => (
-                      <option key={t} value={t}>{PTO_TYPE_LABELS[t]}</option>
+                      <option key={t} value={t} disabled={t === "vacation" && !ptoFormTenureOk}>{PTO_TYPE_LABELS[t]}{t === "vacation" && !ptoFormTenureOk ? ` (locked until ${ptoFormEligibleOn})` : ""}</option>
                     ))}
                   </select>
                 </div>

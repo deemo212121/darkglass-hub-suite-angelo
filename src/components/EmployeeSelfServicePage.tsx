@@ -1516,24 +1516,40 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 <p className="text-xs text-slate-400 py-4">No payroll has been generated for you yet.</p>
               ) : (
                 <>
-                  <div className="grid gap-4 md:grid-cols-4 mb-4">
-                    <div>
-                      <p className="text-xs text-slate-400 mb-1">Gross Pay</p>
-                      <p className="text-lg font-semibold text-blue-300">${myPayslips[0].grossPay.toFixed(2)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-400 mb-1">Deductions</p>
-                      <p className="text-lg font-semibold text-red-300">-${(myPayslips[0].grossPay - myPayslips[0].netPay).toFixed(2)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-400 mb-1">Net Pay</p>
-                      <p className="text-lg font-semibold text-green-300">${myPayslips[0].netPay.toFixed(2)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-400 mb-1">Overtime</p>
-                      <p className="text-lg font-semibold text-amber-300">${myPayslips[0].overtimePay.toFixed(2)}</p>
-                    </div>
-                  </div>
+                  {(() => {
+                    // Net = gross + reimbursements/bonuses − deductions/taxes. Gross − net
+                    // alone went negative ("-$-112.00") whenever reimbursements outweighed
+                    // the deductions, so the two are shown separately.
+                    const p = myPayslips[0];
+                    const listedDeductions = p.adjustments.filter((a) => a.kind !== "reimbursement").reduce((s, a) => s + Math.abs(a.amount), 0);
+                    const rest = p.netPay - p.grossPay + listedDeductions;
+                    const additions = Math.max(0, rest);
+                    const deductions = listedDeductions + Math.max(0, -rest);
+                    return (
+                      <div className="grid gap-4 md:grid-cols-5 mb-4">
+                        <div>
+                          <p className="text-xs text-slate-400 mb-1">Gross Pay</p>
+                          <p className="text-lg font-semibold text-blue-300">${p.grossPay.toFixed(2)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400 mb-1">Reimbursements / Bonuses</p>
+                          <p className="text-lg font-semibold text-emerald-300">+${additions.toFixed(2)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400 mb-1">Deductions</p>
+                          <p className="text-lg font-semibold text-red-300">−${deductions.toFixed(2)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400 mb-1">Net Pay</p>
+                          <p className="text-lg font-semibold text-green-300">${p.netPay.toFixed(2)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400 mb-1">Overtime</p>
+                          <p className="text-lg font-semibold text-amber-300">${p.overtimePay.toFixed(2)}</p>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {(() => {
                     const note = noteForPeriod(myPayslips[0].periodStart, myPayslips[0].periodEnd);
                     return note?.acknowledgedAt ? (

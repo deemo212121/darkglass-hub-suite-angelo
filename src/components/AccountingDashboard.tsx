@@ -55,7 +55,7 @@ import { getTechTaxLinesForPeriod, taxLineAmount, type TechTaxLine } from "@/lib
 import { getEmployeeInfoByProfileIds, getCompanyUsers, getTechnicianContactInfoByIds, setEmployeeHasCarIq, getUserStatusChanges, type AccountStatusChange, type EmployeeInfo } from "@/lib/supabase/users";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { createNotification } from "@/lib/supabase/notifications";
-import { getCompanyPtoRequests, isPaidPtoType, type PtoRequestRow } from "@/lib/supabase/pto";
+import { getCompanyPtoRequests, isPaidPtoType, ptoEligibleDate, type PtoRequestRow } from "@/lib/supabase/pto";
 import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabase/companyHolidays";
 import { getCompanyTimecardCorrections, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import {
@@ -216,6 +216,8 @@ export interface SupabaseEmployee {
   trainingEndDate: string | null;
   hrTrainingStart?: string | null;
   hrFieldStart?: string | null;
+  /** profiles.created_at — the 1-year PTO date's fallback when HR has no hire date (ptoEligibleDate). */
+  createdAt?: string | null;
 }
 
 interface SalaryEntry {
@@ -523,7 +525,11 @@ function computeHoursMap(
   // overtime carry-over below, never counted into this employee's own
   // regular/overtime totals themselves (those stay scoped to the real
   // period). See weekSeedTimecardEntries at its call site.
-  seedEntries: TimecardEntry[] = []
+  seedEntries: TimecardEntry[] = [],
+  // Each person's 1-year PTO date (ptoEligibleDate) — Vacation days before it
+  // aren't paid even if a request was approved (wrong hire date, or filed
+  // before the tenure rule). Empty map = not loaded yet, no check.
+  ptoEligibleOnById: Map<string, string | null> = new Map()
 ): { totals: Map<string, { regular: number; overtime: number }>; daily: Map<string, DailyHours[]> } {
   const hoursMap = new Map<string, { regular: number; overtime: number }>();
   const dailyMap = new Map<string, DailyHours[]>();
@@ -686,6 +692,8 @@ function computeHoursMap(
       if (offDays.has(d.getDay())) continue;
       if (punched?.has(iso)) continue;
       if (unpaidDates?.has(iso)) continue;
+      const eligibleOn = ptoEligibleOnById.get(pto.profileId);
+      if (eligibleOn && iso < eligibleOn) continue;
       const prev = hoursMap.get(pto.profileId) ?? { regular: 0, overtime: 0 };
       hoursMap.set(pto.profileId, { regular: prev.regular + netHours, overtime: prev.overtime });
       const prevDaily = dailyMap.get(pto.profileId) ?? [];
@@ -1769,7 +1777,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           for (let from = 0; ; from += PAGE_SIZE) {
             const { data, error } = await supabase
               .from("profiles")
-              .select("id,company_id,phone_number,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,working_hours,meal_minutes,payroll_excluded,is_active,schedule_timezone,employment_type,tier_level,training_end_date")
+              .select("id,company_id,phone_number,display_name,username,role,extra_roles,assigned_branch,email,off_days,required_check_in,required_check_out,working_hours,meal_minutes,payroll_excluded,is_active,schedule_timezone,employment_type,tier_level,training_end_date,created_at")
               .neq("role", "SUPERSUPERADMIN")
               .range(from, from + PAGE_SIZE - 1);
             if (error) return { data: null, error };
@@ -1894,6 +1902,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         // HR's Field Start, else profiles.training_end_date — the same
         // fallback the Training List page shows as Field Start.
         hrFieldStart: hrTraining?.training_end_date ?? p.training_end_date ?? null,
+        createdAt: p.created_at ?? null,
         };
       }) as SupabaseEmployee[]);
       setSalaryEntries((salRes.data ?? []) as SalaryEntry[]);
@@ -2444,7 +2453,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // Hours worked per employee in current period. Computed from real
     // check_in/check_out punches (see REGULAR_HOURS_PER_DAY comment above).
     const dutyHoursByEmployeeId = computeDutyHoursByEmployee(employees, genStart, genEnd);
-    const { totals: hoursMap, daily: dailyHoursByEmployeeId } = computeHoursMap(timecardEntries, employees, ptoRequests, genStart, genEnd, dutyHoursByEmployeeId, weekSeedTimecardEntries);
+    const { totals: hoursMap, daily: dailyHoursByEmployeeId } = computeHoursMap(
+      timecardEntries, employees, ptoRequests, genStart, genEnd, dutyHoursByEmployeeId, weekSeedTimecardEntries,
+      employeeInfoByProfileId.size > 0
+        ? new Map(employees.map((e) => [e.id, ptoEligibleDate(employeeInfoByProfileId.get(e.id)?.hireDate, e.createdAt)]))
+        : new Map()
+    );
 
     // Every rate-change row per employee (not just the one latestCompMap picks
     // for the whole period) — lets blendedDailyPay below apply the rate that
