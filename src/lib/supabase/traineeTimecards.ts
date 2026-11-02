@@ -9,6 +9,7 @@
  * saveEntry — same reused-not-reimplemented pattern
  * technicianCheckoutProposals.ts's approveCheckoutProposal already uses).
  */
+import { nameRefersTo } from "@/lib/personName";
 import { supabase } from "./client";
 import { getEntryForDate, saveEntry, type UITimeEntry, type PunchField } from "./timecards";
 import { getCompanyUsers, type ProfileRow } from "./users";
@@ -402,6 +403,7 @@ export async function getTraineeReviewQueue(
   const [entries, roster, serverNow] = await Promise.all([getCompanyTraineeEntries(), getCompanyUsers(), getServerNow()]);
   const manager = roster.find((p) => p.id === managerProfileId);
   const managerName = (manager?.display_name || "").trim().toLowerCase();
+  const activeRoster = roster.filter((p) => p.is_active);
 
   // A punched day only becomes reviewable once it's complete: the trainee
   // has clocked out, or their own work day is already over (a forgotten
@@ -445,7 +447,7 @@ export async function getTraineeReviewQueue(
           (p) =>
             p.employment_type === "trainee" &&
             p.is_active &&
-            ((!!managerName && (p.manager_name || "").trim().toLowerCase() === managerName) || (opts?.includeChain && chainCanApprove(managerProfileId, p.id) === true))
+            ((!!managerName && nameRefersTo(p.manager_name, manager?.display_name, activeRoster)) || (opts?.includeChain && chainCanApprove(managerProfileId, p.id) === true))
         )
         .map((trainee) => {
           const traineeTz: ScheduleTimezone = trainee.schedule_timezone || "CST";

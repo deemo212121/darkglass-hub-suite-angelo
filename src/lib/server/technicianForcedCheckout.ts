@@ -44,6 +44,7 @@
  * per technician, not something that re-fires every 5 minutes until fixed.
  */
 
+import { findPersonByName } from "@/lib/personName";
 import { timezoneForBranch } from "../attendanceGrace";
 import { TECHNICIAN_PAY_ROLES, normalizeRole } from "../roleLabels";
 
@@ -253,12 +254,7 @@ export async function runTechnicianForcedCheckout(
   });
 
   function resolveManagerId(p: ServerProfile): string | null {
-    const managerName = (p.manager_name || "").trim().toLowerCase();
-    if (!managerName) return null;
-    const match = profiles.find(
-      (o) => o.company_id === p.company_id && (o.display_name || "").trim().toLowerCase() === managerName
-    );
-    return match?.id ?? null;
+    return findPersonByName(p.manager_name, profiles.filter((o) => o.company_id === p.company_id))?.id ?? null;
   }
 
   function resolveBranchRoleRecipientIds(p: ServerProfile): string[] {
@@ -266,10 +262,10 @@ export async function runTechnicianForcedCheckout(
     if (!branch) return [];
     const row = branchRolesByBranch.get(branch);
     if (!row) return [];
-    const names = [row.branch_manager, row.parts_manager].map((n) => (n || "").trim().toLowerCase()).filter(Boolean);
+    const sameCompany = profiles.filter((o) => o.company_id === p.company_id);
     const ids: string[] = [];
-    for (const name of names) {
-      const match = profiles.find((o) => o.company_id === p.company_id && (o.display_name || "").trim().toLowerCase() === name);
+    for (const name of [row.branch_manager, row.parts_manager]) {
+      const match = findPersonByName(name, sameCompany);
       if (match) ids.push(match.id);
     }
     return ids;

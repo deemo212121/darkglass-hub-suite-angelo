@@ -1,5 +1,6 @@
 import { brandOf, loadBrandLogo } from "@/lib/formBrand";
-import { useState, useMemo, useEffect, useRef, Fragment } from "react";
+import { resolveManager, ManagerTag, type ManagerResolution } from "@/components/ManagerName";
+import { useState, useMemo, useEffect, useRef, useCallback, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { isCompletedPaper, canViewCompletedPapers } from "@/lib/completedPapers";
@@ -2831,10 +2832,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // use (manual override, else auto-derived from branch for Branch Manager;
   // nothing auto-derived for Assigned Interviewer/Trainer) — shared with the
   // column filters below so "filter by X" always matches what's actually shown.
-  const branchManagerNameForCandidate = (c: Candidate): string | null =>
-    (c.branchManagerId && employeesById.get(c.branchManagerId)?.name) ||
-    (c.branch ? branchManagerByBranch.get(c.branch) : undefined) ||
-    null;
+  // General Information's Branch Manager is typed — shown as the account it
+  // points to ("Jerich Leonard Bolico" -> "Jerich Bolico") so the filter and
+  // column agree with every other Manager column.
+  const managerPeople = useMemo(() => employees.map((e) => ({ display_name: e.name, is_active: e.accountActive !== false })), [employees]);
+  const branchManagerNameForCandidate = (c: Candidate): string | null => {
+    if (c.branchManagerId && employeesById.get(c.branchManagerId)?.name) return employeesById.get(c.branchManagerId)!.name;
+    const typed = c.branch ? branchManagerByBranch.get(c.branch) : undefined;
+    return typed ? resolveManager(typed, managerPeople).name || typed : null;
+  };
   const assignedInterviewerNameForCandidate = (c: Candidate): string | null =>
     (c.assignedInterviewerId && employeesById.get(c.assignedInterviewerId)?.name) || null;
   // No longer auto-falls back to the Branch Manager — HR must explicitly
@@ -2929,6 +2935,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     () => Array.from(new Set(visibleCandidates.map(branchManagerNameForCandidate).filter((n): n is string => !!n))).sort(),
     [visibleCandidates]
   );
+  // A Branch Manager whose account is deactivated, or whose name matches no
+  // account (General Information is typed), is flagged in the Manager filter.
+  const hiringManagerFlag = useCallback((name: string): string | null => resolveManager(name, managerPeople).flag || null, [managerPeople]);
   const hiringAssignedInterviewerOptions = useMemo(
     () => Array.from(new Set(visibleCandidates.map(assignedInterviewerNameForCandidate).filter((n): n is string => !!n))).sort(),
     [visibleCandidates]
@@ -20011,7 +20020,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             label: string,
             options: string[],
             selected: Set<string>,
-            setSelected: (s: Set<string>) => void
+            setSelected: (s: Set<string>) => void,
+            /** Tag shown beside an option, e.g. a manager whose account is deactivated. */
+            flagOf?: (opt: string) => string | null
           ) => (
             <>
               <span className="inline-flex items-center gap-1">
@@ -20047,6 +20058,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               className="h-3.5 w-3.5 accent-blue-500"
                             />
                             {opt}
+                            {flagOf?.(opt) && (
+                              <span className={`ml-auto shrink-0 rounded border px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide ${flagOf(opt) === "Deactivated" ? "border-red-500/40 bg-red-500/10 text-red-300" : "border-amber-500/40 bg-amber-500/10 text-amber-300"}`}>
+                                {flagOf(opt)}
+                              </span>
+                            )}
                           </label>
                         ))}
                         {selected.size > 0 && (
@@ -20121,7 +20137,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase relative">
                     <div className="flex items-center gap-3">
                       {renderHiringMultiSelectHeader("branch", "Branch", hiringBranchOptions, hiringBranchFilter, setHiringBranchFilter)}
-                      {renderHiringMultiSelectHeader("branchManager", "Manager", hiringBranchManagerOptions, hiringBranchManagerFilter, setHiringBranchManagerFilter)}
+                      {renderHiringMultiSelectHeader("branchManager", "Manager", hiringBranchManagerOptions, hiringBranchManagerFilter, setHiringBranchManagerFilter, hiringManagerFlag)}
                     </div>
                   </th>
                 )}
@@ -20370,7 +20386,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         </div>
                       ) : (
                         <button onClick={() => startEditCandidateCell(c, "branchManager")} className="flex items-center gap-1 text-left hover:text-blue-300">
-                          {branchManagerNameForCandidate(c) || <span className="text-muted-foreground">—</span>}
+                          {branchManagerNameForCandidate(c) ? (
+                            <>
+                              {branchManagerNameForCandidate(c)}
+                              <ManagerTag flag={hiringManagerFlag(branchManagerNameForCandidate(c)!) as ManagerResolution["flag"] ?? ""} />
+                            </>
+                          ) : <span className="text-muted-foreground">—</span>}
                           <Pencil className="h-2.5 w-2.5 text-muted-foreground shrink-0" />
                         </button>
                       )}

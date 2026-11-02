@@ -3,6 +3,7 @@ import { getRestDayHistory } from "@/lib/supabase/restDayHistory";
 import { isRestDayOn, requiredTimesOn, type RestDayHistory } from "@/lib/restDays";
 import { AlertCircle, AlertTriangle, Compass, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, ChevronRight, ChevronDown, Download, Calendar, FileText, CheckCircle, XCircle, Loader2, Settings, Undo2 } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
+import { ManagerName } from "@/components/ManagerName";
 import { PtoBalanceSummary, usePtoHireDates } from "@/components/PtoBalanceSummary";
 import { toast } from "sonner";
 import { runTour, takeQueuedTour } from "@/lib/tours/runTour";
@@ -4202,7 +4203,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                             })()}
                           </p>
                           <p className="text-xs text-slate-400 mt-1">{record.department || "—"} • {record.location || "—"}</p>
-                          <p className="text-xs text-slate-500 mt-2">Manager: {record.manager || "—"}</p>
+                          <p className="text-xs text-slate-500 mt-2">Manager: <ManagerName name={record.manager} people={profiles} /></p>
                         </div>
                         <div className="text-right flex flex-col items-end gap-1.5">
                           <span className="inline-block px-3 py-1 bg-red-500/20 text-red-300 text-xs font-semibold rounded border border-red-500/40">
@@ -4231,7 +4232,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           <p className="text-white font-semibold">{record.name}</p>
                           <p className="text-xs text-slate-400 mt-1">{record.department || "—"} • {record.location || "—"}</p>
                           <p className="text-xs text-slate-400 mt-2">Clock In: <span className="font-mono font-semibold">{record.checkIn}</span></p>
-                          <p className="text-xs text-slate-500 mt-1">Manager: {record.manager || "—"}</p>
+                          <p className="text-xs text-slate-500 mt-1">Manager: <ManagerName name={record.manager} people={profiles} /></p>
                         </div>
                         <div className="text-right">
                           <span className="inline-block px-3 py-1 bg-yellow-500/20 text-yellow-300 text-xs font-semibold rounded border border-yellow-500/40">
@@ -4250,7 +4251,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           <p className="text-white font-semibold">{record.name}</p>
                           <p className="text-xs text-slate-400 mt-1">{record.department || "—"} • {record.location || "—"}</p>
                           <p className="text-xs text-slate-400 mt-2">Check In: <span className="font-mono font-semibold">{record.checkIn}</span></p>
-                          <p className="text-xs text-slate-500 mt-1">Manager: {record.manager || "—"}</p>
+                          <p className="text-xs text-slate-500 mt-1">Manager: <ManagerName name={record.manager} people={profiles} /></p>
                         </div>
                         <div className="text-right">
                           <span className="inline-block px-3 py-1 bg-orange-500/20 text-orange-300 text-xs font-semibold rounded border border-orange-500/40">

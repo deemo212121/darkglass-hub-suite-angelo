@@ -37,9 +37,9 @@
  * to a single Central-Time reference regardless of branch, since that skew
  * is at most 1 hour and not worth a separate per-branch date axis.
  *
- * PTO-awareness is deliberately not handled here — an employee on approved
- * PTO today still gets evaluated like anyone else with a schedule. That gap
- * already existed in the client-side alert logic and wasn't part of the ask.
+ * Someone with no punch who is on approved leave (any type), on leave HR
+ * plotted on the Absent List, or on a company holiday for their country is
+ * skipped — no missing clock-in alert or grace warning (see excusedToday).
  *
  * missing_clock_out gets one more recipient group on top of HR/Finance +
  * resolved manager: when the flagged profile is a technician (any
@@ -55,6 +55,7 @@
  * ask was specifically about not clocking OUT.
  */
 
+import { findPersonByName } from "@/lib/personName";
 import { buildRestDayHistory, offDaysOn, type RestDayHistory } from "../restDays";
 import { attendanceStartDate, hiringStartDate, isBeforeAttendanceStart, type AttendanceStartCandidate } from "../attendanceStart";
 import {
@@ -275,6 +276,30 @@ export async function runAttendanceAlertCheck(
     // Best-effort — falls back to profiles.off_days.
   }
 
+  // Approved leave (any type — PTO, Sick, Unpaid…), leave HR plotted on the
+  // Absent List, or a company holiday for their country: the day is excused,
+  // so no missing clock-in alert or grace warning. Best-effort — if a fetch
+  // fails, alerts go out as before.
+  const onLeave = new Set<string>();
+  const holidayCountries = new Set<string>(); // "companyId|US" / "companyId|PH"
+  try {
+    const [ptoRes, notesRes, holidaysRes] = await Promise.all([
+      fetch(`${supabaseUrl}/rest/v1/pto_requests?select=profile_id&status=eq.approved&start_date=lte.${dateISO}&or=(end_date.gte.${dateISO},end_date.is.null)`, { headers: sbHeaders }),
+      fetch(`${supabaseUrl}/rest/v1/attendance_notes?select=profile_id,hr_note&note_date=eq.${dateISO}`, { headers: sbHeaders }),
+      fetch(`${supabaseUrl}/rest/v1/company_holidays?select=company_id,country&date=eq.${dateISO}`, { headers: sbHeaders }),
+    ]);
+    // An open-ended request (no end date) only covers its start date, like everywhere else.
+    if (ptoRes.ok) for (const r of (await ptoRes.json()) as { profile_id: string }[]) onLeave.add(r.profile_id);
+    // Same leave statuses as HR_STATUS_TO_PTO_TYPE (pto.ts — not importable here, it pulls in the browser client).
+    const LEAVE_HR_STATUSES = new Set(["Vacation", "Sick", "Personal", "Holiday", "Unpaid", "Bereavement"]);
+    if (notesRes.ok) for (const n of (await notesRes.json()) as { profile_id: string; hr_note: string | null }[]) if (n.hr_note && LEAVE_HR_STATUSES.has(n.hr_note)) onLeave.add(n.profile_id);
+    if (holidaysRes.ok) for (const h of (await holidaysRes.json()) as { company_id: string; country: string }[]) holidayCountries.add(`${h.company_id}|${h.country}`);
+  } catch {
+    // Best-effort.
+  }
+  const excusedToday = (p: ServerProfile) =>
+    onLeave.has(p.id) || holidayCountries.has(`${p.company_id}|${p.assigned_branch === "Philippines" ? "PH" : "US"}`);
+
   const notStartedYet = (p: ServerProfile) =>
     isBeforeAttendanceStart(
       dateISO,
@@ -341,12 +366,7 @@ export async function runAttendanceAlertCheck(
       const leaderId = resolveCsrLeaderId(p.id);
       if (leaderId) return leaderId;
     }
-    const managerName = (p.manager_name || "").trim().toLowerCase();
-    if (!managerName) return null;
-    const match = profiles.find(
-      (o) => o.company_id === p.company_id && (o.display_name || "").trim().toLowerCase() === managerName
-    );
-    return match?.id ?? null;
+    return findPersonByName(p.manager_name, profiles.filter((o) => o.company_id === p.company_id))?.id ?? null;
   }
 
   // Deliberately the plain manager_name lookup only (no CSR-team-leader
@@ -355,12 +375,7 @@ export async function runAttendanceAlertCheck(
   // enrollable checkboxes, so a grace-warning email only ever targets
   // someone who could actually have been enrolled for it.
   function resolveManagerIdSimple(p: ServerProfile): string | null {
-    const managerName = (p.manager_name || "").trim().toLowerCase();
-    if (!managerName) return null;
-    const match = profiles.find(
-      (o) => o.company_id === p.company_id && (o.display_name || "").trim().toLowerCase() === managerName
-    );
-    return match?.id ?? null;
+    return findPersonByName(p.manager_name, profiles.filter((o) => o.company_id === p.company_id))?.id ?? null;
   }
 
   // Only for missing_clock_out, only for technicians (see this file's own
@@ -374,14 +389,10 @@ export async function runAttendanceAlertCheck(
     if (!branch) return [];
     const row = branchRolesByBranch.get(branch);
     if (!row) return [];
-    const names = [row.branch_manager, row.parts_manager]
-      .map((n) => (n || "").trim().toLowerCase())
-      .filter((n): n is string => !!n);
+    const sameCompany = profiles.filter((o) => o.company_id === p.company_id);
     const ids: string[] = [];
-    for (const name of names) {
-      const match = profiles.find(
-        (o) => o.company_id === p.company_id && (o.display_name || "").trim().toLowerCase() === name
-      );
+    for (const name of [row.branch_manager, row.parts_manager]) {
+      const match = findPersonByName(name, sameCompany);
       if (match) ids.push(match.id);
     }
     return ids;
@@ -400,6 +411,8 @@ export async function runAttendanceAlertCheck(
     const entry = entryByProfile.get(p.id);
     const checkIn = entry?.check_in || "";
     const checkOut = entry?.check_out || "";
+    // On approved leave / a holiday and not working: nothing to be late for.
+    if (!checkIn && excusedToday(p)) continue;
 
     const nowHHMM = nowHHMMByTimezone.get(timezoneForBranch(p.assigned_branch))!;
     const country = p.assigned_branch === "Philippines" ? "PH" : "US";

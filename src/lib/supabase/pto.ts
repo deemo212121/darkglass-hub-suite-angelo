@@ -54,6 +54,20 @@ export function isPaidPtoType(ptoType: PtoType): boolean {
   return ptoType === "vacation";
 }
 
+export const LEAVE_TYPE_NAME: Record<PtoType, string> = {
+  vacation: "Vacation Leave",
+  sick: "Sick Leave",
+  personal: "Personal Leave",
+  holiday: "Holiday",
+  unpaid: "Unpaid Leave",
+  bereavement: "Bereavement Leave",
+};
+
+/** What a no-punch day on approved leave shows instead of "Absent": "Sick Leave · Unpaid", "Vacation Leave · Paid". */
+export function leaveDayLabel(ptoType: PtoType): string {
+  return `${LEAVE_TYPE_NAME[ptoType] ?? "Leave"} · ${isPaidPtoType(ptoType) ? "Paid" : "Unpaid"}`;
+}
+
 /**
  * Employees need 1 year of tenure before they're eligible for PTO. Tenure is
  * measured from profiles.employee_info.hireDate if HR has set one, falling

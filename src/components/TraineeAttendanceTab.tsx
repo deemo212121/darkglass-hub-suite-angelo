@@ -19,8 +19,10 @@
  * from AttendanceMonitoringPage rather than re-fetching them — this tab is
  * only ever mounted there.
  */
+import { findPersonByName, nameRefersTo } from "@/lib/personName";
 import { chainCanApprove } from "@/lib/approvalDirectory";
 import { useEffect, useMemo, useState } from "react";
+import { ManagerName } from "@/components/ManagerName";
 import { Link, useSearch } from "@tanstack/react-router";
 import { getSeparations, preloadSeparations, type ProfileRow, type Separation } from "@/lib/supabase/users";
 import { calcWorkedHours } from "@/lib/supabase/timecards";
@@ -161,6 +163,7 @@ export function TraineeAttendanceTab({
     (rejectReasonOption !== "On Field" || (onFieldStart !== "" && onFieldEnd !== ""));
 
   const profileById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
+  const activeProfiles = useMemo(() => profiles.filter((p) => p.is_active), [profiles]);
   const viewerName = (profileById.get(myProfileId || "")?.display_name || "").trim().toLowerCase();
   // Fallback reviewers (Admin/HR/Finance/SuperAdmin/Technical Assistant
   // Director, Senior Branch Manager) can cover a day a trainee's own manager
@@ -203,7 +206,7 @@ export function TraineeAttendanceTab({
           // just don't get a "hasn't clocked in" row (see rows below).
           (showAll
             ? teamScopedIds === null || teamScopedIds.has(p.id) || isTraineeFallbackReviewerRole(role, extraRoles)
-            : (viewerName !== "" && (p.manager_name || "").trim().toLowerCase() === viewerName) ||
+            : (viewerName !== "" && nameRefersTo(p.manager_name, viewerName, activeProfiles)) ||
               // …plus trainees this viewer covers through the Approval Chain (their branch / area).
               chainCanApprove(myProfileId, p.id) === true)
       ),
@@ -212,18 +215,34 @@ export function TraineeAttendanceTab({
   );
   const traineeIds = useMemo(() => new Set(visibleTrainees.map((p) => p.id)), [visibleTrainees]);
 
+  // "Pending by date" always looks at the last 30 days before today, whatever dates are picked.
+  const [recentPending, setRecentPending] = useState<TraineeTimecardEntry[]>([]);
+  const loadRecentPending = () => {
+    const d = new Date(`${companyToday}T12:00:00`);
+    d.setDate(d.getDate() - 30);
+    const from = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    getCompanyTraineeEntries(from, companyToday)
+      .then((rows) => setRecentPending(rows.filter((r) => traineeIds.has(r.profileId) && r.status === "pending" && r.workDate < companyToday)))
+      .catch(() => {});
+  };
+
   const load = () => {
     setLoading(true);
     getCompanyTraineeEntries(dateFrom, dateTo)
       .then((rows) => setEntries(rows.filter((r) => traineeIds.has(r.profileId))))
       .catch((err) => console.error("Failed to load trainee timecards:", err))
       .finally(() => setLoading(false));
+    loadRecentPending();
   };
 
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateFrom, dateTo, traineeIds]);
+  useEffect(() => {
+    loadRecentPending();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyToday]);
 
   // The trainee's own stored manager_name (the same field
   // resolveTeamLeadOrManager reads at punch time), not entry.managerId — a
@@ -238,25 +257,8 @@ export function TraineeAttendanceTab({
   // manager_name is free text, so match loosely: case / extra spaces don't
   // matter, and "Jerich Leonard Bolico" still finds an account named
   // "Jerich Bolico" (same first and last name) when there's only one.
-  const normName = (s: string | null | undefined) => (s || "").trim().toLowerCase().replace(/\s+/g, " ");
-  const managerIdFor = (entry: TraineeTimecardEntry): string | null => {
-    const name = normName(profileById.get(entry.profileId)?.manager_name);
-    if (name) {
-      const active = profiles.filter((p) => p.is_active);
-      const exact = active.find((p) => normName(p.display_name) === name);
-      if (exact) return exact.id;
-      const parts = name.split(" ");
-      if (parts.length >= 2) {
-        const [first, last] = [parts[0], parts[parts.length - 1]];
-        const loose = active.filter((p) => {
-          const n = normName(p.display_name).split(" ");
-          return n.length >= 2 && n[0] === first && n[n.length - 1] === last;
-        });
-        if (loose.length === 1) return loose[0].id;
-      }
-    }
-    return entry.managerId ?? null;
-  };
+  const managerIdFor = (entry: TraineeTimecardEntry): string | null =>
+    findPersonByName(profileById.get(entry.profileId)?.manager_name, activeProfiles)?.id ?? entry.managerId ?? null;
   const remindManager = async (entry: TraineeTimecardEntry) => {
     const managerId = managerIdFor(entry);
     if (!managerId) {
@@ -320,11 +322,37 @@ export function TraineeAttendanceTab({
     () => Array.from(new Set(visibleTrainees.map((p) => p.assigned_branch).filter((b): b is string => !!b))).sort(),
     [visibleTrainees]
   );
-  const managerOptions = useMemo(
-    () => Array.from(new Set(visibleTrainees.map((p) => managerNameOf(p.id)))).sort(),
+  // The Manager filter lists each manager by their account name (the typed
+  // manager_name resolved with findPersonByName — "Jerich Leonard Bolico" ->
+  // "Jerich Bolico"), only managers with at least one active trainee, and
+  // flags one whose account is deactivated or matches no account.
+  const managerInfoOf = useMemo(() => {
+    const inactive = profiles.filter((p) => !p.is_active);
+    const cache = new Map<string, { name: string; flag: "" | "Deactivated" | "Not found" }>();
+    return (profileId: string) => {
+      const typed = managerNameOf(profileId);
+      const hit = cache.get(typed);
+      if (hit) return hit;
+      let info: { name: string; flag: "" | "Deactivated" | "Not found" };
+      if (typed === "Unassigned") info = { name: typed, flag: "" };
+      else {
+        const live = findPersonByName(typed, activeProfiles);
+        const gone = live ? null : findPersonByName(typed, inactive);
+        info = live ? { name: live.display_name || typed, flag: "" } : gone ? { name: gone.display_name || typed, flag: "Deactivated" } : { name: typed, flag: "Not found" };
+      }
+      cache.set(typed, info);
+      return info;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [visibleTrainees, profileById]
-  );
+  }, [profiles, activeProfiles, profileById]);
+  const managerOptions = useMemo(() => {
+    const byName = new Map<string, string>();
+    for (const p of visibleTrainees) if (p.is_active) {
+      const { name, flag } = managerInfoOf(p.id);
+      byName.set(name, flag);
+    }
+    return [...byName.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, flag]) => ({ name, flag }));
+  }, [visibleTrainees, managerInfoOf]);
 
   // Search / Branch / Manager — shared by the table and "Pending by date".
   const matchesPeopleFilters = (row: Row) => {
@@ -332,7 +360,7 @@ export function TraineeAttendanceTab({
     const profile = profileById.get(row.profileId);
     if (q && !(profile?.display_name || "").toLowerCase().includes(q)) return false;
     if (branchFilter !== "all" && profile?.assigned_branch !== branchFilter) return false;
-    if (managerFilter !== "all" && managerNameOf(row.profileId) !== managerFilter) return false;
+    if (managerFilter !== "all" && managerInfoOf(row.profileId).name !== managerFilter) return false;
     return true;
   };
 
@@ -350,14 +378,21 @@ export function TraineeAttendanceTab({
   // Days before today still waiting for review, newest first, with counts.
   const pendingByDate = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const row of rows) {
-      if (row.kind !== "entry" || row.entry!.status !== "pending" || row.entry!.workDate >= companyToday) continue;
-      if (!matchesPeopleFilters(row)) continue;
-      counts.set(row.entry!.workDate, (counts.get(row.entry!.workDate) ?? 0) + 1);
+    for (const e of recentPending) {
+      if (!matchesPeopleFilters({ kind: "entry", entry: e, profileId: e.profileId })) continue;
+      counts.set(e.workDate, (counts.get(e.workDate) ?? 0) + 1);
     }
     return [...counts.entries()].sort(([a], [b]) => b.localeCompare(a));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, search, branchFilter, managerFilter, companyToday, profileById]);
+  }, [recentPending, search, branchFilter, managerFilter, profileById]);
+  // Picking a day outside the dates shown moves the dates to it.
+  const pickPendingDay = (date: string) => {
+    setPendingDay((prev) => (prev === date ? null : date));
+    if (date < dateFrom || date > dateTo) {
+      setDateFrom(date);
+      setDateTo(date);
+    }
+  };
   // A picked day that no longer has pending rows clears itself.
   useEffect(() => {
     if (pendingDay && !pendingByDate.some(([d]) => d === pendingDay)) setPendingDay(null);
@@ -446,7 +481,7 @@ export function TraineeAttendanceTab({
   const canManageTrainee = (trainee: ProfileRow | undefined) =>
     isAttendanceFullAccessRole(role, extraRoles) ||
     isTraineeFallbackReviewerRole(role, extraRoles) ||
-    (viewerName !== "" && (trainee?.manager_name || "").trim().toLowerCase() === viewerName);
+    (viewerName !== "" && nameRefersTo(trainee?.manager_name, viewerName, activeProfiles));
 
   const openEntry = (entry: TraineeTimecardEntry) => {
     resetRejectForm();
@@ -620,7 +655,7 @@ export function TraineeAttendanceTab({
             <select value={managerFilter} onChange={(e) => setManagerFilter(e.target.value)} className={INPUT_CLASS}>
               <option value="all">All Managers</option>
               {managerOptions.map((m) => (
-                <option key={m} value={m}>{m}</option>
+                <option key={m.name} value={m.name}>{m.name}{m.flag ? ` (${m.flag})` : ""}</option>
               ))}
             </select>
           </div>
@@ -669,7 +704,7 @@ export function TraineeAttendanceTab({
             <div className="flex items-center gap-2 mb-2">
               <span className="text-xs uppercase text-slate-400">Pending by date</span>
               <span className="text-[11px] text-slate-500">
-                {pendingByDate.reduce((sum, [, n]) => sum + n, 0)} day{pendingByDate.reduce((sum, [, n]) => sum + n, 0) === 1 ? "" : "s"} before today still waiting · click a date to see who
+                {pendingByDate.reduce((sum, [, n]) => sum + n, 0)} day{pendingByDate.reduce((sum, [, n]) => sum + n, 0) === 1 ? "" : "s"} in the last 30 days still waiting · click a date to see who
               </span>
               {pendingDay && (
                 <button type="button" onClick={() => setPendingDay(null)} className="ml-auto text-[11px] text-blue-300 hover:text-blue-200">
@@ -692,7 +727,7 @@ export function TraineeAttendanceTab({
                   <button
                     key={date}
                     type="button"
-                    onClick={() => setPendingDay((prev) => (prev === date ? null : date))}
+                    onClick={() => pickPendingDay(date)}
                     title={`${date} · ${count} pending · ${age} day${age === 1 ? "" : "s"} ago`}
                     className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition ${tone}`}
                   >
@@ -774,7 +809,7 @@ export function TraineeAttendanceTab({
                       <td className="px-3 py-3 text-slate-500">No punch in this date range yet.</td>
                       {requiredCell}
                       <td className="px-3 py-3 text-slate-500">—</td>
-                      <td className="px-3 py-3 text-slate-300">{managerNameOf(row.profileId)}</td>
+                      <td className="px-3 py-3 text-slate-300"><ManagerName name={managerNameOf(row.profileId)} people={profiles} empty="Unassigned" /></td>
                       <td className="px-3 py-3">
                         <span className="inline-block px-2 py-0.5 rounded text-[11px] font-semibold border bg-white/10 text-slate-400 border-white/10">No Punch Yet</span>
                       </td>
@@ -812,7 +847,7 @@ export function TraineeAttendanceTab({
                     </td>
                     {requiredCell}
                     <td className="px-3 py-3 text-slate-300">{hours.toFixed(2)}h</td>
-                    <td className="px-3 py-3 text-slate-300">{managerNameOf(entry.profileId)}</td>
+                    <td className="px-3 py-3 text-slate-300"><ManagerName name={managerNameOf(entry.profileId)} people={profiles} empty="Unassigned" /></td>
                     <td className="px-3 py-3">
                       <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${STATUS_BADGE[entry.status]}`}>{STATUS_LABEL[entry.status]}</span>
                       {entry.status === "rejected" && entry.rejectReason && (

@@ -17,6 +17,7 @@
  *    Present/still-absent counts (split Technicians vs Office) next to
  *    each name are today's live snapshot — context only, not the trigger.
  */
+import { findPersonByName } from "@/lib/personName";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Mail, Loader2, ChevronRight, Play } from "lucide-react";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
@@ -35,6 +36,9 @@ import { getGmailConnectionStatus, disconnectGmail, type GmailConnectionStatus }
 import { TECHNICIAN_PAY_ROLES, normalizeRole } from "@/lib/roleLabels";
 import { addMinutesToHHMM, payGraceMinutesFor, nowInTimezone, timezoneForBranch } from "@/lib/attendanceGrace";
 import { todayISO } from "@/lib/localDate";
+import { getCompanyPtoRequests, leaveDayLabel, HR_STATUS_TO_PTO_TYPE, type PtoType } from "@/lib/supabase/pto";
+import { getAttendanceNotes } from "@/lib/supabase/attendanceNotes";
+import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
 
 const REGION = "ATTENDANCE" as const;
 
@@ -57,7 +61,7 @@ function formatRoleLabel(role: string | null | undefined): string {
  *  exactly the window the grace-warning email above sends during), and
  *  "absent" (grace has fully expired, same threshold missing_clock_in
  *  itself uses). */
-type ReportStatus = "present" | "not_due" | "in_grace" | "absent";
+type ReportStatus = "present" | "not_due" | "in_grace" | "absent" | "on_leave";
 
 interface ReportRow {
   profile: ProfileRow;
@@ -72,6 +76,8 @@ interface ReportRow {
    *  person's grace window over (and, for the earlier grace-warning email,
    *  when it already fired — the instant their scheduled time passed). */
   graceEndsAt: string | null;
+  /** Approved leave or a company holiday today — shown instead of Absent ("Sick Leave · Unpaid"). */
+  leaveLabel: string | null;
 }
 
 interface ManagerRow {
@@ -113,6 +119,10 @@ export function AttendanceWarningSettingsTab({ myProfileId, myDisplayName }: { m
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [subscribedIds, setSubscribedIds] = useState<Set<string>>(new Set());
   const [todayEntries, setTodayEntries] = useState<CompanyTimecardEntry[]>([]);
+  // Who's on approved leave today (profileId → "Sick Leave · Unpaid"), and today's company holiday.
+  const [leaveToday, setLeaveToday] = useState<Map<string, string>>(new Map());
+  // Today's holiday per country (US / PH keep separate calendars).
+  const [holidayToday, setHolidayToday] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savingManagerId, setSavingManagerId] = useState<string | null>(null);
@@ -190,6 +200,21 @@ export function AttendanceWarningSettingsTab({ myProfileId, myDisplayName }: { m
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load Settings."))
       .finally(() => setLoading(false));
+    // Approved leave (any type) and HR-plotted leave on the Absent List — best-effort.
+    Promise.all([getCompanyPtoRequests().catch(() => []), getAttendanceNotes(today, today).catch(() => []), getCompanyHolidaysInRange(today, today).catch(() => [])])
+      .then(([pto, notes, holidays]) => {
+        const map = new Map<string, string>();
+        for (const n of notes as { profileId: string; hrNote: string }[]) {
+          const t = HR_STATUS_TO_PTO_TYPE[n.hrNote];
+          if (t) map.set(n.profileId, leaveDayLabel(t));
+        }
+        for (const r of pto) {
+          if (r.status !== "approved" || !r.startDate) continue;
+          if (r.startDate <= today && (r.endDate || r.startDate) >= today) map.set(r.profileId, leaveDayLabel(r.ptoType as PtoType));
+        }
+        setLeaveToday(map);
+        setHolidayToday(new Map(holidays.map((h) => [h.country, h.name])));
+      });
   };
 
   const loadGmailStatus = () => {
@@ -246,25 +271,21 @@ export function AttendanceWarningSettingsTab({ myProfileId, myDisplayName }: { m
   // resolveManagerIdSimple uses server-side — a manager only shows up
   // here (and is only ever emailed) if they're findable this same way.
   const managerRows = useMemo<ManagerRow[]>(() => {
-    const profileByNormalizedName = new Map(
-      profiles.filter((p) => p.is_active).map((p) => [(p.display_name || "").trim().toLowerCase(), p])
-    );
+    const active = profiles.filter((p) => p.is_active);
+    const managerIdOf = new Map(profiles.map((p) => [p.id, findPersonByName(p.manager_name, active)?.id ?? null]));
     const checkInByProfileId = new Map(todayEntries.filter((e) => e.checkIn).map((e) => [e.profileId, e.checkIn]));
 
     const managerIds = new Set<string>();
     for (const p of profiles) {
-      const managerName = (p.manager_name || "").trim().toLowerCase();
-      if (!managerName) continue;
-      const match = profileByNormalizedName.get(managerName);
-      if (match) managerIds.add(match.id);
+      const m = managerIdOf.get(p.id);
+      if (m) managerIds.add(m);
     }
 
     const rows: ManagerRow[] = [];
     for (const managerId of managerIds) {
       const manager = profiles.find((p) => p.id === managerId);
       if (!manager) continue;
-      const managerNameLower = (manager.display_name || "").trim().toLowerCase();
-      const reports = profiles.filter((p) => p.is_active && p.id !== managerId && (p.manager_name || "").trim().toLowerCase() === managerNameLower);
+      const reports = profiles.filter((p) => p.is_active && p.id !== managerId && managerIdOf.get(p.id) === managerId);
 
       const technicians = { present: 0, absent: 0 };
       const office = { present: 0, absent: 0 };
@@ -285,8 +306,12 @@ export function AttendanceWarningSettingsTab({ myProfileId, myDisplayName }: { m
         // viewer's own local time.
         const nowHHMM = nowInTimezone(timezoneForBranch(r.assigned_branch)).hhmm;
         let status: ReportStatus;
+        const holiday = holidayToday.get(r.assigned_branch === "Philippines" ? "PH" : "US");
+        const leaveLabel = holiday ? `Holiday · ${holiday}` : leaveToday.get(r.id) ?? null;
         if (checkIn) {
           status = "present";
+        } else if (leaveLabel) {
+          status = "on_leave"; // approved leave / holiday — their leave type, not Absent
         } else if (!r.required_check_in || nowHHMM < r.required_check_in) {
           status = "not_due"; // shift hasn't started yet — not a no-show
         } else if (!graceEndsAt || nowHHMM <= graceEndsAt) {
@@ -300,13 +325,13 @@ export function AttendanceWarningSettingsTab({ myProfileId, myDisplayName }: { m
         if (status === "present") (isTechnician ? technicians : office).present++;
         else if (status === "absent" || status === "in_grace") (isTechnician ? technicians : office).absent++;
 
-        reportRows.push({ profile: r, isTechnician, checkIn, status, graceEndsAt });
+        reportRows.push({ profile: r, isTechnician, checkIn, status, graceEndsAt, leaveLabel });
       }
       reportRows.sort((a, b) => (a.profile.display_name || "").localeCompare(b.profile.display_name || ""));
       rows.push({ profile: manager, technicians, office, reports: reportRows });
     }
     return rows.sort((a, b) => (a.profile.display_name || "").localeCompare(b.profile.display_name || ""));
-  }, [profiles, todayEntries]);
+  }, [profiles, todayEntries, leaveToday, holidayToday]);
 
   // Defaults the Test Mode target to Jhon Norban Rulona if he's in the
   // manager list, else just the first manager — either way, only once,
@@ -496,6 +521,7 @@ export function AttendanceWarningSettingsTab({ myProfileId, myDisplayName }: { m
                 not_due: { label: "Not due yet", className: "text-slate-400" },
                 in_grace: { label: "In grace", className: "text-amber-300" },
                 absent: { label: "Absent", className: "text-red-300" },
+                on_leave: { label: "On leave", className: "text-violet-300" },
               };
               const meta = statusMeta[r.status];
               return (
@@ -652,6 +678,7 @@ export function AttendanceWarningSettingsTab({ myProfileId, myDisplayName }: { m
                                   not_due: { label: "Not due yet", className: "text-slate-400" },
                                   in_grace: { label: "In grace", className: "text-amber-300" },
                                   absent: { label: "Absent", className: "text-red-300" },
+                                  on_leave: { label: r.leaveLabel ?? "On leave", className: "text-violet-300" },
                                 };
                                 const meta = statusMeta[r.status];
                                 return (
@@ -675,6 +702,7 @@ export function AttendanceWarningSettingsTab({ myProfileId, myDisplayName }: { m
                                   not_due: { label: "Not due yet", className: "text-slate-400" },
                                   in_grace: { label: "In grace", className: "text-amber-300" },
                                   absent: { label: "Absent", className: "text-red-300" },
+                                  on_leave: { label: "On leave", className: "text-violet-300" },
                                 };
                                 const meta = statusMeta[r.status];
                                 return (

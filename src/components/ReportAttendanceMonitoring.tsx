@@ -10,6 +10,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { ManagerName } from "@/components/ManagerName";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, ChevronRight, Users, UserCheck, UserX, Clock, Loader2, Download } from "lucide-react";
@@ -567,7 +568,7 @@ export function ReportAttendanceMonitoring({
       hours: number;
       status: DailyStatus;
     }[] = [];
-    for (const p of filteredProfiles) {
+    for (const p of regularProfiles) {
       if (employeeFilter.size > 0 && !employeeFilter.has(p.id)) continue;
       const name = p.display_name || p.username || p.email || "Unknown";
       const role = roleLabel(p.role);
@@ -589,7 +590,7 @@ export function ReportAttendanceMonitoring({
     // in on 8/11, then who was in on 8/10, ..." instead of one person's
     // entire week before jumping to the next person.
     return rows.sort((a, b) => b.date.localeCompare(a.date) || a.name.localeCompare(b.name));
-  }, [filteredProfiles, dateRange, entriesByProfileDate, employeeFilter, restHistory, statusChanges, approvedLeaveByProfile]);
+  }, [regularProfiles, dateRange, entriesByProfileDate, employeeFilter, restHistory, statusChanges, approvedLeaveByProfile]);
 
   // Today-scoped KPI tiles (only meaningful when today falls inside the
   // selected range — otherwise these read 0, same as a report for a past
@@ -598,14 +599,14 @@ export function ReportAttendanceMonitoring({
   const todayKpi = useMemo(() => {
     if (!todayInRange) return { present: 0, absent: 0, late: 0 };
     let present = 0, absent = 0, late = 0;
-    for (const p of filteredProfiles) {
+    for (const p of regularProfiles) {
       const off = offOn(p, todayIso());
       const st = dayStatus(entriesByProfileDate.get(`${p.id}|${todayIso()}`), p.required_check_in, off, graceMinutesFor(p));
       if (st.present) { present++; if (st.late) late++; }
       else if (st.absent) absent++;
     }
     return { present, absent, late };
-  }, [todayInRange, filteredProfiles, entriesByProfileDate, restHistory, statusChanges, approvedLeaveByProfile]);
+  }, [todayInRange, regularProfiles, entriesByProfileDate, restHistory, statusChanges, approvedLeaveByProfile]);
 
   // Scoped to filteredProfiles (department filter AND the optional
   // filterProfile restriction) — company-wide PTO/correction counts would be
@@ -623,7 +624,7 @@ export function ReportAttendanceMonitoring({
   const trendData = useMemo(() => {
     return dateRange.map((d) => {
       let present = 0, absent = 0, late = 0;
-      for (const p of filteredProfiles) {
+      for (const p of regularProfiles) {
         const off = offOn(p, d);
         const st = dayStatus(entriesByProfileDate.get(`${p.id}|${d}`), reqIn(p, d), off, graceMinutesFor(p));
         if (st.present) { present++; if (st.late) late++; }
@@ -632,7 +633,7 @@ export function ReportAttendanceMonitoring({
       const [, m, day] = d.split("-");
       return { date: `${Number(m)}/${Number(day)}`, present, absent, late };
     });
-  }, [dateRange, filteredProfiles, entriesByProfileDate, restHistory, statusChanges, approvedLeaveByProfile]);
+  }, [dateRange, regularProfiles, entriesByProfileDate, restHistory, statusChanges, approvedLeaveByProfile]);
 
   // Styled workbook (attendanceReportWorkbook.ts): Overview (today's numbers
   // + daily trend), then Departments / Employees / Trainees — or Daily
@@ -649,7 +650,7 @@ export function ReportAttendanceMonitoring({
       heading: "Summary — whole period",
       headers: ["", "Total Employees", "Days Present", "Absences", "Lates", "PTO Pending", "Corrections Pending", "Warnings"],
       textCols: 1,
-      rows: [{ cells: ["Count", filteredProfiles.length, sum("present"), sum("absent"), sum("late"), ptoPending, correctionsPending, warningsCount] }],
+      rows: [{ cells: ["Count", regularProfiles.length, sum("present"), sum("absent"), sum("late"), ptoPending, correctionsPending, warningsCount] }],
       headerFills: { 2: FILL_GREEN, 3: FILL_RED, 4: FILL_AMBER },
       greenCols: [2],
       redCols: [3],
@@ -834,7 +835,7 @@ export function ReportAttendanceMonitoring({
         <>
         <div className="grid grid-cols-2 md:grid-cols-6 gap-2 mb-3">
           {[
-            ["Total Employees", filteredProfiles.length, "text-white", Users],
+            ["Total Employees", regularProfiles.length, "text-white", Users],
             ["Present Today", todayKpi.present, "text-green-300", UserCheck],
             ["Absent Today", todayKpi.absent, "text-red-300", UserX],
             ["Late Today", todayKpi.late, "text-yellow-300", Clock],
@@ -973,7 +974,7 @@ export function ReportAttendanceMonitoring({
                                 )}</td>
                                 <td className="px-2.5 py-1.5 text-muted-foreground whitespace-nowrap">{e.department}</td>
                                 <td className="px-2.5 py-1.5 text-muted-foreground whitespace-nowrap">{e.branch}</td>
-                                <td className="px-2.5 py-1.5 text-muted-foreground whitespace-nowrap">{e.manager}</td>
+                                <td className="px-2.5 py-1.5 text-muted-foreground whitespace-nowrap"><ManagerName name={e.manager} people={profiles} /></td>
                                 <td className="px-2.5 py-1.5 text-center tabular-nums">{e.daysWorked}</td>
                                 <td className="px-2.5 py-1.5 text-center tabular-nums">{e.hours.toFixed(2)}</td>
                                 <td className="px-2.5 py-1.5 text-center tabular-nums">{e.daysWorked ? (e.hours / e.daysWorked).toFixed(2) : "—"}</td>
@@ -1052,7 +1053,7 @@ export function ReportAttendanceMonitoring({
                 </td>
                 <td className="px-3 py-2.5 text-muted-foreground whitespace-nowrap">{t.department}</td>
                 <td className="px-3 py-2.5 text-muted-foreground whitespace-nowrap">{t.branch}</td>
-                <td className="px-3 py-2.5 text-muted-foreground whitespace-nowrap">{t.manager}</td>
+                <td className="px-3 py-2.5 text-muted-foreground whitespace-nowrap"><ManagerName name={t.manager} people={profiles} /></td>
                 <td className="px-3 py-2.5 text-center tabular-nums">{t.present}</td>
                 <td className="px-3 py-2.5 text-center">{t.absent > 0 ? <span className="px-2 py-0.5 rounded text-xs bg-red-500/20 text-red-300 border border-red-500/30">{t.absent}</span> : "—"}</td>
                 <td className="px-3 py-2.5 text-center">{t.pending > 0 ? <span className="px-2 py-0.5 rounded text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30">{t.pending}</span> : "—"}</td>

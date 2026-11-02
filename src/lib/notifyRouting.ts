@@ -4,6 +4,7 @@
  * (matched against real profiles by display name) for everyone else.
  */
 
+import { findPersonByName, nameRefersTo } from "@/lib/personName";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import type { ProfileRow } from "@/lib/supabase/users";
 import { getChainData, chainLevelOf, chainCanApproveWith, chainCanClockInWith, isPhGoverned } from "@/lib/approvalDirectory";
@@ -52,13 +53,12 @@ export async function resolveTeamLeadOrManager(
     }
   }
 
-  const managerName = (profile.manager_name || "").trim().toLowerCase();
-  if (!managerName) return null;
+  if (!(profile.manager_name || "").trim()) return null;
   // A deactivated manager shouldn't still be resolved as a live "notify my
   // manager" recipient — every caller of this function (mileage/PTO/note
   // notifications, etc.) would otherwise silently ping an account nobody
   // reads anymore instead of falling through to whoever's actually covering.
-  return allProfiles.find((p) => p.is_active && (p.display_name || "").trim().toLowerCase() === managerName) ?? null;
+  return findPersonByName(profile.manager_name, allProfiles.filter((p) => p.is_active));
 }
 
 /**
@@ -90,12 +90,10 @@ export function visibleAttendanceProfileIds(
   if (!isAttendanceManagerTierRole(viewer.role, viewer.extra_roles)) return new Set([viewer.id]);
 
   const ids = new Set<string>([viewer.id]);
-  const viewerName = (viewer.display_name || "").trim().toLowerCase();
-  if (viewerName) {
-    allProfiles.forEach((p) => {
-      if ((p.manager_name || "").trim().toLowerCase() === viewerName) ids.add(p.id);
-    });
-  }
+  const active = allProfiles.filter((p) => p.is_active);
+  allProfiles.forEach((p) => {
+    if (nameRefersTo(p.manager_name, viewer.display_name, active)) ids.add(p.id);
+  });
   if (csrComposition && isCsrRole(viewer)) {
     // CSR_MANAGER oversees every team, not just one they personally lead —
     // they're never themselves a csr_team_members row (see
@@ -187,29 +185,27 @@ export function visibleEmployeeMonitoringProfileIds(
   const ids = new Set<string>([viewer.id]);
 
   if (isEmployeeMonitoringTeamLeadOnlyRole(viewer.role, viewer.extra_roles)) {
-    const viewerName = (viewer.display_name || "").trim().toLowerCase();
-    if (viewerName) {
-      allProfiles.forEach((p) => {
-        if ((p.manager_name || "").trim().toLowerCase() === viewerName) ids.add(p.id);
-      });
-    }
+    const active = allProfiles.filter((p) => p.is_active);
+    allProfiles.forEach((p) => {
+      if (nameRefersTo(p.manager_name, viewer.display_name, active)) ids.add(p.id);
+    });
   } else {
     // Branch Manager tier and up: walk the manager_name chain downward,
     // level by level — each round's newly-found names become next round's
     // search targets, so a Senior Branch Manager sees their Branch
     // Managers' Team Leaders' Agents too, not just people who directly
     // name them as manager.
-    let frontier = new Set<string>();
-    const startName = (viewer.display_name || "").trim().toLowerCase();
-    if (startName) frontier.add(startName);
+    // Each person's manager resolved once (findPersonByName), then walked by id.
+    const active = allProfiles.filter((p) => p.is_active);
+    const managerIdOf = new Map(allProfiles.map((p) => [p.id, findPersonByName(p.manager_name, active)?.id ?? null]));
+    let frontier = new Set<string>([viewer.id]);
     for (let depth = 0; depth < MAX_MANAGEMENT_CHAIN_DEPTH && frontier.size > 0; depth++) {
       const nextFrontier = new Set<string>();
       allProfiles.forEach((p) => {
-        const managerName = (p.manager_name || "").trim().toLowerCase();
-        if (managerName && frontier.has(managerName) && !ids.has(p.id)) {
+        const mgr = managerIdOf.get(p.id);
+        if (mgr && frontier.has(mgr) && !ids.has(p.id)) {
           ids.add(p.id);
-          const ownName = (p.display_name || "").trim().toLowerCase();
-          if (ownName) nextFrontier.add(ownName);
+          nextFrontier.add(p.id);
         }
       });
       frontier = nextFrontier;

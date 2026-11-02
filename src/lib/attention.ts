@@ -21,6 +21,7 @@
  * Parts "click DONE" lives in this browser (partsDoneQueue) and is added by
  * the strip itself so it updates live.
  */
+import { findPersonByName } from "@/lib/personName";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { canAccessSubmodule } from "@/lib/submoduleAccess";
@@ -85,7 +86,7 @@ function localISO(d = new Date()): string {
 function managerChain(profiles: ProfileRow[], requesterId: string): [string | null, string | null] {
   const managerName = profiles.find((p) => p.id === requesterId)?.manager_name ?? null;
   const managersManager = managerName
-    ? profiles.find((p) => (p.display_name || "").trim().toLowerCase() === managerName.trim().toLowerCase())?.manager_name ?? null
+    ? findPersonByName(managerName, profiles)?.manager_name ?? null
     : null;
   return [managerName, managersManager];
 }

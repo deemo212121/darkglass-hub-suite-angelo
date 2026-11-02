@@ -31,6 +31,7 @@ import { getAttendanceStartByProfile } from "@/lib/supabase/attendanceStart";
 import { isBeforeAttendanceStart } from "@/lib/attendanceStart";
 import { PasswordGateModal, isGateUnlocked } from "@/components/PasswordGateModal";
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { ManagerName } from "@/components/ManagerName";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Pencil, Check, Loader2, Filter, CalendarDays, ListChecks, Paperclip, Flag, History, X, BarChart3, AlertTriangle, Umbrella, HeartPulse, ListTodo, FileDown, Users } from "lucide-react";
@@ -43,7 +44,7 @@ import { visibleEmployeeMonitoringProfileIds } from "@/lib/notifyRouting";
 import { getCompanyTimecardEntries, getProfileIdByFirebaseUid, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getCompanyTraineeEntries, type TraineeTimecardEntry } from "@/lib/supabase/traineeTimecards";
 import { getAttendanceNotes, upsertAttendanceNote, upsertAttendanceHrNote, uploadAttendanceNoteAttachment, removeAttendanceNoteAttachment, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
-import { getCompanyPtoRequests, sickYearWindow, sickDaysUsed, sickDaysPending, SICK_LEAVE_ANNUAL_ALLOWANCE, HR_STATUS_TO_PTO_TYPE, type PtoRequestRow, type PtoType } from "@/lib/supabase/pto";
+import { getCompanyPtoRequests, sickYearWindow, sickDaysUsed, sickDaysPending, SICK_LEAVE_ANNUAL_ALLOWANCE, HR_STATUS_TO_PTO_TYPE, ptoEligibleDate, type PtoRequestRow, type PtoType } from "@/lib/supabase/pto";
 import { HrCalendarTab } from "@/components/HrCalendarTab";
 import { PtoManagementTab } from "@/components/PtoManagementTab";
 import { EmployeeAttendanceStatusTab } from "@/components/EmployeeAttendanceStatusTab";
@@ -672,7 +673,22 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   };
 
   const [savingHrNoteId, setSavingHrNoteId] = useState<string | null>(null);
+  // Vacation (paid PTO) needs 1 year of tenure — same lock as the leave forms.
+  // Returns the date it unlocks when that day is still before it, else null.
+  const vacationLockedUntil = (profileId: string, day: string): string | null => {
+    const p = profiles.find((x) => x.id === profileId);
+    const eligibleOn = ptoEligibleDate(hireDateByProfileId.get(profileId) || null, p?.created_at || null);
+    return eligibleOn && day < eligibleOn ? eligibleOn : null;
+  };
+
   const handleSaveHrStatus = async (profileId: string, noteDate: string, hrNote: string) => {
+    if (hrNote === "Vacation") {
+      const until = vacationLockedUntil(profileId, noteDate);
+      if (until) {
+        alert(`Vacation (paid PTO) is locked until ${until} — it needs 1 year of tenure. Use Personal, Sick or Unpaid instead (unpaid).`);
+        return;
+      }
+    }
     const key = `${profileId}|${noteDate}`;
     // Captured before the save so the activity log can show the actual
     // transition (e.g. "Absent → Sick"), not just the new value in isolation.
@@ -934,7 +950,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         </td>
         <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{ROLE_LABELS[p.role] || p.role}</td>
         <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{p.assigned_branch || "—"}</td>
-        <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{p.manager_name || "—"}</td>
+        <td className="py-2 pr-3 text-slate-300 whitespace-nowrap"><ManagerName name={p.manager_name} people={profiles} /></td>
         <td className="py-2 pr-3 min-w-[220px]">
           {isEditing ? (
             <div className="flex items-center gap-1">
@@ -986,9 +1002,14 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
                   light status text renders on the browser's own near-white
                   popup and becomes nearly unreadable. */}
               <option value="" className="bg-slate-800 text-slate-400">—</option>
-              {HR_STATUS_OPTIONS.map((s) => (
-                <option key={s} value={s} className={`bg-slate-800 ${HR_STATUS_COLOR[s] || "text-slate-200"}`}>{s}</option>
-              ))}
+              {HR_STATUS_OPTIONS.map((s) => {
+                const lockedUntil = s === "Vacation" && hrNote !== "Vacation" ? vacationLockedUntil(p.id, rowDate) : null;
+                return (
+                  <option key={s} value={s} disabled={!!lockedUntil} className={`bg-slate-800 ${HR_STATUS_COLOR[s] || "text-slate-200"}`}>
+                    {s}{lockedUntil ? ` (locked until ${lockedUntil})` : ""}
+                  </option>
+                );
+              })}
               {/* A row already saved with a status that's since been removed
                   from HR_STATUS_OPTIONS (e.g. "Unnoticed") keeps showing it
                   here instead of going blank — picking anything else still
@@ -1270,7 +1291,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
                         <td className="py-2 pr-3 text-white font-medium whitespace-nowrap">{r.profile.display_name || r.profile.email}</td>
                         <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{ROLE_LABELS[r.profile.role] || r.profile.role}</td>
                         <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{r.profile.assigned_branch || "—"}</td>
-                        <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{r.profile.manager_name || "—"}</td>
+                        <td className="py-2 pr-3 text-slate-300 whitespace-nowrap"><ManagerName name={r.profile.manager_name} people={profiles} /></td>
                         <td className="py-2 pr-3 text-red-300 font-semibold whitespace-nowrap">{fmtSickDays(r.used)} / {r.allowance}</td>
                         <td className="py-2 pr-3 text-red-300 font-semibold whitespace-nowrap">{fmtSickDays(r.used - r.allowance)}</td>
                         <td className="py-2 pr-3">

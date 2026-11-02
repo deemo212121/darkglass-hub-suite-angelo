@@ -10,6 +10,7 @@
  * as TeamMessenger.tsx — some tenants may not have realtime enabled for
  * these tables yet.
  */
+import { findPersonByName } from "@/lib/personName";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -605,11 +606,8 @@ export function LiveChatSupportPage({ mod, sub }: Props) {
       if (leader && leader.profileId !== myProfileId) recipientIds.add(leader.profileId);
     }
 
-    const managerName = (me?.manager_name || "").trim().toLowerCase();
-    if (managerName) {
-      const manager = companyStaff.find((p) => (p.display_name || "").trim().toLowerCase() === managerName);
-      if (manager && manager.id !== myProfileId) recipientIds.add(manager.id);
-    }
+    const manager = findPersonByName(me?.manager_name, companyStaff);
+    if (manager && manager.id !== myProfileId) recipientIds.add(manager.id);
 
     if (recipientIds.size === 0) return;
     const body = `🚨 ${currentUserName} escalated a Live Chat — ${session.visitor_name || "a visitor"} (${ticketNumber(session.id)})`;

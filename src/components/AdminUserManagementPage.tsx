@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect, useRef } from "react";
+import { resolveManager, type ManagerResolution } from "@/components/ManagerName";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { BrandedLoader } from "@/components/BrandedLoader";
@@ -585,6 +586,7 @@ function ColumnFilter({
   selected,
   onChange,
   flagged,
+  notFound,
 }: {
   field: string;
   label: string;
@@ -593,6 +595,8 @@ function ColumnFilter({
   onChange: (next: Set<string>) => void;
   /** Options to mark "Deactivated" (e.g. a manager whose own account is off). */
   flagged?: Set<string>;
+  /** Options to mark "Not found" (a manager name no active account has). */
+  notFound?: Set<string>;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -725,6 +729,11 @@ function ColumnFilter({
                   {flagged?.has(opt) && (
                     <span className="ml-auto shrink-0 rounded border border-red-500/40 bg-red-500/10 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-red-300">
                       Deactivated
+                    </span>
+                  )}
+                  {notFound?.has(opt) && (
+                    <span className="ml-auto shrink-0 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-amber-300">
+                      Not found
                     </span>
                   )}
                 </label>
@@ -953,6 +962,20 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     return () => { cancelled = true; };
   }, [auth.companyId]);
 
+  // Manager is shown, filtered and flagged by the account the typed name points
+  // to (resolveManager — "Jerich Leonard Bolico" -> "Jerich Bolico").
+  const managerPeople = useMemo(() => users.filter((u) => u.userName).map((u) => ({ display_name: u.userName, is_active: u.isActive !== false })), [users]);
+  const managerOf = useMemo(() => {
+    const cache = new Map<string, ManagerResolution>();
+    return (typed: string | undefined): ManagerResolution => {
+      const key = typed || "";
+      let r = cache.get(key);
+      if (!r) cache.set(key, (r = resolveManager(key, managerPeople)));
+      return r;
+    };
+  }, [managerPeople]);
+  const cellValue = (record: UserRow, field: string) => (field === "manager" ? managerOf(record.manager).name : colValue(record, field));
+
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     const matches = users.filter((record) => {
@@ -967,7 +990,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       for (const [field, sel] of Object.entries(colFilters)) {
         if (!sel || sel.size === 0) continue; // no filter on this column
         if (sel.has("__none__")) return false; // explicitly hide everything
-        const value = colValue(record, field);
+        const value = cellValue(record, field);
         if (!sel.has(value)) return false;
       }
       return true;
@@ -990,7 +1013,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     // group. Applies regardless of the Status filter, so switching to
     // "All" doesn't scatter deactivated rows throughout the active ones.
     return [...ordered].sort((a, b) => Number(a.isActive === false) - Number(b.isActive === false));
-  }, [search, users, colFilters]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, users, colFilters, managerOf]);
 
   // Manager cells store a free-text display name (profiles.manager_name),
   // not a real foreign key - so linking to "the manager" needs this lookup
@@ -1010,20 +1034,31 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
       // someone whose people have all left drops out of the list.
       const source = field === "manager" ? users.filter((r) => r.isActive !== false) : users;
       map[field] = Array.from(
-        new Set(source.map((r) => colValue(r, field)).filter(Boolean)),
+        new Set(source.map((r) => cellValue(r, field)).filter(Boolean)),
       ).sort((a, b) => a.localeCompare(b));
     }
     return map;
-  }, [users]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [users, managerOf]);
 
   // Managers (by name) whose own account is deactivated while people still
   // report to them — flagged in the Manager filter and column as a reminder
   // to move those people to someone else.
-  const deactivatedManagers = useMemo(() => {
-    const activeNames = new Set(users.filter((u) => u.isActive !== false).map((u) => u.userName));
-    const gone = new Set(users.filter((u) => u.isActive === false && u.userName && !activeNames.has(u.userName)).map((u) => u.userName));
-    return new Set(users.filter((u) => u.isActive !== false && u.manager && gone.has(u.manager)).map((u) => u.manager as string));
-  }, [users]);
+  // Also managers whose name matches no active account at all ("Not found")
+  // — notifications to them go nowhere, so HR should fix the name. Matched
+  // the same forgiving way the rest of the app now resolves a manager
+  // (findPersonByName: case, spaces, middle names).
+  const { deactivatedManagers, missingManagers } = useMemo(() => {
+    const deactivated = new Set<string>();
+    const missing = new Set<string>();
+    for (const u of users) {
+      if (u.isActive === false || !u.manager) continue;
+      const r = managerOf(u.manager);
+      if (r.flag === "Deactivated") deactivated.add(r.name);
+      else if (r.flag === "Not found") missing.add(r.name);
+    }
+    return { deactivatedManagers: deactivated, missingManagers: missing };
+  }, [users, managerOf]);
 
   // manager is free text (matched against real profiles by display name —
   // see resolveTeamLeadOrManager in notifyRouting.ts), so building the tree
@@ -1707,7 +1742,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   <th className="px-2.5 py-2 text-left">
                     <span className="inline-flex items-center">Manager
                       <ColumnFilter field="manager" label="Manager" options={columnOptions["manager"] || []}
-                        selected={colFilters["manager"] || new Set()} onChange={(n) => setColFilter("manager", n)} flagged={deactivatedManagers} />
+                        selected={colFilters["manager"] || new Set()} onChange={(n) => setColFilter("manager", n)} flagged={deactivatedManagers} notFound={missingManagers} />
                     </span>
                   </th>
                   <th className="px-2.5 py-2 text-left">
@@ -1752,9 +1787,13 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       <td className="px-2.5 py-2 align-top break-words"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.userName}</UserLink></td>
                       <td className="px-2.5 py-2 align-top break-words">{roleDisplay(record.type)}</td>
                       <td className="px-2.5 py-2 align-top break-words text-slate-300">{record.email || "—"}</td>
-                      <td className="px-2.5 py-2 align-top break-words"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={loginNameByDisplayName.get(record.manager) || record.manager || record.loginName}>{record.manager || "—"}</UserLink>{record.manager && deactivatedManagers.has(record.manager) && (
+                      <td className="px-2.5 py-2 align-top break-words"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={loginNameByDisplayName.get(managerOf(record.manager).name) || record.manager || record.loginName}>{managerOf(record.manager).name || "—"}</UserLink>{record.manager && managerOf(record.manager).flag === "Deactivated" && (
                         <span title="This manager's account is deactivated — assign this person a new manager" className="ml-1.5 inline-block rounded border border-red-500/40 bg-red-500/10 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-red-300 align-middle">
                           Deactivated
+                        </span>
+                      )}{record.manager && managerOf(record.manager).flag === "Not found" && (
+                        <span title="No active account has this name — the manager won't get this person's notifications (leave, alerts…). Fix the Manager name to match their account." className="ml-1.5 inline-block rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-amber-300 align-middle">
+                          Not found
                         </span>
                       )}</td>
                       <td className="px-2.5 py-2 align-top break-words text-slate-300">
