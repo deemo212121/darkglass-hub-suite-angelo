@@ -111,6 +111,9 @@ export function FloatingMessenger() {
   const [links, setLinks] = useState<Map<string, MessageLink>>(new Map());
   const [replyTo, setReplyTo] = useState<MessageRow | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  /** The ⋯ menu opens above its message instead of below when the list has more room there. */
+  const [menuUp, setMenuUp] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [forwardMsg, setForwardMsg] = useState<MessageRow | null>(null);
   const [forwardSearch, setForwardSearch] = useState("");
   // "Mark as important" (migration 0421) — same marks as the Team Messenger page.
@@ -423,6 +426,17 @@ export function FloatingMessenger() {
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [menuFor]);
+  // …and the list scrolls if part of it is still out of view.
+  useEffect(() => {
+    if (menuFor) menuRef.current?.scrollIntoView({ block: "nearest" });
+  }, [menuFor]);
+  const openMenu = (button: HTMLElement, id: string) => {
+    if (menuFor === id) return setMenuFor(null);
+    const row = button.closest(".fm-row")?.getBoundingClientRect();
+    const list = button.closest(".fm-list")?.getBoundingClientRect();
+    setMenuUp(!!row && !!list && list.bottom - row.bottom < 220 && row.top - list.top > list.bottom - row.bottom);
+    setMenuFor(id);
+  };
 
   const react = async (m: MessageRow, emoji: string) => {
     if (!profileId) return;
@@ -646,7 +660,7 @@ export function FloatingMessenger() {
             </>
           ) : (
             <>
-              <div className="flex-1 space-y-2 overflow-y-auto px-3 py-3">
+              <div className="fm-list flex-1 space-y-2 overflow-y-auto px-3 py-3">
                 {messages.length === 0 ? (
                   <p className="px-2 py-6 text-center text-xs text-slate-500">No messages yet — say hello.</p>
                 ) : (
@@ -671,7 +685,7 @@ export function FloatingMessenger() {
                             </button>
                           );
                         })()}
-                        <div className={`flex w-full items-center gap-1 ${mine ? "flex-row-reverse" : ""}`}>
+                        <div className={`fm-row relative flex w-full items-center gap-1 ${mine ? "flex-row-reverse" : ""}`}>
                         <div id={`fm-msg-${m.id}`} className={`max-w-[75%] min-w-0 rounded-2xl px-3 py-1.5 text-sm ${mine ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-100"}`}>
                           <MessageBody text={m.body} className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]" />
                         </div>
@@ -680,12 +694,12 @@ export function FloatingMessenger() {
                               <Star />
                             </span>
                           )}
-                          <div className="relative">
-                            <button type="button" className={`tm-more ${menuFor === m.id ? "tm-more--open" : ""}`} onClick={() => setMenuFor(menuFor === m.id ? null : m.id)} aria-label="Message actions">
-                              <MoreHorizontal />
-                            </button>
-                            {menuFor === m.id && (
-                              <div className={`tm-menu fm-menu ${mine ? "fm-menu--mine" : ""}`} role="menu">
+                          <button type="button" className={`tm-more ${menuFor === m.id ? "tm-more--open" : ""}`} onClick={(e) => openMenu(e.currentTarget, m.id)} aria-label="Message actions">
+                            <MoreHorizontal />
+                          </button>
+                          {/* Anchored to the whole row (the panel is narrow), lined up with the bubble's edge. */}
+                          {menuFor === m.id && (
+                              <div ref={menuRef} className={`tm-menu fm-menu ${mine ? "fm-menu--mine" : ""} ${menuUp ? "fm-menu--up" : ""}`} role="menu">
                                 <div className="tm-menu-emojis">
                                   {QUICK_REACTIONS.map((e) => (
                                     <button key={e} type="button" onClick={() => void react(m, e)} className="tm-emoji" aria-label={`React ${e}`}>
@@ -715,8 +729,7 @@ export function FloatingMessenger() {
                                   {important.ids.has(m.id) ? "Unmark as important" : "Mark as important"}
                                 </button>
                               </div>
-                            )}
-                          </div>
+                          )}
                         </div>
                         {(reactions.get(m.id) ?? []).length > 0 && (
                           <div className="tm-reactions">

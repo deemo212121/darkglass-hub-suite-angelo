@@ -14702,9 +14702,10 @@ button.home-attn:focus-visible { outline: 2px solid var(--tone); outline-offset:
   border-radius: 10px; border-left: 3px solid var(--color-primary);
   background: color-mix(in oklab, var(--color-primary) 8%, var(--color-panel));
 }
-/* Floating messenger: the ⋯ menu opens under the message (the panel is narrow). */
+/* Floating messenger: the ⋯ menu opens under the message row (the panel is narrow), lined up with the bubble's edge — above it near the bottom of the list. */
 .fm-menu { top: calc(100% + 4px); left: 0; right: auto; transform: none; }
 .fm-menu--mine { left: auto; right: 0; }
+.fm-menu--up { top: auto; bottom: calc(100% + 4px); }
 .fm-msg .tm-more { width: 1.5rem; height: 1.5rem; }
 .fm-msg .tm-reactions { margin-top: 0.2rem; }
 .fm-forward { border-top: 1px solid var(--color-panel-border); background: var(--color-card); }
