@@ -9,16 +9,18 @@
  * part before placing a new PO.
  *
  * Wired to the `truck_stock` table via src/lib/supabase/truckStock.ts.
+ * Import / Export files: src/lib/truckStockFile.ts + TruckStockImportModal.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Plus, Pencil, Trash2, Save, X, Upload, ArrowRightLeft } from "lucide-react";
+import { Plus, Pencil, Trash2, Save, X, Upload, Download, ChevronDown, ArrowRightLeft } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import {
   getTruckStock,
   upsertTruckStockRow,
   deleteTruckStockRow,
+  deleteTruckStockRows,
   bulkUpsertTruckStock,
   decrementTruckStock,
   type TruckStockRow,
@@ -27,8 +29,17 @@ import {
 import { createTruckStockTransferRequest } from "@/lib/supabase/truckStockTransfers";
 import { notifyPartsManagerOfTransferRequest } from "@/lib/truckStockNotify";
 import { getLocations, type LocationRow } from "@/lib/supabase/locationManagement";
-import { resolveTruckStockBranch } from "@/lib/truckStockBranchMap";
 import { getPartTransactionsByPartNo, type PartUsageRow } from "@/lib/supabase/tickets";
+import { exportToCSV } from "@/lib/csvExport";
+import {
+  readTruckStockFile,
+  parseTruckStockTables,
+  downloadTruckStockXlsx,
+  TRUCK_STOCK_EXPORT_HEADERS,
+  type ParsedImport,
+} from "@/lib/truckStockFile";
+import { TruckStockImportModal } from "@/components/TruckStockImportModal";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 const PAGE_SIZE_OPTIONS = [25, 50, 75, 100, 125] as const;
 
@@ -83,9 +94,10 @@ export function TruckStockPanel() {
   const [pageSize, setPageSize] = useState<number | "all">(100);
   const [currentPage, setCurrentPage] = useState(1);
   const [draft, setDraft] = useState<TruckStockRow | null>(null);
-  const [importBusy, setImportBusy] = useState(false);
-  const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
-  const [importResult, setImportResult] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [readingFile, setReadingFile] = useState(false);
+  const [importFile, setImportFile] = useState<{ name: string; parsed: ParsedImport } | null>(null);
+  const [importNote, setImportNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [usagePartNo, setUsagePartNo] = useState<string | null>(null);
   const [showTransferForm, setShowTransferForm] = useState(false);
 
@@ -211,44 +223,59 @@ export function TruckStockPanel() {
     }
   };
 
-  const handleImport = async () => {
-    if (!confirm(
-      "Import the company inventory workbook?\n\n" +
-      "This will bulk-load every Truck Stock part from the PROJECT A USAPP " +
-      "inventory spreadsheet across every branch. Existing rows are merged " +
-      "(quantities update) rather than duplicated.",
-    )) return;
-    setImportBusy(true);
-    setImportResult(null);
-    setImportProgress({ done: 0, total: 0 });
+  // Import: read the picked file (this page's export, the inventory workbook,
+  // or one tab of it as CSV), then show the preview — nothing is saved until
+  // the user confirms there.
+  const handleImportFile = async (file: File) => {
+    setImportNote(null);
+    setReadingFile(true);
     try {
-      const mod = await import("@/lib/truckStockSeed.json");
-      const rawSeed = (mod.default ?? mod) as Array<Omit<TruckStockRow, "id" | "updatedAt">>;
-      // Translate the spreadsheet's 2-3 letter branch codes (AV, ATL, BM,
-      // …) to the full city names from src/lib/locations.ts so the rows
-      // show up grouped under recognisable labels.
-      const seed = rawSeed.map((r) => ({
-        ...r,
-        branch: resolveTruckStockBranch(r.branch),
-      }));
-      setImportProgress({ done: 0, total: seed.length });
-      const { inserted, errors } = await bulkUpsertTruckStock(seed, {
-        chunkSize: 500,
-        onProgress: (done, total) => setImportProgress({ done, total }),
-      });
-      if (errors.length > 0) {
-        setImportResult(`Imported ${inserted} rows with ${errors.length} chunk error(s). First: ${errors[0]}`);
-      } else {
-        setImportResult(`Imported ${inserted} rows from the workbook.`);
+      const parsed = parseTruckStockTables(await readTruckStockFile(file));
+      if (parsed.parts.length === 0) {
+        setImportNote({ ok: false, text: `Nothing to import from ${file.name}: no Part # column or Truck Stock section found.` });
+        return;
       }
-      // Reload the page data so the imported rows show up.
-      const fresh = await getTruckStock();
-      setRows(fresh);
+      setImportFile({ name: file.name, parsed });
     } catch (err) {
-      setImportResult(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
+      setImportNote({ ok: false, text: `Couldn't read ${file.name}: ${err instanceof Error ? err.message : String(err)}` });
     } finally {
-      setImportBusy(false);
+      setReadingFile(false);
     }
+  };
+
+  const handleApplyImport = async (
+    save: { upserts: Array<Omit<TruckStockRow, "id" | "createdAt" | "updatedAt">>; removeIds: string[]; added: number; updated: number },
+    onProgress: (done: number, total: number) => void,
+  ) => {
+    const fileName = importFile?.name ?? "the file";
+    const { errors } = await bulkUpsertTruckStock(save.upserts, { chunkSize: 500, onProgress });
+    // Only remove once everything else saved, so a failed batch never leaves a branch emptier than the file.
+    if (errors.length === 0 && save.removeIds.length > 0) await deleteTruckStockRows(save.removeIds);
+    setRows(await getTruckStock());
+    setImportFile(null);
+    setImportNote(
+      errors.length > 0
+        ? { ok: false, text: `${fileName}: ${errors.length} batch(es) didn't save (${errors[0]})${save.removeIds.length ? "; nothing was removed" : ""}. Import it again to retry.` }
+        : { ok: true, text: `Imported ${fileName}: ${save.added} added, ${save.updated} updated${save.removeIds.length ? `, ${save.removeIds.length} removed` : ""}.` },
+    );
+  };
+
+  // Export: the rows the search and filters show, every page — same columns Import reads back.
+  const handleExport = (kind: "xlsx" | "csv") => {
+    const name = `truck_stock${branchFilter ? `_${branchFilter.replace(/[^A-Za-z0-9]+/g, "_")}` : ""}`;
+    const data = filteredRows.map((r) => [
+      r.branch,
+      r.partNo,
+      r.storageLocation,
+      r.description,
+      r.manufacturer,
+      r.quantity,
+      r.status === "in_use" ? "In Use" : "In Stock",
+      r.notes,
+      r.createdAt ? formatDateAdded(r.createdAt) : "",
+    ]);
+    if (kind === "csv") exportToCSV(name, TRUCK_STOCK_EXPORT_HEADERS, data);
+    else void downloadTruckStockXlsx(name, data).catch((err) => setImportNote({ ok: false, text: `Export failed: ${err instanceof Error ? err.message : String(err)}` }));
   };
 
   // Sends `qty` of an existing in-stock part from one branch to another —
@@ -289,7 +316,7 @@ export function TruckStockPanel() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
         <button
           type="button"
           onClick={() => setShowTransferForm(true)}
@@ -299,20 +326,48 @@ export function TruckStockPanel() {
         >
           <ArrowRightLeft className="h-4 w-4" /> Request Transfer
         </button>
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              disabled={loading || filteredRows.length === 0}
+              title="Download the rows shown (search and filters apply) — edit them and bring them back with Import"
+              className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/5 px-3 py-2 text-sm font-medium text-slate-200 hover:bg-white/10 disabled:opacity-40"
+            >
+              <Download className="h-4 w-4" /> Export <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[200px]">
+            <DropdownMenuItem onSelect={() => handleExport("xlsx")} className="cursor-pointer flex-col items-start gap-0">
+              Excel (.xlsx)
+              <span className="text-[11px] text-muted-foreground">Keeps long part numbers intact</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => handleExport("csv")} className="cursor-pointer">
+              CSV (.csv)
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <button
           type="button"
-          onClick={handleImport}
-          disabled={importBusy || busy}
-          title="Bulk-import the PROJECT A USAPP inventory workbook"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={readingFile || busy || loading}
+          title="Import a Truck Stock export, the PROJECT A USAPP inventory workbook, or one of its tabs saved as CSV — you'll see every change before anything is saved"
           className="inline-flex items-center gap-1 rounded-md border border-amber-400/40 bg-amber-500/15 px-3 py-2 text-sm font-medium text-amber-200 hover:bg-amber-500/25 disabled:opacity-40"
         >
-          <Upload className="h-4 w-4" />
-          {importBusy
-            ? importProgress
-              ? `Importing… ${importProgress.done}/${importProgress.total}`
-              : "Importing…"
-            : "Import workbook"}
+          <Upload className="h-4 w-4" /> {readingFile ? "Reading…" : "Import"}
         </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv,.xlsx,.xls,text/csv"
+          className="hidden"
+          aria-label="Truck Stock import file"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) void handleImportFile(file);
+          }}
+        />
         <button
           type="button"
           onClick={() => setDraft(emptyDraft())}
@@ -323,9 +378,12 @@ export function TruckStockPanel() {
         </button>
       </div>
 
-      {importResult ? (
-          <div className="rounded border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
-            {importResult}
+      {importNote ? (
+          <div className={`flex items-start justify-between gap-3 rounded border px-3 py-2 text-xs ${importNote.ok ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-100" : "border-rose-500/40 bg-rose-500/10 text-rose-200"}`}>
+            <span>{importNote.text}</span>
+            <button type="button" onClick={() => setImportNote(null)} className="rounded p-0.5 opacity-70 hover:opacity-100" aria-label="Dismiss">
+              <X className="h-3.5 w-3.5" />
+            </button>
           </div>
         ) : null}
 
@@ -410,7 +468,7 @@ export function TruckStockPanel() {
           </div>
         ) : groupedByBranch.length === 0 ? (
           <div className="rounded border border-white/10 bg-white/5 p-6 text-center text-sm text-slate-400">
-            No stock rows yet. Click "Add stock" to register the first part.
+            No stock rows yet. Click "Add stock" to register the first part, or Import a file.
           </div>
         ) : (
           groupedByBranch.map(([branch, branchRows]) => (
@@ -463,6 +521,17 @@ export function TruckStockPanel() {
             busy={busy}
             onSubmit={handleRequestTransfer}
             onClose={() => setShowTransferForm(false)}
+          />
+        ) : null}
+
+        {importFile ? (
+          <TruckStockImportModal
+            fileName={importFile.name}
+            parsed={importFile.parsed}
+            existing={rows}
+            branchOptions={branchOptions}
+            onApply={handleApplyImport}
+            onClose={() => setImportFile(null)}
           />
         ) : null}
     </div>

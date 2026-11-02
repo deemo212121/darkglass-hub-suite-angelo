@@ -130,6 +130,15 @@ export async function deleteTruckStockRow(id: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+/** Deletes many rows (an import's "remove parts that aren't in the file"), 200 ids per request. */
+export async function deleteTruckStockRows(ids: string[]): Promise<void> {
+  const valid = ids.filter((id) => /^[0-9a-f-]{36}$/i.test(id));
+  for (let i = 0; i < valid.length; i += 200) {
+    const { error } = await supabase.from("truck_stock").delete().in("id", valid.slice(i, i + 200));
+    if (error) throw new Error(error.message);
+  }
+}
+
 /**
  * Find in-house stock for a specific part number across all branches.
  *
@@ -157,13 +166,12 @@ export async function findTruckStockForPart(partNo: string): Promise<TruckStockR
 
 
 /**
- * Bulk insert / update truck_stock rows in chunks. Used by the
- * "Import workbook" button on the Truck Stock page to load 7k+ rows from
- * the parsed inventory spreadsheet.
+ * Bulk insert / update truck_stock rows in chunks. Used by the Import
+ * button on the Truck Stock page (src/lib/truckStockFile.ts plans the rows).
  *
- * Uses Postgres upsert on (company_id, branch, part_no) so re-running the
- * import bumps quantities for existing rows instead of erroring on the
- * unique constraint.
+ * Uses Postgres upsert on (company_id, branch, part_no) so a row that
+ * already exists is overwritten with the given values instead of erroring
+ * on the unique constraint.
  */
 export async function bulkUpsertTruckStock(
   rows: Array<Omit<TruckStockRow, "id" | "updatedAt">>,
