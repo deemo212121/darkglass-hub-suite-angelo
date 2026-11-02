@@ -102,6 +102,7 @@ import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, linkPayrollDis
 import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { perCutoffSalary, getSalaryHistory, mixedPeriodFixedPay, FIXED_WORKING_DAYS_PER_CUTOFF, type MixedPeriodFixedPay } from "@/lib/supabase/salary";
+import { stateMinWageOn } from "@/lib/stateMinWage";
 import { getPayrollReviewMarks, markPayrollReviewed, clearPayrollReviewMark, type PayrollReviewMark } from "@/lib/supabase/payrollReviewMarks";
 import { cents, centsSummaryTotal, groupCustomPayLines } from "@/lib/payRounding";
 import { getPayrollAdjustmentsForPeriod, payrollAdjustmentsEligible, resolveAdjustmentLines, sumPayrollAdjustments, type PayrollAdjustment } from "@/lib/supabase/payrollAdjustments";
@@ -235,6 +236,8 @@ interface TimecardEntry {
   meal_start: string | null;
   meal_end: string | null;
   status: string;
+  /** The state the day was worked in — the trainee $100 check prices the day at that state's minimum when it's higher. */
+  state?: string | null;
 }
 
 interface PayrollRun {
@@ -2013,7 +2016,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       for (let from = 0; ; from += PAGE_SIZE) {
         const { data, error } = await supabase
           .from("timecard_entries")
-          .select("profile_id,employee_id,work_date,check_in,check_out,meal_start,meal_end,status")
+          .select("profile_id,employee_id,work_date,check_in,check_out,meal_start,meal_end,status,state")
           .gte("work_date", genStart)
           .lte("work_date", genEnd)
           .order("id", { ascending: true })
@@ -2500,6 +2503,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // like any other day (techHourlyPayOtPremium), so the day's pay checked
     // against $100 includes that premium too — otherwise the guarantee would
     // top up pay the premium already covers.
+    //
+    // The day is priced at its state's minimum when that's higher than the
+    // company rate, the same check as the Tech Activity Report's own Trainee
+    // Daily Match. Pricing it at the bare company rate invented a shortfall
+    // the state floor match already pays (Ali Mahdi Azimi 10/11–10/24, $7.25
+    // in Missouri: $46.51 extra here, $317.56 on the report).
+    const stateByProfileDate = new Map<string, string>();
+    for (const e of timecardEntries) if (e.profile_id && e.state) stateByProfileDate.set(`${e.profile_id}|${e.work_date}`, e.state);
     const TRAINEE_DAILY_MATCH_TARGET = 100;
     function traineeDailyMatchFor(
       profileId: string,
@@ -2516,8 +2527,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         if (day.date > trainingEndDate) continue;
         const dayHours = day.regular + day.overtime;
         if (dayHours <= 0) continue;
-        const rate = hourlyRateOnDate(profileId, day.date, fallbackRate);
-        const actualDailyPay = dayHours * rate + day.overtime * weightedRate * 0.5;
+        const companyRate = hourlyRateOnDate(profileId, day.date, fallbackRate);
+        const floorRate = stateMinWageOn(stateByProfileDate.get(`${profileId}|${day.date}`), day.date);
+        const rate = floorRate != null ? Math.max(floorRate, companyRate) : companyRate;
+        const actualDailyPay = dayHours * rate + day.overtime * 0.5 * Math.max(rate, weightedRate);
         if (actualDailyPay < TRAINEE_DAILY_MATCH_TARGET) {
           match += TRAINEE_DAILY_MATCH_TARGET - actualDailyPay;
         }

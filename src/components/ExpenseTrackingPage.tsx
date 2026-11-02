@@ -72,16 +72,14 @@ const isFlashTechAllowance = (e: ExpenseRow) => e.reimbursementType === "Flash T
  */
 const isFlashTechViewExpense = (e: ExpenseRow) => !!e.flashTechTripId || e.category === "Hotel" || e.category === "Car Rental" || isFlashTechAllowance(e);
 
-// Car Rental pick-up / return (migration 0420) — "Nov 2 → Nov 7, 2026" and the number of days.
-const fmtRentalDate = (d: string, withYear: boolean) =>
-  new Date(d + "T00:00:00").toLocaleDateString("en-US", withYear ? { month: "short", day: "numeric", year: "numeric" } : { month: "short", day: "numeric" });
-const rentalLabel = (e: ExpenseRow): string => {
-  if (!e.pickupDate && !e.returnDate) return "";
-  if (e.pickupDate && e.returnDate) return fmtRentalDate(e.pickupDate, false) + " → " + fmtRentalDate(e.returnDate, true);
-  return e.pickupDate ? "Picked up " + fmtRentalDate(e.pickupDate, true) : "Returned " + fmtRentalDate(e.returnDate!, true);
-};
+// Car Rental pick-up / return (migration 0420) — the number of days, shown under the Return Date.
 const rentalDays = (e: ExpenseRow): number | null =>
   e.pickupDate && e.returnDate ? Math.max(0, Math.round((Date.parse(e.returnDate) - Date.parse(e.pickupDate)) / 86_400_000)) : null;
+// The Pick-up Date column: a Car Rental's pick-up date; any other expense (Hotel, Reimbursement…) has only its Date, shown here instead.
+const pickupOrDate = (e: ExpenseRow) => e.pickupDate || e.expenseDate || "";
+// When the record was added (YYYY-MM-DD like the Date column, local time), and the time under it.
+const createdDay = (e: ExpenseRow) => (e.createdAt ? localISODate(new Date(e.createdAt)) : "");
+const createdTime = (e: ExpenseRow) => (e.createdAt ? new Date(e.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "");
 
 export function ExpenseTrackingPage({
   mod,
@@ -231,13 +229,15 @@ export function ExpenseTrackingPage({
   const showStatus = !categoryOnly && (!flashTechOnly || scopedExpenses.some(isSelfFiledExpense));
   // Every column's value as its funnel filter sees it.
   const ALL_COLUMNS: { key: string; label: string; value: (e: ExpenseRow) => string }[] = [
+    { key: "created", label: "Date Created", value: (e) => createdDay(e) || "—" },
     { key: "employee", label: "Employee", value: (e) => profileName(e.profileId) },
     { key: "branch", label: "Branch", value: (e) => branchOf(e) },
     { key: "category", label: "Category", value: (e) => e.category || "" },
     // Gas / Food / Other on a Reimbursement Form (migration 0401). Every "Other — …" is one filter choice, "Other".
     { key: "type", label: "Type", value: (e) => e.reimbursementType || "—" },
     { key: "date", label: "Date", value: (e) => e.expenseDate || "" },
-    { key: "rental", label: "Pick-up / Return", value: (e) => rentalLabel(e) || "—" },
+    { key: "pickup", label: "Pick-up Date", value: (e) => pickupOrDate(e) || "—" },
+    { key: "return", label: "Return Date", value: (e) => e.returnDate || "—" },
     { key: "amount", label: "Amount", value: (e) => fmtMoney(e.amount) },
     { key: "description", label: "Description", value: (e) => e.description || "" },
     { key: "sentBy", label: "Sent By", value: (e) => (e.createdBy ? profileName(e.createdBy) : "") },
@@ -245,9 +245,14 @@ export function ExpenseTrackingPage({
     { key: "reviewer", label: "Approved / Rejected By", value: (e) => reviewerName(e) },
     { key: "receipt", label: "Receipt", value: (e) => (receiptCount(e) ? "Has receipt" : "No receipt") },
   ];
-  // Pick-up / Return only when the view has Car Rentals in it.
+  // Pick-up Date / Return Date only when the view has Car Rentals in it.
   const showRental = scopedExpenses.some((e) => e.category === "Car Rental");
-  const COLUMNS = ALL_COLUMNS.filter((c) => (showStatus || (c.key !== "status" && c.key !== "reviewer")) && (showRental || c.key !== "rental"));
+  // A list with Car Rentals in it shows Pick-up Date / Return Date instead of Date (a Car Rental's Date is its
+  // pick-up date; the other rows' Date shows under Pick-up Date). Lists without Car Rentals keep the Date.
+  const hideDate = showRental || categoryOnly === "Car Rental" || (!!flashTechOnly && flashTechView === "carRental");
+  const COLUMNS = ALL_COLUMNS.filter(
+    (c) => (showStatus || (c.key !== "status" && c.key !== "reviewer")) && (showRental || (c.key !== "pickup" && c.key !== "return")) && !(hideDate && c.key === "date")
+  );
   const matchesSearch = (e: ExpenseRow) =>
     !search || `${profileName(e.profileId)} ${e.createdBy ? profileName(e.createdBy) : ""} ${e.description}`.toLowerCase().includes(search.toLowerCase());
   const matchesColumns = (e: ExpenseRow, skipKey?: string) =>
@@ -258,7 +263,7 @@ export function ExpenseTrackingPage({
   const columnOptions = (key: string) => {
     const col = COLUMNS.find((c) => c.key === key)!;
     const list = Array.from(new Set(rangeExpenses.filter((e) => matchesSearch(e) && matchesColumns(e, key)).map(col.value)));
-    if (key === "date") return list.sort().reverse();
+    if (key === "date" || key === "created" || key === "pickup" || key === "return") return list.sort().reverse();
     if (key === "amount") return list.sort((a, b) => Number(a.replace(/[$,]/g, "")) - Number(b.replace(/[$,]/g, "")));
     return list.sort((a, b) => a.localeCompare(b));
   };
@@ -363,13 +368,14 @@ export function ExpenseTrackingPage({
 
   const handleDownload = () => {
     const q = (s: string) => `"${s.replace(/"/g, '""')}"`;
-    let csv = "Employee,Category,Date,Pick-up,Return,Amount,Description,Status,Sent By,Approved / Rejected By,Reviewed On,Rejection Reason\n";
+    let csv = `Date Created,Employee,Category,${hideDate ? "" : "Date,"}Pick-up Date,Return Date,Amount,Description,Status,Sent By,Approved / Rejected By,Reviewed On,Rejection Reason\n`;
     filtered.forEach((e) => {
       csv += [
+        q(createdDay(e)),
         q(profileName(e.profileId)),
         q(e.category),
-        q(e.expenseDate),
-        q(e.pickupDate ?? ""),
+        ...(hideDate ? [] : [q(e.expenseDate)]),
+        q(hideDate ? pickupOrDate(e) : e.pickupDate ?? ""),
         q(e.returnDate ?? ""),
         q(e.amount.toFixed(2)),
         q(e.description),
@@ -636,6 +642,16 @@ export function ExpenseTrackingPage({
                   <tr><td colSpan={COLUMNS.length + 1} className="px-3 py-8 text-center text-slate-400">{selfFiledOnly && scopedExpenses.length === 0 ? "No employee has sent an expense request yet." : "No expense records match this filter."}</td></tr>
                 ) : filtered.map((e) => (
                   <tr key={e.id} className="border-b border-white/5 hover:bg-white/5 transition">
+                    <td className="px-2 py-1.5 whitespace-nowrap tabular-nums">
+                      {createdDay(e) ? (
+                        <>
+                          <div className="text-slate-300">{createdDay(e)}</div>
+                          <div className="text-[11px] text-slate-500">{createdTime(e)}</div>
+                        </>
+                      ) : (
+                        <span className="text-slate-600 text-xs">—</span>
+                      )}
+                    </td>
                     <td className="px-2 py-1.5 text-white font-medium whitespace-nowrap">{profileName(e.profileId)}</td>
                     <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{branchOf(e)}</td>
                     <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{e.category}</td>
@@ -648,19 +664,22 @@ export function ExpenseTrackingPage({
                         <span className="text-slate-600 text-xs">—</span>
                       )}
                     </td>
-                    <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap tabular-nums">{e.expenseDate}</td>
-                    {showRental && (
+                    {!hideDate && <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap tabular-nums">{e.expenseDate}</td>}
+                    {showRental && (<>
                       <td className="px-2 py-1.5 whitespace-nowrap tabular-nums">
-                        {rentalLabel(e) ? (
+                        {pickupOrDate(e) ? <span className="text-slate-200">{pickupOrDate(e)}</span> : <span className="text-slate-600 text-xs">—</span>}
+                      </td>
+                      <td className="px-2 py-1.5 whitespace-nowrap tabular-nums">
+                        {e.returnDate ? (
                           <>
-                            <div className="text-slate-200">{rentalLabel(e)}</div>
+                            <div className="text-slate-200">{e.returnDate}</div>
                             {rentalDays(e) != null && <div className="text-[11px] text-slate-500">{rentalDays(e)} day{rentalDays(e) === 1 ? "" : "s"}</div>}
                           </>
                         ) : (
                           <span className="text-slate-600 text-xs">—</span>
                         )}
                       </td>
-                    )}
+                    </>)}
                     <td className="px-2 py-1.5 text-right text-slate-200 font-mono">{fmtMoney(e.amount)}</td>
                     <td className="px-2 py-1.5 text-slate-400 w-[260px] max-w-[260px] whitespace-normal">
                       {e.description ? (

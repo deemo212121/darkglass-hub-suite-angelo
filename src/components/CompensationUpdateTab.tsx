@@ -38,6 +38,7 @@ import {
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getAppUrl } from "@/lib/appUrl";
+import { isCompletedPaper, canViewCompletedPapers } from "@/lib/completedPapers";
 import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
@@ -86,7 +87,9 @@ function withHrSignerName(data: CompensationUpdateFormData, hrName: string): Com
 }
 
 export function CompensationUpdateTab() {
-  const { uid, displayName, companyId } = useAuth();
+  const { uid, displayName, companyId, role, extraRoles } = useAuth();
+  // Completed papers: no Delete, and only HR Paperworks' named people + Super Admin open them (completedPapers.ts).
+  const canViewCompleted = canViewCompletedPapers({ uid, companyId, role, extraRoles });
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [docs, setDocs] = useState<SignableDocument[]>([]);
   const [loading, setLoading] = useState(true);
@@ -431,6 +434,7 @@ export function CompensationUpdateTab() {
               const data = doc.formData as CompensationUpdateFormData;
               const busy = busyId === doc.id;
               const open = doc.status === "pending_signature" || doc.status === "signed";
+              const canView = canViewCompleted || !isCompletedPaper(doc);
               return (
                 <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5 align-top">
                   <td className="px-4 py-3 font-medium text-white">{data.employeeName || "—"}</td>
@@ -453,10 +457,12 @@ export function CompensationUpdateTab() {
                   <td className="px-4 py-3 text-slate-300 whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap items-center gap-1.5">
+                      {canView && (
                       <button type="button" onClick={() => setViewDoc(doc)} className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs font-semibold inline-flex items-center gap-1">
                         <Eye className="h-3 w-3" /> View
                       </button>
-                      {doc.pdfUrl && (
+                      )}
+                      {doc.pdfUrl && canView && (
                         <button type="button" onClick={() => downloadSignableDocumentPdf(doc.pdfUrl!, `Promotion Paper and Wage Increase - ${data.employeeName}.pdf`)} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold inline-flex items-center gap-1">
                           <Download className="h-3 w-3" /> PDF
                         </button>
@@ -481,9 +487,11 @@ export function CompensationUpdateTab() {
                           <XCircle className="h-3 w-3" /> Cancel
                         </button>
                       )}
+                      {!isCompletedPaper(doc) && (
                       <button type="button" onClick={() => handleDelete(doc)} disabled={busy} title="Delete" className="p-1 text-red-400 hover:text-red-300 disabled:opacity-50">
                         <Trash2 className="h-4 w-4" />
                       </button>
+                      )}
                     </div>
                   </td>
                 </tr>

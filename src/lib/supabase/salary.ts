@@ -182,7 +182,7 @@ export function perCutoffSalary(annualSalary: number, isPH: boolean = false): nu
 export const FIXED_WORKING_DAYS_PER_CUTOFF = 10;
 
 export interface MixedPeriodFixedPay {
-  /** Days worked while on the fixed salary. */
+  /** Weekdays (Mon–Fri) worked while on the fixed salary — weekends don't count. */
   fixedDays: number;
   /** Per-cutoff salary ÷ FIXED_WORKING_DAYS_PER_CUTOFF. */
   dailyRate: number;
@@ -197,6 +197,9 @@ export interface MixedPeriodFixedPay {
  * salary: the hourly days are paid by the hour (the caller's own day-by-day
  * rate pay, which already pays a fixed day $0), and the fixed days pro rata —
  * per-cutoff ÷ 10 × fixed days worked, capped at the full per-cutoff amount.
+ * Only Monday–Friday counts as a fixed day: a salaried person isn't paid
+ * extra for a weekend (a full-period fixed salary isn't either), so hourly
+ * weekdays + fixed weekdays never pay more than the cutoff's 10 days.
  * Same ÷ 10 rule as a deactivated fixed employee. Returns null when every
  * day of the period has the same pay type (no split — existing rules apply).
  */
@@ -221,6 +224,9 @@ export function mixedPeriodFixedPay(
   let perCutoff = 0;
   for (const date of workedDates) {
     if (date < periodStart || date > periodEnd) continue;
+    const [wy, wm, wd] = date.split("-").map(Number);
+    const weekday = new Date(Date.UTC(wy, wm - 1, wd)).getUTCDay();
+    if (weekday === 0 || weekday === 6) continue;
     const comp = compOn(date);
     if (comp?.type !== "fixed" || !comp.annualSalary) continue;
     const pc = perCutoffSalary(comp.annualSalary, isPH);

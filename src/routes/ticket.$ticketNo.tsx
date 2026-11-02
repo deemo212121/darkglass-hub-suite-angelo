@@ -1919,17 +1919,19 @@ function TicketDetailsPage() {
     // Sync Status, Claim List) — never on a visit, whose status still says
     // e.g. CL-Ready to Complete. Opening a claimed ticket used to knock it
     // back to that (26001513643DF, Paid and data-closed, went back to Ready
-    // to Complete when opened — 72 times since July). Only a visit logged
-    // after the claim status was set moves it; the time is read fresh, since
-    // this page may have just set the status itself.
-    const isClaimStage = (s: string | undefined) => /^cl-(claimed|data[- ]closed)$/i.test(String(s ?? "").trim());
+    // to Complete when opened — 72 times since July). CL-Cancelled too, when
+    // it's set on the ticket (Import Bulk Tickets): 26001610215DF, cancelled
+    // by the 10/30 import, went back to OP-Reschedule Follow up when opened.
+    // Only a visit logged after the status was set moves it; the time is
+    // read fresh, since this page may have just set the status itself.
+    const isTicketSetStatus = (s: string | undefined) => /^cl-(claimed|data[- ]closed|cancelled)$/i.test(String(s ?? "").trim());
     (async () => {
       try {
-        if (isClaimStage(staleStatus)) {
+        if (isTicketSetStatus(staleStatus)) {
           const fresh = await sbGetTicketByNumber(ticketNo).catch(() => null);
           const visitLoggedAt = Date.parse(latest.timestamp || "");
           const statusSetAt = Date.parse(fresh?.statusChangedAt || "");
-          if (!fresh || (isClaimStage(fresh.status) && !(visitLoggedAt > statusSetAt))) return;
+          if (!fresh || (isTicketSetStatus(fresh.status) && !(visitLoggedAt > statusSetAt))) return;
         }
         await sbUpdateTicketStatus(ticketNo, latestStatus);
         setTicketData((prev) => (prev ? { ...prev, status: latestStatus } : prev));

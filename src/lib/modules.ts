@@ -376,6 +376,17 @@ const accountingMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    // Bulk paystub upload (PaystubsPage, migration 0418) — each page matched
+    // to an employee, confirmed here, then shown on their Self-Service → My Files.
+    {
+      slug: "paystubs",
+      title: "Paystubs",
+      description: "Upload a pay run's paystubs in bulk — each one matched to its employee, checked, then sent to their My Files.",
+      custom: "paystubs" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
     // Same shortcut-copy pattern as HR's own Candidate Reviews tile.
     {
       slug: "candidate-reviews",

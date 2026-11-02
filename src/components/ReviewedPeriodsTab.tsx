@@ -12,6 +12,7 @@ import {
   type PayrollReviewBreakdown,
 } from "@/lib/supabase/payrollReviewBreakdowns";
 import { formatISODate } from "@/lib/localDate";
+import { getTechTaxLinesForPeriod, taxLineAmount, type TechTaxLine } from "@/lib/supabase/techTaxLines";
 
 /** A technician who can be added to the period by hand. */
 export interface ReviewedPeriodPerson {
@@ -110,6 +111,16 @@ export function ReviewedPeriodsTab({
     return actual ?? reviewBreakdownTotal(r);
   };
   const isActual = (r: PayrollReviewBreakdown) => actualReady && actualTotals.has(r.profileId);
+  // Total is NET pay — the Tech Activity Report's Net Pay After Tax: gross
+  // (totalOf) less the report's tax lines (MCWH / SSWH / FITW / SITW,
+  // migration 0395), each worked out the same way the report does.
+  const [taxLinesByProfile, setTaxLinesByProfile] = useState<Map<string, Pick<TechTaxLine, "label" | "mode" | "amount">[]>>(new Map());
+  const taxLinesOf = (r: PayrollReviewBreakdown) => {
+    const gross = totalOf(r);
+    return (taxLinesByProfile.get(r.profileId) ?? []).map((l) => ({ label: l.label || "Tax", amount: taxLineAmount(l, gross) }));
+  };
+  const taxesOf = (r: PayrollReviewBreakdown) => Math.round(taxLinesOf(r).reduce((s0, l) => s0 + l.amount, 0) * 100) / 100;
+  const netOf = (r: PayrollReviewBreakdown) => Math.round((totalOf(r) - taxesOf(r)) * 100) / 100;
   /** Actual total − what the saved columns add up to; null until the actual total is known. */
   const notInColumns = (r: PayrollReviewBreakdown): number | null => {
     if (!isActual(r)) return null;
@@ -156,7 +167,9 @@ export function ReviewedPeriodsTab({
     if (!validPeriod) { setRows([]); return; }
     setLoading(true);
     try {
-      setRows(await getPayrollReviewBreakdowns(periodStart, periodEnd));
+      const [list, taxes] = await Promise.all([getPayrollReviewBreakdowns(periodStart, periodEnd), getTechTaxLinesForPeriod(periodStart, periodEnd)]);
+      setRows(list);
+      setTaxLinesByProfile(taxes);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load reviewed periods.");
@@ -235,17 +248,18 @@ export function ReviewedPeriodsTab({
     const ExcelJS = await import("exceljs");
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Reviewed Period", { properties: { tabColor: { argb: "FF0F766E" } } });
-    const lastCol = COLUMNS.length + 4; // A name, B branch, C..K amounts, L not in columns, M total
+    const lastCol = COLUMNS.length + 6; // A name, B branch, C..K amounts, L not in columns, M gross, N taxes, O total (net)
     const colLetter = (i: number) => String.fromCharCode(64 + i);
     const fill = (argb: string) => ({ type: "pattern" as const, pattern: "solid" as const, fgColor: { argb } });
     const thin = { style: "thin" as const, color: { argb: "FFD9E1EC" } };
     const moneyFmt = '"$"#,##0.00;[Red]-"$"#,##0.00;"–"';
     // Header colour per column group: earnings / deductions / reimbursements / salary / total.
-    const groupColor = (key: keyof PayrollReviewAmounts | "notInColumns" | "total" | "name") =>
-      key === "deduction" || key === "pretaxInsurance" ? "FFB91C1C"
+    const groupColor = (key: keyof PayrollReviewAmounts | "notInColumns" | "gross" | "taxes" | "total" | "name") =>
+      key === "deduction" || key === "pretaxInsurance" || key === "taxes" ? "FFB91C1C"
         : key === "mileageOtherReimb" ? "FF6D28D9"
         : key === "salaryMatch" || key === "notInColumns" ? "FFB45309"
         : key === "total" ? "FF15803D"
+        : key === "gross" ? "FF334155"
         : key === "name" ? "FF1E3A5F"
         : "FF0F766E";
 
@@ -268,12 +282,14 @@ export function ReviewedPeriodsTab({
 
     // Column headers (label + its "Including …" notes in one wrapped cell)
     const headerRow = 4;
-    const headers: { text: string; key: keyof PayrollReviewAmounts | "notInColumns" | "total" | "name" }[] = [
+    const headers: { text: string; key: keyof PayrollReviewAmounts | "notInColumns" | "gross" | "taxes" | "total" | "name" }[] = [
       { text: "Technician", key: "name" },
       { text: "Branch", key: "name" },
       ...COLUMNS.map((c) => ({ text: [c.label, ...(c.sub ?? [])].join("\n"), key: c.key })),
-      { text: "Not in Columns\nTotal − columns", key: "notInColumns" },
-      { text: "Total\nTimecard + Tech Activity Report", key: "total" },
+      { text: "Not in Columns\nGross − columns", key: "notInColumns" },
+      { text: "Gross Pay\nTimecard + Tech Activity Report", key: "gross" },
+      { text: "(−) Taxes\nMCWH · SSWH · FITW · SITW", key: "taxes" },
+      { text: "Total\nNet pay (gross − taxes)", key: "total" },
     ];
     headers.forEach((h, i) => {
       const cell = ws.getCell(headerRow, i + 1);
@@ -290,8 +306,8 @@ export function ReviewedPeriodsTab({
     visible.forEach((r, i) => {
       const n = first + i;
       const row = ws.getRow(n);
-      // Total = the technician's actual pay (Payroll Gross Pay), as on the tab.
-      row.values = [nameOf(r), r.branch ?? "", ...COLUMNS.map((c) => r[c.key]), notInColumns(r) ?? 0, Math.round(totalOf(r) * 100) / 100];
+      // Gross = the technician's actual pay; Total = net after the report's tax lines, as on the tab.
+      row.values = [nameOf(r), r.branch ?? "", ...COLUMNS.map((c) => r[c.key]), notInColumns(r) ?? 0, Math.round(totalOf(r) * 100) / 100, taxesOf(r), netOf(r)];
       row.height = 18;
       for (let c = 1; c <= lastCol; c++) {
         const cell = row.getCell(c);
@@ -305,6 +321,7 @@ export function ReviewedPeriodsTab({
         const cell = row.getCell(COLUMNS.findIndex((c) => c.key === key) + 3);
         cell.font = { name: "Calibri", size: 11, color: { argb: "FFB91C1C" } };
       }
+      row.getCell(lastCol - 1).font = { name: "Calibri", size: 11, color: { argb: "FFB91C1C" } };
       row.getCell(lastCol).font = { name: "Calibri", size: 11, bold: true, color: { argb: "FF15803D" } };
       row.getCell(lastCol).fill = fill(i % 2 ? "FFE8F5EC" : "FFF0FAF3");
     });
@@ -454,20 +471,28 @@ export function ReviewedPeriodsTab({
               ))}
               <th className="text-right px-2 py-1.5 font-semibold align-top leading-tight max-w-[92px]">
                 Not in Columns
-                <div className="font-normal text-[9px] text-slate-500">Total − columns</div>
+                <div className="font-normal text-[9px] text-slate-500">Gross − columns</div>
+              </th>
+              <th className="text-right px-2 py-1.5 font-semibold align-top leading-tight">
+                Gross Pay
+                <div className="font-normal text-[9px] text-slate-500">Timecard + Tech Activity Report</div>
+              </th>
+              <th className="text-right px-2 py-1.5 font-semibold align-top leading-tight">
+                (−) Taxes
+                <div className="font-normal text-[9px] text-slate-500">MCWH · SSWH · FITW · SITW</div>
               </th>
               <th className="text-right px-2 py-1.5 font-semibold align-top leading-tight">
                 Total
-                <div className="font-normal text-[9px] text-slate-500">Timecard + Tech Activity Report</div>
+                <div className="font-normal text-[9px] text-slate-500">Net pay (gross − taxes)</div>
               </th>
               <th className="px-1 py-1.5" />
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={COLUMNS.length + 5} className="px-3 py-6 text-center text-slate-400"><Loader2 className="inline h-4 w-4 animate-spin mr-2" />Loading…</td></tr>
+              <tr><td colSpan={COLUMNS.length + 7} className="px-3 py-6 text-center text-slate-400"><Loader2 className="inline h-4 w-4 animate-spin mr-2" />Loading…</td></tr>
             ) : visible.length === 0 ? (
-              <tr><td colSpan={COLUMNS.length + 5} className="px-3 py-6 text-center text-slate-400">No technicians reviewed for this period yet. Mark one Done in the Payroll tab, or add one above.</td></tr>
+              <tr><td colSpan={COLUMNS.length + 7} className="px-3 py-6 text-center text-slate-400">No technicians reviewed for this period yet. Mark one Done in the Payroll tab, or add one above.</td></tr>
             ) : visible.map((r) => (
               <tr key={r.id} className="border-t border-white/5 hover:bg-white/[0.03]">
                 <td className="sticky left-0 z-10 bg-slate-900 px-2 py-1 text-white whitespace-nowrap">
@@ -507,7 +532,7 @@ export function ReviewedPeriodsTab({
                           ? `The columns were saved at Done; the timecard / Tech Activity Report has changed since:\n${changed.join("\n")}${canSync ? "\n\nClick ↻ to update the columns to these amounts." : ""}`
                           : diff !== 0
                           ? "Pay that has no column of its own."
-                          : "The columns add up to the total."
+                          : "The columns add up to the gross pay."
                       }
                     >
                       {diff == null ? (
@@ -532,14 +557,32 @@ export function ReviewedPeriodsTab({
                   );
                 })()}
                 <td
-                  className={`px-2 py-1 text-right font-semibold tabular-nums whitespace-nowrap ${isActual(r) ? "text-emerald-300" : "text-slate-400 italic"}`}
+                  className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${isActual(r) ? "text-slate-200" : "text-slate-400 italic"}`}
                   title={
                     isActual(r)
-                      ? "Actual pay from the timecard and Tech Activity Report (Payroll Gross Pay)."
-                      : "Sum of the columns — the actual total loads once this period finishes loading on the Payroll page."
+                      ? "Actual gross pay from the timecard and Tech Activity Report (its Total Payment)."
+                      : "Sum of the columns — the actual gross loads once this period finishes loading on the Payroll page."
                   }
                 >
                   {money(totalOf(r))}
+                </td>
+                {(() => {
+                  const lines = taxLinesOf(r);
+                  const taxes = taxesOf(r);
+                  return (
+                    <td
+                      className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${taxes > 0 ? "text-red-300" : "text-slate-500"}`}
+                      title={lines.length ? lines.map((l) => `${l.label}: ${money(l.amount)}`).join("\n") : "No tax lines on this technician's Tech Activity Report."}
+                    >
+                      {money(taxes)}
+                    </td>
+                  );
+                })()}
+                <td
+                  className={`px-2 py-1 text-right font-semibold tabular-nums whitespace-nowrap ${isActual(r) ? "text-emerald-300" : "text-slate-400 italic"}`}
+                  title="Net pay: gross pay − taxes — the Tech Activity Report's Net Pay After Tax."
+                >
+                  {money(netOf(r))}
                 </td>
                 <td className="px-1 py-1 text-right">
                   <button
@@ -562,7 +605,9 @@ export function ReviewedPeriodsTab({
                 <td className="bg-slate-900" />
                 {COLUMNS.map((c) => <td key={c.key} className="bg-slate-900 px-1 py-1.5 text-right tabular-nums whitespace-nowrap">{money(totals[c.key])}</td>)}
                 <td className="bg-slate-900 px-2 py-1.5 text-right tabular-nums text-amber-300 whitespace-nowrap">{money(visible.reduce((s0, r) => s0 + (notInColumns(r) ?? 0), 0))}</td>
-                <td className="bg-slate-900 px-2 py-1.5 text-right tabular-nums text-emerald-300 whitespace-nowrap">{money(visible.reduce((s0, r) => s0 + totalOf(r), 0))}</td>
+                <td className="bg-slate-900 px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{money(visible.reduce((s0, r) => s0 + totalOf(r), 0))}</td>
+                <td className="bg-slate-900 px-2 py-1.5 text-right tabular-nums text-red-300 whitespace-nowrap">{money(visible.reduce((s0, r) => s0 + taxesOf(r), 0))}</td>
+                <td className="bg-slate-900 px-2 py-1.5 text-right tabular-nums text-emerald-300 whitespace-nowrap">{money(visible.reduce((s0, r) => s0 + netOf(r), 0))}</td>
                 <td className="bg-slate-900" />
               </tr>
             </tfoot>
