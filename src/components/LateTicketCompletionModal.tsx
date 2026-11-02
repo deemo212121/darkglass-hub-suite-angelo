@@ -69,7 +69,7 @@ export function LateTicketCompletionModal() {
       if (status === "confirmed") {
         await notifyRequestReviewers({
           body: `Ticket ${row.ticketNo} under ${row.technicianName || "(unknown technician)"} (${formatPeriod(row)}) has been marked Claimed/Completed after the fact. Please verify and add to the next payroll.`,
-          linkTo: "/accounting-dashboard?tab=payroll",
+          linkTo: "/m/accounting/accounting-dashboard?tab=payroll",
           senderId: profileId,
           senderName: displayName || "Claims",
         });
@@ -115,7 +115,7 @@ export function LateTicketCompletionModal() {
             resolvedRows.length === 1
               ? `Ticket ${resolvedRows[0].ticketNo} under ${resolvedRows[0].technicianName || "(unknown technician)"} (${formatPeriod(resolvedRows[0])}) has been marked Claimed/Completed after the fact. Please verify and add to the next payroll.`
               : `${resolvedRows.length} tickets were marked Claimed/Completed after the fact (${preview}${resolvedRows.length > 10 ? ", …" : ""}). Please verify and add them to the next payroll.`,
-          linkTo: "/accounting-dashboard?tab=payroll",
+          linkTo: "/m/accounting/accounting-dashboard?tab=payroll",
           senderId: profileId,
           senderName: displayName || "Claims",
         });

@@ -1048,11 +1048,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // Disputes tab (a new dispute was submitted) — same ?tab= convention
   // Employee Self-Service/PartInventory.tsx already use. Ticket Time
   // Disputes' own notification (MobileTechApp.tsx's notifyRequestReviewers)
-  // uses the same convention.
+  // uses the same convention, and so does the Late ticket completion alert
+  // (LateTicketCompletionModal.tsx) → Payroll.
   const routeSearch = (useSearch({ strict: false }) as { tab?: string }) ?? {};
   useEffect(() => {
     if (routeSearch.tab === "payrollDisputes") setActiveTab("payrollDisputes");
     else if (routeSearch.tab === "ticketTimeDisputes") setActiveTab("ticketTimeDisputes");
+    else if (routeSearch.tab === "payroll") setActiveTab("payroll");
   }, [routeSearch.tab]);
 
   // Payroll Disputes tab — employee_requests rows with request_type

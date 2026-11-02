@@ -1500,7 +1500,8 @@ export function MobileTechApp() {
     if (lower.includes("pto-management")) { setView("timeoff"); return; }
     if (lower.includes("corrections")) { setCorrectionPrefillDate(null); setView("correction"); return; }
     if (lower.includes("tickettimedisputes") || lower.includes("ticket-time-disputes")) { setView("tickettimedispute"); return; }
-    if (lower.includes("payrolldisputes") || lower.includes("accounting-dashboard")) { setPayrollDisputePrefill(null); setView("payrolldispute"); return; }
+    // A Late ticket completion alert (?tab=payroll) isn't a dispute — nothing on mobile for it.
+    if (lower.includes("payrolldisputes") || (lower.includes("accounting-dashboard") && !lower.includes("tab=payroll"))) { setPayrollDisputePrefill(null); setView("payrolldispute"); return; }
     if (lower.includes("ticket-list") || lower.includes("/ticket/")) { setView(isSelfRole ? "tickets" : "roster"); return; }
   };
 

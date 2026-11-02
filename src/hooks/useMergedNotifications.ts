@@ -265,6 +265,16 @@ function bodyOverride(body?: string): { department: string; subject: string } | 
  * directly. Falls back to the module's own label, then "General", for
  * anything genuinely uncategorized.
  */
+/**
+ * Late ticket completion alerts (LateTicketCompletionModal.tsx) used to be
+ * stored with "/accounting-dashboard?tab=payroll", which isn't a route, so
+ * clicking one went nowhere. Those rows still carry it — send them to the
+ * real Accounting Dashboard page instead.
+ */
+function fixedLink(linkTo: string | null): string | null {
+  return linkTo?.startsWith("/accounting-dashboard") ? `/m/accounting${linkTo}` : linkTo;
+}
+
 function categoryFor(linkTo: string | null, kind?: AppNotification["kind"], body?: string): string {
   const override = bodyOverride(body);
   if (override) return override.department;
@@ -443,18 +453,21 @@ export function useMergedNotifications(options?: { limit?: number }) {
 
   const notifs: MergedNotif[] = useMemo(() => {
     const merged: MergedNotif[] = [
-      ...tableNotifs.map((n): MergedNotif => ({
-        id: `tbl-${n.id}`,
-        source: "table",
-        senderName: n.senderName,
-        body: n.body,
-        createdAt: n.createdAt,
-        isRead: n.isRead,
-        starred: n.starred,
-        linkTo: n.linkTo,
-        category: categoryFor(n.linkTo, undefined, n.body),
-        subject: subjectFor(n.linkTo, undefined, n.body),
-      })),
+      ...tableNotifs.map((n): MergedNotif => {
+        const linkTo = fixedLink(n.linkTo);
+        return {
+          id: `tbl-${n.id}`,
+          source: "table",
+          senderName: n.senderName,
+          body: n.body,
+          createdAt: n.createdAt,
+          isRead: n.isRead,
+          starred: n.starred,
+          linkTo,
+          category: categoryFor(linkTo, undefined, n.body),
+          subject: subjectFor(linkTo, undefined, n.body),
+        };
+      }),
       ...firestoreNotifs.map((n): MergedNotif => ({
         id: `fs-${n.id}`,
         source: "firestore",
