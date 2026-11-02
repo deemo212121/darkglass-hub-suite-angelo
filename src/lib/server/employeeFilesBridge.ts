@@ -1,13 +1,13 @@
 /**
  * Paystub PDFs (Accounting → Paystubs, Self-Service → My Files) in the
- * private Supabase Storage bucket "employee-files" (migration 0416), done
+ * private Supabase Storage bucket "employee-files" (migration 0418), done
  * server-side with the service key.
  *
  * The browser can't talk to Supabase Storage itself: Storage doesn't accept
  * the app's minted Supabase token the way the database does, so its RLS
  * sees no user and refuses every upload ("new row violates row-level
  * security policy") even though the same check passes in the database. So
- * this does the same checks the 0416 policies describe, from a verified
+ * this does the same checks the 0418 policies describe, from a verified
  * Firebase ID token:
  *   - upload / remove: an active Finance, HR, Admin or SuperAdmin (primary
  *     or extra role) of the company the path belongs to;

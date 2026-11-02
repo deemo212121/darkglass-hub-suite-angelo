@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0418 — Keep the Absent List's HR Status in step with leave requests.
+-- 0421 — Keep the Absent List's HR Status in step with leave requests.
 --
 -- A leave day lived in two places that never talked to each other: the
 -- leave request (pto_requests — what payroll pays) and HR's Absent List
@@ -21,7 +21,7 @@
 -- Also fixes existing marks that contradict an approved request (no new
 -- rows are created for past requests).
 --
--- Run once in the Supabase SQL Editor, after 0417.
+-- Run once in the Supabase SQL Editor, after 0420.
 -- =====================================================================
 
 create or replace function pto_type_hr_status(p_type text)

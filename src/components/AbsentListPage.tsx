@@ -678,7 +678,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     // transition (e.g. "Absent → Sick"), not just the new value in isolation.
     const previousHrNote = notes.find((n) => n.profileId === profileId && n.noteDate === noteDate)?.hrNote || "";
     // An approved leave request decides this day's pay and keeps its mark in
-    // step (migration 0418) — changing the mark alone doesn't change the pay.
+    // step (migration 0421) — changing the mark alone doesn't change the pay.
     const covering = ptoRequests.find((r) => r.profileId === profileId && r.status === "approved" && r.startDate <= noteDate && noteDate <= r.endDate);
     const coveringLabel = covering ? HR_STATUS_FOR_PTO_TYPE[covering.ptoType] : undefined;
     if (covering && coveringLabel && hrNote !== coveringLabel) {
