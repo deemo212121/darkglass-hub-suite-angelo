@@ -584,12 +584,15 @@ function ColumnFilter({
   options,
   selected,
   onChange,
+  flagged,
 }: {
   field: string;
   label: string;
   options: string[];
   selected: Set<string>;
   onChange: (next: Set<string>) => void;
+  /** Options to mark "Deactivated" (e.g. a manager whose own account is off). */
+  flagged?: Set<string>;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -719,6 +722,11 @@ function ColumnFilter({
                     className="accent-blue-500 h-3.5 w-3.5"
                   />
                   <span className="truncate">{opt || "(blank)"}</span>
+                  {flagged?.has(opt) && (
+                    <span className="ml-auto shrink-0 rounded border border-red-500/40 bg-red-500/10 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-red-300">
+                      Deactivated
+                    </span>
+                  )}
                 </label>
               );
             })}
@@ -998,11 +1006,23 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const columnOptions = useMemo(() => {
     const map: Record<string, string[]> = {};
     for (const field of UM_FILTERABLE_FIELDS) {
+      // Manager: only managers with at least one active person under them —
+      // someone whose people have all left drops out of the list.
+      const source = field === "manager" ? users.filter((r) => r.isActive !== false) : users;
       map[field] = Array.from(
-        new Set(users.map((r) => colValue(r, field)).filter(Boolean)),
+        new Set(source.map((r) => colValue(r, field)).filter(Boolean)),
       ).sort((a, b) => a.localeCompare(b));
     }
     return map;
+  }, [users]);
+
+  // Managers (by name) whose own account is deactivated while people still
+  // report to them — flagged in the Manager filter and column as a reminder
+  // to move those people to someone else.
+  const deactivatedManagers = useMemo(() => {
+    const activeNames = new Set(users.filter((u) => u.isActive !== false).map((u) => u.userName));
+    const gone = new Set(users.filter((u) => u.isActive === false && u.userName && !activeNames.has(u.userName)).map((u) => u.userName));
+    return new Set(users.filter((u) => u.isActive !== false && u.manager && gone.has(u.manager)).map((u) => u.manager as string));
   }, [users]);
 
   // manager is free text (matched against real profiles by display name —
@@ -1687,7 +1707,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                   <th className="px-2.5 py-2 text-left">
                     <span className="inline-flex items-center">Manager
                       <ColumnFilter field="manager" label="Manager" options={columnOptions["manager"] || []}
-                        selected={colFilters["manager"] || new Set()} onChange={(n) => setColFilter("manager", n)} />
+                        selected={colFilters["manager"] || new Set()} onChange={(n) => setColFilter("manager", n)} flagged={deactivatedManagers} />
                     </span>
                   </th>
                   <th className="px-2.5 py-2 text-left">
@@ -1732,7 +1752,11 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
                       <td className="px-2.5 py-2 align-top break-words"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={record.loginName}>{record.userName}</UserLink></td>
                       <td className="px-2.5 py-2 align-top break-words">{roleDisplay(record.type)}</td>
                       <td className="px-2.5 py-2 align-top break-words text-slate-300">{record.email || "—"}</td>
-                      <td className="px-2.5 py-2 align-top break-words"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={loginNameByDisplayName.get(record.manager) || record.manager || record.loginName}>{record.manager || "—"}</UserLink></td>
+                      <td className="px-2.5 py-2 align-top break-words"><UserLink moduleSlug={mod.slug} submoduleSlug={sub.slug} userId={loginNameByDisplayName.get(record.manager) || record.manager || record.loginName}>{record.manager || "—"}</UserLink>{record.manager && deactivatedManagers.has(record.manager) && (
+                        <span title="This manager's account is deactivated — assign this person a new manager" className="ml-1.5 inline-block rounded border border-red-500/40 bg-red-500/10 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-red-300 align-middle">
+                          Deactivated
+                        </span>
+                      )}</td>
                       <td className="px-2.5 py-2 align-top break-words text-slate-300">
                         {record.office}
                         {flashTrips.map((t) => (
