@@ -7,6 +7,7 @@ import { getTechCustomPayItems, type TechCustomPayItem } from "@/lib/supabase/te
 import { getPayrollNotesForPeriod, savePayrollNote, type PayrollNote } from "@/lib/supabase/payrollNotes";
 import { createNotification } from "@/lib/supabase/notifications";
 import { getTechTaxLinesForPeriod, taxLineAmount, type TechTaxLine } from "@/lib/supabase/techTaxLines";
+import { isPayPeriod as isBiweeklyPayPeriod } from "@/lib/payPeriods";
 
 export interface PayrollHistoryRun {
   id: string;
@@ -80,17 +81,10 @@ interface HistoryRow {
   totalPay: number | null;
 }
 
-// Pay periods run two weeks, Sunday through Saturday, on the cycle that
-// includes Sep 27 – Oct 10, 2026.
-const PAY_PERIOD_ANCHOR = Date.UTC(2026, 8, 27);
-const DAY_MS = 86_400_000;
+// Pay periods run two weeks, Sunday through Saturday — see payPeriods.ts.
 function isPayPeriod(key: string): boolean {
   const [start, end] = key.split("|");
-  const s = Date.parse(`${start}T00:00:00Z`);
-  const e = Date.parse(`${end}T00:00:00Z`);
-  if (Number.isNaN(s) || Number.isNaN(e)) return false;
-  const offsetDays = Math.round((s - PAY_PERIOD_ANCHOR) / DAY_MS);
-  return Math.round((e - s) / DAY_MS) === 13 && ((offsetDays % 14) + 14) % 14 === 0;
+  return isBiweeklyPayPeriod(start, end);
 }
 
 const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
