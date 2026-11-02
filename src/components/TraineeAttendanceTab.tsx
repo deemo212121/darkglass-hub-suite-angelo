@@ -235,15 +235,37 @@ export function TraineeAttendanceTab({
   // current manager_name (active account), else whoever was stamped on the day.
   const [remindingId, setRemindingId] = useState<string | null>(null);
   const [remindedIds, setRemindedIds] = useState<Set<string>>(new Set());
+  // manager_name is free text, so match loosely: case / extra spaces don't
+  // matter, and "Jerich Leonard Bolico" still finds an account named
+  // "Jerich Bolico" (same first and last name) when there's only one.
+  const normName = (s: string | null | undefined) => (s || "").trim().toLowerCase().replace(/\s+/g, " ");
   const managerIdFor = (entry: TraineeTimecardEntry): string | null => {
-    const name = (profileById.get(entry.profileId)?.manager_name || "").trim().toLowerCase();
-    const byName = name ? profiles.find((p) => p.is_active && (p.display_name || "").trim().toLowerCase() === name)?.id ?? null : null;
-    return byName ?? entry.managerId ?? null;
+    const name = normName(profileById.get(entry.profileId)?.manager_name);
+    if (name) {
+      const active = profiles.filter((p) => p.is_active);
+      const exact = active.find((p) => normName(p.display_name) === name);
+      if (exact) return exact.id;
+      const parts = name.split(" ");
+      if (parts.length >= 2) {
+        const [first, last] = [parts[0], parts[parts.length - 1]];
+        const loose = active.filter((p) => {
+          const n = normName(p.display_name).split(" ");
+          return n.length >= 2 && n[0] === first && n[n.length - 1] === last;
+        });
+        if (loose.length === 1) return loose[0].id;
+      }
+    }
+    return entry.managerId ?? null;
   };
   const remindManager = async (entry: TraineeTimecardEntry) => {
     const managerId = managerIdFor(entry);
     if (!managerId) {
-      toast.error("This trainee has no manager on file to remind.");
+      const name = profileById.get(entry.profileId)?.manager_name?.trim();
+      toast.error(
+        name
+          ? `No active account matches the manager "${name}" — check the trainee's Manager in their profile.`
+          : "This trainee has no manager on file to remind."
+      );
       return;
     }
     if (!myProfileId) {
