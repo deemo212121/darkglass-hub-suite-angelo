@@ -13,6 +13,8 @@
  *  - HR / Admin / Super Admin / Finance: company-wide pending PTO and time
  *    corrections, plus anyone over the monthly correction limit
  *    (Admin / HR / Super Admin).
+ *  - HR / Admin / Super Admin: people who finished every form on Staff Form
+ *    Checklist since this viewer last opened it.
  *  - Everyone: unread notifications and messages.
  *
  * Cached for a minute per person so moving between pages doesn't refetch.
@@ -39,8 +41,8 @@ import { getCoachingWaitingCount } from "@/lib/supabase/csrCoachingLogs";
 /** Corrections allowed per person per month (Exceeded → Time Corrections). */
 export const MAX_CORRECTIONS_PER_MONTH = 2;
 
-export type AttentionKind = "pto" | "sick" | "corrections" | "disputes" | "over-limit" | "coaching" | "notifications" | "messages";
-export type AttentionTone = "warn" | "alert" | "info";
+export type AttentionKind = "pto" | "sick" | "corrections" | "disputes" | "over-limit" | "coaching" | "forms-complete" | "notifications" | "messages";
+export type AttentionTone = "warn" | "alert" | "info" | "good";
 
 export interface AttentionItem {
   kind: AttentionKind;
@@ -65,6 +67,8 @@ export interface Attention {
 
 const COMPANY_WIDE_ROLES = new Set(["ADMIN", "SUPERADMIN", "SUPERSUPERADMIN", "HR", "FINANCE"]);
 const LIMIT_ROLES = new Set(["ADMIN", "HR", "SUPERADMIN"]);
+// Told when someone finishes every form on Staff Form Checklist.
+const FORMS_DONE_ROLES = new Set(["ADMIN", "HR", "SUPERADMIN", "SUPERSUPERADMIN"]);
 // Can be coached or coach on CSR → Coaching Log.
 const COACHING_ROLES = new Set(["CSR", "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER", "ADMIN", "SUPERADMIN"]);
 const CACHE_MS = 60_000;
@@ -232,6 +236,29 @@ async function compute(who: Who): Promise<Attention> {
     });
   }
 
+  // Staff Form Checklist: people who finished every form since this viewer last opened it.
+  const checklistPage = heldRoles.some((r) => FORMS_DONE_ROLES.has(r)) ? firstPage([["hr", "technician-form-checklist"]]) : null;
+  if (checklistPage) {
+    // Loaded on demand, like modules.ts above — it pulls in the form registries.
+    const { getStaffWhoFinishedAllForms, staffFormChecklistSeenAt, staffFormNoticePreviewOn } = await import("@/lib/staffFormChecklist");
+    const seenAt = staffFormChecklistSeenAt(uid);
+    let finished = (await getStaffWhoFinishedAllForms().catch(() => [])).filter((f) => f.finishedAt > seenAt);
+    // Local preview with nobody finished yet: one example so the card can be seen.
+    if (finished.length === 0 && staffFormNoticePreviewOn()) finished = [{ profileId: "example", name: "Example User (preview)", finishedAt: new Date().toISOString() }];
+    if (finished.length > 0) {
+      bump(checklistPage, finished.length);
+      const names = finished.slice(0, 5).map((f) => f.name).join(", ") + (finished.length > 5 ? `, +${finished.length - 5} more` : "");
+      items.push({
+        kind: "forms-complete",
+        count: finished.length,
+        label: finished.length === 1 ? "user completed all the forms" : "users completed all the forms",
+        tone: "good",
+        title: `Staff Form Checklist — ${names}`,
+        to: checklistPage,
+      });
+    }
+  }
+
   const unreadNotifications = notifications.filter((n) => !n.isRead).length;
   if (unreadNotifications > 0)
     items.push({ kind: "notifications", count: unreadNotifications, label: unreadNotifications === 1 ? "Unread notification" : "Unread notifications", tone: "info", href: "/notifications" });
@@ -277,6 +304,11 @@ export function useAttention(): Attention | null {
   }, [key]);
 
   return data;
+}
+
+/** Drop the cached counts so the next page that shows them refetches (e.g. after opening Staff Form Checklist). */
+export function clearAttentionCache(): void {
+  cache = null;
 }
 
 /** Red count badge text — "99+" past 99. */

@@ -7,7 +7,7 @@
  */
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
-import { Bell, CalendarClock, CheckCheck, ClipboardCheck, ClipboardEdit, Flag, HeartPulse, MessageCircle, PartyPopper, TicketCheck } from "lucide-react";
+import { Bell, BadgeCheck, CalendarClock, CheckCheck, ClipboardCheck, ClipboardEdit, Flag, HeartPulse, MessageCircle, PartyPopper, TicketCheck } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole } from "@/lib/roleLabels";
 import { useAttention, badgeText, type AttentionItem, type AttentionKind, type AttentionTone } from "@/lib/attention";
@@ -23,6 +23,7 @@ const ICONS: Record<AttentionKind | "parts-done", ReactNode> = {
   disputes: <TicketCheck />,
   "over-limit": <Flag />,
   coaching: <ClipboardCheck />,
+  "forms-complete": <BadgeCheck />,
   notifications: <Bell />,
   messages: <MessageCircle />,
   "parts-done": <CheckCheck />,

@@ -14093,6 +14093,7 @@ a.home-attn:focus-visible { outline: 2px solid var(--tone); outline-offset: 2px;
 .home-attn--warn { --tone: #f59e0b; }
 .home-attn--alert { --tone: #ef4444; }
 .home-attn--info { --tone: var(--color-primary); }
+.home-attn--good { --tone: #22c55e; }
 button.home-attn:hover {
   transform: translateY(-1px);
   border-color: color-mix(in oklab, var(--tone) 65%, transparent);

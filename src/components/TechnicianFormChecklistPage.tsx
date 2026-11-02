@@ -1,4 +1,3 @@
-import { brandOf, type FormBrand } from "@/lib/formBrand";
 /**
  * HR module -> Staff Form Checklist. Per-person live status of every
  * signable form for 5 tiers, each its own tab — pulled straight from
@@ -43,20 +42,13 @@ import { ManagerReviewPage, SUPPORTED_TYPES as EMPLOYER_SIGN_SUPPORTED_TYPES } f
 import { getCompanyUsers, getEmploymentStatusesByProfileIds, getMyProfileId, getUserStatusChanges, setProfileFrozen, type AccountStatusChange, type EmploymentStatusInfo, type ProfileRow } from "@/lib/supabase/users";
 import { getActiveFlashTechDestinationsByProfile, type ActiveFlashTechDestination } from "@/lib/supabase/flashTechTrips";
 import { formatISODate, localISODate } from "@/lib/localDate";
-import { isEligibleForTechnicianFormChecklist, isBmAndUpRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { getSignableDocumentsByTypes, getExistingActiveDocuments, createSignableDocument, updateSignableDocumentPdfUrl, confirmSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import {
   SIGNABLE_DOCUMENT_REGISTRY,
-  TECHNICIAN_FORM_TYPES,
-  NEW_TECHNICIAN_FORM_TYPES,
-  OFFICE_STAFF_US_FORM_TYPES,
-  PH_STAFF_FORM_TYPES,
-  MEXICO_STAFF_FORM_TYPES,
-  BM_AND_UP_FORM_TYPES,
   getDocumentReviewStatus,
   isTechnicianExemptFromForm,
   exemptionRowValueForToggle,
-  pickAuthoritativeDocument,
   isNewAutomationDoc,
   SHARED_OLD_NEW_AUTOMATION_TYPES,
   isOutdatedDocument,
@@ -70,206 +62,24 @@ import { getTechnicianFormExemptions, setTechnicianFormExemption } from "@/lib/s
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getAppUrl } from "@/lib/appUrl";
 import { onTabVisible } from "@/lib/pageVisibility";
-import { LOCATIONS_DATA } from "@/lib/zipCoverage";
-import { contractorAgreementCountryOf, CONTRACTOR_AGREEMENT_SHORT_TITLE, type ContractorAgreementCountry } from "@/lib/masterPhContractorAgreementFormTemplate";
 import { uploadW4Form } from "@/lib/firebase/storage";
 import { fillW4Pdf } from "@/lib/w4PdfFill";
 import type { W4FormData } from "@/lib/w4FormTemplate";
 import { CONTRACTOR_ADDENDUM_POSITION_LEVELS } from "@/lib/contractorAddendumFormTemplate";
+import {
+  CHECKLIST_TABS,
+  countsOnTab,
+  findLegacyIdSource,
+  formLabelOnTab,
+  latestDocsForTab,
+  markStaffFormChecklistSeen,
+  setStaffFormNoticePreview,
+  staffFormNoticePreviewOn,
+  tabProgress,
+  type ChecklistTabKey,
+} from "@/lib/staffFormChecklist";
+import { clearAttentionCache } from "@/lib/attention";
 
-// Same derivation ReportHRDaily.tsx's onboarding/attendance splits use for
-// "PH" vs "US" — there's no real country column, just branch membership in
-// the Philippines subset of LOCATIONS_DATA.
-const PH_BRANCH_NAMES = new Set(LOCATIONS_DATA.filter((l) => l.isPhilippines).map((l) => l.location));
-const isPhBranch = (u: ProfileRow) => PH_BRANCH_NAMES.has(u.assigned_branch || "");
-// Mexico Staff — the same idea: anyone assigned to the Mexico branch.
-const MX_BRANCH_NAMES = new Set(LOCATIONS_DATA.filter((l) => l.isMexico).map((l) => l.location));
-const isMxBranch = (u: ProfileRow) => MX_BRANCH_NAMES.has(u.assigned_branch || "");
-
-type ChecklistTabKey = "technician" | "newTechnician" | "officeStaffUs" | "officeStaffUsAhs" | "phStaff" | "ahsPhStaff" | "mexicoStaff" | "bmAndUp";
-
-/**
- * The AHS Forms PH forms that come in two versions — the original US In Home
- * Services one and the Admin Hub Solutions one (HR Paperworks → AHS Forms PH;
- * see lib/formBrand.ts). That tab sends these in their AHS version (its
- * `ahsFormTypes`); Office Staff (US) AHS has its own list.
- */
-const BRANDED_FORM_TYPES = new Set<SignableDocumentType>(["master_ph_contractor_agreement", "confidentiality_noncompete_agreement", "direct_deposit", "valid_id_form"]);
-/**
- * The ones that must be signed in the tab's own version to count — the
- * agreements naming the employer (Master PH Contractor Agreement, Master
- * Confidentiality, Master W-2 Office & Logistics). Everything else carries
- * over: either version of Direct Deposit / Valid ID counts on both PH Staff
- * and AHS Forms PH (like W-8BEN), and Office Staff (US) AHS shares every
- * other Office Staff (US) form.
- */
-const VERSION_REQUIRED_FORM_TYPES = new Set<SignableDocumentType>(["master_ph_contractor_agreement", "confidentiality_noncompete_agreement", "master_w2_office_agreement"]);
-/** What Office Staff (US) AHS sends in the Admin Hub Solutions version — only the two agreements; its other forms (Direct Deposit included) go out as usual. */
-const AHS_OFFICE_STAFF_US_FORM_TYPES = new Set<SignableDocumentType>(["master_w2_office_agreement", "confidentiality_noncompete_agreement"]);
-/** The AHS Forms PH checklist — the same forms as HR Paperworks' AHS Forms PH group. */
-const AHS_PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "confidentiality_noncompete_agreement", "w8ben", "direct_deposit", "valid_id_form"];
-
-interface ChecklistTabConfig {
-  key: ChecklistTabKey;
-  label: string;
-  formTypes: SignableDocumentType[];
-  isEligible: (u: ProfileRow) => boolean;
-  /** Plural noun used in "N technicians" / "No office staff found." messaging. */
-  noun: string;
-  /**
-   * Which formSource bucket this tab's SHARED_OLD_NEW_AUTOMATION_TYPES
-   * (w4/i9/direct_deposit/w8ben) should count — "old" for the original
-   * Technician tab (only pre-New-Automation-Forms submissions), "new" for
-   * every other tab (only submissions sent through their own "New
-   * Automation Forms" flow). A form type NOT in SHARED_OLD_NEW_AUTOMATION_TYPES
-   * (the Master Agreements, Contractor Addendum, W-9) ignores this — there's
-   * no old/new split for those yet, so every submission counts regardless.
-   */
-  formSourceBucket: "old" | "new";
-  /** Which version of the VERSION_REQUIRED_FORM_TYPES this tab counts; unset = any. */
-  brand?: FormBrand;
-  /** The forms this tab sends in their Admin Hub Solutions version (brand "ahs" tabs). */
-  ahsFormTypes?: ReadonlySet<SignableDocumentType>;
-  /** Which country version of the contractor agreement this tab counts and sends — Mexico Staff "mx"; unset = the Philippines one. */
-  country?: ContractorAgreementCountry;
-}
-
-/** Whether a copy counts on this tab: the agreements naming the employer in the tab's brand, the contractor agreement in its country. */
-function countsOnTab(d: Pick<SignableDocument, "documentType" | "formData">, config: ChecklistTabConfig): boolean {
-  if (config.brand && VERSION_REQUIRED_FORM_TYPES.has(d.documentType) && brandOf(d.formData) !== config.brand) return false;
-  if (d.documentType === "master_ph_contractor_agreement" && contractorAgreementCountryOf(d.formData) !== (config.country ?? "ph")) return false;
-  return true;
-}
-/** The form's name on this tab — the contractor agreement is the Master Mexico Contractor Agreement on Mexico Staff. */
-function formLabelOnTab(type: SignableDocumentType, config: ChecklistTabConfig): string {
-  if (type === "master_ph_contractor_agreement") return CONTRACTOR_AGREEMENT_SHORT_TITLE[config.country ?? "ph"];
-  return SIGNABLE_DOCUMENT_REGISTRY[type]?.label ?? type;
-}
-
-/**
- * Identity photos collected alongside a Master Agreement's own typed
- * fields (technicianIdDocuments.ts — private-bucket paths on the
- * document's formData, never a plaintext SSN column). Not part of the
- * signed PDF itself, so they need their own "view" links here rather than
- * riding along with the doc's pdfUrl-driven one above.
- */
-/**
- * SSN Card / Driver's License / Valid ID (their own standalone forms now —
- * see ssnCardFormTemplate.ts/driversLicenseFormTemplate.ts/
- * validIdFormTemplate.ts) can also be satisfied by an ID photo already on
- * file from the OLD Master Agreement that used to collect it inline
- * (technicianIdDocuments.ts's private-bucket paths). Someone who already
- * uploaded their license/SSN card/government ID through the old flow
- * shouldn't have to redo it just because the field moved to its own form —
- * this used to render as a separate "ID"/"License"/"SSN Card" sub-row
- * nested under the Master Agreement row; now it's folded straight into
- * whichever standalone row it satisfies instead (see findLegacyIdSource
- * below), so there's exactly one row per requirement, not two.
- */
-const LEGACY_ID_SOURCES: Partial<Record<SignableDocumentType, { fromType: SignableDocumentType; field: string }[]>> = {
-  ssn_card_form: [
-    { fromType: "master_w2_agreement", field: "ssnCardPhotoPath" },
-    { fromType: "master_w2_office_agreement", field: "ssnCardPhotoPath" },
-  ],
-  drivers_license_form: [
-    { fromType: "master_w2_agreement", field: "licensePhotoPath" },
-    { fromType: "master_w2_office_agreement", field: "licensePhotoPath" },
-  ],
-  valid_id_form: [{ fromType: "master_ph_contractor_agreement", field: "governmentIdPhotoPath" }],
-};
-
-/** The legacy Master Agreement doc + field satisfying `type`, if any — null when `type` has no legacy source or none of them have the photo on file. */
-function findLegacyIdSource(
-  type: SignableDocumentType,
-  docMap: Map<SignableDocumentType, SignableDocument | undefined>
-): { doc: SignableDocument; field: string } | null {
-  for (const src of LEGACY_ID_SOURCES[type] ?? []) {
-    const doc = docMap.get(src.fromType);
-    if (doc?.formData?.[src.field]) return { doc, field: src.field };
-  }
-  return null;
-}
-
-const CHECKLIST_TABS: ChecklistTabConfig[] = [
-  {
-    key: "technician",
-    label: "Technician",
-    formTypes: TECHNICIAN_FORM_TYPES,
-    isEligible: (u) => isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
-    noun: "technicians",
-    formSourceBucket: "old",
-  },
-  {
-    key: "newTechnician",
-    label: "New Technician",
-    formTypes: NEW_TECHNICIAN_FORM_TYPES,
-    isEligible: (u) => isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
-    noun: "technicians",
-    formSourceBucket: "new",
-  },
-  {
-    key: "officeStaffUs",
-    label: "Office Staff (US)",
-    formTypes: OFFICE_STAFF_US_FORM_TYPES,
-    isEligible: (u) => !isPhBranch(u) && !isMxBranch(u) && !isBmAndUpRole(u.role) && !isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
-    noun: "office staff",
-    formSourceBucket: "new",
-    // The US In Home Services agreements — AHS copies count on Office Staff (US) AHS instead.
-    brand: "usihs",
-  },
-  {
-    // Same people and forms as Office Staff (US); the Master W-2 Office &
-    // Logistics and Master Confidentiality agreements are their Admin Hub
-    // Solutions versions here, everything else carries over.
-    key: "officeStaffUsAhs",
-    label: "Office Staff (US) AHS",
-    formTypes: OFFICE_STAFF_US_FORM_TYPES,
-    isEligible: (u) => !isPhBranch(u) && !isMxBranch(u) && !isBmAndUpRole(u.role) && !isEligibleForTechnicianFormChecklist(u.role, u.extra_roles),
-    noun: "office staff",
-    formSourceBucket: "new",
-    brand: "ahs",
-    ahsFormTypes: AHS_OFFICE_STAFF_US_FORM_TYPES,
-  },
-  {
-    key: "phStaff",
-    label: "PH Staff",
-    formTypes: PH_STAFF_FORM_TYPES,
-    isEligible: (u) => isPhBranch(u),
-    noun: "PH staff",
-    formSourceBucket: "new",
-    // The US In Home Services set — AHS copies count on the AHS Forms PH tab instead.
-    brand: "usihs",
-  },
-  {
-    key: "ahsPhStaff",
-    label: "AHS Forms PH",
-    formTypes: AHS_PH_STAFF_FORM_TYPES,
-    isEligible: (u) => isPhBranch(u),
-    noun: "PH staff",
-    formSourceBucket: "new",
-    brand: "ahs",
-    ahsFormTypes: BRANDED_FORM_TYPES,
-  },
-  {
-    // Like PH Staff, with the Mexico version of the contractor agreement.
-    key: "mexicoStaff",
-    label: "Mexico Staff",
-    formTypes: MEXICO_STAFF_FORM_TYPES,
-    isEligible: (u) => isMxBranch(u),
-    noun: "Mexico staff",
-    formSourceBucket: "new",
-    brand: "usihs",
-    country: "mx",
-  },
-  {
-    key: "bmAndUp",
-    label: "BM, SBS, Tech Director, Tech Assistant Director",
-    formTypes: BM_AND_UP_FORM_TYPES,
-    isEligible: (u) => isBmAndUpRole(u.role),
-    noun: "management staff",
-    formSourceBucket: "new",
-  },
-];
 
 interface TechRow {
   profileId: string;
@@ -318,9 +128,6 @@ function leftBadgeFor(
   };
 }
 
-function isComplete(doc: SignableDocument | undefined, type: SignableDocumentType): boolean {
-  return getDocumentReviewStatus(type, doc) === "done";
-}
 
 // Optional "instant preview while refreshing" cache — same sessionStorage
 // pattern as TicketList.tsx/ReportHRDaily.tsx's own caches: always still
@@ -547,6 +354,15 @@ export function TechnicianFormChecklistPage({
     getMyProfileId(uid).then(setMyProfileId).catch(() => setMyProfileId(null));
   }, [uid]);
 
+  const [noticePreview, setNoticePreview] = useState(staffFormNoticePreviewOn);
+
+  // Opening the checklist clears Home's "finished all forms" card for this viewer.
+  useEffect(() => {
+    if (!uid) return;
+    markStaffFormChecklistSeen(uid);
+    clearAttentionCache();
+  }, [uid]);
+
   // The roster doesn't vary per tab — fetched once (and on manual Refresh),
   // not re-pulled every time the active tab changes.
   const [usersLoading, setUsersLoading] = useState(() => readCachedUsers() === null);
@@ -596,44 +412,7 @@ export function TechnicianFormChecklistPage({
         getTechnicianFormExemptions(activeConfig.formTypes),
       ]);
 
-      // Group every row per (person, documentType) — NOT just "keep the
-      // newest" (that let a re-sent, still-pending duplicate hide an
-      // earlier row the person had genuinely already signed/confirmed,
-      // making a completed form show as "Not sent" again). pickAuthoritativeDocument
-      // picks whichever row actually represents the best status reached.
-      //
-      // "person" here is formData.employeeId, NOT d.recipientId —
-      // recipientId is who currently needs to ACT on the document, and gets
-      // reassigned to whichever HR staffer completes the employer/
-      // countersign step. A fully confirmed two-party form's recipientId
-      // permanently points at that HR staffer, not the person, so grouping
-      // by recipientId made every one of these vanish from the checklist
-      // back to "Not sent" the moment it was actually finished.
-      // formData.employeeId is set once at creation and never changes, so
-      // it's the stable "whose form is this" identity.
-      const byKey = new Map<string, SignableDocument[]>();
-      for (const d of docs) {
-        const personId = (d.formData as Record<string, any> | undefined)?.employeeId || d.recipientId;
-        if (!personId) continue;
-        // Only w4/i9/direct_deposit/w8ben are actually shared between an
-        // old and a new tab — see SHARED_OLD_NEW_AUTOMATION_TYPES's doc
-        // comment. A doc of one of those types that isn't from this tab's
-        // own bucket doesn't count toward this tab's checklist at all —
-        // without this, e.g. New Technician's W-4 row showed "done" off an
-        // old-flow W-4 submission it never actually sent.
-        if (SHARED_OLD_NEW_AUTOMATION_TYPES.has(d.documentType) && isNewAutomationDoc(d) !== (activeConfig.formSourceBucket === "new")) continue;
-        // The Master PH Contractor Agreement counts on its own version's tab only (Direct Deposit / Valid ID carry over) — and its own country's.
-        if (!countsOnTab(d, activeConfig)) continue;
-        const key = `${personId}|${d.documentType}`;
-        const arr = byKey.get(key);
-        if (arr) arr.push(d);
-        else byKey.set(key, [d]);
-      }
-      const latest = new Map<string, SignableDocument>();
-      for (const [key, group] of byKey) {
-        const best = pickAuthoritativeDocument(group);
-        if (best) latest.set(key, best);
-      }
+      const latest = latestDocsForTab(docs, activeConfig);
 
       setLatestByKey(latest);
       setExemptions(exemptionRows);
@@ -684,23 +463,7 @@ export function TechnicianFormChecklistPage({
 
   const rows: TechRow[] = useMemo(() => {
     return allUsers.filter(activeConfig.isEligible).map((u) => {
-      // Two passes: docMap needs every one of this tab's form types filled
-      // in before findLegacyIdSource can look a type's legacy source up in
-      // it, regardless of which order formTypes lists them in.
-      const docMap = new Map<SignableDocumentType, SignableDocument | undefined>();
-      for (const type of activeConfig.formTypes) {
-        docMap.set(type, latestByKey.get(`${u.id}|${type}`));
-      }
-      const exempt = new Set<SignableDocumentType>();
-      let doneCount = 0;
-      for (const type of activeConfig.formTypes) {
-        const doc = docMap.get(type);
-        if (isTechnicianExemptFromForm(type, !!doc, exemptions.has(`${u.id}|${type}`))) {
-          exempt.add(type);
-        } else if (isComplete(doc, type) || findLegacyIdSource(type, docMap)) {
-          doneCount++;
-        }
-      }
+      const { docs: docMap, exempt, doneCount, applicableTotal } = tabProgress(u.id, activeConfig, latestByKey, exemptions);
       return {
         profileId: u.id,
         name: u.display_name || u.username || u.email || "Unnamed",
@@ -709,7 +472,7 @@ export function TechnicianFormChecklistPage({
         docs: docMap,
         exempt,
         doneCount,
-        applicableTotal: activeConfig.formTypes.length - exempt.size,
+        applicableTotal,
         frozen: u.frozen === true,
         isTrainee: u.employment_type === "trainee",
         isDeactivated: !u.is_active,
@@ -1187,6 +950,22 @@ export function TechnicianFormChecklistPage({
           Show Legacy Technician Checklist
           <Switch checked={showLegacyTechnicianTab} onCheckedChange={handleToggleLegacyTab} />
         </label>
+        {import.meta.env.DEV && (
+          <label
+            title="Local only — Home's 'completed all the forms' card lists everyone who has ever finished, so you can see it. Not shown on the live site."
+            className="flex items-center gap-2 rounded-md border border-dashed border-emerald-500/40 bg-emerald-500/5 px-3 py-1.5 text-xs font-semibold text-emerald-300 cursor-pointer"
+          >
+            Preview Home notice (local)
+            <Switch
+              checked={noticePreview}
+              onCheckedChange={(on) => {
+                setStaffFormNoticePreview(on);
+                setNoticePreview(on);
+                clearAttentionCache();
+              }}
+            />
+          </label>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-6">
