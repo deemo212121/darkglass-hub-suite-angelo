@@ -333,11 +333,14 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
         direct_deposit: { name: "Direct Deposit Authorization (AHS)", tab: "ahsDirectDeposit" },
         valid_id_form: { name: "Valid ID (AHS)", tab: "ahsValidId" },
       };
-      // The Mexico version of the contractor agreement (form_data.country = "mx", HR Paperworks → New Automation Forms → Mexico Staff) opens the Mexico tab.
-      const mxLabel = doc.document_type === "master_ph_contractor_agreement" && (doc.form_data as { country?: string } | null)?.country === "mx"
+      // The Mexico and US versions of the contractor agreement (form_data.country "mx" — HR Paperworks → New Automation Forms → Mexico Staff; "us" — AHS Forms US) open their own tabs.
+      const agreementCountry = doc.document_type === "master_ph_contractor_agreement" ? (doc.form_data as { country?: string } | null)?.country : undefined;
+      const countryLabel = agreementCountry === "mx"
         ? { name: "Master Mexico Contractor Agreement", tab: "mxContractorAgreement" }
+        : agreementCountry === "us"
+        ? { name: "Master US Contractor Agreement", tab: "usContractorAgreement" }
         : undefined;
-      const ahsLabel = mxLabel ?? ((doc.form_data as { brand?: string } | null)?.brand === "ahs" ? AHS_FORM_TABS[doc.document_type] : undefined);
+      const ahsLabel = countryLabel ?? ((doc.form_data as { brand?: string } | null)?.brand === "ahs" ? AHS_FORM_TABS[doc.document_type] : undefined);
       const docLabel = ahsLabel ?? DOC_TYPE_LABELS[doc.document_type] ?? DOC_TYPE_LABELS.warning_form;
       const notifyFields = {
         title: `Signed by ${doc.recipient_name ?? "recipient"}`,

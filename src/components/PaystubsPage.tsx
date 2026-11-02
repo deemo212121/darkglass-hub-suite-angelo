@@ -21,7 +21,7 @@ import {
 } from "@/lib/supabase/employeeFiles";
 
 /**
- * Accounting → Paystubs (migration 0416). Upload a pay run's check stubs in
+ * Accounting → Paystubs (migration 0418). Upload a pay run's check stubs in
  * bulk — one PDF with a page per employee, or several PDFs — and each page
  * is split off, its payee name read (OCR) and matched to an account. Nothing
  * reaches anyone until it's confirmed here: green matches start ticked,

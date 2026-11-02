@@ -2177,7 +2177,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         )}
 
         {/* My Files Tab — paystubs Accounting published from Accounting →
-            Paystubs (migration 0416); only this employee's own. */}
+            Paystubs (migration 0418); only this employee's own. */}
         {activeTab === "files" && <MyFilesTab profileId={myProfileId} />}
       </main>
 

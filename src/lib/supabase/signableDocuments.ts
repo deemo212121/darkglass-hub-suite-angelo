@@ -10,6 +10,7 @@ import {
   getDocumentReviewStatus,
   pickAuthoritativeDocument,
 } from "@/lib/signableDocumentRegistry";
+import { isCompletedPaper } from "@/lib/completedPapers";
 
 export type SignableDocumentType = "performance_bonus_policy" | "warning_form" | "w8ben" | "w4" | "w9" | "w4r" | "i9" | "wage_ack" | "car_iq_agreement" | "vehicle_agreement" | "employee_confidentiality" | "meal_rest_break" | "pto_ack" | "parts_responsibility" | "mileage_fuel" | "location_consent" | "damage" | "contractor_data" | "contractor_data_us" | "direct_deposit" | "promotion_form" | "action_plan_form" | "termination_form" | "substance_screening" | "flash_technician_travel" | "nda_form" | "vehicle_use_agreement" | "contractor_addendum" | "master_w2_agreement" | "master_w2_office_agreement" | "master_ph_contractor_agreement" | "master_w2_executive_agreement" | "confidentiality_noncompete_agreement" | "certificate_of_employment" | "ssn_card_form" | "drivers_license_form" | "valid_id_form" | "visit_exception_report" | "compensation_update";
 /** "executive" only applies to promotion_form documents (see migration 0166) — every other document type just never uses that slot. */
@@ -610,6 +611,8 @@ export async function cancelSignableDocument(id: string): Promise<void> {
 export async function deleteSignableDocument(id: string): Promise<void> {
   const doc = await getSignableDocument(id);
   if (!doc) throw new Error("Document not found.");
+  // HR Paperworks shows no Delete on a completed paper (completedPapers.ts) — refused here too, e.g. from a page opened before it completed.
+  if (isCompletedPaper(doc)) throw new Error("A completed paper can't be deleted.");
   if (doc.agentNoteId) {
     await deleteAgentNote(doc.agentNoteId).catch((err) => console.error("Failed to retract warning note on delete:", err));
   }

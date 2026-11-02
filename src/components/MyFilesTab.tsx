@@ -4,7 +4,7 @@ import { getEmployeeFileUrl, getMyEmployeeFiles, type EmployeeFileRow } from "@/
 
 /**
  * Employee Self-Service → My Files: the paystubs Accounting published to
- * this employee from Accounting → Paystubs (migration 0416), newest pay
+ * this employee from Accounting → Paystubs (migration 0418), newest pay
  * date first. RLS only ever returns the caller's own published files, and
  * each one opens through a short-lived signed link.
  */

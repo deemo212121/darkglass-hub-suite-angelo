@@ -14,10 +14,11 @@ import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, ChevronRight, Users, UserCheck, UserX, Clock, Loader2, Download } from "lucide-react";
 import { BrandedLoader } from "@/components/BrandedLoader";
+import { AppModal } from "@/components/ui-kit/AppModal";
+import { writeAttendanceWorkbook, FILL_GREEN, FILL_RED, FILL_AMBER, type AttendanceSheetSpec, type AttendanceTable } from "@/lib/attendanceReportWorkbook";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import * as XLSX from "xlsx";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
-import { getCompanyUsers, getFirstDeactivations, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsers, getSeparations, preloadSeparations, getHireDatesByProfileIds, type ProfileRow, type Separation } from "@/lib/supabase/users";
 import { getCompanyTimecardEntries, calcWorkedHours, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { toSeconds, ON_TIME_BUFFER_SECONDS, payGraceMinutesFor } from "@/lib/attendanceGrace";
@@ -57,7 +58,8 @@ const departmentRank = (name: string) => {
   const i = DEPARTMENTS.findIndex((d) => d.name === name);
   return i === -1 ? DEPARTMENTS.length : i;
 };
-import { getCompanyPtoRequests, type PtoRequestRow } from "@/lib/supabase/pto";
+import { getCompanyTraineeEntries, type TraineeTimecardEntry } from "@/lib/supabase/traineeTimecards";
+import { getCompanyPtoRequests, ptoYearWindow, ptoDaysUsed, ptoDaysPending, type PtoRequestRow } from "@/lib/supabase/pto";
 import { getCompanyTimecardCorrections, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { getAllAgentNotes, type CsrAgentNote } from "@/lib/supabase/csrAgentNotes";
 import { localISODate, todayISO } from "@/lib/localDate";
@@ -79,13 +81,31 @@ const EMPLOYEE_COLUMNS: { label: string; left?: boolean }[] = [
   { label: "Avg Hours / Day" },
   { label: "Days Absent" },
   { label: "Missing Time Out" },
-  { label: "Leave Days" },
+  { label: "PTO Left" },
   { label: "Correction Requests" },
   { label: "Approved" },
   { label: "Pending" },
   { label: "Rejected" },
   { label: "Warnings" },
 ];
+
+// Leave type names for the "on leave" breakdown.
+const LEAVE_TYPE_LABEL: Record<string, string> = {
+  vacation: "PTO",
+  sick: "Sick Leave",
+  personal: "Personal",
+  holiday: "Holiday",
+  unpaid: "Unpaid Leave",
+  bereavement: "Bereavement",
+};
+const LEAVE_TYPE_CLASS: Record<string, string> = {
+  vacation: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
+  sick: "border-sky-500/40 bg-sky-500/10 text-sky-300",
+  unpaid: "border-slate-400/40 bg-slate-500/10 text-slate-300",
+  bereavement: "border-violet-500/40 bg-violet-500/10 text-violet-300",
+};
+const leaveTypeLabel = (t: string) => LEAVE_TYPE_LABEL[t] ?? t.charAt(0).toUpperCase() + t.slice(1);
+const fmtShortDate = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
 const todayIso = () => todayISO();
 const daysAgoIso = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return localISODate(d); };
@@ -191,6 +211,8 @@ export function ReportAttendanceMonitoring({
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [entries, setEntries] = useState<CompanyTimecardEntry[]>([]);
   const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
+  // Trainees clock in on Trainee Attendance (trainee_timecard_entries), not the regular timecard.
+  const [traineeEntries, setTraineeEntries] = useState<TraineeTimecardEntry[]>([]);
   const [corrections, setCorrections] = useState<TimecardCorrectionRow[]>([]);
   const [notes, setNotes] = useState<CsrAgentNote[]>([]);
 
@@ -212,12 +234,13 @@ export function ReportAttendanceMonitoring({
       try {
         setLoading(true);
         setError(null);
-        const [companyUsers, tcEntries, pto, corr, allNotes] = await Promise.all([
+        const [companyUsers, tcEntries, pto, corr, allNotes, traineeRows] = await Promise.all([
           getCompanyUsers(),
           getCompanyTimecardEntries(dateFrom, dateTo),
           getCompanyPtoRequests(),
           getCompanyTimecardCorrections(),
           getAllAgentNotes().catch((err) => { console.error("Failed to load agent notes:", err); return []; }),
+          getCompanyTraineeEntries(dateFrom, dateTo).catch((err) => { console.error("Failed to load trainee timecards:", err); return [] as TraineeTimecardEntry[]; }),
         ]);
         if (cancelled) return;
         // Deactivated accounts are kept — shown with their deactivation date
@@ -227,6 +250,7 @@ export function ReportAttendanceMonitoring({
         setPtoRequests(pto);
         setCorrections(corr);
         setNotes(allNotes);
+        setTraineeEntries(traineeRows);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load Attendance Monitoring Report.");
       } finally {
@@ -236,14 +260,20 @@ export function ReportAttendanceMonitoring({
     return () => { cancelled = true; };
   }, [dateFrom, dateTo]);
 
-  // The first time each deactivated account was deactivated (User
-  // Management's Activity Log) — the day it took effect when one was picked,
-  // else the day it was done. From that day on they aren't counted absent.
-  const [statusChanges, setStatusChanges] = useState<Map<string, string>>(new Map());
+  // When and why each deactivated account left — the Master List's status
+  // date (Terminated / Resigned / Inactive) first, else the first time User
+  // Management deactivated it (getSeparations). From that day on they aren't
+  // counted absent.
+  const [statusChanges, setStatusChanges] = useState<Map<string, Separation>>(new Map());
+  useEffect(preloadSeparations, []);
   useEffect(() => {
-    getFirstDeactivations().then(setStatusChanges).catch(() => {});
-  }, []);
-  const deactivatedOn = (p: ProfileRow): string | null => (p.is_active === false ? statusChanges.get(p.id) ?? null : null);
+    if (profiles.length === 0) return;
+    let cancelled = false;
+    getSeparations(profiles).then((m) => { if (!cancelled) setStatusChanges(m); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [profiles]);
+  const deactivatedOn = (p: ProfileRow): string | null => (p.is_active === false ? statusChanges.get(p.id)?.date ?? null : null);
+  const leftLabelOf = (p: ProfileRow): string => statusChanges.get(p.id)?.label ?? "Deactivated";
   // Deactivated accounts show only when they were still active for part of
   // the range (deactivated on/after Date From) or clocked in during it — not
   // everyone who ever left. No known date: only their actual punches count.
@@ -309,13 +339,46 @@ export function ReportAttendanceMonitoring({
   }, []);
   const reqIn = (p: ProfileRow, d: string) => requiredTimesOn(restHistory, p.id, d, { checkIn: p.required_check_in, checkOut: p.required_check_out }).checkIn;
   // A rest day, or a day on/after the account was deactivated (or any day
-  // when the date isn't known) — not counted absent.
-  const offOn = (p: ProfileRow, d: string) => {
+  // when the date isn't known).
+  const restOrGoneOn = (p: ProfileRow, d: string) => {
     if (isRestDayOn(restHistory, p.id, d, p.off_days)) return true;
     if (p.is_active !== false) return false;
     const until = deactivatedOn(p);
     return until == null || d >= until;
   };
+  // Approved leave (PTO / Sick / Unpaid…) covering the day.
+  const approvedLeaveByProfile = useMemo(() => {
+    const map = new Map<string, PtoRequestRow[]>();
+    for (const r of ptoRequests) {
+      if (r.status !== "approved") continue;
+      if (!map.has(r.profileId)) map.set(r.profileId, []);
+      map.get(r.profileId)!.push(r);
+    }
+    return map;
+  }, [ptoRequests]);
+  // PTO balance (remaining / total for the PTO year as of Date To, capped at
+  // today) — anchored to the Master List Hire Date like everywhere else.
+  const [hireDates, setHireDates] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    if (profiles.length === 0) return;
+    let cancelled = false;
+    getHireDatesByProfileIds(profiles.map((p) => p.id)).then((m) => { if (!cancelled) setHireDates(m); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [profiles]);
+  const ptoBalanceOf = (p: ProfileRow): { remaining: number; allowance: number; used: number; pending: number } | null => {
+    const asOf = dateTo < todayIso() ? dateTo : todayIso();
+    const window = ptoYearWindow(hireDates.get(p.id) ?? null, p.created_at ?? null, asOf);
+    if (!window) return null;
+    const mine = ptoRequests.filter((r) => r.profileId === p.id);
+    const used = ptoDaysUsed(mine, window);
+    return { remaining: Math.max(0, window.allowance - used), allowance: window.allowance, used, pending: ptoDaysPending(mine, window) };
+  };
+  const fmtDays = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+  // "N on leave" → which leave it was (type, dates, reason).
+  const [leaveView, setLeaveView] = useState<{ profileId: string; name: string } | null>(null);
+  const onLeaveOn = (p: ProfileRow, d: string) => (approvedLeaveByProfile.get(p.id) ?? []).some((r) => r.startDate <= d && r.endDate >= d);
+  // Not counted absent: a rest day, a deactivated day, or a day of approved leave.
+  const offOn = (p: ProfileRow, d: string) => restOrGoneOn(p, d) || onLeaveOn(p, d);
   const reqOut = (p: ProfileRow, d: string) => requiredTimesOn(restHistory, p.id, d, { checkIn: p.required_check_in, checkOut: p.required_check_out }).checkOut;
 
   const entriesByProfileDate = useMemo(() => {
@@ -332,16 +395,35 @@ export function ReportAttendanceMonitoring({
     return dates;
   }, [dateFrom, dateTo]);
 
+  const leaveViewRows = useMemo(() => {
+    if (!leaveView) return [];
+    const person = profiles.find((x) => x.id === leaveView.profileId);
+    return (approvedLeaveByProfile.get(leaveView.profileId) ?? [])
+      .filter((r) => r.startDate <= dateTo && (r.endDate || r.startDate) >= dateFrom)
+      .sort((a, b) => a.startDate.localeCompare(b.startDate))
+      .map((r) => {
+        // Days of it inside the picked dates, rest days / days after leaving left out (same as the column).
+        const inRange = person ? dateRange.filter((d) => d >= r.startDate && d <= (r.endDate || r.startDate) && !restOrGoneOn(person, d)).length : 0;
+        return { ...r, inRange };
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leaveView, approvedLeaveByProfile, profiles, dateFrom, dateTo, dateRange, restHistory, statusChanges]);
+
   // Role-level summary across the date range — this is a system-wide
   // report, not a per-employee attribution tool (that's what Attendance
   // Monitoring Dashboard's Daily Attendance Tracker is for). One pass per
   // employee over dateRange, aggregated into their role bucket.
+  // Trainees have their own table below the Department Summary.
+  const isTraineeProfile = (p: ProfileRow) => p.employment_type === "trainee";
+  const regularProfiles = useMemo(() => filteredProfiles.filter((p) => !isTraineeProfile(p)), [filteredProfiles]);
   const roleSummary = useMemo(() => {
-    const map = new Map<string, { count: number; present: number; absent: number; late: number; hours: number }>();
-    for (const p of filteredProfiles) {
+    // count = everyone shown for the range; inactive = the deactivated among them.
+    const map = new Map<string, { count: number; inactive: number; present: number; absent: number; late: number; hours: number }>();
+    for (const p of regularProfiles) {
       const role = departmentOf(p);
-      const bucket = map.get(role) ?? { count: 0, present: 0, absent: 0, late: 0, hours: 0 };
+      const bucket = map.get(role) ?? { count: 0, inactive: 0, present: 0, absent: 0, late: 0, hours: 0 };
       bucket.count += 1;
+      if (p.is_active === false) bucket.inactive += 1;
       const graceMinutes = graceMinutesFor(p);
       for (const d of dateRange) {
         const off = offOn(p, d);
@@ -352,7 +434,7 @@ export function ReportAttendanceMonitoring({
       map.set(role, bucket);
     }
     return Array.from(map.entries()).map(([role, v]) => ({ role, ...v })).sort((a, b) => departmentRank(a.role) - departmentRank(b.role) || a.role.localeCompare(b.role));
-  }, [filteredProfiles, dateRange, entriesByProfileDate, restHistory, statusChanges]);
+  }, [regularProfiles, dateRange, entriesByProfileDate, restHistory, statusChanges, approvedLeaveByProfile]);
 
   // The people under each role in Role Summary — opened by clicking the
   // role's row. Same day classification as the role totals above, so a
@@ -372,6 +454,8 @@ export function ReportAttendanceMonitoring({
       department: string;
       title: string;
       deactivatedOn: string | null;
+      leftLabel: string;
+      leftSource: string | null;
       inactive: boolean;
       branch: string;
       manager: string;
@@ -380,17 +464,17 @@ export function ReportAttendanceMonitoring({
       absent: number;
       missingTimeOut: number;
       leaveDays: number;
+      pto: { remaining: number; allowance: number; used: number; pending: number } | null;
       corrections: number;
       correctionsApproved: number;
       correctionsPending: number;
       correctionsRejected: number;
       warnings: number;
     }[]>();
-    for (const p of filteredProfiles) {
+    for (const p of regularProfiles) {
       const role = departmentOf(p);
       const graceMinutes = graceMinutesFor(p);
       let daysWorked = 0, hours = 0, absent = 0, missingTimeOut = 0, leaveDays = 0;
-      const leave = ptoRequests.filter((r) => r.profileId === p.id && r.status === "approved" && r.startDate <= dateTo && r.endDate >= dateFrom);
       for (const d of dateRange) {
         const entry = entriesByProfileDate.get(`${p.id}|${d}`);
         const off = offOn(p, d);
@@ -399,7 +483,7 @@ export function ReportAttendanceMonitoring({
         else if (st.absent) absent++;
         // Today's shift may still be going — only earlier days count as a missed Time Out.
         if (entry?.checkIn && !entry.checkOut && d < today) missingTimeOut++;
-        if (!off && leave.some((r) => r.startDate <= d && r.endDate >= d)) leaveDays++;
+        if (!restOrGoneOn(p, d) && onLeaveOn(p, d)) leaveDays++;
       }
       const corr = corrections.filter((c) => c.profileId === p.id && c.workDate >= dateFrom && c.workDate <= dateTo);
       const list = map.get(role) ?? [];
@@ -409,10 +493,12 @@ export function ReportAttendanceMonitoring({
         department: role,
         title: roleLabel(p.role),
         deactivatedOn: deactivatedOn(p),
+        leftLabel: leftLabelOf(p),
+        leftSource: statusChanges.get(p.id)?.source ?? null,
         inactive: p.is_active === false,
         branch: p.assigned_branch || "—",
         manager: p.manager_name || "—",
-        daysWorked, hours, absent, missingTimeOut, leaveDays,
+        daysWorked, hours, absent, missingTimeOut, leaveDays, pto: ptoBalanceOf(p),
         corrections: corr.length,
         correctionsApproved: corr.filter((c) => c.status === "approved").length,
         correctionsPending: corr.filter((c) => c.status === "pending").length,
@@ -424,7 +510,43 @@ export function ReportAttendanceMonitoring({
     }
     for (const list of map.values()) list.sort((a, b) => a.name.localeCompare(b.name));
     return map;
-  }, [filteredProfiles, dateRange, dateFrom, dateTo, entriesByProfileDate, restHistory, statusChanges, ptoRequests, corrections, notes]);
+  }, [regularProfiles, dateRange, dateFrom, dateTo, entriesByProfileDate, restHistory, statusChanges, ptoRequests, corrections, notes, hireDates]);
+
+  // Trainees — one row each over the range, from their Trainee Attendance
+  // punches. Absent = a past scheduled day with no punch (rest days, approved
+  // leave, holidays-as-leave and days after they left don't count); Pending =
+  // punched days still waiting for the manager's review.
+  const traineeSummary = useMemo(() => {
+    const byKey = new Map(traineeEntries.map((e) => [`${e.profileId}|${e.workDate}`, e]));
+    const today = todayIso();
+    return filteredProfiles
+      .filter(isTraineeProfile)
+      .map((p) => {
+        let present = 0, absent = 0, pending = 0, hours = 0;
+        for (const d of dateRange) {
+          const e = byKey.get(`${p.id}|${d}`);
+          if (e?.checkIn) {
+            present++;
+            if (e.status === "pending") pending++;
+            if (e.checkOut) hours += calcWorkedHours({ checkIn: e.checkIn, checkOut: e.checkOut, mealStart: e.mealStart, mealEnd: e.mealEnd, notes: "" });
+          } else if (d < today && !offOn(p, d)) absent++;
+        }
+        return {
+          profileId: p.id,
+          name: p.display_name || p.username || p.email || "Unknown",
+          department: departmentOf(p),
+          title: roleLabel(p.role),
+          branch: p.assigned_branch || "—",
+          manager: p.manager_name || "—",
+          inactive: p.is_active === false,
+          leftLabel: leftLabelOf(p),
+          leftOn: deactivatedOn(p),
+          present, absent, pending, hours,
+        };
+      })
+      .sort((a, b) => a.department.localeCompare(b.department) || a.name.localeCompare(b.name));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredProfiles, traineeEntries, dateRange, restHistory, statusChanges, approvedLeaveByProfile]);
 
   // Day-by-day breakdown, for groupBy === "employee" — one row per
   // (employee, date), Name/Role on the far left same as the aggregate
@@ -467,7 +589,7 @@ export function ReportAttendanceMonitoring({
     // in on 8/11, then who was in on 8/10, ..." instead of one person's
     // entire week before jumping to the next person.
     return rows.sort((a, b) => b.date.localeCompare(a.date) || a.name.localeCompare(b.name));
-  }, [filteredProfiles, dateRange, entriesByProfileDate, employeeFilter, restHistory, statusChanges]);
+  }, [filteredProfiles, dateRange, entriesByProfileDate, employeeFilter, restHistory, statusChanges, approvedLeaveByProfile]);
 
   // Today-scoped KPI tiles (only meaningful when today falls inside the
   // selected range — otherwise these read 0, same as a report for a past
@@ -483,7 +605,7 @@ export function ReportAttendanceMonitoring({
       else if (st.absent) absent++;
     }
     return { present, absent, late };
-  }, [todayInRange, filteredProfiles, entriesByProfileDate, restHistory, statusChanges]);
+  }, [todayInRange, filteredProfiles, entriesByProfileDate, restHistory, statusChanges, approvedLeaveByProfile]);
 
   // Scoped to filteredProfiles (department filter AND the optional
   // filterProfile restriction) — company-wide PTO/correction counts would be
@@ -510,52 +632,120 @@ export function ReportAttendanceMonitoring({
       const [, m, day] = d.split("-");
       return { date: `${Number(m)}/${Number(day)}`, present, absent, late };
     });
-  }, [dateRange, filteredProfiles, entriesByProfileDate, restHistory, statusChanges]);
+  }, [dateRange, filteredProfiles, entriesByProfileDate, restHistory, statusChanges, approvedLeaveByProfile]);
 
-  const exportToXlsx = () => {
-    const sheet: (string | number)[][] = [
-      ["Attendance Monitoring Report"],
-      [`Period: ${dateFrom} to ${dateTo}`],
-      [`Generated: ${new Date().toLocaleString()}`],
-      [],
-      ["Summary — Today", ],
-      ["Metric", "Value"],
-      ["Total Employees", filteredProfiles.length],
-      ["Present Today", todayKpi.present],
-      ["Absent Today", todayKpi.absent],
-      ["Late Today", todayKpi.late],
-      ["PTO Pending", ptoPending],
-      ["Corrections Pending", correctionsPending],
-      ["Warnings", warningsCount],
-      [],
-      ["Daily Trend"],
-      ["Date", "Present", "Absent", "Late"],
-      ...trendData.map((t) => [t.date, t.present, t.absent, t.late]),
-      [],
-      ...(groupBy === "employee"
-        ? [
-            ["Daily Attendance"],
-            ["Name", "Role", "Date", "Clock In", "Required In", "Clock Out", "Required Out", "Hours", "Status"],
-            ...dailyEmployeeRows.map((r) => [r.name, r.role, r.date, r.clockIn || "—", r.requiredCheckIn || "—", r.clockOut || "—", r.requiredCheckOut || "—", r.hours.toFixed(2), STATUS_LABEL[r.status]]),
-          ]
-        : [
-            ["Department Summary — Full Period"],
-            ["Department", "Employees", "Days Present", "Absences", "Lates", "Total Hours"],
-            ...roleSummary.map((r) => [r.role, r.count, r.present, r.absent, r.late, r.hours.toFixed(1)]),
-            [],
-            ["Employees — Full Period"],
-            EMPLOYEE_COLUMNS.map((c) => c.label),
-            ...roleSummary.flatMap((r) => (employeesByRole.get(r.role) ?? []).map((e) => [
-              e.inactive ? `${e.name} (Deactivated${e.deactivatedOn ? " " + e.deactivatedOn : ""})` : e.name, e.department, e.branch, e.manager, e.daysWorked, e.hours.toFixed(2),
-              e.daysWorked ? (e.hours / e.daysWorked).toFixed(2) : "0.00",
-              e.absent, e.missingTimeOut, e.leaveDays, e.corrections, e.correctionsApproved, e.correctionsPending, e.correctionsRejected, e.warnings,
-            ])),
-          ]),
+  // Styled workbook (attendanceReportWorkbook.ts): Overview (today's numbers
+  // + daily trend), then Departments / Employees / Trainees — or Daily
+  // Attendance when grouped by employee.
+  const [exporting, setExporting] = useState(false);
+  const exportToXlsx = async () => {
+    const period = `${fmtShortDate(dateFrom)} – ${fmtShortDate(dateTo)}`;
+    const subtitle = `${period}   •   ${departmentFilter || "All Departments"}`;
+    const leftName = (name: string, label: string, on: string | null) => `${name} (${label}${on ? " · " + fmtShortDate(on) : ""})`;
+    // One sheet, same order as the page: period totals, Department Summary,
+    // each department's people by name, Trainees, Daily Trend.
+    const sum = (k: "present" | "absent" | "late") => trendData.reduce((n, t) => n + (t[k] ?? 0), 0);
+    const summaryTable: AttendanceTable = {
+      heading: "Summary — whole period",
+      headers: ["", "Total Employees", "Days Present", "Absences", "Lates", "PTO Pending", "Corrections Pending", "Warnings"],
+      textCols: 1,
+      rows: [{ cells: ["Count", filteredProfiles.length, sum("present"), sum("absent"), sum("late"), ptoPending, correctionsPending, warningsCount] }],
+      headerFills: { 2: FILL_GREEN, 3: FILL_RED, 4: FILL_AMBER },
+      greenCols: [2],
+      redCols: [3],
+      amberCols: [4, 5, 6, 7],
+    };
+    const trendTable: AttendanceTable = {
+      heading: "Daily Trend",
+      headers: ["Date", "Present", "Absent", "Late"],
+      textCols: 1,
+      rows: trendData.map((t) => ({ cells: [t.date, t.present, t.absent, t.late] })),
+      headerFills: { 1: FILL_GREEN, 2: FILL_RED, 3: FILL_AMBER },
+      greenCols: [1],
+      redCols: [2],
+      amberCols: [3],
+      totalCols: [1, 2, 3],
+    };
+    const departmentTable: AttendanceTable = {
+      heading: "Department Summary — Full Period",
+      headers: ["Department", "Active Employees", "Deactivated", "Days Present", "Absences", "Total Hours"],
+      textCols: 1,
+      rows: roleSummary.map((r) => ({ cells: [r.role, r.count - r.inactive, r.inactive, r.present, r.absent, Number(r.hours.toFixed(1))] })),
+      headerFills: { 1: FILL_GREEN, 2: FILL_RED },
+      greenCols: [1],
+      redCols: [2, 4],
+      formats: { 5: "#,##0.0" },
+      totalCols: [1, 2, 3, 4, 5],
+    };
+    // Each department's people — the same table the page opens under a department.
+    const peopleTables: AttendanceTable[] = roleSummary.map((r) => {
+      const people = employeesByRole.get(r.role) ?? [];
+      const active = people.filter((e) => !e.inactive).length;
+      return {
+        heading: `${r.role} — ${people.length} ${people.length === 1 ? "person" : "people"} (${active} active${people.length - active ? `, ${people.length - active} deactivated` : ""})`,
+        headers: EMPLOYEE_COLUMNS.map((c) => c.label),
+        textCols: 4,
+        rows: people.map((e) => ({
+          tone: e.inactive ? ("left" as const) : undefined,
+          cells: [
+            e.inactive ? leftName(e.name, e.leftLabel, e.deactivatedOn) : e.name, e.department, e.branch, e.manager,
+            e.daysWorked, Number(e.hours.toFixed(2)), e.daysWorked ? Number((e.hours / e.daysWorked).toFixed(2)) : 0,
+            e.absent, e.missingTimeOut,
+            e.pto ? `${fmtDays(e.pto.remaining)}/${e.pto.allowance}${e.leaveDays ? ` · ${e.leaveDays} on leave` : ""}` : e.leaveDays ? `Not eligible · ${e.leaveDays} on leave` : "Not eligible",
+            e.corrections, e.correctionsApproved, e.correctionsPending, e.correctionsRejected, e.warnings,
+          ] as (string | number)[],
+        })),
+        formats: { 5: "0.00", 6: "0.00" },
+        redCols: [7, 13, 14],
+        amberCols: [8, 12],
+        greenCols: [11],
+        totalCols: [4, 5, 7, 8, 10, 11, 12, 13, 14],
+      };
+    });
+    const traineeTable: AttendanceTable = {
+      heading: `Trainees — ${traineeSummary.length} (from Trainee Attendance; Pending Days = waiting for the manager's review)`,
+      headers: ["Trainee", "Department", "Branch", "Manager", "Days Present", "Absences", "Pending Days", "Total Hours"],
+      textCols: 4,
+      rows: traineeSummary.length
+        ? traineeSummary.map((t) => ({
+            tone: t.inactive ? ("left" as const) : undefined,
+            cells: [t.inactive ? leftName(t.name, t.leftLabel, t.leftOn) : t.name, t.department, t.branch, t.manager, t.present, t.absent, t.pending, Number(t.hours.toFixed(2))],
+          }))
+        : [{ cells: ["No trainees in these dates", "", "", "", "", "", "", ""] }],
+      redCols: [5],
+      amberCols: [6],
+      formats: { 7: "0.00" },
+      totalCols: traineeSummary.length ? [4, 5, 6, 7] : undefined,
+    };
+    const dailyTable: AttendanceTable = {
+      heading: "Daily Attendance",
+      headers: ["Name", "Role", "Date", "Clock In", "Required In", "Clock Out", "Required Out", "Hours", "Status"],
+      textCols: 3,
+      rows: dailyEmployeeRows.map((r) => ({
+        cells: [r.name, r.role, r.date, r.clockIn || "—", r.requiredCheckIn || "—", r.clockOut || "—", r.requiredCheckOut || "—", Number(r.hours.toFixed(2)), STATUS_LABEL[r.status]],
+      })),
+      formats: { 7: "0.00" },
+    };
+    const sheets: AttendanceSheetSpec[] = [
+      {
+        name: "Attendance Report",
+        title: "Attendance Monitoring Report",
+        note: "Absences leave out rest days, approved leave and days after someone left. PTO Left = PTO days remaining / total for their PTO year.",
+        sections:
+          groupBy === "employee"
+            ? [summaryTable, dailyTable, trendTable]
+            : [summaryTable, departmentTable, ...peopleTables, traineeTable, trendTable],
+        widths: { 0: 34, 1: 16, 2: 16, 3: 22, 9: 24 },
+      },
     ];
-    const worksheet = XLSX.utils.aoa_to_sheet(sheet);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Attendance Report");
-    XLSX.writeFile(workbook, `attendance-monitoring-report_${dateFrom}_to_${dateTo}.xlsx`);
+    setExporting(true);
+    try {
+      await writeAttendanceWorkbook(`attendance-monitoring-report_${dateFrom}_to_${dateTo}.xlsx`, subtitle, sheets);
+    } catch (err) {
+      console.error("Attendance report export failed:", err);
+    } finally {
+      setExporting(false);
+    }
   };
 
   const content = (
@@ -627,8 +817,12 @@ export function ReportAttendanceMonitoring({
               )}
             </div>
           )}
-          <button onClick={exportToXlsx} disabled={loading} className="btn text-xs px-2.5 py-1 mb-0.5 flex items-center gap-1.5 disabled:opacity-50">
-            <Download className="h-3.5 w-3.5" /> Download XLSX
+          <button
+            onClick={() => void exportToXlsx()}
+            disabled={loading || exporting}
+            className="group flex items-center gap-1.5 px-3 py-1.5 mb-0.5 bg-gradient-to-br from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white rounded-lg transition shadow-lg hover:shadow-blue-500/50 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Download className="h-4 w-4 group-hover:scale-110 transition transform" /> Download Attendance Report
           </button>
         </div></div>
 
@@ -722,12 +916,15 @@ export function ReportAttendanceMonitoring({
         <div className="panel overflow-x-auto p-0">
           <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm flex justify-between"><span>Department Summary — Full Period</span><span className="text-xs text-muted-foreground">{roleSummary.length} departments · click one to see its people</span></div>
           <table className="w-full text-sm"><thead><tr className="border-b border-white/10 bg-white/5">
-            {["Department", "Employees", "Days Present", "Absences", "Lates", "Total Hours"].map((h, i) => (
-              <th key={h} className={`px-3 py-3 ${i === 0 ? "text-left" : "text-center"} text-xs text-muted-foreground uppercase whitespace-nowrap`}>{h}</th>
+            {["Department", "Employees", "Days Present", "Absences", "Total Hours"].map((h, i) => (
+              <th key={h} className={`px-3 py-3 ${i === 0 ? "text-left" : "text-center"} text-xs text-muted-foreground uppercase whitespace-nowrap`}>
+                {h}
+                {h === "Employees" && <span className="block text-[9px] font-normal normal-case tracking-normal">Active | Deactivated</span>}
+              </th>
             ))}
           </tr></thead>
           <tbody>
-            {roleSummary.length === 0 ? <tr><td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">No employees found.</td></tr> :
+            {roleSummary.length === 0 ? <tr><td colSpan={5} className="px-4 py-12 text-center text-muted-foreground">No employees found.</td></tr> :
               roleSummary.map((r, i) => {
                 const isOpen = openRoles.has(r.role);
                 const people = employeesByRole.get(r.role) ?? [];
@@ -744,15 +941,18 @@ export function ReportAttendanceMonitoring({
                       {r.role}
                     </span>
                   </td>
-                  <td className="px-3 py-2.5 text-center">{r.count}</td>
+                  <td className="px-3 py-2.5 text-center tabular-nums whitespace-nowrap" title={`${r.count - r.inactive} active, ${r.inactive} deactivated during these dates`}>
+                    <span className="text-emerald-300">{r.count - r.inactive}</span>
+                    <span className="mx-1.5 text-muted-foreground/50">|</span>
+                    <span className={r.inactive > 0 ? "text-red-300" : "text-muted-foreground/60"}>{r.inactive}</span>
+                  </td>
                   <td className="px-3 py-2.5 text-center">{r.present}</td>
                   <td className="px-3 py-2.5 text-center">{r.absent > 0 ? <span className="px-2 py-0.5 rounded text-xs bg-red-500/20 text-red-300 border border-red-500/30">{r.absent}</span> : "—"}</td>
-                  <td className="px-3 py-2.5 text-center">{r.late > 0 ? <span className="px-2 py-0.5 rounded text-xs bg-yellow-500/20 text-yellow-300 border border-yellow-500/30">{r.late}</span> : "—"}</td>
                   <td className="px-3 py-2.5 text-center">{r.hours.toFixed(1)}</td>
                 </tr>
                 {isOpen && (
                   <tr className="border-b border-white/10 bg-slate-950/40">
-                    <td colSpan={6} className="p-0">
+                    <td colSpan={5} className="p-0">
                       <div className="overflow-x-auto">
                         <table className="w-full text-xs">
                           <thead><tr className="border-b border-white/10 bg-white/5">
@@ -764,8 +964,11 @@ export function ReportAttendanceMonitoring({
                             {people.map((e) => (
                               <tr key={e.profileId} className="border-b border-white/5 hover:bg-white/5">
                                 <td className="px-2.5 py-1.5 pl-8 whitespace-nowrap"><span className="font-medium">{e.name}</span><span className="block text-[10px] text-muted-foreground">{e.title}</span>{e.inactive && (
-                                  <span className="mt-0.5 inline-block rounded-full border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-300">
-                                    Deactivated{e.deactivatedOn ? ` · ${new Date(e.deactivatedOn + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : ""}
+                                  <span
+                                    className="mt-0.5 inline-block rounded-full border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-300"
+                                    title={e.leftSource ? `Date from ${e.leftSource}` : "No date on file"}
+                                  >
+                                    {e.leftLabel}{e.deactivatedOn ? ` · ${new Date(e.deactivatedOn + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : ""}
                                   </span>
                                 )}</td>
                                 <td className="px-2.5 py-1.5 text-muted-foreground whitespace-nowrap">{e.department}</td>
@@ -776,7 +979,30 @@ export function ReportAttendanceMonitoring({
                                 <td className="px-2.5 py-1.5 text-center tabular-nums">{e.daysWorked ? (e.hours / e.daysWorked).toFixed(2) : "—"}</td>
                                 <td className="px-2.5 py-1.5 text-center">{e.absent > 0 ? <span className="px-1.5 py-0.5 rounded text-[10px] bg-red-500/20 text-red-300 border border-red-500/30">{e.absent}</span> : "—"}</td>
                                 <td className="px-2.5 py-1.5 text-center">{e.missingTimeOut > 0 ? <span className="px-1.5 py-0.5 rounded text-[10px] bg-orange-500/20 text-orange-300 border border-orange-500/30">{e.missingTimeOut}</span> : "—"}</td>
-                                <td className="px-2.5 py-1.5 text-center tabular-nums">{e.leaveDays || "—"}</td>
+                                <td
+                                  className="px-2.5 py-1.5 text-center tabular-nums whitespace-nowrap"
+                                  title={e.pto ? `${fmtDays(e.pto.remaining)} of ${e.pto.allowance} PTO days left this PTO year · ${fmtDays(e.pto.used)} used${e.pto.pending ? ` · ${fmtDays(e.pto.pending)} pending` : ""}${e.leaveDays ? ` · ${e.leaveDays} leave day${e.leaveDays === 1 ? "" : "s"} in these dates` : ""}` : "Not PTO-eligible yet (under 1 year from hire date)"}
+                                >
+                                  {e.pto ? (
+                                    <>
+                                      <span className={e.pto.remaining === 0 ? "text-red-300" : "text-emerald-300"}>{fmtDays(e.pto.remaining)}</span>
+                                      <span className="text-muted-foreground">/{e.pto.allowance}</span>
+                                      {e.pto.pending > 0 && <span className="block text-[9px] text-amber-300">{fmtDays(e.pto.pending)} pending</span>}
+                                    </>
+                                  ) : (
+                                    <span className="text-muted-foreground/60 text-[10px]">Not eligible</span>
+                                  )}
+                                  {e.leaveDays > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={(ev) => { ev.stopPropagation(); setLeaveView({ profileId: e.profileId, name: e.name }); }}
+                                      className="block mx-auto text-[9px] text-violet-300 underline decoration-dotted underline-offset-2 hover:text-violet-200"
+                                      title="See which leave"
+                                    >
+                                      {e.leaveDays} on leave
+                                    </button>
+                                  )}
+                                </td>
                                 <td className="px-2.5 py-1.5 text-center">{e.corrections > 0 ? <span className="px-1.5 py-0.5 rounded text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30">{e.corrections}</span> : "—"}</td>
                                 <td className="px-2.5 py-1.5 text-center tabular-nums">{e.correctionsApproved || "—"}</td>
                                 <td className="px-2.5 py-1.5 text-center tabular-nums">{e.correctionsPending || "—"}</td>
@@ -796,8 +1022,78 @@ export function ReportAttendanceMonitoring({
           </tbody></table>
         </div>
         )}
+        {groupBy !== "employee" && (
+        <div className="panel overflow-x-auto p-0 mt-4">
+          <div className="px-4 py-3 border-b border-white/10 font-semibold text-sm flex justify-between">
+            <span>Trainees — Full Period</span>
+            <span className="text-xs text-muted-foreground">
+              {traineeSummary.filter((t) => !t.inactive).length} active
+              {traineeSummary.some((t) => t.inactive) ? ` · ${traineeSummary.filter((t) => t.inactive).length} left` : ""} · from Trainee Attendance
+            </span>
+          </div>
+          <table className="w-full text-sm"><thead><tr className="border-b border-white/10 bg-white/5">
+            {["Trainee", "Department", "Branch", "Manager", "Days Present", "Absences", "Pending Days", "Total Hours"].map((h, i) => (
+              <th key={h} className={`px-3 py-3 ${i < 4 ? "text-left" : "text-center"} text-xs text-muted-foreground uppercase whitespace-nowrap`}>{h}</th>
+            ))}
+          </tr></thead>
+          <tbody>
+            {traineeSummary.length === 0 ? (
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-muted-foreground">No trainees in these dates.</td></tr>
+            ) : traineeSummary.map((t, i) => (
+              <tr key={t.profileId} className={`border-b border-white/5 hover:bg-white/5 ${i % 2 !== 0 ? "bg-white/[0.02]" : ""}`}>
+                <td className="px-3 py-2.5 whitespace-nowrap">
+                  <span className="font-medium">{t.name}</span>
+                  <span className="block text-[10px] text-muted-foreground">{t.title}</span>
+                  {t.inactive && (
+                    <span className="mt-0.5 inline-block rounded-full border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-300">
+                      {t.leftLabel}{t.leftOn ? ` · ${new Date(t.leftOn + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : ""}
+                    </span>
+                  )}
+                </td>
+                <td className="px-3 py-2.5 text-muted-foreground whitespace-nowrap">{t.department}</td>
+                <td className="px-3 py-2.5 text-muted-foreground whitespace-nowrap">{t.branch}</td>
+                <td className="px-3 py-2.5 text-muted-foreground whitespace-nowrap">{t.manager}</td>
+                <td className="px-3 py-2.5 text-center tabular-nums">{t.present}</td>
+                <td className="px-3 py-2.5 text-center">{t.absent > 0 ? <span className="px-2 py-0.5 rounded text-xs bg-red-500/20 text-red-300 border border-red-500/30">{t.absent}</span> : "—"}</td>
+                <td className="px-3 py-2.5 text-center">{t.pending > 0 ? <span className="px-2 py-0.5 rounded text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30">{t.pending}</span> : "—"}</td>
+                <td className="px-3 py-2.5 text-center tabular-nums">{t.hours.toFixed(1)}</td>
+              </tr>
+            ))}
+          </tbody></table>
+        </div>
+        )}
         </>
         )}
+      {leaveView && (
+        <AppModal
+          title={`Leave — ${leaveView.name}`}
+          description={`Approved leave between ${fmtShortDate(dateFrom)} and ${fmtShortDate(dateTo)}`}
+          onClose={() => setLeaveView(null)}
+        >
+          {leaveViewRows.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">No approved leave in these dates.</p>
+          ) : (
+            <div className="space-y-2">
+              {leaveViewRows.map((r) => (
+                <div key={r.id} className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${LEAVE_TYPE_CLASS[r.ptoType] ?? "border-amber-500/40 bg-amber-500/10 text-amber-300"}`}>
+                      {leaveTypeLabel(r.ptoType)}
+                    </span>
+                    <span className="text-sm text-slate-200">
+                      {fmtShortDate(r.startDate)}{r.endDate && r.endDate !== r.startDate ? ` – ${fmtShortDate(r.endDate)}` : ""}
+                    </span>
+                    <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                      {r.inRange} day{r.inRange === 1 ? "" : "s"} in these dates
+                    </span>
+                  </div>
+                  {r.reason?.trim() && <p className="mt-1.5 text-xs text-muted-foreground">"{r.reason.trim()}"</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </AppModal>
+      )}
     </>
   );
 

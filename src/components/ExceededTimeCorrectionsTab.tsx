@@ -39,6 +39,15 @@ import { EmptyState } from "@/components/ui-kit/EmptyState";
 import { TableSkeleton } from "@/components/ui-kit/TableSkeleton";
 
 import { MAX_CORRECTIONS_PER_MONTH } from "@/lib/attention";
+import { getSignableDocuments, type SignableDocument } from "@/lib/supabase/signableDocuments";
+import { collectTimeCardWarnings, type TimeCardWarning } from "@/lib/timeCardWarnings";
+
+/** Where a sent Warning Form stands, for the Warning column. */
+const WARNING_STATUS_LABEL: Record<string, string> = {
+  pending_signature: "Out for signature",
+  signed: "Signed",
+  confirmed: "Confirmed",
+};
 /** Corrections allowed per person per month; more than this is flagged. */
 export { MAX_CORRECTIONS_PER_MONTH };
 
@@ -369,6 +378,13 @@ export function ExceededTimeCorrectionsTab({
   const [dialog, setDialog] = useState<ExemptDialog | null>(null);
   const [dialogReason, setDialogReason] = useState("");
   const [dialogSaving, setDialogSaving] = useState(false);
+  // Warning Forms marked "Time Card Warning" (HR → Warning Form) — the Warning column.
+  const [warningForms, setWarningForms] = useState<SignableDocument[] | null>(null);
+  useEffect(() => {
+    getSignableDocuments("warning_form")
+      .then(setWarningForms)
+      .catch(() => setWarningForms([]));
+  }, []);
 
   useEffect(() => {
     getCompanyTimecardCorrections()
@@ -544,8 +560,27 @@ export function ExceededTimeCorrectionsTab({
     );
   }, [corrections, profiles, range, search, overOnly, activeExemption, allowed]);
 
+  // Each person's time-card warnings that belong to this range, newest first.
+  // The limit resets every month, so a warning counts for the month it is
+  // about. Sources: the Warning Forms marked Time Card Warning (or worded
+  // that way), and the "Previous Warning(s) Issued" lines on any Warning
+  // Form that are about time cards. Cancelled forms don't count.
+  const timeCardWarnings = useMemo(() => {
+    const map = new Map<string, TimeCardWarning[]>();
+    const { start, end } = rangeBounds(range);
+    for (const w of collectTimeCardWarnings(warningForms ?? [])) {
+      if (w.day < start || w.day > end) continue;
+      if (!map.has(w.employeeId)) map.set(w.employeeId, []);
+      map.get(w.employeeId)!.push(w);
+    }
+    for (const list of map.values()) list.sort((x, y) => y.day.localeCompare(x.day));
+    return map;
+  }, [warningForms, range]);
+  const [viewWarning, setViewWarning] = useState<{ person: string; warnings: TimeCardWarning[] } | null>(null);
+
   const regionRows = rows.filter((r) => regionOf(r.group) === region);
-  const overCount = (list: PersonRow[]) => list.filter((r) => r.counted > allowed).length;
+  // Over the limit and not warned yet — the region tabs and "N over limit" (warned people stay listed, just not counted).
+  const overCount = (list: PersonRow[]) => list.filter((r) => r.counted > allowed && !timeCardWarnings.has(r.profile.id)).length;
 
   return (
     <div className="panel p-4">
@@ -628,18 +663,21 @@ export function ExceededTimeCorrectionsTab({
                           </th>
                         ))}
                         <th className="px-3 py-2 font-semibold">Status</th>
+                        <th className="px-3 py-2 font-semibold" title="Time Card Warning forms (time corrections) dated in this range — resets every month">Warning Form</th>
                       </tr>
                     </thead>
                     <tbody>
                       {list.map((r) => {
                         const n = r.counted;
                         const over = n > allowed;
+                        // Over the limit but already warned for it — stays at the top, no longer red.
+                        const warned = (timeCardWarnings.get(r.profile.id) ?? []).length > 0;
                         const open = openId === r.profile.id;
                         const counts = { approved: 0, pending: 0, rejected: 0 } as Record<string, number>;
                         for (const c of r.corrections) counts[c.status] = (counts[c.status] ?? 0) + 1;
                         return (
                           <Fragment key={r.profile.id}>
-                            <tr className={`border-b border-white/5 last:border-b-0 ${over ? "bg-red-500/[0.06]" : ""}`}>
+                            <tr className={`border-b border-white/5 last:border-b-0 ${over && !warned ? "bg-red-500/[0.06]" : ""}`}>
                               <td className="px-3 py-2">
                                 <button
                                   type="button"
@@ -654,7 +692,7 @@ export function ExceededTimeCorrectionsTab({
                                 {g.key === "PH" ? ROLE_LABELS[normalizeRole(r.profile.role)] ?? r.profile.role : r.profile.assigned_branch || "—"}
                               </td>
                               <td className="px-3 py-2 tabular-nums">
-                                <span className={`font-semibold ${over ? "text-red-300" : n === allowed ? "text-amber-300" : ""}`}>{n}</span>
+                                <span className={`font-semibold ${over && !warned ? "text-red-300" : over ? "text-slate-200" : n === allowed ? "text-amber-300" : ""}`}>{n}</span>
                                 <span className="text-slate-500"> / {allowed}</span>
                                 {r.corrections.length > 0 && (
                                   <span className="ml-2 text-[11px] text-slate-400">
@@ -684,7 +722,11 @@ export function ExceededTimeCorrectionsTab({
                                 );
                               })}
                               <td className="px-3 py-2">
-                                {over ? (
+                                {over && warned ? (
+                                  <span className="inline-flex items-center gap-1 rounded border border-slate-500/40 bg-slate-500/15 px-2 py-0.5 text-[11px] font-semibold text-slate-300" title="Over the limit — a time-card warning was already sent">
+                                    <Flag className="h-3 w-3" /> Over limit · warned
+                                  </span>
+                                ) : over ? (
                                   <span className="inline-flex items-center gap-1 rounded border border-red-500/40 bg-red-500/15 px-2 py-0.5 text-[11px] font-semibold text-red-300">
                                     <Flag className="h-3 w-3" /> Over limit
                                   </span>
@@ -694,10 +736,40 @@ export function ExceededTimeCorrectionsTab({
                                   <span className="text-[11px] text-slate-500">OK</span>
                                 )}
                               </td>
+                              <td className="px-3 py-2 whitespace-nowrap">
+                                {(() => {
+                                  // Only for people over the limit — at or under it, a warning on file isn't this page's business.
+                                  if (!over) return <span className="text-[11px] text-slate-600">—</span>;
+                                  if (warningForms === null) return <span className="text-[11px] text-slate-500">…</span>;
+                                  const sent = timeCardWarnings.get(r.profile.id) ?? [];
+                                  if (sent.length === 0) {
+                                    return over ? (
+                                      <span className="rounded border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-300" title="Over the limit and no Time Card Warning form dated in this range">
+                                        Not sent
+                                      </span>
+                                    ) : (
+                                      <span className="text-[11px] text-slate-600">—</span>
+                                    );
+                                  }
+                                  const w = sent[0];
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => setViewWarning({ person: r.profile.display_name || r.profile.email || "", warnings: sent })}
+                                      className="inline-flex items-center gap-1.5 rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-500/20"
+                                      title="View the warning"
+                                    >
+                                      Sent{w.level ? ` · ${w.level}` : ""} · {fmtDay(w.issuedOn || w.day)}
+                                      {w.status && <span className="font-normal text-emerald-200/80">· {WARNING_STATUS_LABEL[w.status] ?? w.status}</span>}
+                                      {sent.length > 1 && <span className="rounded-full bg-emerald-500/25 px-1.5 text-[10px]">{sent.length}</span>}
+                                    </button>
+                                  );
+                                })()}
+                              </td>
                             </tr>
                             {open && (
                               <tr className="border-b border-white/5 bg-black/30">
-                                <td colSpan={4 + LEAVE_COLUMNS.length} className="px-3 py-3">
+                                <td colSpan={5 + LEAVE_COLUMNS.length} className="px-3 py-3">
                                   <MonthTimecards
                                     range={range}
                                     profileId={r.profile.id}
@@ -793,6 +865,40 @@ export function ExceededTimeCorrectionsTab({
           </AppModal>
         );
       })()}
+
+      {viewWarning && (
+        <AppModal
+          size="full"
+          title={`Time card warning${viewWarning.warnings.length > 1 ? "s" : ""} — ${viewWarning.person}`}
+          description={`${viewWarning.warnings.length} in ${rangeLabel(range)}`}
+          onClose={() => setViewWarning(null)}
+        >
+          <div className="space-y-4">
+            {viewWarning.warnings.map((w) => (
+              <div key={w.key} className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-300">
+                  {w.level && <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-semibold text-emerald-300">{w.level} warning</span>}
+                  <span>Issued {fmtDay(w.issuedOn || w.day)}</span>
+                  {w.issuedBy && <span>by {w.issuedBy}</span>}
+                  {w.status && <span className="text-slate-400">{WARNING_STATUS_LABEL[w.status] ?? w.status}</span>}
+                  {w.fromPreviousList && <span className="text-slate-500">Listed under Previous Warning(s) Issued on a later Warning Form</span>}
+                </div>
+                {w.text && <p className="mt-2 whitespace-pre-line text-sm text-slate-200">{w.text}</p>}
+                {w.doc.pdfUrl ? (
+                  <div className="mt-3">
+                    <iframe src={w.doc.pdfUrl} title="Warning Form" className="h-[78vh] w-full rounded border border-white/10 bg-white" />
+                    <a href={w.doc.pdfUrl} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-xs text-blue-300 hover:text-blue-200">
+                      Open the {w.fromPreviousList ? "Warning Form it's listed on" : "Warning Form"} in a new tab ↗
+                    </a>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-slate-500">No PDF on file for this form yet.</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </AppModal>
+      )}
 
       {dialog && (
         <AppModal

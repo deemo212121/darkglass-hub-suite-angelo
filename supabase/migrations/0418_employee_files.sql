@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0416 — Employee files (paystubs): Accounting → Paystubs uploads a pay
+-- 0418 — Employee files (paystubs): Accounting → Paystubs uploads a pay
 -- run's check stubs in bulk (one PDF, one page per employee), each page is
 -- matched to an account by the payee name and confirmed by Accounting, and
 -- the confirmed ones show on that employee's Employee Self-Service → My

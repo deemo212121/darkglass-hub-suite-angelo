@@ -22,6 +22,7 @@ import { saveCompanyPart } from "@/lib/customFormCompletion";
 import type { CurrentSigner } from "@/lib/customFormSections";
 import { CustomFormRenderer, type CustomFormRendererValue } from "@/components/CustomFormRenderer";
 import { InlinePdfLink } from "@/components/InlinePdfViewer";
+import { hasOwnLetterhead } from "@/lib/documentTemplates/generate";
 import usihsLogo from "@/assets/us-in-home-services-logo.png";
 
 export function CompleteCustomFormPage({ submissionId }: { submissionId: string }) {
@@ -114,7 +115,7 @@ export function CompleteCustomFormPage({ submissionId }: { submissionId: string 
               signer={me}
               initialValues={submission.responses}
               onSubmit={(values) => handleSubmit(values)}
-              paper={{ header: <img src={usihsLogo} alt="US In Home Services" className="h-[100px] w-[100px] mx-auto mb-5" /> }}
+              paper={{ header: hasOwnLetterhead(form.fields) ? undefined : <img src={usihsLogo} alt="US In Home Services" className="h-[100px] w-[100px] mx-auto mb-5" /> }}
             />
           </div>
         )}

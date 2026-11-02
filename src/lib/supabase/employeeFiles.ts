@@ -1,7 +1,7 @@
 /**
  * Employee files — paystubs uploaded in bulk on Accounting → Paystubs and
  * shown to each employee on Employee Self-Service → My Files (migration
- * 0416). Rows live in employee_files; the PDFs in the private
+ * 0418). Rows live in employee_files; the PDFs in the private
  * "employee-files" bucket, read through short-lived signed URLs. RLS lets
  * an employee see only their own published files; Finance / HR / Admin
  * manage everything (is_employee_files_admin).
@@ -33,7 +33,7 @@ async function removePdfs(paths: string[]): Promise<void> {
   await filesApi("action=remove", { json: { paths } }).catch((err) => console.error("Couldn't remove paystub PDF:", err));
 }
 
-/** "replaced" = superseded by a corrected file (migration 0417), kept for the record. */
+/** "replaced" = superseded by a corrected file (migration 0419), kept for the record. */
 export type EmployeeFileStatus = "unassigned" | "published" | "withdrawn" | "replaced";
 
 export interface EmployeeFileRow {
@@ -251,7 +251,7 @@ export async function updateEmployeeFileDetails(
 }
 
 /**
- * Replace a published file with a corrected PDF (migration 0417): the new
+ * Replace a published file with a corrected PDF (migration 0419): the new
  * one is published to the same person with the same details and points
  * back at the old one, which turns "replaced" — kept, hidden from them.
  */

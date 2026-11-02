@@ -46,8 +46,14 @@ async function captureHtmlToPdfBlobInner(
   try {
     await new Promise<void>((resolve) => {
       iframe.onload = () => resolve();
-      iframe.srcdoc = `<!DOCTYPE html><html><head><style>body{margin:0;}${styles}</style></head><body>${bodyHtml}</body></html>`;
+      // No kerning / ligatures: html2canvas places text word by word from the
+      // browser's layout, and on phones (no Arial on Android — another font
+      // stands in) kerned/ligated widths drifted from what it draws, leaving
+      // gaps like "Provide   a detailed", " :" and "clock -in".
+      iframe.srcdoc = `<!DOCTYPE html><html><head><style>body{margin:0;}*{font-kerning:none;font-variant-ligatures:none;text-rendering:optimizeSpeed;}${styles}</style></head><body>${bodyHtml}</body></html>`;
     });
+    // Fonts settle before measuring, so the layout html2canvas copies is the final one.
+    await iframe.contentDocument?.fonts?.ready.catch(() => undefined);
     const body = iframe.contentDocument?.body;
     if (!body) throw new Error("Could not prepare document for capture.");
     // Runs against the real (already-loaded) iframe document just before

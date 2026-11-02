@@ -180,6 +180,8 @@ function mapExpenseRow(row: any): ExpenseRow {
     orNumber: row.or_number ?? null,
     fromLocation: row.from_location ?? null,
     toLocation: row.to_location ?? null,
+    pickupDate: row.pickup_date ?? null,
+    returnDate: row.return_date ?? null,
     flashTechTripId: row.flash_tech_trip_id ?? null,
     expenseSubtype: row.expense_subtype ?? null,
     reviewNote: row.review_note ?? null,
@@ -418,6 +420,8 @@ export async function createFlashTechTrip(input: {
         toLocation: input.destinationLocation,
         flashTechTripId: tripId,
         expenseSubtype: subtype,
+        // The Car Rental line's pick-up / return (migration 0420) — the trip's rental dates, else the trip's own.
+        ...(subtype === "transportation" ? { pickupDate: input.rentalStartDate || input.startDate, returnDate: input.rentalEndDate || input.endDate } : {}),
       });
     } catch (err) {
       console.error(`createFlashTechTrip: failed to create ${subtype} expense:`, err);
@@ -567,7 +571,7 @@ export async function updateFlashTechTripTrackerFields(
     console.error("updateFlashTechTripTrackerFields error:", error.message);
     throw new Error(error.message);
   }
-  if ("hotelRate" in fields || "rentalRate" in fields || "lodgingStartDate" in fields || "rentalStartDate" in fields) {
+  if ("hotelRate" in fields || "rentalRate" in fields || "lodgingStartDate" in fields || "rentalStartDate" in fields || "rentalEndDate" in fields) {
     await syncFlashTechTripExpenses(id).catch((err) => console.error("Couldn't update the trip's expense lines:", err));
   }
 }
@@ -582,20 +586,21 @@ export async function getFlashTechTripReceipts(): Promise<Map<string, string[]>>
 /**
  * Copies the trip's Hotel Rate / Rental Rate (the stay's cost, as HR enters
  * it on the trip) onto its linked Hotel / Car Rental expense lines, with the
- * lodging / rental start date — they used to stay at $0 forever. Only lines
+ * lodging / rental start date — they used to stay at $0 forever. A Car
+ * Rental line also gets the rental's pick-up / return dates. Only lines
  * still Pending are changed; an Approved / Reimbursed / Rejected line keeps
  * what Accounting decided on.
  */
 export async function syncFlashTechTripExpenses(tripId: string): Promise<void> {
   const { data: trip, error } = await supabase
     .from("flash_tech_trips")
-    .select("start_date, hotel_rate, rental_rate, lodging_start_date, rental_start_date")
+    .select("start_date, end_date, hotel_rate, rental_rate, lodging_start_date, rental_start_date, rental_end_date")
     .eq("id", tripId)
     .maybeSingle();
   if (error || !trip) return;
   const { data: lines } = await supabase
     .from("expenses")
-    .select("id, amount, expense_date, expense_subtype, status")
+    .select("id, amount, expense_date, expense_subtype, status, pickup_date, return_date")
     .eq("flash_tech_trip_id", tripId)
     .eq("status", "Pending");
   for (const line of lines ?? []) {
@@ -604,8 +609,10 @@ export async function syncFlashTechTripExpenses(tripId: string): Promise<void> {
     const rate = hotel ? trip.hotel_rate : trip.rental_rate;
     const amount = rate != null ? Number(rate) : Number(line.amount) || 0;
     const date = (hotel ? trip.lodging_start_date : trip.rental_start_date) || trip.start_date || line.expense_date;
-    if (amount === Number(line.amount) && date === line.expense_date) continue;
-    await supabase.from("expenses").update({ amount, expense_date: date }).eq("id", line.id);
+    const returnDate = trip.rental_end_date || trip.end_date || line.return_date || date;
+    const rentalSame = hotel || (line.pickup_date === date && line.return_date === returnDate);
+    if (amount === Number(line.amount) && date === line.expense_date && rentalSame) continue;
+    await supabase.from("expenses").update({ amount, expense_date: date, ...(hotel ? {} : { pickup_date: date, return_date: returnDate }) }).eq("id", line.id);
   }
 }
 

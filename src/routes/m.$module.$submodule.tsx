@@ -26,8 +26,7 @@ import { ADMIN_MODULE_ROLES, USER_MANAGEMENT_DEFAULT_ROLES, ACTIVITY_LOG_DEFAULT
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import { guideDepartmentFor } from "@/lib/tours/guideDepartments";
 import { canSeeTicketTour } from "@/lib/tours/ticketTours";
-import { ExpensesModulePage } from "@/components/ExpensesModulePage";
-import { PaystubsPage } from "@/components/PaystubsPage";import { StaffListPage } from "@/components/StaffListPage";
+import { ExpensesModulePage } from "@/components/ExpensesModulePage";import { StaffListPage } from "@/components/StaffListPage";
 import { ItTicketsPage } from "@/components/ItTicketsPage";
 
 // Each page below is loaded only when it is opened (2026-10-26). They were
@@ -36,6 +35,7 @@ import { ItTicketsPage } from "@/components/ItTicketsPage";
 const OverallStatusPage = lazy(() => import("@/components/OverallStatusPage").then((m) => ({ default: m.OverallStatusPage })));
 const RepairForecastPage = lazy(() => import("@/components/RepairForecastPage").then((m) => ({ default: m.RepairForecastPage })));
 const DailyActivityPage = lazy(() => import("@/components/DailyActivityPage").then((m) => ({ default: m.DailyActivityPage })));
+const PaystubsPage = lazy(() => import("@/components/PaystubsPage").then((m) => ({ default: m.PaystubsPage })));
 const TriageDashboardPage = lazy(() => import("@/components/TriageDashboardPage").then((m) => ({ default: m.TriageDashboardPage })));
 const UniversalActivityLogPage = lazy(() => import("@/components/UniversalActivityLogPage").then((m) => ({ default: m.UniversalActivityLogPage })));
 const ReportsLibraryPage = lazy(() => import("@/components/ReportsLibraryPage").then((m) => ({ default: m.ReportsLibraryPage })));

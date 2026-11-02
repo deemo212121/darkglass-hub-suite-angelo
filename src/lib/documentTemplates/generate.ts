@@ -52,6 +52,16 @@ export function loadDocumentLogo(): Promise<string> {
   return loadAssetDataUrl(() => import("@/assets/us-in-home-services-logo.png"));
 }
 
+/**
+ * A form that starts with an Image element (e.g. the Admin Hub Solutions
+ * badge on an AHS agreement) brings its own letterhead — automatic
+ * documents print that image instead of the US In Home Services seal.
+ */
+export function hasOwnLetterhead(fields: CustomFormField[]): boolean {
+  const first = fields.find((f) => !f.hidden && !SKIPPED_IN_DOCUMENT.has(f.type));
+  return first?.type === "image" && !!first.config?.url;
+}
+
 /** A Paragraph element's rich text with {{field_name}} tokens filled from the answers, sanitized. */
 export function fillDisplayHtml(html: string, valuesByName: Record<string, CustomFormResponseValue>, fieldsByName: Record<string, CustomFormField>): string {
   const filled = String(html).replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_: string, name: string) => escapeHtml(formatFieldValue(valuesByName[name], fieldsByName[name])));
@@ -119,8 +129,10 @@ function isFileValue(value: CustomFormResponseValue | undefined): value is { url
  */
 export async function toDataUrl(url: string): Promise<string> {
   if (url.startsWith("data:")) return url;
+  // This app's own files (public/, e.g. /brand/…) are same-origin already — no proxy needed.
+  const sameOrigin = url.startsWith("/") && !url.startsWith("//");
   try {
-    const res = await fetch(`/api/image-proxy?url=${encodeURIComponent(url)}`);
+    const res = await fetch(sameOrigin ? url : `/api/image-proxy?url=${encodeURIComponent(url)}`);
     if (!res.ok) throw new Error(`Image proxy responded ${res.status}`);
     const blob = await res.blob();
     return await new Promise<string>((resolve, reject) => {
@@ -372,6 +384,17 @@ function buildAutoDocumentBlocks(form: Pick<CustomForm, "title" | "fields">, val
     blocks.push(`<div class="doc-blk full" style="width:100%;font-size:16px;font-weight:700;text-align:center;">${escapeHtml(form.title)}</div>`);
   }
   for (const field of fields) {
+    if (field.type === "image") {
+      // An Image element (e.g. a letterhead logo) at its set size — config.url is already a data: URL (generateAutoDocumentPdf).
+      const c = field.config ?? {};
+      if (c.url) {
+        const align = ["left", "center", "right"].includes(c.alignment) ? c.alignment : "left";
+        const size = c.width || c.height ? `${c.width ? `width:${Number(c.width)}px;` : ""}${c.height ? `height:${Number(c.height)}px;` : ""}` : "max-height:160px;";
+        const caption = c.caption ? `<div class="doc-under">${escapeHtml(String(c.caption))}</div>` : "";
+        blocks.push(`<div class="doc-blk full text" style="width:100%;text-align:${align};"><img src="${escapeHtml(String(c.url))}" style="${size}${c.rounded ? "border-radius:8px;" : ""}" />${caption}</div>`);
+      }
+      continue;
+    }
     if (DISPLAY_TYPES.has(field.type)) {
       for (const html of renderDisplayFieldHtml(field, valuesByName, fieldsByName)) {
         // Headings, and a paragraph that's only a bold title (e.g. "2.1 …"), stay on the page with what follows — see paginateBlocks.
@@ -478,7 +501,10 @@ export async function generateAutoDocumentPdf(form: Pick<CustomForm, "title" | "
   for (const [name, value] of Object.entries(valuesByName)) {
     if (isFileValue(value)) valuesByName[name] = { ...value, url: await toDataUrl(value.url) };
   }
-  const pages = await paginateBlocks(buildAutoDocumentBlocks(form, valuesByName, fieldsByName, await loadDocumentLogo()));
+  // Image elements inlined the same way, so the capture never waits on a remote request.
+  const fields = await Promise.all(form.fields.map(async (f) => (f.type === "image" && f.config?.url ? { ...f, config: { ...f.config, url: await toDataUrl(String(f.config.url)) } } : f)));
+  const logo = hasOwnLetterhead(fields) ? "" : await loadDocumentLogo();
+  const pages = await paginateBlocks(buildAutoDocumentBlocks({ ...form, fields }, valuesByName, fieldsByName, logo));
   const pageHtml = pages.map(
     (items, i) => `<div class="doc-page"><div class="doc-flow">${items.join("")}</div>${pages.length > 1 ? `<div class="doc-footer">Page ${i + 1} of ${pages.length}</div>` : ""}</div>`
   );

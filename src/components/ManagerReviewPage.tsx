@@ -318,7 +318,7 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
     await signDocument(doc.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
     await confirmSignableDocument(doc.id, null);
 
-    void logActivity({ action: contractorAgreementCountryOf(existing) === "mx" ? "master_mx_contractor_agreement_employer_signed" : "master_ph_contractor_agreement_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+    void logActivity({ action: `master_${contractorAgreementCountryOf(existing)}_contractor_agreement_employer_signed`, targetType: "employee", targetLabel: existing.employeeName || "" });
     setDoc({ ...doc, status: "confirmed", pdfUrl, formData: merged as unknown as Record<string, any> });
   };
 

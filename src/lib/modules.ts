@@ -376,7 +376,7 @@ const accountingMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
-    // Bulk paystub upload (PaystubsPage, migration 0416) — each page matched
+    // Bulk paystub upload (PaystubsPage, migration 0418) — each page matched
     // to an employee, confirmed here, then shown on their Self-Service → My Files.
     {
       slug: "paystubs",

@@ -2,6 +2,7 @@ import { brandOf, loadBrandLogo } from "@/lib/formBrand";
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
+import { isCompletedPaper, canViewCompletedPapers } from "@/lib/completedPapers";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, KeyRound, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, UserPlus, Search, Bell, Download, Forward, History, FileText, ClipboardList, ClipboardCheck, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, ShieldCheck, GraduationCap, LogOut, PhoneCall, Briefcase, Star, Route as RouteIcon, RefreshCw } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
@@ -38,7 +39,7 @@ import { useAuth } from "@/lib/auth";
 import { nowInTimezone, DEFAULT_ATTENDANCE_TIMEZONE } from "@/lib/attendanceGrace";
 import { normalizeRole, ROLE_LABELS, isJotformHrRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { useAllRoleOptions } from "@/lib/customRoles";
-import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, getProfileCredentialsPreview, setTraineeAccessGranted, getUserStatusChanges, getFirstDeactivations, recordAccountStatusChange, type AccountStatusChange, type EmployeeInfo, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, getProfileCredentialsPreview, setTraineeAccessGranted, getUserStatusChanges, getSeparations, preloadSeparations, recordAccountStatusChange, type AccountStatusChange, type EmployeeInfo, type ProfileRow, type Separation } from "@/lib/supabase/users";
 import { CorrectionManagerSignModal, CorrectionHrSignModal } from "@/components/CorrectionSignModals";
 import { PtoManagerSignModal, PtoHrSignModal } from "@/components/PtoSignModals";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
@@ -103,7 +104,7 @@ import { useSortableSearchTable } from "@/hooks/useSortableSearchTable";
 import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW2AgreementFormData } from "@/lib/masterW2AgreementFormTemplate";
 import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, masterW2OfficeUsesAdminHub, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
 import { agreementLogoLoader } from "@/lib/agreementBranding";
-import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, contractorAgreementCountryOf, CONTRACTOR_AGREEMENT_TITLE, CONTRACTOR_AGREEMENT_SHORT_TITLE, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
+import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, contractorAgreementCountryOf, CONTRACTOR_AGREEMENT_TITLE, CONTRACTOR_AGREEMENT_SHORT_TITLE, type ContractorAgreementCountry, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
 import { masterW2ExecutiveAgreementStyles, buildMasterW2ExecutiveAgreementBodyMarkup, type MasterW2ExecutiveAgreementFormData } from "@/lib/masterW2ExecutiveAgreementFormTemplate";
 import { confidentialityNonCompeteAgreementStyles, buildConfidentialityNonCompeteAgreementBodyMarkup, captureConfidentialityNonCompeteAgreementPdf, CNC_CURRENT_TEMPLATE_VERSION, confidentialityAgreementTitle, confidentialityUsesAdminHub, type ConfidentialityNonCompeteAgreementFormData } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
 import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments";
@@ -1150,7 +1151,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "compensationUpdate" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "confidentialityNonCompeteAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList" | "clockInCodes" | "performanceBonusPolicy" | "ahsDirectDeposit" | "ahsValidId" | "ahsPhAgreement" | "ahsConfidentiality" | "ahsW2Office" | "mxContractorAgreement">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "compensationUpdate" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "confidentialityNonCompeteAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList" | "clockInCodes" | "performanceBonusPolicy" | "ahsDirectDeposit" | "ahsValidId" | "ahsPhAgreement" | "ahsConfidentiality" | "ahsW2Office" | "mxContractorAgreement" | "usContractorAgreement">(paperworksOnly ? "combineForms" : "hiring");
   // HR Paperworks → "AHS Forms PH": the Admin Hub Solutions versions of Direct
   // Deposit, Valid ID, the Master PH Contractor Agreement and the Master
   // Confidentiality agreement; "AHS Forms US" has the Master W-2 Office &
@@ -1158,13 +1159,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // the original tabs, but they send (and list) only AHS copies — every copy
   // is tagged form_data.brand = "ahs" and keeps that version for good
   // (lib/formBrand.ts). The original tabs list only the US In Home Services copies.
-  const isAhsFormsTab = activeTab === "ahsDirectDeposit" || activeTab === "ahsValidId" || activeTab === "ahsPhAgreement" || activeTab === "ahsConfidentiality" || activeTab === "ahsW2Office";
+  const isAhsFormsTab = activeTab === "ahsDirectDeposit" || activeTab === "ahsValidId" || activeTab === "ahsPhAgreement" || activeTab === "ahsConfidentiality" || activeTab === "ahsW2Office" || activeTab === "usContractorAgreement";
   const isAhsDoc = (d: { formData?: unknown }) => brandOf(d.formData) === "ahs";
-  // New Automation Forms → Mexico Staff: the Mexico version of the Master PH
-  // Contractor Agreement (same type, form_data.country "mx" — see
-  // masterPhContractorAgreementFormTemplate.ts). Its own tab lists only those.
-  const isMxTab = activeTab === "mxContractorAgreement";
-  const isMxDoc = (d: { formData?: unknown }) => contractorAgreementCountryOf(d.formData) === "mx";
+  // New Automation Forms → Mexico Staff and AHS Forms US: the Mexico and US
+  // versions of the Master PH Contractor Agreement (same type,
+  // form_data.country "mx" / "us" — see masterPhContractorAgreementFormTemplate.ts;
+  // the US one is always Admin Hub Solutions). Each tab lists only its own copies.
+  const contractorTabCountry: ContractorAgreementCountry = activeTab === "mxContractorAgreement" ? "mx" : activeTab === "usContractorAgreement" ? "us" : "ph";
+  const contractorDocCountry = (d: { formData?: unknown }) => contractorAgreementCountryOf(d.formData);
+  // Completed papers (completedPapers.ts): no Delete button, and only HR Paperworks' named
+  // people + Super Admin can View / Download them. Papers still in progress are unchanged.
+  const canViewCompleted = canViewCompletedPapers({ uid, companyId, role: myRole, extraRoles: myExtraRoles });
+  const canViewPaper = (doc: SignableDocument) => canViewCompleted || !isCompletedPaper(doc);
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // Which floating-sidebar section headers (Automated Forms/Generate
@@ -1191,7 +1197,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [startDateFor, setStartDateFor] = useState<{ id: string; date: string } | null>(null);
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string; viewCvCandidateId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList", "clockInCodes", "ndaForm", "confidentialityNonCompeteAgreement", "performanceBonusPolicy", "ahsDirectDeposit", "ahsValidId", "ahsPhAgreement", "ahsConfidentiality", "ahsW2Office", "mxContractorAgreement"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList", "clockInCodes", "ndaForm", "confidentialityNonCompeteAgreement", "performanceBonusPolicy", "ahsDirectDeposit", "ahsValidId", "ahsPhAgreement", "ahsConfidentiality", "ahsW2Office", "mxContractorAgreement", "usContractorAgreement"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -1678,15 +1684,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Log — the reactivation date, who did it and the reason, shown under the
   // Master List's status (written here and by User Management alike).
   const [accountStatusChanges, setAccountStatusChanges] = useState<Map<string, AccountStatusChange>>(new Map());
-  // First time each account was deactivated — the Master List's Deactivated flag next to the name.
-  const [firstDeactivations, setFirstDeactivations] = useState<Map<string, string>>(new Map());
+  // When and why each deactivated account left — the flag next to the name (Master List status date first, else the first deactivation).
+  const [separations, setSeparations] = useState<Map<string, Separation>>(new Map());
 
   const loadEmployees = async () => {
     setEmployeesLoading(true);
+    preloadSeparations();
     void getUserStatusChanges().then(setAccountStatusChanges).catch((err) => console.error("Failed to load account status changes:", err));
-    void getFirstDeactivations().then(setFirstDeactivations).catch(() => {});
     try {
       const profiles = await getCompanyUsers();
+      void getSeparations(profiles).then(setSeparations).catch(() => {});
 
       const me = profiles.find((p) => p.id === uid);
       setMyLocations(me ? branchesOf(me.assigned_branch, me.branch_access) : []);
@@ -4041,11 +4048,28 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
     return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
   }, [warningBucketPopup, sentWarningForms, warningCountByEmployee]);
+  // A sent 2nd warning with no 1st listed under Previous Warning(s), or a 3rd
+  // with fewer than two — flagged in the list. (Forms made before 2026-10-27
+  // could be sent that way; newer ones can't be generated without them.)
+  const missingPriorWarnings = (doc: SignableDocument): number => {
+    const data = doc.formData as unknown as WarningFormData;
+    const required = data.level === "2nd" ? 1 : data.level === "3rd" ? 2 : 0;
+    const listed = (data.previousWarnings ?? []).filter((w) => (w?.cause ?? "").trim()).length;
+    return Math.max(0, required - listed);
+  };
+  const [onlyMissingPrior, setOnlyMissingPrior] = useState(false);
+  const missingPriorCount = useMemo(
+    () => sentWarningForms.filter((d) => d.status !== "cancelled" && missingPriorWarnings(d) > 0).length,
+    [sentWarningForms],
+  );
   const warningFormsInBucket = useMemo(
-    () => warningBucketPick == null
-      ? sentWarningForms
-      : sentWarningForms.filter((d) => warningBucketOf(warningCountByEmployee.get(warningEmployeeKey(d)) ?? 0) === warningBucketPick),
-    [sentWarningForms, warningCountByEmployee, warningBucketPick],
+    () => {
+      const inBucket = warningBucketPick == null
+        ? sentWarningForms
+        : sentWarningForms.filter((d) => warningBucketOf(warningCountByEmployee.get(warningEmployeeKey(d)) ?? 0) === warningBucketPick);
+      return onlyMissingPrior ? inBucket.filter((d) => d.status !== "cancelled" && missingPriorWarnings(d) > 0) : inBucket;
+    },
+    [sentWarningForms, warningCountByEmployee, warningBucketPick, onlyMissingPrior],
   );
   const {
     search: warningFormSentSearch,
@@ -6631,24 +6655,28 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   useEffect(() => {
-    if (activeTab === "masterPhContractorAgreement" || activeTab === "ahsPhAgreement" || activeTab === "mxContractorAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMasterPhContractorAgreementForms();
+    if (activeTab === "masterPhContractorAgreement" || activeTab === "ahsPhAgreement" || activeTab === "mxContractorAgreement" || activeTab === "usContractorAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMasterPhContractorAgreementForms();
   }, [activeTab]);
   const sentMasterPhContractorAgreementAwaitingEmployerCount = useMemo(
-    () => sentMasterPhContractorAgreementForms.filter((d) => !isAhsDoc(d) && !isMxDoc(d) && isAwaitingEmployerStep(d)).length,
+    () => sentMasterPhContractorAgreementForms.filter((d) => !isAhsDoc(d) && contractorDocCountry(d) === "ph" && isAwaitingEmployerStep(d)).length,
     [sentMasterPhContractorAgreementForms]
   );
   const sentAhsPhAgreementAwaitingEmployerCount = useMemo(
-    () => sentMasterPhContractorAgreementForms.filter((d) => isAhsDoc(d) && !isMxDoc(d) && isAwaitingEmployerStep(d)).length,
+    () => sentMasterPhContractorAgreementForms.filter((d) => isAhsDoc(d) && contractorDocCountry(d) === "ph" && isAwaitingEmployerStep(d)).length,
     [sentMasterPhContractorAgreementForms]
   );
   const sentMxAgreementAwaitingEmployerCount = useMemo(
-    () => sentMasterPhContractorAgreementForms.filter((d) => isMxDoc(d) && isAwaitingEmployerStep(d)).length,
+    () => sentMasterPhContractorAgreementForms.filter((d) => contractorDocCountry(d) === "mx" && isAwaitingEmployerStep(d)).length,
+    [sentMasterPhContractorAgreementForms]
+  );
+  const sentUsAgreementAwaitingEmployerCount = useMemo(
+    () => sentMasterPhContractorAgreementForms.filter((d) => contractorDocCountry(d) === "us" && isAwaitingEmployerStep(d)).length,
     [sentMasterPhContractorAgreementForms]
   );
 
   type MasterPhContractorAgreementSortColumn = "employee" | "nationality" | "sentBy" | "status" | "sent";
   const visibleMasterPhContractorAgreementForms = useMemo(
-    () => sentMasterPhContractorAgreementForms.filter((d) => (isMxTab ? isMxDoc(d) : !isMxDoc(d) && (activeTab === "ahsPhAgreement" ? isAhsDoc(d) : !isAhsDoc(d)))),
+    () => sentMasterPhContractorAgreementForms.filter((d) => contractorDocCountry(d) === contractorTabCountry && (contractorTabCountry !== "ph" || (activeTab === "ahsPhAgreement" ? isAhsDoc(d) : !isAhsDoc(d)))),
     [sentMasterPhContractorAgreementForms, activeTab],
   );
   const masterPhContractorAgreementStatusLabel = (doc: SignableDocument): string =>
@@ -6760,8 +6788,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setMasterPhContractorAgreementPreviewLoading(true);
     try {
       const recipientName = employees.find((e) => e.id === masterPhContractorAgreementRecipientId)?.name || "";
-      const logo = await loadBrandLogo(activeTab === "ahsPhAgreement" ? "ahs" : "usihs");
-      const previewData = { ...buildMasterPhContractorAgreementPreviewData(recipientName), ...(activeTab === "ahsPhAgreement" ? { brand: "ahs" as const } : {}), ...(isMxTab ? { country: "mx" as const } : {}) };
+      const ahsCopy = activeTab === "ahsPhAgreement" || contractorTabCountry === "us";
+      const logo = await loadBrandLogo(ahsCopy ? "ahs" : "usihs");
+      const previewData = { ...buildMasterPhContractorAgreementPreviewData(recipientName), ...(ahsCopy ? { brand: "ahs" as const } : {}), ...(contractorTabCountry !== "ph" ? { country: contractorTabCountry } : {}) };
       const pdfBlob = await captureHtmlToPdfBlob(buildMasterPhContractorAgreementBodyMarkup(previewData, logo), masterPhContractorAgreementStyles);
       const url = URL.createObjectURL(pdfBlob);
       setMasterPhContractorAgreementPreviewPdfUrl(url);
@@ -6781,13 +6810,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       if (!recipient) throw new Error("Select a recipient first.");
 
       const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["master_ph_contractor_agreement"]);
-      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Master PH or Mexico Contractor Agreement on file. Send another one anyway?`)) {
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a Master Contractor Agreement (PH, Mexico or US) on file. Send another one anyway?`)) {
         return;
       }
 
       const doc = await createSignableDocument({
         documentType: "master_ph_contractor_agreement",
-        formData: { employeeId: recipient.id, employeeName: recipient.name, ...(activeTab === "ahsPhAgreement" ? { brand: "ahs" } : {}), ...(isMxTab ? { country: "mx" } : {}) } as unknown as Record<string, any>,
+        formData: { employeeId: recipient.id, employeeName: recipient.name, ...(activeTab === "ahsPhAgreement" || contractorTabCountry === "us" ? { brand: "ahs" } : {}), ...(contractorTabCountry !== "ph" ? { country: contractorTabCountry } : {}) } as unknown as Record<string, any>,
         recipientId: masterPhContractorAgreementRecipientId,
         recipientSlot: "employee",
         pdfUrl: "",
@@ -6801,10 +6830,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         dmThreadId: thread.id,
         senderId: myProfileId,
         senderName: displayName || "HR",
-        body: `📋 Please complete the ${CONTRACTOR_AGREEMENT_TITLE[isMxTab ? "mx" : "ph"]}: ${fillLink}`,
+        body: `📋 Please complete the ${CONTRACTOR_AGREEMENT_TITLE[contractorTabCountry]}: ${fillLink}`,
       });
 
-      void logActivity({ action: isMxTab ? "master_mx_contractor_agreement_sent" : "master_ph_contractor_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+      void logActivity({ action: `master_${contractorTabCountry}_contractor_agreement_sent`, targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
 
       setMasterPhContractorAgreementRecipientId("");
       setMasterPhContractorAgreementRecipientSearch("");
@@ -6926,7 +6955,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       await signDocument(masterPhContractorAgreementEmployerDialog.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
       await confirmSignableDocument(masterPhContractorAgreementEmployerDialog.id, null);
 
-      void logActivity({ action: contractorAgreementCountryOf(existing) === "mx" ? "master_mx_contractor_agreement_employer_signed" : "master_ph_contractor_agreement_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+      void logActivity({ action: `master_${contractorAgreementCountryOf(existing)}_contractor_agreement_employer_signed`, targetType: "employee", targetLabel: existing.employeeName || "" });
       setMasterPhContractorAgreementEmployerDialog(null);
       await loadSentMasterPhContractorAgreementForms();
     } catch (err) {
@@ -18633,7 +18662,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   ] as const;
 
   // "Mexico Staff" — PH Staff's forms for Mexico staff: the Mexico version of
-  // the contractor agreement (its own tab, same document type — see isMxTab),
+  // the contractor agreement (its own tab, same document type — see contractorTabCountry),
   // and the same shared W-8BEN / Direct Deposit / Valid ID tabs.
   const newAutomationFormsMexicoTabs = [
     { key: "mxContractorAgreement", label: "Master Mexico Contractor Agreement", count: sentMxAgreementAwaitingEmployerCount, icon: FileCheck },
@@ -18754,6 +18783,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       icon: Paperclip,
       tabs: [
         { key: "ahsW2Office", label: "Master W-2 Office & Logistics Agreement", count: sentAhsW2OfficeAwaitingEmployerCount, icon: FileCheck },
+        // The US version of the contractor agreement (form_data.country "us" — see contractorTabCountry).
+        { key: "usContractorAgreement", label: "Master US Contractor Agreement", count: sentUsAgreementAwaitingEmployerCount, icon: FileCheck },
         { key: "newW4", label: "Form W-4", count: 0, icon: Landmark },
         { key: "newI9", label: "Form I-9 (Employment Eligibility)", count: sentI9AwaitingSection2CountNew, icon: FileCheck },
         { key: "newDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
@@ -21331,10 +21362,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {employee.name}
                         </button>
                         {!employee.accountActive && (() => {
-                          const on = firstDeactivations.get(employee.id);
+                          const sep = separations.get(employee.id);
+                          const on = sep?.date;
                           return (
                             <span className="ml-1.5 rounded-full border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-300">
-                              Deactivated{on ? ` · ${formatISODate(on, { year: "numeric", month: "short", day: "numeric" })}` : ""}
+                              {sep?.label ?? "Deactivated"}{on ? ` · ${formatISODate(on, { year: "numeric", month: "short", day: "numeric" })}` : ""}
                             </span>
                           );
                         })()}
@@ -21895,8 +21927,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                       </td>
                       <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(row.doc.createdAt).toLocaleDateString()}</td>
                       <td className="px-4 py-3">
-                        {row.doc.pdfUrl ? (
+                        {row.doc.pdfUrl && canViewPaper(row.doc) ? (
                           <button type="button" onClick={() => setSignedFormPreview(row)} className="btn text-xs px-2.5 py-1.5">View PDF</button>
+                        ) : row.doc.pdfUrl ? (
+                          <span className="text-muted-foreground text-xs" title="Completed papers open only for Wencil, Angella, Justin and Super Admins.">Restricted</span>
                         ) : (
                           <span className="text-muted-foreground text-xs">Not yet submitted</span>
                         )}
@@ -24464,8 +24498,19 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>,
             document.body,
           )}
-          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
-            {sortedSentWarningForms.length}{warningFormSentSearch || warningBucketPick != null ? ` of ${sentWarningForms.length}` : ""} forms
+          {(missingPriorCount > 0 || onlyMissingPrior) && (
+            <button
+              type="button"
+              onClick={() => setOnlyMissingPrior((v) => !v)}
+              aria-pressed={onlyMissingPrior}
+              className={`mb-1.5 ml-auto rounded-md border px-2.5 py-1 text-xs font-semibold transition ${onlyMissingPrior ? "border-red-400/70 bg-red-500/25 text-white" : "border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20"}`}
+              title="2nd warnings with no 1st listed, or 3rd warnings with fewer than two — click to show only those"
+            >
+              ⚠ {missingPriorCount} missing a previous warning{onlyMissingPrior ? " · showing only these" : ""}
+            </button>
+          )}
+          <span className={`text-xs text-muted-foreground mb-1.5 ${missingPriorCount > 0 || onlyMissingPrior ? "" : "ml-auto"}`}>
+            {sortedSentWarningForms.length}{warningFormSentSearch || warningBucketPick != null || onlyMissingPrior ? ` of ${sentWarningForms.length}` : ""} forms
           </span>
         </div>
         {warnActionError && (
@@ -24550,9 +24595,21 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        <button type="button" onClick={() => handleViewWarnForm(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
-                          {data.employeeName}
-                        </button>
+                        {canViewPaper(doc) ? (
+                          <button type="button" onClick={() => handleViewWarnForm(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName}
+                          </button>
+                        ) : (
+                          <span>{data.employeeName}</span>
+                        )}
+                        {doc.status !== "cancelled" && missingPriorWarnings(doc) > 0 && (
+                          <div
+                            className="mt-1 inline-flex items-center gap-1 rounded border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-red-300"
+                            title="Add it with Edit Warnings 1-3 — the PDF is regenerated with the signatures already collected"
+                          >
+                            ⚠ {data.level} warning — {data.level === "2nd" ? "no 1st warning listed" : `${missingPriorWarnings(doc) === 2 ? "no previous warnings" : "only one previous warning"} listed`}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
                       <td className="px-4 py-3 text-muted-foreground">
@@ -24629,6 +24686,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           )}
                           {doc.pdfUrl && (
                             <>
+                            {canViewPaper(doc) && (
                             <button
                               type="button"
                               onClick={() => setWarnViewDoc(doc)}
@@ -24636,6 +24694,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             >
                               View
                             </button>
+                            )}
+                            {canViewPaper(doc) && (
                             <button
                               type="button"
                               onClick={() => handleDownloadWarningFormPdf(doc)}
@@ -24643,8 +24703,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             >
                               Download PDF
                             </button>
+                            )}
                             </>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -24654,6 +24716,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -24939,9 +25002,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        <button type="button" onClick={() => handleViewPromoForm(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
-                          {data.employeeName}
-                        </button>
+                        {canViewPaper(doc) ? (
+                          <button type="button" onClick={() => handleViewPromoForm(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName}
+                          </button>
+                        ) : (
+                          <span>{data.employeeName}</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
                       <td className="px-4 py-3 text-muted-foreground">
@@ -25006,6 +25073,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Re-sign for HR
                             </button>
                           )}
+                          {canViewPaper(doc) && (
                           <button
                             type="button"
                             onClick={() => handleViewPromoForm(doc)}
@@ -25013,7 +25081,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             View
                           </button>
-                          {doc.pdfUrl && (
+                          )}
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button
                               type="button"
                               onClick={() => handleDownloadPromoFormPdf(doc)}
@@ -25022,6 +25091,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Download PDF
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -25031,6 +25101,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -25177,9 +25248,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        <button type="button" onClick={() => handleViewActionPlanForm(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
-                          {data.employeeName}
-                        </button>
+                        {canViewPaper(doc) ? (
+                          <button type="button" onClick={() => handleViewActionPlanForm(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName}
+                          </button>
+                        ) : (
+                          <span>{data.employeeName}</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
                       <td className="px-4 py-3 text-muted-foreground">
@@ -25244,6 +25319,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Revert
                             </button>
                           )}
+                          {canViewPaper(doc) && (
                           <button
                             type="button"
                             onClick={() => handleViewActionPlanForm(doc)}
@@ -25251,7 +25327,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             View
                           </button>
-                          {doc.pdfUrl && (
+                          )}
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button
                               type="button"
                               onClick={() => handleDownloadActionPlanFormPdf(doc)}
@@ -25260,6 +25337,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Download PDF
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -25269,6 +25347,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -25446,9 +25525,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        <button type="button" onClick={() => handleViewTerminationForm(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
-                          {data.employeeName}
-                        </button>
+                        {canViewPaper(doc) ? (
+                          <button type="button" onClick={() => handleViewTerminationForm(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName}
+                          </button>
+                        ) : (
+                          <span>{data.employeeName}</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
                       <td className="px-4 py-3 text-muted-foreground">
@@ -25513,6 +25596,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Revert
                             </button>
                           )}
+                          {canViewPaper(doc) && (
                           <button
                             type="button"
                             onClick={() => handleViewTerminationForm(doc)}
@@ -25520,7 +25604,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             View
                           </button>
-                          {doc.pdfUrl && (
+                          )}
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button
                               type="button"
                               onClick={() => handleDownloadTerminationFormPdf(doc)}
@@ -25529,6 +25614,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Download PDF
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -25538,6 +25624,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -25753,7 +25840,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setW8DocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -25779,16 +25866,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Copy Link
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setW8DocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadW8benPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -25798,6 +25886,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -25995,7 +26084,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setW4DocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -26022,12 +26111,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Copy Link
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setW4DocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadW4Pdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -26037,6 +26126,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Fill Employer Info →
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -26046,6 +26136,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -26242,7 +26333,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setW9DocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.name || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -26268,16 +26359,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Copy Link
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setW9DocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadW9Pdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -26287,6 +26379,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -26484,7 +26577,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setW4rDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {name || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -26510,16 +26603,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Copy Link
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setW4rDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadW4RPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -26529,6 +26623,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -26728,7 +26823,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setI9DocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -26765,12 +26860,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               </button>
                             </>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setI9DocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadI9Pdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -26780,6 +26875,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Re-sign
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -26789,6 +26885,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -26986,7 +27083,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setWageAckDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -27023,12 +27120,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               </button>
                             </>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setWageAckDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadWageAckPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -27038,6 +27135,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Re-sign
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -27047,6 +27145,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -27252,7 +27351,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setCarIqDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -27279,16 +27378,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Copy Link
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setCarIqDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadCarIqPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -27298,6 +27398,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -27503,7 +27604,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setVehicleDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -27530,16 +27631,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Copy Link
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setVehicleDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadVehiclePdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -27549,6 +27651,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -27754,7 +27857,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setConfidentialityDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -27781,16 +27884,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Copy Link
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setConfidentialityDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadConfidentialityPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -27800,6 +27904,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -28050,18 +28155,20 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.status === "pending_signature" && (
                             <button type="button" onClick={() => handleCopySsnCardLink(doc)} className="btn text-[10px] px-2 py-1">Copy Link</button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setSsnCardDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">View</button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadSsnCardPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">Download PDF</button>
                           )}
                           {doc.pdfUrl && (
                             <button type="button" disabled={busy} onClick={() => void handleRegenerateSsnCardPdf(doc)} title="Re-render this PDF from its saved data — fixes a date rendered a day early, or a blank signature/card photo from a cross-origin image glitch" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">{busy ? "Regenerating…" : "Regenerate PDF"}</button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button type="button" disabled={busy} onClick={() => handleDeleteSsnCard(doc)} title="Permanently delete this request" className="text-muted-foreground hover:text-red-300 disabled:opacity-50">
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -28336,18 +28443,20 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.status === "pending_signature" && (
                             <button type="button" onClick={() => handleCopyDriversLicenseLink(doc)} className="btn text-[10px] px-2 py-1">Copy Link</button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setDriversLicenseDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">View</button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadDriversLicensePdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">Download PDF</button>
                           )}
                           {doc.pdfUrl && (
                             <button type="button" disabled={busy} onClick={() => void handleRegenerateDriversLicensePdf(doc)} title="Re-render this PDF from its saved data — fixes a date rendered a day early, or a blank signature/license photo from a cross-origin image glitch" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">{busy ? "Regenerating…" : "Regenerate PDF"}</button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button type="button" disabled={busy} onClick={() => handleDeleteDriversLicense(doc)} title="Permanently delete this request" className="text-muted-foreground hover:text-red-300 disabled:opacity-50">
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -28555,18 +28664,20 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           {doc.status === "pending_signature" && (
                             <button type="button" onClick={() => handleCopyValidIdLink(doc)} className="btn text-[10px] px-2 py-1">Copy Link</button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setValidIdDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">View</button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadValidIdPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">Download PDF</button>
                           )}
                           {doc.pdfUrl && (
                             <button type="button" disabled={busy} onClick={() => void handleRegenerateValidIdPdf(doc)} title="Re-render this PDF from its saved data — fixes a date rendered a day early, or a blank signature/ID photo from a cross-origin image glitch" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">{busy ? "Regenerating…" : "Regenerate PDF"}</button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button type="button" disabled={busy} onClick={() => handleDeleteValidId(doc)} title="Permanently delete this request" className="text-muted-foreground hover:text-red-300 disabled:opacity-50">
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -28797,7 +28908,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setNdaDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -28824,12 +28935,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Copy Link
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setNdaDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadNdaPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -28839,6 +28950,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               {busy ? "Regenerating…" : "Regenerate PDF"}
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -28848,6 +28960,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -29045,7 +29158,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setSubstanceScreeningDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -29082,12 +29195,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               </button>
                             </>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setSubstanceScreeningDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadSubstanceScreeningPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -29097,6 +29210,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Re-sign
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -29106,6 +29220,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -29312,7 +29427,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setMealRestBreakDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -29350,12 +29465,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               </button>
                             </>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setMealRestBreakDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadMealRestBreakPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -29365,6 +29480,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Re-sign
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -29374,6 +29490,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -29543,7 +29660,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setPerformanceBonusDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -29570,16 +29687,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Copy Link
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setPerformanceBonusDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadPerformanceBonusPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -29589,6 +29707,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -29793,7 +29912,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setPtoAckDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -29820,16 +29939,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Copy Link
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setPtoAckDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadPtoAckPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -29839,6 +29959,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -30045,7 +30166,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setPartsResponsibilityDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -30083,12 +30204,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               </button>
                             </>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setPartsResponsibilityDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadPartsResponsibilityPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -30098,6 +30219,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Re-sign
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -30107,6 +30229,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -30313,7 +30436,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setMileageFuelDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -30351,12 +30474,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               </button>
                             </>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setMileageFuelDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadMileageFuelPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -30366,6 +30489,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Re-sign
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -30375,6 +30499,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -30546,7 +30671,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setMasterW2AgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -30607,12 +30732,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               </button>
                             </>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setMasterW2AgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadMasterW2AgreementPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -30627,6 +30752,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Re-sign
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -30636,6 +30762,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -30868,7 +30995,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setMasterW2OfficeAgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -30929,12 +31056,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               </button>
                             </>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setMasterW2OfficeAgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadMasterW2OfficeAgreementPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -30949,6 +31076,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Re-sign
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -30958,6 +31086,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -31189,7 +31318,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setMasterW2ExecutiveAgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -31227,12 +31356,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               </button>
                             </>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setMasterW2ExecutiveAgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadMasterW2ExecutiveAgreementPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -31247,6 +31376,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Re-sign
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -31256,6 +31386,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -31496,7 +31627,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setConfidentialityNonCompeteAgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -31536,12 +31667,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               </button>
                             </>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setConfidentialityNonCompeteAgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadConfidentialityNonCompeteAgreementPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -31556,6 +31687,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Re-sign
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -31565,6 +31697,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -31646,12 +31779,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         </div>
       )}
 
-      {(activeTab === "masterPhContractorAgreement" || activeTab === "ahsPhAgreement" || activeTab === "mxContractorAgreement") && (
+      {(activeTab === "masterPhContractorAgreement" || activeTab === "ahsPhAgreement" || activeTab === "mxContractorAgreement" || activeTab === "usContractorAgreement") && (
       <>
       <div className="panel p-0 overflow-visible mt-4 relative z-20">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Send {CONTRACTOR_AGREEMENT_SHORT_TITLE[isMxTab ? "mx" : "ph"]} Request {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
-          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their info and sign. Once they submit, it lands back here for HR to add the employer signature. Covers the independent-contractor relationship, confidentiality/NDA, the {isMxTab ? "Mexico" : "PH"} off-days & leave policy, and governing law/e-signature terms in one document.</p>
+          <h2 className="font-semibold text-sm">Send {CONTRACTOR_AGREEMENT_SHORT_TITLE[contractorTabCountry]} Request {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to fill in their info and sign. Once they submit, it lands back here for HR to add the employer signature. Covers the independent-contractor relationship, confidentiality/NDA, the {{ ph: "PH", mx: "Mexico", us: "US" }[contractorTabCountry]} off-days & leave policy, and governing law/e-signature terms in one document.</p>
         </div>
         <div className="p-4 flex flex-col md:flex-row gap-6">
           <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
@@ -31717,7 +31850,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 {masterPhContractorAgreementPreviewLoading || !masterPhContractorAgreementPreviewPdfUrl ? (
                   <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
                 ) : (
-                  <iframe src={masterPhContractorAgreementPreviewPdfUrl} title={`${CONTRACTOR_AGREEMENT_SHORT_TITLE[isMxTab ? "mx" : "ph"]} Preview`} className="w-full border-0" style={{ height: 560 }} />
+                  <iframe src={masterPhContractorAgreementPreviewPdfUrl} title={`${CONTRACTOR_AGREEMENT_SHORT_TITLE[contractorTabCountry]} Preview`} className="w-full border-0" style={{ height: 560 }} />
                 )}
               </div>
             ) : (
@@ -31731,7 +31864,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
       <div className="panel p-0 overflow-hidden mt-4">
         <div className="px-4 py-4 border-b border-white/10">
-          <h2 className="font-semibold text-sm">Sent {CONTRACTOR_AGREEMENT_SHORT_TITLE[isMxTab ? "mx" : "ph"]} Forms {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
+          <h2 className="font-semibold text-sm">Sent {CONTRACTOR_AGREEMENT_SHORT_TITLE[contractorTabCountry]} Forms {isAhsFormsTab && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span>}</h2>
           <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Employer Signature" means the contractor finished — add your signature to finalize.</p>
         </div>
         <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
@@ -31804,7 +31937,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setMasterPhContractorAgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -31864,12 +31997,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               </button>
                             </>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setMasterPhContractorAgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View PDF
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadMasterPhContractorAgreementPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -31884,6 +32017,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Re-sign
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -31893,6 +32027,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -32159,7 +32294,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setFlashTechnicianTravelDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -32197,12 +32332,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               </button>
                             </>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setFlashTechnicianTravelDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadFlashTechnicianTravelPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -32217,6 +32352,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Re-sign
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -32226,6 +32362,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -32456,7 +32593,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <a href={doc.pdfUrl} target="_blank" rel="noreferrer noopener" className="text-blue-300 hover:text-blue-200 hover:underline">
                             {fd?.signerNames?.employee || recipient?.name || doc.recipientName || "—"}
                           </a>
@@ -32484,12 +32621,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Finalize
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setContractorAddendumDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">View</button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadContractorAddendumPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">Download PDF</button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -32499,6 +32637,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -32824,7 +32963,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setLocationConsentDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -32862,12 +33001,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               </button>
                             </>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setLocationConsentDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadLocationConsentPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -32877,6 +33016,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Re-sign
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -32886,6 +33026,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -33092,7 +33233,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setDamageDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -33130,12 +33271,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               </button>
                             </>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setDamageDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadDamagePdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -33145,6 +33286,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Re-sign
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -33154,6 +33296,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -33359,7 +33502,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setContractorDataDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -33386,12 +33529,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Copy Link
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setContractorDataDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadContractorDataPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -33401,6 +33544,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               {busy ? "Regenerating…" : "Regenerate PDF"}
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -33410,6 +33554,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -33615,7 +33760,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setContractorDataUsDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -33642,12 +33787,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Copy Link
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setContractorDataUsDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadContractorDataUsPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -33657,6 +33802,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               {busy ? "Regenerating…" : "Regenerate PDF"}
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -33666,6 +33812,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -33871,7 +34018,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setVehicleUseAgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -33898,12 +34045,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Copy Link
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setVehicleUseAgreementDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadVehicleUseAgreementPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -33913,6 +34060,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               {busy ? "Regenerating…" : "Regenerate PDF"}
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -33922,6 +34070,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -34238,7 +34387,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
-                        {doc.pdfUrl ? (
+                        {doc.pdfUrl && canViewPaper(doc) ? (
                           <button type="button" onClick={() => setDirectDepositDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
                             {data.employeeName || recipient?.name || doc.recipientName || "—"}
                           </button>
@@ -34265,12 +34414,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               Copy Link
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => setDirectDepositDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               View
                             </button>
                           )}
-                          {doc.pdfUrl && (
+                          {doc.pdfUrl && canViewPaper(doc) && (
                             <button type="button" onClick={() => handleDownloadDirectDepositPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
                               Download PDF
                             </button>
@@ -34280,6 +34429,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               {busy ? "Regenerating…" : "Regenerate PDF"}
                             </button>
                           )}
+                          {!isCompletedPaper(doc) && (
                           <button
                             type="button"
                             disabled={busy}
@@ -34289,6 +34439,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -37091,7 +37242,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             {SIGNABLE_DOCUMENT_REGISTRY[type].label}
                           </label>
                           <span className={`shrink-0 text-[10px] font-semibold uppercase tracking-wide ${statusColor}`}>{statusText}</span>
-                          {doc?.pdfUrl && (
+                          {doc?.pdfUrl && canViewPaper(doc) && (
                             <a
                               href={doc.pdfUrl}
                               target="_blank"

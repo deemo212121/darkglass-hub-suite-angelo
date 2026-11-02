@@ -1281,6 +1281,54 @@ export async function getFirstDeactivations(): Promise<Map<string, string>> {
   return result;
 }
 
+export interface Separation {
+  /** Master List status when it says they left, else "Deactivated". */
+  label: "Terminated" | "Resigned" | "Inactive" | "Deactivated";
+  /** "YYYY-MM-DD" — the Master List's status date (else Terminate Date), else the first account deactivation. */
+  date: string | null;
+  source: "Master List" | "User Management" | null;
+}
+
+/**
+ * When and why each deactivated account left — the Master List's Employment
+ * Status and its date first (what HR records as the real last day; a batch
+ * of accounts switched off on one day would otherwise all show that day),
+ * the first User Management deactivation when the Master List has no date.
+ * Only deactivated accounts are in the map.
+ */
+// The deactivation log is a big read — fetched once and shared for a few
+// minutes, and started early by preloadSeparations so the dates are ready
+// by the time a page has its people.
+let firstOffCache: { at: number; promise: Promise<Map<string, string>> } | null = null;
+function firstDeactivationsCached(): Promise<Map<string, string>> {
+  if (!firstOffCache || Date.now() - firstOffCache.at > 5 * 60_000) {
+    firstOffCache = { at: Date.now(), promise: getFirstDeactivations().catch(() => { firstOffCache = null; return new Map<string, string>(); }) };
+  }
+  return firstOffCache.promise;
+}
+/** Start loading the deactivation dates before the page's people arrive. */
+export function preloadSeparations(): void {
+  void firstDeactivationsCached();
+}
+
+export async function getSeparations(people: Pick<ProfileRow, "id" | "is_active">[]): Promise<Map<string, Separation>> {
+  const gone = people.filter((p) => p.is_active === false).map((p) => p.id);
+  const out = new Map<string, Separation>();
+  if (gone.length === 0) return out;
+  const [statuses, firstOff] = await Promise.all([
+    getEmploymentStatusesByProfileIds(gone).catch(() => new Map<string, EmploymentStatusInfo>()),
+    firstDeactivationsCached(),
+  ]);
+  for (const id of gone) {
+    const info = statuses.get(id);
+    const label = info?.status === "terminated" ? "Terminated" : info?.status === "resigned" ? "Resigned" : info?.status === "inactive" ? "Inactive" : "Deactivated";
+    const masterDate = info?.statusDate || info?.terminateDate || null;
+    const date = masterDate || firstOff.get(id) || null;
+    out.set(id, { label, date, source: masterDate ? "Master List" : date ? "User Management" : null });
+  }
+  return out;
+}
+
 /**
  * Log an account Activate / Deactivate in User Management's Activity Log —
  * the record User Management and HR's Master List read the status date and

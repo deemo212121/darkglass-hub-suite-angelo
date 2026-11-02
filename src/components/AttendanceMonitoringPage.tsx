@@ -1,7 +1,7 @@
 import { getAttendanceStartByProfile } from "@/lib/supabase/attendanceStart";
 import { getRestDayHistory } from "@/lib/supabase/restDayHistory";
 import { isRestDayOn, requiredTimesOn, type RestDayHistory } from "@/lib/restDays";
-import { AlertCircle, AlertTriangle, Compass, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, ChevronRight, ChevronDown, Download, Calendar, FileText, CheckCircle, XCircle, Loader2, Settings } from "lucide-react";
+import { AlertCircle, AlertTriangle, Compass, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, ChevronRight, ChevronDown, Download, Calendar, FileText, CheckCircle, XCircle, Loader2, Settings, Undo2 } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
 import { PtoBalanceSummary, usePtoHireDates } from "@/components/PtoBalanceSummary";
 import { toast } from "sonner";
@@ -15,7 +15,7 @@ import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, type ProfileRow } from "@/lib/supabase/users";
 import { resolvePresenceStatus, PRESENCE_DOT_CLASS, PRESENCE_LABEL } from "@/lib/presence";
-import { getRoleDepartmentBreakdown, normalizeRole, isAttendanceManagerTierRole, TECHNICIAN_PAY_ROLES, isCompanySuperAdminRole, isFinanceRole } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, normalizeRole, isAttendanceManagerTierRole, TECHNICIAN_PAY_ROLES, isCompanySuperAdminRole, isFinanceRole, isAttendanceFullAccessRole } from "@/lib/roleLabels";
 import { getPendingCheckoutProposals, approveCheckoutProposal, type CheckoutProposal } from "@/lib/supabase/technicianCheckoutProposals";
 import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
 import { RequestedTime } from "@/components/CorrectionRequestedTime";
@@ -72,6 +72,7 @@ import {
   getCompanyTimecardCorrectionHistory,
   reviewCorrectionStage,
   canReviewCorrectionStage,
+  undoCorrectionRejection,
   type TimecardCorrectionRow,
   type TimecardCorrectionHistoryRow,
   type CorrectionStage,
@@ -1512,8 +1513,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         // "—", not counted toward workingDays/pct) rather than "off" (which
         // would read as a scheduled rest day for someone already employed).
         if (iso > todayISO || isBeforeHireFor(p.id, iso)) return "future" as const;
-        workingDays++;
         const entry = entriesByKey.get(`${p.id}|${iso}`);
+        // Approved leave or a company holiday with no punch — excused, not absent, and not a working day.
+        if (!entry?.checkIn && (isOnLeaveFor(p.id, iso) || isCompanyHolidayFor(iso))) return (isOnLeaveFor(p.id, iso) ? "leave" : "holiday") as "leave" | "holiday";
+        workingDays++;
         const present = Boolean(entry?.checkIn);
         if (present) presentCount++;
         if (present) return "present" as const;
@@ -1523,7 +1526,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const pct = workingDays > 0 ? Math.round((presentCount / workingDays) * 100) : 100;
       return { profileId: p.id, name: p.display_name || p.email, cells, presentCount, workingDays, pct };
     });
-  }, [summaryProfiles, weekDates, entriesByKey, traineePendingByKey, todayISO, isBeforeHireFor, isRestDayFor, requiredFor]);
+  }, [summaryProfiles, weekDates, entriesByKey, traineePendingByKey, todayISO, isBeforeHireFor, isRestDayFor, requiredFor, isOnLeaveFor, isCompanyHolidayFor]);
 
   // Narrows weeklySummary to rows matching the selected day + status (e.g.
   // "who was absent on Wednesday") — "all" for either just shows everyone,
@@ -1544,7 +1547,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       for (let d = new Date(monthStart); d <= today; d.setDate(d.getDate() + 1)) {
         const iso = toISODate(d);
         const dow = d.getDay();
-        if (isRestDayFor(p, iso) || isBeforeHireFor(p.id, iso)) continue;
+        if (isRestDayFor(p, iso) || isBeforeHireFor(p.id, iso) || isCompanyHolidayFor(iso) || isOnLeaveFor(p.id, iso)) continue;
         workingDays++;
         const entry = entriesByKey.get(`${p.id}|${iso}`);
         const checkIn = entry?.checkIn || "";
@@ -1560,7 +1563,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const status = pct >= 90 ? "Good" : pct >= 70 ? "Warning" : "Poor";
       return { profileId: p.id, name: p.display_name || p.email, workingDays, present, absent, late, pct, status };
     });
-  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor, isRestDayFor, requiredFor]);
+  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor, isRestDayFor, requiredFor, isCompanyHolidayFor, isOnLeaveFor]);
 
   // ---- Custom-range summary — same shape as monthlySummary above, just
   // over whatever [customRangeStart, customRangeEnd] the user picked instead
@@ -1577,7 +1580,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         const iso = toISODate(d);
         if (iso > todayISO) break; // don't count days that haven't happened yet as absences
         const dow = d.getDay();
-        if (isRestDayFor(p, iso) || isBeforeHireFor(p.id, iso)) continue;
+        if (isRestDayFor(p, iso) || isBeforeHireFor(p.id, iso) || isCompanyHolidayFor(iso) || isOnLeaveFor(p.id, iso)) continue;
         workingDays++;
         const entry = customEntriesByKey.get(`${p.id}|${iso}`);
         const checkIn = entry?.checkIn || "";
@@ -1591,7 +1594,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const status = pct >= 90 ? "Good" : pct >= 70 ? "Warning" : "Poor";
       return { profileId: p.id, name: p.display_name || p.email, workingDays, present, absent, late, pct, status };
     });
-  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor, isRestDayFor, requiredFor]);
+  }, [summaryProfiles, customEntriesByKey, customRangeStart, customRangeEnd, todayISO, isBeforeHireFor, isRestDayFor, requiredFor, isCompanyHolidayFor, isOnLeaveFor]);
 
   // Day-by-day breakdown behind the Custom Attendance Summary's Present/
   // Absent/Late numbers — same day-iteration/off-day rules as customSummary
@@ -1615,7 +1618,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       const iso = toISODate(d);
       if (iso > todayISO) break;
-      if (isRestDayFor(p, iso) || isBeforeHireFor(p.id, iso)) continue;
+      if (isRestDayFor(p, iso) || isBeforeHireFor(p.id, iso) || isCompanyHolidayFor(iso) || isOnLeaveFor(p.id, iso)) continue;
       const entry = customEntriesByKey.get(`${p.id}|${iso}`);
       const checkIn = entry?.checkIn || "";
       const checkOut = entry?.checkOut || "";
@@ -2084,6 +2087,25 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const refreshCorrections = async () => {
     setCorrections(await getCompanyTimecardCorrections());
     setCorrectionHistory(await getCompanyTimecardCorrectionHistory());
+  };
+
+  // Undo a rejection — whoever rejected it, or Admin / HR / Super Admin
+  // (full attendance access). The rejected stage goes back to pending.
+  const [undoingCorrectionId, setUndoingCorrectionId] = useState<string | null>(null);
+  const canUndoCorrectionRejection = (c: TimecardCorrectionRow) =>
+    isAttendanceFullAccessRole(role, extraRoles) ||
+    (!!myProfileId && [c.managerStatus === "rejected" ? c.managerReviewedBy : null, c.hrStatus === "rejected" ? c.hrReviewedBy : null, c.accountingStatus === "rejected" ? c.accountingReviewedBy : null].includes(myProfileId));
+  const handleUndoCorrectionRejection = async (c: TimecardCorrectionRow) => {
+    if (!confirm(`Undo the rejection of ${profileName(c.profileId)}'s ${c.workDate} correction? It goes back to review.`)) return;
+    setUndoingCorrectionId(c.id);
+    try {
+      await undoCorrectionRejection(c, myProfileId || "", displayName || "Reviewer");
+      await refreshCorrections();
+    } catch (err) {
+      alert(`Couldn't undo the rejection: ${err instanceof Error ? err.message : "unknown error"}`);
+    } finally {
+      setUndoingCorrectionId(null);
+    }
   };
 
   const handleCorrectionStageAction = async (stage: CorrectionStage, decision: "approved" | "rejected") => {
@@ -2968,6 +2990,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               <span className="inline-block px-2 py-1 rounded bg-slate-700/50 text-slate-400">OFF</span>
                             ) : cell === "future" ? (
                               <span className="text-slate-600">—</span>
+                            ) : cell === "leave" ? (
+                              <span className="inline-block px-2 py-1 rounded bg-violet-500/20 text-violet-300" title="Approved leave">Leave</span>
+                            ) : cell === "holiday" ? (
+                              <span className="inline-block px-2 py-1 rounded bg-sky-500/20 text-sky-300" title="Company holiday">Holiday</span>
                             ) : cell === "present" ? (
                               <span className="inline-block px-2 py-1 rounded bg-green-500/20 text-green-300">✓</span>
                             ) : cell === "pending" ? (
@@ -3599,7 +3625,20 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               View Timecard
                             </button>
                           ) : (
-                            <CorrectionOverallBadge status={correction.status} size="md" />
+                            <div className="flex flex-col items-start gap-1.5">
+                              <CorrectionOverallBadge status={correction.status} size="md" />
+                              {correction.status === "rejected" && canUndoCorrectionRejection(correction) && (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleUndoCorrectionRejection(correction)}
+                                  disabled={undoingCorrectionId === correction.id}
+                                  className="inline-flex items-center gap-1 rounded border border-white/15 bg-white/5 px-2 py-0.5 text-[11px] font-semibold text-slate-200 hover:bg-white/10 disabled:opacity-50"
+                                  title="Put it back in review — the rejected stage goes back to pending"
+                                >
+                                  {undoingCorrectionId === correction.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Undo2 className="h-3 w-3" />} Undo
+                                </button>
+                              )}
+                            </div>
                           )}
                         </td>
                       </tr>
