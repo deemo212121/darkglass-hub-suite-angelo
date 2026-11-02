@@ -354,8 +354,11 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
   };
 
   // Same steps as HR Paperworks' "Add Company Signature" for this agreement.
+  // Claims it first, like the other types here — the Staff Form Checklist's
+  // "Sign" opens this page for a form that isn't assigned to the signer yet.
   const handleSubmitPhAntiCloningAgreement = async (dataUrl: string) => {
-    if (!doc) return;
+    if (!doc || !myProfileId) return;
+    await reassignSignableDocument(doc.id, { recipientId: myProfileId, recipientName: displayName || "Manager" }, "hr_staff");
     const existing = doc.formData as unknown as PhAntiCloningAgreementFormData;
     await refreshStorageAuthToken();
     const signatureUrl = await uploadSignableDocumentSignature(doc.companyId, doc.id, "hr_staff", dataUrl);

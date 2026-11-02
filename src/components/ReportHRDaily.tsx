@@ -13914,6 +13914,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "w8ben", label: "Form W-8BEN" },
     { type: "direct_deposit", label: "Direct Deposit Authorization" },
     { type: "confidentiality_noncompete_agreement", label: "Master Confidentiality & Non-Compete Agreement" },
+    // Admin Hub Solutions-only (AHS Forms PH); the contractor fills in their start date and role when they sign.
+    { type: "ph_anti_cloning_agreement", label: "Master PH Independent Contractor & Anti-Cloning Agreement (AHS)" },
   ];
   // Matches newAutomationFormsManagementTabs (BM, SBS, Tech Director, Tech
   // Assistant Director Forms).

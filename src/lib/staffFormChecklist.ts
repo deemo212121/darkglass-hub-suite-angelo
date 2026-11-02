@@ -56,8 +56,12 @@ export const BRANDED_FORM_TYPES = new Set<SignableDocumentType>(["master_ph_cont
 export const VERSION_REQUIRED_FORM_TYPES = new Set<SignableDocumentType>(["master_ph_contractor_agreement", "confidentiality_noncompete_agreement", "master_w2_office_agreement"]);
 /** What Office Staff (US) AHS sends in the Admin Hub Solutions version — only the two agreements; its other forms (Direct Deposit included) go out as usual. */
 export const AHS_OFFICE_STAFF_US_FORM_TYPES = new Set<SignableDocumentType>(["master_w2_office_agreement", "confidentiality_noncompete_agreement"]);
-/** The AHS Forms PH checklist — the same forms as HR Paperworks' AHS Forms PH group. */
-export const AHS_PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "confidentiality_noncompete_agreement", "w8ben", "direct_deposit", "valid_id_form"];
+/**
+ * The AHS Forms PH checklist — the same forms as HR Paperworks' AHS Forms PH
+ * group. The Anti-Cloning Agreement is Admin Hub Solutions-only (no US In
+ * Home Services version), so it isn't in BRANDED_FORM_TYPES.
+ */
+export const AHS_PH_STAFF_FORM_TYPES: SignableDocumentType[] = ["master_ph_contractor_agreement", "confidentiality_noncompete_agreement", "w8ben", "direct_deposit", "valid_id_form", "ph_anti_cloning_agreement"];
 
 export interface ChecklistTabConfig {
   key: ChecklistTabKey;
