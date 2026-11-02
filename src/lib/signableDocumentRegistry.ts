@@ -61,6 +61,9 @@ export const SIGNABLE_DOCUMENT_REGISTRY: Record<SignableDocumentType, SignableDo
   // Sent to everyone (every checklist tier). Login-only like the Master
   // agreements — recipients are existing AHS staff.
   confidentiality_noncompete_agreement: { label: "Master Confidentiality & Non-Compete Agreement", internalPath: "/fill-confidentiality-noncompete-agreement", externalPath: "/fill-confidentiality-noncompete-agreement" },
+  // AHS Forms PH only (Admin Hub Solutions) — PH contractors are existing AHS
+  // staff, so login-only like the Master agreements. Not in any checklist tier.
+  ph_anti_cloning_agreement: { label: "Master PH Independent Contractor & Anti-Cloning Agreement", internalPath: "/fill-ph-anti-cloning-agreement", externalPath: "/fill-ph-anti-cloning-agreement" },
   // Every technician (New Technician tier). Login-only — recipients are
   // existing AHS technicians, so no external/no-login variant.
   performance_bonus_policy: { label: "Performance Bonus Policy & Acknowledgment Form", internalPath: "/fill-performance-bonus-policy", externalPath: "/fill-performance-bonus-policy" },
@@ -203,6 +206,7 @@ export const DOCUMENT_TYPES_REQUIRING_EMPLOYER_SIGNATURE = new Set<SignableDocum
   "visit_exception_report",
   // Like the other Master Agreements: done once the employer countersigns.
   "confidentiality_noncompete_agreement",
+  "ph_anti_cloning_agreement",
 ]);
 
 /**

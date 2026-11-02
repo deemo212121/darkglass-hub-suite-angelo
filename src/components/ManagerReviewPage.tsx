@@ -61,6 +61,7 @@ import {
   uploadMasterW2OfficeAgreementForm,
   uploadMasterPhContractorAgreementForm,
   uploadConfidentialityNonCompeteAgreementForm,
+  uploadPhAntiCloningAgreementForm,
   refreshStorageAuthToken,
 } from "@/lib/firebase/storage";
 import { fillPartsResponsibilityPdf } from "@/lib/partsResponsibilityPdfFill";
@@ -77,6 +78,7 @@ import { masterW2AgreementStyles, buildMasterW2AgreementBodyMarkup, type MasterW
 import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, masterW2OfficeUsesAdminHub, type MasterW2OfficeAgreementFormData } from "@/lib/masterW2OfficeAgreementFormTemplate";
 import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, contractorAgreementCountryOf, CONTRACTOR_AGREEMENT_TITLE, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
 import { captureConfidentialityNonCompeteAgreementPdf, confidentialityUsesAdminHub, type ConfidentialityNonCompeteAgreementFormData } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
+import { capturePhAntiCloningAgreementPdf, PH_ANTI_CLONING_AGREEMENT_TITLE, PH_ANTI_CLONING_COMPANY_SIGNER, type PhAntiCloningAgreementFormData } from "@/lib/phAntiCloningAgreementFormTemplate";
 import { agreementLogoLoader } from "@/lib/agreementBranding";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
@@ -104,6 +106,7 @@ interface Props {
 }
 
 const TYPE_LABEL: Partial<Record<SignableDocumentType, string>> = {
+  ph_anti_cloning_agreement: PH_ANTI_CLONING_AGREEMENT_TITLE,
   parts_responsibility: "Parts Responsibility and Technician Floor Protection Acknowledgment Form",
   wage_ack: "Acknowledgment of Wage & Compensation Structure",
   damage: "Damage, Part Loss, and Tool Penalty Commission Deduction Agreement",
@@ -154,7 +157,7 @@ const UNIFORM_CONFIGS: Partial<Record<SignableDocumentType, UniformSignConfig>> 
  * (everything but i9) vs. still needs the plain "Needs your review" text
  * pointing HR at Attendance Monitoring instead.
  */
-export const SUPPORTED_TYPES = new Set<SignableDocumentType>(["parts_responsibility", "master_w2_agreement", "master_w2_office_agreement", "master_ph_contractor_agreement", "confidentiality_noncompete_agreement", ...Object.keys(UNIFORM_CONFIGS) as SignableDocumentType[]]);
+export const SUPPORTED_TYPES = new Set<SignableDocumentType>(["parts_responsibility", "master_w2_agreement", "master_w2_office_agreement", "master_ph_contractor_agreement", "confidentiality_noncompete_agreement", "ph_anti_cloning_agreement", ...Object.keys(UNIFORM_CONFIGS) as SignableDocumentType[]]);
 
 export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) {
   const { ready, uid, displayName, role } = useAuth();
@@ -184,6 +187,10 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
           setError("This document doesn't exist or has been removed.");
         } else {
           setDoc(document);
+          // The PH Anti-Cloning Agreement prints its Company representative (Shin Seo) — start from that.
+          if (document.documentType === "ph_anti_cloning_agreement") {
+            setPrintedNameTitle((document.formData as Partial<PhAntiCloningAgreementFormData>).employerPrintedNameTitle || PH_ANTI_CLONING_COMPANY_SIGNER);
+          }
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load document.");
@@ -346,9 +353,32 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
     setDoc({ ...doc, status: "confirmed", pdfUrl, formData: merged as unknown as Record<string, any> });
   };
 
+  // Same steps as HR Paperworks' "Add Company Signature" for this agreement.
+  const handleSubmitPhAntiCloningAgreement = async (dataUrl: string) => {
+    if (!doc) return;
+    const existing = doc.formData as unknown as PhAntiCloningAgreementFormData;
+    await refreshStorageAuthToken();
+    const signatureUrl = await uploadSignableDocumentSignature(doc.companyId, doc.id, "hr_staff", dataUrl);
+    const signedAt = new Date().toISOString();
+    const merged: PhAntiCloningAgreementFormData = {
+      ...existing,
+      employerSignatureDataUrl: dataUrl,
+      employerDateSigned: signedAt,
+      employerPrintedNameTitle: printedNameTitle.trim(),
+    };
+    const logo = await loadAssetDataUrl(agreementLogoLoader(true));
+    const pdfBlob = await capturePhAntiCloningAgreementPdf(merged, logo);
+    const pdfUrl = await uploadPhAntiCloningAgreementForm(doc.companyId, existing.employeeName || "ph-anti-cloning-agreement", pdfBlob);
+    const entry = { name: displayName || "Manager", url: signatureUrl, signedAt };
+    await signDocument(doc.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
+    await confirmSignableDocument(doc.id, null);
+    void logActivity({ action: "ph_anti_cloning_agreement_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+    setDoc({ ...doc, status: "confirmed", pdfUrl, formData: merged as unknown as Record<string, any> });
+  };
+
   const handleSubmit = async () => {
     if (!doc || !myProfileId) return;
-    if (doc.documentType === "confidentiality_noncompete_agreement" && !printedNameTitle.trim()) {
+    if ((doc.documentType === "confidentiality_noncompete_agreement" || doc.documentType === "ph_anti_cloning_agreement") && !printedNameTitle.trim()) {
       setError("Enter your printed name / title.");
       return;
     }
@@ -374,6 +404,8 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
         await handleSubmitMasterPhContractorAgreement(dataUrl);
       } else if (doc.documentType === "confidentiality_noncompete_agreement") {
         await handleSubmitConfidentialityNonCompeteAgreement(dataUrl);
+      } else if (doc.documentType === "ph_anti_cloning_agreement") {
+        await handleSubmitPhAntiCloningAgreement(dataUrl);
       } else {
         const config = UNIFORM_CONFIGS[doc.documentType];
         if (!config) return;
@@ -468,7 +500,7 @@ export function ManagerReviewPage({ docId, embedded = false, onSigned }: Props) 
             )}
 
             <div className="max-w-lg">
-              {doc.documentType === "confidentiality_noncompete_agreement" && (
+              {(doc.documentType === "confidentiality_noncompete_agreement" || doc.documentType === "ph_anti_cloning_agreement") && (
                 <div className="mb-3">
                   <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">Your printed name / title</label>
                   <input

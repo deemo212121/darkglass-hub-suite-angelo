@@ -94,7 +94,7 @@ import {
   type OnboardingDocumentColumn,
   type OnboardingGroupKey,
 } from "@/lib/supabase/onboardingDocumentColumns";
-import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadMasterW2OfficeAgreementForm, uploadMasterPhContractorAgreementForm, uploadMasterW2ExecutiveAgreementForm, uploadConfidentialityNonCompeteAgreementForm, uploadVehicleUseAgreementForm, uploadNdaForm, uploadSsnCardForm, uploadDriversLicenseForm, uploadValidIdForm, uploadSignableDocumentSignature, uploadSignableDocumentAttachment, refreshStorageAuthToken } from "@/lib/firebase/storage";
+import { uploadCoeCertificate, uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm, uploadW8benForm, uploadW4Form, uploadW4RForm, uploadI9Form, uploadWageAckForm, uploadCarIqAgreementForm, uploadVehicleAgreementForm, uploadEmployeeConfidentialityForm, uploadMealRestBreakForm, uploadPtoAckForm, uploadPartsResponsibilityForm, uploadMileageFuelForm, uploadLocationConsentForm, uploadDamageForm, uploadContractorDataForm, uploadDirectDepositForm, uploadSubstanceScreeningForm, uploadFlashTechnicianTravelForm, uploadContractorAddendumForm, uploadMasterW2AgreementForm, uploadMasterW2OfficeAgreementForm, uploadMasterPhContractorAgreementForm, uploadMasterW2ExecutiveAgreementForm, uploadConfidentialityNonCompeteAgreementForm, uploadPhAntiCloningAgreementForm, uploadVehicleUseAgreementForm, uploadNdaForm, uploadSsnCardForm, uploadDriversLicenseForm, uploadValidIdForm, uploadSignableDocumentSignature, uploadSignableDocumentAttachment, refreshStorageAuthToken } from "@/lib/firebase/storage";
 import { regenerateSimpleSignableDocumentPdf, regenerateMasterAgreementPdf } from "@/lib/regenerateSignableDocumentPdf";
 import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, resolveSignaturesForCapture, loadAssetDataUrl as loadImageDataUrl, fileToDataUrl } from "@/lib/pdfCapture";
 import { compressImage } from "@/lib/imageCompression";
@@ -106,6 +106,7 @@ import { masterW2OfficeAgreementStyles, buildMasterW2OfficeAgreementBodyMarkup, 
 import { agreementLogoLoader } from "@/lib/agreementBranding";
 import { masterPhContractorAgreementStyles, buildMasterPhContractorAgreementBodyMarkup, contractorAgreementCountryOf, CONTRACTOR_AGREEMENT_TITLE, CONTRACTOR_AGREEMENT_SHORT_TITLE, type ContractorAgreementCountry, type MasterPhContractorAgreementFormData } from "@/lib/masterPhContractorAgreementFormTemplate";
 import { masterW2ExecutiveAgreementStyles, buildMasterW2ExecutiveAgreementBodyMarkup, type MasterW2ExecutiveAgreementFormData } from "@/lib/masterW2ExecutiveAgreementFormTemplate";
+import { phAntiCloningAgreementStyles, buildPhAntiCloningAgreementBodyMarkup, capturePhAntiCloningAgreementPdf, PH_ANTI_CLONING_AGREEMENT_TITLE, PH_ANTI_CLONING_COMPANY_SIGNER, type PhAntiCloningAgreementFormData } from "@/lib/phAntiCloningAgreementFormTemplate";
 import { confidentialityNonCompeteAgreementStyles, buildConfidentialityNonCompeteAgreementBodyMarkup, captureConfidentialityNonCompeteAgreementPdf, CNC_CURRENT_TEMPLATE_VERSION, confidentialityAgreementTitle, confidentialityUsesAdminHub, type ConfidentialityNonCompeteAgreementFormData } from "@/lib/confidentialityNonCompeteAgreementFormTemplate";
 import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments";
 import {
@@ -1152,7 +1153,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Reviews, the Approved log, the department trend chart, and the full
   // Employee Directory all on top of each other, forcing a long scroll to
   // reach anything below Hiring.
-  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "compensationUpdate" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "confidentialityNonCompeteAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList" | "clockInCodes" | "performanceBonusPolicy" | "ahsDirectDeposit" | "ahsValidId" | "ahsPhAgreement" | "ahsConfidentiality" | "ahsW2Office" | "mxContractorAgreement" | "usContractorAgreement" | "formInconsistencies">(paperworksOnly ? "combineForms" : "hiring");
+  const [activeTab, setActiveTab] = useState<"hiring" | "recruitmentSite" | "warnings" | "masterList" | "leaders" | "jotform" | "jotformDocuments" | "customForms" | "onboarding" | "hiringReports" | "report" | "coe" | "warningForm" | "promotionForm" | "compensationUpdate" | "actionPlanForm" | "terminationForm" | "employeeRequestManager" | "w8ben" | "i9" | "wageAck" | "carIqAgreement" | "vehicleAgreement" | "vehicleUseAgreement" | "employeeConfidentiality" | "mealRestBreak" | "ptoAck" | "partsResponsibility" | "mileageFuel" | "locationConsent" | "damage" | "contractorData" | "contractorDataUs" | "directDeposit" | "substanceScreening" | "flashTechnicianTravel" | "contractorAddendum" | "combineForms" | "employerQueue" | "ndaForm" | "calendar" | "interviewCalendar" | "masterW2Agreement" | "newW4" | "masterW2OfficeAgreement" | "newW8ben" | "masterPhContractorAgreement" | "newI9" | "newDirectDeposit" | "newCombineForms" | "newOnboardingDocuments" | "newW9" | "newContractorAddendum" | "masterW2ExecutiveAgreement" | "confidentialityNonCompeteAgreement" | "ssnCard" | "driversLicense" | "validId" | "flashTech" | "staffFormChecklist" | "trainingList" | "clockInCodes" | "performanceBonusPolicy" | "ahsDirectDeposit" | "ahsValidId" | "ahsPhAgreement" | "ahsConfidentiality" | "ahsW2Office" | "mxContractorAgreement" | "usContractorAgreement" | "formInconsistencies" | "ahsPhAntiCloning">(paperworksOnly ? "combineForms" : "hiring");
   // HR Paperworks → "AHS Forms PH": the Admin Hub Solutions versions of Direct
   // Deposit, Valid ID, the Master PH Contractor Agreement and the Master
   // Confidentiality agreement; "AHS Forms US" has the Master W-2 Office &
@@ -1160,7 +1161,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // the original tabs, but they send (and list) only AHS copies — every copy
   // is tagged form_data.brand = "ahs" and keeps that version for good
   // (lib/formBrand.ts). The original tabs list only the US In Home Services copies.
-  const isAhsFormsTab = activeTab === "ahsDirectDeposit" || activeTab === "ahsValidId" || activeTab === "ahsPhAgreement" || activeTab === "ahsConfidentiality" || activeTab === "ahsW2Office" || activeTab === "usContractorAgreement";
+  const isAhsFormsTab = activeTab === "ahsDirectDeposit" || activeTab === "ahsValidId" || activeTab === "ahsPhAgreement" || activeTab === "ahsConfidentiality" || activeTab === "ahsW2Office" || activeTab === "usContractorAgreement" || activeTab === "ahsPhAntiCloning";
   const isAhsDoc = (d: { formData?: unknown }) => brandOf(d.formData) === "ahs";
   // New Automation Forms → Mexico Staff and AHS Forms US: the Mexico and US
   // versions of the Master PH Contractor Agreement (same type,
@@ -1200,7 +1201,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [startDateFor, setStartDateFor] = useState<{ id: string; date: string } | null>(null);
   const hrSearchParams = (useSearch({ strict: false }) as { tab?: string; submissionId?: string; profileId?: string; docId?: string; viewCvCandidateId?: string }) ?? {};
   const initialHrSearchRef = useRef(hrSearchParams);
-  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList", "clockInCodes", "ndaForm", "confidentialityNonCompeteAgreement", "performanceBonusPolicy", "ahsDirectDeposit", "ahsValidId", "ahsPhAgreement", "ahsConfidentiality", "ahsW2Office", "mxContractorAgreement", "usContractorAgreement", "formInconsistencies"] as const;
+  const VALID_HR_TABS = ["hiring", "warnings", "masterList", "leaders", "jotform", "jotformDocuments", "customForms", "onboarding", "hiringReports", "report", "coe", "warningForm", "promotionForm", "compensationUpdate", "actionPlanForm", "terminationForm", "employeeRequestManager", "w8ben", "i9", "newI9", "wageAck", "carIqAgreement", "vehicleAgreement", "vehicleUseAgreement", "employeeConfidentiality", "mealRestBreak", "ptoAck", "partsResponsibility", "mileageFuel", "locationConsent", "damage", "contractorData", "contractorDataUs", "directDeposit", "substanceScreening", "flashTechnicianTravel", "combineForms", "newCombineForms", "employerQueue", "ssnCard", "driversLicense", "validId", "flashTech", "staffFormChecklist", "trainingList", "clockInCodes", "ndaForm", "confidentialityNonCompeteAgreement", "performanceBonusPolicy", "ahsDirectDeposit", "ahsValidId", "ahsPhAgreement", "ahsConfidentiality", "ahsW2Office", "mxContractorAgreement", "usContractorAgreement", "formInconsistencies", "ahsPhAntiCloning"] as const;
   useEffect(() => {
     const tab = initialHrSearchRef.current.tab;
     if (tab && (VALID_HR_TABS as readonly string[]).includes(tab)) setActiveTab(tab as typeof activeTab);
@@ -2406,6 +2407,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (type === "w4") handleOpenW4EmployerDialog(doc);
     else if (type === "i9") handleOpenI9Section2(doc);
     else if (type === "confidentiality_noncompete_agreement") handleOpenConfidentialityNonCompeteAgreementEmployerDialog(doc);
+    else if (type === "ph_anti_cloning_agreement") handleOpenPhAntiCloningEmployerDialog(doc);
     else setManagerReviewDoc(doc);
   };
   // Which form types already have a real NEW-AUTOMATION document on file
@@ -2604,6 +2606,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     master_ph_contractor_agreement: "masterPhContractorAgreement",
     master_w2_executive_agreement: "masterW2ExecutiveAgreement",
     confidentiality_noncompete_agreement: "confidentialityNonCompeteAgreement",
+    ph_anti_cloning_agreement: "ahsPhAntiCloning",
     certificate_of_employment: "coe",
     ssn_card_form: "ssnCard",
     drivers_license_form: "driversLicense",
@@ -6639,6 +6642,305 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setConfidentialityNonCompeteAgreementEmployerError(err instanceof Error ? err.message : "Failed to save signature.");
     } finally {
       setConfidentialityNonCompeteAgreementEmployerSaving(false);
+    }
+  };
+
+  // ── Master Philippines Independent Contractor & Anti-Cloning Agreement —
+  // AHS Forms PH only (an Admin Hub Solutions form). Same two-party
+  // HTML-captured flow as the Master Confidentiality agreement above (see
+  // phAntiCloningAgreementFormTemplate.ts): HR sends it (Start Date and
+  // Role / Position prefilled from the Master List, editable), the
+  // contractor confirms them and signs, then the Company representative —
+  // Shin Seo, printed on the form — countersigns here. ──
+  const [sentPhAntiCloningForms, setSentPhAntiCloningForms] = useState<SignableDocument[]>([]);
+  const loadSentPhAntiCloningForms = async () => {
+    try {
+      setSentPhAntiCloningForms(await getSignableDocuments("ph_anti_cloning_agreement"));
+    } catch (err) {
+      console.error("Failed to load sent PH Anti-Cloning Agreement forms:", err);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === "ahsPhAntiCloning") void loadSentPhAntiCloningForms();
+  }, [activeTab]);
+  const sentPhAntiCloningAwaitingEmployerCount = useMemo(
+    () => sentPhAntiCloningForms.filter(isAwaitingEmployerStep).length,
+    [sentPhAntiCloningForms]
+  );
+
+  type PhAntiCloningSortColumn = "employee" | "branch" | "role" | "sentBy" | "status" | "sent";
+  const phAntiCloningStatusLabel = (doc: SignableDocument): string =>
+    doc.status === "confirmed" ? "Completed"
+      : isAwaitingEmployerStep(doc) ? "Awaiting Company Signature"
+      : doc.status === "cancelled" ? "Cancelled"
+      : "Awaiting Contractor";
+  const {
+    search: phAntiCloningSentSearch,
+    setSearch: setPhAntiCloningSentSearch,
+    sortColumn: phAntiCloningSentSortColumn,
+    sortDir: phAntiCloningSentSortDir,
+    handleSort: handlePhAntiCloningSentSort,
+    filterOptionsFor: phAntiCloningFilterOptionsFor,
+    toggleFilterValue: phAntiCloningToggleFilterValue,
+    clearColumnFilter: phAntiCloningClearColumnFilter,
+    isColumnFiltered: phAntiCloningIsColumnFiltered,
+    isValueChecked: phAntiCloningIsValueChecked,
+    rows: sortedSentPhAntiCloningForms,
+  } = useSortableSearchTable<SignableDocument, PhAntiCloningSortColumn>(
+    sentPhAntiCloningForms,
+    (doc, q) => {
+      const data = doc.formData as Partial<PhAntiCloningAgreementFormData>;
+      const employeeName = (data.employeeName || doc.recipientName || "").toLowerCase();
+      const branch = (employees.find((e) => e.id === doc.recipientId)?.branch || "").toLowerCase();
+      return employeeName.includes(q) || branch.includes(q) || (data.rolePosition || "").toLowerCase().includes(q);
+    },
+    (doc, column) => {
+      const data = doc.formData as Partial<PhAntiCloningAgreementFormData>;
+      switch (column) {
+        case "employee": return (data.employeeName || doc.recipientName || "").toLowerCase();
+        case "branch": return (employees.find((e) => e.id === doc.recipientId)?.branch || "").toLowerCase();
+        case "role": return (data.rolePosition || "").toLowerCase();
+        case "sentBy": return (doc.createdByName ?? "").toLowerCase();
+        case "status": return phAntiCloningStatusLabel(doc).toLowerCase();
+        case "sent": return new Date(doc.createdAt).getTime();
+      }
+    },
+    (doc, column) => {
+      switch (column) {
+        case "branch": return (employees.find((e) => e.id === doc.recipientId)?.branch || "") || "—";
+        case "sentBy": return doc.createdByName ?? "—";
+        case "status": return phAntiCloningStatusLabel(doc);
+        default: return "";
+      }
+    }
+  );
+
+  const [phAntiCloningRecipientId, setPhAntiCloningRecipientId] = useState("");
+  const [phAntiCloningRecipientSearch, setPhAntiCloningRecipientSearch] = useState("");
+  const [phAntiCloningRecipientDropdownOpen, setPhAntiCloningRecipientDropdownOpen] = useState(false);
+  const [phAntiCloningStartDate, setPhAntiCloningStartDate] = useState("");
+  const [phAntiCloningRole, setPhAntiCloningRole] = useState("");
+  const [phAntiCloningSending, setPhAntiCloningSending] = useState(false);
+  const [phAntiCloningSendError, setPhAntiCloningSendError] = useState<string | null>(null);
+  const [phAntiCloningActionBusyId, setPhAntiCloningActionBusyId] = useState<string | null>(null);
+  const [phAntiCloningActionError, setPhAntiCloningActionError] = useState<string | null>(null);
+  const [phAntiCloningDocPreview, setPhAntiCloningDocPreview] = useState<SignableDocument | null>(null);
+  const [phAntiCloningPreviewExpanded, setPhAntiCloningPreviewExpanded] = useState(false);
+  const [phAntiCloningPreviewPdfUrl, setPhAntiCloningPreviewPdfUrl] = useState<string | null>(null);
+  const [phAntiCloningPreviewLoading, setPhAntiCloningPreviewLoading] = useState(false);
+  // PH staff first — it's a Philippines contractor agreement — then everyone else.
+  const filteredPhAntiCloningRecipients = useMemo(
+    () => employees
+      .filter((e) => e.status === "active" && e.name.toLowerCase().includes(phAntiCloningRecipientSearch.toLowerCase()))
+      .sort((a, b) => (a.country === "PH" ? 0 : 1) - (b.country === "PH" ? 0 : 1)),
+    [employees, phAntiCloningRecipientSearch]
+  );
+
+  const buildPhAntiCloningSendData = (): PhAntiCloningAgreementFormData => {
+    const recipient = employees.find((e) => e.id === phAntiCloningRecipientId);
+    return {
+      employeeId: recipient?.id ?? "",
+      employeeName: recipient?.name ?? "",
+      startDate: phAntiCloningStartDate,
+      rolePosition: phAntiCloningRole.trim(),
+      employeeDateSigned: "",
+      employeeSignatureDataUrl: "",
+      employerDateSigned: "",
+      employerSignatureDataUrl: "",
+      employerPrintedNameTitle: PH_ANTI_CLONING_COMPANY_SIGNER,
+      brand: "ahs",
+    };
+  };
+
+  const togglePhAntiCloningPreview = async () => {
+    if (phAntiCloningPreviewExpanded) {
+      setPhAntiCloningPreviewExpanded(false);
+      if (phAntiCloningPreviewPdfUrl) URL.revokeObjectURL(phAntiCloningPreviewPdfUrl);
+      setPhAntiCloningPreviewPdfUrl(null);
+      return;
+    }
+    setPhAntiCloningSendError(null);
+    setPhAntiCloningPreviewExpanded(true);
+    setPhAntiCloningPreviewLoading(true);
+    try {
+      const logo = await loadImageDataUrl(agreementLogoLoader(true));
+      const pdfBlob = await capturePhAntiCloningAgreementPdf(buildPhAntiCloningSendData(), logo);
+      setPhAntiCloningPreviewPdfUrl(URL.createObjectURL(pdfBlob));
+    } catch (err) {
+      setPhAntiCloningSendError(err instanceof Error ? err.message : "Failed to build preview.");
+    } finally {
+      setPhAntiCloningPreviewLoading(false);
+    }
+  };
+
+  const handleSendPhAntiCloning = async () => {
+    if (!phAntiCloningRecipientId || !uid) return;
+    setPhAntiCloningSending(true);
+    setPhAntiCloningSendError(null);
+    try {
+      const recipient = employees.find((e) => e.id === phAntiCloningRecipientId);
+      if (!recipient) throw new Error("Select a recipient first.");
+      const alreadySent = await getExistingActiveDocumentTypes(recipient.id, ["ph_anti_cloning_agreement"]);
+      if (alreadySent.length > 0 && !window.confirm(`${recipient.name} already has a ${PH_ANTI_CLONING_AGREEMENT_TITLE} on file. Send another one anyway?`)) {
+        return;
+      }
+
+      const doc = await createSignableDocument({
+        documentType: "ph_anti_cloning_agreement",
+        formData: buildPhAntiCloningSendData() as unknown as Record<string, any>,
+        recipientId: phAntiCloningRecipientId,
+        recipientSlot: "employee",
+        pdfUrl: "",
+      });
+
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+      const thread = await getOrCreateDmThread(myProfileId, phAntiCloningRecipientId);
+      await sendMessage({
+        dmThreadId: thread.id,
+        senderId: myProfileId,
+        senderName: displayName || "HR",
+        body: `📋 Please complete the ${PH_ANTI_CLONING_AGREEMENT_TITLE}: ${getAppUrl()}/fill-ph-anti-cloning-agreement/${doc.id}`,
+      });
+
+      void logActivity({ action: "ph_anti_cloning_agreement_sent", targetType: "employee", targetId: recipient.id, targetLabel: recipient.name });
+
+      setPhAntiCloningRecipientId("");
+      setPhAntiCloningRecipientSearch("");
+      setPhAntiCloningStartDate("");
+      setPhAntiCloningRole("");
+      await loadSentPhAntiCloningForms();
+    } catch (err) {
+      setPhAntiCloningSendError(err instanceof Error ? err.message : "Failed to send request.");
+    } finally {
+      setPhAntiCloningSending(false);
+    }
+  };
+
+  const handleCopyPhAntiCloningLink = async (doc: SignableDocument) => {
+    try {
+      await navigator.clipboard.writeText(`${getAppUrl()}/fill-ph-anti-cloning-agreement/${doc.id}`);
+    } catch (err) {
+      console.error("Failed to copy link:", err);
+    }
+  };
+
+  const phAntiCloningName = (doc: SignableDocument) =>
+    (doc.formData as Partial<PhAntiCloningAgreementFormData>).employeeName || doc.recipientName || "ph-anti-cloning-agreement";
+
+  const handleDownloadPhAntiCloningPdf = async (doc: SignableDocument) => {
+    if (!doc.pdfUrl) return;
+    await downloadSignableDocumentPdf(doc.pdfUrl, `PH Independent Contractor & Anti-Cloning Agreement - ${phAntiCloningName(doc)}.pdf`);
+  };
+
+  /** Re-renders the PDF from its stored data (signatures are inline data: URLs in form_data) — see regenerateSignableDocumentPdf.ts. */
+  const handleRegeneratePhAntiCloningPdf = async (doc: SignableDocument) => {
+    setPhAntiCloningActionBusyId(doc.id);
+    setPhAntiCloningActionError(null);
+    try {
+      const logo = await loadImageDataUrl(agreementLogoLoader(true));
+      await regenerateMasterAgreementPdf(doc, logo, buildPhAntiCloningAgreementBodyMarkup, phAntiCloningAgreementStyles, uploadPhAntiCloningAgreementForm, phAntiCloningName(doc), capturePhAntiCloningAgreementPdf);
+      await loadSentPhAntiCloningForms();
+    } catch (err) {
+      setPhAntiCloningActionError(err instanceof Error ? err.message : "Failed to regenerate PDF.");
+    } finally {
+      setPhAntiCloningActionBusyId(null);
+    }
+  };
+
+  const handleReopenPhAntiCloningEmployer = async (doc: SignableDocument) => {
+    if (!window.confirm("Re-open this for a new Company signature? The contractor's signature stays as-is.")) return;
+    setPhAntiCloningActionBusyId(doc.id);
+    setPhAntiCloningActionError(null);
+    try {
+      await reopenEmployerSignature(doc.id);
+      await loadSentPhAntiCloningForms();
+    } catch (err) {
+      setPhAntiCloningActionError(err instanceof Error ? err.message : "Failed to reopen for re-signing.");
+    } finally {
+      setPhAntiCloningActionBusyId(null);
+    }
+  };
+
+  const handleDeletePhAntiCloning = async (doc: SignableDocument) => {
+    if (!window.confirm(`Permanently delete this ${PH_ANTI_CLONING_AGREEMENT_TITLE} request?`)) return;
+    setPhAntiCloningActionBusyId(doc.id);
+    setPhAntiCloningActionError(null);
+    try {
+      await deleteSignableDocument(doc.id);
+      await loadSentPhAntiCloningForms();
+    } catch (err) {
+      setPhAntiCloningActionError(err instanceof Error ? err.message : "Failed to delete.");
+    } finally {
+      setPhAntiCloningActionBusyId(null);
+    }
+  };
+
+  // Company signature — same "claim, sign, regenerate" steps as the Master
+  // Confidentiality agreement's employer dialog above. Name / Title starts
+  // as the representative printed on the form (Shin Seo).
+  const [phAntiCloningEmployerDialog, setPhAntiCloningEmployerDialog] = useState<SignableDocument | null>(null);
+  const [phAntiCloningEmployerNameTitle, setPhAntiCloningEmployerNameTitle] = useState(PH_ANTI_CLONING_COMPANY_SIGNER);
+  const [phAntiCloningEmployerSaving, setPhAntiCloningEmployerSaving] = useState(false);
+  const [phAntiCloningEmployerError, setPhAntiCloningEmployerError] = useState<string | null>(null);
+  const phAntiCloningEmployerSigPad = useSignaturePad({ width: 400, height: 120 });
+
+  const handleOpenPhAntiCloningEmployerDialog = (doc: SignableDocument) => {
+    setPhAntiCloningEmployerDialog(doc);
+    setPhAntiCloningEmployerNameTitle((doc.formData as Partial<PhAntiCloningAgreementFormData>).employerPrintedNameTitle || PH_ANTI_CLONING_COMPANY_SIGNER);
+    setPhAntiCloningEmployerError(null);
+  };
+
+  const handleSavePhAntiCloningEmployerSignature = async () => {
+    if (!phAntiCloningEmployerDialog || !uid) return;
+    if (!phAntiCloningEmployerNameTitle.trim()) {
+      setPhAntiCloningEmployerError("Enter the Company representative's name / title.");
+      return;
+    }
+    if (!phAntiCloningEmployerSigPad.hasContent()) {
+      setPhAntiCloningEmployerError("Please add your signature.");
+      return;
+    }
+    setPhAntiCloningEmployerSaving(true);
+    setPhAntiCloningEmployerError(null);
+    try {
+      const myProfileId = await getMyProfileId(uid);
+      if (!myProfileId) throw new Error("Could not resolve your profile.");
+
+      await reassignSignableDocument(phAntiCloningEmployerDialog.id, { recipientId: myProfileId, recipientName: displayName || "HR" }, "hr_staff");
+
+      const existing = phAntiCloningEmployerDialog.formData as PhAntiCloningAgreementFormData;
+      const dataUrl = phAntiCloningEmployerSigPad.toDataURL();
+      if (!dataUrl) {
+        setPhAntiCloningEmployerError("Please add your signature.");
+        return;
+      }
+      await refreshStorageAuthToken();
+      const signatureUrl = await uploadSignableDocumentSignature(phAntiCloningEmployerDialog.companyId, phAntiCloningEmployerDialog.id, "hr_staff", dataUrl);
+      const signedAt = new Date().toISOString();
+
+      const merged: PhAntiCloningAgreementFormData = {
+        ...existing,
+        employerSignatureDataUrl: dataUrl,
+        employerDateSigned: signedAt,
+        employerPrintedNameTitle: phAntiCloningEmployerNameTitle.trim(),
+      };
+
+      const logo = await loadImageDataUrl(agreementLogoLoader(true));
+      const pdfBlob = await capturePhAntiCloningAgreementPdf(merged, logo);
+      const pdfUrl = await uploadPhAntiCloningAgreementForm(phAntiCloningEmployerDialog.companyId, existing.employeeName || "ph-anti-cloning-agreement", pdfBlob);
+
+      const entry = { name: displayName || "HR", url: signatureUrl, signedAt };
+      await signDocument(phAntiCloningEmployerDialog.id, "hr_staff", entry, pdfUrl, merged as unknown as Record<string, any>);
+      await confirmSignableDocument(phAntiCloningEmployerDialog.id, null);
+
+      void logActivity({ action: "ph_anti_cloning_agreement_employer_signed", targetType: "employee", targetLabel: existing.employeeName || "" });
+      setPhAntiCloningEmployerDialog(null);
+      await loadSentPhAntiCloningForms();
+    } catch (err) {
+      setPhAntiCloningEmployerError(err instanceof Error ? err.message : "Failed to save signature.");
+    } finally {
+      setPhAntiCloningEmployerSaving(false);
     }
   };
 
@@ -13197,6 +13499,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     { type: "master_w2_office_agreement", label: "Master W-2 Office & Logistics Agreement", run: async (doc, l) => { await regenerateMasterAgreementPdf(doc, masterW2OfficeUsesAdminHub(doc.formData) ? l.ahs : l.usihs, buildMasterW2OfficeAgreementBodyMarkup, masterW2OfficeAgreementStyles, uploadMasterW2OfficeAgreementForm, bulkName(doc, "master-w2-office-agreement")); } },
     { type: "master_w2_executive_agreement", label: "Master W-2 Executive Agreement", run: async (doc, l) => { await regenerateMasterAgreementPdf(doc, l.usihs, buildMasterW2ExecutiveAgreementBodyMarkup, masterW2ExecutiveAgreementStyles, uploadMasterW2ExecutiveAgreementForm, bulkName(doc, "master-w2-executive-agreement")); } },
     { type: "confidentiality_noncompete_agreement", label: "Master Confidentiality & Non-Compete Agreement", run: async (doc, l) => { await regenerateMasterAgreementPdf(doc, confidentialityUsesAdminHub(doc.formData) ? l.ahs : l.usihs, buildConfidentialityNonCompeteAgreementBodyMarkup, confidentialityNonCompeteAgreementStyles, uploadConfidentialityNonCompeteAgreementForm, bulkName(doc, "confidentiality-noncompete-agreement"), captureConfidentialityNonCompeteAgreementPdf); } },
+    { type: "ph_anti_cloning_agreement", label: "Master PH Independent Contractor & Anti-Cloning Agreement", run: async (doc, l) => { await regenerateMasterAgreementPdf(doc, l.ahs, buildPhAntiCloningAgreementBodyMarkup, phAntiCloningAgreementStyles, uploadPhAntiCloningAgreementForm, bulkName(doc, "ph-anti-cloning-agreement"), capturePhAntiCloningAgreementPdf); } },
     { type: "master_ph_contractor_agreement", label: "Master PH Contractor Agreement", run: async (doc, l) => { await regenerateMasterAgreementPdf(doc, brandOf(doc.formData) === "ahs" ? l.ahs : l.usihs, buildMasterPhContractorAgreementBodyMarkup, masterPhContractorAgreementStyles, uploadMasterPhContractorAgreementForm, bulkName(doc, "master-ph-contractor-agreement")); } },
     { type: "direct_deposit", label: "Direct Deposit Authorization", run: async (doc, l) => { await regenerateSimpleSignableDocumentPdf(doc, brandOf(doc.formData) === "ahs" ? l.ahs : l.usihs, buildDirectDepositBodyMarkup, directDepositStyles, uploadDirectDepositForm, bulkName(doc, "direct-deposit")); } },
     { type: "valid_id_form", label: "Valid ID", run: async (doc, l) => { await regenerateSimpleSignableDocumentPdf(doc, brandOf(doc.formData) === "ahs" ? l.ahs : l.usihs, buildValidIdFormBodyMarkup, validIdFormStyles, uploadValidIdForm, bulkName(doc, "valid-id"), "idPhotoUrls"); } },
@@ -18768,6 +19071,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       icon: Paperclip,
       tabs: [
         { key: "ahsPhAgreement", label: "Master PH Contractor Agreement", count: sentAhsPhAgreementAwaitingEmployerCount, icon: FileCheck },
+        { key: "ahsPhAntiCloning", label: "Master PH Independent Contractor & Anti-Cloning Agreement", count: sentPhAntiCloningAwaitingEmployerCount, icon: FileCheck },
         { key: "ahsDirectDeposit", label: "Direct Deposit Authorization", count: 0, icon: FileCheck },
         { key: "ahsValidId", label: "Valid ID", count: 0, icon: FileCheck },
         { key: "ahsConfidentiality", label: "Master Confidentiality, Non-Solicitation & Affirmative Duty Agreement", count: sentAhsConfidentialityAwaitingEmployerCount, icon: FileText },
@@ -31791,6 +32095,327 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </div>
             <div className="flex-1 overflow-hidden bg-slate-950">
               {confidentialityNonCompeteAgreementDocPreview.pdfUrl && <iframe src={confidentialityNonCompeteAgreementDocPreview.pdfUrl} title="Master Confidentiality & Non-Compete Agreement" className="w-full h-full min-h-[70vh] border-0" />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "ahsPhAntiCloning" && (
+      <>
+      <div className="panel p-0 overflow-visible mt-4 relative z-20">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Send {PH_ANTI_CLONING_AGREEMENT_TITLE} Request <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span></h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Pick a teammate — they'll get a link to confirm their name, start date and role and sign. Once they submit, it lands back here for the Company representative ({PH_ANTI_CLONING_COMPANY_SIGNER}) to countersign.</p>
+        </div>
+        <div className="p-4 flex flex-col md:flex-row gap-6">
+          <div className="flex flex-col gap-3 w-full md:max-w-sm md:shrink-0">
+            <div className="flex flex-col gap-1 relative">
+              <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Recipient (AHS teammate)</label>
+              <input
+                type="text"
+                value={phAntiCloningRecipientSearch}
+                onChange={(e) => { setPhAntiCloningRecipientSearch(e.target.value); setPhAntiCloningRecipientId(""); setPhAntiCloningRecipientDropdownOpen(true); }}
+                onFocus={() => setPhAntiCloningRecipientDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setPhAntiCloningRecipientDropdownOpen(false), 150)}
+                placeholder="Search a teammate…"
+                className="glass-input text-sm py-1.5 px-3 rounded-md"
+              />
+              {phAntiCloningRecipientDropdownOpen && (
+                <div className="absolute z-50 top-full mt-1 w-full max-h-96 overflow-y-auto rounded-md border border-white/15 bg-slate-900 shadow-2xl">
+                  {filteredPhAntiCloningRecipients.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No matching teammates.</p>
+                  ) : (
+                    filteredPhAntiCloningRecipients.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => {
+                          const role = ROLE_LABELS[normalizeRole(e.position)] ?? e.position;
+                          setPhAntiCloningRecipientId(e.id);
+                          setPhAntiCloningRecipientSearch(`${e.name} — ${role}`);
+                          // Prefilled from the Master List — HR and the contractor can both change them.
+                          setPhAntiCloningStartDate(/^\d{4}-\d{2}-\d{2}$/.test(e.startDate) ? e.startDate : "");
+                          setPhAntiCloningRole(role);
+                          setPhAntiCloningRecipientDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-white/10 ${phAntiCloningRecipientId === e.id ? "bg-blue-500/20 text-blue-300" : ""}`}
+                      >
+                        {e.name} <span className="text-muted-foreground text-xs">— {ROLE_LABELS[normalizeRole(e.position)] ?? e.position}{e.country === "PH" ? " · PH" : ""}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Start Date</label>
+                <input type="date" value={phAntiCloningStartDate} onChange={(e) => setPhAntiCloningStartDate(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Role / Position</label>
+                <input type="text" value={phAntiCloningRole} onChange={(e) => setPhAntiCloningRole(e.target.value)} placeholder="e.g. CSR Agent" className="glass-input text-sm py-1.5 px-3 rounded-md" />
+              </div>
+            </div>
+            <p className="text-[10px] text-muted-foreground -mt-1">Optional — the contractor confirms or fills these in before signing.</p>
+
+            {phAntiCloningSendError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{phAntiCloningSendError}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <button onClick={togglePhAntiCloningPreview} className="btn text-sm px-4 py-2 flex items-center gap-1.5">
+                Preview <ChevronDown className={`h-3.5 w-3.5 transition-transform ${phAntiCloningPreviewExpanded ? "rotate-180" : ""}`} />
+              </button>
+              <button
+                onClick={handleSendPhAntiCloning}
+                disabled={!phAntiCloningRecipientId || phAntiCloningSending}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {phAntiCloningSending ? "Sending…" : "Send Request"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            {phAntiCloningPreviewExpanded ? (
+              <div className="border border-white/10 rounded-md overflow-hidden bg-white/5 h-full" style={{ minHeight: 560 }}>
+                {phAntiCloningPreviewLoading || !phAntiCloningPreviewPdfUrl ? (
+                  <div className="h-full flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>Loading preview…</div>
+                ) : (
+                  <iframe src={phAntiCloningPreviewPdfUrl} title={`${PH_ANTI_CLONING_AGREEMENT_TITLE} Preview`} className="w-full border-0" style={{ height: 560 }} />
+                )}
+              </div>
+            ) : (
+              <div className="border border-dashed border-white/15 rounded-md flex items-center justify-center text-sm text-muted-foreground" style={{ minHeight: 560 }}>
+                Click "Preview" to see the document here.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="panel p-0 overflow-hidden mt-4">
+        <div className="px-4 py-4 border-b border-white/10">
+          <h2 className="font-semibold text-sm">Sent {PH_ANTI_CLONING_AGREEMENT_TITLE} Forms <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">AHS — Admin Hub Solutions</span></h2>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Track completion status. "Awaiting Company Signature" means the contractor finished — add the Company signature to finalize.</p>
+        </div>
+        <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex flex-wrap items-end gap-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="text"
+              value={phAntiCloningSentSearch}
+              onChange={(e) => setPhAntiCloningSentSearch(e.target.value)}
+              placeholder="Name, branch or role…"
+              className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+            />
+          </div>
+          {phAntiCloningSentSearch && (
+            <button onClick={() => setPhAntiCloningSentSearch("")} className="btn text-sm px-3 py-1.5">Clear</button>
+          )}
+          <span className="text-xs text-muted-foreground mb-1.5 ml-auto">
+            {sortedSentPhAntiCloningForms.length}{phAntiCloningSentSearch ? ` of ${sentPhAntiCloningForms.length}` : ""} forms
+          </span>
+        </div>
+        {phAntiCloningActionError && (
+          <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{phAntiCloningActionError}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 bg-white/5">
+                <SortableTh column="employee" label="Contractor" sortColumn={phAntiCloningSentSortColumn} sortDir={phAntiCloningSentSortDir} onSort={handlePhAntiCloningSentSort} />
+                <FilterableTh
+                  column="branch" label="Branch"
+                  sortColumn={phAntiCloningSentSortColumn} sortDir={phAntiCloningSentSortDir} onSort={handlePhAntiCloningSentSort}
+                  options={phAntiCloningFilterOptionsFor("branch")}
+                  isChecked={(v) => phAntiCloningIsValueChecked("branch", v)}
+                  onToggleValue={(v) => phAntiCloningToggleFilterValue("branch", v)}
+                  onClear={() => phAntiCloningClearColumnFilter("branch")}
+                  isFiltered={phAntiCloningIsColumnFiltered("branch")}
+                />
+                <SortableTh column="role" label="Role / Position" sortColumn={phAntiCloningSentSortColumn} sortDir={phAntiCloningSentSortDir} onSort={handlePhAntiCloningSentSort} />
+                <FilterableTh
+                  column="sentBy" label="Sent By"
+                  sortColumn={phAntiCloningSentSortColumn} sortDir={phAntiCloningSentSortDir} onSort={handlePhAntiCloningSentSort}
+                  options={phAntiCloningFilterOptionsFor("sentBy")}
+                  isChecked={(v) => phAntiCloningIsValueChecked("sentBy", v)}
+                  onToggleValue={(v) => phAntiCloningToggleFilterValue("sentBy", v)}
+                  onClear={() => phAntiCloningClearColumnFilter("sentBy")}
+                  isFiltered={phAntiCloningIsColumnFiltered("sentBy")}
+                />
+                <FilterableTh
+                  column="status" label="Status"
+                  sortColumn={phAntiCloningSentSortColumn} sortDir={phAntiCloningSentSortDir} onSort={handlePhAntiCloningSentSort}
+                  options={phAntiCloningFilterOptionsFor("status")}
+                  isChecked={(v) => phAntiCloningIsValueChecked("status", v)}
+                  onToggleValue={(v) => phAntiCloningToggleFilterValue("status", v)}
+                  onClear={() => phAntiCloningClearColumnFilter("status")}
+                  isFiltered={phAntiCloningIsColumnFiltered("status")}
+                />
+                <SortableTh column="sent" label="Sent" sortColumn={phAntiCloningSentSortColumn} sortDir={phAntiCloningSentSortDir} onSort={handlePhAntiCloningSentSort} />
+                <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedSentPhAntiCloningForms.length === 0 ? (
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground text-sm">{sentPhAntiCloningForms.length === 0 ? "No requests sent yet." : "No forms match this search/filter."}</td></tr>
+              ) : (
+                sortedSentPhAntiCloningForms.map((doc) => {
+                  const data = doc.formData as Partial<PhAntiCloningAgreementFormData>;
+                  const recipient = employees.find((e) => e.id === doc.recipientId);
+                  const busy = phAntiCloningActionBusyId === doc.id;
+                  const awaitingEmployer = isAwaitingEmployerStep(doc);
+                  return (
+                    <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
+                      <td className="px-4 py-3 font-medium">
+                        {doc.pdfUrl && canViewPaper(doc) ? (
+                          <button type="button" onClick={() => setPhAntiCloningDocPreview(doc)} className="text-blue-300 hover:text-blue-200 hover:underline text-left">
+                            {data.employeeName || recipient?.name || doc.recipientName || "—"}
+                          </button>
+                        ) : (
+                          data.employeeName || recipient?.name || doc.recipientName || "—"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{recipient?.branch || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{data.rolePosition || "—"}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{doc.createdByName ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                          doc.status === "confirmed" ? "bg-green-500/20 text-green-300"
+                          : awaitingEmployer ? "bg-orange-500/20 text-orange-300"
+                          : doc.status === "cancelled" ? "bg-slate-500/20 text-slate-400"
+                          : "bg-yellow-500/20 text-yellow-300"
+                        }`}>
+                          {phAntiCloningStatusLabel(doc)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {doc.status === "pending_signature" && doc.recipientSlot === "employee" && (
+                            <button type="button" onClick={() => handleCopyPhAntiCloningLink(doc)} className="btn text-[10px] px-2 py-1">
+                              Copy Link
+                            </button>
+                          )}
+                          {awaitingEmployer && (
+                            <>
+                              <button type="button" onClick={() => handleOpenPhAntiCloningEmployerDialog(doc)} className="btn text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white">
+                                Add Company Signature →
+                              </button>
+                              <button type="button" onClick={() => handleOpenEmployerReassign(doc)} className="btn text-[10px] px-2 py-1">
+                                Send to Employer
+                              </button>
+                            </>
+                          )}
+                          {doc.pdfUrl && canViewPaper(doc) && (
+                            <button type="button" onClick={() => setPhAntiCloningDocPreview(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              View
+                            </button>
+                          )}
+                          {doc.pdfUrl && canViewPaper(doc) && (
+                            <button type="button" onClick={() => handleDownloadPhAntiCloningPdf(doc)} className="text-blue-300 hover:text-blue-200 underline text-xs">
+                              Download PDF
+                            </button>
+                          )}
+                          {doc.pdfUrl && (
+                            <button type="button" disabled={busy} onClick={() => void handleRegeneratePhAntiCloningPdf(doc)} title="Re-render this PDF from its saved data" className="text-amber-300 hover:text-amber-200 underline text-xs disabled:opacity-40">
+                              {busy ? "Regenerating…" : "Regenerate PDF"}
+                            </button>
+                          )}
+                          {doc.status === "confirmed" && (
+                            <button type="button" onClick={() => handleReopenPhAntiCloningEmployer(doc)} className="btn text-[10px] px-2 py-1" title="Redo the Company signature — keeps the contractor's original signature">
+                              Re-sign
+                            </button>
+                          )}
+                          {!isCompletedPaper(doc) && (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleDeletePhAntiCloning(doc)}
+                            title="Permanently delete this request"
+                            className="text-muted-foreground hover:text-red-300 disabled:opacity-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      )}
+
+      {phAntiCloningEmployerDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-2">Add Company Signature</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Company Representative signature for{" "}
+              <span className="font-semibold text-white">{(phAntiCloningEmployerDialog.formData as Partial<PhAntiCloningAgreementFormData>).employeeName || "—"}</span>'s
+              {" "}{PH_ANTI_CLONING_AGREEMENT_TITLE}.
+            </p>
+
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">Name / Title</label>
+            <input
+              className="glass-input text-sm py-1.5 px-3 rounded-md w-full mb-3"
+              value={phAntiCloningEmployerNameTitle}
+              onChange={(e) => setPhAntiCloningEmployerNameTitle(e.target.value)}
+              placeholder={PH_ANTI_CLONING_COMPANY_SIGNER}
+            />
+
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">Add your signature</label>
+            <canvas
+              {...phAntiCloningEmployerSigPad.canvasProps}
+              className={`bg-white rounded-md border border-white/15 w-full ${phAntiCloningEmployerSigPad.canvasProps.className}`}
+            />
+            <div className="flex justify-center mt-2">
+              <SignaturePadControls pad={phAntiCloningEmployerSigPad} />
+            </div>
+
+            {phAntiCloningEmployerError && (
+              <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2 mt-3">{phAntiCloningEmployerError}</p>
+            )}
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => setPhAntiCloningEmployerDialog(null)} className="btn text-sm px-4 py-2">Cancel</button>
+              <button
+                onClick={handleSavePhAntiCloningEmployerSignature}
+                disabled={phAntiCloningEmployerSaving}
+                className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+              >
+                {phAntiCloningEmployerSaving ? "Saving…" : "Complete & Sign"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {phAntiCloningDocPreview && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setPhAntiCloningDocPreview(null)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{(phAntiCloningDocPreview.formData as Partial<PhAntiCloningAgreementFormData>).employeeName || "—"}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {phAntiCloningDocPreview.status === "confirmed" ? "Completed" : "Submitted"} {new Date(phAntiCloningDocPreview.signedAt ?? phAntiCloningDocPreview.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {phAntiCloningDocPreview.pdfUrl && (
+                  <a href={phAntiCloningDocPreview.pdfUrl} target="_blank" rel="noopener noreferrer" className="btn text-xs px-2.5 py-1.5 flex items-center gap-1"><Download className="h-3 w-3" /> Download</a>
+                )}
+                <button type="button" onClick={() => setPhAntiCloningDocPreview(null)} className="btn text-xs px-2.5 py-1.5">Close</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden bg-slate-950">
+              {phAntiCloningDocPreview.pdfUrl && <iframe src={phAntiCloningDocPreview.pdfUrl} title={PH_ANTI_CLONING_AGREEMENT_TITLE} className="w-full h-full min-h-[70vh] border-0" />}
             </div>
           </div>
         </div>
