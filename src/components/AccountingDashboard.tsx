@@ -116,6 +116,7 @@ import { renderPayslipBodyHtml, renderTechActivitySummaryPageHtml, PAYSLIP_STYLE
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity, getModuleActivityLog, getModuleActivityLogByAction, moduleActivityActionLabel, type ModuleActivityLogEntry } from "@/lib/supabase/moduleActivityLog";
 import { todayISO, formatISODate, localISODate } from "@/lib/localDate";
+import { currentPayPeriod, isPayPeriod, listPayPeriods } from "@/lib/payPeriods";
 import { toast } from "sonner";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -452,15 +453,6 @@ export interface EmployeePayrollRow {
 }
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
-// Weekends are off days — a period should never end on one (nothing worked
-// there anyway), so roll back to the Friday before.
-function rollBackToWeekday(d: Date): Date {
-  const day = d.getDay(); // 0=Sun, 6=Sat
-  if (day === 0) d.setDate(d.getDate() - 2);
-  else if (day === 6) d.setDate(d.getDate() - 1);
-  return d;
-}
-
 // Regular/overtime hours per employee from a set of raw timecard rows, plus
 // approved PTO credited as if it were a normal scheduled day — shared by the
 // live preview and by generatePayroll() when re-picked dates exactly match
@@ -846,33 +838,6 @@ function buildDepartmentSheetRows(rows: EmployeePayrollRow[]): (string | number)
   }
   sheet.push(["", "Nation Total", "", "", "", "", Number(nationTotal.toFixed(2))]);
   return sheet;
-}
-
-// Default period suggested for genStart/genEnd (Finance can freely pick
-// something else — see the date inputs on the Payroll tab). Ends yesterday
-// (or the Friday before, if yesterday fell on a weekend) — an employee
-// still clocked in today wouldn't have a check-out yet, so including today
-// would understate their hours. Starts the day after the previous payroll
-// run's period_end so the suggested range never gaps or overlaps it; with
-// no prior run (first time ever), defaults to a 14-day window.
-function periodBounds(lastPeriodEnd: string | null): { start: string; end: string } {
-  const endDate = rollBackToWeekday((() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    return d;
-  })());
-  const end = localISODate(endDate); // local calendar date, not toISOString() (UTC) — that's the previous day for PH staff (UTC+8) and the next day for US staff late in the evening
-
-  let startDate: Date;
-  if (lastPeriodEnd) {
-    startDate = new Date(lastPeriodEnd + "T00:00:00");
-    startDate.setDate(startDate.getDate() + 1);
-  } else {
-    startDate = new Date(endDate);
-    startDate.setDate(startDate.getDate() - 13); // first-ever run: default 14-day window
-  }
-  const start = localISODate(startDate);
-  return { start, end };
 }
 
 // Always USD — every rate (PH included) is entered and saved in dollars.
@@ -1742,11 +1707,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   }, [mileageEntries, companyId]);
 
   // Payroll generation period — Finance picks this via the date inputs on
-  // the Payroll tab. Seeded once (see fetchData) from the auto "day after
-  // the last run's end, through yesterday" default, same range this used
-  // to always use before it became editable.
-  const [genStart, setGenStart] = useState("");
-  const [genEnd, setGenEnd] = useState("");
+  // the Payroll tab. Starts on the bi-weekly pay period in progress
+  // (Sunday–Saturday, same cycle as the periods already worked — see
+  // payPeriods.ts); Finance can pick another period or custom dates.
+  const [genStart, setGenStart] = useState(() => currentPayPeriod().start);
+  const [genEnd, setGenEnd] = useState(() => currentPayPeriod().end);
+  const payPeriodOptions = useMemo(() => listPayPeriods(), []);
 
   // ── Data fetching ───────────────────────────────────────────────────────────
   const fetchData = useCallback(async (options?: { silent?: boolean }) => {
@@ -1914,8 +1880,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // whatever Finance has already picked on a later refetch). runs is
       // already ordered by generated_at desc, so runs[0] is the most recent
       // run — the default next period picks up the day after it ended.
-      setGenStart((prev) => prev || periodBounds(runs[0]?.period_end ?? null).start);
-      setGenEnd((prev) => prev || periodBounds(runs[0]?.period_end ?? null).end);
+      setGenStart((prev) => prev || currentPayPeriod().start);
+      setGenEnd((prev) => prev || currentPayPeriod().end);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
@@ -4856,6 +4822,23 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             <div className="flex flex-wrap gap-3 items-center">
               <div className="flex items-center gap-2">
                 <label className="text-xs text-slate-400 uppercase tracking-wide">Period</label>
+                <select
+                  value={isPayPeriod(genStart, genEnd) ? `${genStart}|${genEnd}` : ""}
+                  onChange={(e) => {
+                    if (!e.target.value) return;
+                    const [start, end] = e.target.value.split("|");
+                    setGenStart(start);
+                    setGenEnd(end);
+                  }}
+                  className="bg-slate-800/50 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="" disabled>Custom dates</option>
+                  {payPeriodOptions.map((p, i) => (
+                    <option key={p.start} value={`${p.start}|${p.end}`} className="bg-slate-900">
+                      {formatISODate(p.start)} – {formatISODate(p.end)}{i === 0 ? " (current)" : ""}
+                    </option>
+                  ))}
+                </select>
                 <input
                   type="date"
                   value={genStart}
