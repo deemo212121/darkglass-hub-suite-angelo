@@ -4,12 +4,23 @@
  * branches first) and, when the file has parts that look like ones already
  * there, ticks through that checklist; then every change is shown with a tick
  * box so a row the file has wrong (say, a part pulled in the app since the
- * sheet was last updated) can be left out. Saving is the parent's job.
+ * sheet was last updated) can be left out. Parts the file marks Used come
+ * along as used parts with their ticket number (the Used list), unless the
+ * user unticks them. Saving is the parent's job.
  */
 import { useMemo, useState } from "react";
 import { ArrowLeft, ArrowRight, Copy, Upload, X } from "lucide-react";
-import type { TruckStockRow } from "@/lib/supabase/truckStock";
-import { planTruckStockImport, type ImportMode, type ParsedImport, type StockChange, type StockFields } from "@/lib/truckStockFile";
+import type { TruckStockRow, TruckStockUsedRow } from "@/lib/supabase/truckStock";
+import {
+  planTruckStockImport,
+  planUsedImport,
+  usedDateText,
+  type ImportMode,
+  type ParsedImport,
+  type StockChange,
+  type StockFields,
+  type UsedFields,
+} from "@/lib/truckStockFile";
 
 const SHOWN_ROWS = 300;
 
@@ -23,12 +34,17 @@ export type ImportSave = {
   updated: number;
   /** Clear first: what the file's branches hold now, downloaded before anything is saved. */
   backup: { branches: string[]; rows: TruckStockRow[] } | null;
+  /** Used parts with their ticket number, for the Used list. */
+  usedUpserts: UsedFields[];
+  usedAdded: number;
+  usedUpdated: number;
 };
 
 export function TruckStockImportModal({
   fileName,
   parsed,
   existing,
+  existingUsed,
   branchOptions,
   onApply,
   onClose,
@@ -36,17 +52,21 @@ export function TruckStockImportModal({
   fileName: string;
   parsed: ParsedImport;
   existing: TruckStockRow[];
+  /** null when the Used list can't be read (migration 0422 not run yet). */
+  existingUsed: TruckStockUsedRow[] | null;
   branchOptions: string[];
   onApply: (save: ImportSave, onProgress: (done: number, total: number) => void) => Promise<void>;
   onClose: () => void;
 }) {
-  const needsBranch = parsed.parts.some((p) => !p.branch);
+  const needsBranch = parsed.parts.some((p) => !p.branch) || parsed.used.some((u) => !u.branch);
+  const usedOnly = parsed.parts.length === 0;
   const [fallbackBranch, setFallbackBranch] = useState("");
   const [mode, setMode] = useState<ImportMode>("update");
   /** Possible duplicates the user unticked: add them as their own part. */
   const [separate, setSeparate] = useState<Set<string>>(() => new Set());
   const [step, setStep] = useState<"duplicates" | "changes">("duplicates");
   const [excluded, setExcluded] = useState<Set<string>>(() => new Set());
+  const [includeUsed, setIncludeUsed] = useState(true);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -55,9 +75,16 @@ export function TruckStockImportModal({
     () => planTruckStockImport(parsed.parts, existing, { fallbackBranch, mode, separate }),
     [parsed, existing, fallbackBranch, mode, separate],
   );
+  const usedPlan = useMemo(
+    () => planUsedImport(parsed.used, existingUsed ?? [], { fallbackBranch, mode, branches: branchOptions }),
+    [parsed, existingUsed, fallbackBranch, mode, branchOptions],
+  );
+  const canSaveUsed = existingUsed !== null && parsed.used.length > 0;
+  const usedToSave = canSaveUsed && includeUsed ? usedPlan.changes : [];
   const dups = plan.duplicates;
   const showDuplicates = step === "duplicates" && dups.length > 0;
   const selected = plan.changes.filter((c) => !excluded.has(changeKey(c)));
+  const totalChanges = selected.length + usedToSave.length;
   const count = (kind: StockChange["kind"], list: StockChange[]) => list.filter((c) => c.kind === kind).length;
   const multiBranch = plan.branches.length > 1;
   const branchLabel = multiBranch ? `these ${plan.branches.length} branches` : plan.branches[0] ?? "this branch";
@@ -81,6 +108,7 @@ export function TruckStockImportModal({
     const removing = count("remove", selected);
     if (
       mode === "clear" &&
+      !usedOnly &&
       !confirm(
         `Clear first: ${plural(removing, "part")} at ${multiBranch ? plan.branches.join(", ") : branchLabel} that ${removing === 1 ? "isn't" : "aren't"} in the file will be removed, and the rest take the file's values.\n\nA copy of the ${plural(plan.atBranches, "part")} there now downloads first. Continue?`,
       )
@@ -97,6 +125,9 @@ export function TruckStockImportModal({
           added: count("add", selected),
           updated: count("update", selected),
           backup: mode === "clear" ? { branches: plan.branches, rows: existing.filter((r) => branches.has(r.branch.toLowerCase())) } : null,
+          usedUpserts: usedToSave.map((c) => c.after),
+          usedAdded: usedToSave.filter((c) => c.kind === "add").length,
+          usedUpdated: usedToSave.filter((c) => c.kind === "update").length,
         },
         (done, total) => setProgress({ done, total }),
       );
@@ -162,7 +193,7 @@ export function TruckStockImportModal({
             </p>
           ) : null}
 
-          <fieldset disabled={busy} className={waitingForBranch ? "hidden" : ""}>
+          <fieldset disabled={busy} className={waitingForBranch || usedOnly ? "hidden" : ""}>
             <legend className="mb-1.5 text-slate-300">Parts already in Truck Stock:</legend>
             <div className="grid gap-2 sm:grid-cols-3">
               {modes.map((m) => {
@@ -287,6 +318,7 @@ export function TruckStockImportModal({
                     : mode === "addOnly"
                       ? "A part that's only listed this way isn't added."
                       : "A part the app has that's only listed this way goes to 0; one it doesn't have isn't added."}
+                  {canSaveUsed && includeUsed ? " Used ones go to the Used list with their ticket number (below)." : ""}
                 </p>
               ) : null}
               {notParts > 0 ? <p className="text-slate-500">{plural(notParts, "cell")} in the Part # column weren't part numbers and were skipped.</p> : null}
@@ -298,7 +330,7 @@ export function TruckStockImportModal({
                 </p>
               ) : null}
 
-              {plan.changes.length === 0 ? (
+              {usedOnly ? null : plan.changes.length === 0 ? (
                 <div className="rounded border border-white/10 bg-white/5 p-6 text-center text-sm text-slate-400">
                   {waitingForBranch
                     ? "Pick the branch to see what would change."
@@ -381,6 +413,87 @@ export function TruckStockImportModal({
                   ) : null}
                 </div>
               )}
+
+              {parsed.used.length > 0 && !waitingForBranch ? (
+                <div className="space-y-2 rounded border border-violet-400/25 bg-violet-500/5 p-3">
+                  {existingUsed === null ? (
+                    <p className="text-amber-200">
+                      This file lists {plural(parsed.used.length, "used part")} with ticket numbers. They can't be saved until migration 0422 (Truck Stock used parts) is run
+                      in Supabase; the rest of the import works without it.
+                    </p>
+                  ) : (
+                    <>
+                      <label className="flex items-start gap-2 text-violet-100">
+                        <input type="checkbox" checked={includeUsed} onChange={(e) => setIncludeUsed(e.target.checked)} disabled={busy} className="mt-0.5" />
+                        <span>
+                          <span className="font-semibold">Used parts with their ticket number</span>
+                          <span className="text-violet-100/80">
+                            {" "}
+                            go to the Used list. They don't count as stock{mode === "clear" && !usedOnly ? ", and Clear first doesn't remove any" : ""}.
+                          </span>
+                        </span>
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        <span className="rounded-full border border-emerald-400/30 bg-emerald-500/15 px-2.5 py-1 text-emerald-200">
+                          {usedPlan.changes.filter((c) => c.kind === "add").length.toLocaleString()} new
+                        </span>
+                        {mode !== "addOnly" ? (
+                          <span className="rounded-full border border-sky-400/30 bg-sky-500/15 px-2.5 py-1 text-sky-200">
+                            {usedPlan.changes.filter((c) => c.kind === "update").length.toLocaleString()} updated
+                          </span>
+                        ) : null}
+                        <span className="rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-slate-300">{(usedPlan.unchanged + usedPlan.kept).toLocaleString()} already there</span>
+                      </div>
+                      {includeUsed && usedPlan.changes.length > 0 ? (
+                        <div className="max-h-[30vh] overflow-auto rounded border border-white/10">
+                          <table className="w-full text-xs">
+                            <thead className="sticky top-0 bg-slate-900 text-slate-300">
+                              <tr>
+                                <th className="px-2 py-2 text-left">Change</th>
+                                {multiBranch ? <th className="px-2 py-2 text-left">Branch</th> : null}
+                                <th className="px-2 py-2 text-left">Part No</th>
+                                <th className="px-2 py-2 text-left">Ticket #</th>
+                                <th className="px-2 py-2 text-right">Qty</th>
+                                <th className="px-2 py-2 text-left">Date Used</th>
+                                <th className="px-2 py-2 text-left">Tech</th>
+                                <th className="px-2 py-2 text-left">Stored At</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {usedPlan.changes.slice(0, SHOWN_ROWS).map((c) => (
+                                <tr key={`${c.after.branch}\u0000${c.after.partNo}\u0000${c.after.ticketNo}`} className="border-t border-white/5">
+                                  <td className="whitespace-nowrap px-2 py-1.5">
+                                    {c.kind === "add" ? (
+                                      <span className="rounded-full border border-emerald-400/30 bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-200">New</span>
+                                    ) : (
+                                      <>
+                                        <span className="rounded-full border border-sky-400/30 bg-sky-500/15 px-2 py-0.5 text-[11px] text-sky-200">Updated</span>
+                                        <span className="ml-1.5 text-[11px] text-slate-400">{c.changed.join(", ")}</span>
+                                      </>
+                                    )}
+                                  </td>
+                                  {multiBranch ? <td className="px-2 py-1.5 text-slate-300">{c.after.branch}</td> : null}
+                                  <td className="px-2 py-1.5 font-mono">{c.after.partNo}</td>
+                                  <td className="px-2 py-1.5 font-mono">{c.after.ticketNo || <span className="font-sans text-slate-500">none in the sheet</span>}</td>
+                                  <td className="px-2 py-1.5 text-right font-semibold">{c.after.quantity}</td>
+                                  <td className="whitespace-nowrap px-2 py-1.5 text-slate-300">{usedDateText(c.after.usedDate) || "—"}</td>
+                                  <td className="px-2 py-1.5 text-slate-300">{c.after.tech || "—"}</td>
+                                  <td className="px-2 py-1.5 text-slate-300">{c.after.storageLocation || "—"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {usedPlan.changes.length > SHOWN_ROWS ? (
+                            <div className="border-t border-white/10 px-3 py-2 text-slate-400">
+                              …and {plural(usedPlan.changes.length - SHOWN_ROWS, "more")} not shown (included).
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              ) : null}
             </>
           )}
 
@@ -413,7 +526,7 @@ export function TruckStockImportModal({
             <button
               type="button"
               onClick={handleImport}
-              disabled={busy || selected.length === 0 || waitingForBranch}
+              disabled={busy || totalChanges === 0 || waitingForBranch}
               className={`inline-flex items-center gap-1 rounded px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40 ${mode === "clear" ? "bg-rose-600 hover:bg-rose-500" : "bg-amber-600 hover:bg-amber-500"}`}
             >
               <Upload className="h-3.5 w-3.5" />
@@ -421,7 +534,7 @@ export function TruckStockImportModal({
                 ? progress && progress.total > 0
                   ? `Saving… ${progress.done}/${progress.total}`
                   : "Saving…"
-                : `${mode === "clear" ? "Clear and import" : "Import"} ${plural(selected.length, "change")}`}
+                : `${mode === "clear" && !usedOnly ? "Clear and import" : "Import"} ${plural(totalChanges, "change")}`}
             </button>
           )}
         </div>
