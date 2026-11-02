@@ -33,7 +33,7 @@ import {
   type LeadersRosterRow,
 } from "@/lib/supabase/leadersRoster";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
-import { LOCATIONS_DATA } from "@/lib/zipCoverage";
+import { LOCATIONS_DATA, lookupZip } from "@/lib/zipCoverage";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { nowInTimezone, DEFAULT_ATTENDANCE_TIMEZONE } from "@/lib/attendanceGrace";
@@ -2962,10 +2962,18 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     if (hiringStatusFilter.size > 0) result = result.filter((c) => hiringStatusFilter.has(CANDIDATE_STATUS_LABEL[c.status]));
     const q = hiringSearch.trim().toLowerCase();
     if (q) {
+      // Also contact number (digits only, so "(865) 296" finds "+1 865 296 9302"),
+      // email, source (e.g. Indeed), and a ZIP — the branch that covers it.
+      const qDigits = q.replace(/\D/g, "");
+      const zipBranch = /^\d{5}$/.test(q) ? lookupZip(q)?.location.toLowerCase() ?? null : null;
       result = result.filter((c) =>
         c.name.toLowerCase().includes(q) ||
         (c.position ?? "").toLowerCase().includes(q) ||
-        (c.branch ?? "").toLowerCase().includes(q),
+        (c.branch ?? "").toLowerCase().includes(q) ||
+        (c.email ?? "").toLowerCase().includes(q) ||
+        (c.source ?? "").toLowerCase().includes(q) ||
+        (qDigits.length >= 3 && (c.phone ?? "").replace(/\D/g, "").includes(qDigits)) ||
+        (!!zipBranch && (c.branch ?? "").toLowerCase() === zipBranch),
       );
     }
     if (hiringPositionFilter.size > 0) result = result.filter((c) => c.position && hiringPositionFilter.has(c.position));
@@ -19532,7 +19540,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Search</label>
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-                <input value={hiringSearch} onChange={(e) => setHiringSearch(e.target.value)} placeholder="Name, position, or branch…" className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56" />
+                <input value={hiringSearch} onChange={(e) => setHiringSearch(e.target.value)} placeholder="Name, phone, email, source, ZIP…" title="Search by name, position, branch, contact number, email, source (e.g. Indeed) or ZIP (finds the branch that covers it)" className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-64" />
               </div>
             </div>
             {(hiringSearch || hiringStatusFilter.size > 0 || hiringPositionFilter.size > 0 || hiringBranchFilter.size > 0 || hiringBranchManagerFilter.size > 0 || hiringAssignedInterviewerFilter.size > 0 || hiringOutreachFilter.size > 0 || hiringCvFilter !== "all" || hiringAccountStatusFilter !== "all" || hiringNoteFilter !== "all" || hiringContactFilter !== "all" || hiringDocumentVerifiedFilter !== "all" || hiringScreeningDateFilter.size > 0 || hiringInterviewDateFilter.size > 0) && (
