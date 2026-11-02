@@ -8942,7 +8942,11 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
   const ptoEligible = ptoEligibilityKnown && isEligibleForPto(hireDate, myCreatedAt);
   const ptoEligibleOn = ptoEligibleDate(hireDate, myCreatedAt);
   const isPaidLeave = leaveType === "Vacation" || leaveType === "Personal";
-  const paidLeaveBlocked = isPaidLeave && !ptoEligible;
+  // Only Vacation (paid PTO) waits for 1 year — Personal is unpaid and open from day 1.
+  const paidLeaveBlocked = leaveType === "Vacation" && !ptoEligible;
+  useEffect(() => {
+    if (ptoEligibilityKnown && !ptoEligible && leaveType === "Vacation") setLeaveType("Personal");
+  }, [ptoEligibilityKnown, ptoEligible, leaveType]);
   // Vacation and Personal both draw on the PTO allowance (ptoRequestsInYear).
   const ptoYear = ptoYearWindow(hireDate, myCreatedAt);
   // Only approved days come off; pending ones show beside the balance. A new
@@ -8992,7 +8996,7 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
     }
     if (paidLeaveBlocked) {
       setMsg(ptoEligibilityKnown
-        ? `${leaveType} leave needs 1 year with the company — you'll be eligible starting ${ptoEligibleOn}. Sick and Unpaid leave are available now.`
+        ? `${leaveType} leave needs 1 year with the company — you'll be eligible starting ${ptoEligibleOn}. Sick, Personal and Unpaid leave are available now.`
         : "Checking your PTO eligibility — try again in a moment.");
       return;
     }
@@ -9149,12 +9153,12 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
         <div className="mtech-section-title" style={{ marginTop: 0 }}>Leave Type</div>
         <select className="mtech-bill-input full" value={leaveType} onChange={(e) => setLeaveType(e.target.value)}>
           {LEAVE_TYPES.map((t) => (
-            <option key={t} value={t}>{t}{(t === "Vacation" || t === "Personal") && ptoEligibilityKnown && !ptoEligible ? " (after 1 year)" : (t === "Vacation" || t === "Personal") && ptoUsedUp ? " (no PTO left)" : ""}</option>
+            <option key={t} value={t} disabled={t === "Vacation" && ptoEligibilityKnown && !ptoEligible}>{t}{t === "Vacation" && ptoEligibilityKnown && !ptoEligible ? ` (locked until ${ptoEligibleOn})` : (t === "Vacation" || t === "Personal") && ptoUsedUp ? " (no PTO left)" : ""}</option>
           ))}
         </select>
         {paidLeaveBlocked && ptoEligibilityKnown && (
           <p style={{ marginTop: 6, fontSize: 12, color: "#fbbf24" }}>
-            {leaveType} leave needs 1 year with the company — you'll be eligible starting {ptoEligibleOn}. Sick and Unpaid leave are available now.
+            {leaveType} leave needs 1 year with the company — you'll be eligible starting {ptoEligibleOn}. Sick, Personal and Unpaid leave are available now.
           </p>
         )}
         {isPaidLeave && ptoUsedUp && ptoYear && (

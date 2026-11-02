@@ -27,6 +27,7 @@ import { handlePasswordResetRequest } from "./lib/server/passwordResetRequestBri
 import { handleItBypassLoginRequest } from "./lib/server/itBypassLoginBridge";
 import { handleServerStatusRequest } from "./lib/server/serverStatus";
 import { handleStorageUploadRequest } from "./lib/server/storageUploadBridge";
+import { handleEmployeeFilesRequest } from "./lib/server/employeeFilesBridge";
 import { handleTraineeDecisionRequest } from "./lib/server/traineeDecisions";
 
 const CANONICAL_ORIGIN = "https://adminhubsolution.com";
@@ -235,6 +236,10 @@ export default {
     if (url.pathname === "/api/server-status") {
       const merged = await resolveServerEnv(env);
       return await handleServerStatusRequest(request, merged);
+    }
+    if (url.pathname === "/api/employee-files") {
+      const merged = await resolveServerEnv(env);
+      return await handleEmployeeFilesRequest(request, merged);
     }
     if (url.pathname === "/api/storage-upload") {
       const merged = await resolveServerEnv(env);

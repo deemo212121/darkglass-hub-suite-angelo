@@ -483,7 +483,13 @@ export function EmployeePayrollDetailModal({
         if (!type) continue;
         (isPaidPtoType(type) ? paidLeaveDates : unpaidLeaveDates).set(n.noteDate, type);
       }
-      for (const [date, type] of formalPaidLeaveDates) paidLeaveDates.set(date, type);
+      // A formal paid request also beats a leftover unpaid HR mark (e.g. an
+      // Absent List "Personal" on days later approved as Vacation) — payroll
+      // pays the request, so this table has to show it the same way.
+      for (const [date, type] of formalPaidLeaveDates) {
+        paidLeaveDates.set(date, type);
+        unpaidLeaveDates.delete(date);
+      }
       for (const [date, type] of formalUnpaidLeaveDates) {
         unpaidLeaveDates.set(date, type);
         paidLeaveDates.delete(date);

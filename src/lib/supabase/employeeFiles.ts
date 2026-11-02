@@ -7,8 +7,31 @@
  * manage everything (is_employee_files_admin).
  */
 import { supabase } from "./client";
+import { auth as firebaseAuth } from "@/lib/firebase/config";
 
-const BUCKET = "employee-files";
+// The PDFs go through /api/employee-files (employeeFilesBridge.ts) — Supabase
+// Storage refuses the browser's own token, so the server does it after
+// checking who's asking.
+async function filesApi(query: string, init: { body?: BodyInit; json?: unknown } = {}): Promise<any> {
+  const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
+  if (!idToken) throw new Error("Your session expired — sign in again.");
+  const res = await fetch(`/api/employee-files?${query}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${idToken}`, ...(init.json !== undefined ? { "Content-Type": "application/json" } : { "Content-Type": "application/pdf" }) },
+    body: init.json !== undefined ? JSON.stringify(init.json) : init.body,
+  });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(out.error || `Request failed (${res.status})`);
+  return out;
+}
+
+async function uploadPdf(path: string, bytes: Uint8Array): Promise<void> {
+  await filesApi(`action=upload&path=${encodeURIComponent(path)}`, { body: new Blob([bytes as BlobPart], { type: "application/pdf" }) });
+}
+
+async function removePdfs(paths: string[]): Promise<void> {
+  await filesApi("action=remove", { json: { paths } }).catch((err) => console.error("Couldn't remove paystub PDF:", err));
+}
 
 /** "replaced" = superseded by a corrected file (migration 0419), kept for the record. */
 export type EmployeeFileStatus = "unassigned" | "published" | "withdrawn" | "replaced";
@@ -139,10 +162,9 @@ export async function saveEmployeeFiles(input: {
     const safe = (f.nameOnFile || f.sourceFileName || "file").replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 60);
     const path = `${input.companyId}/${batchId}/${String(i + 1).padStart(3, "0")}-${safe}.pdf`;
     try {
-      const { error: upErr } = await supabase.storage
-        .from(BUCKET)
-        .upload(path, new Blob([f.bytes as BlobPart], { type: "application/pdf" }), { contentType: "application/pdf" });
-      if (upErr) throw new Error(upErr.message);
+      await uploadPdf(path, f.bytes).catch((err) => {
+        throw new Error(`file upload (storage): ${err instanceof Error ? err.message : err}`);
+      });
       const publish = f.publish && !!f.profileId;
       const { error } = await supabase.from("employee_files").insert({
         company_id: input.companyId,
@@ -166,8 +188,8 @@ export async function saveEmployeeFiles(input: {
         published_at: publish ? now : null,
       });
       if (error) {
-        await supabase.storage.from(BUCKET).remove([path]);
-        throw new Error(error.message);
+        await removePdfs([path]);
+        throw new Error(`saving the record (employee_files): ${error.message}`);
       }
       saved++;
     } catch (err) {
@@ -245,10 +267,7 @@ export async function replaceEmployeeFile(input: {
   if (!old.profileId) throw new Error("This file isn't assigned to anyone.");
   const now = new Date().toISOString();
   const path = `${input.companyId}/${old.batchId}/corrected-${Date.now()}.pdf`;
-  const { error: upErr } = await supabase.storage
-    .from(BUCKET)
-    .upload(path, new Blob([input.bytes as BlobPart], { type: "application/pdf" }), { contentType: "application/pdf" });
-  if (upErr) throw new Error(upErr.message);
+  await uploadPdf(path, input.bytes);
   const { data: created, error: insErr } = await supabase
     .from("employee_files")
     .insert({
@@ -275,7 +294,7 @@ export async function replaceEmployeeFile(input: {
     .select("id")
     .single();
   if (insErr) {
-    await supabase.storage.from(BUCKET).remove([path]);
+    await removePdfs([path]);
     throw new Error(insErr.message);
   }
   const { error: updErr } = await supabase
@@ -285,7 +304,7 @@ export async function replaceEmployeeFile(input: {
   if (updErr) {
     // Don't leave two live copies — undo the new one.
     await supabase.from("employee_files").delete().eq("id", created.id);
-    await supabase.storage.from(BUCKET).remove([path]);
+    await removePdfs([path]);
     throw new Error(updErr.message);
   }
 }
@@ -294,12 +313,11 @@ export async function replaceEmployeeFile(input: {
 export async function deleteEmployeeFile(file: Pick<EmployeeFileRow, "id" | "storagePath">): Promise<void> {
   const { error } = await supabase.from("employee_files").delete().eq("id", file.id);
   if (error) throw new Error(error.message);
-  await supabase.storage.from(BUCKET).remove([file.storagePath]);
+  await removePdfs([file.storagePath]);
 }
 
 /** Bucket is private — a short-lived signed URL, made when the file is opened. */
 export async function getEmployeeFileUrl(storagePath: string, download?: string): Promise<string> {
-  const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(storagePath, 300, download ? { download } : undefined);
-  if (error) throw new Error(error.message);
-  return data.signedUrl;
+  const { url } = await filesApi(`action=url&path=${encodeURIComponent(storagePath)}${download ? `&download=${encodeURIComponent(download)}` : ""}`, { json: {} });
+  return url as string;
 }

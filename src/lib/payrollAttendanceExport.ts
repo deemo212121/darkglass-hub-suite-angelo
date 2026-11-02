@@ -529,7 +529,8 @@ export async function downloadPayrollAttendanceWorkbook(
             if (employee.offDays?.includes(date.getUTCDay())) continue;
             const key = date.toISOString().slice(0, 10);
             (paid ? paidLeaveDates : unpaidLeaveDates).set(key, request.ptoType);
-            if (!paid) paidLeaveDates.delete(key);
+            // A formal request beats a leftover HR mark either way; unpaid requests run last and win.
+            (paid ? unpaidLeaveDates : paidLeaveDates).delete(key);
           }
         }
       }

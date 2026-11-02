@@ -4,7 +4,7 @@ import { AlertTriangle, CheckCircle2, ChevronLeft, Eye, FileText, Loader2, Penci
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { useAuth } from "@/lib/auth";
-import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsers, getMyProfileAndCompanyIds, type ProfileRow } from "@/lib/supabase/users";
 import { extractPdfPage, pdfPageCount, readPaystubFiles, type PaystubPage } from "@/lib/paystubPdf";
 import { matchEmployeeName, type EmployeeMatchPerson, type EmployeeMatchStatus } from "@/lib/employeeFileMatch";
 import {
@@ -65,9 +65,13 @@ function mostCommon(values: (string | null)[]): string {
 export function PaystubsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
-  const { uid, companyId, displayName } = useAuth();
+  const { uid, displayName } = useAuth();
   const [tab, setTab] = useState<Tab>("upload");
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
+  // The company's real id (profiles.company_id). useAuth().companyId is the
+  // legacy login code, which matches neither the storage folder nor
+  // employee_files.company_id.
+  const [companyId, setCompanyId] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [files, setFiles] = useState<EmployeeFileRow[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -83,7 +87,10 @@ export function PaystubsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }
 
   useEffect(() => {
     if (!uid) return;
-    void getMyProfileId(uid).then(setMyProfileId);
+    void getMyProfileAndCompanyIds(uid).then((ids) => {
+      setMyProfileId(ids?.profileId ?? null);
+      setCompanyId(ids?.companyId ?? null);
+    });
     void getCompanyUsers().then(setProfiles);
     void reload();
   }, [uid]);
@@ -392,12 +399,14 @@ function UploadTab({
           type="button"
           onClick={() => void publish()}
           disabled={!!saving || toPublish.length === 0 || !payDate}
+          title={!payDate ? "Enter the Pay date above first — it couldn't be read off the stubs." : toPublish.length === 0 ? "Tick at least one row matched to an employee." : undefined}
           className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
         >
           {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
           {saving ? `Saving ${saving.done} of ${saving.total}…` : `Publish ${toPublish.length} confirmed`}
         </button>
       </div>
+      {!payDate && toPublish.length > 0 && <p className="text-xs text-amber-300">Enter the Pay date above to publish — it couldn't be read off the stubs.</p>}
       {error && <p className="text-sm text-red-300">{error}</p>}
 
       <div className="overflow-x-auto rounded-lg border border-white/10">
