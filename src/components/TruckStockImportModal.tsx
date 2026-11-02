@@ -28,6 +28,8 @@ const changeKey = (c: StockChange) => `${c.kind}:${c.before?.id ?? `${c.after.br
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
 
 export type ImportSave = {
+  /** Rows that take the file's part number, renamed before the upserts (which then hit them). */
+  renames: Array<{ id: string; partNo: string }>;
   upserts: StockFields[];
   removeIds: string[];
   added: number;
@@ -120,6 +122,7 @@ export function TruckStockImportModal({
       const branches = new Set(plan.branches.map((b) => b.toLowerCase()));
       await onApply(
         {
+          renames: selected.filter((c) => c.kind === "update" && c.before && c.after.partNo !== c.before.partNo).map((c) => ({ id: c.before!.id, partNo: c.after.partNo })),
           upserts: selected.filter((c) => c.kind !== "remove").map((c) => c.after),
           removeIds: selected.filter((c) => c.kind === "remove" && c.before).map((c) => c.before!.id),
           added: count("add", selected),
@@ -219,8 +222,9 @@ export function TruckStockImportModal({
                   <Copy className="h-3.5 w-3.5" /> {plural(dups.length, "possible duplicate")}
                 </p>
                 <p className="mt-0.5 text-amber-100/80">
-                  These parts in the file look like ones already there: the same number apart from spaces, dashes, leading zeros or words after it. Ticked = the same part, so
-                  it updates that one instead of being added again. Untick a row to add it as its own part.
+                  These parts in the file look like ones already there: the same number apart from spaces, dashes, leading zeros, a count or words after it. Ticked = the
+                  same part, so it updates that one instead of being added again; untick a row to add it as its own part. "Also in Truck Stock" rows are a second copy we
+                  already have of a part the file lists: ticked, that copy is removed.
                 </p>
               </div>
               <div className="max-h-[48vh] overflow-auto rounded border border-white/10">
@@ -260,14 +264,20 @@ export function TruckStockImportModal({
                           <td className="px-2 py-1.5">
                             <div className="font-mono">{d.like.partNo}</div>
                             <div className="text-[11px] text-slate-400">
-                              {d.kind === "ours" ? "In Truck Stock" : "Also in this file"} · Qty {d.like.quantity}
+                              {d.kind === "ours" ? "In Truck Stock" : d.kind === "extra" ? "Also in Truck Stock" : "Also in this file"} · Qty {d.like.quantity}
                               {d.like.storageLocation ? ` · ${d.like.storageLocation}` : ""}
                             </div>
                           </td>
                           <td className="px-2 py-1.5">
-                            {same ? (
+                            {d.kind === "extra" ? (
+                              same ? (
+                                <span className="text-rose-200">Same part: remove our extra copy</span>
+                              ) : (
+                                <span className="text-slate-300">Keep both</span>
+                              )
+                            ) : same ? (
                               <span className="text-sky-200">
-                                Same part: {d.kind === "ours" ? (mode === "addOnly" ? "leave ours as it is" : "update ours") : "count them together"}
+                                Same part: {d.kind === "ours" ? (mode === "addOnly" ? "leave ours as it is" : d.rename ? `update ours, renamed ${d.part.partNo}` : "update ours") : "count them together"}
                               </span>
                             ) : (
                               <span className="text-emerald-200">Add as a new part</span>
@@ -287,7 +297,7 @@ export function TruckStockImportModal({
                 {mode !== "addOnly" ? (
                   <span className="rounded-full border border-sky-400/30 bg-sky-500/15 px-2.5 py-1 text-sky-200">{count("update", plan.changes).toLocaleString()} updated</span>
                 ) : null}
-                {mode === "clear" ? (
+                {mode === "clear" || count("remove", plan.changes) > 0 ? (
                   <span className="rounded-full border border-rose-400/30 bg-rose-500/15 px-2.5 py-1 text-rose-200">{count("remove", plan.changes).toLocaleString()} removed</span>
                 ) : null}
                 {mode === "addOnly" ? (
@@ -382,7 +392,10 @@ export function TruckStockImportModal({
                               )}
                             </td>
                             {multiBranch ? <td className="px-2 py-1.5 text-slate-300">{c.after.branch}</td> : null}
-                            <td className="px-2 py-1.5 font-mono">{c.after.partNo}</td>
+                            <td className="px-2 py-1.5 font-mono">
+                              {c.after.partNo}
+                              {c.before && c.before.partNo !== c.after.partNo ? <div className="font-sans text-[11px] text-slate-500">was {c.before.partNo}</div> : null}
+                            </td>
                             <td className="px-2 py-1.5">
                               {c.after.storageLocation || <span className="text-slate-500">—</span>}
                               {locChanged && c.before?.storageLocation ? <div className="text-[11px] text-slate-500">was {c.before.storageLocation}</div> : null}

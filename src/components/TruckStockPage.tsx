@@ -23,6 +23,7 @@ import {
   upsertTruckStockRow,
   deleteTruckStockRow,
   deleteTruckStockRows,
+  renameTruckStockRows,
   bulkUpsertTruckStock,
   decrementTruckStock,
   getTruckStockUsed,
@@ -337,6 +338,8 @@ export function TruckStockPanel() {
       const where = save.backup.branches.length === 1 ? `_${save.backup.branches[0].replace(/[^A-Za-z0-9]+/g, "_")}` : "";
       await downloadTruckStockXlsx(`truck_stock_before_import${where}`, exportData(save.backup.rows));
     }
+    // Look-alikes taking the file's part number first, so the upsert below hits the renamed rows (throws, saving nothing, if it can't).
+    if (save.renames.length > 0) await renameTruckStockRows(save.renames);
     const total = save.upserts.length + save.usedUpserts.length;
     const { errors } = await bulkUpsertTruckStock(save.upserts, { chunkSize: 500, onProgress: (done) => onProgress(done, total) });
     // Only remove once everything else saved, so a failed batch never leaves a branch emptier than the file.

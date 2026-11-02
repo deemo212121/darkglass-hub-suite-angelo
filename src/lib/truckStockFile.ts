@@ -76,19 +76,30 @@ export type StockChange = {
  */
 export type ImportMode = "update" | "addOnly" | "clear";
 
-/** A part the import would add that looks like one already there. */
+/** A part the import would add that looks like one already there — or one of ours that looks like a part the file has. */
 export type PossibleDuplicate = {
   /** Stable id for the checklist tick box. */
   key: string;
-  /** "ours": looks like a part Truck Stock has; "file": the file lists it twice, spelled differently. */
-  kind: "ours" | "file";
+  /**
+   * "ours": looks like a part Truck Stock has; "file": the file lists it
+   * twice, spelled differently; "extra": besides the row the file's part
+   * matched, Truck Stock has another that looks like it (`like`) — ticked,
+   * that one is removed.
+   */
+  kind: "ours" | "file" | "extra";
   branch: string;
   part: { partNo: string; quantity: number; storageLocation: string };
   like: { partNo: string; quantity: number; storageLocation: string };
+  /** "ours" taken as the same part also takes the file's (tidier) part number. */
+  rename: boolean;
 };
 
 export type ImportPlan = {
-  /** Adds and updates carry the full row to save, spelled the way the app's row is (so the upsert hits it). */
+  /**
+   * Adds and updates carry the full row to save, spelled the way the app's row
+   * is (so the upsert hits it) — except an update whose after.partNo differs
+   * from before.partNo: that row is renamed first (renameTruckStockRows).
+   */
   changes: StockChange[];
   unchanged: number;
   /** Parts the file lists that Truck Stock has, left as they are ("addOnly"). */
@@ -168,7 +179,7 @@ const statusLabel = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowe
  * "26000774644DF"); "" otherwise (dates like "4/29", "HOLD FOR SV", UPS 1Z…).
  */
 function ticketIn(text: string): string {
-  const s = clean(text);
+  const s = clean(text).replace(/^["'“”]+|["'“”]+$/g, "");
   const m = s.match(/ticket\s*(?:#|no\.?|number)\s*:?\s*([A-Z0-9][A-Z0-9-]{4,})/i);
   if (m) return m[1];
   return /^[A-Z0-9][A-Z0-9-]*$/i.test(s) && (s.match(/\d/g)?.length ?? 0) >= 6 && !/^1Z/i.test(s) ? s : "";
@@ -197,6 +208,44 @@ function splitCount(text: string): { n: number | null; rest: string } {
   const n = Number(m[1] ?? m[2] ?? m[3] ?? m[4]);
   return { n: n > 0 ? n : null, rest: s.slice(m[0].length).trim() };
 }
+
+/**
+ * A workbook Part # cell that also holds the count or the box: "WB24X25013
+ * QTY 14  WB...BOX 2", "WH16X26910 (13)", "WR01X44347 (4pcs)", "5304523152
+ * (QTY 4)", "WD13X10071QTY 2", "heater 5304522340 x2". Whatever else is in
+ * the cell stays part of the part number ("DA81-06403A lokring",
+ * "140282033103 (809069206)"). qty is null when the cell has no count.
+ */
+function splitPartCell(text: string): { partNo: string; qty: number | null; location: string } {
+  const { rest, qty, box } = splitCountAndBox(text);
+  return { partNo: rest || clean(text), qty, location: box };
+}
+
+/** "WR..BOX 2", "wb...box 1", ".WR...BOX 2" → "WR...BOX 2", "WB...BOX 1" (the sheet types all of them); any other bin as it is. */
+const binName = (v: string) => v.replace(/^\.?\s*([A-Z]{1,3})\s?\.{2,}\s?BOX\s*(\d{1,2})$/i, (_, a: string, n: string) => `${a.toUpperCase()}...BOX ${n}`);
+
+/** A cell's count ("QTY 14", "(13)", "(4pcs)", "x2") and trailing box ("WB...BOX 2"), and what's left; rest may be "". */
+function splitCountAndBox(text: string): { rest: string; qty: number | null; box: string } {
+  let s = clean(text);
+  let box = "";
+  const b = s.match(/(?:^|\s+)([A-Z]{1,3}\s?\.{2,}\s?BOX\s*\d{1,2})$/i);
+  if (b && b.index! > 0) {
+    box = binName(b[1]);
+    s = s.slice(0, b.index).trim();
+  }
+  let qty: number | null = null;
+  const m = s.match(/\(\s*(?:qty\.?\s*)?(\d{1,3})\s*(?:pcs?|ea)?\s*\)|(?<![A-Z])qty\.?\s*(\d{1,3})(?!\d)|(?:^|\s+)x\s?(\d{1,3})$/i);
+  const n = m ? Number(m[1] ?? m[2] ?? m[3]) : 0;
+  if (m && n > 0) {
+    qty = n;
+    s = clean(`${s.slice(0, m.index)} ${s.slice(m.index! + m[0].length)}`);
+  }
+  return { rest: s, qty, box };
+}
+
+/** A Part # cell naming the bin the parts listed under it sit in: "A-1", "K3", "BIG BOX 1", "BOX 3 (NO.5303.5304)", "LG SMALL BOX 1", "SHELF :  M", "BLUE BUCKET". */
+const isBinHeading = (v: string) =>
+  /^(?:[A-Z]{1,2}-?\d{1,2}|(?:(?:[A-Z]+|[A-Z]?\d{1,4})[\s-]+)*(?:BOX|BUCKET)\b.*|(?:\(.*?\)\s*)?SHELF\b.*)$/i.test(clean(v));
 
 /** The branch a tab or file name stands for (AV → Asheville), or "" when it isn't a branch code. */
 const branchForTab = (name: string) => TRUCK_STOCK_BRANCH_CODE_MAP[upper(name)] ?? "";
@@ -425,17 +474,30 @@ function readTruckStockSection(t: ImportTable, p: number, branch: string, out: P
   const dataRows = t.rows.slice(2);
   const descCol = descriptionColumn(h1, extra, dataRows.filter((r) => clean(r[p])));
   let lastLocation = "";
+  let heading = "";
   for (const row of dataRows) {
     const cell = (c: number | null | undefined) => (c == null ? "" : clean(row[c]));
-    const partNo = cell(p);
-    if (!partNo || isPartHeader(partNo) || isSectionLabel(partNo)) continue;
-    if (!/\d/.test(partNo)) {
+    const raw = cell(p);
+    if (!raw || isPartHeader(raw) || isSectionLabel(raw)) continue;
+    // "A-1", "BIG BOX 1" …: the bin the parts listed under it are in.
+    if (isBinHeading(raw)) {
+      heading = raw;
+      continue;
+    }
+    const { partNo, qty: cellQty, location: cellBox } = splitPartCell(raw);
+    if (!/\d/.test(partNo) || partNo.replace(/[^A-Z0-9]/gi, "").length < 4) {
+      if (!/\d/.test(raw)) heading = ""; // a letter group ("WB", "WR") starts a new run of parts
       skipped["Not a part number"] = (skipped["Not a part number"] ?? 0) + 1;
       continue;
     }
     let location = cell(bound.location);
-    if (/^\.?["”']{1,2}$/.test(location)) location = lastLocation; // ditto mark: same bin as the row above
-    else if (location) lastLocation = location;
+    // A count typed in the Location column ("QTY 11", "QTY 3 WH...BOX 4") is the count; the bin is what's left.
+    const inLocation = splitCountAndBox(location);
+    if (inLocation.qty !== null) location = inLocation.box || inLocation.rest;
+    location = binName(location);
+    const ditto = /^\.?["”']{1,2}$/.test(location); // ditto mark: same bin as the row above
+    if (ditto || !location) location = cellBox || (ditto ? lastLocation : heading);
+    if (location) lastLocation = location;
 
     const status = cell(bound.status);
     let qty: number | null = null;
@@ -447,6 +509,7 @@ function readTruckStockSection(t: ImportTable, p: number, branch: string, out: P
       qty = n;
       if (rest) notes.push(rest);
     }
+    qty ??= cellQty ?? inLocation.qty;
     for (const c of lead === null ? extra : [lead, ...extra]) {
       if (c === descCol) continue;
       const { n, rest } = splitCount(cell(c));
@@ -493,12 +556,12 @@ function readLiveSection(t: ImportTable, p: number, branch: string, used: UsedCo
   const descCol = descriptionColumn(h1, rest, dataRows.filter((r) => clean(r[p])));
   for (const row of dataRows) {
     const cell = (c: number | null | undefined) => (c == null ? "" : clean(row[c]));
-    const partNo = cell(p);
+    const { partNo, qty: cellQty, location: cellBox } = splitPartCell(cell(p));
     const status = cell(statusCol);
     if (!partNo || !/\d/.test(partNo) || !USED.test(status)) continue;
     const q = cell(quantityCol);
-    const quantity = /^\d{1,3}$/.test(q) ? Number(q) || 1 : (splitCount(q).n ?? 1);
-    const base = { branch, partNo, quantity, storageLocation: cell(locationCol), description: cell(descCol) };
+    const quantity = /^\d{1,3}$/.test(q) ? Number(q) || 1 : (splitCount(q).n ?? cellQty ?? 1);
+    const base = { branch, partNo, quantity, storageLocation: cell(locationCol) || cellBox, description: cell(descCol) };
     used.add(usedLineFrom(cell, base, side, rest.filter((c) => c !== descCol), status, "live"));
   }
 }
@@ -679,6 +742,10 @@ export function planTruckStockImport(
   // another spelling in the file — preferring one that matched a row.
   const duplicates: PossibleDuplicate[] = [];
   const absorbed = new Set<ImportPart>();
+  // Our row takes the file's spelling when that's the tidier one ("WH16X26910" for our "WH16X26910 (13)").
+  const renameTo = new Map<string, string>();
+  /** Rows the user said aren't the same part as a look-alike in the file: never an "extra" copy either. */
+  const keptApart = new Set<string>();
   const ours = new Map<string, TruckStockRow[]>();
   if (opts.mode !== "clear") {
     existing.forEach((r) => lookAlikeKeys(r.branch, r.partNo).forEach((k) => ours.set(k, [...(ours.get(k) ?? []), r])));
@@ -697,20 +764,25 @@ export function planTruckStockImport(
       .sort((a, b) => Number(squash(a.partNo) !== squash(p.partNo)) - Number(squash(b.partNo) !== squash(p.partNo)))[0];
     if (r) {
       const key = `ours:${k}`;
-      duplicates.push({ key, kind: "ours", branch: p.branch, part: brief(p), like: brief(r) });
+      // The tidier spelling: shorter, or ours has a count / box typed into it ("DA81-06403A (4)").
+      const messy = (s: string) => { const x = splitCountAndBox(s); return x.qty !== null || !!x.box; };
+      const rename = clean(p.partNo).length < clean(r.partNo).length || (messy(r.partNo) && !messy(p.partNo));
+      duplicates.push({ key, kind: "ours", branch: p.branch, part: brief(p), like: brief(r), rename });
       if (!opts.separate?.has(key)) {
         matched.set(p, r);
         used.add(r.id);
-      }
+        if (rename) renameTo.set(r.id, p.partNo);
+      } else keptApart.add(r.id);
       register(p);
       continue;
     }
     const q = keys.map((x) => inFile.get(x)).find(Boolean);
     if (q) {
       const key = `file:${k}`;
-      duplicates.push({ key, kind: "file", branch: p.branch, part: brief(p), like: brief(q) });
+      duplicates.push({ key, kind: "file", branch: p.branch, part: brief(p), like: brief(q), rename: false });
       if (!opts.separate?.has(key)) {
         absorbed.add(p);
+        q.canAdd ||= p.canAdd;
         q.quantity += p.quantity;
         q.storageLocation ||= p.storageLocation;
         q.description ||= p.description;
@@ -757,7 +829,7 @@ export function planTruckStockImport(
       opts.mode === "clear"
         ? {
             branch: before.branch,
-            partNo: before.partNo,
+            partNo: renameTo.get(before.id) ?? before.partNo,
             quantity: p.quantity,
             storageLocation: p.storageLocation,
             description: p.description,
@@ -767,7 +839,7 @@ export function planTruckStockImport(
           }
         : {
             branch: before.branch,
-            partNo: before.partNo,
+            partNo: renameTo.get(before.id) ?? before.partNo,
             quantity: p.quantity,
             storageLocation: p.storageLocation || before.storageLocation,
             description: p.description || before.description,
@@ -776,6 +848,7 @@ export function planTruckStockImport(
             status: p.status ?? before.status,
           };
     const changed = FIELDS.filter(([f]) => clean(after[f]) !== clean(before[f])).map(([, label]) => label);
+    if (after.partNo !== before.partNo) changed.unshift("Part No");
     if (changed.length === 0) {
       unchanged++;
       continue;
@@ -785,8 +858,24 @@ export function planTruckStockImport(
 
   const branches = new Set([...merged.values()].map((p) => p.branch.toLowerCase()));
   const atBranches = existing.filter((r) => branches.has(r.branch.toLowerCase()));
-  const missing = atBranches.filter((r) => !used.has(r.id));
+  let missing = atBranches.filter((r) => !used.has(r.id));
   if (opts.mode === "clear") missing.forEach((r) => changes.push({ kind: "remove", before: r, after: r, changed: [] }));
+  else if (opts.mode === "update") {
+    // Ours that look like a part the file has, beside the row it matched or adds ("WR17X31816 (2)"
+    // when the file's "WR17X31816 (2)" row is now read as WR17X31816): an extra copy.
+    const extras = new Set<string>();
+    for (const r of missing) {
+      if (keptApart.has(r.id)) continue;
+      const p = lookAlikeKeys(r.branch, r.partNo).map((k) => inFile.get(k)).find((x) => x && !absorbed.has(x));
+      if (!p) continue;
+      const key = `extra:${r.id}`;
+      duplicates.push({ key, kind: "extra", branch: r.branch, part: brief(p), like: brief(r), rename: false });
+      if (opts.separate?.has(key)) continue;
+      extras.add(r.id);
+      changes.push({ kind: "remove", before: r, after: r, changed: [] });
+    }
+    missing = missing.filter((r) => !extras.has(r.id));
+  }
   return {
     changes,
     unchanged,

@@ -130,7 +130,21 @@ export async function deleteTruckStockRow(id: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
-/** Deletes many rows (an import's "remove parts that aren't in the file"), 200 ids per request. */
+/** Gives rows a new part number (Import: a look-alike takes the file's tidier spelling). Run before the upsert that then hits them. */
+export async function renameTruckStockRows(renames: Array<{ id: string; partNo: string }>): Promise<void> {
+  for (let i = 0; i < renames.length; i += 10) {
+    const results = await Promise.all(
+      renames
+        .slice(i, i + 10)
+        .filter((r) => /^[0-9a-f-]{36}$/i.test(r.id))
+        .map((r) => supabase.from("truck_stock").update({ part_no: r.partNo.trim() }).eq("id", r.id)),
+    );
+    const failed = results.find((r) => r.error);
+    if (failed?.error) throw new Error(failed.error.message);
+  }
+}
+
+/** Deletes many rows (Clear first: parts at the branch that aren't in the file), 200 ids per request. */
 export async function deleteTruckStockRows(ids: string[]): Promise<void> {
   const valid = ids.filter((id) => /^[0-9a-f-]{36}$/i.test(id));
   for (let i = 0; i < valid.length; i += 200) {
