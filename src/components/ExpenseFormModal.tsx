@@ -52,8 +52,8 @@ export function ExpenseFormModal({
     orNumber: editing?.orNumber || "",
     fromLocation: editing?.fromLocation || "",
     toLocation: editing?.toLocation || "",
-    // A Car Rental saved before it had pick-up / return dates starts from its Date.
-    pickupDate: editing?.pickupDate || (editing?.category === "Car Rental" ? editing.expenseDate ?? "" : ""),
+    // A Car Rental / Hotel saved before it had its two dates starts from its Date.
+    pickupDate: editing?.pickupDate || (editing?.category === "Car Rental" || editing?.category === "Hotel" ? editing.expenseDate ?? "" : ""),
     returnDate: editing?.returnDate || "",
     reimbursementType: (editing?.reimbursementType ?? "") as ReimbursementType | "",
     reimbursementOther: editing?.reimbursementOther || "",
@@ -62,6 +62,11 @@ export function ExpenseFormModal({
   const isReimbursement = form.category === EMPLOYEE_EXPENSE_CATEGORY;
   // A Car Rental records when the car was picked up and returned.
   const isCarRental = form.category === "Car Rental";
+  // A Hotel records check-in and check-out the same way (same two columns).
+  const isHotel = form.category === "Hotel";
+  const hasStayDates = isCarRental || isHotel;
+  const startLabel = isHotel ? "Check-in Date" : "Pick-up Date";
+  const endLabel = isHotel ? "Check-out Date" : "Return Date";
   // Storage folder key for the receipt upload — a brand-new expense has no
   // row id yet, so a client-generated key stands in until it's saved; an
   // existing expense being edited just uses its own real id.
@@ -102,13 +107,13 @@ export function ExpenseFormModal({
       alert("Please enter the amount (more than $0).");
       return;
     }
-    if (!form.profileId || (!isCarRental && !form.expenseDate)) {
+    if (!form.profileId || (!hasStayDates && !form.expenseDate)) {
       alert(profiles ? "Please select an employee and a date." : "Please enter a date.");
       return;
     }
-    // A Car Rental has no separate Date — its pick-up date is the expense's date.
-    if (isCarRental && (!form.pickupDate || !form.returnDate)) {
-      alert("Please enter the pick-up date and the return date.");
+    // A Car Rental / Hotel has no separate Date — its pick-up / check-in date is the expense's date.
+    if (hasStayDates && (!form.pickupDate || !form.returnDate)) {
+      alert(isHotel ? "Please enter the check-in date and the check-out date." : "Please enter the pick-up date and the return date.");
       return;
     }
     if (isReimbursement && !form.reimbursementType) {
@@ -119,8 +124,8 @@ export function ExpenseFormModal({
       alert("Please specify what the Other reimbursement is for.");
       return;
     }
-    if (isCarRental && form.returnDate < form.pickupDate) {
-      alert("The return date can't be before the pick-up date.");
+    if (hasStayDates && form.returnDate < form.pickupDate) {
+      alert(isHotel ? "The check-out date can't be before the check-in date." : "The return date can't be before the pick-up date.");
       return;
     }
     if (requireReceipt && form.receipts.length === 0) {
@@ -131,11 +136,11 @@ export function ExpenseFormModal({
     const typeFields = isReimbursement
       ? { reimbursementType: form.reimbursementType || null, reimbursementOther: form.reimbursementOther }
       : editing?.reimbursementType ? { reimbursementType: null } : {};
-    // Only a Car Rental carries pick-up / return dates; other categories clear them.
-    const rentalFields = isCarRental
+    // Only a Car Rental (pick-up / return) or Hotel (check-in / check-out) carries these dates; other categories clear them.
+    const rentalFields = hasStayDates
       ? { pickupDate: form.pickupDate || null, returnDate: form.returnDate || null }
       : editing?.pickupDate || editing?.returnDate ? { pickupDate: null, returnDate: null } : {};
-    const expenseDate = isCarRental ? form.pickupDate : form.expenseDate;
+    const expenseDate = hasStayDates ? form.pickupDate : form.expenseDate;
     setSaving(true);
     try {
       if (editing) {
@@ -217,7 +222,7 @@ export function ExpenseFormModal({
                 </select>
               )}
             </div>
-            {!isCarRental && (
+            {!hasStayDates && (
               <div>
                 <label className="block text-xs text-slate-400 uppercase mb-1">Date</label>
                 <input type="date" value={form.expenseDate} onChange={(e) => setForm({ ...form, expenseDate: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
@@ -273,17 +278,17 @@ export function ExpenseFormModal({
               <input type="text" value={form.toLocation} onChange={(e) => setForm({ ...form, toLocation: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
             </div>
           </div>
-          {isCarRental && (
+          {hasStayDates && (
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs text-slate-400 uppercase mb-1">
-                  Pick-up Date <span className="text-red-400 normal-case">* required</span>
+                  {startLabel} <span className="text-red-400 normal-case">* required</span>
                 </label>
                 <input type="date" value={form.pickupDate} max={form.returnDate || undefined} onChange={(e) => setForm({ ...form, pickupDate: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
               </div>
               <div>
                 <label className="block text-xs text-slate-400 uppercase mb-1">
-                  Return Date <span className="text-red-400 normal-case">* required</span>
+                  {endLabel} <span className="text-red-400 normal-case">* required</span>
                 </label>
                 <input type="date" value={form.returnDate} min={form.pickupDate || undefined} onChange={(e) => setForm({ ...form, returnDate: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
               </div>

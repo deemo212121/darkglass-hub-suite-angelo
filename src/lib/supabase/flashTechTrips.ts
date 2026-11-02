@@ -420,8 +420,11 @@ export async function createFlashTechTrip(input: {
         toLocation: input.destinationLocation,
         flashTechTripId: tripId,
         expenseSubtype: subtype,
-        // The Car Rental line's pick-up / return (migration 0420) — the trip's rental dates, else the trip's own.
-        ...(subtype === "transportation" ? { pickupDate: input.rentalStartDate || input.startDate, returnDate: input.rentalEndDate || input.endDate } : {}),
+        // The Car Rental line's pick-up / return and the Hotel line's check-in / check-out (migration 0420) —
+        // the trip's rental / lodging dates, else the trip's own.
+        ...(subtype === "transportation"
+          ? { pickupDate: input.rentalStartDate || input.startDate, returnDate: input.rentalEndDate || input.endDate }
+          : { pickupDate: input.lodgingStartDate || input.startDate, returnDate: input.lodgingEndDate || input.endDate }),
       });
     } catch (err) {
       console.error(`createFlashTechTrip: failed to create ${subtype} expense:`, err);
@@ -594,7 +597,7 @@ export async function getFlashTechTripReceipts(): Promise<Map<string, string[]>>
 export async function syncFlashTechTripExpenses(tripId: string): Promise<void> {
   const { data: trip, error } = await supabase
     .from("flash_tech_trips")
-    .select("start_date, end_date, hotel_rate, rental_rate, lodging_start_date, rental_start_date, rental_end_date")
+    .select("start_date, end_date, hotel_rate, rental_rate, lodging_start_date, lodging_end_date, rental_start_date, rental_end_date")
     .eq("id", tripId)
     .maybeSingle();
   if (error || !trip) return;
@@ -609,10 +612,10 @@ export async function syncFlashTechTripExpenses(tripId: string): Promise<void> {
     const rate = hotel ? trip.hotel_rate : trip.rental_rate;
     const amount = rate != null ? Number(rate) : Number(line.amount) || 0;
     const date = (hotel ? trip.lodging_start_date : trip.rental_start_date) || trip.start_date || line.expense_date;
-    const returnDate = trip.rental_end_date || trip.end_date || line.return_date || date;
-    const rentalSame = hotel || (line.pickup_date === date && line.return_date === returnDate);
+    const returnDate = (hotel ? trip.lodging_end_date : trip.rental_end_date) || trip.end_date || line.return_date || date;
+    const rentalSame = line.pickup_date === date && line.return_date === returnDate;
     if (amount === Number(line.amount) && date === line.expense_date && rentalSame) continue;
-    await supabase.from("expenses").update({ amount, expense_date: date, ...(hotel ? {} : { pickup_date: date, return_date: returnDate }) }).eq("id", line.id);
+    await supabase.from("expenses").update({ amount, expense_date: date, pickup_date: date, return_date: returnDate }).eq("id", line.id);
   }
 }
 
