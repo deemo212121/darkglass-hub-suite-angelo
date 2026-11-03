@@ -74,12 +74,15 @@ import {
   reviewCorrectionStage,
   canReviewCorrectionStage,
   undoCorrectionRejection,
+  undoCorrectionApproval,
+  approvedCorrectionStages,
   type TimecardCorrectionRow,
   type TimecardCorrectionHistoryRow,
   type CorrectionStage,
   type CorrectionStatus,
 } from "@/lib/supabase/timecardCorrections";
 import { CorrectionManagerSignModal, CorrectionHrSignModal } from "@/components/CorrectionSignModals";
+import { AppModal } from "@/components/ui-kit/AppModal";
 import { StageNote } from "@/components/StageNote";
 import { useAttention, badgeText } from "@/lib/attention";
 
@@ -2096,6 +2099,40 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const canUndoCorrectionRejection = (c: TimecardCorrectionRow) =>
     isAttendanceFullAccessRole(role, extraRoles) ||
     (!!myProfileId && [c.managerStatus === "rejected" ? c.managerReviewedBy : null, c.hrStatus === "rejected" ? c.hrReviewedBy : null, c.accountingStatus === "rejected" ? c.accountingReviewedBy : null].includes(myProfileId));
+  // Undo an approval — back to pending for review again. Only the person who
+  // approved a step can undo it (no one else, not even Admin / HR), with a reason.
+  const undoableApprovalStages = (c: TimecardCorrectionRow) => {
+    if (c.status === "rejected" || !myProfileId) return [];
+    const by = { manager: c.managerReviewedBy, hr: c.hrReviewedBy, accounting: c.accountingReviewedBy };
+    return approvedCorrectionStages(c).filter((s) => by[s] === myProfileId);
+  };
+  const [undoingApprovalId, setUndoingApprovalId] = useState<string | null>(null);
+  const [undoApproval, setUndoApproval] = useState<{ c: TimecardCorrectionRow; reason: string } | null>(null);
+  const handleUndoCorrectionApproval = async () => {
+    if (!undoApproval) return;
+    const { c, reason } = undoApproval;
+    const stages = undoableApprovalStages(c);
+    if (stages.length === 0 || !reason.trim()) return;
+    setUndoingApprovalId(c.id);
+    try {
+      await undoCorrectionApproval(c, myProfileId || "", displayName || "Reviewer", reason, stages);
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: displayName || "Reviewer",
+        action: "timecard_correction_approval_undone",
+        targetType: "timecard_correction",
+        targetId: c.id,
+        targetLabel: `${profileName(c.profileId)} (${c.workDate})`,
+        details: { stages, wasApproved: c.status === "approved", reason: reason.trim() },
+      });
+      setUndoApproval(null);
+      await refreshCorrections();
+    } catch (err) {
+      alert(`Couldn't undo the approval: ${err instanceof Error ? err.message : "unknown error"}`);
+    } finally {
+      setUndoingApprovalId(null);
+    }
+  };
   const handleUndoCorrectionRejection = async (c: TimecardCorrectionRow) => {
     if (!confirm(`Undo the rejection of ${profileName(c.profileId)}'s ${c.workDate} correction? It goes back to review.`)) return;
     setUndoingCorrectionId(c.id);
@@ -3621,6 +3658,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           <CorrectionStageBadges row={correction} />
                         </td>
                         <td className="px-3 py-3">
+                          <div className="flex flex-col items-start gap-1.5">
                           {correction.status === "pending" ? (
                             <button onClick={() => { setSelectedCorrection(correction); setCorrectionTimecardData({ checkIn: correction.correctedCheckIn || correction.originalCheckIn, checkOut: correction.correctedCheckOut || correction.originalCheckOut, mealStart: correction.correctedMealStart || correction.originalMealStart, mealEnd: correction.correctedMealEnd || correction.originalMealEnd }); }} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs transition flex items-center gap-1">
                               View Timecard
@@ -3641,6 +3679,18 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               )}
                             </div>
                           )}
+                          {undoableApprovalStages(correction).length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setUndoApproval({ c: correction, reason: "" })}
+                              disabled={undoingApprovalId === correction.id}
+                              className="inline-flex items-center gap-1 rounded border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
+                              title="Undo your approval — back to pending for review (the timecard goes back to the actual times until it's approved again)"
+                            >
+                              {undoingApprovalId === correction.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Undo2 className="h-3 w-3" />} Undo approval
+                            </button>
+                          )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -4034,6 +4084,63 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
             </div>
           </div>
         )}
+
+        {undoApproval && (() => {
+          const c = undoApproval.c;
+          const stages = undoableApprovalStages(c);
+          const names = stages.map((s) => (s === "manager" ? "Manager" : s === "hr" ? "HR" : "Accounting")).join(" / ");
+          const busy = undoingApprovalId === c.id;
+          return (
+            <AppModal
+              title="Undo your approval?"
+              description={`${profileName(c.profileId)} · ${c.workDate} · ${names} approval`}
+              icon={<Undo2 className="h-5 w-5" />}
+              tone="warning"
+              busy={busy}
+              onClose={() => setUndoApproval(null)}
+              footer={
+                <>
+                  <button type="button" onClick={() => setUndoApproval(null)} disabled={busy} className="btn text-sm px-4 py-2">
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleUndoCorrectionApproval()}
+                    disabled={busy || !undoApproval.reason.trim()}
+                    className="btn btn-primary text-sm px-4 py-2 inline-flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Undo2 className="h-4 w-4" />} Undo approval
+                  </button>
+                </>
+              }
+            >
+              <div className="space-y-3 text-sm">
+                <p className="text-slate-300">
+                  It goes back to <span className="font-semibold text-white">pending</span> for review.
+                  {c.status === "approved" && (
+                    <>
+                      {" "}Their timecard goes back to the actual times ({c.originalCheckIn || "—"} → {c.originalCheckOut || "—"}) until it&apos;s approved again.
+                    </>
+                  )}{" "}
+                  {profileName(c.profileId)} will be told, with your reason.
+                </p>
+                <div>
+                  <label className="block text-xs text-slate-400 uppercase mb-1">
+                    Reason <span className="text-red-400 normal-case">* required</span>
+                  </label>
+                  <textarea
+                    autoFocus
+                    rows={3}
+                    value={undoApproval.reason}
+                    onChange={(e) => setUndoApproval({ c, reason: e.target.value })}
+                    placeholder="Why are you undoing the approval? e.g. approved the wrong day, times need checking"
+                    className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none resize-none"
+                  />
+                </div>
+              </div>
+            </AppModal>
+          );
+        })()}
 
         {selectedCorrection && signingManagerCorrection && (
           <CorrectionManagerSignModal

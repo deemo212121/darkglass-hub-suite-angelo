@@ -8942,7 +8942,8 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
   const ptoEligibilityKnown = hireDateLoaded && !!(hireDate || myCreatedAt);
   const ptoEligible = ptoEligibilityKnown && isEligibleForPto(hireDate, myCreatedAt);
   const ptoEligibleOn = ptoEligibleDate(hireDate, myCreatedAt);
-  const isPaidLeave = leaveType === "Vacation" || leaveType === "Personal";
+  // Only Vacation is paid PTO and draws on the balance (isPaidPtoType) — Personal is unpaid.
+  const isPaidLeave = leaveType === "Vacation";
   // Only Vacation (paid PTO) waits for 1 year — Personal is unpaid and open from day 1.
   const paidLeaveBlocked = leaveType === "Vacation" && !ptoEligible;
   useEffect(() => {
@@ -9154,7 +9155,7 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
         <div className="mtech-section-title" style={{ marginTop: 0 }}>Leave Type</div>
         <select className="mtech-bill-input full" value={leaveType} onChange={(e) => setLeaveType(e.target.value)}>
           {LEAVE_TYPES.map((t) => (
-            <option key={t} value={t} disabled={t === "Vacation" && ptoEligibilityKnown && !ptoEligible}>{t}{t === "Vacation" && ptoEligibilityKnown && !ptoEligible ? ` (locked until ${ptoEligibleOn})` : (t === "Vacation" || t === "Personal") && ptoUsedUp ? " (no PTO left)" : ""}</option>
+            <option key={t} value={t} disabled={t === "Vacation" && ptoEligibilityKnown && !ptoEligible}>{t}{t === "Vacation" && ptoEligibilityKnown && !ptoEligible ? ` (locked until ${ptoEligibleOn})` : t === "Vacation" && ptoUsedUp ? " (no PTO left)" : ""}</option>
           ))}
         </select>
         {paidLeaveBlocked && ptoEligibilityKnown && (

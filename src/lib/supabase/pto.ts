@@ -153,9 +153,10 @@ export function ptoYearWindow(
 
 /**
  * Requests that count against a PTO (vacation) year window — pending or
- * approved, dated inside the window, excluding `unpaid` (which doesn't draw
- * against the allowance) and `sick` (which draws against its own separate
- * Sick Leave allowance instead — see sickRequestsInYear below).
+ * approved, dated inside the window. Only Vacation (paid PTO, isPaidPtoType)
+ * draws on the allowance: Personal, Holiday, Bereavement and Unpaid are
+ * unpaid time off, and Sick has its own Sick Leave allowance
+ * (sickRequestsInYear below).
  */
 export function ptoRequestsInYear<T extends Pick<PtoRequestRow, "ptoType" | "status" | "startDate" | "hoursRequested">>(
   requests: T[],
@@ -163,8 +164,7 @@ export function ptoRequestsInYear<T extends Pick<PtoRequestRow, "ptoType" | "sta
 ): T[] {
   return requests.filter(
     (r) =>
-      r.ptoType !== "unpaid" &&
-      r.ptoType !== "sick" &&
+      isPaidPtoType(r.ptoType) &&
       r.status !== "denied" &&
       r.status !== "cancelled" &&
       r.startDate >= window.start &&

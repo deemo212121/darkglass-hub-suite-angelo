@@ -1,6 +1,7 @@
 import { ChevronLeft, Compass, DollarSign, Clock, ListTodo, Download, Eye, EyeOff, TrendingUp, AlertCircle, CheckCircle2, XCircle, Plus, FileText, X, Paperclip, Receipt, Pencil, Trash2, Loader2 } from "lucide-react";
 import { MyFilesTab } from "@/components/MyFilesTab";
 import { useHolidayNames } from "@/hooks/useHolidayNames";
+import { addMinutesToHHMM, payGraceMinutesFor } from "@/lib/attendanceGrace";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { runTour, takeQueuedTour } from "@/lib/tours/runTour";
 import { SELF_SERVICE_TOUR, SELF_SERVICE_TOUR_TARGET } from "@/lib/tours/selfServiceTour";
@@ -357,7 +358,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
         if (!schedule.profileId) return;
         const today = new Date();
         const start = new Date(today);
-        start.setDate(start.getDate() - 30);
+        start.setDate(start.getDate() - 31);
         const toKey = (d: Date) =>
           `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
         const holidays = await getCompanyHolidaysInRange(toKey(start), toKey(today)).catch(() => []);
@@ -634,6 +635,47 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   const myPtoAvailable = Math.max(0, myPtoRemaining - myPtoPending);
   // Every PTO day this year is approved or pending — the PTO Request button locks until the anniversary reset.
   const myPtoUsedUp = ptoEligible && !!myPtoYear && myPtoAvailable <= 0;
+
+  // My Dashboard — this month from the real attendance above (it used to be
+  // fixed sample numbers). Absent = a scheduled day with no punch, before
+  // today; rest days, holidays and approved leave never count. Late = clocked
+  // in after the start time plus the grace period (15 min US / PH's own).
+  const monthStats = useMemo(() => {
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const month = today.slice(0, 7);
+    const me = companyProfiles.find((p) => p.id === myProfileId);
+    const graceEnd = me?.required_check_in
+      ? addMinutesToHHMM(me.required_check_in.slice(0, 5), payGraceMinutesFor(me.assigned_branch === "Philippines" ? "PH" : "US"))
+      : null;
+    const rows = liveAttendance.filter((r) => r.date.startsWith(month) && r.date <= today);
+    const off = new Set(["day-off", "holiday", "paid-leave", "unpaid-leave"]);
+    const worked = rows.filter((r) => !!r.clockIn);
+    const expected = rows.filter((r) => !off.has(r.status) && (r.date < today || !!r.clockIn));
+    const absences = rows.filter((r) => r.status === "absent" && r.date < today).map((r) => r.date);
+    const lates = graceEnd ? worked.filter((r) => r.clockIn.slice(0, 5) > graceEnd).map((r) => r.date) : [];
+    const totalHours = worked.reduce((sum, r) => sum + (r.hoursWorked || 0), 0);
+    const present = expected.filter((r) => !!r.clockIn || r.status === "pending-correction").length;
+    return {
+      loaded: liveAttendance.length > 0,
+      rate: expected.length ? (present / expected.length) * 100 : null,
+      lates,
+      absences,
+      daysWorked: worked.length,
+      totalHours,
+      avgHours: worked.length ? totalHours / worked.length : 0,
+    };
+  }, [liveAttendance, companyProfiles, myProfileId]);
+  const requestCounts = useMemo(
+    () => ({
+      pending: myRequests.filter((r) => r.status === "pending").length,
+      approved: myRequests.filter((r) => r.status === "approved" || r.status === "modified").length,
+      rejected: myRequests.filter((r) => r.status === "rejected").length,
+    }),
+    [myRequests]
+  );
+  const shortDates = (dates: string[]) =>
+    dates.map((d) => new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })).join(", ");
   const myPtoYearRequestIds = useMemo(
     () => new Set(myPtoYearRequests.map((r) => `pto-${r.id}`)),
     [myPtoYearRequests]
@@ -1445,37 +1487,41 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
               </div>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-2">Attendance Rate</p>
-                <p className="text-2xl font-bold text-amber-300">98.5%</p>
+                <p className="text-2xl font-bold text-amber-300">{monthStats.rate == null ? "—" : `${monthStats.rate % 1 === 0 ? monthStats.rate.toFixed(0) : monthStats.rate.toFixed(1)}%`}</p>
                 <p className="text-xs text-slate-400 mt-1">This month</p>
               </div>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-2">Lates</p>
-                <p className="text-2xl font-bold text-orange-300">2</p>
-                <p className="text-xs text-slate-400 mt-1">This month</p>
+                <p className="text-2xl font-bold text-orange-300">{monthStats.loaded ? monthStats.lates.length : "—"}</p>
+                <p className="text-xs text-slate-400 mt-1" title={monthStats.lates.length ? `Late on ${shortDates(monthStats.lates)}` : undefined}>
+                  {monthStats.lates.length ? shortDates(monthStats.lates) : "This month"}
+                </p>
               </div>
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
                 <p className="text-xs text-slate-400 mb-2">Absences</p>
-                <p className="text-2xl font-bold text-red-300">1</p>
-                <p className="text-xs text-slate-400 mt-1">This month</p>
+                <p className="text-2xl font-bold text-red-300">{monthStats.loaded ? monthStats.absences.length : "—"}</p>
+                <p className="text-xs text-slate-400 mt-1" title={monthStats.absences.length ? `Absent on ${shortDates(monthStats.absences)}` : undefined}>
+                  {monthStats.absences.length ? shortDates(monthStats.absences) : "This month"}
+                </p>
               </div>
             </div>
 
             {/* Attendance Summary Detail */}
             <div data-tour="ess-dashboard-detail" className="grid gap-4 md:grid-cols-2">
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <h3 className="text-sm font-bold text-white mb-4">Total Attendances</h3>
+                <h3 className="text-sm font-bold text-white mb-4">Total Attendances <span className="text-xs font-normal text-slate-400">· this month</span></h3>
                 <div className="space-y-3">
                   <div className="flex justify-between text-sm">
                     <span className="text-slate-300">Days Worked</span>
-                    <span className="text-green-300 font-semibold">19</span>
+                    <span className="text-green-300 font-semibold">{monthStats.daysWorked}</span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-slate-300">Total Hours</span>
-                    <span className="text-blue-300 font-semibold">152.5 hrs</span>
+                    <span className="text-blue-300 font-semibold">{monthStats.totalHours.toFixed(1)} hrs</span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-slate-300">Average Per Day</span>
-                    <span className="text-purple-300 font-semibold">8.03 hrs</span>
+                    <span className="text-purple-300 font-semibold">{monthStats.avgHours.toFixed(2)} hrs</span>
                   </div>
                 </div>
               </div>
@@ -1485,15 +1531,15 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 <div className="space-y-3">
                   <div className="flex justify-between text-sm">
                     <span className="text-slate-300">Awaiting Approval</span>
-                    <span className="text-yellow-300 font-semibold">1</span>
+                    <span className="text-yellow-300 font-semibold">{requestCounts.pending}</span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-slate-300">Already Approved</span>
-                    <span className="text-green-300 font-semibold">2</span>
+                    <span className="text-green-300 font-semibold">{requestCounts.approved}</span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-slate-300">Rejected</span>
-                    <span className="text-red-300 font-semibold">1</span>
+                    <span className="text-red-300 font-semibold">{requestCounts.rejected}</span>
                   </div>
                 </div>
               </div>
@@ -1794,19 +1840,19 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
 
             {attendanceView === "monthly" && (
               <div className="bg-slate-900/50 border border-white/10 rounded-lg p-4">
-                <h3 className="text-sm font-bold text-white mb-4">Monthly Attendance Summary - June 2026</h3>
+                <h3 className="text-sm font-bold text-white mb-4">Monthly Attendance Summary - {new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })}</h3>
                 <div className="grid gap-4 md:grid-cols-3">
                   <div className="bg-slate-800/50 rounded p-3">
                     <p className="text-xs text-slate-400 mb-1">Total Days Worked</p>
-                    <p className="text-2xl font-bold text-blue-300">19</p>
+                    <p className="text-2xl font-bold text-blue-300">{monthStats.daysWorked}</p>
                   </div>
                   <div className="bg-slate-800/50 rounded p-3">
                     <p className="text-xs text-slate-400 mb-1">Total Hours</p>
-                    <p className="text-2xl font-bold text-green-300">152.5</p>
+                    <p className="text-2xl font-bold text-green-300">{monthStats.totalHours.toFixed(1)}</p>
                   </div>
                   <div className="bg-slate-800/50 rounded p-3">
                     <p className="text-xs text-slate-400 mb-1">Attendance Rate</p>
-                    <p className="text-2xl font-bold text-amber-300">98.5%</p>
+                    <p className="text-2xl font-bold text-amber-300">{monthStats.rate == null ? "—" : `${monthStats.rate % 1 === 0 ? monthStats.rate.toFixed(0) : monthStats.rate.toFixed(1)}%`}</p>
                   </div>
                 </div>
               </div>
