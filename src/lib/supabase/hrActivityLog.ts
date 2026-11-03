@@ -218,6 +218,32 @@ export interface GetActivityLogFilters {
   limit?: number;
 }
 
+/**
+ * Every entry created between two instants (ISO), paged past the 1000-row
+ * cap — Activity Logs reads one date window at a time, and a busy two
+ * weeks holds more than getActivityLog's limit.
+ */
+export async function getActivityLogInRange(fromIso: string, toIso: string): Promise<HrActivityLogEntry[]> {
+  const all: HrActivityLogEntry[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from("hr_activity_log")
+      .select(SELECT)
+      .gte("created_at", fromIso)
+      .lte("created_at", toIso)
+      .order("created_at", { ascending: false })
+      .order("id")
+      .range(from, from + 999);
+    if (error) {
+      if (isMissingTableError(error)) return all;
+      throw new Error(error.message);
+    }
+    all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < 1000) break;
+  }
+  return all;
+}
+
 export async function getActivityLog(filters?: GetActivityLogFilters): Promise<HrActivityLogEntry[]> {
   let query = supabase.from("hr_activity_log").select(SELECT).order("created_at", { ascending: false });
   if (filters?.actorId) query = query.eq("actor_id", filters.actorId);

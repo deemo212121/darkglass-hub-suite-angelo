@@ -138,6 +138,32 @@ export async function getModuleActivityLog(module: ActivityLogModule, limit = 20
 }
 
 /**
+ * Every entry for these modules created between two instants (ISO), paged
+ * past the 1000-row cap — Activity Logs reads one date window at a time.
+ */
+export async function getModuleActivityLogInRange(modules: ActivityLogModule[], fromIso: string, toIso: string): Promise<ModuleActivityLogEntry[]> {
+  const all: ModuleActivityLogEntry[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from("module_activity_log")
+      .select(SELECT)
+      .in("module", modules)
+      .gte("created_at", fromIso)
+      .lte("created_at", toIso)
+      .order("created_at", { ascending: false })
+      .order("id")
+      .range(from, from + 999);
+    if (error) {
+      if (isMissingTableError(error)) return all;
+      throw new Error(error.message);
+    }
+    all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < 1000) break;
+  }
+  return all;
+}
+
+/**
  * Same table, narrowed to every entry for one action (any target) — e.g.
  * every "user_created" entry ever logged, for building an account-creator
  * lookup (see getAccountCreatorsByEmail in users.ts). `limit` defaults

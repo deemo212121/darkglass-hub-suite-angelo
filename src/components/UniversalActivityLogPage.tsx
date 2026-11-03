@@ -6,7 +6,7 @@
  * the filter bar + table over that already-normalized feed, it does no
  * data-shaping of its own.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import * as XLSX from "xlsx";
@@ -28,6 +28,14 @@ const TABS: TabKey[] = ["all", ...DEPARTMENT_ORDER];
 
 const todayIso = () => todayISO();
 const daysAgoIso = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return localISODate(d); };
+const shiftIso = (iso: string, days: number) => { const d = new Date(`${iso}T12:00:00`); d.setDate(d.getDate() + days); return localISODate(d); };
+const shortDate = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+
+// Opens on the last two weeks; "Load 2 more weeks" reads the two weeks
+// before the oldest day shown and adds them below. The table draws rows a
+// page at a time — two weeks can hold 20,000+ ticket status changes.
+const LOAD_DAYS = 14;
+const ROWS_PER_PAGE = 300;
 
 function downloadXlsx(rows: UniversalActivityEntry[], dateFrom: string, dateTo: string) {
   const data = rows.map((r) => ({
@@ -49,28 +57,65 @@ export function UniversalActivityLogPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const [activeTab, setActiveTab] = usePersistedTab<TabKey>("ahs:universal-activity-log-tab", TABS, "all");
 
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [entries, setEntries] = useState<UniversalActivityEntry[]>([]);
-  const [dateFrom, setDateFrom] = useState(daysAgoIso(29));
+  const [dateFrom, setDateFrom] = useState(daysAgoIso(LOAD_DAYS - 1));
   const [dateTo, setDateTo] = useState(todayIso());
   const [search, setSearch] = useState("");
+  const [shownRows, setShownRows] = useState(ROWS_PER_PAGE);
+  // Bumped by every full load, so a slower earlier load (or a Load more
+  // started before it) can't overwrite what the newer one shows.
+  const loadSeq = useRef(0);
+
+  const loadRange = async (from: string, to: string) => {
+    if (!from || !to) return;
+    const seq = ++loadSeq.current;
+    setLoading(true);
+    setError(null);
+    setShownRows(ROWS_PER_PAGE);
+    try {
+      const rows = await getUniversalActivityLog({ startDate: from, endDate: to });
+      if (seq === loadSeq.current) setEntries(rows);
+    } catch (err) {
+      if (seq === loadSeq.current) setError(err instanceof Error ? err.message : "Failed to load activity log.");
+    } finally {
+      if (seq === loadSeq.current) setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const rows = await getUniversalActivityLog({ startDate: dateFrom, endDate: dateTo });
-        if (!cancelled) setEntries(rows);
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load activity log.");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [dateFrom, dateTo]);
+    void loadRange(dateFrom, dateTo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const changeDateFrom = (v: string) => { setDateFrom(v); void loadRange(v, dateTo); };
+  const changeDateTo = (v: string) => { setDateTo(v); void loadRange(dateFrom, v); };
+
+  // The two weeks before the oldest day shown, added below what's loaded.
+  const olderTo = dateFrom ? shiftIso(dateFrom, -1) : "";
+  const olderFrom = dateFrom ? shiftIso(dateFrom, -LOAD_DAYS) : "";
+  const loadOlder = async () => {
+    if (!olderFrom || loadingMore) return;
+    const seq = loadSeq.current;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const rows = await getUniversalActivityLog({ startDate: olderFrom, endDate: olderTo });
+      if (seq !== loadSeq.current) return;
+      setEntries((prev) => {
+        const seen = new Set(prev.map((e) => e.id));
+        return [...prev, ...rows.filter((r) => !seen.has(r.id))].sort((a, b) => b.when.localeCompare(a.when));
+      });
+      setDateFrom(olderFrom);
+    } catch (err) {
+      if (seq === loadSeq.current) setError(err instanceof Error ? err.message : "Failed to load older activity.");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  useEffect(() => { setShownRows(ROWS_PER_PAGE); }, [activeTab, search]);
 
   const countByTab = useMemo(() => {
     const counts = new Map<TabKey, number>();
@@ -102,7 +147,7 @@ export function UniversalActivityLogPage({ mod, sub }: { mod: ModuleDef; sub: Su
           <button type="button" onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></button>
           <div>
             <h1 className="text-2xl font-bold">{sub.title}</h1>
-            <p className="text-xs text-muted-foreground mt-0.5">Every department's recent activity in one feed — pick a department or view ALL.</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Every department's activity in one feed — the last 2 weeks; load older weeks at the bottom. Pick a department or view ALL.</p>
           </div>
         </div>
 
@@ -111,11 +156,11 @@ export function UniversalActivityLogPage({ mod, sub }: { mod: ModuleDef; sub: Su
             <div className="flex flex-wrap items-end gap-4">
               <div className="flex flex-col gap-1">
                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date From</label>
-                <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                <input type="date" value={dateFrom} onChange={(e) => changeDateFrom(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date To</label>
-                <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                <input type="date" value={dateTo} onChange={(e) => changeDateTo(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Search</label>
@@ -173,7 +218,7 @@ export function UniversalActivityLogPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 <tbody>
                   {filteredRows.length === 0 ? (
                     <tr><td colSpan={activeTab === "all" ? 5 : 4} className="px-3 py-8 text-center text-muted-foreground">No activity in this range.</td></tr>
-                  ) : filteredRows.map((r) => (
+                  ) : filteredRows.slice(0, shownRows).map((r) => (
                     <tr key={r.id} className={`border-b border-white/5 ${r.alert ? "bg-rose-500/10 hover:bg-rose-500/15" : "hover:bg-white/5"}`}>
                       <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">{new Date(r.when).toLocaleString()}</td>
                       {activeTab === "all" && (
@@ -195,6 +240,29 @@ export function UniversalActivityLogPage({ mod, sub }: { mod: ModuleDef; sub: Su
                   ))}
                 </tbody>
               </table>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 px-3 py-3 text-xs text-muted-foreground">
+              <span>
+                Showing {Math.min(shownRows, filteredRows.length).toLocaleString()} of {filteredRows.length.toLocaleString()}
+                {dateFrom && dateTo ? ` · ${shortDate(dateFrom)} – ${shortDate(dateTo)}` : ""}
+              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                {filteredRows.length > shownRows && (
+                  <button type="button" onClick={() => setShownRows((n) => n + ROWS_PER_PAGE)} className="btn text-xs px-3 py-1.5">
+                    Show {Math.min(ROWS_PER_PAGE, filteredRows.length - shownRows).toLocaleString()} more
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void loadOlder()}
+                  disabled={loadingMore || !olderFrom}
+                  title={olderFrom ? `Adds ${shortDate(olderFrom)} – ${shortDate(olderTo)}` : undefined}
+                  className="btn text-xs px-3 py-1.5 inline-flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {loadingMore && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  {loadingMore ? "Loading…" : `Load 2 more weeks${olderFrom ? ` (${shortDate(olderFrom)} – ${shortDate(olderTo)})` : ""}`}
+                </button>
+              </div>
             </div>
           </div>
         )}
