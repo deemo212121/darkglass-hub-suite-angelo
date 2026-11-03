@@ -115,6 +115,45 @@ export type IncentivePerson = Pick<ProfileRow, "id" | "display_name" | "email" |
 
 export const isTraineePerson = (p: Pick<IncentivePerson, "employment_type">) => p.employment_type === "trainee";
 
+// ── One claim per technician ──
+// The table allows one incentive of each kind per technician account
+// (tech_incentives_one_per_kind). The same person can still have a second
+// account (e.g. rehired under a new login), so accounts with the same phone
+// number or email count as the same person too.
+
+const phoneKey = (s: string | null | undefined) => {
+  const d = (s || "").replace(/\D/g, "");
+  return d.length === 11 && d.startsWith("1") ? d.slice(1) : d.length >= 10 ? d : "";
+};
+const emailKey = (s: string | null | undefined) => (s || "").trim().toLowerCase();
+
+/** The person's other accounts: a different profile with the same phone number or email. */
+export function samePersonAccounts(t: Pick<IncentivePerson, "id" | "phone_number" | "email">, people: IncentivePerson[]): IncentivePerson[] {
+  const phone = phoneKey(t.phone_number);
+  const email = emailKey(t.email);
+  if (!phone && !email) return [];
+  return people.filter((p) => p.id !== t.id && ((phone && phoneKey(p.phone_number) === phone) || (email && emailKey(p.email) === email)));
+}
+
+/** An incentive of this kind already submitted or approved under one of the person's other accounts, if any. */
+export function claimedUnderOtherAccount(
+  t: Pick<IncentivePerson, "id" | "phone_number" | "email">,
+  kind: IncentiveKind,
+  people: IncentivePerson[],
+  incentives: TechIncentive[]
+): { incentive: TechIncentive; account: IncentivePerson } | null {
+  for (const account of samePersonAccounts(t, people)) {
+    const incentive = incentives.find((r) => r.technicianId === account.id && r.kind === kind && (r.status === "pending" || r.status === "approved"));
+    if (incentive) return { incentive, account };
+  }
+  return null;
+}
+
+/** A clearer message when the database refuses a second claim for the same technician. */
+function claimError(message: string): Error {
+  return /tech_incentives_one_per_kind|duplicate key/i.test(message) ? new Error("This incentive has already been claimed for this technician — refresh to see it.") : new Error(message);
+}
+
 export interface IncentiveCase {
   technician: IncentivePerson;
   startDate: string;
@@ -256,7 +295,7 @@ export async function setIncentiveRecipient(input: {
     six_month_date: input.sixMonthDate,
     status: "planned",
   });
-  if (error) throw new Error(error.message);
+  if (error) throw claimError(error.message);
 }
 
 export async function submitIncentive(input: {
@@ -291,7 +330,7 @@ export async function submitIncentive(input: {
   const { data, error } = input.existing
     ? await supabase.from("tech_incentives").update(fields).eq("id", input.existing.id).select("*").single()
     : await supabase.from("tech_incentives").insert({ technician_id: input.technicianId, kind: input.kind, ...fields }).select("*").single();
-  if (error) throw new Error(error.message);
+  if (error) throw claimError(error.message);
   return mapRow(data);
 }
 
@@ -353,10 +392,19 @@ const payLineDescription = (kind: IncentiveKind, technicianName: string) =>
  */
 export async function approveIncentive(
   inc: TechIncentive,
-  ctx: { reviewerId: string | null; reviewerName: string; technicianName: string; incentives: TechIncentive[] }
+  ctx: { reviewerId: string | null; reviewerName: string; technicianName: string; incentives: TechIncentive[]; people?: IncentivePerson[] }
 ): Promise<{ period: { start: string; end: string }; match: TechIncentive | null }> {
   if (inc.status !== "pending") throw new Error("Only a pending incentive can be approved.");
   if (!inc.recipientId) throw new Error("Nobody is picked to receive it.");
+  // A technician is only claimed once — not again under another account of theirs (same phone or email).
+  const tech = ctx.people?.find((p) => p.id === inc.technicianId);
+  if (tech && ctx.people) {
+    const approved = ctx.incentives.filter((r) => r.status === "approved");
+    for (const kind of inc.kind === "branch_manager" ? (["branch_manager", "technician_match"] as const) : [inc.kind]) {
+      const other = claimedUnderOtherAccount(tech, kind, ctx.people, approved);
+      if (other) throw new Error(`${INCENTIVE_LABEL[kind]} was already paid for this technician under their other account, ${other.account.display_name || other.account.email} (same phone or email). A technician can only be claimed once.`);
+    }
+  }
   const period = payPeriodContaining(todayISO());
   const reviewed = { reviewed_by: ctx.reviewerId, reviewed_by_name: ctx.reviewerName, reviewed_at: new Date().toISOString(), pay_period_start: period.start, pay_period_end: period.end };
 
@@ -403,7 +451,7 @@ export async function approveIncentive(
       .single();
     if (matchError) {
       await removePayLine("technician_match", matchLineId).catch(() => {});
-      throw new Error(matchError.message);
+      throw claimError(matchError.message);
     }
     return { period, match: mapRow(data) };
   } catch (err) {

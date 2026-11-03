@@ -27,6 +27,7 @@ import { getProfileIdByFirebaseUid } from "@/lib/supabase/timecards";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import {
   approveIncentive,
+  claimedUnderOtherAccount,
   getIncentiveCases,
   getTechIncentives,
   isBranchManagerPerson,
@@ -244,7 +245,14 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         const retained = retainedAtSixMonths(c);
         const g = typeof grades === "object" ? grades[c.technician.id] : undefined;
         const gradeOk = g?.complete ? (g.points ?? -Infinity) >= MIN_GRADE_POINTS : null;
-        const needsHr = due && retained && (isOpen(rows.hr) || (isOpen(rows.branch_manager) && gradeOk !== false));
+        // Already claimed under another account of this person (same phone or email) — a technician is claimed once.
+        const elsewhere = {
+          hr: claimedUnderOtherAccount(c.technician, "hr", people, incentives ?? []),
+          branch_manager: claimedUnderOtherAccount(c.technician, "branch_manager", people, incentives ?? []),
+        };
+        const openHr = isOpen(rows.hr) && !elsewhere.hr;
+        const openBm = isOpen(rows.branch_manager) && !elsewhere.branch_manager;
+        const needsHr = due && retained && (openHr || (openBm && gradeOk !== false));
         const waiting = rows.hr?.status === "pending" || rows.branch_manager?.status === "pending";
         const done = due && !needsHr && !waiting && (rows.hr?.status === "approved" || rows.branch_manager?.status === "approved");
         const leftEarly = !retained && isOpen(rows.hr) && isOpen(rows.branch_manager);
@@ -254,12 +262,12 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         const submittable: { kind: "hr" | "branch_manager"; recipientId: string; existing: TechIncentive | null }[] = [];
         const hrPick = pickedFor(c, "hr", rows.hr);
         const bmPick = pickedFor(c, "branch_manager", rows.branch_manager);
-        if (due && retained && isOpen(rows.hr) && hrPick) submittable.push({ kind: "hr", recipientId: hrPick, existing: rows.hr ?? null });
-        if (due && retained && isOpen(rows.branch_manager) && gradeOk && bmPick) submittable.push({ kind: "branch_manager", recipientId: bmPick, existing: rows.branch_manager ?? null });
-        return { c, rows, days, due, retained, grade: g, gradeOk, needsHr, under, submittable };
+        if (due && retained && openHr && hrPick) submittable.push({ kind: "hr", recipientId: hrPick, existing: rows.hr ?? null });
+        if (due && retained && openBm && gradeOk && bmPick) submittable.push({ kind: "branch_manager", recipientId: bmPick, existing: rows.branch_manager ?? null });
+        return { c, rows, days, due, retained, grade: g, gradeOk, needsHr, under, submittable, elsewhere };
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [cases, byTechnician, grades, today]
+    [cases, byTechnician, grades, today, people, incentives]
   );
 
   // Search: the technician's name / email / branch, or who's picked (or approved) for their incentives.
@@ -424,6 +432,17 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       );
     }
     if (!v.retained) return <Pill tone="muted">Left before 6 months</Pill>;
+    const other = v.elsewhere[kind];
+    if (other) {
+      return (
+        <div title="Same phone number or email as another account — a technician can only be claimed once">
+          <Pill tone="muted">Already claimed</Pill> <span className="text-[11px] text-slate-300">{amount}</span>
+          <div className="text-[11px] text-slate-500">
+            Under their other account, {other.account.display_name || other.account.email} ({other.incentive.status === "approved" ? "approved" : "waiting on Accounting"}) · to {nameOf(other.incentive.recipientId)}
+          </div>
+        </div>
+      );
+    }
     const key = `${v.c.technician.id}:${kind}`;
     const picked = pickedFor(v.c, kind, inc) ?? "";
     const editable = canSubmit && incentives !== null && savingKey !== key;
@@ -670,8 +689,13 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
               {(() => {
                 const v = views.find((x) => x.c.technician.id === c.technician.id);
                 const missing: string[] = [];
-                if (v && isOpen(v.rows.hr) && !picks.some((p) => p.kind === "hr")) missing.push(`${INCENTIVE_LABEL.hr} — no recruiter picked`);
-                if (v && isOpen(v.rows.branch_manager) && !picks.some((p) => p.kind === "branch_manager")) missing.push(v.gradeOk === false ? `${INCENTIVE_LABEL.branch_manager} — not eligible (below C)` : `${INCENTIVE_LABEL.branch_manager} — no Branch Manager picked`);
+                const elsewhereNote = (k: "hr" | "branch_manager") => {
+                  const o = v?.elsewhere[k];
+                  return o ? `${INCENTIVE_LABEL[k]} — already claimed under their other account, ${o.account.display_name || o.account.email}` : null;
+                };
+                if (v && isOpen(v.rows.hr) && !picks.some((p) => p.kind === "hr")) missing.push(elsewhereNote("hr") ?? `${INCENTIVE_LABEL.hr} — no recruiter picked`);
+                if (v && isOpen(v.rows.branch_manager) && !picks.some((p) => p.kind === "branch_manager"))
+                  missing.push(elsewhereNote("branch_manager") ?? (v.gradeOk === false ? `${INCENTIVE_LABEL.branch_manager} — not eligible (below C)` : `${INCENTIVE_LABEL.branch_manager} — no Branch Manager picked`));
                 return missing.length ? <p className="text-[11px] text-slate-500">Not included: {missing.join("; ")}.</p> : null;
               })()}
               <p className="text-[11px] text-slate-500">Accounting approves; approving adds it to payroll for the pay period it's approved in.</p>
@@ -699,7 +723,7 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
                   disabled={busy}
                   onClick={() =>
                     run(async () => {
-                      const res = await approveIncentive(inc, { reviewerId: myProfileId, reviewerName: displayName || "Accounting", technicianName: tech, incentives: incentives ?? [] });
+                      const res = await approveIncentive(inc, { reviewerId: myProfileId, reviewerName: displayName || "Accounting", technicianName: tech, incentives: incentives ?? [], people });
                       log("incentive_approved", inc, { payPeriod: res.period });
                       if (res.match) log("incentive_approved", res.match, { payPeriod: res.period, matchOf: inc.id });
                       if (inc.submittedById && inc.submittedById !== myProfileId) {
