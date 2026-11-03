@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { AlertTriangle, CheckCircle2, ChevronLeft, Eye, FileText, Loader2, Pencil, RefreshCw, Trash2, Undo2, Upload, X, XCircle } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { useAuth } from "@/lib/auth";
-import { getCompanyUsers, getMyProfileAndCompanyIds, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsersLite, getMyProfileAndCompanyIds, type ProfileRow } from "@/lib/supabase/users";
 import { extractPdfPage, pdfPageCount, readPaystubFiles, type PaystubPage } from "@/lib/paystubPdf";
 import { matchEmployeeName, type EmployeeMatchPerson, type EmployeeMatchStatus } from "@/lib/employeeFileMatch";
 import {
@@ -95,7 +95,11 @@ export function PaystubsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }
       setMyProfileId(ids?.profileId ?? null);
       setCompanyId(ids?.companyId ?? null);
     });
-    void getCompanyUsers().then(setProfiles);
+    // The lean roster — the full one is slow enough that a quick upload could
+    // be matched before it arrived (the upload re-matches when it does).
+    void getCompanyUsersLite()
+      .then(setProfiles)
+      .catch((err) => setLoadError(err instanceof Error ? err.message : "Couldn't load the employee list."));
     void reload();
   }, [uid]);
 
@@ -226,6 +230,20 @@ function UploadTab({
   const ahsNetOf = (profileId: string | null): number | null | undefined =>
     ahsNet?.key !== `${periodStart}|${periodEnd}` ? undefined : profileId ? ahsNet.byProfile.get(profileId) ?? null : null;
 
+  // Matching uses the roster as it is when the reading finishes, and rows
+  // left unmatched (and not picked by hand) are re-matched if it arrives later.
+  const peopleRef = useRef(people);
+  useEffect(() => {
+    peopleRef.current = people;
+    setRows((rs) =>
+      rs.map((r) => {
+        if (r.manual || r.status !== "none") return r;
+        const m = matchEmployeeName(r.name, people);
+        return { ...r, profileId: m.profileId, status: m.status, reason: m.reason, confirmed: m.status === "matched" };
+      })
+    );
+  }, [people]);
+
   const read = async (list: FileList | null) => {
     const pdfs = [...(list ?? [])].filter((f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name));
     if (pdfs.length === 0) return;
@@ -236,7 +254,7 @@ function UploadTab({
       const pages = await readPaystubFiles(pdfs, (done, total, status) => setReading({ done, total, status }));
       setRows(
         pages.map((p) => {
-          const m = matchEmployeeName(p.name, people);
+          const m = matchEmployeeName(p.name, peopleRef.current);
           return { ...p, profileId: m.profileId, status: m.status, reason: m.reason, confirmed: m.status === "matched", manual: false };
         })
       );
