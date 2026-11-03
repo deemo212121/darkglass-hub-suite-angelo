@@ -6,9 +6,12 @@
  *
  * Laid out for the US Appliance check stub: the name is the first line of
  * "TO THE ORDER OF", the pay date is top right, and the stub's NETPAY row
- * says "Period 10/11/26-10/24/26". Net pay is read twice — the check amount
- * ("$*******2,479.27") and the NETPAY row's Current cell — and kept only
- * when the two agree (or only one could be read). The regions are generous, and a page
+ * says "Period 10/11/26-10/24/26". Net pay comes from the written amount
+ * ("PAY Four Hundred Seventy-One Dollars & 45 Cents") — words OCR cleanly,
+ * where the digits' asterisks and dotted dividers get mistaken for "1"s.
+ * When the words can't be parsed it falls back to the check amount
+ * ("$*******2,479.27") and the NETPAY row's Current cell, kept only when
+ * the two agree (or only one could be read). The regions are generous, and a page
  * where nothing readable comes back falls to the file name (a single
  * "Jane Doe - 10-30-2026.pdf"), then to Accounting picking the person.
  */
@@ -42,6 +45,7 @@ const NAME_BOX = [0.095, 0.175, 0.6, 0.235] as const;
 const DATE_BOX = [0.58, 0.075, 0.97, 0.11] as const;
 const PERIOD_BOX = [0.36, 0.585, 0.66, 0.62] as const;
 const NETPAY_BOX = [0.195, 0.59, 0.29, 0.613] as const;
+const WRITTEN_BOX = [0.05, 0.115, 0.8, 0.15] as const;
 
 const RENDER_SCALE = 2;
 const PREVIEW_WIDTH = 900;
@@ -105,6 +109,26 @@ function netRowReadings(text: string): number[] {
   const out = [Number(`${d.slice(0, -2)}.${d.slice(-2)}`)];
   if (d.length >= 4 && d[d.length - 3] === "1") out.push(Number(`${d.slice(0, -3)}.${d.slice(-2)}`));
   return out;
+}
+
+const SMALL: Record<string, number> = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
+  twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+};
+
+/** "PAY Four Hundred Seventy-One Dollars & 45 Cents" → 471.45; null when any word isn't a number word. */
+export function readWrittenAmount(text: string): number | null {
+  const m = text.match(/PAY\s+([A-Za-z\s-]+?)\s+Dollars?\s*&\s*(\d{2})\s*Cents/i);
+  if (!m) return null;
+  let total = 0, group = 0;
+  for (const w of m[1].toLowerCase().split(/[\s-]+/).filter(Boolean)) {
+    if (w in SMALL) group += SMALL[w];
+    else if (w === "hundred") group *= 100;
+    else if (w === "thousand") { total += group * 1000; group = 0; }
+    else return null;
+  }
+  return Number(`${total + group}.${m[2]}`);
 }
 
 /** Net pay from the check-amount and NETPAY-row text: the one value both agree on, or the only reading there is; null when unsure. */
@@ -217,7 +241,9 @@ export async function readPaystubFiles(
         const dateText = (await worker.recognize(crop(canvas, DATE_BOX))).data.text;
         const payDate = readDate(dateText);
         const period = readPeriod((await worker.recognize(crop(canvas, PERIOD_BOX))).data.text);
-        const netPay = readNetPay(dateText, (await worker.recognize(crop(canvas, NETPAY_BOX))).data.text);
+        const netPay =
+          readWrittenAmount((await worker.recognize(crop(canvas, WRITTEN_BOX))).data.text) ??
+          readNetPay(dateText, (await worker.recognize(crop(canvas, NETPAY_BOX))).data.text);
         const name = ocrName || (src.pages === 1 ? fileName : "");
 
         out.push({
