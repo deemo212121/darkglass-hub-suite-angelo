@@ -29,7 +29,8 @@ import {
   type IncentiveKind,
 } from "@/lib/techIncentives";
 
-export type IncentiveStatus = "pending" | "approved" | "rejected";
+/** planned = HR has picked who gets it (or blanked it) but hasn't submitted it yet. */
+export type IncentiveStatus = "planned" | "pending" | "approved" | "rejected";
 
 /** One graded pay period in the Branch Manager Incentive's 6-month average. */
 export interface IncentiveGradePeriod {
@@ -43,7 +44,8 @@ export interface TechIncentive {
   id: string;
   technicianId: string;
   kind: IncentiveKind;
-  recipientId: string;
+  /** Null only while planned with nobody picked. */
+  recipientId: string | null;
   amount: number;
   startDate: string;
   sixMonthDate: string;
@@ -69,7 +71,7 @@ function mapRow(r: any): TechIncentive {
     id: r.id,
     technicianId: r.technician_id,
     kind: r.kind,
-    recipientId: r.recipient_id,
+    recipientId: r.recipient_id ?? null,
     amount: Number(r.amount) || 0,
     startDate: r.start_date,
     sixMonthDate: r.six_month_date,
@@ -215,7 +217,44 @@ export function retainedAtSixMonths(c: Pick<IncentiveCase, "separation" | "sixMo
   return !!c.separation.date && c.separation.date >= c.sixMonthDate;
 }
 
-// ── HR: submit / withdraw ──
+// ── HR: pick / submit / withdraw ──
+
+/**
+ * HR picks (or blanks) who gets an incentive from the table. Saved as
+ * 'planned' until it's submitted; a pending one keeps waiting on Accounting
+ * with the new person; a rejected one goes back to planned. An approved
+ * one can't change here.
+ */
+export async function setIncentiveRecipient(input: {
+  technicianId: string;
+  kind: Exclude<IncentiveKind, "technician_match">;
+  recipientId: string | null;
+  startDate: string;
+  sixMonthDate: string;
+  existing?: TechIncentive | null;
+}): Promise<void> {
+  const ex = input.existing;
+  if (ex?.status === "approved") throw new Error("It's already approved — undo the approval first.");
+  if (ex?.status === "pending" && !input.recipientId) throw new Error("It's waiting on Accounting — withdraw it first to leave it blank.");
+  if (ex) {
+    const { error } = await supabase
+      .from("tech_incentives")
+      .update({ recipient_id: input.recipientId, ...(ex.status === "rejected" ? { status: "planned" } : {}) })
+      .eq("id", ex.id);
+    if (error) throw new Error(error.message);
+    return;
+  }
+  const { error } = await supabase.from("tech_incentives").insert({
+    technician_id: input.technicianId,
+    kind: input.kind,
+    recipient_id: input.recipientId,
+    amount: INCENTIVE_AMOUNT[input.kind],
+    start_date: input.startDate,
+    six_month_date: input.sixMonthDate,
+    status: "planned",
+  });
+  if (error) throw new Error(error.message);
+}
 
 export async function submitIncentive(input: {
   technicianId: string;
@@ -224,7 +263,7 @@ export async function submitIncentive(input: {
   startDate: string;
   sixMonthDate: string;
   grade?: { points: number; grade: string; periods: IncentiveGradePeriod[] } | null;
-  /** The row being resubmitted (pending or rejected), if there is one. */
+  /** The row being submitted (planned, pending or rejected), if there is one. */
   existing?: TechIncentive | null;
   submittedById: string | null;
   submittedByName: string;
@@ -253,9 +292,9 @@ export async function submitIncentive(input: {
   return mapRow(data);
 }
 
-/** HR takes back one that isn't approved yet. */
+/** HR takes back one that's waiting on Accounting — it's planned again, with the same person picked. */
 export async function withdrawIncentive(id: string): Promise<void> {
-  const { error } = await supabase.from("tech_incentives").delete().eq("id", id);
+  const { error } = await supabase.from("tech_incentives").update({ status: "planned", submitted_at: new Date().toISOString() }).eq("id", id).eq("status", "pending");
   if (error) throw new Error(error.message);
 }
 
@@ -314,6 +353,7 @@ export async function approveIncentive(
   ctx: { reviewerId: string | null; reviewerName: string; technicianName: string; incentives: TechIncentive[] }
 ): Promise<{ period: { start: string; end: string }; match: TechIncentive | null }> {
   if (inc.status !== "pending") throw new Error("Only a pending incentive can be approved.");
+  if (!inc.recipientId) throw new Error("Nobody is picked to receive it.");
   const period = payPeriodContaining(todayISO());
   const reviewed = { reviewed_by: ctx.reviewerId, reviewed_by_name: ctx.reviewerName, reviewed_at: new Date().toISOString(), pay_period_start: period.start, pay_period_end: period.end };
 

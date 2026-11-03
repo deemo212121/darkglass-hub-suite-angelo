@@ -3,21 +3,26 @@
  * three incentives that come with it (rules: src/lib/techIncentives.ts):
  * HR Incentive $100 to the recruiter, Branch Manager Incentive $500 (6-month
  * average grade C or better, still employed), and the technician's $500
- * match, added when the Branch Manager's is approved. HR submits;
- * Accounting (Finance) or Super Admin approves, which puts it on payroll
- * for the pay period it's approved in (src/lib/supabase/techIncentives.ts).
+ * match, added when the Branch Manager's is approved.
+ *
+ * In the table HR picks who gets each one (the recruiter from a dropdown;
+ * the Branch Manager filled in from the branch, blank when there's none) —
+ * saved as they pick — and every technician's 6-month average grade loads
+ * on its own from Technician Performance. Once the 6 months are up HR
+ * submits; Accounting (Finance) or Super Admin approves, which puts it on
+ * payroll for the pay period it's approved in.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Loader2, Award, Check, X, Undo2, Send, AlertTriangle } from "lucide-react";
+import { ChevronLeft, Loader2, Award, Check, X, Undo2, Send, AlertTriangle, ArrowDownUp } from "lucide-react";
 import { toast } from "sonner";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { BrandedLoader } from "@/components/BrandedLoader";
 import { AppModal } from "@/components/ui-kit/AppModal";
 import { GradeMedal, letterGrade, payPeriodsThrough, shortPoints, gradeName, type LetterGrade } from "@/components/techPerformanceGrading";
-import { getMyPerformance } from "@/lib/supabase/myPerformance";
+import { getPerformanceLoader } from "@/lib/supabase/myPerformance";
 import { getProfileIdByFirebaseUid } from "@/lib/supabase/timecards";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import {
@@ -28,6 +33,7 @@ import {
   notifyAboutIncentive,
   rejectIncentive,
   retainedAtSixMonths,
+  setIncentiveRecipient,
   submitIncentive,
   undoIncentiveApproval,
   withdrawIncentive,
@@ -54,6 +60,7 @@ const money = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigi
 const fmtDate = (iso: string | null | undefined) =>
   iso ? new Date(`${iso.slice(0, 10)}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";
 const fmtPeriod = (s: string | null, e: string | null) => (s && e ? `${fmtDate(s).replace(/, \d{4}$/, "")} – ${fmtDate(e)}` : "—");
+const periodsTitle = (periods: IncentiveGradePeriod[]) => periods.map((p) => `${fmtPeriod(p.start, p.end)}: ${gradeName(p.grade as LetterGrade)} (${p.points} pts)`).join("\n");
 
 interface SixMonthGrade {
   /** Average points over the graded pay periods; null with none to grade. */
@@ -65,22 +72,39 @@ interface SixMonthGrade {
 }
 
 /**
- * The Technician Performance grade over the 6 months: each graded pay period
- * fully inside them (from the first graded period, 08/27, on), its points
- * averaged. Before the 6-month mark: the periods finished so far.
+ * Every technician's Technician Performance grade over their 6 months, in
+ * one read: each graded pay period fully inside the 6 months (from the
+ * first graded period, 08/27, on), its points averaged. Before the 6-month
+ * mark it's the periods finished so far. Technicians who left before 6
+ * months aren't graded.
  */
-async function sixMonthGrade(technicianId: string, startDate: string, sixMonth: string, today: string): Promise<SixMonthGrade> {
-  const complete = sixMonth <= today;
-  const end = complete ? sixMonth : addDaysISO(today, -1);
-  const periods = payPeriodsThrough(end).filter((p) => p.start >= startDate && p.end <= end);
-  const graded = await Promise.all(
-    periods.map(async (p) => {
-      const points = shortPoints(await getMyPerformance(technicianId, p.start, p.end));
+async function gradeEveryone(cases: IncentiveCase[], today: string): Promise<Record<string, SixMonthGrade>> {
+  const lastFinished = addDaysISO(today, -1);
+  const windows = cases
+    .filter((c) => retainedAtSixMonths(c))
+    .map((c) => {
+      const complete = c.sixMonthDate <= today;
+      const end = complete ? c.sixMonthDate : lastFinished;
+      return { c, complete, periods: payPeriodsThrough(end).filter((p) => p.start >= c.startDate && p.end <= end) };
+    });
+  const all = windows.flatMap((w) => w.periods);
+  const out: Record<string, SixMonthGrade> = {};
+  if (all.length === 0) {
+    for (const w of windows) out[w.c.technician.id] = { points: null, grade: null, periods: [], complete: w.complete };
+    return out;
+  }
+  const spanStart = all.reduce((m, p) => (p.start < m ? p.start : m), all[0].start);
+  const spanEnd = all.reduce((m, p) => (p.end > m ? p.end : m), all[0].end);
+  const perf = await getPerformanceLoader(windows.map((w) => w.c.technician.id), spanStart, spanEnd);
+  for (const w of windows) {
+    const graded = w.periods.map((p) => {
+      const points = shortPoints(perf(w.c.technician.id, p.start, p.end));
       return { start: p.start, end: p.end, points, grade: letterGrade(points) };
-    })
-  );
-  const points = graded.length ? graded.reduce((s, g) => s + g.points, 0) / graded.length : null;
-  return { points, grade: points == null ? null : letterGrade(points), periods: graded, complete };
+    });
+    const points = graded.length ? graded.reduce((s, g) => s + g.points, 0) / graded.length : null;
+    out[w.c.technician.id] = { points, grade: points == null ? null : letterGrade(points), periods: graded, complete: w.complete };
+  }
+  return out;
 }
 
 type Filter = "all" | "needs-hr" | "waiting" | "upcoming" | "done" | "not-eligible";
@@ -93,8 +117,18 @@ const FILTER_LABEL: Record<Filter, string> = {
   "not-eligible": "Left before 6 months",
 };
 
+type SortKey = "closest" | "six-month" | "name" | "branch" | "grade";
+const SORT_LABEL: Record<SortKey, string> = {
+  closest: "Closest to 6 months",
+  "six-month": "6-month date (earliest first)",
+  name: "Technician A–Z",
+  branch: "Branch",
+  grade: "Grade (highest first)",
+};
+const SORT_KEY = "ahs:incentives-sort";
+
 type Dialog =
-  | { type: "submit"; c: IncentiveCase }
+  | { type: "submit"; c: IncentiveCase; picks: { kind: "hr" | "branch_manager"; recipientId: string; existing: TechIncentive | null }[] }
   | { type: "approve"; inc: TechIncentive }
   | { type: "reject"; inc: TechIncentive }
   | { type: "undo"; inc: TechIncentive }
@@ -110,6 +144,7 @@ const STATUS_PILL: Record<string, string> = {
 function Pill({ tone, children }: { tone: keyof typeof STATUS_PILL; children: React.ReactNode }) {
   return <span className={`inline-flex items-center rounded border px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide ${STATUS_PILL[tone]}`}>{children}</span>;
 }
+const SELECT_CLASS = "w-full min-w-[11rem] bg-slate-800/60 border border-white/10 rounded-md px-2 py-1 text-xs text-white focus:border-blue-500 focus:outline-none disabled:opacity-60";
 
 export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
@@ -126,11 +161,38 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   const [missingStartDate, setMissingStartDate] = useState<IncentivePerson[]>([]);
   const [incentives, setIncentives] = useState<TechIncentive[] | null>([]);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
-  const [grades, setGrades] = useState<Record<string, SixMonthGrade | "loading" | "error">>({});
+  const [grades, setGrades] = useState<Record<string, SixMonthGrade> | "loading" | "error">("loading");
   const [filter, setFilter] = useState<Filter>("all");
+  const [sort, setSortState] = useState<SortKey>(() => {
+    try {
+      const v = localStorage.getItem(SORT_KEY) as SortKey | null;
+      return v && v in SORT_LABEL ? v : "closest";
+    } catch {
+      return "closest";
+    }
+  });
+  const setSort = (v: SortKey) => {
+    setSortState(v);
+    try {
+      localStorage.setItem(SORT_KEY, v);
+    } catch {
+      /* private mode — just not remembered */
+    }
+  };
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [busy, setBusy] = useState(false);
+  const [savingKey, setSavingKey] = useState<string | null>(null);
 
+  const loadGrades = (list: IncentiveCase[]) => {
+    setGrades("loading");
+    gradeEveryone(list, today)
+      .then(setGrades)
+      .catch((err) => {
+        console.error("Incentives: grades failed to load:", err);
+        setGrades("error");
+      });
+  };
+  const reloadIncentives = async () => setIncentives(await getTechIncentives());
   const load = async () => {
     setError(null);
     try {
@@ -139,6 +201,7 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       setPeople(people);
       setMissingStartDate(missingStartDate);
       setIncentives(rows);
+      loadGrades(cases);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't load incentives.");
     } finally {
@@ -159,52 +222,76 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     return map;
   }, [incentives]);
   const approverIds = useMemo(() => people.filter((p) => p.is_active && isFinanceRole(p.role, p.extra_roles)).map((p) => p.id), [people]);
+  const branchManagers = useMemo(
+    () => people.filter((p) => p.is_active && isBranchManagerPerson(p)).sort((a, b) => (a.display_name || "").localeCompare(b.display_name || "")),
+    [people]
+  );
 
-  const loadGrade = (c: IncentiveCase) => {
-    const id = c.technician.id;
-    setGrades((g) => ({ ...g, [id]: "loading" }));
-    sixMonthGrade(id, c.startDate, c.sixMonthDate, today)
-      .then((res) => setGrades((g) => ({ ...g, [id]: res })))
-      .catch(() => setGrades((g) => ({ ...g, [id]: "error" })));
-  };
+  // Not submitted yet: nothing saved, only picked (planned), or rejected.
+  const isOpen = (r?: TechIncentive) => !r || r.status === "planned" || r.status === "rejected";
+  /** Who's picked in the table: the saved pick, else the suggestion (recruiter from the Hiring record, the branch's Branch Manager), else blank. */
+  const pickedFor = (c: IncentiveCase, kind: "hr" | "branch_manager", r?: TechIncentive) =>
+    r ? r.recipientId : kind === "hr" ? c.suggestedRecruiterId : c.suggestedBranchManagerId;
 
-  // Each row's state, per incentive.
   const views = useMemo(
     () =>
       cases.map((c) => {
         const rows = byTechnician.get(c.technician.id) ?? {};
-        const due = c.sixMonthDate <= today;
+        const days = daysUntil(c.sixMonthDate, today);
+        const due = days <= 0;
         const retained = retainedAtSixMonths(c);
-        const g = grades[c.technician.id];
-        const gradeOk = typeof g === "object" && g.complete ? (g.points ?? -Infinity) >= MIN_GRADE_POINTS : null;
-        const open = (r?: TechIncentive) => !r || r.status === "rejected";
-        const needsHr = due && retained && (open(rows.hr) || (open(rows.branch_manager) && gradeOk !== false));
+        const g = typeof grades === "object" ? grades[c.technician.id] : undefined;
+        const gradeOk = g?.complete ? (g.points ?? -Infinity) >= MIN_GRADE_POINTS : null;
+        const needsHr = due && retained && (isOpen(rows.hr) || (isOpen(rows.branch_manager) && gradeOk !== false));
         const waiting = rows.hr?.status === "pending" || rows.branch_manager?.status === "pending";
-        const done = !needsHr && !waiting && (rows.hr?.status === "approved" || rows.branch_manager?.status === "approved");
-        const status: Filter = !retained && !(rows.hr || rows.branch_manager) ? "not-eligible" : waiting ? "waiting" : needsHr ? "needs-hr" : !due ? "upcoming" : done ? "done" : "all";
-        return { c, rows, due, retained, gradeOk, status };
+        const done = due && !needsHr && !waiting && (rows.hr?.status === "approved" || rows.branch_manager?.status === "approved");
+        const leftEarly = !retained && isOpen(rows.hr) && isOpen(rows.branch_manager);
+        // Which filter chips the row is under — a row can be under more than one (e.g. one waiting on Accounting, the other still to submit).
+        const under: Record<Filter, boolean> = { all: !leftEarly, "needs-hr": needsHr, waiting, upcoming: !due && retained, done, "not-eligible": leftEarly };
+        // What Submit would send: an open incentive with someone picked (the Branch Manager's only at C or better).
+        const submittable: { kind: "hr" | "branch_manager"; recipientId: string; existing: TechIncentive | null }[] = [];
+        const hrPick = pickedFor(c, "hr", rows.hr);
+        const bmPick = pickedFor(c, "branch_manager", rows.branch_manager);
+        if (due && retained && isOpen(rows.hr) && hrPick) submittable.push({ kind: "hr", recipientId: hrPick, existing: rows.hr ?? null });
+        if (due && retained && isOpen(rows.branch_manager) && gradeOk && bmPick) submittable.push({ kind: "branch_manager", recipientId: bmPick, existing: rows.branch_manager ?? null });
+        return { c, rows, days, due, retained, grade: g, gradeOk, needsHr, under, submittable };
       }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [cases, byTechnician, grades, today]
   );
 
-  // Grade every technician who's reached 6 months and still needs the Branch Manager step.
-  useEffect(() => {
-    for (const v of views) {
-      if (!v.due || !v.retained || grades[v.c.technician.id]) continue;
-      if (v.rows.branch_manager && v.rows.branch_manager.status !== "rejected") continue;
-      loadGrade(v.c);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [views]);
-
   const counts = useMemo(() => {
-    const out: Record<Filter, number> = { all: views.length, "needs-hr": 0, waiting: 0, upcoming: 0, done: 0, "not-eligible": 0 };
-    for (const v of views) if (v.status !== "all") out[v.status]++;
+    const out: Record<Filter, number> = { all: 0, "needs-hr": 0, waiting: 0, upcoming: 0, done: 0, "not-eligible": 0 };
+    for (const v of views) for (const f of Object.keys(out) as Filter[]) if (v.under[f]) out[f]++;
     return out;
   }, [views]);
-  const shown = filter === "all" ? views.filter((v) => v.status !== "not-eligible") : views.filter((v) => v.status === filter);
 
-  const log = (action: string, inc: { id: string; kind: IncentiveKind; technicianId: string; recipientId: string; amount: number }, details: Record<string, unknown> = {}) =>
+  const shown = useMemo(() => {
+    const list = views.filter((v) => v.under[filter]);
+    const name = (v: (typeof views)[number]) => v.c.technician.display_name || "";
+    const byName = (a: (typeof views)[number], b: (typeof views)[number]) => name(a).localeCompare(name(b));
+    const sorted = [...list];
+    if (sort === "closest") {
+      // Not there yet, fewest days left first; then the ones already past 6 months, most recent first.
+      sorted.sort((a, b) => (a.days > 0) !== (b.days > 0) ? (a.days > 0 ? -1 : 1) : a.days > 0 ? a.days - b.days || byName(a, b) : b.days - a.days || byName(a, b));
+    } else if (sort === "six-month") {
+      sorted.sort((a, b) => a.c.sixMonthDate.localeCompare(b.c.sixMonthDate) || byName(a, b));
+    } else if (sort === "name") {
+      sorted.sort(byName);
+    } else if (sort === "branch") {
+      sorted.sort((a, b) => (a.c.technician.assigned_branch || "~").localeCompare(b.c.technician.assigned_branch || "~") || a.days - b.days);
+    } else {
+      // The grade the row shows: the one saved when the Branch Manager's was submitted, else the live one.
+      const pts = (v: (typeof views)[number]) => {
+        const bm = v.rows.branch_manager;
+        return (bm && !isOpen(bm) ? bm.gradePoints : v.grade?.points) ?? -Infinity;
+      };
+      sorted.sort((a, b) => pts(b) - pts(a) || byName(a, b));
+    }
+    return sorted;
+  }, [views, filter, sort]);
+
+  const log = (action: string, inc: { id: string; kind: IncentiveKind; technicianId: string; recipientId: string | null; amount: number }, details: Record<string, unknown> = {}) =>
     void logModuleActivity({
       module: "accounting",
       actorName: displayName || "Unknown",
@@ -220,7 +307,7 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     try {
       await fn();
       setDialog(null);
-      await load();
+      await reloadIncentives();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
@@ -228,31 +315,55 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     }
   };
 
-  const gradeLine = (g: SixMonthGrade | "loading" | "error" | undefined, c: IncentiveCase, stored?: TechIncentive) => {
-    if (stored && stored.gradePoints != null && stored.grade) {
+  // Saving a pick from a table dropdown.
+  const pick = async (v: (typeof views)[number], kind: "hr" | "branch_manager", recipientId: string | null) => {
+    const key = `${v.c.technician.id}:${kind}`;
+    setSavingKey(key);
+    try {
+      const existing = v.rows[kind] ?? null;
+      await setIncentiveRecipient({ technicianId: v.c.technician.id, kind, recipientId, startDate: v.c.startDate, sixMonthDate: v.c.sixMonthDate, existing });
+      void logModuleActivity({
+        module: "accounting",
+        actorName: displayName || "Unknown",
+        action: "incentive_recipient_set",
+        targetType: "tech_incentive",
+        targetId: existing?.id ?? v.c.technician.id,
+        targetLabel: `${INCENTIVE_LABEL[kind]} — ${recipientId ? nameOf(recipientId) : "nobody"} (technician ${v.c.technician.display_name})`,
+        details: { from: existing ? nameOf(existing.recipientId) : null, to: recipientId ? nameOf(recipientId) : null },
+      });
+      await reloadIncentives();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't save that.");
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
+  const gradeCell = (v: (typeof views)[number]) => {
+    if (!v.retained) return <span className="text-[11px] text-slate-500">—</span>;
+    const stored = v.rows.branch_manager && !isOpen(v.rows.branch_manager) ? v.rows.branch_manager : undefined;
+    if (stored?.grade && stored.gradePoints != null) {
       return (
-        <span className="inline-flex items-center gap-1 text-[11px] text-slate-300" title={stored.gradePeriods.map((p) => `${fmtPeriod(p.start, p.end)}: ${p.grade} (${p.points} pts)`).join("\n")}>
-          <GradeMedal grade={stored.grade as LetterGrade} size="sm" /> {gradeName(stored.grade as LetterGrade)} · {stored.gradePoints.toFixed(1)} pts avg ({stored.gradePeriods.length} pay periods)
-        </span>
+        <div title={periodsTitle(stored.gradePeriods)}>
+          <span className="inline-flex items-center gap-1.5 text-xs text-slate-200"><GradeMedal grade={stored.grade as LetterGrade} size="sm" /> {gradeName(stored.grade as LetterGrade)}</span>
+          <div className="text-[11px] text-slate-500">{stored.gradePoints.toFixed(1)} pts avg · {stored.gradePeriods.length} pay periods · when submitted</div>
+        </div>
       );
     }
-    if (g === "loading") return <span className="inline-flex items-center gap-1 text-[11px] text-slate-400"><Loader2 className="h-3 w-3 animate-spin" /> Checking grade…</span>;
-    if (g === "error") return <button type="button" onClick={() => loadGrade(c)} className="text-[11px] text-red-300 underline">Couldn't load the grade — retry</button>;
-    if (!g) return <button type="button" onClick={() => loadGrade(c)} className="text-[11px] text-sky-300 hover:text-sky-200 underline">Grade so far</button>;
-    if (g.points == null || !g.grade) return <span className="text-[11px] text-slate-400">No graded pay periods{g.complete ? "" : " yet"}</span>;
+    if (grades === "loading") return <span className="inline-flex items-center gap-1 text-[11px] text-slate-400"><Loader2 className="h-3 w-3 animate-spin" /> Loading…</span>;
+    if (grades === "error") return <button type="button" onClick={() => loadGrades(cases)} className="text-[11px] text-red-300 underline">Couldn't load — retry</button>;
+    const g = v.grade;
+    if (!g || g.points == null || !g.grade) return <span className="text-[11px] text-slate-500">No graded pay periods{g?.complete ? "" : " yet"}</span>;
     const ok = g.points >= MIN_GRADE_POINTS;
     return (
-      <span
-        className={`inline-flex items-center gap-1 text-[11px] ${ok ? "text-slate-300" : "text-red-300"}`}
-        title={g.periods.map((p) => `${fmtPeriod(p.start, p.end)}: ${p.grade} (${p.points} pts)`).join("\n")}
-      >
-        <GradeMedal grade={g.grade} size="sm" /> {gradeName(g.grade)} · {g.points.toFixed(1)} pts avg ({g.periods.length} pay period{g.periods.length === 1 ? "" : "s"}){g.complete ? "" : " so far"}
-        {g.complete && !ok && " — below C"}
-      </span>
+      <div title={periodsTitle(g.periods)}>
+        <span className={`inline-flex items-center gap-1.5 text-xs ${ok ? "text-slate-200" : "text-red-300"}`}><GradeMedal grade={g.grade} size="sm" /> {gradeName(g.grade)}{ok ? "" : " — below C"}</span>
+        <div className="text-[11px] text-slate-500">{g.points.toFixed(1)} pts avg · {g.periods.length} pay period{g.periods.length === 1 ? "" : "s"}{g.complete ? "" : " so far"}</div>
+      </div>
     );
   };
 
-  /** The actions for one incentive row (HR or Branch Manager). */
+  /** The approve / reject / withdraw / undo buttons under an incentive. */
   const rowActions = (inc: TechIncentive) => (
     <div className="mt-1 flex flex-wrap gap-1">
       {inc.status === "pending" && canApprove && (
@@ -278,45 +389,70 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     </div>
   );
 
-  const incentiveCell = (v: (typeof views)[number], kind: IncentiveKind) => {
+  /** HR Incentive / Branch Manager Incentive cell: who gets it (a dropdown until it's approved), then where it stands. */
+  const incentiveCell = (v: (typeof views)[number], kind: "hr" | "branch_manager") => {
     const inc = v.rows[kind];
     const amount = money(INCENTIVE_AMOUNT[kind]);
-    if (kind === "technician_match") {
-      if (inc) return <div><Pill tone="approved">Approved</Pill> <span className="text-xs text-slate-300">{amount}</span><div className="text-[11px] text-slate-500">Payroll {fmtPeriod(inc.payPeriodStart, inc.payPeriodEnd)}</div></div>;
-      return <span className="text-[11px] text-slate-500">Added when the Branch Manager's is approved</span>;
-    }
-    const grade = kind === "branch_manager" ? gradeLine(grades[v.c.technician.id], v.c, inc && inc.status !== "rejected" ? inc : undefined) : null;
-    if (inc && inc.status !== "rejected") {
+    if (inc && (inc.status === "approved" || inc.status === "pending")) {
       return (
         <div>
-          <Pill tone={inc.status}>{inc.status === "pending" ? "Waiting on Accounting" : "Approved"}</Pill> <span className="text-xs text-slate-200">{amount} · {nameOf(inc.recipientId)}</span>
+          <div className="text-xs text-slate-200">{nameOf(inc.recipientId)}</div>
+          <div className="mt-0.5"><Pill tone={inc.status}>{inc.status === "pending" ? "Waiting on Accounting" : "Approved"}</Pill> <span className="text-[11px] text-slate-300">{amount}</span></div>
           {inc.status === "approved" && <div className="text-[11px] text-slate-500">Payroll {fmtPeriod(inc.payPeriodStart, inc.payPeriodEnd)} · by {inc.reviewedByName || "—"}</div>}
           {inc.status === "pending" && <div className="text-[11px] text-slate-500">Submitted by {inc.submittedByName || "—"} · {fmtDate(inc.submittedAt)}</div>}
-          {grade && <div>{grade}</div>}
           {rowActions(inc)}
         </div>
       );
     }
     if (!v.retained) return <Pill tone="muted">Left before 6 months</Pill>;
-    if (!v.due) return <div><span className="text-[11px] text-slate-500">{amount} at 6 months</span>{grade && <div>{grade}</div>}</div>;
-    if (kind === "branch_manager" && v.gradeOk === false) return <div><Pill tone="muted">Not eligible</Pill>{grade && <div>{grade}</div>}</div>;
+    const key = `${v.c.technician.id}:${kind}`;
+    const picked = pickedFor(v.c, kind, inc) ?? "";
+    const editable = canSubmit && incentives !== null && savingKey !== key;
+    const options =
+      kind === "hr"
+        ? Object.keys(HR_INCENTIVE_RECRUITERS).map((id) => ({ id, label: nameOf(id) }))
+        : [...branchManagers, ...(picked && !branchManagers.some((p) => p.id === picked) && personById.get(picked) ? [personById.get(picked)!] : [])].map((p) => ({ id: p.id, label: `${p.display_name} · ${p.assigned_branch || "—"}` }));
+    const notEligible = kind === "branch_manager" && v.due && v.gradeOk === false;
     return (
       <div>
-        {inc?.status === "rejected" ? <Pill tone="rejected">Rejected</Pill> : <Pill tone="ready">Ready to submit</Pill>} <span className="text-xs text-slate-300">{amount}</span>
+        <div className="flex items-center gap-1.5">
+          <select value={picked} disabled={!editable} onChange={(e) => void pick(v, kind, e.target.value || null)} className={SELECT_CLASS} aria-label={kind === "hr" ? "HR recruiter" : "Branch Manager"}>
+            <option value="">{kind === "hr" ? "— Pick the recruiter —" : "— No Branch Manager —"}</option>
+            {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+          {savingKey === key && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400 shrink-0" />}
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          {inc?.status === "rejected" ? (
+            <Pill tone="rejected">Rejected</Pill>
+          ) : notEligible ? (
+            <Pill tone="muted">Not eligible — below C</Pill>
+          ) : v.due ? (
+            picked ? <Pill tone="ready">Ready to submit</Pill> : <Pill tone="muted">Pick who gets it</Pill>
+          ) : null}
+          <span className="text-[11px] text-slate-500">{amount}{v.due ? "" : " at 6 months"}</span>
+        </div>
         {inc?.status === "rejected" && <div className="text-[11px] text-red-300">“{inc.reviewNote}” — {inc.reviewedByName}</div>}
-        {grade && <div>{grade}</div>}
+        {kind === "hr" && !inc && v.c.suggestedRecruiterId && <div className="text-[10px] text-slate-500">From their HR Hiring record</div>}
+        {kind === "branch_manager" && !inc && (v.c.suggestedBranchManagerId ? <div className="text-[10px] text-slate-500">{v.c.technician.assigned_branch || "Their branch"}'s Branch Manager</div> : <div className="text-[10px] text-slate-500">No Branch Manager found for their branch</div>)}
       </div>
     );
   };
 
+  const matchCell = (v: (typeof views)[number]) => {
+    const inc = v.rows.technician_match;
+    if (inc) return <div><Pill tone="approved">Approved</Pill> <span className="text-xs text-slate-300">{money(inc.amount)}</span><div className="text-[11px] text-slate-500">Payroll {fmtPeriod(inc.payPeriodStart, inc.payPeriodEnd)}</div></div>;
+    return <span className="text-[11px] text-slate-500">{money(INCENTIVE_AMOUNT.technician_match)} — added when the Branch Manager's is approved</span>;
+  };
+
   return (
     <div className="min-h-screen flex flex-col">
-      <main className="flex-1 max-w-[1600px] mx-auto w-full px-4 sm:px-6 py-8">
+      <main className="flex-1 max-w-[1700px] mx-auto w-full px-4 sm:px-6 py-8">
         <div className="flex items-center gap-3 mb-2">
           <button type="button" onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></button>
           <div>
             <h1 className="text-2xl font-bold">{sub.title}</h1>
-            <p className="text-xs text-muted-foreground mt-0.5">Technician 6-month incentives — HR submits, Accounting approves, and approved incentives go on payroll.</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Technician 6-month incentives — HR picks who gets each one and submits, Accounting approves, and approved incentives go on payroll.</p>
           </div>
         </div>
 
@@ -333,7 +469,7 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           ))}
         </div>
         <p className="text-[11px] text-muted-foreground mb-4">
-          6 months count from the technician's start date (the later of the Master List Hire Date and their HR Hiring training / start date), for technicians reaching 6 months on or after {fmtDate(INCENTIVE_PROGRAM_START)}. Approved incentives go on payroll for the pay period they're approved in (now {fmtPeriod(payPeriodContaining(today).start, payPeriodContaining(today).end)}).
+          6 months count from the technician's start date (the later of the Master List Hire Date and their HR Hiring training / start date), for technicians reaching 6 months on or after {fmtDate(INCENTIVE_PROGRAM_START)}. The grade is their Technician Performance grade averaged over every finished pay period in their 6 months. Approved incentives go on payroll for the pay period they're approved in (now {fmtPeriod(payPeriodContaining(today).start, payPeriodContaining(today).end)}).
         </p>
         {!loading && missingStartDate.length > 0 && (
           <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
@@ -341,25 +477,32 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
             {missingStartDate.map((p) => p.display_name || p.email).join(", ")}.
           </div>
         )}
-
         {incentives === null && (
           <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200 flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 shrink-0" /> Incentives need database migration 0426 — ask an admin to run it. Until then the list shows who's due, but nothing can be submitted.
+            <AlertTriangle className="h-4 w-4 shrink-0" /> Incentives need database migration 0426 — ask an admin to run it. Until then the list shows who's coming up, but nobody can be picked or submitted.
           </div>
         )}
         {error && <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</div>}
 
-        <div className="flex flex-wrap gap-1.5 mb-3">
-          {(Object.keys(FILTER_LABEL) as Filter[]).map((f) => (
-            <button
-              key={f}
-              type="button"
-              onClick={() => setFilter(f)}
-              className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${filter === f ? "border-primary/50 bg-primary/20 text-primary" : "border-white/10 text-muted-foreground hover:text-foreground"}`}
-            >
-              {FILTER_LABEL[f]} <span className="ml-1 rounded-full bg-black/20 px-1.5 text-[10px] tabular-nums">{f === "all" ? counts.all - counts["not-eligible"] : counts[f]}</span>
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <div className="flex flex-wrap gap-1.5">
+            {(Object.keys(FILTER_LABEL) as Filter[]).map((f) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setFilter(f)}
+                className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${filter === f ? "border-primary/50 bg-primary/20 text-primary" : "border-white/10 text-muted-foreground hover:text-foreground"}`}
+              >
+                {FILTER_LABEL[f]} <span className="ml-1 rounded-full bg-black/20 px-1.5 text-[10px] tabular-nums">{counts[f]}</span>
+              </button>
+            ))}
+          </div>
+          <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <ArrowDownUp className="h-3.5 w-3.5" /> Sort
+            <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} className="bg-slate-800/60 border border-white/10 rounded-md px-2 py-1 text-xs text-white focus:border-blue-500 focus:outline-none">
+              {(Object.keys(SORT_LABEL) as SortKey[]).map((k) => <option key={k} value={k}>{SORT_LABEL[k]}</option>)}
+            </select>
+          </label>
         </div>
 
         {loading ? (
@@ -371,20 +514,21 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
                 <thead>
                   <tr className="bg-white/5 border-b border-white/10 text-left text-muted-foreground">
                     <th className="px-3 py-2 font-semibold">Technician</th>
-                    <th className="px-3 py-2 font-semibold whitespace-nowrap">Started → 6 months</th>
-                    <th className="px-3 py-2 font-semibold min-w-[220px]">{INCENTIVE_LABEL.hr}</th>
-                    <th className="px-3 py-2 font-semibold min-w-[260px]">{INCENTIVE_LABEL.branch_manager}</th>
-                    <th className="px-3 py-2 font-semibold min-w-[180px]">{INCENTIVE_LABEL.technician_match}</th>
+                    <th className="px-3 py-2 font-semibold whitespace-nowrap min-w-[170px]">6 months</th>
+                    <th className="px-3 py-2 font-semibold min-w-[150px]">6-month grade</th>
+                    <th className="px-3 py-2 font-semibold min-w-[200px]">{INCENTIVE_LABEL.hr}</th>
+                    <th className="px-3 py-2 font-semibold min-w-[220px]">{INCENTIVE_LABEL.branch_manager}</th>
+                    <th className="px-3 py-2 font-semibold min-w-[160px]">{INCENTIVE_LABEL.technician_match}</th>
                     <th className="px-3 py-2" />
                   </tr>
                 </thead>
                 <tbody>
                   {shown.length === 0 ? (
-                    <tr><td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">Nothing here.</td></tr>
+                    <tr><td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">Nothing here.</td></tr>
                   ) : shown.map((v) => {
-                    const days = daysUntil(v.c.sixMonthDate, today);
-                    // Something to submit, or a pending one HR may change.
-                    const submittable = canSubmit && incentives !== null && v.due && v.retained && (v.status === "needs-hr" || v.status === "waiting");
+                    const totalDays = Math.max(1, -daysUntil(v.c.startDate, v.c.sixMonthDate));
+                    const elapsed = Math.min(100, Math.max(0, Math.round(((totalDays - Math.max(0, v.days)) / totalDays) * 100)));
+                    const canSubmitRow = canSubmit && incentives !== null && v.needsHr;
                     return (
                       <tr key={v.c.technician.id} className="border-b border-white/5 align-top hover:bg-white/[0.03]">
                         <td className="px-3 py-2.5">
@@ -393,18 +537,29 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
                           {v.c.separation && <div className="text-[11px] text-red-300">{v.c.separation.label}{v.c.separation.date ? ` ${fmtDate(v.c.separation.date)}` : ""}</div>}
                         </td>
                         <td className="px-3 py-2.5 whitespace-nowrap">
-                          <div className="text-slate-300">{fmtDate(v.c.startDate)} → <span className="font-semibold text-white">{fmtDate(v.c.sixMonthDate)}</span></div>
-                          <div className="text-[11px] text-muted-foreground">
-                            {v.c.startSource} · {days > 0 ? `in ${days} day${days === 1 ? "" : "s"}` : days === 0 ? "today" : `reached ${-days} day${days === -1 ? "" : "s"} ago`}
+                          <div className="font-semibold text-white">{fmtDate(v.c.sixMonthDate)}</div>
+                          <div className={`text-[11px] ${v.days > 0 && v.days <= 14 ? "text-amber-300 font-semibold" : "text-muted-foreground"}`}>
+                            {v.days > 0 ? `in ${v.days} day${v.days === 1 ? "" : "s"}` : v.days === 0 ? "today" : `reached ${-v.days} day${v.days === -1 ? "" : "s"} ago`}
                           </div>
+                          <div className="mt-1 h-1 w-28 rounded-full bg-white/10 overflow-hidden" title={`${elapsed}% of the 6 months`}>
+                            <div className={`h-full ${v.days <= 0 ? "bg-emerald-400" : "bg-sky-400"}`} style={{ width: `${elapsed}%` }} />
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">Started {fmtDate(v.c.startDate)} · {v.c.startSource}</div>
                         </td>
+                        <td className="px-3 py-2.5">{gradeCell(v)}</td>
                         <td className="px-3 py-2.5">{incentiveCell(v, "hr")}</td>
                         <td className="px-3 py-2.5">{incentiveCell(v, "branch_manager")}</td>
-                        <td className="px-3 py-2.5">{incentiveCell(v, "technician_match")}</td>
+                        <td className="px-3 py-2.5">{matchCell(v)}</td>
                         <td className="px-3 py-2.5 text-right">
-                          {submittable && (
-                            <button type="button" onClick={() => setDialog({ type: "submit", c: v.c })} className="btn btn-primary text-xs px-3 py-1.5 inline-flex items-center gap-1.5 whitespace-nowrap">
-                              <Send className="h-3.5 w-3.5" /> {[v.rows.hr, v.rows.branch_manager].some((r) => r?.status === "pending") ? "Edit / submit" : "Submit"}
+                          {canSubmitRow && (
+                            <button
+                              type="button"
+                              disabled={v.submittable.length === 0}
+                              title={v.submittable.length === 0 ? "Pick who gets it first" : undefined}
+                              onClick={() => setDialog({ type: "submit", c: v.c, picks: v.submittable })}
+                              className="btn btn-primary text-xs px-3 py-1.5 inline-flex items-center gap-1.5 whitespace-nowrap disabled:opacity-50"
+                            >
+                              <Send className="h-3.5 w-3.5" /> Submit
                             </button>
                           )}
                         </td>
@@ -418,50 +573,79 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         )}
       </main>
 
-      {dialog?.type === "submit" && (
-        <SubmitDialog
-          c={dialog.c}
-          rows={byTechnician.get(dialog.c.technician.id) ?? {}}
-          people={people}
-          grade={grades[dialog.c.technician.id]}
-          onRetryGrade={() => loadGrade(dialog.c)}
-          busy={busy}
-          onClose={() => setDialog(null)}
-          onSubmit={(picks) =>
-            run(async () => {
-              const c = dialog.c;
-              const rows = byTechnician.get(c.technician.id) ?? {};
-              const submitted: TechIncentive[] = [];
-              for (const pick of picks) {
-                const existing = rows[pick.kind];
-                const g = grades[c.technician.id];
-                const saved = await submitIncentive({
-                  technicianId: c.technician.id,
-                  kind: pick.kind,
-                  recipientId: pick.recipientId,
-                  startDate: c.startDate,
-                  sixMonthDate: c.sixMonthDate,
-                  grade: pick.kind === "branch_manager" && typeof g === "object" && g.points != null && g.grade ? { points: g.points, grade: g.grade, periods: g.periods } : null,
-                  existing: existing && existing.status !== "approved" ? existing : null,
-                  submittedById: myProfileId,
-                  submittedByName: displayName || "HR",
-                });
-                submitted.push(saved);
-                log("incentive_submitted", saved);
-              }
-              const techName = c.technician.display_name || "a technician";
-              await notifyAboutIncentive({
-                recipientIds: approverIds,
-                senderId: myProfileId,
-                senderName: displayName || "HR",
-                body: `🏅 Incentive${submitted.length > 1 ? "s" : ""} to approve: ${techName} reached 6 months — ${submitted.map((s) => `${INCENTIVE_LABEL[s.kind]} ${money(s.amount)} for ${nameOf(s.recipientId)}`).join("; ")}.`,
-                linkTo: "/m/accounting/incentives",
-              });
-              toast.success(`Submitted for Accounting's approval`);
-            })
-          }
-        />
-      )}
+      {dialog?.type === "submit" && (() => {
+        const { c, picks } = dialog;
+        const g = typeof grades === "object" ? grades[c.technician.id] : undefined;
+        return (
+          <AppModal
+            title={`Submit to Accounting — ${c.technician.display_name}`}
+            description={`Reached 6 months on ${fmtDate(c.sixMonthDate)} (started ${fmtDate(c.startDate)}) · ${c.technician.assigned_branch || "No branch"}`}
+            icon={<Send className="h-5 w-5" />}
+            busy={busy}
+            onClose={() => setDialog(null)}
+            footer={
+              <>
+                <button type="button" onClick={() => setDialog(null)} disabled={busy} className="btn text-sm px-4 py-2">Cancel</button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    run(async () => {
+                      const submitted: TechIncentive[] = [];
+                      for (const p of picks) {
+                        const saved = await submitIncentive({
+                          technicianId: c.technician.id,
+                          kind: p.kind,
+                          recipientId: p.recipientId,
+                          startDate: c.startDate,
+                          sixMonthDate: c.sixMonthDate,
+                          grade: p.kind === "branch_manager" && g && g.points != null && g.grade ? { points: g.points, grade: g.grade, periods: g.periods } : null,
+                          existing: p.existing,
+                          submittedById: myProfileId,
+                          submittedByName: displayName || "HR",
+                        });
+                        submitted.push(saved);
+                        log("incentive_submitted", saved);
+                      }
+                      await notifyAboutIncentive({
+                        recipientIds: approverIds,
+                        senderId: myProfileId,
+                        senderName: displayName || "HR",
+                        body: `🏅 Incentive${submitted.length > 1 ? "s" : ""} to approve: ${c.technician.display_name || "a technician"} reached 6 months — ${submitted.map((s) => `${INCENTIVE_LABEL[s.kind]} ${money(s.amount)} for ${nameOf(s.recipientId)}`).join("; ")}.`,
+                        linkTo: "/m/accounting/incentives",
+                      });
+                      toast.success("Submitted for Accounting's approval");
+                    })
+                  }
+                  className="btn btn-primary text-sm px-4 py-2 inline-flex items-center gap-1.5"
+                >
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Submit
+                </button>
+              </>
+            }
+          >
+            <div className="space-y-2 text-sm text-slate-300">
+              {picks.map((p) => (
+                <div key={p.kind} className="rounded-lg border border-white/10 px-3 py-2">
+                  <div className="font-semibold text-white">{INCENTIVE_LABEL[p.kind]} · {money(INCENTIVE_AMOUNT[p.kind])}</div>
+                  <div className="text-xs">To {nameOf(p.recipientId)}</div>
+                  {p.kind === "branch_manager" && g?.grade && g.points != null && (
+                    <div className="text-[11px] text-slate-400 mt-1">6-month average {gradeName(g.grade)} · {g.points.toFixed(1)} pts over {g.periods.length} pay periods. Approving it also adds the {money(INCENTIVE_AMOUNT.technician_match)} {INCENTIVE_LABEL.technician_match} for {c.technician.display_name}.</div>
+                  )}
+                </div>
+              ))}
+              {(() => {
+                const v = views.find((x) => x.c.technician.id === c.technician.id);
+                const missing: string[] = [];
+                if (v && isOpen(v.rows.hr) && !picks.some((p) => p.kind === "hr")) missing.push(`${INCENTIVE_LABEL.hr} — no recruiter picked`);
+                if (v && isOpen(v.rows.branch_manager) && !picks.some((p) => p.kind === "branch_manager")) missing.push(v.gradeOk === false ? `${INCENTIVE_LABEL.branch_manager} — not eligible (below C)` : `${INCENTIVE_LABEL.branch_manager} — no Branch Manager picked`);
+                return missing.length ? <p className="text-[11px] text-slate-500">Not included: {missing.join("; ")}.</p> : null;
+              })()}
+              <p className="text-[11px] text-slate-500">Accounting approves; approving adds it to payroll for the pay period it's approved in.</p>
+            </div>
+          </AppModal>
+        );
+      })()}
 
       {dialog?.type === "approve" && (() => {
         const inc = dialog.inc;
@@ -569,7 +753,7 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
             <p className="text-sm text-slate-300">
               {undo
                 ? `Takes ${money(inc.amount)} off ${nameOf(inc.recipientId)}'s payroll for ${fmtPeriod(inc.payPeriodStart, inc.payPeriodEnd)} and puts it back to waiting on Accounting.${inc.kind === "branch_manager" ? ` The technician's ${money(INCENTIVE_AMOUNT.technician_match)} ${INCENTIVE_LABEL.technician_match} comes off too.` : ""} If that payroll was already generated, regenerate it.`
-                : "It goes back to Ready to submit."}
+                : `It's no longer waiting on Accounting; ${nameOf(inc.recipientId)} stays picked, so you can submit it again.`}
             </p>
           </AppModal>
         );
@@ -599,126 +783,6 @@ function RejectDialog({ label, busy, onClose, onReject }: { label: string; busy:
     >
       <label className="block text-xs text-slate-400 uppercase mb-1">Reason <span className="text-red-400 normal-case">* required</span></label>
       <textarea autoFocus rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is it rejected? HR sees this and can resubmit." className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none resize-none" />
-    </AppModal>
-  );
-}
-
-/** HR's submit form for one technician: the HR Incentive's recruiter and the Branch Manager Incentive's Branch Manager. */
-function SubmitDialog({
-  c, rows, people, grade, onRetryGrade, busy, onClose, onSubmit,
-}: {
-  c: IncentiveCase;
-  rows: Partial<Record<IncentiveKind, TechIncentive>>;
-  people: IncentivePerson[];
-  grade: SixMonthGrade | "loading" | "error" | undefined;
-  onRetryGrade: () => void;
-  busy: boolean;
-  onClose: () => void;
-  onSubmit: (picks: { kind: "hr" | "branch_manager"; recipientId: string }[]) => void;
-}) {
-  const open = (r?: TechIncentive) => !r || r.status !== "approved";
-  const hrOpen = open(rows.hr);
-  const bmOpen = open(rows.branch_manager);
-  const [hrOn, setHrOn] = useState(hrOpen);
-  const [recruiter, setRecruiter] = useState(rows.hr?.recipientId ?? c.suggestedRecruiterId ?? "");
-  const gradeReady = typeof grade === "object" && grade.complete;
-  const gradeOk = gradeReady && (grade.points ?? -Infinity) >= MIN_GRADE_POINTS;
-  const [bmOn, setBmOn] = useState(bmOpen);
-  const [branchManager, setBranchManager] = useState(rows.branch_manager?.recipientId ?? c.suggestedBranchManagerId ?? "");
-  const managers = useMemo(() => {
-    const list = people.filter((p) => p.is_active && isBranchManagerPerson(p));
-    const picked = people.find((p) => p.id === branchManager);
-    if (picked && !list.includes(picked)) list.push(picked);
-    return list.sort((a, b) => (a.display_name || "").localeCompare(b.display_name || ""));
-  }, [people, branchManager]);
-  const nameOf = (id: string) => people.find((p) => p.id === id)?.display_name || HR_INCENTIVE_RECRUITERS[id] || id;
-  // A Branch Manager incentive already pending wasn't auto-graded — grade it now.
-  useEffect(() => {
-    if (bmOpen && grade === undefined) onRetryGrade();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Only what's new or changed — one already waiting with the same person isn't sent again.
-  const picks: { kind: "hr" | "branch_manager"; recipientId: string }[] = [];
-  if (hrOpen && hrOn && recruiter) picks.push({ kind: "hr", recipientId: recruiter });
-  if (bmOpen && bmOn && gradeOk && branchManager) picks.push({ kind: "branch_manager", recipientId: branchManager });
-  const changed = picks.filter((p) => !(rows[p.kind]?.status === "pending" && rows[p.kind]?.recipientId === p.recipientId));
-
-  return (
-    <AppModal
-      title={`Submit incentives — ${c.technician.display_name}`}
-      description={`Reached 6 months on ${fmtDate(c.sixMonthDate)} (started ${fmtDate(c.startDate)}, ${c.startSource}) · ${c.technician.assigned_branch || "No branch"}`}
-      icon={<Award className="h-5 w-5" />}
-      busy={busy}
-      onClose={onClose}
-      footer={
-        <>
-          <button type="button" onClick={onClose} disabled={busy} className="btn text-sm px-4 py-2">Cancel</button>
-          <button type="button" disabled={busy || changed.length === 0} onClick={() => onSubmit(changed)} className="btn btn-primary text-sm px-4 py-2 inline-flex items-center gap-1.5 disabled:opacity-50">
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Submit to Accounting
-          </button>
-        </>
-      }
-    >
-      <div className="space-y-4 text-sm">
-        <div className={`rounded-lg border border-white/10 p-3 ${hrOpen ? "" : "opacity-60"}`}>
-          <label className="flex items-center gap-2 font-semibold text-white">
-            <input type="checkbox" checked={hrOpen && hrOn} disabled={!hrOpen} onChange={(e) => setHrOn(e.target.checked)} className="accent-blue-500" />
-            {INCENTIVE_LABEL.hr} · {money(INCENTIVE_AMOUNT.hr)}
-          </label>
-          {hrOpen ? (
-            <div className="mt-2">
-              <label className="block text-xs text-slate-400 uppercase mb-1">Recruiter</label>
-              <select value={recruiter} onChange={(e) => setRecruiter(e.target.value)} disabled={!hrOn} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm">
-                <option value="">— Pick the recruiter —</option>
-                {Object.keys(HR_INCENTIVE_RECRUITERS).map((id) => <option key={id} value={id}>{nameOf(id)}</option>)}
-              </select>
-              <p className="text-[11px] text-slate-500 mt-1">{c.suggestedRecruiterId ? `Filled in from who added their HR Hiring record (${nameOf(c.suggestedRecruiterId)}).` : "Their HR Hiring record wasn't added by one of the recruiters — pick who recruited them."}</p>
-            </div>
-          ) : <p className="text-xs text-slate-400 mt-1">Already approved.</p>}
-        </div>
-
-        <div className={`rounded-lg border border-white/10 p-3 ${bmOpen ? "" : "opacity-60"}`}>
-          <label className="flex items-center gap-2 font-semibold text-white">
-            <input type="checkbox" checked={bmOpen && bmOn && gradeOk} disabled={!bmOpen || !gradeOk} onChange={(e) => setBmOn(e.target.checked)} className="accent-blue-500" />
-            {INCENTIVE_LABEL.branch_manager} · {money(INCENTIVE_AMOUNT.branch_manager)}
-          </label>
-          {!bmOpen ? <p className="text-xs text-slate-400 mt-1">Already approved.</p> : (
-            <div className="mt-2 space-y-2">
-              <div className="text-xs">
-                {grade === "loading" || grade === undefined ? (
-                  <span className="inline-flex items-center gap-1 text-slate-400"><Loader2 className="h-3 w-3 animate-spin" /> Checking the 6-month grade…</span>
-                ) : grade === "error" ? (
-                  <button type="button" onClick={onRetryGrade} className="text-red-300 underline">Couldn't load the grade — retry</button>
-                ) : grade.points == null || !grade.grade ? (
-                  <span className="text-red-300">No graded pay periods in their 6 months — the C requirement can't be checked.</span>
-                ) : (
-                  <div>
-                    <span className={gradeOk ? "text-emerald-300" : "text-red-300"}>
-                      6-month average: {gradeName(grade.grade)} ({grade.grade}) · {grade.points.toFixed(1)} pts — {gradeOk ? "meets C or better" : "below C, not eligible"}
-                    </span>
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {grade.periods.map((p) => (
-                        <span key={p.start} className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-300">{fmtPeriod(p.start, p.end)}: {p.grade} ({p.points})</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 uppercase mb-1">Branch Manager</label>
-                <select value={branchManager} onChange={(e) => setBranchManager(e.target.value)} disabled={!bmOn || !gradeOk} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm">
-                  <option value="">— Pick the Branch Manager —</option>
-                  {managers.map((p) => <option key={p.id} value={p.id}>{p.display_name} · {p.assigned_branch || "—"}</option>)}
-                </select>
-                <p className="text-[11px] text-slate-500 mt-1">{c.suggestedBranchManagerId ? `Filled in from ${c.technician.assigned_branch || "their branch"}'s Branch Manager.` : "No Branch Manager found for their branch — pick one."}</p>
-              </div>
-              <p className="text-[11px] text-slate-500">Approving it also adds the {money(INCENTIVE_AMOUNT.technician_match)} {INCENTIVE_LABEL.technician_match} for {c.technician.display_name}.</p>
-            </div>
-          )}
-        </div>
-        <p className="text-[11px] text-slate-500">Accounting approves; approving adds it to payroll for the pay period it's approved in.</p>
-      </div>
     </AppModal>
   );
 }

@@ -47,10 +47,12 @@ export async function getMyPerformance(profileId: string, startDate: string, end
     getClockInMeetingsInRange(startDate, endDate),
   ]);
   if (overrides.error) throw new Error(overrides.error.message);
+  return toPerformance(overrides.data ?? [], corrections.count ?? 0, damages.count ?? 0, meetings.filter((m) => m.profileId === profileId));
+}
 
-  const rows = overrides.data ?? [];
+/** One technician's period figures from their per-day rows and error counts — shared by getMyPerformance and getPerformanceLoader. */
+function toPerformance(rows: any[], timecardIssueCount: number, damageAssessmentCount: number, meetings: ClockInMeeting[]): MyPerformance {
   const sum = (k: string) => rows.reduce((s, r: any) => s + (Number(r[k]) || 0), 0);
-  const mine = meetings.filter((m) => m.profileId === profileId);
   return {
     minorTicketCount: sum("minor_ticket"),
     majorTicketCount: sum("major_ticket"),
@@ -58,11 +60,91 @@ export async function getMyPerformance(profileId: string, startDate: string, end
     daysWorked: rows.filter((r: any) => Number(r.hours_worked) > 0).length,
     hoursWorked: sum("hours_worked"),
     miles: sum("miles"),
-    timecardIssueCount: corrections.count ?? 0,
-    damageAssessmentCount: damages.count ?? 0,
-    missedClockInCount: mine.length,
-    meetings: mine,
+    timecardIssueCount,
+    damageAssessmentCount,
+    missedClockInCount: meetings.length,
+    meetings,
   };
+}
+
+const PAGE_SIZE = 1000;
+const ID_GROUP = 100;
+
+async function readAll(build: (from: number, to: number) => PromiseLike<{ data: any[] | null; error: { message: string } | null }>): Promise<{ rows: any[]; error: string | null }> {
+  const rows: any[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await build(from, from + PAGE_SIZE - 1);
+    if (error) return { rows, error: error.message };
+    rows.push(...(data ?? []));
+    if (!data || data.length < PAGE_SIZE) return { rows, error: null };
+  }
+}
+
+/**
+ * getMyPerformance for many technicians and pay periods at once: each
+ * source is read once for the whole span (in pages and groups of ids),
+ * then split per technician and pay period with the same arithmetic.
+ * Incentives grades everyone's 6 months with it. Read as the viewer, so
+ * RLS decides what they see (HR / Admin see it all).
+ */
+export async function getPerformanceLoader(
+  profileIds: string[],
+  startDate: string,
+  endDate: string
+): Promise<(profileId: string, periodStart: string, periodEnd: string) => MyPerformance> {
+  const ids = [...new Set(profileIds.filter(Boolean))];
+  const groups: string[][] = [];
+  for (let i = 0; i < ids.length; i += ID_GROUP) groups.push(ids.slice(i, i + ID_GROUP));
+  const eachGroup = async (build: (group: string[], from: number, to: number) => PromiseLike<{ data: any[] | null; error: { message: string } | null }>) => {
+    const parts = await Promise.all(groups.map((g) => readAll((from, to) => build(g, from, to))));
+    return { rows: parts.flatMap((p) => p.rows), error: parts.find((p) => p.error)?.error ?? null };
+  };
+  const [overrides, corrections, damages, meetings] = await Promise.all([
+    eachGroup((g, from, to) =>
+      supabase
+        .from("technician_daily_performance_overrides")
+        .select("profile_id, work_date, redo_count, miles, hours_worked, minor_ticket, major_ticket")
+        .in("profile_id", g)
+        .gte("work_date", startDate)
+        .lte("work_date", endDate)
+        .order("profile_id")
+        .order("work_date")
+        .range(from, to)
+    ),
+    eachGroup((g, from, to) =>
+      supabase.from("timecard_corrections").select("id, profile_id, work_date").in("profile_id", g).gte("work_date", startDate).lte("work_date", endDate).order("id").range(from, to)
+    ),
+    eachGroup((g, from, to) =>
+      supabase
+        .from("hr_signable_documents")
+        .select("id, recipient_id, created_at")
+        .eq("document_type", "damage")
+        .in("recipient_id", g)
+        .gte("created_at", `${startDate}T00:00:00`)
+        .lte("created_at", `${endDate}T23:59:59`)
+        .order("id")
+        .range(from, to)
+    ),
+    getClockInMeetingsInRange(startDate, endDate),
+  ]);
+  // Same as getMyPerformance: the per-day rows must load; a failed error-count read counts as none.
+  if (overrides.error) throw new Error(overrides.error);
+  const byProfile = <T,>(rows: T[], key: (r: T) => string) => {
+    const map = new Map<string, T[]>();
+    for (const r of rows) map.set(key(r), [...(map.get(key(r)) ?? []), r]);
+    return map;
+  };
+  const days = byProfile(overrides.rows, (r) => r.profile_id);
+  const corrDays = byProfile(corrections.error ? [] : corrections.rows, (r) => r.profile_id);
+  const damageTimes = byProfile(damages.error ? [] : damages.rows, (r) => r.recipient_id);
+  const meetingsBy = byProfile(meetings, (m) => m.profileId);
+  return (profileId, periodStart, periodEnd) =>
+    toPerformance(
+      (days.get(profileId) ?? []).filter((r) => r.work_date >= periodStart && r.work_date <= periodEnd),
+      (corrDays.get(profileId) ?? []).filter((r) => r.work_date >= periodStart && r.work_date <= periodEnd).length,
+      (damageTimes.get(profileId) ?? []).filter((r) => r.created_at >= `${periodStart}T00:00:00` && r.created_at <= `${periodEnd}T23:59:59`).length,
+      (meetingsBy.get(profileId) ?? []).filter((m) => m.missedDate >= periodStart && m.missedDate <= periodEnd)
+    );
 }
 
 /**

@@ -48,6 +48,7 @@ export const MODULE_ACTIVITY_ACTION_LABELS: Record<string, string> = {
   truck_stock_imported: "Imported a Truck Stock file",
   truck_stock_import_blocked: "Tried to import Truck Stock without Admin access",
   // Technician Incentives (IncentivesPage.tsx, migration 0426) — logged under "accounting".
+  incentive_recipient_set: "Picked who gets an incentive",
   incentive_submitted: "Submitted an incentive for approval",
   incentive_withdrawn: "Withdrew an incentive",
   incentive_approved: "Approved an incentive (added to payroll)",

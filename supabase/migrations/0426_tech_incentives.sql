@@ -11,8 +11,10 @@
 --   technician_match  $500 to the technician, added automatically when the
 --                     Branch Manager's incentive is approved (match_of
 --                     points at it)
--- HR submits (status 'pending'); Accounting (Finance) or Super Admin
--- approves or rejects. Approving adds the amount to payroll for the pay
+-- HR picks who gets each one ahead of time (status 'planned' — the HR
+-- recruiter / Branch Manager chosen in the table, recipient_id left empty
+-- when HR blanks it), then submits (status 'pending'); Accounting
+-- (Finance) or Super Admin approves or rejects. Approving adds the amount to payroll for the pay
 -- period it's approved in — pay_line_id is the tech_custom_pay_items row
 -- (Branch Manager / technician) or the payroll_adjustments row (HR) — so
 -- undoing an approval can remove it again.
@@ -39,7 +41,7 @@ create table if not exists tech_incentives (
   company_id         uuid not null references companies(id) on delete cascade,
   technician_id      uuid not null references profiles(id) on delete cascade,
   kind               text not null check (kind in ('hr', 'branch_manager', 'technician_match')),
-  recipient_id       uuid not null references profiles(id) on delete cascade,
+  recipient_id       uuid references profiles(id) on delete cascade,
   amount             numeric(12,2) not null check (amount >= 0),
   start_date         date not null,
   six_month_date     date not null,
@@ -48,7 +50,7 @@ create table if not exists tech_incentives (
   grade_points       numeric,
   grade              text,
   grade_periods      jsonb not null default '[]'::jsonb,
-  status             text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),
+  status             text not null default 'pending' check (status in ('planned', 'pending', 'approved', 'rejected')),
   submitted_by       uuid references profiles(id) on delete set null,
   submitted_by_name  text,
   submitted_at       timestamptz not null default now(),
@@ -62,7 +64,9 @@ create table if not exists tech_incentives (
   match_of           uuid references tech_incentives(id) on delete cascade,
   created_at         timestamptz not null default now(),
   updated_at         timestamptz not null default now(),
-  constraint tech_incentives_one_per_kind unique (company_id, technician_id, kind)
+  constraint tech_incentives_one_per_kind unique (company_id, technician_id, kind),
+  -- Only a planned one may have nobody picked yet.
+  constraint tech_incentives_recipient_set check (status = 'planned' or recipient_id is not null)
 );
 create index if not exists idx_tech_incentives_status on tech_incentives(company_id, status);
 
@@ -78,12 +82,13 @@ begin
     return new;
   end if;
   -- Only Accounting approves or rejects, and only Accounting changes an
-  -- approved incentive (e.g. undoing it). HR may submit and resubmit.
+  -- approved incentive (e.g. undoing it). HR may plan, submit, change the
+  -- person and resubmit.
   if not is_incentive_approver() then
-    if tg_op = 'INSERT' and new.status <> 'pending' then
+    if tg_op = 'INSERT' and new.status not in ('planned', 'pending') then
       raise exception 'Only Accounting can approve or reject incentives.' using errcode = '42501';
     end if;
-    if tg_op = 'UPDATE' and (old.status = 'approved' or new.status <> 'pending') then
+    if tg_op = 'UPDATE' and (old.status = 'approved' or new.status not in ('planned', 'pending')) then
       raise exception 'Only Accounting can approve or reject incentives.' using errcode = '42501';
     end if;
   end if;
