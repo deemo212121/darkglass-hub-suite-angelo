@@ -16,7 +16,10 @@
  *   - Technician Matching Incentive, $500 to the technician, added the
  *     moment the Branch Manager's incentive is approved.
  * HR submits, Accounting approves, and approving puts it on payroll.
- * Counts technicians whose 6-month mark is on or after the program start.
+ * Counts technicians who started on or after INCENTIVE_STARTED_ON_OR_AFTER —
+ * everyone hired from November on, plus everyone who was still in training
+ * (under 3 months) when the program began — and any technician still marked
+ * as a trainee.
  */
 
 export type IncentiveKind = "hr" | "branch_manager" | "technician_match";
@@ -29,8 +32,13 @@ export const INCENTIVE_LABEL: Record<IncentiveKind, string> = {
   technician_match: "Technician Matching Incentive",
 };
 
-/** Technicians reaching 6 months on or after this day count. */
-export const INCENTIVE_PROGRAM_START = "2026-11-03";
+/**
+ * Technicians who started on or after this day count: 3 months before the
+ * program began (Nov 3, 2026), so it covers everyone still in training then
+ * and everyone hired after. A fixed day, so nobody drops off the list as
+ * they pass 3 months.
+ */
+export const INCENTIVE_STARTED_ON_OR_AFTER = "2026-08-03";
 
 /** HR recruiters who earn the HR Incentive, by profile id. To add someone, add them here. */
 export const HR_INCENTIVE_RECRUITERS: Record<string, string> = {

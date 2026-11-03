@@ -30,6 +30,7 @@ import {
   getIncentiveCases,
   getTechIncentives,
   isBranchManagerPerson,
+  isTraineePerson,
   notifyAboutIncentive,
   rejectIncentive,
   retainedAtSixMonths,
@@ -46,7 +47,7 @@ import {
   HR_INCENTIVE_RECRUITERS,
   INCENTIVE_AMOUNT,
   INCENTIVE_LABEL,
-  INCENTIVE_PROGRAM_START,
+  INCENTIVE_STARTED_ON_OR_AFTER,
   MIN_GRADE_POINTS,
   daysUntil,
   type IncentiveKind,
@@ -469,7 +470,7 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           ))}
         </div>
         <p className="text-[11px] text-muted-foreground mb-4">
-          6 months count from the technician's start date (the later of the Master List Hire Date and their HR Hiring training / start date), for technicians reaching 6 months on or after {fmtDate(INCENTIVE_PROGRAM_START)}. The grade is their Technician Performance grade averaged over every finished pay period in their 6 months. Approved incentives go on payroll for the pay period they're approved in (now {fmtPeriod(payPeriodContaining(today).start, payPeriodContaining(today).end)}).
+          Technicians who started on or after {fmtDate(INCENTIVE_STARTED_ON_OR_AFTER)} — everyone hired from November on, plus everyone who was still in training (under 3 months) when this started — and anyone still in training. 6 months count from their start date (the later of the Master List Hire Date and their HR Hiring training / start date). The grade is their Technician Performance grade averaged over every finished pay period in their 6 months. Approved incentives go on payroll for the pay period they're approved in (now {fmtPeriod(payPeriodContaining(today).start, payPeriodContaining(today).end)}).
         </p>
         {!loading && missingStartDate.length > 0 && (
           <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
@@ -534,6 +535,7 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
                         <td className="px-3 py-2.5">
                           <div className="font-medium text-white">{v.c.technician.display_name || v.c.technician.email}</div>
                           <div className="text-[11px] text-muted-foreground">{v.c.technician.assigned_branch || "No branch"}</div>
+                          {isTraineePerson(v.c.technician) && <span className="mt-0.5 inline-block rounded border border-violet-400/30 bg-violet-500/10 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-violet-200">In training</span>}
                           {v.c.separation && <div className="text-[11px] text-red-300">{v.c.separation.label}{v.c.separation.date ? ` ${fmtDate(v.c.separation.date)}` : ""}</div>}
                         </td>
                         <td className="px-3 py-2.5 whitespace-nowrap">

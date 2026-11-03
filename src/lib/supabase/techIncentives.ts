@@ -24,7 +24,7 @@ import {
   HR_INCENTIVE_RECRUITERS,
   INCENTIVE_AMOUNT,
   INCENTIVE_LABEL,
-  INCENTIVE_PROGRAM_START,
+  INCENTIVE_STARTED_ON_OR_AFTER,
   sixMonthDate,
   type IncentiveKind,
 } from "@/lib/techIncentives";
@@ -110,7 +110,10 @@ export async function getTechIncentives(): Promise<TechIncentive[] | null> {
 /** The few profile fields this page needs. */
 export type IncentivePerson = Pick<ProfileRow, "id" | "display_name" | "email" | "role" | "extra_roles" | "assigned_branch" | "manager_name" | "is_active" | "created_at"> & {
   phone_number: string | null;
+  employment_type: string | null;
 };
+
+export const isTraineePerson = (p: Pick<IncentivePerson, "employment_type">) => p.employment_type === "trainee";
 
 export interface IncentiveCase {
   technician: IncentivePerson;
@@ -137,7 +140,7 @@ async function getPeople(): Promise<IncentivePerson[]> {
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabase
       .from("profiles")
-      .select("id, display_name, email, phone_number, role, extra_roles, assigned_branch, manager_name, is_active, created_at")
+      .select("id, display_name, email, phone_number, role, extra_roles, assigned_branch, manager_name, is_active, created_at, employment_type")
       .neq("role", "SUPERSUPERADMIN")
       .order("id")
       .range(from, from + 999);
@@ -149,8 +152,8 @@ async function getPeople(): Promise<IncentivePerson[]> {
 }
 
 /**
- * Technicians whose 6-month mark is on or after the program start, with
- * their start date, the recruiter and Branch Manager to suggest, and —
+ * Technicians who started on or after INCENTIVE_STARTED_ON_OR_AFTER (or are
+ * still trainees), with their start date, the recruiter and Branch Manager to suggest, and —
  * for anyone who left — their separation. Plus everyone, for names and
  * the Branch Manager list, and the active technicians with no start date
  * at all (no Hire Date, no HR Hiring date) — the account's creation day
@@ -181,8 +184,8 @@ export async function getIncentiveCases(): Promise<{ cases: IncentiveCase[]; peo
       if (t.is_active) missingStartDate.push(t);
       continue;
     }
+    if (startDate < INCENTIVE_STARTED_ON_OR_AFTER && !isTraineePerson(t)) continue;
     const six = sixMonthDate(startDate);
-    if (six < INCENTIVE_PROGRAM_START) continue;
 
     // Newest Hiring record first; the first one an HR recruiter created gets the credit.
     const recruiterRecord = [...records]
