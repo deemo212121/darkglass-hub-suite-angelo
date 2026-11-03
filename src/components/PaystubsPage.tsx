@@ -19,6 +19,8 @@ import {
   withdrawEmployeeFilesForPayDate,
   type EmployeeFileRow,
 } from "@/lib/supabase/employeeFiles";
+import { getPayrollReviewBreakdowns, reviewBreakdownTotal } from "@/lib/supabase/payrollReviewBreakdowns";
+import { getTechTaxLinesForPeriod, taxLineAmount } from "@/lib/supabase/techTaxLines";
 
 /**
  * Accounting → Paystubs (migration 0418). Upload a pay run's check stubs in
@@ -55,6 +57,8 @@ function fmtDate(iso: string | null): string {
   const [y, m, d] = iso.split("-");
   return `${m}/${d}/${y}`;
 }
+
+const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
 function mostCommon(values: (string | null)[]): string {
   const counts = new Map<string, number>();
@@ -198,6 +202,29 @@ function UploadTab({
   const [periodEnd, setPeriodEnd] = useState("");
   const [filter, setFilter] = useState<"all" | "look" | "matched" | "none">("all");
   const [previewKey, setPreviewKey] = useState<string | null>(null);
+  // AHS net pay for the period above, per person — Reviewed Periods' Total
+  // (the saved columns less the Tech Activity Report's tax lines), to check
+  // against the net pay read off each stub.
+  const [ahsNet, setAhsNet] = useState<{ key: string; byProfile: Map<string, number> } | null>(null);
+  useEffect(() => {
+    if (!periodStart || !periodEnd || periodStart > periodEnd) return;
+    const key = `${periodStart}|${periodEnd}`;
+    let cancelled = false;
+    void Promise.all([getPayrollReviewBreakdowns(periodStart, periodEnd), getTechTaxLinesForPeriod(periodStart, periodEnd)])
+      .then(([rowsForPeriod, taxes]) => {
+        const byProfile = new Map<string, number>();
+        for (const r of rowsForPeriod) {
+          const gross = Math.round(reviewBreakdownTotal(r) * 100) / 100;
+          const tax = (taxes.get(r.profileId) ?? []).reduce((s, l) => s + taxLineAmount(l, gross), 0);
+          byProfile.set(r.profileId, Math.round((gross - tax) * 100) / 100);
+        }
+        if (!cancelled) setAhsNet({ key, byProfile });
+      })
+      .catch((err) => console.error("Failed to load AHS net pay:", err));
+    return () => { cancelled = true; };
+  }, [periodStart, periodEnd]);
+  const ahsNetOf = (profileId: string | null): number | null | undefined =>
+    ahsNet?.key !== `${periodStart}|${periodEnd}` ? undefined : profileId ? ahsNet.byProfile.get(profileId) ?? null : null;
 
   const read = async (list: FileList | null) => {
     const pdfs = [...(list ?? [])].filter((f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name));
@@ -428,11 +455,15 @@ function UploadTab({
               <th className="px-3 py-2">Name on stub</th>
               <th className="px-3 py-2">Matched to</th>
               <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2 text-right" title="Reviewed Periods' net pay (gross − taxes) for the period above">AHS net pay</th>
+              <th className="px-3 py-2 text-right" title="Net pay read off the stub — the check amount and the NETPAY row, kept when they agree">Stub net pay</th>
               <th className="px-3 py-2"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
             {shown.map((r) => {
+              const ahs = ahsNetOf(r.profileId);
+              const netDiff = ahs != null && r.netPay != null ? Math.round((r.netPay - ahs) * 100) / 100 : null;
               const flag = flagOf(r);
               const st = r.manual ? { label: "Picked by hand", cls: "bg-sky-500/15 text-sky-300" } : STATUS_STYLE[r.status];
               return (
@@ -458,6 +489,16 @@ function UploadTab({
                         <AlertTriangle className="h-3 w-3" /> {flag}
                       </span>
                     )}
+                  </td>
+                  <td className="px-3 py-1.5 text-right tabular-nums whitespace-nowrap text-slate-300">
+                    {ahs === undefined ? <span className="text-slate-500">…</span> : ahs === null ? <span className="text-slate-500" title="No Reviewed Periods row for this person and period">—</span> : money(ahs)}
+                  </td>
+                  <td
+                    className={`px-3 py-1.5 text-right tabular-nums whitespace-nowrap ${netDiff == null ? "text-slate-300" : netDiff === 0 ? "text-emerald-300" : "text-red-300"}`}
+                    title={netDiff ? `${netDiff > 0 ? "+" : "−"}${money(Math.abs(netDiff))} vs AHS` : undefined}
+                  >
+                    {r.netPay == null ? <span className="text-slate-500" title="Couldn't read the net pay off this stub — check the preview">—</span> : money(r.netPay)}
+                    {!!netDiff && <div className="text-[10px]">{netDiff > 0 ? "+" : "−"}{money(Math.abs(netDiff))}</div>}
                   </td>
                   <td className="px-3 py-1.5 text-right">
                     <button type="button" onClick={() => setPreviewKey(r.key)} className="inline-flex items-center gap-1 rounded px-2 py-1 text-slate-300 hover:bg-white/10" title="Preview this page">
@@ -487,6 +528,10 @@ function UploadTab({
               <div className="text-slate-400">Matched to</div>
               <PersonSelect value={preview.profileId} people={people} onChange={(id) => update(preview.key, { profileId: id, manual: true, confirmed: !!id })} />
               {preview.profileId && <div className="text-slate-500">{nameOf.get(preview.profileId)}</div>}
+              <div className="text-slate-400">Net pay — stub / AHS</div>
+              <div className="text-sm font-semibold text-white tabular-nums">
+                {preview.netPay == null ? "—" : money(preview.netPay)} / {(() => { const a = ahsNetOf(preview.profileId); return a == null ? "—" : money(a); })()}
+              </div>
               <label className="mt-1 flex items-center gap-2 text-white">
                 <input type="checkbox" checked={preview.confirmed} disabled={!preview.profileId} onChange={(e) => update(preview.key, { confirmed: e.target.checked })} />
                 That's them — confirm
