@@ -6,7 +6,9 @@
  *
  * Laid out for the US Appliance check stub: the name is the first line of
  * "TO THE ORDER OF", the pay date is top right, and the stub's NETPAY row
- * says "Period 10/11/26-10/24/26". The regions are generous, and a page
+ * says "Period 10/11/26-10/24/26". Net pay is read twice — the check amount
+ * ("$*******2,479.27") and the NETPAY row's Current cell — and kept only
+ * when the two agree (or only one could be read). The regions are generous, and a page
  * where nothing readable comes back falls to the file name (a single
  * "Jane Doe - 10-30-2026.pdf"), then to Accounting picking the person.
  */
@@ -31,12 +33,15 @@ export interface PaystubPage {
   payDate: string | null;
   periodStart: string | null;
   periodEnd: string | null;
+  /** Net pay read off the page; null when it couldn't be read with confidence. */
+  netPay: number | null;
 }
 
 /** Fractions of the page: [left, top, right, bottom]. */
 const NAME_BOX = [0.095, 0.175, 0.6, 0.235] as const;
 const DATE_BOX = [0.58, 0.075, 0.97, 0.11] as const;
 const PERIOD_BOX = [0.36, 0.585, 0.66, 0.62] as const;
+const NETPAY_BOX = [0.195, 0.59, 0.29, 0.613] as const;
 
 const RENDER_SCALE = 2;
 const PREVIEW_WIDTH = 900;
@@ -72,6 +77,44 @@ export function readPeriod(text: string): { start: string; end: string } | null 
   if (!m) return null;
   const start = isoDate(m[1], m[2], m[3]), end = isoDate(m[4], m[5], m[6]);
   return start && end && start <= end ? { start, end } : null;
+}
+
+/** "2479 27" → { dollars: "2479", cents: "27" } when the last digit group is the 2-digit cents. */
+function splitAmount(groups: string[]): { dollars: string; cents: string } | null {
+  if (groups.length >= 2 && groups[groups.length - 1].length === 2) return { dollars: groups.slice(0, -1).join(""), cents: groups[groups.length - 1] };
+  return null;
+}
+
+/** The check amount, "$*******2,479.27". The asterisks can leave a stray "]", and a leading 1 can read as "]" — so up to two readings. */
+function checkAmountReadings(text: string): number[] {
+  const line = text.split("\n").find((l) => l.includes("$")) ?? "";
+  const tail = (line.trim().match(/[\d\],.\s]+$/) ?? [""])[0];
+  const parts = splitAmount(tail.match(/[\d\]]+/g) ?? []);
+  if (!parts) return [];
+  const options = new Set([parts.dollars.replace(/\]/g, ""), parts.dollars.replace(/^\]+/, "1").replace(/\]/g, "")]);
+  return [...options].filter((d) => /^\d+$/.test(d)).map((d) => Number(`${d}.${parts.cents}`));
+}
+
+/** The NETPAY row's "2479 27". The dotted divider before the cents reads as anything — or as a "1", or not at all. */
+function netRowReadings(text: string): number[] {
+  const groups = (text.split("\n").find((l) => /\d/.test(l)) ?? "").match(/\d+/g) ?? [];
+  const parts = splitAmount(groups);
+  if (parts) return [Number(`${parts.dollars}.${parts.cents}`)];
+  const d = groups.join("");
+  if (d.length < 3) return [];
+  const out = [Number(`${d.slice(0, -2)}.${d.slice(-2)}`)];
+  if (d.length >= 4 && d[d.length - 3] === "1") out.push(Number(`${d.slice(0, -3)}.${d.slice(-2)}`));
+  return out;
+}
+
+/** Net pay from the check-amount and NETPAY-row text: the one value both agree on, or the only reading there is; null when unsure. */
+export function readNetPay(checkText: string, netRowText: string): number | null {
+  const a = checkAmountReadings(checkText), b = netRowReadings(netRowText);
+  const both = a.filter((x) => b.includes(x));
+  if (both.length > 0) return both.length === 1 ? both[0] : null;
+  if (a.length === 1 && b.length === 0) return a[0];
+  if (b.length === 1 && a.length === 0) return b[0];
+  return null;
 }
 
 /** First line that looks like a person's name: letters (with ' . -), at least two words. */
@@ -171,8 +214,10 @@ export async function readPaystubFiles(
         preview.getContext("2d")!.drawImage(canvas, 0, 0, preview.width, preview.height);
 
         const ocrName = readName((await worker.recognize(crop(canvas, NAME_BOX))).data.text);
-        const payDate = readDate((await worker.recognize(crop(canvas, DATE_BOX))).data.text);
+        const dateText = (await worker.recognize(crop(canvas, DATE_BOX))).data.text;
+        const payDate = readDate(dateText);
         const period = readPeriod((await worker.recognize(crop(canvas, PERIOD_BOX))).data.text);
+        const netPay = readNetPay(dateText, (await worker.recognize(crop(canvas, NETPAY_BOX))).data.text);
         const name = ocrName || (src.pages === 1 ? fileName : "");
 
         out.push({
@@ -187,6 +232,7 @@ export async function readPaystubFiles(
           payDate,
           periodStart: period?.start ?? null,
           periodEnd: period?.end ?? null,
+          netPay,
         });
         page.cleanup();
       }
