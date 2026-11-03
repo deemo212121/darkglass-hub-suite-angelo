@@ -74,7 +74,7 @@ import {
   reviewCorrectionStage,
   canReviewCorrectionStage,
   undoCorrectionRejection,
-  undoCorrectionApproval,
+  remindCorrectionManager, undoCorrectionApproval,
   approvedCorrectionStages,
   type TimecardCorrectionRow,
   type TimecardCorrectionHistoryRow,
@@ -2107,6 +2107,45 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     return approvedCorrectionStages(c).filter((s) => by[s] === myProfileId);
   };
   const [undoingApprovalId, setUndoingApprovalId] = useState<string | null>(null);
+  // Bell — remind the manager a correction is still waiting on the manager
+  // step. Shown to anyone but that manager; each viewer's last reminder per
+  // correction is remembered (this browser) so the bell shows "Reminded".
+  const [remindingId, setRemindingId] = useState<string | null>(null);
+  const [remindedAt, setRemindedAt] = useState<Record<string, number>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("ahs.correctionReminders") || "{}");
+    } catch {
+      return {};
+    }
+  });
+  const canRemindManager = (c: TimecardCorrectionRow) => c.status === "pending" && c.managerStatus === "pending" && !!myProfileId && c.managerId !== myProfileId;
+  const handleRemindManager = async (c: TimecardCorrectionRow) => {
+    setRemindingId(c.id);
+    try {
+      const managerName = await remindCorrectionManager(c, myProfileId || "", displayName || "HR");
+      const next = { ...remindedAt, [c.id]: Date.now() };
+      setRemindedAt(next);
+      try {
+        localStorage.setItem("ahs.correctionReminders", JSON.stringify(next));
+      } catch {
+        /* private mode — just not remembered */
+      }
+      void logModuleActivity({
+        module: "attendance-monitoring",
+        actorName: displayName || "Reviewer",
+        action: "timecard_correction_manager_reminded",
+        targetType: "timecard_correction",
+        targetId: c.id,
+        targetLabel: `${profileName(c.profileId)} (${c.workDate})`,
+        details: { manager: managerName },
+      });
+      toast.success(`Reminder sent to ${managerName}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't send the reminder");
+    } finally {
+      setRemindingId(null);
+    }
+  };
   const [undoApproval, setUndoApproval] = useState<{ c: TimecardCorrectionRow; reason: string } | null>(null);
   const handleUndoCorrectionApproval = async () => {
     if (!undoApproval) return;
@@ -3679,6 +3718,20 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               )}
                             </div>
                           )}
+                          {canRemindManager(correction) && (() => {
+                            const at = remindedAt[correction.id];
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => void handleRemindManager(correction)}
+                                disabled={remindingId === correction.id}
+                                className="inline-flex items-center gap-1 rounded border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
+                                title={at ? `You reminded the manager ${new Date(at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} — click to remind again` : "Remind the manager this correction is still waiting on their approval"}
+                              >
+                                {remindingId === correction.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bell className="h-3 w-3" />} {at ? "Reminded" : "Remind manager"}
+                              </button>
+                            );
+                          })()}
                           {undoableApprovalStages(correction).length > 0 && (
                             <button
                               type="button"
