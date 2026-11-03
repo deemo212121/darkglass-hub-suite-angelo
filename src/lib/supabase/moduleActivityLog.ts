@@ -138,29 +138,23 @@ export async function getModuleActivityLog(module: ActivityLogModule, limit = 20
 }
 
 /**
- * Every entry for these modules created between two instants (ISO), paged
- * past the 1000-row cap — Activity Logs reads one date window at a time.
+ * The newest `limit` entries for these modules created at or before
+ * `before` (and not before `after`), both ISO and optional — Activity Logs
+ * loads a page at a time. `before` is inclusive; the caller drops repeats.
  */
-export async function getModuleActivityLogInRange(modules: ActivityLogModule[], fromIso: string, toIso: string): Promise<ModuleActivityLogEntry[]> {
-  const all: ModuleActivityLogEntry[] = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await supabase
-      .from("module_activity_log")
-      .select(SELECT)
-      .in("module", modules)
-      .gte("created_at", fromIso)
-      .lte("created_at", toIso)
-      .order("created_at", { ascending: false })
-      .order("id")
-      .range(from, from + 999);
-    if (error) {
-      if (isMissingTableError(error)) return all;
-      throw new Error(error.message);
-    }
-    all.push(...(data ?? []).map(mapRow));
-    if (!data || data.length < 1000) break;
+export async function getModuleActivityLogPage(
+  modules: ActivityLogModule[],
+  opts: { before?: string | null; after?: string | null; limit: number }
+): Promise<ModuleActivityLogEntry[]> {
+  let query = supabase.from("module_activity_log").select(SELECT).in("module", modules).order("created_at", { ascending: false }).order("id").limit(opts.limit);
+  if (opts.before) query = query.lte("created_at", opts.before);
+  if (opts.after) query = query.gte("created_at", opts.after);
+  const { data, error } = await query;
+  if (error) {
+    if (isMissingTableError(error)) return [];
+    throw new Error(error.message);
   }
-  return all;
+  return (data ?? []).map(mapRow);
 }
 
 /**

@@ -5,6 +5,10 @@
  * for how each department's rows are actually sourced — this page is just
  * the filter bar + table over that already-normalized feed, it does no
  * data-shaping of its own.
+ *
+ * Each tab loads its newest 500 entries when first opened, and "Load 500
+ * more" the next 500 older ones; a tab keeps what it loaded while you look
+ * at others. Date From / Date To are optional limits.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
@@ -14,30 +18,23 @@ import { ChevronLeft, Loader2, Download, Search, ShieldAlert } from "lucide-reac
 import { BrandedLoader } from "@/components/BrandedLoader";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import {
-  getUniversalActivityLog,
+  getUniversalActivityPage,
   DEPARTMENT_LABEL,
   DEPARTMENT_ORDER,
-  type ActivityDepartment,
+  type ActivityTab,
   type UniversalActivityEntry,
 } from "@/lib/supabase/universalActivityLog";
 import { usePersistedTab } from "@/lib/usePersistedTab";
-import { localISODate, todayISO } from "@/lib/localDate";
+import { todayISO } from "@/lib/localDate";
 
-type TabKey = "all" | ActivityDepartment;
+type TabKey = ActivityTab;
 const TABS: TabKey[] = ["all", ...DEPARTMENT_ORDER];
+const PAGE_SIZE = 500;
 
-const todayIso = () => todayISO();
-const daysAgoIso = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return localISODate(d); };
-const shiftIso = (iso: string, days: number) => { const d = new Date(`${iso}T12:00:00`); d.setDate(d.getDate() + days); return localISODate(d); };
-const shortDate = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+/** What one tab has loaded: its rows (newest first) and where the next page starts (null = nothing older). */
+type TabState = { entries: UniversalActivityEntry[]; next: string | null; loading: boolean; error: string | null };
 
-// Opens on the last two weeks; "Load 2 more weeks" reads the two weeks
-// before the oldest day shown and adds them below. The table draws rows a
-// page at a time — two weeks can hold 20,000+ ticket status changes.
-const LOAD_DAYS = 14;
-const ROWS_PER_PAGE = 300;
-
-function downloadXlsx(rows: UniversalActivityEntry[], dateFrom: string, dateTo: string) {
+function downloadXlsx(rows: UniversalActivityEntry[], tab: TabKey) {
   const data = rows.map((r) => ({
     When: new Date(r.when).toLocaleString(),
     Department: DEPARTMENT_LABEL[r.department],
@@ -48,7 +45,8 @@ function downloadXlsx(rows: UniversalActivityEntry[], dateFrom: string, dateTo: 
   const worksheet = XLSX.utils.json_to_sheet(data);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Activity Log");
-  XLSX.writeFile(workbook, `universal-activity-log_${dateFrom}_to_${dateTo}.xlsx`);
+  const span = rows.length ? `${rows[rows.length - 1].when.slice(0, 10)}_to_${rows[0].when.slice(0, 10)}` : todayISO();
+  XLSX.writeFile(workbook, `activity-log_${tab}_${span}.xlsx`);
 }
 
 export function UniversalActivityLogPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
@@ -56,78 +54,60 @@ export function UniversalActivityLogPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [activeTab, setActiveTab] = usePersistedTab<TabKey>("ahs:universal-activity-log-tab", TABS, "all");
 
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [entries, setEntries] = useState<UniversalActivityEntry[]>([]);
-  const [dateFrom, setDateFrom] = useState(daysAgoIso(LOAD_DAYS - 1));
-  const [dateTo, setDateTo] = useState(todayIso());
+  const [tabs, setTabs] = useState<Partial<Record<TabKey, TabState>>>({});
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [search, setSearch] = useState("");
-  const [shownRows, setShownRows] = useState(ROWS_PER_PAGE);
-  // Bumped by every full load, so a slower earlier load (or a Load more
-  // started before it) can't overwrite what the newer one shows.
-  const loadSeq = useRef(0);
+  // Bumped when the dates change, so pages still loading for the old dates are dropped.
+  const generation = useRef(0);
+  // "generation:tab" pages being fetched right now — one at a time per tab.
+  const inFlight = useRef(new Set<string>());
 
-  const loadRange = async (from: string, to: string) => {
-    if (!from || !to) return;
-    const seq = ++loadSeq.current;
-    setLoading(true);
-    setError(null);
-    setShownRows(ROWS_PER_PAGE);
+  // Optional date limits as instants: the viewer's own local midnight to end of day.
+  const afterIso = dateFrom ? new Date(`${dateFrom}T00:00:00`).toISOString() : null;
+  const toIso = dateTo ? new Date(`${dateTo}T23:59:59.999`).toISOString() : null;
+
+  const loadPage = async (tab: TabKey, reset: boolean) => {
+    const gen = generation.current;
+    const key = `${gen}:${tab}`;
+    const prev = reset ? undefined : tabs[tab];
+    if (inFlight.current.has(key) || (prev && !prev.next)) return;
+    inFlight.current.add(key);
+    setTabs((t) => ({ ...t, [tab]: { entries: prev?.entries ?? [], next: prev?.next ?? null, loading: true, error: null } }));
     try {
-      const rows = await getUniversalActivityLog({ startDate: from, endDate: to });
-      if (seq === loadSeq.current) setEntries(rows);
-    } catch (err) {
-      if (seq === loadSeq.current) setError(err instanceof Error ? err.message : "Failed to load activity log.");
-    } finally {
-      if (seq === loadSeq.current) setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadRange(dateFrom, dateTo);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const changeDateFrom = (v: string) => { setDateFrom(v); void loadRange(v, dateTo); };
-  const changeDateTo = (v: string) => { setDateTo(v); void loadRange(dateFrom, v); };
-
-  // The two weeks before the oldest day shown, added below what's loaded.
-  const olderTo = dateFrom ? shiftIso(dateFrom, -1) : "";
-  const olderFrom = dateFrom ? shiftIso(dateFrom, -LOAD_DAYS) : "";
-  const loadOlder = async () => {
-    if (!olderFrom || loadingMore) return;
-    const seq = loadSeq.current;
-    setLoadingMore(true);
-    setError(null);
-    try {
-      const rows = await getUniversalActivityLog({ startDate: olderFrom, endDate: olderTo });
-      if (seq !== loadSeq.current) return;
-      setEntries((prev) => {
-        const seen = new Set(prev.map((e) => e.id));
-        return [...prev, ...rows.filter((r) => !seen.has(r.id))].sort((a, b) => b.when.localeCompare(a.when));
+      const page = await getUniversalActivityPage({
+        tab,
+        before: prev ? prev.next : toIso,
+        after: afterIso,
+        limit: PAGE_SIZE,
+        have: new Set(prev?.entries.map((e) => e.id)),
       });
-      setDateFrom(olderFrom);
+      if (gen !== generation.current) return;
+      setTabs((t) => ({ ...t, [tab]: { entries: reset ? page.entries : [...(t[tab]?.entries ?? []), ...page.entries], next: page.next, loading: false, error: null } }));
     } catch (err) {
-      if (seq === loadSeq.current) setError(err instanceof Error ? err.message : "Failed to load older activity.");
+      if (gen !== generation.current) return;
+      setTabs((t) => ({ ...t, [tab]: { entries: t[tab]?.entries ?? [], next: t[tab]?.next ?? null, loading: false, error: err instanceof Error ? err.message : "Failed to load activity log." } }));
     } finally {
-      setLoadingMore(false);
+      inFlight.current.delete(key);
     }
   };
 
-  useEffect(() => { setShownRows(ROWS_PER_PAGE); }, [activeTab, search]);
+  // A tab loads its first page the first time it's opened (and again after the dates change).
+  useEffect(() => {
+    if (!tabs[activeTab]) void loadPage(activeTab, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, tabs]);
 
-  const countByTab = useMemo(() => {
-    const counts = new Map<TabKey, number>();
-    for (const e of entries) counts.set(e.department, (counts.get(e.department) ?? 0) + 1);
-    counts.set("all", entries.length);
-    return counts;
-  }, [entries]);
+  const changeDates = (from: string, to: string) => {
+    generation.current++;
+    setDateFrom(from);
+    setDateTo(to);
+    setTabs({});
+  };
 
-  const tabRows = useMemo(
-    () => (activeTab === "all" ? entries : entries.filter((e) => e.department === activeTab)),
-    [entries, activeTab]
-  );
+  const current = tabs[activeTab];
+  const tabRows = current?.entries ?? [];
+  const firstLoad = !current || (current.loading && current.entries.length === 0);
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -140,6 +120,12 @@ export function UniversalActivityLogPage({ mod, sub }: { mod: ModuleDef; sub: Su
     );
   }, [tabRows, search]);
 
+  const tabCount = (t: TabKey) => {
+    const s = tabs[t];
+    if (!s || (s.loading && s.entries.length === 0)) return null;
+    return `${s.entries.length.toLocaleString()}${s.next ? "+" : ""}`;
+  };
+
   return (
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-[1600px] mx-auto w-full px-6 py-8">
@@ -147,7 +133,7 @@ export function UniversalActivityLogPage({ mod, sub }: { mod: ModuleDef; sub: Su
           <button type="button" onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /></button>
           <div>
             <h1 className="text-2xl font-bold">{sub.title}</h1>
-            <p className="text-xs text-muted-foreground mt-0.5">Every department's activity in one feed — the last 2 weeks; load older weeks at the bottom. Pick a department or view ALL.</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Every department's activity in one feed, newest first — {PAGE_SIZE} at a time, load more at the bottom. Pick a department or view ALL.</p>
           </div>
         </div>
 
@@ -156,12 +142,17 @@ export function UniversalActivityLogPage({ mod, sub }: { mod: ModuleDef; sub: Su
             <div className="flex flex-wrap items-end gap-4">
               <div className="flex flex-col gap-1">
                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date From</label>
-                <input type="date" value={dateFrom} onChange={(e) => changeDateFrom(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => changeDates(e.target.value, dateTo)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Date To</label>
-                <input type="date" value={dateTo} onChange={(e) => changeDateTo(e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+                <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => changeDates(dateFrom, e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
               </div>
+              {(dateFrom || dateTo) && (
+                <button type="button" onClick={() => changeDates("", "")} className="btn text-xs px-3 py-1.5">
+                  Clear dates
+                </button>
+              )}
               <div className="flex flex-col gap-1">
                 <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Search</label>
                 <div className="relative">
@@ -171,12 +162,13 @@ export function UniversalActivityLogPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     placeholder="Actor, action, or target…"
+                    title="Searches the rows loaded so far"
                     className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
                   />
                 </div>
               </div>
             </div>
-            <button onClick={() => downloadXlsx(filteredRows, dateFrom, dateTo)} disabled={loading || filteredRows.length === 0} className="btn text-sm px-3 shrink-0 flex items-center gap-1.5 disabled:opacity-50">
+            <button onClick={() => downloadXlsx(filteredRows, activeTab)} disabled={firstLoad || filteredRows.length === 0} className="btn text-sm px-3 shrink-0 flex items-center gap-1.5 disabled:opacity-50">
               <Download className="h-3.5 w-3.5" /> Download XLSX
             </button>
           </div>
@@ -191,14 +183,14 @@ export function UniversalActivityLogPage({ mod, sub }: { mod: ModuleDef; sub: Su
               className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${activeTab === t ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
             >
               {t === "all" ? "ALL" : DEPARTMENT_LABEL[t]}
-              <span className="ml-1.5 text-[10px] text-muted-foreground">({countByTab.get(t) ?? 0})</span>
+              {tabCount(t) && <span className="ml-1.5 text-[10px] text-muted-foreground">({tabCount(t)})</span>}
             </button>
           ))}
         </div>
 
-        {error && <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</div>}
+        {current?.error && <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{current.error}</div>}
 
-        {loading ? (
+        {firstLoad ? (
           <div className="panel p-8">
             <BrandedLoader label="Loading activity log…" />
           </div>
@@ -217,8 +209,8 @@ export function UniversalActivityLogPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 </thead>
                 <tbody>
                   {filteredRows.length === 0 ? (
-                    <tr><td colSpan={activeTab === "all" ? 5 : 4} className="px-3 py-8 text-center text-muted-foreground">No activity in this range.</td></tr>
-                  ) : filteredRows.slice(0, shownRows).map((r) => (
+                    <tr><td colSpan={activeTab === "all" ? 5 : 4} className="px-3 py-8 text-center text-muted-foreground">{search.trim() ? "No loaded activity matches the search." : "No activity."}</td></tr>
+                  ) : filteredRows.map((r) => (
                     <tr key={r.id} className={`border-b border-white/5 ${r.alert ? "bg-rose-500/10 hover:bg-rose-500/15" : "hover:bg-white/5"}`}>
                       <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">{new Date(r.when).toLocaleString()}</td>
                       {activeTab === "all" && (
@@ -243,26 +235,22 @@ export function UniversalActivityLogPage({ mod, sub }: { mod: ModuleDef; sub: Su
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 px-3 py-3 text-xs text-muted-foreground">
               <span>
-                Showing {Math.min(shownRows, filteredRows.length).toLocaleString()} of {filteredRows.length.toLocaleString()}
-                {dateFrom && dateTo ? ` · ${shortDate(dateFrom)} – ${shortDate(dateTo)}` : ""}
+                {search.trim() ? `${filteredRows.length.toLocaleString()} of ${tabRows.length.toLocaleString()} loaded` : `${tabRows.length.toLocaleString()} loaded`}
+                {tabRows.length > 0 && ` · back to ${new Date(tabRows[tabRows.length - 1].when).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`}
               </span>
-              <div className="flex flex-wrap items-center gap-2">
-                {filteredRows.length > shownRows && (
-                  <button type="button" onClick={() => setShownRows((n) => n + ROWS_PER_PAGE)} className="btn text-xs px-3 py-1.5">
-                    Show {Math.min(ROWS_PER_PAGE, filteredRows.length - shownRows).toLocaleString()} more
-                  </button>
-                )}
+              {current?.next ? (
                 <button
                   type="button"
-                  onClick={() => void loadOlder()}
-                  disabled={loadingMore || !olderFrom}
-                  title={olderFrom ? `Adds ${shortDate(olderFrom)} – ${shortDate(olderTo)}` : undefined}
+                  onClick={() => void loadPage(activeTab, false)}
+                  disabled={current.loading}
                   className="btn text-xs px-3 py-1.5 inline-flex items-center gap-1.5 disabled:opacity-50"
                 >
-                  {loadingMore && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  {loadingMore ? "Loading…" : `Load 2 more weeks${olderFrom ? ` (${shortDate(olderFrom)} – ${shortDate(olderTo)})` : ""}`}
+                  {current.loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  {current.loading ? "Loading…" : `Load ${PAGE_SIZE} more`}
                 </button>
-              </div>
+              ) : (
+                <span>{dateFrom || dateTo ? "That's everything in these dates." : "That's everything."}</span>
+              )}
             </div>
           </div>
         )}

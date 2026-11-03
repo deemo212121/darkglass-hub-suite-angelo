@@ -219,29 +219,21 @@ export interface GetActivityLogFilters {
 }
 
 /**
- * Every entry created between two instants (ISO), paged past the 1000-row
- * cap — Activity Logs reads one date window at a time, and a busy two
- * weeks holds more than getActivityLog's limit.
+ * The newest `limit` entries created at or before `before` (and not before
+ * `after`), both ISO and optional — Activity Logs loads a page at a time.
+ * `before` is inclusive so entries sharing the last shown timestamp aren't
+ * skipped; the caller drops the ones it already has.
  */
-export async function getActivityLogInRange(fromIso: string, toIso: string): Promise<HrActivityLogEntry[]> {
-  const all: HrActivityLogEntry[] = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await supabase
-      .from("hr_activity_log")
-      .select(SELECT)
-      .gte("created_at", fromIso)
-      .lte("created_at", toIso)
-      .order("created_at", { ascending: false })
-      .order("id")
-      .range(from, from + 999);
-    if (error) {
-      if (isMissingTableError(error)) return all;
-      throw new Error(error.message);
-    }
-    all.push(...(data ?? []).map(mapRow));
-    if (!data || data.length < 1000) break;
+export async function getActivityLogPage(opts: { before?: string | null; after?: string | null; limit: number }): Promise<HrActivityLogEntry[]> {
+  let query = supabase.from("hr_activity_log").select(SELECT).order("created_at", { ascending: false }).order("id").limit(opts.limit);
+  if (opts.before) query = query.lte("created_at", opts.before);
+  if (opts.after) query = query.gte("created_at", opts.after);
+  const { data, error } = await query;
+  if (error) {
+    if (isMissingTableError(error)) return [];
+    throw new Error(error.message);
   }
-  return all;
+  return (data ?? []).map(mapRow);
 }
 
 export async function getActivityLog(filters?: GetActivityLogFilters): Promise<HrActivityLogEntry[]> {

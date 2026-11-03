@@ -60,12 +60,16 @@ export async function logPartsDoneActivity(params: {
 }
 
 /** Most recent Done-button activity, newest first. */
-export async function getPartsDoneActivity(limit = 200): Promise<PartsDoneActivityRow[]> {
-  const { data, error } = await supabase
+export async function getPartsDoneActivity(limit = 200, range?: { before?: string | null; after?: string | null }): Promise<PartsDoneActivityRow[]> {
+  // Optional created_at bounds (ISO, inclusive) — Activity Logs reads a page at a time.
+  let query = supabase
     .from("parts_done_activity_log")
     .select("id, branch, summary, recipient_count, actor_name, created_at, collections_done, collections_total, pickup_done, pickup_total, received_done, received_total")
     .order("created_at", { ascending: false })
     .limit(limit);
+  if (range?.before) query = query.lte("created_at", range.before);
+  if (range?.after) query = query.gte("created_at", range.after);
+  const { data, error } = await query;
   if (error) {
     console.error("getPartsDoneActivity error:", error.message);
     return [];
