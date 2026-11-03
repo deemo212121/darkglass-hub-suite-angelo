@@ -2883,12 +2883,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Staff group — one filter for the whole Hiring view (pipeline tiles, table,
   // column filters): PH Staff = branch Philippines; Technician = a
   // technical position (Technician department or a Technician tier);
-  // US Staff = everyone else (Parts). Remembered per browser.
-  type HiringStaffGroup = "all" | "tech" | "us" | "ph";
+  // Mexico = branch Mexico; US Staff = everyone else, not technical (Parts,
+  // office). PH and Mexico take every position. Remembered per browser.
+  type HiringStaffGroup = "all" | "tech" | "us" | "ph" | "mx";
   const [hiringStaffGroup, setHiringStaffGroupState] = useState<HiringStaffGroup>(() => {
     try {
       const v = localStorage.getItem("hrHiring:staffGroup");
-      return v === "tech" || v === "us" || v === "ph" ? v : "all";
+      return v === "tech" || v === "us" || v === "ph" || v === "mx" ? v : "all";
     } catch {
       return "all";
     }
@@ -2902,14 +2903,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
   const candidateStaffGroup = (c: (typeof candidates)[number]): Exclude<HiringStaffGroup, "all"> => {
-    if ((c.branch || "").trim().toLowerCase() === "philippines") return "ph";
+    const branch = (c.branch || "").trim().toLowerCase();
+    if (branch === "philippines") return "ph";
+    if (branch === "mexico") return "mx";
     const code = candidatePositionOptions.find((r) => r.label === c.position)?.value || c.position || "";
     const role = normalizeRole(code);
     if (getRoleDepartmentBreakdown(code).department === "Technician" || role.startsWith("TECHNICIAN") || /technic/i.test(c.position || "")) return "tech";
     return "us";
   };
   const hiringStaffGroupCounts = useMemo(() => {
-    const counts = { all: scopedCandidates.length, tech: 0, us: 0, ph: 0 };
+    const counts = { all: scopedCandidates.length, tech: 0, us: 0, ph: 0, mx: 0 };
     for (const c of scopedCandidates) counts[candidateStaffGroup(c)]++;
     return counts;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -19552,31 +19555,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         <>
           <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Candidate Pipeline</p>
-            {/* One staff-group filter for the whole Hiring view — the tiles below and the Hiring table both follow it. */}
-            <div className="inline-flex rounded-lg border border-white/10 bg-white/5 p-0.5" role="group" aria-label="Staff group">
-              {([
-                ["all", "All"],
-                ["tech", "Technician"],
-                ["us", "US Staff"],
-                ["ph", "PH Staff"],
-              ] as const).map(([key, label]) => (
-                <button
-                  key={key}
-                  type="button"
-                  aria-pressed={hiringStaffGroup === key}
-                  onClick={() => setHiringStaffGroup(key)}
-                  title={
-                    key === "tech" ? "Technical positions" : key === "us" ? "Parts and other US staff" : key === "ph" ? "Branch: Philippines" : "Every candidate"
-                  }
-                  className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-semibold transition ${
-                    hiringStaffGroup === key ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {label}
-                  <span className="rounded-full bg-black/20 px-1.5 text-[10px] tabular-nums">{hiringStaffGroupCounts[key]}</span>
-                </button>
-              ))}
-            </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 mb-4">
             {[
@@ -19814,14 +19792,50 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       {/* ── Hiring ── */}
       {activeTab === "hiring" && (
       <div className="panel p-0 overflow-hidden mb-4">
-        <div className="px-4 py-4 border-b border-white/10 flex justify-between items-center">
+        <div className="px-4 py-4 border-b border-white/10 flex flex-wrap justify-between items-center gap-2">
           <div>
             <h2 className="font-semibold text-sm">Hiring</h2>
             {isBranchManager && <p className="text-[10px] text-muted-foreground mt-0.5">Showing applicants for your branch{myLocations.length > 1 ? "es" : ""}: {myLocations.join(", ") || "none assigned"}</p>}
           </div>
-          <button onClick={() => setShowAddCandidate(!showAddCandidate)} className="btn text-sm px-3 py-1.5 flex items-center gap-2">
-            <Plus className="h-4 w-4" /> Add Candidate
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+                {/* One staff-group filter for the whole Hiring view — the pipeline tiles and this table both follow it. */}
+                <div className="inline-flex rounded-lg border border-white/10 bg-white/5 p-0.5" role="group" aria-label="Staff group">
+                  {([
+                    ["all", "All"],
+                    ["tech", "Technician"],
+                    ["us", "US Staff"],
+                    ["ph", "PH Staff"],
+                    ["mx", "Mexico"],
+                  ] as const).map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      aria-pressed={hiringStaffGroup === key}
+                      onClick={() => setHiringStaffGroup(key)}
+                      title={
+                        key === "tech"
+                          ? "Technical positions, every branch except Philippines and Mexico"
+                          : key === "us"
+                            ? "Every branch except Philippines and Mexico — non-technical positions"
+                            : key === "ph"
+                              ? "Branch Philippines — every position"
+                              : key === "mx"
+                                ? "Branch Mexico — every position"
+                                : "Every candidate"
+                      }
+                      className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-semibold transition ${
+                        hiringStaffGroup === key ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {label}
+                      <span className="rounded-full bg-black/20 px-1.5 text-[10px] tabular-nums">{hiringStaffGroupCounts[key]}</span>
+                    </button>
+                  ))}
+                </div>
+            <button onClick={() => setShowAddCandidate(!showAddCandidate)} className="btn text-sm px-3 py-1.5 flex items-center gap-2">
+              <Plus className="h-4 w-4" /> Add Candidate
+            </button>
+          </div>
         </div>
 
         {/* Connect Gmail — connect-only for now (no send action yet); lets
