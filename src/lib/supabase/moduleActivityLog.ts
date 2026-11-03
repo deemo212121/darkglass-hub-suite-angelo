@@ -47,6 +47,12 @@ export const MODULE_ACTIVITY_ACTION_LABELS: Record<string, string> = {
   weekly_password_reset_disabled: "Turned off weekly forced password change",
   truck_stock_imported: "Imported a Truck Stock file",
   truck_stock_import_blocked: "Tried to import Truck Stock without Admin access",
+  // Technician Incentives (IncentivesPage.tsx, migration 0426) — logged under "accounting".
+  incentive_submitted: "Submitted an incentive for approval",
+  incentive_withdrawn: "Withdrew an incentive",
+  incentive_approved: "Approved an incentive (added to payroll)",
+  incentive_rejected: "Rejected an incentive",
+  incentive_approval_undone: "Undid an incentive approval (removed from payroll)",
 };
 
 /** Actions Activity Logs flags as an alert (red) — someone tried something they don't have access to. */

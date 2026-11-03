@@ -38,6 +38,7 @@ const DailyActivityPage = lazy(() => import("@/components/DailyActivityPage").th
 const PaystubsPage = lazy(() => import("@/components/PaystubsPage").then((m) => ({ default: m.PaystubsPage })));
 const TriageDashboardPage = lazy(() => import("@/components/TriageDashboardPage").then((m) => ({ default: m.TriageDashboardPage })));
 const UniversalActivityLogPage = lazy(() => import("@/components/UniversalActivityLogPage").then((m) => ({ default: m.UniversalActivityLogPage })));
+const IncentivesPage = lazy(() => import("@/components/IncentivesPage").then((m) => ({ default: m.IncentivesPage })));
 const ReportsLibraryPage = lazy(() => import("@/components/ReportsLibraryPage").then((m) => ({ default: m.ReportsLibraryPage })));
 const ErrorsImprovementsPage = lazy(() => import("@/components/ErrorsImprovementsPage").then((m) => ({ default: m.ErrorsImprovementsPage })));
 const GenericModulePage = lazy(() => import("@/components/GenericModulePage").then((m) => ({ default: m.GenericModulePage })));
@@ -747,6 +748,8 @@ function SubModule() {
         ? <TechnicianWhereaboutsPage mod={mod} sub={sub} />
         : (sub as any).custom === "universal-activity-log"
         ? <UniversalActivityLogPage mod={mod} sub={sub} />
+        : (sub as any).custom === "incentives"
+        ? <IncentivesPage mod={mod} sub={sub} />
         : (sub as any).custom === "reports-library"
         ? <ReportsLibraryPage mod={mod} sub={sub} />
         : (sub as any).custom === "errors-improvements"

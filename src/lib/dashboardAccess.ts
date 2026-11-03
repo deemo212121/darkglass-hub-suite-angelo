@@ -31,6 +31,10 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   // Payroll. The rows themselves are Finance / HR / Admin only (RLS).
   "paystubs": ["ADMIN", "FINANCE"],
   "expense-tracking": ["ADMIN", "FINANCE"],
+  // Technician Incentives (custom: "incentives", migration 0426) — one page
+  // under both HR and Accounting: HR submits, Finance approves (approving
+  // writes payroll). The rows themselves are HR / Admin / Finance only (RLS).
+  "incentives": ["ADMIN", "HR", "FINANCE"],
   // View access matches expense-tracking (SUPERADMIN always bypasses per
   // hasDashboardAccess) — write access (scheduling/editing a trip) is
   // further restricted inside FlashTechCalendarPage.tsx itself and by the

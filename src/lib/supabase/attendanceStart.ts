@@ -8,13 +8,30 @@ import { supabase } from "./client";
 import { getEmployeeInfoByProfileIds } from "./users";
 import { attendanceStartDate, hiringStartDate, type AttendanceStartCandidate } from "@/lib/attendanceStart";
 
-async function loadCandidates(): Promise<AttendanceStartCandidate[]> {
-  const withStart = await supabase.from("hr_candidates").select("email, phone, status, training_start_date, start_date");
-  if (!withStart.error) return (withStart.data ?? []) as AttendanceStartCandidate[];
+const PAGE_SIZE = 1000;
+
+/**
+ * Every HR Hiring record (paged — a single read stops at 1000 rows, and
+ * there are more than that). `extra` adds columns, e.g. created_by.
+ */
+export async function loadHiringRecords<T extends AttendanceStartCandidate = AttendanceStartCandidate>(extra = ""): Promise<T[]> {
+  const readAll = async (columns: string) => {
+    const rows: T[] = [];
+    for (let from = 0; ; from += PAGE_SIZE) {
+      const { data, error } = await supabase.from("hr_candidates").select(columns).order("id").range(from, from + PAGE_SIZE - 1);
+      if (error) return { rows, error };
+      rows.push(...((data ?? []) as unknown as T[]));
+      if (!data || data.length < PAGE_SIZE) return { rows, error: null };
+    }
+  };
+  const withStart = await readAll(`email, phone, status, training_start_date, start_date${extra}`);
+  if (!withStart.error) return withStart.rows;
   // start_date (migration 0261) not there yet — training start only.
-  const older = await supabase.from("hr_candidates").select("email, phone, status, training_start_date");
-  return older.error ? [] : ((older.data ?? []) as AttendanceStartCandidate[]);
+  const older = await readAll(`email, phone, status, training_start_date${extra}`);
+  return older.error ? [] : older.rows;
 }
+
+const loadCandidates = () => loadHiringRecords();
 
 export async function getAttendanceStartByProfile(
   profiles: { id: string; email: string | null; phone_number?: string | null }[]

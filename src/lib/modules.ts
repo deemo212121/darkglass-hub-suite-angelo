@@ -348,6 +348,17 @@ const accountingMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    // Same page as HR → Incentives — Accounting approves (or rejects) what
+    // HR submitted; approving adds it to that pay period's payroll.
+    {
+      slug: "incentives",
+      title: "Incentives",
+      description: "Approve technician 6-month incentives — HR $100, Branch Manager $500 and the technician's matching $500 — and add them to payroll.",
+      custom: "incentives" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
     // Same submodule (slug "absent-list") also lives under the HR module's
     // own tile grid — carried over here too so it's reachable from either
     // module, same AbsentListPage either way (dispatch in
@@ -465,6 +476,17 @@ const hrMod: ModuleDef = {
       title: "HR Paperworks",
       description: "Send and e-sign HR paperwork — warnings, promotions, tax forms (W-4/W-9/I-9), NDAs, and more.",
       custom: "hr-paperworks" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    // Same page as Accounting → Incentives — HR submits a technician's
+    // 6-month incentives here, Accounting approves them there.
+    {
+      slug: "incentives",
+      title: "Incentives",
+      description: "Technician 6-month incentives — HR $100, Branch Manager $500 and the technician's matching $500 — submitted by HR, approved by Accounting, paid through payroll.",
+      custom: "incentives" as any,
       fields: [],
       count: 0,
       seed: () => ({}),

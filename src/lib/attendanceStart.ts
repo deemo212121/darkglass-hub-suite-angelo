@@ -32,16 +32,24 @@ const normalizePhone = (value: string | null | undefined) => {
 /** A withdrawn / cancelled application never starts — its dates don't count. */
 const isDeadApplication = (status: string | null | undefined) => /withdraw|cancel|reject/i.test(status ?? "");
 
+/** This account's live HR Hiring records — matched by phone first, then email. */
+export function matchHiringRecords<T extends AttendanceStartCandidate>(
+  profile: { email: string | null; phone_number?: string | null },
+  candidates: T[]
+): T[] {
+  const live = candidates.filter((c) => !isDeadApplication(c.status));
+  const phone = normalizePhone(profile.phone_number);
+  const email = profile.email?.trim().toLowerCase();
+  const byPhone = phone ? live.filter((c) => normalizePhone(c.phone) === phone) : [];
+  return byPhone.length ? byPhone : email ? live.filter((c) => c.email?.trim().toLowerCase() === email) : [];
+}
+
 /** The HR Hiring date (training start, else start) for this account, or null. */
 export function hiringStartDate(
   profile: { email: string | null; phone_number?: string | null },
   candidates: AttendanceStartCandidate[]
 ): string | null {
-  const live = candidates.filter((c) => !isDeadApplication(c.status));
-  const phone = normalizePhone(profile.phone_number);
-  const email = profile.email?.trim().toLowerCase();
-  const byPhone = phone ? live.filter((c) => normalizePhone(c.phone) === phone) : [];
-  const matches = byPhone.length ? byPhone : email ? live.filter((c) => c.email?.trim().toLowerCase() === email) : [];
+  const matches = matchHiringRecords(profile, candidates);
   const dates = matches.map((c) => c.training_start_date || c.start_date || null).filter((d): d is string => !!d);
   // Several records (re-application): the most recent date.
   return dates.sort().pop() ?? null;
