@@ -15,7 +15,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Loader2, Award, Check, X, Undo2, Send, AlertTriangle, ArrowDownUp } from "lucide-react";
+import { ChevronLeft, Loader2, Award, Check, X, Undo2, Send, AlertTriangle, ArrowDownUp, Search } from "lucide-react";
 import { toast } from "sonner";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
@@ -164,6 +164,7 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   const [grades, setGrades] = useState<Record<string, SixMonthGrade> | "loading" | "error">("loading");
   const [filter, setFilter] = useState<Filter>("all");
+  const [search, setSearch] = useState("");
   const [sort, setSortState] = useState<SortKey>(() => {
     try {
       const v = localStorage.getItem(SORT_KEY) as SortKey | null;
@@ -261,14 +262,31 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     [cases, byTechnician, grades, today]
   );
 
+  // Search: the technician's name / email / branch, or who's picked (or approved) for their incentives.
+  const searched = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return views;
+    return views.filter((v) => {
+      const names = [
+        v.c.technician.display_name,
+        v.c.technician.email,
+        v.c.technician.assigned_branch,
+        nameOf(pickedFor(v.c, "hr", v.rows.hr)),
+        nameOf(pickedFor(v.c, "branch_manager", v.rows.branch_manager)),
+      ];
+      return names.some((n) => (n || "").toLowerCase().includes(q));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [views, search, personById]);
+
   const counts = useMemo(() => {
     const out: Record<Filter, number> = { all: 0, "needs-hr": 0, waiting: 0, upcoming: 0, done: 0, "not-eligible": 0 };
-    for (const v of views) for (const f of Object.keys(out) as Filter[]) if (v.under[f]) out[f]++;
+    for (const v of searched) for (const f of Object.keys(out) as Filter[]) if (v.under[f]) out[f]++;
     return out;
-  }, [views]);
+  }, [searched]);
 
   const shown = useMemo(() => {
-    const list = views.filter((v) => v.under[filter]);
+    const list = searched.filter((v) => v.under[filter]);
     const name = (v: (typeof views)[number]) => v.c.technician.display_name || "";
     const byName = (a: (typeof views)[number], b: (typeof views)[number]) => name(a).localeCompare(name(b));
     const sorted = [...list];
@@ -290,7 +308,7 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
       sorted.sort((a, b) => pts(b) - pts(a) || byName(a, b));
     }
     return sorted;
-  }, [views, filter, sort]);
+  }, [searched, filter, sort]);
 
   const log = (action: string, inc: { id: string; kind: IncentiveKind; technicianId: string; recipientId: string | null; amount: number }, details: Record<string, unknown> = {}) =>
     void logModuleActivity({
@@ -498,12 +516,25 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
               </button>
             ))}
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search technician, branch, recruiter, manager…"
+              aria-label="Search incentives"
+              className="w-64 max-w-full bg-slate-800/60 border border-white/10 rounded-md py-1 pl-8 pr-2 text-xs text-white placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
           <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
             <ArrowDownUp className="h-3.5 w-3.5" /> Sort
             <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} className="bg-slate-800/60 border border-white/10 rounded-md px-2 py-1 text-xs text-white focus:border-blue-500 focus:outline-none">
               {(Object.keys(SORT_LABEL) as SortKey[]).map((k) => <option key={k} value={k}>{SORT_LABEL[k]}</option>)}
             </select>
           </label>
+          </div>
         </div>
 
         {loading ? (
@@ -525,7 +556,7 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
                 </thead>
                 <tbody>
                   {shown.length === 0 ? (
-                    <tr><td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">Nothing here.</td></tr>
+                    <tr><td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">{search.trim() ? `Nothing matches “${search.trim()}”${filter === "all" ? "" : ` under ${FILTER_LABEL[filter]}`}.` : "Nothing here."}</td></tr>
                   ) : shown.map((v) => {
                     const totalDays = Math.max(1, -daysUntil(v.c.startDate, v.c.sixMonthDate));
                     const elapsed = Math.min(100, Math.max(0, Math.round(((totalDays - Math.max(0, v.days)) / totalDays) * 100)));
