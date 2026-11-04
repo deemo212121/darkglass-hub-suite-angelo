@@ -125,6 +125,69 @@ export async function getEbayOrders(startDate: string, endDate: string): Promise
   return (data || []).map(mapOrder);
 }
 
+// ---------- Search (any date) + Orders by "Date Added" ----------
+
+/** Most rows one search returns — enough for a part # / order # lookup. */
+export const EBAY_SEARCH_LIMIT = 200;
+
+/**
+ * What someone typed → an ilike pattern: partial, any case, and spaces /
+ * dashes match anything in between ("10 15047" finds "10-15047-97413").
+ * Characters that mean something in a PostgREST filter are dropped.
+ */
+function ebaySearchPattern(raw: string): string | null {
+  const parts = raw.replace(/[%_*,()\\"'.:]/g, " ").split(/[\s-]+/).filter(Boolean);
+  return parts.length ? `%${parts.join("%")}%` : null;
+}
+
+/** Listings whose Part # matches, on any Listed Date (not just the page's date range). */
+export async function searchEbayListings(query: string): Promise<EbayListingRow[]> {
+  const pattern = ebaySearchPattern(query);
+  if (!pattern) return [];
+  const { data, error } = await supabase
+    .from("ebay_listings")
+    .select("*")
+    .ilike("part_no", pattern)
+    .order("listed_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(EBAY_SEARCH_LIMIT);
+  if (error) throw error;
+  return (data || []).map(mapListing);
+}
+
+/** Orders whose Order ID (also when saved as a full eBay link) or Part # matches, on any date. */
+export async function searchEbayOrders(query: string): Promise<EbayOrderRow[]> {
+  const pattern = ebaySearchPattern(query);
+  if (!pattern) return [];
+  const { data, error } = await supabase
+    .from("ebay_orders")
+    .select("*")
+    .or(`order_ext_id.ilike.${pattern},part_no.ilike.${pattern}`)
+    .order("created_at", { ascending: false })
+    .limit(EBAY_SEARCH_LIMIT);
+  if (error) throw error;
+  return (data || []).map(mapOrder);
+}
+
+/**
+ * Orders entered into AHS between these two days (the "Date Added"
+ * column), whatever their eBay Order Date — days are the viewer's own
+ * local days, the same way the Date Added column shows them.
+ */
+export async function getEbayOrdersAddedBetween(startDate: string, endDate: string): Promise<EbayOrderRow[]> {
+  const from = new Date(`${startDate}T00:00:00`);
+  const to = new Date(`${endDate}T00:00:00`);
+  to.setDate(to.getDate() + 1);
+  const { data, error } = await supabase
+    .from("ebay_orders")
+    .select("*")
+    .gte("created_at", from.toISOString())
+    .lt("created_at", to.toISOString())
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data || []).map(mapOrder);
+}
+
 export async function createEbayOrder(input: {
   orderExtId: string;
   partNo: string;
