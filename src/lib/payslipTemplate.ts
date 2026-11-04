@@ -510,6 +510,10 @@ export function renderTechActivitySummaryPageHtml(
   taxes: { label: string; amount: number }[] = []
 ): string {
   const taxTotal = taxes.reduce((s, t) => s + t.amount, 0);
+  // Only the items that hold something — a category with no count and no
+  // pay ("0", "0.0", "0%", "0 − 0 = 0" at $0) is left off the printout.
+  // The modal still lists every category so Finance can fill one in.
+  const shownItems = breakdown.lineItems.filter((item) => Math.abs(item.payment) >= 0.005 || /[1-9]/.test(item.value));
   const escapeText = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const grandTotal = breakdown.totalPayment + extraPay - taxTotal;
   return `
@@ -539,7 +543,7 @@ export function renderTechActivitySummaryPageHtml(
         </tr>
       </thead>
       <tbody>
-        ${breakdown.lineItems.map((item) => `
+        ${shownItems.map((item) => `
         <tr>
           <td>${item.label}</td>
           <td class="amount">${item.value}</td>
@@ -547,6 +551,11 @@ export function renderTechActivitySummaryPageHtml(
           <td class="amount">${item.paymentDisplay ?? `$${item.payment.toFixed(2)}`}</td>
         </tr>
         `).join('')}
+        ${shownItems.length === 0 ? `
+        <tr>
+          <td colspan="4" style="text-align: center; color: #9ca3af;">No pay items for this period.</td>
+        </tr>
+        ` : ""}
       </tbody>
       <tfoot>
         <tr style="font-weight: 700; background: #f3f4f6;">
