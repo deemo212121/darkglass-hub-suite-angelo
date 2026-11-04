@@ -23,7 +23,6 @@ import { getServerNow, zonedDateKey } from "@/lib/serverTime";
 import { createNotification } from "./notifications";
 import { getCompanyUsers } from "./users";
 import { isAttendanceManagerTierRole } from "@/lib/roleLabels";
-import { findPersonByName } from "@/lib/personName";
 
 export type CorrectionStatus = "pending" | "approved" | "rejected";
 export type CorrectionStage = "manager" | "hr" | "accounting";
@@ -1169,30 +1168,3 @@ export async function updateCorrectionPdfUrl(correctionId: string, pdfUrl: strin
 }
 
 
-/**
- * Bell reminder — pings the requester's manager that their time correction is
- * still waiting on the manager step. The manager is the one the correction was
- * routed to (managerId) when that account is still active, otherwise the
- * requester's current Manager (the name in their profile, matched to an active
- * account). Returns the manager's name; throws when no active manager is found.
- */
-export async function remindCorrectionManager(c: TimecardCorrectionRow, senderId: string, senderName: string): Promise<string> {
-  const roster = await getCompanyUsers();
-  const active = roster.filter((p) => p.is_active);
-  const requester = roster.find((p) => p.id === c.profileId);
-  const manager =
-    (c.managerId ? active.find((p) => p.id === c.managerId) : undefined) ??
-    (requester?.manager_name ? findPersonByName(requester.manager_name, active) : null) ??
-    null;
-  if (!manager) throw new Error(`${requester?.display_name || "This employee"} has no active manager on file.`);
-  const requesterName = requester?.display_name || "An employee";
-  const submitted = c.createdAt ? new Date(c.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : null;
-  await createNotification({
-    recipientId: manager.id,
-    senderId,
-    senderName,
-    body: `🔔 Reminder: ${requesterName}'s time correction for ${c.workDate}${submitted ? ` (submitted ${submitted})` : ""} is still waiting on your approval.`,
-    linkTo: "/m/dashboard/attendance-monitoring?tab=corrections",
-  });
-  return manager.display_name || "the manager";
-}

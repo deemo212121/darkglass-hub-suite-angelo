@@ -15,6 +15,9 @@
  *    (Admin / HR / Super Admin).
  *  - HR / Admin / Super Admin: people who finished every form on Staff Form
  *    Checklist since this viewer last opened it.
+ *  - Trainee days waiting on approval: HR / Admin / Super Admin / Finance see
+ *    the whole company's, managers their own + Approval Chain trainees,
+ *    anyone else only trainees who list them as Manager.
  *  - Everyone: unread notifications and messages.
  *
  * Cached for a minute per person so moving between pages doesn't refetch.
@@ -25,7 +28,8 @@ import { findPersonByName } from "@/lib/personName";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { canAccessSubmodule } from "@/lib/submoduleAccess";
-import { isAttendanceManagerTierRole, normalizeRole } from "@/lib/roleLabels";
+import { isAttendanceFullAccessRole, isAttendanceManagerTierRole, normalizeRole } from "@/lib/roleLabels";
+import { getTraineeDaysAwaitingApproval } from "@/lib/supabase/traineeTimecards";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getProfileIdByFirebaseUid } from "@/lib/supabase/timecards";
 import { registerApprovalDirectory } from "@/lib/approvalDirectory";
@@ -42,7 +46,7 @@ import { getCoachingWaitingCount } from "@/lib/supabase/csrCoachingLogs";
 /** Corrections allowed per person per month (Exceeded → Time Corrections). */
 export const MAX_CORRECTIONS_PER_MONTH = 2;
 
-export type AttentionKind = "pto" | "sick" | "corrections" | "disputes" | "over-limit" | "coaching" | "forms-complete" | "notifications" | "messages";
+export type AttentionKind = "pto" | "sick" | "corrections" | "disputes" | "trainee" | "over-limit" | "coaching" | "forms-complete" | "notifications" | "messages";
 export type AttentionTone = "warn" | "alert" | "info" | "good";
 
 export interface AttentionItem {
@@ -53,6 +57,8 @@ export interface AttentionItem {
   title?: string;
   /** Page to open: [module, submodule]. */
   to?: [string, string];
+  /** Query string for `to` — e.g. { tab: "trainee-attendance" }. */
+  search?: Record<string, string>;
   href?: string;
   /** The messenger opens instead of navigating. */
   opensMessenger?: boolean;
@@ -189,6 +195,25 @@ async function compute(who: Who): Promise<Attention> {
       bump(approvalsPage, pendingFixes);
       tab("corrections", pendingFixes);
       items.push({ kind: "corrections", count: pendingFixes, label: pendingFixes === 1 ? "Time correction to review" : "Time corrections to review", tone: "warn", title: "Attendance Monitoring", to: approvalsPage });
+    }
+  }
+
+  // Trainee days that need this viewer's approval (Attendance Monitoring → Trainee Attendance).
+  if (myId && approvalsPage) {
+    const scope = isAttendanceFullAccessRole(role, extra) ? "everyone" : isTeamManager ? "chain" : "own";
+    const traineeDays = await getTraineeDaysAwaitingApproval(myId, scope).catch(() => 0);
+    if (traineeDays > 0) {
+      bump(approvalsPage, traineeDays);
+      tab("trainee-attendance", traineeDays);
+      items.push({
+        kind: "trainee",
+        count: traineeDays,
+        label: traineeDays === 1 ? "Trainee day needs your approval" : "Trainee days need your approval",
+        tone: "warn",
+        title: "Attendance Monitoring → Trainee Attendance",
+        to: approvalsPage,
+        search: { tab: "trainee-attendance" },
+      });
     }
   }
 

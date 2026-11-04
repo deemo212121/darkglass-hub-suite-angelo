@@ -347,3 +347,40 @@ export async function notifyRequesterOfTransferReceived(payload: {
     console.warn("[truckStockNotify] notifyRequesterOfTransferReceived skipped:", err);
   }
 }
+
+/**
+ * "Remind" bell on Truck Stock Requests — pings the Parts Manager(s) of the
+ * branch whose step it is (same people notified when the request was made):
+ * "approve" = a pending pull (source branch) or transfer (destination);
+ * "receive" = in transit, waiting on the destination to Mark Received.
+ * The sender is never notified. Returns how many people were reminded.
+ */
+export async function remindTruckStockApprovers(payload: {
+  requestId: string;
+  kind: "pull" | "transfer";
+  step: "approve" | "receive";
+  /** The branch whose Parts Manager acts on this step. */
+  branch: string;
+  partNo: string;
+  qty: number;
+  fromBranch: string;
+  toBranch: string | null;
+  ticketNo: string | null;
+  senderId: string | null;
+  senderName: string;
+}): Promise<number> {
+  const recipientIds = (await findApproverProfileIdsForBranch(payload.branch)).filter((id) => id !== payload.senderId);
+  if (recipientIds.length === 0) throw new Error(`No Parts Manager on file for ${payload.branch} to remind.`);
+  const item = `${payload.qty} × ${payload.partNo}`;
+  const body =
+    payload.step === "receive"
+      ? `🔔 Reminder: ${item} is in transit to ${payload.toBranch || payload.branch} — please Mark Received once it arrives.`
+      : payload.kind === "pull"
+        ? `🔔 Reminder: the pull of ${item} from ${payload.fromBranch} Truck Stock${payload.ticketNo ? ` for ticket ${payload.ticketNo}` : ""} is still waiting on your approval.`
+        : `🔔 Reminder: the transfer of ${item} from ${payload.fromBranch} to ${payload.toBranch} is still waiting on your approval.`;
+  const linkTo = `${TRANSFER_LINK}&requestId=${encodeURIComponent(payload.requestId)}`;
+  await Promise.all(
+    recipientIds.map((id) => createNotification({ recipientId: id, senderId: payload.senderId, senderName: payload.senderName, body, linkTo }))
+  );
+  return recipientIds.length;
+}

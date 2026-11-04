@@ -7,7 +7,7 @@
  */
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
-import { Bell, BadgeCheck, CalendarClock, CheckCheck, ClipboardCheck, ClipboardEdit, Flag, HeartPulse, MessageCircle, PartyPopper, TicketCheck } from "lucide-react";
+import { Bell, BadgeCheck, CalendarClock, CheckCheck, ClipboardCheck, ClipboardEdit, Flag, GraduationCap, HeartPulse, MessageCircle, PartyPopper, TicketCheck } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole } from "@/lib/roleLabels";
 import { useAttention, badgeText, type AttentionItem, type AttentionKind, type AttentionTone } from "@/lib/attention";
@@ -21,6 +21,7 @@ const ICONS: Record<AttentionKind | "parts-done", ReactNode> = {
   sick: <HeartPulse />,
   corrections: <ClipboardEdit />,
   disputes: <TicketCheck />,
+  trainee: <GraduationCap />,
   "over-limit": <Flag />,
   coaching: <ClipboardCheck />,
   "forms-complete": <BadgeCheck />,
@@ -81,7 +82,7 @@ export function HomeToday() {
       );
     if (it.to)
       return (
-        <Link key={it.kind} to="/m/$module/$submodule" params={{ module: it.to[0], submodule: it.to[1] }} className={cls} title={it.title}>
+        <Link key={it.kind} to="/m/$module/$submodule" params={{ module: it.to[0], submodule: it.to[1] }} search={it.search as never} className={cls} title={it.title}>
           {body}
         </Link>
       );
