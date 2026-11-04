@@ -1,8 +1,8 @@
-﻿import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
+﻿import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, ChevronDown, Plus, Trash2, Loader2, Printer, History, Download, FileSpreadsheet, Package, DollarSign, Tag, CheckCircle2, Users, CreditCard, ListChecks, ClipboardList, Pencil } from "lucide-react";
+import { ChevronLeft, ChevronDown, Plus, Trash2, Loader2, Printer, History, Download, FileSpreadsheet, Package, DollarSign, Tag, CheckCircle2, Users, CreditCard, ListChecks, ClipboardList, Pencil, Search, X } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { normalizeRole } from "@/lib/roleLabels";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
@@ -13,6 +13,10 @@ import {
   EBAY_LISTINGS_STATUSES,
   EBAY_SALES_ACCOUNTS,
   getEbayOrders,
+  getEbayOrdersAddedBetween,
+  searchEbayOrders,
+  searchEbayListings,
+  EBAY_SEARCH_LIMIT,
   createEbayOrder,
   updateEbayOrder,
   deleteEbayOrder,
@@ -43,6 +47,7 @@ import {
 import { LOCATIONS } from "@/lib/locations";
 import { EbayImportModal } from "@/components/EbayImportModal";
 import { localISODate, todayISO } from "@/lib/localDate";
+import { useColumnFunnels } from "@/hooks/useColumnFunnels";
 
 // Color coding per order status, reused for status chips/dropdown-adjacent
 // badges wherever a status shows up on this page.
@@ -144,6 +149,206 @@ function daysAgoIso(n: number) {
 }
 
 type Tab = "orders" | "listings" | "summary" | "assignments";
+
+/** Which date the page's Start/End range filters the Orders table by. */
+type OrderDateBasis = "order" | "added";
+const ORDER_DATE_BASIS_KEY = "ahs.ebayReport.orderDateBasis";
+
+/** Search box above the Orders / Listings tables — Esc or the × clears it. */
+function TableSearch({ value, onChange, placeholder, busy, className = "" }: { value: string; onChange: (v: string) => void; placeholder: string; busy: boolean; className?: string }) {
+  return (
+    <div className={`relative ${className}`}>
+      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Escape") onChange(""); }}
+        placeholder={placeholder}
+        aria-label={placeholder}
+        spellCheck={false}
+        autoComplete="off"
+        className="glass-input w-full rounded-md py-1.5 pl-8 pr-8 text-sm font-mono placeholder:font-sans"
+      />
+      {busy ? (
+        <Loader2 className="absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-muted-foreground" />
+      ) : value ? (
+        <button type="button" onClick={() => onChange("")} className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-white/10 hover:text-foreground" title="Clear search (Esc)" aria-label="Clear search">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** "Clear column filters (n)" — shows only while a table has funnel filters on. */
+function ClearFunnels({ count, onClear }: { count: number; onClear: () => void }) {
+  if (count === 0) return null;
+  return (
+    <button type="button" onClick={onClear} className="inline-flex items-center gap-1 rounded-md border border-blue-400/30 bg-blue-500/10 px-2 py-1 text-[11px] font-semibold text-blue-200 hover:bg-blue-500/20" title="Remove every column (funnel) filter on this table">
+      <X className="h-3 w-3" /> Clear column filters ({count})
+    </button>
+  );
+}
+
+/**
+ * A notes box that grows as you type — wider first (up to maxRem), then onto
+ * more lines — so a long note stays readable instead of scrolling out of view.
+ */
+function GrowingTextarea({
+  value,
+  onChange,
+  minRem = 8,
+  maxRem = 22,
+  className = "",
+  ...rest
+}: { value: string; onChange: (v: string) => void; minRem?: number; maxRem?: number; className?: string } & Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "onChange" | "className">) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const longestLine = Math.max(0, ...value.split("\n").map((line) => line.length));
+  const width = `clamp(${minRem}rem, ${longestLine + 3}ch, ${maxRem}rem)`;
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const border = el.offsetHeight - el.clientHeight;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight + border}px`;
+  }, [value, width]);
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      style={{ width }}
+      className={`resize-none overflow-hidden align-top ${className}`}
+      {...rest}
+    />
+  );
+}
+
+/**
+ * Orders-table Notes cell: shows the start of the note (whole note on hover);
+ * click it to open the full note in a bigger box and edit it there. Clicking
+ * outside or Save keeps the change, Esc / Cancel drops it.
+ */
+function NotesCell({ value, label, onSave }: { value: string; label: string; onSave: (next: string) => void }) {
+  const PANEL_W = 320;
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const [pos, setPos] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  const place = useCallback(() => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - PANEL_W - 8));
+    // Below the cell, or above it when there isn't room below.
+    setPos(window.innerHeight - r.bottom < 240 ? { left, bottom: window.innerHeight - r.top + 4 } : { left, top: r.bottom + 4 });
+  }, []);
+
+  const finish = useCallback(
+    (save: boolean) => {
+      setOpen(false);
+      if (save && draft !== value) onSave(draft);
+    },
+    [draft, value, onSave]
+  );
+
+  const openPanel = () => {
+    setDraft(value);
+    place();
+    setOpen(true);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (panelRef.current?.contains(t) || btnRef.current?.contains(t)) return;
+      finish(true);
+    };
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open, finish, place]);
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => (open ? finish(true) : openPanel())}
+        title={value ? `${value}\n\nClick to open the full note` : "Click to add a note"}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        className="glass-input block w-32 truncate rounded px-2 py-0.5 text-left text-xs hover:border-blue-400/50"
+      >
+        {value || <span className="text-muted-foreground">—</span>}
+      </button>
+      {open && pos
+        ? createPortal(
+            <div
+              ref={panelRef}
+              role="dialog"
+              aria-label={`Notes — ${label}`}
+              style={{ position: "fixed", left: pos.left, top: pos.top, bottom: pos.bottom, width: PANEL_W, zIndex: 9999 }}
+              className="rounded-md border border-[var(--color-panel-border)] bg-[var(--color-card)] p-3 text-foreground shadow-2xl"
+            >
+              <div className="mb-1.5 truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Notes · {label}</div>
+              <textarea
+                autoFocus
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onFocus={(e) => {
+                  const end = e.currentTarget.value.length;
+                  e.currentTarget.setSelectionRange(end, end);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    finish(false);
+                  } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    finish(true);
+                  }
+                }}
+                rows={6}
+                placeholder="Add a note…"
+                className="glass-input w-full resize-y rounded-md px-2 py-1.5 text-sm leading-relaxed"
+              />
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <span className="text-[10px] text-muted-foreground">Ctrl+Enter save · Esc cancel</span>
+                <div className="flex gap-1.5">
+                  <button type="button" onClick={() => finish(false)} className="btn px-2.5 py-1 text-xs">Cancel</button>
+                  <button type="button" onClick={() => finish(true)} className="btn bg-blue-600 px-2.5 py-1 text-xs text-white hover:bg-blue-700">Save</button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+    </>
+  );
+}
+
+/** The searched-for text, marked inside a cell (case-insensitive, first match). */
+function Highlight({ text, query }: { text: string; query: string }) {
+  const q = query.trim().toLowerCase();
+  const i = q ? text.toLowerCase().indexOf(q) : -1;
+  if (i < 0) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, i)}
+      <mark className="rounded-sm bg-amber-400/25 text-amber-200">{text.slice(i, i + q.length)}</mark>
+      {text.slice(i + q.length)}
+    </>
+  );
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -454,8 +659,10 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
         setListings(l);
         setBranchSettings(bs);
         setBranchNotes(bn);
-        originalOrdersRef.current = new Map(o.map((r) => [r.id, r]));
-        originalListingsRef.current = new Map(l.map((r) => [r.id, r]));
+        // Merge (not replace): rows shown by a search or the Date Added view
+        // keep their saved snapshot, so their edits still log before → after.
+        for (const r of o) originalOrdersRef.current.set(r.id, r);
+        for (const r of l) originalListingsRef.current.set(r.id, r);
       })
       .catch((err) => setError(errMsg(err, String(err))))
       .finally(() => setLoading(false));
@@ -470,6 +677,99 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
   const filteredListings = useMemo(
     () => (branchFilter.length === 0 ? listings : listings.filter((l) => branchFilter.includes(l.branch))),
     [listings, branchFilter]
+  );
+
+  // ---------- Orders tab: "Dates by" Order Date / Date Added, and a search
+  // by Order # or Part # across every date. ----------
+  const [orderDateBasis, setOrderDateBasisState] = useState<OrderDateBasis>(() => {
+    try {
+      return localStorage.getItem(ORDER_DATE_BASIS_KEY) === "added" ? "added" : "order";
+    } catch {
+      return "order";
+    }
+  });
+  const setOrderDateBasis = (b: OrderDateBasis) => {
+    setOrderDateBasisState(b);
+    try { localStorage.setItem(ORDER_DATE_BASIS_KEY, b); } catch { /* not remembered */ }
+  };
+  const [addedOrders, setAddedOrders] = useState<EbayOrderRow[]>([]);
+  const [addedOrdersLoading, setAddedOrdersLoading] = useState(false);
+  const loadAddedOrders = useCallback(() => {
+    if (orderDateBasis !== "added") return;
+    setAddedOrdersLoading(true);
+    getEbayOrdersAddedBetween(startDate, endDate)
+      .then((rows) => {
+        for (const r of rows) originalOrdersRef.current.set(r.id, r);
+        setAddedOrders(rows);
+      })
+      .catch((err) => setError(errMsg(err, "Failed to load orders by Date Added")))
+      .finally(() => setAddedOrdersLoading(false));
+  }, [orderDateBasis, startDate, endDate]);
+  useEffect(() => { loadAddedOrders(); }, [loadAddedOrders]);
+
+  const [orderQuery, setOrderQuery] = useState("");
+  const [orderResults, setOrderResults] = useState<EbayOrderRow[] | null>(null);
+  const [orderSearching, setOrderSearching] = useState(false);
+  const [listingQuery, setListingQuery] = useState("");
+  const [listingResults, setListingResults] = useState<EbayListingRow[] | null>(null);
+  const [listingSearching, setListingSearching] = useState(false);
+  const [listingStatusFilter, setListingStatusFilter] = useState<string>("all");
+  // Bumped after a delete so an open search re-runs.
+  const [searchNonce, setSearchNonce] = useState(0);
+
+  useEffect(() => {
+    const q = orderQuery.trim();
+    if (!q) { setOrderResults(null); setOrderSearching(false); return; }
+    setOrderSearching(true);
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      searchEbayOrders(q)
+        .then((rows) => {
+          if (cancelled) return;
+          for (const r of rows) originalOrdersRef.current.set(r.id, r);
+          setOrderResults(rows);
+        })
+        .catch((err) => { if (!cancelled) setError(errMsg(err, "Order search failed")); })
+        .finally(() => { if (!cancelled) setOrderSearching(false); });
+    }, 300);
+    return () => { cancelled = true; window.clearTimeout(t); };
+  }, [orderQuery, searchNonce]);
+
+  useEffect(() => {
+    const q = listingQuery.trim();
+    if (!q) { setListingResults(null); setListingSearching(false); return; }
+    setListingSearching(true);
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      searchEbayListings(q)
+        .then((rows) => {
+          if (cancelled) return;
+          for (const r of rows) originalListingsRef.current.set(r.id, r);
+          setListingResults(rows);
+        })
+        .catch((err) => { if (!cancelled) setError(errMsg(err, "Part # search failed")); })
+        .finally(() => { if (!cancelled) setListingSearching(false); });
+    }, 300);
+    return () => { cancelled = true; window.clearTimeout(t); };
+  }, [listingQuery, searchNonce]);
+
+  const orderSearchOn = orderQuery.trim() !== "";
+  const listingSearchOn = listingQuery.trim() !== "";
+  const byBranch = <T extends { branch: string }>(rows: T[]) => (branchFilter.length === 0 ? rows : rows.filter((r) => branchFilter.includes(r.branch)));
+  // Both tables lead with Date Added, so they list the most recently entered row first.
+  const newestAddedFirst = <T extends { createdAt: string }>(rows: T[]) =>
+    [...rows].sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0));
+  // The Orders table: search hits (any date), else the range by Order Date or Date Added.
+  const orderTableRows = useMemo(
+    () => newestAddedFirst(byBranch(orderSearchOn ? orderResults ?? [] : orderDateBasis === "added" ? addedOrders : orders)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [orderSearchOn, orderResults, orderDateBasis, addedOrders, orders, branchFilter]
+  );
+  // The Listings table: search hits (any date) or the range, then the Status chips.
+  const listingRowsBeforeStatus = useMemo(
+    () => newestAddedFirst(byBranch(listingSearchOn ? listingResults ?? [] : listings)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [listingSearchOn, listingResults, listings, branchFilter]
   );
 
   const totalEarnings = useMemo(
@@ -616,6 +916,16 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
   }, [dynamicGroups, branchBreakdown]);
 
   const [expandedPersons, setExpandedPersons] = useState<Set<string>>(new Set());
+  // Summary → By Assigned Person: a branch row clicked open — the orders and
+  // Listed items behind that row's numbers (same range, so totals match).
+  const [branchDetail, setBranchDetail] = useState<{ branch: string; person: string } | null>(null);
+  useEffect(() => {
+    if (!branchDetail) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setBranchDetail(null); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [branchDetail]);
+  const tabsRef = useRef<HTMLDivElement>(null);
   const togglePersonExpanded = (person: string) => {
     setExpandedPersons((prev) => {
       const next = new Set(prev);
@@ -699,6 +1009,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     try {
       const created = await createEbayOrder(orderDraft);
       setOrders((prev) => [created, ...prev]);
+      loadAddedOrders();
       setOrderDraft({ ...emptyOrderDraft(), branch: orderDraft.branch });
       originalOrdersRef.current.set(created.id, created);
       await logActivity({
@@ -740,11 +1051,18 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     }
   };
 
+  // A row can be on screen from the date range, the Date Added view or a
+  // search — keep every copy in step.
   const patchOrder = (id: string, patch: Partial<EbayOrderRow>) => {
-    setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, ...patch } : o)));
+    const apply = (rows: EbayOrderRow[]) => rows.map((o) => (o.id === id ? { ...o, ...patch } : o));
+    setOrders(apply);
+    setAddedOrders(apply);
+    setOrderResults((prev) => (prev ? apply(prev) : prev));
   };
   const patchListing = (id: string, patch: Partial<EbayListingRow>) => {
-    setListings((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+    const apply = (rows: EbayListingRow[]) => rows.map((l) => (l.id === id ? { ...l, ...patch } : l));
+    setListings(apply);
+    setListingResults((prev) => (prev ? apply(prev) : prev));
   };
 
   const saveOrderField = async (row: EbayOrderRow, patch: Partial<EbayOrderRow>) => {
@@ -809,8 +1127,11 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
 
   const removeOrder = async (id: string) => {
     if (!confirm("Delete this order row?")) return;
-    const row = orders.find((o) => o.id === id);
-    setOrders((prev) => prev.filter((o) => o.id !== id));
+    const row = [...orders, ...addedOrders, ...(orderResults ?? [])].find((o) => o.id === id);
+    const drop = (rows: EbayOrderRow[]) => rows.filter((o) => o.id !== id);
+    setOrders(drop);
+    setAddedOrders(drop);
+    setOrderResults((prev) => (prev ? drop(prev) : prev));
     try {
       await deleteEbayOrder(id);
       if (row) {
@@ -824,12 +1145,16 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     } catch (err) {
       setError(errMsg(err, "Failed to delete order"));
       load();
+      loadAddedOrders();
+      setSearchNonce((n) => n + 1);
     }
   };
   const removeListing = async (id: string) => {
     if (!confirm("Delete this listing row?")) return;
-    const row = listings.find((l) => l.id === id);
-    setListings((prev) => prev.filter((l) => l.id !== id));
+    const row = [...listings, ...(listingResults ?? [])].find((l) => l.id === id);
+    const drop = (rows: EbayListingRow[]) => rows.filter((l) => l.id !== id);
+    setListings(drop);
+    setListingResults((prev) => (prev ? drop(prev) : prev));
     try {
       await deleteEbayListing(id);
       loadActiveListings();
@@ -844,6 +1169,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     } catch (err) {
       setError(errMsg(err, "Failed to delete listing"));
       load();
+      setSearchNonce((n) => n + 1);
     }
   };
 
@@ -872,7 +1198,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     setError(null);
     try {
       await updateEbayOrder(editingOrder.id, patch);
-      setOrders((prev) => prev.map((o) => (o.id === editingOrder.id ? { ...o, ...patch } : o)));
+      patchOrder(editingOrder.id, patch);
       originalOrdersRef.current.set(editingOrder.id, { ...editingOrder, ...patch });
       await Promise.all(changes.map((c) =>
         logActivity({
@@ -913,7 +1239,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     setError(null);
     try {
       await updateEbayListing(editingListing.id, patch);
-      setListings((prev) => prev.map((l) => (l.id === editingListing.id ? { ...l, ...patch } : l)));
+      patchListing(editingListing.id, patch);
       if (patch.status !== undefined) loadActiveListings();
       originalListingsRef.current.set(editingListing.id, { ...editingListing, ...patch });
       await Promise.all(changes.map((c) =>
@@ -1145,6 +1471,106 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     `);
   };
 
+  // ---------- Funnel (column) filters on every table on this page ----------
+  const money = (n: number) => `${n.toFixed(2)}`;
+  const dayAdded = (iso: string) => {
+    const d = iso ? new Date(iso) : null;
+    return d && !Number.isNaN(d.getTime()) ? localISODate(d) : "";
+  };
+  const changedByName = (id: string) => changedByRowId.get(id)?.actorName || "";
+
+  const orderFunnels = useColumnFunnels(orderTableRows, {
+    "Order Date": (o) => o.orderDate,
+    "Order ID": (o) => parseEbayOrderRef(o.orderExtId).display,
+    "Part #": (o) => o.partNo,
+    Qty: (o) => String(o.quantity),
+    Status: (o) => o.status,
+    Earnings: (o) => money(o.orderEarnings),
+    Account: (o) => o.salesAccount,
+    Branch: (o) => o.branch,
+    Notes: (o) => o.notes,
+    "Date Added": (o) => dayAdded(o.createdAt),
+    "Changed By": (o) => changedByName(o.id),
+  }, (o) => o.id);
+
+  const listingFunnels = useColumnFunnels(listingRowsBeforeStatus, {
+    "Listed Date": (l) => l.listedDate,
+    "Part #": (l) => l.partNo,
+    Account: (l) => l.ebayAccount,
+    Branch: (l) => l.branch,
+    Price: (l) => money(l.price),
+    Qty: (l) => String(l.quantity),
+    Status: (l) => l.status,
+    "Date Added": (l) => dayAdded(l.createdAt),
+    "Changed By": (l) => changedByName(l.id),
+  }, (l) => l.id);
+  // Status chips (All / Listed / Sold) count what the funnels leave, then narrow it.
+  const listingStatusCounts = new Map<string, number>();
+  for (const l of listingFunnels.visible) listingStatusCounts.set(l.status, (listingStatusCounts.get(l.status) || 0) + 1);
+  const listingTableRows = listingStatusFilter === "all"
+    ? listingFunnels.visible
+    : listingFunnels.visible.filter((l) => l.status === listingStatusFilter || l.id === listingFunnels.pinned);
+
+  type PersonRow = (typeof byPersonBreakdown)[number];
+  const personFunnels = useColumnFunnels(byPersonBreakdown, {
+    Person: (p) => p.person,
+    Branches: (p) => String(p.branches),
+    Orders: (p) => String(p.orders),
+    Earnings: (p) => money(p.earnings),
+    ...Object.fromEntries(EBAY_ORDER_STATUSES.map((st) => [st, (p: PersonRow) => String(p.statuses[st] ?? 0)])),
+    Listed: (p) => String(p.listed),
+  }, (p) => p.person);
+
+  // Daily Branch Report: one funnel set across every day's table.
+  const dailyRows = useMemo(
+    () => dateList.flatMap((date) => dailyReportBranches.map((branch) => ({
+      date,
+      branch,
+      t: dailyBranchTotals.get(`${branch}|${date}`) || { salesQty: 0, salesValue: 0, returnQty: 0, returnsValue: 0 },
+    }))),
+    [dateList, dailyReportBranches, dailyBranchTotals]
+  );
+  const dailyFunnels = useColumnFunnels(dailyRows, {
+    Branch: (r) => r.branch,
+    Assigned: (r) => settingsByBranch.get(r.branch)?.assignedTo || "",
+    Listings: (r) => resolveListingsStatus(r.branch, r.date),
+    "Sales Qty": (r) => String(r.t.salesQty),
+    Sales: (r) => money(r.t.salesValue),
+    "Return Qty": (r) => String(r.t.returnQty),
+    "Returns Value": (r) => money(r.t.returnsValue),
+    Comments: (r) => getBranchNote(r.branch, r.date),
+  }, (r) => `${r.branch}|${r.date}`);
+  const dailyVisibleByDate = new Map<string, typeof dailyRows>();
+  for (const r of dailyFunnels.visible) {
+    const list = dailyVisibleByDate.get(r.date);
+    if (list) list.push(r); else dailyVisibleByDate.set(r.date, [r]);
+  }
+
+  const assignFunnels = useColumnFunnels(EBAY_BRANCHES, {
+    Branch: (b) => b,
+    "Assigned To": (b) => getBranchSetting(b).assignedTo,
+  }, (b) => b);
+  const centFunnels = useColumnFunnels(branchCents, {
+    Branch: (b) => b.branch,
+    "Cents (.XX)": (b) => `.${String(b.cents).padStart(2, "0")}`,
+  }, (b) => b.branch);
+
+  // From the branch popup: jump to Orders / Listings showing exactly that branch.
+  const openBranchIn = (where: "orders" | "listings", branch: string) => {
+    setBranchDetail(null);
+    if (where === "orders") {
+      setOrderQuery("");
+      setOrderDateBasis("order");
+      orderFunnels.only("Branch", [branch]);
+    } else {
+      setListingQuery("");
+      setListingStatusFilter("Listed");
+      listingFunnels.only("Branch", [branch]);
+    }
+    setTab(where);
+    tabsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   const [exportBusy, setExportBusy] = useState<"excel" | "pdf" | null>(null);
   const handleExport = async (format: "excel" | "pdf") => {
     setExportBusy(format);
@@ -1166,7 +1592,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
           accounts={ebayAccountNames}
           activityTargetType={EBAY_ACTIVITY_TARGET_TYPE}
           onClose={() => setImportOpen(false)}
-          onImported={() => { load(); loadActiveListings(); }}
+          onImported={() => { load(); loadActiveListings(); loadAddedOrders(); }}
         />
       )}
         <div className="flex items-center justify-between gap-3 mb-6">
@@ -1249,7 +1675,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
           </div>
         </div>
 
-        <div className="flex gap-2 mb-4">
+        <div ref={tabsRef} className="flex gap-2 mb-4 scroll-mt-4">
           {(["summary", "orders", "listings", "assignments"] as Tab[]).map((t) => (
             <button
               key={t}
@@ -1303,26 +1729,33 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
             </div>
 
             <div className="panel p-0 border-l-4 border-l-pink-500">
-              <h2 className="text-sm font-semibold px-4 pt-4 mb-2 text-pink-300 flex items-center gap-2"><Users className="h-4 w-4" /> By Assigned Person (totals for range)</h2>
+              <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-4 mb-2">
+                <h2 className="text-sm font-semibold text-pink-300 flex items-center gap-2"><Users className="h-4 w-4" /> By Assigned Person (totals for range)</h2>
+                <ClearFunnels count={personFunnels.activeCount} onClear={personFunnels.clear} />
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-white/10 bg-white/5">
-                      <th className="px-3 py-2 text-left font-semibold text-muted-foreground uppercase tracking-wide">Person</th>
-                      <th className="px-3 py-2 text-right font-semibold text-muted-foreground uppercase tracking-wide">Branches</th>
-                      <th className="px-3 py-2 text-right font-semibold text-muted-foreground uppercase tracking-wide">Orders</th>
-                      <th className="px-3 py-2 text-right font-semibold text-muted-foreground uppercase tracking-wide">Earnings</th>
-                      {EBAY_ORDER_STATUSES.map((s) => (
-                        <th key={s} className="px-3 py-2 text-right font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">{s}</th>
+                      {[
+                        { h: "Person", align: "text-left" },
+                        { h: "Branches", align: "text-right" },
+                        { h: "Orders", align: "text-right" },
+                        { h: "Earnings", align: "text-right" },
+                        ...EBAY_ORDER_STATUSES.map((st) => ({ h: st as string, align: "text-right" })),
+                        { h: "Listed", align: "text-right" },
+                      ].map(({ h, align }) => (
+                        <th key={h} className={`px-3 py-2 ${align} font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap`}>
+                          <span className="inline-flex items-center">{h}{personFunnels.funnel(h)}</span>
+                        </th>
                       ))}
-                      <th className="px-3 py-2 text-right font-semibold text-muted-foreground uppercase tracking-wide">Listed</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {byPersonBreakdown.length === 0 ? (
-                      <tr><td colSpan={5 + EBAY_ORDER_STATUSES.length} className="px-3 py-6 text-center text-muted-foreground">No data for this date range.</td></tr>
+                    {personFunnels.visible.length === 0 ? (
+                      <tr><td colSpan={5 + EBAY_ORDER_STATUSES.length} className="px-3 py-6 text-center text-muted-foreground">{byPersonBreakdown.length === 0 ? "No data for this date range." : "Nobody matches the column filters."}</td></tr>
                     ) : (
-                      byPersonBreakdown.map((p) => {
+                      personFunnels.visible.map((p) => {
                         const isOpen = expandedPersons.has(p.person);
                         return (
                           <Fragment key={p.person}>
@@ -1342,8 +1775,21 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                               <td className="px-3 py-2 text-right font-medium text-cyan-400">{p.listed}</td>
                             </tr>
                             {isOpen && p.branchRows.map((b) => (
-                              <tr key={`${p.person}-${b.branch}`} className="border-b border-white/5 bg-white/[0.02]">
-                                <td className="px-3 py-2 pl-10 text-muted-foreground">{b.branch}</td>
+                              <tr
+                                key={`${p.person}-${b.branch}`}
+                                className="border-b border-white/5 bg-white/[0.02] cursor-pointer hover:bg-blue-500/10"
+                                onClick={() => setBranchDetail({ branch: b.branch, person: p.person })}
+                                title={`See the orders and listings behind ${b.branch}'s numbers`}
+                              >
+                                <td className="px-3 py-2 pl-10">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); setBranchDetail({ branch: b.branch, person: p.person }); }}
+                                    className="text-blue-300/90 underline-offset-2 hover:text-blue-200 hover:underline"
+                                  >
+                                    {b.branch}
+                                  </button>
+                                </td>
                                 <td className="px-3 py-2 text-right"></td>
                                 <td className="px-3 py-2 text-right text-muted-foreground">{b.orders}</td>
                                 <td className="px-3 py-2 text-right text-green-400/80">${b.earnings.toFixed(2)}</td>
@@ -1363,23 +1809,23 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
             </div>
 
             <div>
-              <h2 className="text-sm font-semibold mb-2 text-teal-300 flex items-center gap-2"><ClipboardList className="h-4 w-4" /> Daily Branch Report</h2>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                <h2 className="text-sm font-semibold text-teal-300 flex items-center gap-2"><ClipboardList className="h-4 w-4" /> Daily Branch Report</h2>
+                <ClearFunnels count={dailyFunnels.activeCount} onClear={dailyFunnels.clear} />
+              </div>
               {dateList.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Pick a valid date range to see the daily branch report.</p>
               ) : (
                 <div className="space-y-4">
                   {dateList.map((date) => {
-                    let dayTotals = { salesQty: 0, salesValue: 0, returnQty: 0, returnsValue: 0 };
-                    for (const b of dailyReportBranches) {
-                      const t = dailyBranchTotals.get(`${b}|${date}`);
-                      if (t) {
-                        dayTotals = {
-                          salesQty: dayTotals.salesQty + t.salesQty,
-                          salesValue: dayTotals.salesValue + t.salesValue,
-                          returnQty: dayTotals.returnQty + t.returnQty,
-                          returnsValue: dayTotals.returnsValue + t.returnsValue,
-                        };
-                      }
+                    // This day's rows the column filters leave — Totals add up just those.
+                    const dayRows = dailyVisibleByDate.get(date) ?? [];
+                    const dayTotals = { salesQty: 0, salesValue: 0, returnQty: 0, returnsValue: 0 };
+                    for (const { t } of dayRows) {
+                      dayTotals.salesQty += t.salesQty;
+                      dayTotals.salesValue += t.salesValue;
+                      dayTotals.returnQty += t.returnQty;
+                      dayTotals.returnsValue += t.returnsValue;
                     }
                     return (
                       <div key={date} className="panel p-0 overflow-hidden border-l-4 border-l-teal-500">
@@ -1400,19 +1846,20 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                                   { h: "Returns Value", align: "text-right" },
                                   { h: "Comments", align: "text-left" },
                                 ].map(({ h, align }) => (
-                                  <th key={h} className={`px-2 py-2 ${align} text-[11px] font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap`}>{h}</th>
+                                  <th key={h} className={`px-2 py-2 ${align} text-[11px] font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap`}>
+                                    <span className="inline-flex items-center">{h}{dailyFunnels.funnel(h)}</span>
+                                  </th>
                                 ))}
                               </tr>
                             </thead>
                             <tbody>
-                              {dailyReportBranches.length === 0 ? (
-                                <tr><td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">No branches match this filter.</td></tr>
+                              {dayRows.length === 0 ? (
+                                <tr><td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">{dailyReportBranches.length === 0 ? "No branches match this filter." : "No branches match the column filters on this day."}</td></tr>
                               ) : (
-                                dailyReportBranches.map((branch) => {
-                                  const t = dailyBranchTotals.get(`${branch}|${date}`) || { salesQty: 0, salesValue: 0, returnQty: 0, returnsValue: 0 };
+                                dayRows.map(({ branch, t }) => {
                                   const assignedTo = settingsByBranch.get(branch)?.assignedTo || "";
                                   return (
-                                    <tr key={branch} className="border-b border-white/5 hover:bg-white/5">
+                                    <tr key={branch} className="border-b border-white/5 hover:bg-white/5" {...dailyFunnels.rowPin(`${branch}|${date}`)}>
                                       <td className="px-2 py-2 font-medium whitespace-nowrap">{branch}</td>
                                       <td className="px-2 py-2 whitespace-nowrap text-muted-foreground">
                                         {assignedTo || "—"}
@@ -1445,7 +1892,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                                 })
                               )}
                             </tbody>
-                            {dailyReportBranches.length > 0 && (
+                            {dayRows.length > 0 && (
                               <tfoot>
                                 <tr className="border-t border-white/10 bg-white/5 font-semibold">
                                   <td className="px-2 py-2">Totals</td>
@@ -1512,7 +1959,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                   </select>
                 </Field>
                 <Field label="Notes">
-                  <input placeholder="Optional" value={orderDraft.notes} onChange={(e) => setOrderDraft((d) => ({ ...d, notes: e.target.value }))} className="glass-input text-sm py-1.5 px-2 rounded-md w-32" />
+                  <GrowingTextarea placeholder="Optional" value={orderDraft.notes} onChange={(v) => setOrderDraft((d) => ({ ...d, notes: v }))} className="glass-input text-sm py-1.5 px-2 rounded-md" />
                 </Field>
                 <button onClick={handleAddOrder} disabled={addingOrder} className="btn flex items-center gap-2 px-4 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
                   {addingOrder ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} Add
@@ -1521,12 +1968,45 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
             </div>
 
             <div className="panel p-0 border-l-4 border-l-slate-500">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-white/10 px-3 py-2.5">
+                <TableSearch value={orderQuery} onChange={setOrderQuery} placeholder="Search order # or part #" busy={orderSearching} className="w-full sm:w-72" />
+                <div
+                  role="group"
+                  aria-label="Which date the Start / End range filters by"
+                  className={`inline-flex items-center rounded-md border border-white/10 bg-white/5 p-0.5 text-xs ${orderSearchOn ? "opacity-40" : ""}`}
+                  title={orderSearchOn ? "Searching looks at every date — clear the search to use the date range again" : "Which date the Start / End range above filters this table by"}
+                >
+                  <span className="px-2 font-semibold uppercase tracking-wide text-[10px] text-muted-foreground">Dates by</span>
+                  {(["order", "added"] as const).map((b) => (
+                    <button
+                      key={b}
+                      type="button"
+                      disabled={orderSearchOn}
+                      aria-pressed={orderDateBasis === b}
+                      onClick={() => setOrderDateBasis(b)}
+                      className={`rounded px-2.5 py-1 font-semibold transition-colors disabled:cursor-not-allowed ${orderDateBasis === b ? "bg-blue-600 text-white" : "text-muted-foreground hover:bg-white/10"}`}
+                    >
+                      {b === "order" ? "Order Date" : "Date Added"}
+                    </button>
+                  ))}
+                </div>
+                {addedOrdersLoading && orderDateBasis === "added" && !orderSearchOn && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                <ClearFunnels count={orderFunnels.activeCount} onClear={orderFunnels.clear} />
+                <p className="ml-auto text-xs text-muted-foreground tabular-nums">
+                  {orderSearchOn
+                    ? orderResults === null
+                      ? "Searching every date…"
+                      : `${orderFunnels.visible.length} ${orderFunnels.visible.length === 1 ? "match" : "matches"} on any date${orderResults.length >= EBAY_SEARCH_LIMIT ? ` — first ${EBAY_SEARCH_LIMIT} shown, type more of the number` : ""}`
+                    : `${orderFunnels.visible.length} ${orderFunnels.visible.length === 1 ? "order" : "orders"} ${orderDateBasis === "added" ? "added" : "dated"} ${startDate} to ${endDate}`}
+                </p>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-white/10 bg-white/5">
                       {[
-                        { h: "Date", align: "text-left" },
+                        { h: "Date Added", align: "text-left" },
+                        { h: "Order Date", align: "text-left" },
                         { h: "Order ID", align: "text-left" },
                         { h: "Part #", align: "text-left" },
                         { h: "Qty", align: "text-center" },
@@ -1535,34 +2015,48 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                         { h: "Account", align: "text-left" },
                         { h: "Branch", align: "text-left" },
                         { h: "Notes", align: "text-left" },
-                        { h: "Date Added", align: "text-left" },
                         { h: "Changed By", align: "text-left" },
                         { h: "", align: "text-center" },
-                      ].map(({ h, align }) => (
-                        <th key={h || "actions"} className={`px-2 py-3 ${align} text-[11px] font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap`}>{h}</th>
-                      ))}
+                      ].map(({ h, align }) => {
+                        // The column the date range is filtering on reads in blue.
+                        const active = !orderSearchOn && ((h === "Order Date" && orderDateBasis === "order") || (h === "Date Added" && orderDateBasis === "added"));
+                        return (
+                          <th key={h || "actions"} className={`px-2 py-3 ${align} text-[11px] font-semibold uppercase tracking-wide whitespace-nowrap ${active ? "text-blue-300" : "text-muted-foreground"}`}>
+                            {h ? <span className="inline-flex items-center">{h}{orderFunnels.funnel(h)}</span> : null}
+                          </th>
+                        );
+                      })}
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredOrders.length === 0 ? (
-                      <tr><td colSpan={12} className="px-3 py-6 text-center text-muted-foreground">No orders match these filters.</td></tr>
+                    {orderFunnels.visible.length === 0 ? (
+                      <tr><td colSpan={12} className="px-3 py-6 text-center text-muted-foreground">
+                        {orderSearchOn && orderResults === null
+                          ? "Searching every date…"
+                          : orderTableRows.length > 0
+                          ? "No orders match the column filters."
+                          : orderSearchOn
+                          ? `No order # or part # matching “${orderQuery.trim()}” on any date.`
+                          : "No orders match these filters."}
+                      </td></tr>
                     ) : (
-                      filteredOrders.map((o) => (
-                        <tr key={o.id} className="border-b border-white/5 hover:bg-white/5">
+                      orderFunnels.visible.map((o) => (
+                        <tr key={o.id} className="border-b border-white/5 hover:bg-white/5" {...orderFunnels.rowPin(o.id)}>
+                          <td className="px-2 py-2 whitespace-nowrap">{formatDateAdded(o.createdAt)}</td>
                           <td className="px-2 py-2 whitespace-nowrap">{o.orderDate}</td>
                           <td className="px-2 py-2 font-mono whitespace-nowrap">
                             {(() => {
                               const ref = parseEbayOrderRef(o.orderExtId);
                               return ref.href ? (
                                 <a href={ref.href} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline underline-offset-2" title="Open this order on eBay">
-                                  {ref.display}
+                                  <Highlight text={ref.display} query={orderQuery} />
                                 </a>
                               ) : (
                                 "—"
                               );
                             })()}
                           </td>
-                          <td className="px-2 py-2 font-mono whitespace-nowrap">{o.partNo || "—"}</td>
+                          <td className="px-2 py-2 font-mono whitespace-nowrap">{o.partNo ? <Highlight text={o.partNo} query={orderQuery} /> : "—"}</td>
                           <td className="px-2 py-2 text-center">
                             <input type="number" value={o.quantity} onChange={(e) => patchOrder(o.id, { quantity: Number(e.target.value) })} onBlur={() => saveOrderField(o, { quantity: o.quantity })} className="glass-input text-xs py-0.5 px-1.5 rounded w-14 text-center" />
                           </td>
@@ -1577,9 +2071,15 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                           <td className="px-2 py-2 whitespace-nowrap">{o.salesAccount}</td>
                           <td className="px-2 py-2 whitespace-nowrap">{o.branch}</td>
                           <td className="px-2 py-2">
-                            <input value={o.notes} onChange={(e) => patchOrder(o.id, { notes: e.target.value })} onBlur={() => saveOrderField(o, { notes: o.notes })} className="glass-input text-xs py-0.5 px-2 rounded w-28" />
+                            <NotesCell
+                              value={o.notes}
+                              label={parseEbayOrderRef(o.orderExtId).display || o.partNo || "Order"}
+                              onSave={(next) => {
+                                patchOrder(o.id, { notes: next });
+                                void saveOrderField(o, { notes: next });
+                              }}
+                            />
                           </td>
-                          <td className="px-2 py-2 whitespace-nowrap text-muted-foreground">{formatDateAdded(o.createdAt)}</td>
                           <td className="px-2 py-2 whitespace-nowrap">
                             {(() => {
                               const entry = changedByRowId.get(o.id);
@@ -1664,34 +2164,75 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
             </div>
 
             <div className="panel p-0 border-l-4 border-l-slate-500">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-white/10 px-3 py-2.5">
+                <TableSearch value={listingQuery} onChange={setListingQuery} placeholder="Search part #" busy={listingSearching} className="w-full sm:w-72" />
+                <div role="group" aria-label="Show listings by status" className="inline-flex items-center rounded-md border border-white/10 bg-white/5 p-0.5 text-xs">
+                  {(["all", ...EBAY_LISTING_STATUSES] as string[]).map((s) => {
+                    const n = s === "all" ? listingFunnels.visible.length : listingStatusCounts.get(s) || 0;
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        aria-pressed={listingStatusFilter === s}
+                        onClick={() => setListingStatusFilter(s)}
+                        className={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 font-semibold transition-colors ${listingStatusFilter === s ? "bg-blue-600 text-white" : "text-muted-foreground hover:bg-white/10"}`}
+                      >
+                        {s === "all" ? "All" : s}
+                        <span className={`tabular-nums ${listingStatusFilter === s ? "text-blue-100" : "text-muted-foreground/70"}`}>{n}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <ClearFunnels count={listingFunnels.activeCount} onClear={listingFunnels.clear} />
+                <p className="ml-auto text-xs text-muted-foreground tabular-nums">
+                  {listingSearchOn
+                    ? listingResults === null
+                      ? "Searching every date…"
+                      : `${listingTableRows.length} ${listingTableRows.length === 1 ? "match" : "matches"} on any date${listingResults.length >= EBAY_SEARCH_LIMIT ? ` — first ${EBAY_SEARCH_LIMIT} shown, type more of the part #` : ""}`
+                    : `${listingTableRows.length} ${listingTableRows.length === 1 ? "listing" : "listings"} listed ${startDate} to ${endDate}`}
+                </p>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-white/10 bg-white/5">
                       {[
-                        { h: "Date", align: "text-left" },
+                        { h: "Date Added", align: "text-left" },
+                        { h: "Listed Date", align: "text-left" },
                         { h: "Part #", align: "text-left" },
                         { h: "Account", align: "text-left" },
                         { h: "Branch", align: "text-left" },
                         { h: "Price", align: "text-right" },
                         { h: "Qty", align: "text-center" },
                         { h: "Status", align: "text-left" },
-                        { h: "Date Added", align: "text-left" },
                         { h: "Changed By", align: "text-left" },
                         { h: "", align: "text-center" },
                       ].map(({ h, align }) => (
-                        <th key={h || "actions"} className={`px-2 py-3 ${align} text-[11px] font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap`}>{h}</th>
+                        <th key={h || "actions"} className={`px-2 py-3 ${align} text-[11px] font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap`}>
+                          {h ? <span className="inline-flex items-center">{h}{listingFunnels.funnel(h)}</span> : null}
+                        </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredListings.length === 0 ? (
-                      <tr><td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">No listings match these filters.</td></tr>
+                    {listingTableRows.length === 0 ? (
+                      <tr><td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
+                        {listingSearchOn
+                          ? listingResults === null
+                            ? "Searching every date…"
+                            : listingRowsBeforeStatus.length > 0
+                            ? "No matches pass the status / column filters."
+                            : `No listing with a part # matching “${listingQuery.trim()}” on any date.`
+                          : listingRowsBeforeStatus.length > 0
+                          ? "No listings match the status / column filters."
+                          : "No listings match these filters."}
+                      </td></tr>
                     ) : (
-                      filteredListings.map((l) => (
-                        <tr key={l.id} className="border-b border-white/5 hover:bg-white/5">
+                      listingTableRows.map((l) => (
+                        <tr key={l.id} className="border-b border-white/5 hover:bg-white/5" {...listingFunnels.rowPin(l.id)}>
+                          <td className="px-2 py-2 whitespace-nowrap">{formatDateAdded(l.createdAt)}</td>
                           <td className="px-2 py-2 whitespace-nowrap">{l.listedDate}</td>
-                          <td className="px-2 py-2 font-mono whitespace-nowrap">{l.partNo || "—"}</td>
+                          <td className="px-2 py-2 font-mono whitespace-nowrap">{l.partNo ? <Highlight text={l.partNo} query={listingQuery} /> : "—"}</td>
                           <td className="px-2 py-2 whitespace-nowrap">{l.ebayAccount}</td>
                           <td className="px-2 py-2 whitespace-nowrap">{l.branch}</td>
                           <td className="px-2 py-2 text-right">
@@ -1705,7 +2246,6 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                               {EBAY_LISTING_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                             </select>
                           </td>
-                          <td className="px-2 py-2 whitespace-nowrap text-muted-foreground">{formatDateAdded(l.createdAt)}</td>
                           <td className="px-2 py-2 whitespace-nowrap">
                             {(() => {
                               const entry = changedByRowId.get(l.id);
@@ -1739,25 +2279,31 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
         {tab === "assignments" && (
           <div className="panel p-0 border-l-4 border-l-indigo-500">
             <div className="px-4 pt-4 pb-2">
-              <h2 className="text-sm font-semibold text-indigo-300 flex items-center gap-2"><Users className="h-4 w-4" /> Branch Assignments</h2>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold text-indigo-300 flex items-center gap-2"><Users className="h-4 w-4" /> Branch Assignments</h2>
+                <ClearFunnels count={assignFunnels.activeCount} onClear={assignFunnels.clear} />
+              </div>
               <p className="text-xs text-muted-foreground mt-1">Who currently handles each branch's eBay listings. The Daily Branch Report on the Summary tab groups branches by whoever is assigned here — change it any time coverage moves to a different person. Listings Status is edited per day on that same Daily Branch Report, not here.</p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-white/10 bg-white/5">
-                    <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Branch</th>
-                    <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Assigned To</th>
+                    <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide"><span className="inline-flex items-center">Branch{assignFunnels.funnel("Branch")}</span></th>
+                    <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide"><span className="inline-flex items-center">Assigned To{assignFunnels.funnel("Assigned To")}</span></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {EBAY_BRANCHES.map((branch) => {
+                  {assignFunnels.visible.length === 0 && EBAY_BRANCHES.length > 0 && (
+                    <tr><td colSpan={2} className="px-3 py-4 text-center text-muted-foreground">No branches match the column filters.</td></tr>
+                  )}
+                  {assignFunnels.visible.map((branch) => {
                     const setting = getBranchSetting(branch);
                     const assignedOptions = setting.assignedTo && !partsStaffNames.includes(setting.assignedTo)
                       ? [setting.assignedTo, ...partsStaffNames]
                       : partsStaffNames;
                     return (
-                      <tr key={branch} className="border-b border-white/5 hover:bg-white/5">
+                      <tr key={branch} className="border-b border-white/5 hover:bg-white/5" {...assignFunnels.rowPin(branch)}>
                         <td className="px-3 py-2 font-medium whitespace-nowrap">{branch}</td>
                         <td className="px-3 py-2">
                           <select
@@ -1780,23 +2326,28 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
             </div>
 
             <div className="border-t border-white/10 px-4 py-4 bg-cyan-500/5">
-              <h2 className="text-sm font-semibold text-cyan-300 flex items-center gap-2"><DollarSign className="h-4 w-4" /> Branches &amp; Cent Pricing</h2>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold text-cyan-300 flex items-center gap-2"><DollarSign className="h-4 w-4" /> Branches &amp; Cent Pricing</h2>
+                <ClearFunnels count={centFunnels.activeCount} onClear={centFunnels.clear} />
+              </div>
               <p className="text-xs text-muted-foreground mt-1">The branches this page offers everywhere (pickers, Assignments, Daily Branch Report) — each one's cent value is the fixed cents a Listing price always ends in for that branch. Add or remove a branch here and it updates everywhere.</p>
               <div className="overflow-x-auto mt-3 rounded-md border border-white/10">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-white/10 bg-white/5">
-                      <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Branch</th>
-                      <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Cents (.XX)</th>
+                      <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide"><span className="inline-flex items-center">Branch{centFunnels.funnel("Branch")}</span></th>
+                      <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide"><span className="inline-flex items-center">Cents (.XX){centFunnels.funnel("Cents (.XX)")}</span></th>
                       <th className="px-3 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide"></th>
                     </tr>
                   </thead>
                   <tbody>
                     {branchCents.length === 0 ? (
                       <tr><td colSpan={3} className="px-3 py-4 text-center text-muted-foreground">Loading…</td></tr>
+                    ) : centFunnels.visible.length === 0 ? (
+                      <tr><td colSpan={3} className="px-3 py-4 text-center text-muted-foreground">No branches match the column filters.</td></tr>
                     ) : (
-                      branchCents.map((b) => (
-                        <tr key={b.branch} className="border-b border-white/5 hover:bg-white/5">
+                      centFunnels.visible.map((b) => (
+                        <tr key={b.branch} className="border-b border-white/5 hover:bg-white/5" {...centFunnels.rowPin(b.branch)}>
                           <td className="px-3 py-2 font-medium whitespace-nowrap">{b.branch}</td>
                           <td className="px-3 py-2">
                             <div className="flex items-center gap-1">
@@ -1920,6 +2471,17 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                 </select>
               </Field>
             </div>
+            <div className="mt-3">
+              <Field label="Notes">
+                <textarea
+                  value={orderEditDraft.notes}
+                  onChange={(e) => setOrderEditDraft((d) => d && ({ ...d, notes: e.target.value }))}
+                  rows={3}
+                  placeholder="Optional"
+                  className="glass-input w-full resize-y rounded-md px-2 py-1.5 text-sm leading-relaxed"
+                />
+              </Field>
+            </div>
             <div className="flex justify-end gap-2 mt-5">
               <button onClick={() => setEditingOrder(null)} className="btn px-4 text-sm">Cancel</button>
               <button onClick={handleSaveOrderEdit} disabled={savingOrderEdit} className="btn flex items-center gap-2 px-4 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 text-sm">
@@ -1929,6 +2491,140 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
           </div>
         </div>
       )}
+
+      {branchDetail && (() => {
+        const { branch, person } = branchDetail;
+        const bOrders = newestAddedFirst(orders.filter((o) => (o.branch || "—") === branch));
+        const bListed = newestAddedFirst(listings.filter((l) => l.status === "Listed" && (l.branch || "—") === branch));
+        const earnings = bOrders.reduce((sum, o) => sum + o.orderEarnings, 0);
+        const qty = bOrders.reduce((sum, o) => sum + o.quantity, 0);
+        const statusCounts = EBAY_ORDER_STATUSES.map((st) => ({ st, n: bOrders.filter((o) => o.status === st).length })).filter((x) => x.n > 0);
+        const th = (h: string, align = "text-left") => (
+          <th key={h} className={`px-2 py-2 ${align} text-[11px] font-semibold uppercase tracking-wide text-muted-foreground whitespace-nowrap`}>{h}</th>
+        );
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setBranchDetail(null)}>
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label={`${branch} — orders and listings`}
+              className="flex max-h-[85vh] w-full max-w-5xl flex-col rounded-lg border border-white/10 bg-slate-900"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-3 border-b border-white/10 px-5 py-4">
+                <div className="min-w-0">
+                  <h3 className="text-lg font-bold text-white">{branch}</h3>
+                  <p className="text-xs text-muted-foreground">
+                    {person === "Unassigned" ? "Unassigned" : `Assigned to ${person}`} · {startDate} to {endDate} · orders by Order Date
+                  </p>
+                </div>
+                <button type="button" onClick={() => setBranchDetail(null)} className="text-slate-400 hover:text-white text-xl leading-none" aria-label="Close">×</button>
+              </div>
+
+              <div className="space-y-5 overflow-y-auto px-5 py-4">
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <span className="rounded-md border border-blue-500/30 bg-blue-500/5 px-2.5 py-1"><span className="text-muted-foreground">Orders</span> <b className="text-blue-300 tabular-nums">{bOrders.length}</b></span>
+                  <span className="rounded-md border border-green-500/30 bg-green-500/5 px-2.5 py-1"><span className="text-muted-foreground">Earnings</span> <b className="text-green-400 tabular-nums">${earnings.toFixed(2)}</b></span>
+                  {statusCounts.map(({ st, n }) => {
+                    const tone = ORDER_STATUS_TONE[st] || ORDER_STATUS_TONE.Pending;
+                    return (
+                      <span key={st} className={`rounded-md border px-2.5 py-1 ${tone.border} ${tone.bg}`}><span className="text-muted-foreground">{st}</span> <b className={`tabular-nums ${tone.text}`}>{n}</b></span>
+                    );
+                  })}
+                  <span className="rounded-md border border-cyan-500/30 bg-cyan-500/5 px-2.5 py-1"><span className="text-muted-foreground">Listed</span> <b className="text-cyan-300 tabular-nums">{bListed.length}</b></span>
+                </div>
+
+                <section>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="flex items-center gap-2 text-sm font-semibold text-blue-300"><Package className="h-4 w-4" /> Orders ({bOrders.length})</h4>
+                    {bOrders.length > 0 && (
+                      <button type="button" onClick={() => openBranchIn("orders", branch)} className="btn px-3 py-1 text-xs">Open in Orders tab →</button>
+                    )}
+                  </div>
+                  {bOrders.length === 0 ? (
+                    <p className="rounded-md border border-white/10 px-3 py-4 text-center text-xs text-muted-foreground">No orders for {branch} with an Order Date in this range.</p>
+                  ) : (
+                    <div className="overflow-x-auto rounded-md border border-white/10">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-white/10 bg-white/5">
+                            {th("Date Added")}{th("Order Date")}{th("Order ID")}{th("Part #")}{th("Qty", "text-center")}{th("Status")}{th("Earnings", "text-right")}{th("Notes")}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {bOrders.map((o) => {
+                            const ref = parseEbayOrderRef(o.orderExtId);
+                            const tone = ORDER_STATUS_TONE[o.status] || ORDER_STATUS_TONE.Pending;
+                            return (
+                              <tr key={o.id} className="border-b border-white/5">
+                                <td className="px-2 py-2 whitespace-nowrap">{formatDateAdded(o.createdAt)}</td>
+                                <td className="px-2 py-2 whitespace-nowrap">{o.orderDate}</td>
+                                <td className="px-2 py-2 font-mono whitespace-nowrap">
+                                  {ref.href ? (
+                                    <a href={ref.href} target="_blank" rel="noopener noreferrer" className="text-blue-400 underline underline-offset-2 hover:text-blue-300" title="Open this order on eBay">{ref.display}</a>
+                                  ) : "—"}
+                                </td>
+                                <td className="px-2 py-2 font-mono whitespace-nowrap">{o.partNo || "—"}</td>
+                                <td className="px-2 py-2 text-center tabular-nums">{o.quantity}</td>
+                                <td className="px-2 py-2"><span className={`rounded border px-1.5 py-0.5 text-[11px] font-semibold ${tone.border} ${tone.bg} ${tone.text}`}>{o.status}</span></td>
+                                <td className="px-2 py-2 text-right font-medium text-green-400 tabular-nums">${o.orderEarnings.toFixed(2)}</td>
+                                <td className="max-w-[16rem] truncate px-2 py-2 text-muted-foreground" title={o.notes || undefined}>{o.notes || "—"}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t border-white/10 bg-white/5 font-semibold">
+                            <td colSpan={4} className="px-2 py-2">Total</td>
+                            <td className="px-2 py-2 text-center tabular-nums">{qty}</td>
+                            <td className="px-2 py-2"></td>
+                            <td className="px-2 py-2 text-right text-green-400 tabular-nums">${earnings.toFixed(2)}</td>
+                            <td className="px-2 py-2"></td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
+                </section>
+
+                <section>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="flex items-center gap-2 text-sm font-semibold text-cyan-300"><Tag className="h-4 w-4" /> Listed ({bListed.length})</h4>
+                    {bListed.length > 0 && (
+                      <button type="button" onClick={() => openBranchIn("listings", branch)} className="btn px-3 py-1 text-xs">Open in Listings tab →</button>
+                    )}
+                  </div>
+                  {bListed.length === 0 ? (
+                    <p className="rounded-md border border-white/10 px-3 py-4 text-center text-xs text-muted-foreground">Nothing still Listed for {branch} with a Listed Date in this range.</p>
+                  ) : (
+                    <div className="overflow-x-auto rounded-md border border-white/10">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-white/10 bg-white/5">
+                            {th("Date Added")}{th("Listed Date")}{th("Part #")}{th("Account")}{th("Price", "text-right")}{th("Qty", "text-center")}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {bListed.map((l) => (
+                            <tr key={l.id} className="border-b border-white/5">
+                              <td className="px-2 py-2 whitespace-nowrap">{formatDateAdded(l.createdAt)}</td>
+                              <td className="px-2 py-2 whitespace-nowrap">{l.listedDate}</td>
+                              <td className="px-2 py-2 font-mono whitespace-nowrap">{l.partNo || "—"}</td>
+                              <td className="px-2 py-2 whitespace-nowrap">{l.ebayAccount}</td>
+                              <td className="px-2 py-2 text-right font-medium text-green-400 tabular-nums">${l.price.toFixed(2)}</td>
+                              <td className="px-2 py-2 text-center tabular-nums">{l.quantity}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {editingListing && listingEditDraft && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setEditingListing(null)}>
