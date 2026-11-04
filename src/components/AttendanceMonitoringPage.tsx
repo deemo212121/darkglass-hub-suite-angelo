@@ -74,7 +74,7 @@ import {
   reviewCorrectionStage,
   canReviewCorrectionStage,
   undoCorrectionRejection,
-  remindCorrectionManager, undoCorrectionApproval,
+  undoCorrectionApproval,
   approvedCorrectionStages,
   type TimecardCorrectionRow,
   type TimecardCorrectionHistoryRow,
@@ -83,6 +83,8 @@ import {
 } from "@/lib/supabase/timecardCorrections";
 import { CorrectionManagerSignModal, CorrectionHrSignModal } from "@/components/CorrectionSignModals";
 import { AppModal } from "@/components/ui-kit/AppModal";
+import { StageRemindButton } from "@/components/RemindButton";
+import { pendingStagesOf } from "@/lib/supabase/approvalReminders";
 import { StageNote } from "@/components/StageNote";
 import { useAttention, badgeText } from "@/lib/attention";
 
@@ -2107,45 +2109,6 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     return approvedCorrectionStages(c).filter((s) => by[s] === myProfileId);
   };
   const [undoingApprovalId, setUndoingApprovalId] = useState<string | null>(null);
-  // Bell — remind the manager a correction is still waiting on the manager
-  // step. Shown to anyone but that manager; each viewer's last reminder per
-  // correction is remembered (this browser) so the bell shows "Reminded".
-  const [remindingId, setRemindingId] = useState<string | null>(null);
-  const [remindedAt, setRemindedAt] = useState<Record<string, number>>(() => {
-    try {
-      return JSON.parse(localStorage.getItem("ahs.correctionReminders") || "{}");
-    } catch {
-      return {};
-    }
-  });
-  const canRemindManager = (c: TimecardCorrectionRow) => c.status === "pending" && c.managerStatus === "pending" && !!myProfileId && c.managerId !== myProfileId;
-  const handleRemindManager = async (c: TimecardCorrectionRow) => {
-    setRemindingId(c.id);
-    try {
-      const managerName = await remindCorrectionManager(c, myProfileId || "", displayName || "HR");
-      const next = { ...remindedAt, [c.id]: Date.now() };
-      setRemindedAt(next);
-      try {
-        localStorage.setItem("ahs.correctionReminders", JSON.stringify(next));
-      } catch {
-        /* private mode — just not remembered */
-      }
-      void logModuleActivity({
-        module: "attendance-monitoring",
-        actorName: displayName || "Reviewer",
-        action: "timecard_correction_manager_reminded",
-        targetType: "timecard_correction",
-        targetId: c.id,
-        targetLabel: `${profileName(c.profileId)} (${c.workDate})`,
-        details: { manager: managerName },
-      });
-      toast.success(`Reminder sent to ${managerName}`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't send the reminder");
-    } finally {
-      setRemindingId(null);
-    }
-  };
   const [undoApproval, setUndoApproval] = useState<{ c: TimecardCorrectionRow; reason: string } | null>(null);
   const handleUndoCorrectionApproval = async () => {
     if (!undoApproval) return;
@@ -3431,6 +3394,19 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                              !(request.accountingStatus === "pending" && canReviewPtoStage(request, "accounting", myProfileId, role, extraRoles, displayName, requesterManagerName, requesterManagersManagerName)) && (
                               <span className="text-xs text-slate-500">{request.managerStatus === "pending" ? "Awaiting manager" : "Awaiting HR/Accounting"}</span>
                             )}
+                            <StageRemindButton
+                              kind="pto_request"
+                              id={request.id}
+                              pending={pendingStagesOf(request)}
+                              requesterId={request.profileId}
+                              managerId={request.managerId}
+                              profiles={profiles}
+                              viewer={{ id: myProfileId, name: displayName, role, extraRoles }}
+                              what={`${PTO_TYPE_LABELS[request.ptoType]} request for ${request.startDate === request.endDate ? request.startDate : `${request.startDate} to ${request.endDate}`}`}
+                              linkTo="/m/dashboard/attendance-monitoring?tab=pto-management"
+                              logModule="attendance-monitoring"
+                              className="self-start"
+                            />
                           </div>
                         </td>
                       </tr>
@@ -3718,20 +3694,18 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               )}
                             </div>
                           )}
-                          {canRemindManager(correction) && (() => {
-                            const at = remindedAt[correction.id];
-                            return (
-                              <button
-                                type="button"
-                                onClick={() => void handleRemindManager(correction)}
-                                disabled={remindingId === correction.id}
-                                className="inline-flex items-center gap-1 rounded border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                                title={at ? `You reminded the manager ${new Date(at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} — click to remind again` : "Remind the manager this correction is still waiting on their approval"}
-                              >
-                                {remindingId === correction.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bell className="h-3 w-3" />} {at ? "Reminded" : "Remind manager"}
-                              </button>
-                            );
-                          })()}
+                          <StageRemindButton
+                            kind="timecard_correction"
+                            id={correction.id}
+                            pending={pendingStagesOf(correction)}
+                            requesterId={correction.profileId}
+                            managerId={correction.managerId}
+                            profiles={profiles}
+                            viewer={{ id: myProfileId, name: displayName, role, extraRoles }}
+                            what={`time correction for ${correction.workDate}`}
+                            linkTo="/m/dashboard/attendance-monitoring?tab=corrections"
+                            logModule="attendance-monitoring"
+                          />
                           {undoableApprovalStages(correction).length > 0 && (
                             <button
                               type="button"

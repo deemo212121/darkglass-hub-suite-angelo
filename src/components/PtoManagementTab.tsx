@@ -31,6 +31,8 @@ import {
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import { PtoManagerSignModal, PtoHrSignModal } from "@/components/PtoSignModals";
 import { PtoReasonCell, PtoPhotoCell } from "@/components/PtoReasonPhotoCells";
+import { StageRemindButton } from "@/components/RemindButton";
+import { pendingStagesOf } from "@/lib/supabase/approvalReminders";
 
 // Same split as Attendance Monitoring's PTO Management (Paid Leave / Unpaid Leave).
 const PAID_LEAVE_PTO_TYPES: PtoType[] = ["vacation"];
@@ -437,6 +439,19 @@ export function PtoManagementTab() {
                      !(request.accountingStatus === "pending" && canReviewPtoStage(request, "accounting", myProfileId, role, extraRoles, displayName, requesterManagerName, requesterManagersManagerName)) && (
                       <span className="text-xs text-slate-500">{request.managerStatus === "pending" ? "Awaiting manager" : "Awaiting HR/Accounting"}</span>
                     )}
+                    <StageRemindButton
+                      kind="pto_request"
+                      id={request.id}
+                      pending={pendingStagesOf(request)}
+                      requesterId={request.profileId}
+                      managerId={request.managerId}
+                      profiles={profiles}
+                      viewer={{ id: myProfileId, name: displayName, role, extraRoles }}
+                      what={`${PTO_TYPE_LABELS[request.ptoType]} request for ${request.startDate === request.endDate ? request.startDate : `${request.startDate} to ${request.endDate}`}`}
+                      linkTo="/m/dashboard/attendance-monitoring?tab=pto-management"
+                      logModule="attendance-monitoring"
+                      className="self-start"
+                    />
                   </div>
                 </td>
               </tr>

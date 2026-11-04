@@ -26,6 +26,8 @@ import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { resetMileageRouteConfirmation } from "@/lib/supabase/mileage";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { TicketDisputeManagerSignModal, TicketDisputeHrSignModal } from "@/components/TicketDisputeSignModals";
+import { StageRemindButton } from "@/components/RemindButton";
+import type { ReminderStage } from "@/lib/supabase/approvalReminders";
 
 const isPdfAttachment = (url: string) => /\.pdf(\?|$)/i.test(url);
 
@@ -92,6 +94,30 @@ export function TicketTimeDisputesTab() {
   const reviewableDisputes = isFullRequestsAdmin
     ? ticketTimeDisputes
     : ticketTimeDisputes.filter((r) => canReviewTicketDispute(r.profileId, role, extraRoles, displayName, employees));
+  // Remind bell — pending: the requester's manager approves (and HR still
+  // signs the Exception Report paperwork when it has one); history: an
+  // approved dispute whose HR paperwork is still unsigned.
+  const disputeRemindStages = (r: EmployeeRequestRow): ReminderStage[] => {
+    const hrPaperwork = r.exceptionType !== null && r.hrPaperworkStatus === "pending" && r.status !== "rejected";
+    const out: ReminderStage[] = [];
+    if (r.status === "pending") out.push("manager");
+    if (hrPaperwork) out.push("hr");
+    return out;
+  };
+  const disputeRemind = (r: EmployeeRequestRow) => (
+    <StageRemindButton
+      kind="ticket_time_dispute"
+      id={r.id}
+      pending={disputeRemindStages(r)}
+      requesterId={r.profileId}
+      profiles={employees}
+      viewer={{ id: myProfileId, name: displayName, role, extraRoles }}
+      what={`ticket time dispute${r.ticketNo ? ` on ticket ${r.ticketNo}` : ""} (submitted ${r.createdAt.slice(0, 10)})`}
+      linkTo="/m/dashboard/attendance-monitoring?tab=ticket-dispute"
+      logModule="attendance-monitoring"
+      className="mt-2"
+    />
+  );
   const eraFilteredDisputes = reviewableDisputes.filter((r) => (r.exceptionType !== null) === (ticketDisputeEraFilter === "new"));
   const pendingTicketTimeDisputes = eraFilteredDisputes.filter((r) => r.status === "pending");
   const historyTicketTimeDisputes = eraFilteredDisputes
@@ -281,6 +307,7 @@ export function TicketTimeDisputesTab() {
                     Reject
                   </button>
                 </div>
+                {disputeRemind(r)}
                 {isFullRequestsAdmin && r.exceptionType !== null && r.hrPaperworkStatus === "pending" && (
                     <button
                       type="button"
@@ -378,6 +405,7 @@ export function TicketTimeDisputesTab() {
                     <StageNote note={r.hrNote} />
                   </div>
                 )}
+                {disputeRemind(r)}
                 {isFullRequestsAdmin && r.exceptionType !== null && r.hrPaperworkStatus === "pending" && (
                     <button
                       type="button"

@@ -26,6 +26,8 @@ export const MODULE_ACTIVITY_ACTION_LABELS: Record<string, string> = {
   pto_stage_reconsidered: "Reconsidered a PTO review decision",
   timecard_correction_approved: "Approved time correction",
   timecard_correction_rejected: "Rejected time correction",
+  approval_reminder_sent: "Sent an approval reminder",
+  timecard_correction_manager_reminded: "Reminded the manager about a time correction",
   conduct_warning_submitted: "Submitted conduct warning",
   attendance_note_saved: "Saved attendance note",
   hr_status_saved: "Set HR Status",

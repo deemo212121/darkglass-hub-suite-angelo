@@ -46,7 +46,10 @@ import {
   notifyRequesterOfTransferDecision,
   notifyRequesterOfTransferReceived,
   canApproveTruckStockPull,
+  remindTruckStockApprovers,
 } from "@/lib/truckStockNotify";
+import { RemindButton } from "@/components/RemindButton";
+import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
 import {
   getTruckStockPullRequests,
   approveTruckStockPullRequest,
@@ -179,6 +182,52 @@ export function TruckStockRequestsPanel({ highlightRequestId }: { highlightReque
     subTab === "pending"
       ? canApproveTruckStockPull(role, extraRoles, myAssignedBranch, row.kind === "pull" ? row.branch : (row.toBranch as string))
       : canApproveTruckStockPull(role, extraRoles, myAssignedBranch, (row.toBranch as string) ?? row.branch);
+
+  // Remind bell — pings the Parts Manager of the branch whose step it is
+  // (same branch canActOn checks). Hidden from that branch's own Parts
+  // Manager; Admins and everyone else can send it.
+  const actingBranch = (row: UnifiedRow): string =>
+    subTab === "pending" ? (row.kind === "pull" ? row.branch : (row.toBranch as string)) : ((row.toBranch as string) ?? row.branch);
+  const isActingPartsManager = (row: UnifiedRow) =>
+    [role, ...(extraRoles ?? [])].some((r) => String(r ?? "").trim().toUpperCase() === "PARTS_MANAGER") &&
+    String(myAssignedBranch ?? "").trim().toLowerCase() === String(actingBranch(row) ?? "").trim().toLowerCase();
+  const remindButton = (r: UnifiedRow) => {
+    if (isActingPartsManager(r)) return null;
+    const branch = actingBranch(r);
+    const step = subTab === "pending" ? "approve" : "receive";
+    return (
+      <RemindButton
+        reminderKey={`truck_stock:${r.id}:${step}`}
+        label={step === "approve" ? "Remind Parts Manager" : "Remind to receive"}
+        title={`Send ${branch}'s Parts Manager a bell reminder`}
+        onRemind={async () => {
+          const n = await remindTruckStockApprovers({
+            requestId: r.id,
+            kind: r.kind,
+            step,
+            branch,
+            partNo: r.partNo,
+            qty: r.quantity,
+            fromBranch: r.branch,
+            toBranch: r.toBranch,
+            ticketNo: r.ticketNo,
+            senderId: myProfileId,
+            senderName: displayName || "Parts",
+          });
+          void logModuleActivity({
+            module: "truck-stock",
+            actorName: displayName || "Parts",
+            action: "approval_reminder_sent",
+            targetType: r.kind === "pull" ? "truck_stock_pull_request" : "truck_stock_transfer",
+            targetId: r.id,
+            targetLabel: `${r.quantity} × ${r.partNo} (${r.branch}${r.toBranch ? ` → ${r.toBranch}` : ""})`,
+            details: { step, branch, people: n },
+          });
+          return `Reminder sent to ${branch}'s Parts Manager${n === 1 ? "" : `s (${n})`}`;
+        }}
+      />
+    );
+  };
 
   const load = async () => {
     setLoading(true);
@@ -547,6 +596,7 @@ export function TruckStockRequestsPanel({ highlightRequestId }: { highlightReque
                     {showReason && <td className="px-3 py-2 text-rose-200 max-w-xs" title={r.rejectionReason || ""}>{r.rejectionReason || "—"}</td>}
                     {showActions && (
                       <td className="px-3 py-2">
+                        <div className="flex flex-col items-end gap-1">
                         {mayAct ? (
                           subTab === "pending" ? (
                             <div className="flex items-center justify-end gap-1">
@@ -569,6 +619,8 @@ export function TruckStockRequestsPanel({ highlightRequestId }: { highlightReque
                             {subTab === "pending" ? `Awaiting ${r.kind === "pull" ? r.branch : r.toBranch}'s Parts Manager` : `In transit to ${r.toBranch}`}
                           </span>
                         )}
+                        {remindButton(r)}
+                        </div>
                       </td>
                     )}
                   </tr>
