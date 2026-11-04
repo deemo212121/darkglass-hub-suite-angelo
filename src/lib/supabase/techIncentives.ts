@@ -21,7 +21,6 @@ import { findPersonByName } from "@/lib/personName";
 import { normalizeRole } from "@/lib/roleLabels";
 import { todayISO } from "@/lib/localDate";
 import {
-  HR_INCENTIVE_RECRUITERS,
   INCENTIVE_AMOUNT,
   INCENTIVE_LABEL,
   INCENTIVE_STARTED_ON_OR_AFTER,
@@ -162,7 +161,7 @@ export interface IncentiveCase {
   sixMonthDate: string;
   /** Left the company — when and why (deactivated accounts only). */
   separation: { label: string; date: string | null } | null;
-  /** The HR recruiter credited by their Hiring record, when it's one of HR_INCENTIVE_RECRUITERS. */
+  /** Who added their HR Hiring record, when that person has the HR role (and is still active). */
   suggestedRecruiterId: string | null;
   /** Their branch's Branch Manager (General Information), else their own manager. */
   suggestedBranchManagerId: string | null;
@@ -171,6 +170,8 @@ export interface IncentiveCase {
 const BRANCH_MANAGER_ROLES = new Set(["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER"]);
 export const isBranchManagerPerson = (p: Pick<IncentivePerson, "role" | "extra_roles">) =>
   [p.role, ...(p.extra_roles ?? [])].some((r) => BRANCH_MANAGER_ROLES.has(normalizeRole(r)));
+/** Has the HR role, as their main role or an extra one — who can receive the HR Incentive. */
+export const isHrPerson = (p: Pick<IncentivePerson, "role" | "extra_roles">) => [p.role, ...(p.extra_roles ?? [])].some((r) => normalizeRole(r) === "HR");
 
 type HiringRecord = AttendanceStartCandidate & { created_by: string | null; created_at: string | null };
 
@@ -209,6 +210,7 @@ export async function getIncentiveCases(): Promise<{ cases: IncentiveCase[]; peo
     getSeparations(technicians).catch(() => new Map()),
   ]);
   const active = people.filter((p) => p.is_active);
+  const hrIds = new Set(active.filter(isHrPerson).map((p) => p.id));
   const branchManagerByBranch = new Map(branchRoles.map((r) => [r.branch.trim().toLowerCase(), r.branchManager]));
 
   const cases: IncentiveCase[] = [];
@@ -226,10 +228,10 @@ export async function getIncentiveCases(): Promise<{ cases: IncentiveCase[]; peo
     if (startDate < INCENTIVE_STARTED_ON_OR_AFTER && !isTraineePerson(t)) continue;
     const six = sixMonthDate(startDate);
 
-    // Newest Hiring record first; the first one an HR recruiter created gets the credit.
+    // Newest Hiring record first; the first one created by someone with the HR role gets the credit.
     const recruiterRecord = [...records]
       .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")))
-      .find((c) => c.created_by && HR_INCENTIVE_RECRUITERS[c.created_by]);
+      .find((c) => c.created_by && hrIds.has(c.created_by));
     const typedBranchManager = branchManagerByBranch.get((t.assigned_branch || "").trim().toLowerCase());
     const branchManager =
       (typedBranchManager ? findPersonByName(typedBranchManager, active) : null) ??

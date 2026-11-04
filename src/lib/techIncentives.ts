@@ -7,8 +7,8 @@
  * date — the same "attendance starts on" day as everywhere else; with
  * neither, they aren't counted until HR adds one):
  *   - HR Incentive, $100, to the HR recruiter credited with the hire
- *     (Colleen, Wincel or Kyle — HR picks; the Hiring record's creator
- *     fills it in when it's one of them);
+ *     (anyone with the HR role — HR picks; the Hiring record's creator
+ *     fills it in when they have the HR role);
  *   - Branch Manager Incentive, $500, when the technician is still
  *     employed and their 6-month average grade is C or better (the
  *     Technician Performance grade, averaged over every graded pay period
@@ -39,13 +39,6 @@ export const INCENTIVE_LABEL: Record<IncentiveKind, string> = {
  * they pass 3 months.
  */
 export const INCENTIVE_STARTED_ON_OR_AFTER = "2026-08-03";
-
-/** HR recruiters who earn the HR Incentive, by profile id. To add someone, add them here. */
-export const HR_INCENTIVE_RECRUITERS: Record<string, string> = {
-  "e4fede96-7f43-495c-968e-9c285c507a00": "Colleen Tac-on",
-  "18ca4ceb-5fca-43f3-b25c-9e5e7f45e40a": "Wincel Franz Carusca",
-  "4fd23d15-8f70-415e-bb20-2d485345efb0": "Kyle Jomarc Sicat",
-};
 
 /** Technician Performance points for a C (5–6 pts) — the Branch Manager Incentive needs the 6-month average at or above this. */
 export const MIN_GRADE_POINTS = 5;

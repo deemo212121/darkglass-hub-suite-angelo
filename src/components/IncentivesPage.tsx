@@ -31,6 +31,7 @@ import {
   getIncentiveCases,
   getTechIncentives,
   isBranchManagerPerson,
+  isHrPerson,
   isTraineePerson,
   notifyAboutIncentive,
   rejectIncentive,
@@ -45,7 +46,6 @@ import {
   type TechIncentive,
 } from "@/lib/supabase/techIncentives";
 import {
-  HR_INCENTIVE_RECRUITERS,
   INCENTIVE_AMOUNT,
   INCENTIVE_LABEL,
   INCENTIVE_STARTED_ON_OR_AFTER,
@@ -218,7 +218,7 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   }, [uid]);
 
   const personById = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
-  const nameOf = (id: string | null | undefined) => (id ? personById.get(id)?.display_name || HR_INCENTIVE_RECRUITERS[id] || "Unknown" : "—");
+  const nameOf = (id: string | null | undefined) => (id ? personById.get(id)?.display_name || "Unknown" : "—");
   const byTechnician = useMemo(() => {
     const map = new Map<string, Partial<Record<IncentiveKind, TechIncentive>>>();
     for (const r of incentives ?? []) map.set(r.technicianId, { ...(map.get(r.technicianId) ?? {}), [r.kind]: r });
@@ -227,6 +227,11 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   const approverIds = useMemo(() => people.filter((p) => p.is_active && isFinanceRole(p.role, p.extra_roles)).map((p) => p.id), [people]);
   const branchManagers = useMemo(
     () => people.filter((p) => p.is_active && isBranchManagerPerson(p)).sort((a, b) => (a.display_name || "").localeCompare(b.display_name || "")),
+    [people]
+  );
+  // The HR recruiter dropdown: everyone active with the HR role (main or extra).
+  const hrPeople = useMemo(
+    () => people.filter((p) => p.is_active && isHrPerson(p)).sort((a, b) => (a.display_name || "").localeCompare(b.display_name || "")),
     [people]
   );
 
@@ -448,7 +453,7 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     const editable = canSubmit && incentives !== null && savingKey !== key;
     const options =
       kind === "hr"
-        ? Object.keys(HR_INCENTIVE_RECRUITERS).map((id) => ({ id, label: nameOf(id) }))
+        ? [...hrPeople, ...(picked && !hrPeople.some((p) => p.id === picked) && personById.get(picked) ? [personById.get(picked)!] : [])].map((p) => ({ id: p.id, label: p.display_name || p.email || "Unknown" }))
         : [...branchManagers, ...(picked && !branchManagers.some((p) => p.id === picked) && personById.get(picked) ? [personById.get(picked)!] : [])].map((p) => ({ id: p.id, label: `${p.display_name} · ${p.assigned_branch || "—"}` }));
     const notEligible = kind === "branch_manager" && v.due && v.gradeOk === false;
     return (
@@ -496,7 +501,7 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
 
         <div className="grid gap-2 sm:grid-cols-3 mt-4 mb-4">
           {([
-            ["hr", `${money(INCENTIVE_AMOUNT.hr)} to the HR recruiter (${Object.values(HR_INCENTIVE_RECRUITERS).map((n) => n.split(" ")[0]).join(", ")}) for each technician who reaches 6 months.`],
+            ["hr", `${money(INCENTIVE_AMOUNT.hr)} to the HR recruiter (anyone with the HR role) for each technician who reaches 6 months.`],
             ["branch_manager", `${money(INCENTIVE_AMOUNT.branch_manager)} to the Branch Manager when the technician is still employed at 6 months and their 6-month average grade is C or better.`],
             ["technician_match", `${money(INCENTIVE_AMOUNT.technician_match)} to the technician, added automatically when the Branch Manager's incentive is approved.`],
           ] as const).map(([kind, text]) => (
