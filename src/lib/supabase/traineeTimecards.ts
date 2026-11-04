@@ -492,6 +492,35 @@ export async function getPendingTraineeReviewCount(managerProfileId: string): Pr
 const CHECKOUT_REVIEW_CHECK_TIMEOUT_MS = 8000;
 
 /**
+ * Finished trainee days (clocked out, or their work day is over) still
+ * pending, that this viewer can approve — Home's "Trainee days need your
+ * approval". Not-clocked-in-yet "no-shows" are left out here: they'd show
+ * every morning before the trainee's shift starts.
+ *   everyone → HR / Admin / Super Admin / Finance (full attendance access): the whole company;
+ *   chain    → manager-tier: their own trainees + the ones they cover through the Approval Chain;
+ *   own      → anyone else: only trainees who list them as Manager (cheap pre-check first).
+ */
+export async function getTraineeDaysAwaitingApproval(viewerProfileId: string, scope: "everyone" | "chain" | "own"): Promise<number> {
+  if (scope === "own" && !(await mightHaveTraineesToReview(viewerProfileId))) return 0;
+  if (scope !== "everyone") {
+    const queue = await getTraineeReviewQueue(viewerProfileId, { includeChain: scope === "chain" });
+    return queue.filter((i) => i.kind === "entry" && i.trainee.id !== viewerProfileId).length;
+  }
+  const [{ data, error }, roster, serverNow] = await Promise.all([
+    supabase.from("trainee_timecard_entries").select(ROW_COLUMNS).eq("status", "pending"),
+    getCompanyUsers(),
+    getServerNow(),
+  ]);
+  if (error) throw new Error(error.message);
+  const byId = new Map(roster.map((p) => [p.id, p]));
+  return (data ?? []).map(mapRow).filter((e) => {
+    const trainee = byId.get(e.profileId);
+    if (!trainee || !trainee.is_active || trainee.id === viewerProfileId) return false;
+    return !!e.checkOut || e.workDate < zonedDateKey(serverNow, trainee.schedule_timezone || "CST");
+  }).length;
+}
+
+/**
  * Cheap pre-check for getPendingTraineeReviewCount: could this person be
  * anyone's trainee reviewer? True when an active trainee lists them as
  * manager (profiles.manager_name — what isCurrentTraineeManager goes by) or a
