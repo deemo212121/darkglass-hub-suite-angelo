@@ -161,7 +161,7 @@ export interface IncentiveCase {
   sixMonthDate: string;
   /** Left the company — when and why (deactivated accounts only). */
   separation: { label: string; date: string | null } | null;
-  /** Who added their HR Hiring record, when that person has the HR role (and is still active). */
+  /** Who added their HR Hiring record, when HR is that person's main role (and they're still active). */
   suggestedRecruiterId: string | null;
   /** Their branch's Branch Manager (General Information), else their own manager. */
   suggestedBranchManagerId: string | null;
@@ -170,8 +170,8 @@ export interface IncentiveCase {
 const BRANCH_MANAGER_ROLES = new Set(["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER"]);
 export const isBranchManagerPerson = (p: Pick<IncentivePerson, "role" | "extra_roles">) =>
   [p.role, ...(p.extra_roles ?? [])].some((r) => BRANCH_MANAGER_ROLES.has(normalizeRole(r)));
-/** Has the HR role, as their main role or an extra one — who can receive the HR Incentive. */
-export const isHrPerson = (p: Pick<IncentivePerson, "role" | "extra_roles">) => [p.role, ...(p.extra_roles ?? [])].some((r) => normalizeRole(r) === "HR");
+/** HR is their main role (not just an extra one) — who can receive the HR Incentive. */
+export const isHrPerson = (p: Pick<IncentivePerson, "role">) => normalizeRole(p.role) === "HR";
 
 type HiringRecord = AttendanceStartCandidate & { created_by: string | null; created_at: string | null };
 
@@ -228,7 +228,7 @@ export async function getIncentiveCases(): Promise<{ cases: IncentiveCase[]; peo
     if (startDate < INCENTIVE_STARTED_ON_OR_AFTER && !isTraineePerson(t)) continue;
     const six = sixMonthDate(startDate);
 
-    // Newest Hiring record first; the first one created by someone with the HR role gets the credit.
+    // Newest Hiring record first; the first one created by someone whose main role is HR gets the credit.
     const recruiterRecord = [...records]
       .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")))
       .find((c) => c.created_by && hrIds.has(c.created_by));

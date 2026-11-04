@@ -7,8 +7,8 @@
  * date — the same "attendance starts on" day as everywhere else; with
  * neither, they aren't counted until HR adds one):
  *   - HR Incentive, $100, to the HR recruiter credited with the hire
- *     (anyone with the HR role — HR picks; the Hiring record's creator
- *     fills it in when they have the HR role);
+ *     (anyone whose main role is HR — HR picks; the Hiring record's
+ *     creator fills it in when their main role is HR);
  *   - Branch Manager Incentive, $500, when the technician is still
  *     employed and their 6-month average grade is C or better (the
  *     Technician Performance grade, averaged over every graded pay period

@@ -229,7 +229,7 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     () => people.filter((p) => p.is_active && isBranchManagerPerson(p)).sort((a, b) => (a.display_name || "").localeCompare(b.display_name || "")),
     [people]
   );
-  // The HR recruiter dropdown: everyone active with the HR role (main or extra).
+  // The HR recruiter dropdown: everyone active whose main role is HR.
   const hrPeople = useMemo(
     () => people.filter((p) => p.is_active && isHrPerson(p)).sort((a, b) => (a.display_name || "").localeCompare(b.display_name || "")),
     [people]
@@ -501,7 +501,7 @@ export function IncentivesPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
 
         <div className="grid gap-2 sm:grid-cols-3 mt-4 mb-4">
           {([
-            ["hr", `${money(INCENTIVE_AMOUNT.hr)} to the HR recruiter (anyone with the HR role) for each technician who reaches 6 months.`],
+            ["hr", `${money(INCENTIVE_AMOUNT.hr)} to the HR recruiter (HR staff) for each technician who reaches 6 months.`],
             ["branch_manager", `${money(INCENTIVE_AMOUNT.branch_manager)} to the Branch Manager when the technician is still employed at 6 months and their 6-month average grade is C or better.`],
             ["technician_match", `${money(INCENTIVE_AMOUNT.technician_match)} to the technician, added automatically when the Branch Manager's incentive is approved.`],
           ] as const).map(([kind, text]) => (
