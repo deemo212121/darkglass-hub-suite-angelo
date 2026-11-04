@@ -27,6 +27,8 @@ export interface PayslipDailyRow {
   hours: number;
   rate: number;
   amount: number;
+  /** State worked that day (from the timecard), shown when `showState` is set. */
+  state?: string | null;
 }
 
 export interface EmployeePayslipData {
@@ -72,6 +74,12 @@ export interface EmployeePayslipData {
    * piece-rate/bonus difference is broken out on page 2).
    */
   hasTechActivityPage?: boolean;
+  /**
+   * Field roles (Technician, Branch / Senior Branch Manager, Tech Manager,
+   * Technical / Assistant Director) get a State column on the daily table —
+   * the state each day was worked in, which sets that day's minimum wage.
+   */
+  showState?: boolean;
   /** true when assigned_branch !== "Philippines". No longer drives a tax withholding line (removed) — kept for any future US/PH-specific formatting. */
   isUS: boolean;
 }
@@ -397,6 +405,7 @@ export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
         <thead>
           <tr>
             <th>Date</th>
+            ${employee.showState ? "<th>State</th>" : ""}
             <th>Time In</th>
             <th>Meal In</th>
             <th>Meal Out</th>
@@ -410,6 +419,7 @@ export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
           ${employee.dailyRows.length > 0 ? employee.dailyRows.map((r) => `
           <tr>
             <td>${r.date}</td>
+            ${employee.showState ? `<td>${escapeText(r.state || "—")}</td>` : ""}
             <td>${formatClockTime(r.clockIn)}</td>
             <td>${formatClockTime(r.mealStart)}</td>
             <td>${formatClockTime(r.mealEnd)}</td>
@@ -420,13 +430,13 @@ export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
           </tr>
           `).join('') : `
           <tr>
-            <td colspan="8" style="text-align: center; color: #9ca3af;">No daily attendance recorded for this period.</td>
+            <td colspan="${employee.showState ? 9 : 8}" style="text-align: center; color: #9ca3af;">No daily attendance recorded for this period.</td>
           </tr>
           `}
         </tbody>
         <tfoot>
           <tr style="font-weight: 700; background: #f3f4f6;">
-            <td colspan="7">${employee.hasTechActivityPage ? "Hourly Pay Total" : "Total"}</td>
+            <td colspan="${employee.showState ? 8 : 7}">${employee.hasTechActivityPage ? "Hourly Pay Total" : "Total"}</td>
             <td class="amount">$${(employee.hasTechActivityPage ? employee.dailyRows.reduce((s, r) => s + r.amount, 0) : employee.grossPay).toFixed(2)}</td>
           </tr>
         </tfoot>
@@ -495,9 +505,13 @@ export function renderTechActivitySummaryPageHtml(
   branch: string,
   breakdown: TechActivityBreakdown,
   isUS: boolean,
-  extraPay: number
+  extraPay: number,
+  /** The report's tax lines (MCWH, SSWH, …) in dollars — taken off for the net pay, as on the modal. */
+  taxes: { label: string; amount: number }[] = []
 ): string {
-  const grandTotal = breakdown.totalPayment + extraPay;
+  const taxTotal = taxes.reduce((s, t) => s + t.amount, 0);
+  const escapeText = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const grandTotal = breakdown.totalPayment + extraPay - taxTotal;
   return `
   <div class="container">
     <div class="header">
@@ -547,9 +561,18 @@ export function renderTechActivitySummaryPageHtml(
         <div>Extra</div>
         <div class="amount">$${extraPay.toFixed(2)}</div>
       </div>
+      ${taxes
+        .map(
+          (t) => `
+      <div class="summary-row" style="border: none; grid-template-columns: 2fr 1fr;">
+        <div>Tax — ${escapeText(t.label)}</div>
+        <div class="amount" style="color: #b91c1c;">−$${t.amount.toFixed(2)}</div>
+      </div>`
+        )
+        .join("")}
 
       <div class="summary-row total" style="border: none; grid-template-columns: 2fr 1fr;">
-        <div>GRAND TOTAL</div>
+        <div>${taxes.length > 0 ? "NET PAY AFTER TAX" : "GRAND TOTAL"}</div>
         <div class="amount">$${grandTotal.toFixed(2)}</div>
       </div>
     </div>

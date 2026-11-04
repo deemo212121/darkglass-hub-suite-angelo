@@ -12,7 +12,13 @@ import { payGraceMinutesFor } from "./attendanceGrace";
 import { normalizeStateName, highestRateAmong, STATE_MIN_WAGE_2026, stateMinWageOn, stateRateChangeInfo, COMMISSION_COUNTS_TOWARD_STATE_MIN, OT_MATCH_ADDS_TRUE_UP_AND_FLOOR } from "./stateMinWage";
 
 /** One prefilled row of a sheet's Includable / Reimbursements table. */
-export interface AttendanceAdjustmentLine { type: string; rate: number; quantity: number }
+export interface AttendanceAdjustmentLine {
+  type: string;
+  rate: number;
+  quantity: number;
+  /** Sunday "YYYY-MM-DD" of the workweek an includable line is tagged with — counts toward that week's OT rate, as in the app. */
+  week?: string | null;
+}
 /**
  * What the app already knows for this employee and period, written into the
  * sheet so its 15-step calculation comes up with the total: custom pay lines
@@ -73,7 +79,9 @@ export function attendanceExportRows(
 }
 
 export function uniqueAttendanceSheetName(name: string, used: Set<string>): string {
-  const base = name.replace(/[\\/*?:\[\]\x00-\x1f]/g, " ").replace(/^'+|'+$/g, "").trim() || "Employee";
+  // An apostrophe inside the name (A'Dejaun) becomes ’: exceljs doesn't escape it in
+  // the print-area name, which left the file unreadable to other tools.
+  const base = name.replace(/[\\/*?:\[\]\x00-\x1f]/g, " ").replace(/^'+|'+$/g, "").trim().replace(/'/g, "’") || "Employee";
   let candidate = base.slice(0, 31).replace(/'+$/g, "");
   let index = 2;
   while (used.has(candidate.toLowerCase()) || candidate.toLowerCase() === "history") {
@@ -167,7 +175,7 @@ export function addAttendanceAdjustmentTemplates(sheet: Worksheet, attendanceCou
   const titleRow = attendanceCount + 6;
   const headerRow = titleRow + 3;
   const templates = [
-    { label: "Includable", first: 1, last: 3, color: "FFFCE4D6", prefix: "Includable", lines: fitAdjustmentRows(adjustments?.includable ?? []) },
+    { label: "Includable", first: 1, last: 4, color: "FFFCE4D6", prefix: "Includable", lines: fitAdjustmentRows(adjustments?.includable ?? []) },
     { label: "Reimbursements", first: 5, last: 7, color: "FFE4DFEC", prefix: "Reimbursements", lines: fitAdjustmentRows(adjustments?.reimbursements ?? []) },
   ];
   for (const template of templates) {
@@ -189,10 +197,14 @@ export function addAttendanceAdjustmentTemplates(sheet: Worksheet, attendanceCou
       headerRow: true,
       totalsRow: false,
       style: { theme: "TableStyleLight1", showRowStripes: false },
-      columns: [{ name: "Type", filterButton: false }, { name: "Rate", filterButton: false }, { name: "Quantity", filterButton: false }],
+      columns: [
+        { name: "Type", filterButton: false }, { name: "Rate", filterButton: false }, { name: "Quantity", filterButton: false },
+        ...(template.last - template.first === 3 ? [{ name: "Week", filterButton: false }] : []),
+      ],
       rows: Array.from({ length: rowCount }, (_, i) => {
         const line = template.lines[i];
-        return line ? [line.type, Math.round(line.rate * 10000) / 10000, Math.round(line.quantity * 10000) / 10000] : [null, null, null];
+        const week = template.last - template.first === 3 ? [line?.week ?? null] : [];
+        return line ? [line.type, Math.round(line.rate * 10000) / 10000, Math.round(line.quantity * 10000) / 10000, ...week] : [null, null, null, ...week];
       }),
     });
     for (let row = headerRow; row <= headerRow + rowCount; row++) {
@@ -201,7 +213,7 @@ export function addAttendanceAdjustmentTemplates(sheet: Worksheet, attendanceCou
         cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: template.color } };
         cell.font = { color: { argb: "FF222222" }, bold: row === headerRow };
         cell.border = { bottom: { style: "thin", color: { argb: "FFD0D0D0" } } };
-        cell.numFmt = row === headerRow || column === template.first ? "@" : column === template.first + 1 ? '"$"#,##0.00;[Red]-"$"#,##0.00' : "0.###";
+        cell.numFmt = row === headerRow || column === template.first || column === template.first + 3 ? "@" : column === template.first + 1 ? '"$"#,##0.00;[Red]-"$"#,##0.00' : "0.###";
       }
     }
   }
@@ -235,10 +247,54 @@ export function addAttendancePayBreakdown(sheet: Worksheet, attendanceCount: num
   const otherAdditions = adjustments?.otherAdditions ?? 0;
   const corrected = straight + includable;
   const weighted = hours > 0 ? corrected / hours : 0;
-  const premium = otHours * weighted * premiumFactor;
+  // OT premium per Sunday workweek, as the app does it (weeklyOtPremium in
+  // AccountingDashboard.tsx): a week's includable lines (Week column) count
+  // in that week; untagged ones — and ones tagged to a week with no hours
+  // here — are spread over the weeks by hours. Blending the whole period
+  // into one rate missed the app by a few dollars when weeks differ
+  // (A'Dejaun Tyson 10/11–10/24: $416.08 vs $418.78).
+  const table = `Includable_${sheet.id}`;
+  const weekRows = new Map<string, number[]>();
+  for (let row = 2; row <= end; row++) {
+    const m = String(sheet.getCell(`A${row}`).value ?? "").match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (!m) continue;
+    const week = startOfWeekSunday(`${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`);
+    weekRows.set(week, [...(weekRows.get(week) ?? []), row]);
+  }
+  const contiguous = (rows: number[]) => rows[rows.length - 1] - rows[0] === rows.length - 1;
+  const ref = (column: string, rows: number[]) =>
+    contiguous(rows) ? `${column}${rows[0]}:${column}${rows[rows.length - 1]}` : rows.map((r) => `${column}${r}`).join(",");
+  const includableLines = fitAdjustmentRows(adjustments?.includable ?? []);
+  const weeks = [...weekRows.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([week, rows]) => {
+    let weekHours = 0, weekOt = 0, weekStraight = 0;
+    for (const r of rows) { weekHours += amount(`H${r}`); weekOt += amount(`G${r}`); weekStraight += amount(`H${r}`) * amount(`M${r}`); }
+    const tagged = weekHours > 0 ? linesTotal(includableLines.filter((l) => l.week === week)) : 0;
+    return {
+      week, weekHours, weekOt, weekStraight, tagged,
+      hoursF: `SUM(${ref("H", rows)})`,
+      otF: `SUM(${ref("G", rows)})`,
+      straightF: contiguous(rows) ? `SUMPRODUCT(${ref("H", rows)},${ref("M", rows)})` : rows.map((r) => `H${r}*M${r}`).join("+"),
+    };
+  });
+  const placedF = (w: (typeof weeks)[number]) => `IF(${w.hoursF}>0,SUMPRODUCT((${table}[Week]="${w.week}")*${table}[Rate]*${table}[Quantity]),0)`;
+  const unplaced = includable - weeks.reduce((sum, w) => sum + w.tagged, 0);
+  const unplacedF = `(AL3-${weeks.length ? weeks.map(placedF).join("-") : "0"})`;
+  let premium = 0;
+  const weekNotes: string[] = [];
+  for (const w of weeks) {
+    const incl = w.tagged + (hours > 0 ? unplaced * (w.weekHours / hours) : 0);
+    const rate = w.weekHours > 0 ? (w.weekStraight + incl) / w.weekHours : 0;
+    premium += w.weekOt * rate * premiumFactor;
+    weekNotes.push(`Wk ${Number(w.week.slice(5, 7))}/${Number(w.week.slice(8, 10))}: ${w.weekOt.toFixed(3)} OT h × $${rate.toFixed(4)} = $${(w.weekOt * rate * premiumFactor).toFixed(2)}`);
+  }
+  const premiumF = weeks.length
+    ? `(${weeks.map((w) => `IFERROR(${w.otF}*(${w.straightF}+${placedF(w)}+${unplacedF}*${w.hoursF}/H${total})/${w.hoursF},0)`).join("+")})*$AP$6`
+    : "0";
   const minMatch = isPh ? 0 : Math.max(0, stateRegular - companyRegular - (COMMISSION_COUNTS_TOWARD_STATE_MIN ? includable : 0));
   const afterRate = hours > 0 ? (corrected + minMatch) / hours : 0;
-  const requiredPremium = otHours * afterRate * premiumFactor;
+  // The regular-pay match is spread over the weeks by hours, so it lifts
+  // every week's rate by the same Step 8 ÷ Total Hours.
+  const requiredPremium = premium + (hours > 0 ? otHours * (minMatch / hours) * premiumFactor : 0);
   // OT hours are owed at least 1.5x the minimum of the state they were worked
   // in: K (OT hours x applied rate x 1.5) minus their straight time at the
   // company rate (G x M). Same check as the Tech Activity Report.
@@ -293,21 +349,21 @@ export function addAttendancePayBreakdown(sheet: Worksheet, attendanceCount: num
   sheet.getCell(inputTitleRow + 1, 13).dataValidation = { type: "list", allowBlank: false, formulae: ['"Company,State"'] };
   sheet.mergeCells(inputTitleRow + 7, 9, inputTitleRow + 10, 13);
   const explanation = sheet.getCell(inputTitleRow + 7, 9);
-  explanation.value = "Period-based weighted rate. The app sets this rate per workweek (custom lines tagged with a week count toward that week), so its OT premium can differ slightly when includable pay is uneven across weeks. Includable and reimbursement tables feed this breakdown automatically. Other additions can include a separately calculated salary/trainee guarantee or override; these are not fetched here. Holiday premium and deductions start at zero. Step explanations appear below each equation. This template does not update saved payroll.";
+  explanation.value = "OT premium per workweek, as the app does it: includable lines with a Week count toward that week's rate; lines without one are spread over the weeks by hours. Includable and reimbursement tables feed this breakdown automatically. Other additions can include a separately calculated salary/trainee guarantee or override; these are not fetched here. Holiday premium and deductions start at zero. Step explanations appear below each equation. This template does not update saved payroll.";
   explanation.alignment = { wrapText: true, vertical: "top" };
   const steps: [string, string, string, number, string][] = [
     ["Total Includable", "Sum of includable Rate × Quantity", `SUMPRODUCT(Includable_${sheet.id}[Rate],Includable_${sheet.id}[Quantity])`, includable, "Includes negative entries, such as Redo, exactly once."],
     ["Base Straight Wages", "Sum of daily Total Hours × Company Hourly Rate", sum("I"), straight, "Includes all paid hours, including overtime at straight time; preserves daily rate changes."],
     ["Corrected Straight-Time Pay", "Step 1 + Step 2", "AL3+AL4", corrected, "Straight-time wages plus includable compensation; reimbursements excluded."],
-    ["Period Weighted Regular Rate", "Step 3 ÷ Total Hours", `IFERROR(AL5/H${total},0)`, weighted, "Period calculation; the app computes it per workweek."],
-    ["Corrected OT Premium", "OT Hours × Step 4 × OT Premium Factor", `G${total}*AL6*$AP$6`, premium, "Only the extra premium; the straight-time portion of OT is already in Step 2."],
+    ["Period Weighted Regular Rate", "Step 3 ÷ Total Hours", `IFERROR(AL5/H${total},0)`, weighted, "For reference; Step 5 uses each workweek's own rate."],
+    ["Corrected OT Premium", "Σ per workweek: week OT Hours × week rate × OT Premium Factor", premiumF, premium, `Week rate = (week straight wages + week includable) ÷ week hours; includable lines count in their Week, untagged ones are spread by hours, same as the app. ${weekNotes.join("; ")}.`],
     ["Holiday Premium", "Holiday premium input", "$AP$3", holidayPremium, "Holiday premium in AP3 (prefilled from the app when known)."],
     ["Wages Before State Match", "Step 3 + Step 5 + Step 6", "AL5+AL7+AL8", corrected + premium + holidayPremium, "Includable pay is already included; do not add it again."],
     COMMISSION_COUNTS_TOWARD_STATE_MIN
       ? ["State Regular-Pay Match", "MAX(State regular floor − Company regular pay − Step 1, 0)", isPh ? "0" : `MAX(0,${sum("J")}-${companyRegularFormula}-AL3)`, minMatch, "Regular hours only, including paid meal credit. Includable pay (commission) counts toward the state floor. Recalculates from States Worked and state rates."]
       : ["State Regular-Pay Match", "MAX(State regular floor − Company regular pay, 0)", isPh ? "0" : `MAX(0,${sum("J")}-${companyRegularFormula})`, minMatch, "Regular hours only, including paid meal credit. Recalculates from States Worked and state rates."],
     ["Regular Rate After Match", "(Step 3 + Step 8) ÷ Total Hours", `IFERROR((AL5+AL10)/H${total},0)`, afterRate, "Includes the regular-pay shortfall before recalculating overtime."],
-    ["Required OT Premium After Match", "OT Hours × Step 9 × OT Premium Factor", `G${total}*AL11*$AP$6`, requiredPremium, "Recomputed premium after the state regular-pay match."],
+    ["Required OT Premium After Match", "Step 5 + OT Hours × (Step 8 ÷ Total Hours) × OT Premium Factor", `AL7+IFERROR(G${total}*AL10/H${total},0)*$AP$6`, requiredPremium, "Recomputed premium after the state regular-pay match, which raises every week's rate by the same amount."],
     OT_MATCH_ADDS_TRUE_UP_AND_FLOOR
       ? ["Additional OT Match", "MAX(Step 10 − Step 5, 0) + MAX(OT at 1.5× state min − Step 5, 0)", isPh ? "0" : `MAX(AL12-AL7,0)+MAX(${otFloorFormula}-AL7,0)`, otMatch, "Both checks added together, as Finance's payroll sheet does: the regular-rate true-up and OT hours at 1.5× the minimum of the state they were worked in (column K less their straight time at the company rate)."]
       : ["Additional OT Match", "MAX(MAX(Step 10, OT at 1.5× state min) − Step 5, 0)", isPh ? "0" : `MAX(MAX(AL12,${otFloorFormula})-AL7,0)`, otMatch, "OT hours are owed at least 1.5× the minimum of the state they were worked in (column K less their straight time at the company rate). Only incremental overtime; avoids counting the original premium twice."],
@@ -472,12 +528,13 @@ export async function downloadIndividualAttendanceWorkbook(
   pay: Parameters<typeof attendanceExportRows>[2],
   states: Parameters<typeof attendanceExportRows>[3],
   isPh: boolean, start: string, end: string,
+  adjustments?: AttendanceAdjustments,
 ) {
   const ExcelJS = await import("exceljs");
   const workbook = new ExcelJS.Workbook();
   workbook.calcProperties.fullCalcOnLoad = true;
   const sheet = workbook.addWorksheet(uniqueAttendanceSheetName(employeeName, new Set()));
-  populateAttendanceSheet(sheet, employeeName, attendance, hours, pay, states, isPh);
+  populateAttendanceSheet(sheet, employeeName, attendance, hours, pay, states, isPh, adjustments);
   const buffer = await workbook.xlsx.writeBuffer();
   const url = URL.createObjectURL(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
   const link = document.createElement("a");

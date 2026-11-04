@@ -51,7 +51,7 @@ import { getCarIqMileageRateHistory, addCarIqMileageRate, deleteCarIqMileageRate
 import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, computeMealTimeCredit, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
 import { payGraceMinutesFor } from "@/lib/attendanceGrace";
 import { updatePayrollLineItemPaid } from "@/lib/supabase/payslips";
-import { getTechTaxLinesForPeriod, taxLineAmount, type TechTaxLine } from "@/lib/supabase/techTaxLines";
+import { getTechTaxLines, getTechTaxLinesForPeriod, taxLineAmount, type TechTaxLine } from "@/lib/supabase/techTaxLines";
 import { getEmployeeInfoByProfileIds, getCompanyUsers, getTechnicianContactInfoByIds, setEmployeeHasCarIq, getUserStatusChanges, type AccountStatusChange, type EmployeeInfo } from "@/lib/supabase/users";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { createNotification } from "@/lib/supabase/notifications";
@@ -3714,6 +3714,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         flatThreshold ? CSR_WEEKLY_OVERTIME_THRESHOLD : undefined
       );
       const rate = row.hourlyRateUSD;
+      const stateByDate = new Map<string, string>();
+      for (const e of timecardEntries) if (e.profile_id === emp.id && e.state) stateByDate.set(e.work_date, e.state);
       return attendanceRows
         .filter((r) => r.hoursWorked > 0)
         .map((r) => {
@@ -3727,6 +3729,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             hours: r.hoursWorked,
             rate,
             amount: regular * rate + overtime * rate * 1.5,
+            state: stateByDate.get(r.date) ?? null,
           };
         });
     })();
@@ -3774,6 +3777,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       notes: "",
       // Same US/PH split already derived onto SupabaseEmployee.country.
       isUS: row.employee.country !== "PH",
+      showState: isMealAlwaysPaidRole(row.employee.role, row.employee.extraRoles),
     };
 
     // Technicians get a real 2nd PDF page — page 1 stays hourly time
@@ -3783,10 +3787,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // hourly combined) is the technician's actual gross for the period, not
     // page 1's hourly-only figure.
     if (row.isTechPortion) {
-      const [redoByTech, onHoldByTech, customItems] = await Promise.all([
+      const [redoByTech, onHoldByTech, customItems, taxLines] = await Promise.all([
         getTechRedoTickets(genStart, genEnd),
         getTechOnHoldTickets(genStart, genEnd),
         getTechCustomPayItems(row.employee.id, genStart, genEnd),
+        getTechTaxLines(row.employee.id, genStart, genEnd),
       ]);
       const nameKey = row.employee.full_name.trim().toLowerCase();
       const breakdown = buildTechActivityBreakdown(
@@ -3801,7 +3806,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       const pdfBlob = await captureHtmlPagesToPdfBlob(
         [
           renderPayslipBodyHtml(payslipData),
-          renderTechActivitySummaryPageHtml(row.employee.full_name, payslipData.period, row.employee.assigned_branch || "", breakdown, payslipData.isUS, payslipData.extraPay),
+          renderTechActivitySummaryPageHtml(
+            row.employee.full_name,
+            payslipData.period,
+            row.employee.assigned_branch || "",
+            breakdown,
+            payslipData.isUS,
+            payslipData.extraPay,
+            // The report's tax lines, so the PDF ends on the same Net Pay After Tax as the modal.
+            taxLines
+              .map((l) => ({ label: l.label, amount: taxLineAmount(l, breakdown.totalPayment) }))
+              .filter((t) => t.amount !== 0)
+          ),
         ],
         PAYSLIP_STYLES
       );
@@ -4076,19 +4092,31 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const generationRows = nationIncludedPayrollRows.filter((r) => visibleEmployeeIds.has(r.employee.id));
   const generationEmployeeCount = new Set(generationRows.map((r) => r.employee.id)).size;
   const tickedHiddenCount = new Set(nationIncludedPayrollRows.filter((r) => !visibleEmployeeIds.has(r.employee.id)).map((r) => r.employee.id)).size;
-  // Each technician's pay beyond hours, for the attendance workbook's
+  // Each employee's pay beyond hours, for the attendance workbook's
   // Includable / Reimbursements tables — so its 15-step calc comes up with
-  // the total instead of leaving them blank. Custom lines keep their week
-  // in the label; ticket/category pay the app computed itself is one line.
+  // the total instead of leaving them blank. Technicians: custom lines keep
+  // their week in the label; ticket/category pay the app computed itself is
+  // one line. Everyone: reimbursements from Payroll Adjustments (office
+  // staff have no custom lines, so before this their tables were always
+  // empty). Someone with an office row and a tech row gets both in one sheet.
   const buildAttendanceAdjustments = (rows: EmployeePayrollRow[]) => {
     const fmtWeek = (w: string) => `Wk ${Number(w.slice(5, 7))}/${Number(w.slice(8, 10))}`;
-    const byEmployee = new Map<string, { includable: { type: string; rate: number; quantity: number }[]; reimbursements: { type: string; rate: number; quantity: number }[]; holidayPremium: number; otherAdditions: number }>();
+    const byEmployee = new Map<string, { includable: { type: string; rate: number; quantity: number; week?: string | null }[]; reimbursements: { type: string; rate: number; quantity: number }[]; holidayPremium: number; otherAdditions: number }>();
+    const adjustmentsAdded = new Set<string>();
     for (const row of rows) {
-      if (!row.isTechPortion) continue;
       const id = row.employee.id;
+      const entry = byEmployee.get(id) ?? { includable: [], reimbursements: [], holidayPremium: 0, otherAdditions: 0 };
+      byEmployee.set(id, entry);
+      // Adjustments belong to the person, not the row — added once.
+      const reimbursementLines = adjustmentsFor(row.employee, row.isTechPortion).filter((a) => a.kind === "reimbursement" && a.amount !== 0);
+      if (reimbursementLines.length > 0 && !adjustmentsAdded.has(id)) {
+        adjustmentsAdded.add(id);
+        entry.reimbursements.push(...reimbursementLines.map((a) => ({ type: a.description || "Reimbursement", rate: a.amount, quantity: 1 })));
+      }
+      if (!row.isTechPortion) continue;
       const lines = techCustomPayItemsAll.filter((i) => i.profileId === id && i.value * i.rate !== 0);
-      const includable = lines.filter((i) => i.isWageIncludable).map((i) => ({
-        type: `${i.label || "(custom line)"}${i.workWeekStart ? ` (${fmtWeek(i.workWeekStart)})` : ""}`, rate: i.rate, quantity: i.value,
+      const includable: { type: string; rate: number; quantity: number; week?: string | null }[] = lines.filter((i) => i.isWageIncludable).map((i) => ({
+        type: `${i.label || "(custom line)"}${i.workWeekStart ? ` (${fmtWeek(i.workWeekStart)})` : ""}`, rate: i.rate, quantity: i.value, week: i.workWeekStart,
       }));
       const reimbursements = lines.filter((i) => !i.isWageIncludable).map((i) => ({
         type: `${i.label || "(custom line)"}${i.workWeekStart ? ` (${fmtWeek(i.workWeekStart)})` : ""}`, rate: i.rate, quantity: i.value,
@@ -4102,13 +4130,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           ? { type: "Mileage (field)", rate: row.techManual.mileagePay / miles, quantity: miles }
           : { type: "Mileage (field)", rate: row.techManual.mileagePay, quantity: 1 });
       }
-      byEmployee.set(id, {
-        includable,
-        reimbursements,
-        holidayPremium: row.techHolidayPremium,
-        otherAdditions: row.techTraineeMatch + row.techGuaranteedSalaryMatch,
-      });
+      entry.includable.push(...includable);
+      entry.reimbursements.unshift(...reimbursements);
+      entry.holidayPremium += row.techHolidayPremium;
+      entry.otherAdditions += row.techTraineeMatch + row.techGuaranteedSalaryMatch;
     }
+    for (const [id, entry] of byEmployee) if (!entry.includable.length && !entry.reimbursements.length && !entry.holidayPremium && !entry.otherAdditions) byEmployee.delete(id);
     return byEmployee;
   };
   const downloadFilteredAttendance = async () => {
@@ -6772,6 +6799,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           initialEnd={genEnd || undefined}
           onClose={() => { setDetailEmployee(null); setWizardStep("detail"); }}
           onRateChanged={() => { fetchData({ silent: true }); reloadTimecardEntries(); }}
+          workbookAdjustments={
+            genStart && genEnd
+              ? { periodStart: genStart, periodEnd: genEnd, data: buildAttendanceAdjustments(payrollRows.filter((r) => r.employee.id === detailEmployee.id)).get(detailEmployee.id) }
+              : undefined
+          }
           nextBusy={nextBusy}
           onNext={
             isTechRole(detailEmployee)

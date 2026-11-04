@@ -41,6 +41,7 @@ import {
 } from "@/lib/supabase/salary";
 import { todayISO as userTodayISO, formatTimeInZone, timeZoneLabel } from "@/lib/localDate";
 import { technicianTimeZone, timeZoneForState } from "@/lib/attendanceGrace";
+import type { AttendanceAdjustments } from "@/lib/payrollAttendanceExport";
 
 interface Props {
   profileId: string;
@@ -76,6 +77,8 @@ interface Props {
   onClose: () => void;
   /** Called after a rate change is saved, so the caller can refresh its own aggregate payroll view. */
   onRateChanged?: () => void;
+  /** Includable / reimbursement lines for the attendance workbook's tables (see AccountingDashboard's buildAttendanceAdjustments) — used only while the range shown is this period. */
+  workbookAdjustments?: { periodStart: string; periodEnd: string; data: AttendanceAdjustments | undefined };
   /** When set (Office Payroll's per-technician review wizard), a "Next →" button appears in the footer — advances to the Tech Activity Report. Omitted for office employees and other callers. Called with which toggle was active ("company"/"state") and this modal's own State-matched Hourly + OT total (payViewTotals.compliant.total) — the caller persists that choice as this technician's actual Hourly + OT pay for the period (see payroll_hourly_ot_overrides), since this modal is the only place that computes the state-floor comparison. May return a Promise; the Next button disables (see nextBusy) until it resolves. */
   onNext?: (mode: "company" | "state", stateHourlyOtTotal: number) => void | Promise<void>;
   /** True while the caller's onNext is still saving — disables the Next button so a second click can't race the first (e.g. double-submitting the pay-mode override). */
@@ -227,6 +230,7 @@ export function EmployeePayrollDetailModal({
   initialEnd,
   onClose,
   onRateChanged,
+  workbookAdjustments,
   onNext,
   nextBusy,
   onDone,
@@ -1000,7 +1004,8 @@ export function EmployeePayrollDetailModal({
     try {
       // Loaded on click — see AccountingDashboard's downloadFilteredAttendance.
       const { downloadIndividualAttendanceWorkbook } = await import("@/lib/payrollAttendanceExport");
-      await downloadIndividualAttendanceWorkbook(employeeName, attendance, dailyHoursSplitByDate, dailyPayByDate, ticketStateByDate, isPhPayroll, rangeStart, rangeEnd);
+      const adjustments = workbookAdjustments && workbookAdjustments.periodStart === rangeStart && workbookAdjustments.periodEnd === rangeEnd ? workbookAdjustments.data : undefined;
+      await downloadIndividualAttendanceWorkbook(employeeName, attendance, dailyHoursSplitByDate, dailyPayByDate, ticketStateByDate, isPhPayroll, rangeStart, rangeEnd, adjustments);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "Unable to download attendance. Please try again.");
     } finally {
