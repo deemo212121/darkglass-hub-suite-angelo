@@ -33,6 +33,7 @@ import { PtoManagerSignModal, PtoHrSignModal } from "@/components/PtoSignModals"
 import { PtoReasonCell, PtoPhotoCell } from "@/components/PtoReasonPhotoCells";
 import { StageRemindButton } from "@/components/RemindButton";
 import { pendingStagesOf } from "@/lib/supabase/approvalReminders";
+import { PtoUsageRanking } from "@/components/PtoUsageRanking";
 
 // Same split as Attendance Monitoring's PTO Management (Paid Leave / Unpaid Leave).
 const PAID_LEAVE_PTO_TYPES: PtoType[] = ["vacation"];
@@ -98,7 +99,8 @@ export function PtoManagementTab() {
     [myProfile, profiles, csrComposition]
   );
   // Status tabs + Dates / Submitted sort — same as Attendance Monitoring's PTO table.
-  const [ptoLeaveTab, setPtoLeaveTab] = useState<"paid" | "unpaid">("paid");
+  // Paid Leave / Unpaid Leave request lists, or "usage" — the PTO Usage ranking.
+  const [ptoLeaveTab, setPtoLeaveTab] = useState<"paid" | "unpaid" | "usage">("paid");
   const [ptoStatusTab, setPtoStatusTab] = useState<"pending" | "approved" | "rejected">("pending");
   const ptoStatusMatches = (status: string, tab: "pending" | "approved" | "rejected") => (tab === "rejected" ? status === "denied" : status === tab);
   const [ptoSort, setPtoSort] = useState<{ key: "dates" | "submitted"; dir: "desc" | "asc" }>({ key: "submitted", dir: "desc" });
@@ -255,6 +257,7 @@ export function PtoManagementTab() {
         {([
           ["paid", "Paid Leave"],
           ["unpaid", "Unpaid Leave"],
+          ["usage", "PTO Usage"],
         ] as const).map(([key, label]) => (
           <button
             key={key}
@@ -263,7 +266,7 @@ export function PtoManagementTab() {
             className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition ${ptoLeaveTab === key ? "bg-blue-600 text-white" : "bg-white/5 text-slate-400 hover:bg-white/10"}`}
           >
             {label}
-            {(() => {
+            {key !== "usage" && (() => {
               const n = visiblePtoRequests.filter((r) => (key === "paid" ? PAID_LEAVE_PTO_TYPES : UNPAID_LEAVE_PTO_TYPES).includes(r.ptoType) && r.status === "pending").length;
               return n > 0 ? <span className="home-badge home-badge--sm" title={`${n} pending`}>{n > 99 ? "99+" : n}</span> : null;
             })()}
@@ -271,6 +274,14 @@ export function PtoManagementTab() {
         ))}
       </div>
 
+      {ptoLeaveTab === "usage" ? (
+        loading ? (
+          <div className="flex items-center justify-center gap-2 py-10 text-sm text-slate-400"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+        ) : (
+          <PtoUsageRanking profiles={visibleProfiles} requests={visiblePtoRequests} />
+        )
+      ) : (
+      <>
       <div className="bg-slate-900/50 border border-white/10 rounded-lg p-6 overflow-x-auto">
         <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
           <h2 className="text-lg font-bold text-white">PTO Requests</h2>
@@ -539,6 +550,8 @@ export function PtoManagementTab() {
           })}
         </div>
       </div>
+      </>
+      )}
 
       {showPtoForm && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
