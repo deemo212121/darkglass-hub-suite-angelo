@@ -58,7 +58,7 @@ export function PayrollAdjustmentsSection({
   items: PayrollAdjustment[];
   /** Gross pay for the same period — tax is worked out from it, and it's the start of the Net line. */
   grossPay?: number | null;
-  /** Lines shown under Gross pay that add up to it (e.g. hourly days + fixed days ÷ 10). */
+  /** Lines shown under Gross pay, such as hourly earnings plus full fixed cutoff salary. */
   grossBreakdown?: { label: string; amount: number }[];
   createdByName?: string | null;
   onChanged: () => void | Promise<void>;
