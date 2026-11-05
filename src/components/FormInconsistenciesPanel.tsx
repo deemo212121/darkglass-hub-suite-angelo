@@ -9,15 +9,19 @@
  *
  * A difference that's fine (the person moved) can be marked as checked
  * (form_consistency_reviews, migration 0425); it stays hidden until a new,
- * different value shows up. One that's a mistake can be sent back: "Send
- * form again" sends the person a fresh copy of the forms HR picks to fill
- * out once more (formConsistencyReviews.ts's sendFormsAgain) — signed forms
- * are never edited here. HR also gets a bell notification when someone
+ * different value shows up. One that's a mistake can be fixed: clicking a
+ * form opens it right here (SignedFormViewer) with Edit — HR corrects the
+ * answer and the PDF is rebuilt under their signature (signedFormEdit.ts) —
+ * or "Send form again" sends the person a fresh copy of the forms HR picks
+ * to fill out once more (formConsistencyReviews.ts's sendFormsAgain). HR
+ * also gets a bell notification when someone
  * signs a form that disagrees with all of their other forms
  * (formConsistencyReviews.ts's notifyHrOfNewInconsistencies).
  */
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, Clock, ExternalLink, Loader2, RefreshCw, Search, Send, ShieldAlert, Undo2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, FileText, Loader2, Pencil, RefreshCw, Search, Send, ShieldAlert, Undo2 } from "lucide-react";
+import { SignedFormViewer } from "@/components/SignedFormViewer";
+import { editHistoryOf } from "@/lib/signedFormEdit";
 import { useAuth } from "@/lib/auth";
 import { Switch } from "@/components/ui/switch";
 import { getSignableDocumentsByTypes, type SignableDocument } from "@/lib/supabase/signableDocuments";
@@ -34,6 +38,7 @@ import {
   type Inconsistency,
 } from "@/lib/formConsistency";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
+import { SIGNABLE_DOCUMENT_REGISTRY } from "@/lib/signableDocumentRegistry";
 import { isCompletedPaper } from "@/lib/completedPapers";
 
 const shortDate = (iso: string) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—");
@@ -77,6 +82,8 @@ export function FormInconsistenciesPanel({ canViewCompleted }: { canViewComplete
   const [sendPick, setSendPick] = useState<Set<string>>(new Set());
   const [sendNote, setSendNote] = useState("");
   const [sentFor, setSentFor] = useState<string | null>(null);
+  // The signed form open in place (SignedFormViewer), and the difference it was opened from.
+  const [viewing, setViewing] = useState<{ docId: string; profileId: string; field: ConsistencyField; rowKey: string } | null>(null);
   // Who the message comes from.
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   useEffect(() => {
@@ -214,8 +221,35 @@ export function FormInconsistenciesPanel({ canViewCompleted }: { canViewComplete
     }
   };
 
+  const viewedDoc = viewing ? docById.get(viewing.docId) : undefined;
+  const viewedPerson = viewing ? people.find((p) => p.profileId === viewing.profileId) : undefined;
+
   return (
     <div className="space-y-4">
+      {viewing && viewedDoc && (
+        <SignedFormViewer
+          doc={viewedDoc}
+          title={SIGNABLE_DOCUMENT_REGISTRY[viewedDoc.documentType]?.label ?? viewedDoc.documentType}
+          personName={viewedPerson?.name ?? "this person"}
+          focusField={viewing.field}
+          editor={{ profileId: myProfileId, name: displayName }}
+          onSaved={(updated) => setDocs((prev) => prev.map((d) => (d.id === updated.id ? updated : d)))}
+          onSendAgain={
+            viewedPerson?.active
+              ? () => {
+                  // Same picker as the row's own button, this form already ticked.
+                  setSendFor(viewing.rowKey);
+                  setSendPick(new Set([viewing.docId]));
+                  setSendNote("");
+                  setNoteFor(null);
+                  setSentFor(null);
+                  setViewing(null);
+                }
+              : undefined
+          }
+          onClose={() => setViewing(null)}
+        />
+      )}
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-[18rem] flex-1">
           <h2 className="flex items-center gap-2 text-lg font-bold text-white">
@@ -332,15 +366,18 @@ export function FormInconsistenciesPanel({ canViewCompleted }: { canViewComplete
                                 return (
                                   <Fragment key={f.docId}>
                                     {f.pdfUrl && canOpen(f) ? (
-                                      <a
-                                        href={f.pdfUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        title={`Open the signed ${f.label}`}
+                                      <button
+                                        type="button"
+                                        onClick={() => setViewing({ docId: f.docId, profileId: person.profileId, field: inc.field, rowKey: key })}
+                                        title={`Open the signed ${f.label} — view, edit or send it again`}
                                         className="inline-flex items-center gap-1 rounded border border-sky-400/30 bg-sky-500/10 px-1.5 py-0.5 text-[11px] text-sky-200 hover:bg-sky-500/20"
                                       >
-                                        {f.label} · {shortDate(f.signedAt)} <ExternalLink className="h-3 w-3" />
-                                      </a>
+                                        {f.label} · {shortDate(f.signedAt)}
+                                        {(() => {
+                                          const d = docById.get(f.docId);
+                                          return d && editHistoryOf(d).length > 0 ? <Pencil className="h-3 w-3 text-amber-300" aria-label="Edited by HR" /> : <FileText className="h-3 w-3" />;
+                                        })()}
+                                      </button>
                                     ) : (
                                       <span className="rounded border border-white/10 px-1.5 py-0.5 text-[11px] text-slate-400">
                                         {f.label} · {shortDate(f.signedAt)}

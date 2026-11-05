@@ -21,6 +21,7 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   warning_note_retracted: "Retracted warning/mistake",
   coe_sent: "Sent Certificate of Employment",
   form_sent_again_inconsistency: "Sent a form again (didn't match their other forms)",
+  signed_form_edited: "Corrected a signed form (Form Inconsistencies)",
   warning_form_sent: "Sent Employee Warning Form",
   warning_form_signed: "Signed Employee Warning Form",
   nda_form_sent: "Sent Non-Disclosure Agreement",
