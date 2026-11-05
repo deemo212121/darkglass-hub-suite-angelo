@@ -28,7 +28,8 @@
  * dev, and any Node serverless target).
  */
 
-import { verifyFirebaseToken, strToB64url, b64urlToString } from "./supabaseTokenBridge";
+import { verifyFirebaseToken } from "./supabaseTokenBridge";
+import { readOAuthState, signOAuthState } from "./oauthState";
 import { fetchSubmissionForNotify } from "./customFormsBridge";
 
 interface EnvBag {
@@ -56,6 +57,8 @@ function readEnv(env?: Record<string, string | undefined>): EnvBag | { error: st
   return { supabaseUrl, supabaseServiceKey, firebaseProjectId, googleClientId, googleClientSecret };
 }
 
+/** What a Drive connect's signed state says (see oauthState.ts). */
+const DRIVE_STATE_PURPOSE = "google-drive-connect";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -77,6 +80,14 @@ async function fetchProfileByFirebaseUid(
   const r = rows[0];
   if (!r) return null;
   return { id: r.id, companyId: r.company_id, role: r.role, name: r.display_name || r.username || r.email };
+}
+
+async function fetchProfileById(env: EnvBag, profileId: string): Promise<{ id: string; companyId: string; name: string } | null> {
+  const url = `${env.supabaseUrl}/rest/v1/profiles?select=id,company_id,display_name,username,email&id=eq.${encodeURIComponent(profileId)}&limit=1`;
+  const res = await fetch(url, { headers: { apikey: env.supabaseServiceKey, Authorization: `Bearer ${env.supabaseServiceKey}` } });
+  if (!res.ok) throw new Error(`Supabase profile lookup failed (${res.status}): ${await res.text()}`);
+  const [r] = (await res.json()) as Array<{ id: string; company_id: string; display_name: string | null; username: string | null; email: string }>;
+  return r ? { id: r.id, companyId: r.company_id, name: r.display_name || r.username || r.email } : null;
 }
 
 async function fetchDriveConnection(env: EnvBag, companyId: string): Promise<{ refreshToken: string; rootFolderId: string | null } | null> {
@@ -242,10 +253,13 @@ export async function handleGoogleDriveRequest(request: Request, env?: Record<st
   if (code && state) {
     const appOrigin = url.origin;
     try {
-      const decoded = JSON.parse(b64urlToString(state)) as { companyId: string; profileId: string; connectedByName: string };
+      const claims = await readOAuthState<{ companyId: string; profileId: string }>(envBag.supabaseServiceKey, DRIVE_STATE_PURPOSE, state);
+      if (!claims) throw new Error("Invalid or expired Google Drive connect state");
+      const person = await fetchProfileById(envBag, claims.profileId);
+      if (!person || person.companyId !== claims.companyId) throw new Error("Google Drive connect: profile not found");
       const redirectUri = `${url.origin}${url.pathname}`;
       const { refreshToken } = await exchangeCodeForTokens(envBag, code, redirectUri);
-      await upsertDriveConnection(envBag, decoded.companyId, decoded.profileId, decoded.connectedByName, refreshToken);
+      await upsertDriveConnection(envBag, claims.companyId, person.id, person.name, refreshToken);
       return Response.redirect(`${appOrigin}/hr-dashboard?tab=customForms&driveConnected=1`, 302);
     } catch (err) {
       console.error("[google-drive] callback error:", err);
@@ -267,7 +281,7 @@ export async function handleGoogleDriveRequest(request: Request, env?: Record<st
       if (!profile.role || !["ADMIN", "SUPERADMIN"].includes(profile.role.toUpperCase())) {
         return json({ error: "Only an Admin can connect Google Drive" }, 403);
       }
-      const state = strToB64url(JSON.stringify({ companyId: profile.companyId, profileId: profile.id, connectedByName: profile.name }));
+      const state = await signOAuthState(envBag.supabaseServiceKey, DRIVE_STATE_PURPOSE, { companyId: profile.companyId, profileId: profile.id });
       const redirectUri = `${url.origin}${url.pathname}`;
       const authUrl = new URL(AUTH_ENDPOINT);
       authUrl.searchParams.set("client_id", envBag.googleClientId);

@@ -39,7 +39,8 @@
  */
 
 import { resolveDefaultPassword } from "./defaultPasswordBridge";
-import { verifyFirebaseToken, strToB64url, b64urlToString } from "./supabaseTokenBridge";
+import { verifyFirebaseToken } from "./supabaseTokenBridge";
+import { peekOAuthState, readOAuthState, signOAuthState } from "./oauthState";
 import { CANDIDATE_EMAIL_SENDER_ROLES, emailBodyHtml, isValidEmail, parseEmailList, parseSignatureImage } from "../hiringEmails";
 
 export interface EnvBag {
@@ -214,15 +215,14 @@ export async function fetchGmailConnection(env: EnvBag, companyId: string, regio
 const holdsCandidateEmailRole = (profile: { role: string | null; extraRoles: string[] }) =>
   [profile.role, ...profile.extraRoles].some((r) => r && CANDIDATE_EMAIL_SENDER_ROLES.has(r.toUpperCase()));
 
-// The connect round-trip passes through the browser, so its state is signed:
-// nobody can add a mailbox under someone else's name, or to another company,
-// by making up their own callback.
-function hiringStateKey(env: EnvBag): Promise<CryptoKey> {
-  return crypto.subtle.importKey("raw", new TextEncoder().encode(env.supabaseServiceKey), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-}
-async function signHiringState(env: EnvBag, companyId: string, profileId: string): Promise<string> {
-  const mac = await crypto.subtle.sign("HMAC", await hiringStateKey(env), new TextEncoder().encode(`hiring-gmail-account|${companyId}|${profileId}`));
-  return Array.from(new Uint8Array(mac), (b) => b.toString(16).padStart(2, "0")).join("");
+/** What a Gmail connect's signed state says (see oauthState.ts). */
+const GMAIL_STATE_PURPOSE = "gmail-connect";
+interface GmailConnectClaims {
+  companyId: string;
+  profileId: string;
+  region: string;
+  /** A Hiring panel account (hiring_gmail_accounts) rather than a fixed slot. */
+  hiringAccount?: boolean;
 }
 
 async function upsertHiringGmailAccount(
@@ -575,21 +575,23 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
     const appOrigin = url.origin;
     let region: Region = "US";
     try {
-      const decoded = JSON.parse(b64urlToString(state)) as { companyId: string; profileId: string; connectedByName: string; region: string; hiringAccount?: boolean; sig?: string };
-      region = parseRegion(decoded.region) ?? "US";
-      if (decoded.hiringAccount && decoded.sig !== (await signHiringState(envBag, decoded.companyId, decoded.profileId))) {
-        throw new Error("Invalid Hiring Gmail state");
-      }
+      // Only for choosing which of our pages to go back to if this fails.
+      region = parseRegion(peekOAuthState(state)?.region as string) ?? "US";
+      const claims = await readOAuthState<GmailConnectClaims>(envBag.supabaseServiceKey, GMAIL_STATE_PURPOSE, state);
+      if (!claims) throw new Error("Invalid or expired Gmail connect state");
+      const claimedRegion = parseRegion(claims.region);
+      if (!claimedRegion) throw new Error("Gmail connect: invalid slot");
+      region = claimedRegion;
+      const person = await fetchProfileById(envBag, claims.profileId);
+      if (!person || person.companyId !== claims.companyId) throw new Error("Gmail connect: profile not found");
       const redirectUri = `${url.origin}${url.pathname}`;
       const { refreshToken } = await exchangeCodeForTokens(envBag, code, redirectUri);
       const accessToken = await refreshAccessToken(envBag, refreshToken);
       const { email: connectedEmail, name: connectedAccountName } = await fetchConnectedProfile(accessToken);
-      if (decoded.hiringAccount) {
-        const person = await fetchProfileById(envBag, decoded.profileId);
-        if (!person || person.companyId !== decoded.companyId) throw new Error("Hiring Gmail: profile not found");
-        await upsertHiringGmailAccount(envBag, decoded.companyId, person, connectedAccountName, connectedEmail, refreshToken);
+      if (claims.hiringAccount) {
+        await upsertHiringGmailAccount(envBag, claims.companyId, person, connectedAccountName, connectedEmail, refreshToken);
       } else {
-        await upsertGmailConnection(envBag, decoded.companyId, region, decoded.profileId, decoded.connectedByName, connectedAccountName, connectedEmail, refreshToken);
+        await upsertGmailConnection(envBag, claims.companyId, region, person.id, person.name, connectedAccountName, connectedEmail, refreshToken);
       }
       return Response.redirect(returnUrlFor(appOrigin, region, { gmailConnected: "1", gmailRegion: region }), 302);
     } catch (err) {
@@ -602,11 +604,7 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
     // echoed back by Google even on a denied/cancelled consent, so this
     // can still route back to the right page instead of always assuming
     // Accounting Dashboard.
-    let region: Region = "US";
-    try {
-      const decoded = JSON.parse(b64urlToString(state || "")) as { region?: string };
-      region = parseRegion(decoded.region) ?? "US";
-    } catch { /* no usable state — fall back to the default page below */ }
+    const region = parseRegion(peekOAuthState(state)?.region as string) ?? "US";
     return Response.redirect(returnUrlFor(url.origin, region, { gmailConnected: "0" }), 302);
   }
 
@@ -622,7 +620,7 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       if (!(await canConnectGmailSlot(envBag, profile, region))) {
         return json({ error: "You do not have permission to connect this Gmail. Ask an Admin to grant your role access." }, 403);
       }
-      const state = strToB64url(JSON.stringify({ companyId: profile.companyId, profileId: profile.id, connectedByName: profile.name, region }));
+      const state = await signOAuthState(envBag.supabaseServiceKey, GMAIL_STATE_PURPOSE, { companyId: profile.companyId, profileId: profile.id, region });
       const redirectUri = `${url.origin}${url.pathname}`;
       const authUrl = new URL(AUTH_ENDPOINT);
       authUrl.searchParams.set("client_id", envBag.googleClientId);
@@ -650,8 +648,7 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       const profile = await fetchProfileByFirebaseUid(envBag, claims.sub);
       if (!profile) return json({ error: "Profile not found" }, 404);
       if (!holdsCandidateEmailRole(profile)) return json({ error: "Only HR, Admin and Super Admin can connect a Hiring Gmail." }, 403);
-      const sig = await signHiringState(envBag, profile.companyId, profile.id);
-      const state = strToB64url(JSON.stringify({ companyId: profile.companyId, profileId: profile.id, region: "HR_HIRING", hiringAccount: true, sig }));
+      const state = await signOAuthState(envBag.supabaseServiceKey, GMAIL_STATE_PURPOSE, { companyId: profile.companyId, profileId: profile.id, region: "HR_HIRING", hiringAccount: true });
       const authUrl = new URL(AUTH_ENDPOINT);
       authUrl.searchParams.set("client_id", envBag.googleClientId);
       authUrl.searchParams.set("redirect_uri", `${url.origin}${url.pathname}`);

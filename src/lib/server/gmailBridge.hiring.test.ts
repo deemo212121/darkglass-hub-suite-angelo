@@ -44,6 +44,8 @@ const SIGNATURES = {
 
 let gmailSends: string[];
 let upserts: any[];
+let slotUpserts: any[];
+let exchanges: number;
 
 function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = String(input);
@@ -63,6 +65,11 @@ function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
     const wanted = /id=eq\.([^&]+)/.exec(url)?.[1];
     return ok(Object.values(ACCOUNTS).filter((a) => a.id === wanted));
   }
+  if (url.includes("/rest/v1/hr_gmail_connections") && init?.method === "POST") {
+    slotUpserts.push(JSON.parse(String(init.body)));
+    return Promise.resolve(new Response(null, { status: 201 }));
+  }
+  if (url.includes("/rest/v1/gmail_connect_role_gates")) return ok([]);
   if (url.includes("/rest/v1/hiring_email_signatures")) {
     const wanted = /id=eq\.([^&]+)/.exec(url)?.[1];
     return ok(Object.values(SIGNATURES).filter((s) => s.id === wanted));
@@ -70,7 +77,10 @@ function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
   if (url.includes("/rest/v1/hr_candidates")) return ok([{ company_id: COMPANY }]);
   if (url === "https://oauth2.googleapis.com/token") {
     const form = String(init?.body);
-    if (form.includes("grant_type=authorization_code")) return ok({ refresh_token: "rt-new", access_token: "at-new" });
+    if (form.includes("grant_type=authorization_code")) {
+      exchanges++;
+      return ok({ refresh_token: "rt-new", access_token: "at-new" });
+    }
     if (form.includes("rt-expired")) return Promise.resolve(new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 }));
     return ok({ access_token: "at" });
   }
@@ -99,6 +109,8 @@ const email = (uid: string, accountId: string, extra: Record<string, unknown> = 
 beforeEach(() => {
   gmailSends = [];
   upserts = [];
+  slotUpserts = [];
+  exchanges = 0;
   vi.stubGlobal("fetch", vi.fn(fakeFetch));
   vi.spyOn(console, "error").mockImplementation(() => {});
   for (const k of Object.keys(people)) delete people[k];
@@ -265,6 +277,66 @@ describe("send-candidate-email: signature", () => {
   });
 });
 
+describe("connect: fixed Gmail slots (Payroll, Parts, IT, Attendance, Flash Tech)", () => {
+  const start = (uid: string, region: string) => handleGmailRequest(new Request(`https://app.test/api/gmail?action=connect&region=${region}&idToken=${uid}`), ENV);
+  const callback = (state: string) => handleGmailRequest(new Request(`https://app.test/api/gmail?code=abc&state=${encodeURIComponent(state)}`), ENV);
+  const stateFrom = (res: Response) => new URL(res.headers.get("location")!).searchParams.get("state")!;
+  const encode = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+  const alter = (state: string, change: Record<string, unknown>) => {
+    const [body, sig] = state.split(".");
+    return `${encode({ ...JSON.parse(Buffer.from(body, "base64url").toString("utf8")), ...change })}.${sig}`;
+  };
+
+  it.each(["US", "PH", "PARTS", "IT_1", "IT_2", "IT_3", "ATTENDANCE", "FLASH_TECH"])("a normal %s connect saves under the Admin who started it", async (region) => {
+    const res = await callback(stateFrom(await start("admin", region)));
+    expect(res.headers.get("location")).toContain("gmailConnected=1");
+    expect(slotUpserts).toEqual([
+      { company_id: COMPANY, region, connected_by: ADMIN, connected_by_name: "admin", connected_account_name: "New Person", connected_email: "New.Person@USIHS.com", refresh_token: "rt-new" },
+    ]);
+  });
+
+  it("keeps someone without access out, as before", async () => {
+    expect((await start("ana", "US")).status).toBe(403);
+    expect((await start("tech", "US")).status).toBe(403);
+  });
+
+  it("refuses a made-up callback in the old format, before it ever talks to Google", async () => {
+    const forged = encode({ companyId: COMPANY, profileId: ADMIN, connectedByName: "Someone", region: "US" });
+    const res = await callback(forged);
+    expect(res.headers.get("location")).toContain("gmailConnected=0");
+    expect(exchanges).toBe(0);
+    expect(slotUpserts).toHaveLength(0);
+  });
+
+  it.each([
+    ["another slot", { region: "PH" }],
+    ["another company", { companyId: OTHER_COMPANY }],
+    ["another person", { profileId: ANA }],
+  ])("refuses a real state altered to name %s", async (_what, change) => {
+    const res = await callback(alter(stateFrom(await start("admin", "US")), change));
+    expect(res.headers.get("location")).toContain("gmailConnected=0");
+    expect(exchanges).toBe(0);
+    expect(slotUpserts).toHaveLength(0);
+  });
+
+  it("refuses a state over 15 minutes old, and still returns to the page it started from", async () => {
+    const state = stateFrom(await start("admin", "ATTENDANCE"));
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 16 * 60 * 1000);
+    const res = await callback(state);
+    expect(res.headers.get("location")).toContain("/m/dashboard/attendance-monitoring");
+    expect(res.headers.get("location")).toContain("gmailConnected=0");
+    expect(slotUpserts).toHaveLength(0);
+  });
+
+  it("cancelling on Google's screen goes back to the right page and saves nothing", async () => {
+    const state = stateFrom(await start("admin", "FLASH_TECH"));
+    const res = await handleGmailRequest(new Request(`https://app.test/api/gmail?error=access_denied&state=${encodeURIComponent(state)}`), ENV);
+    expect(res.headers.get("location")).toContain("/m/hr/flash-tech");
+    expect(res.headers.get("location")).toContain("gmailConnected=0");
+    expect(slotUpserts).toHaveLength(0);
+  });
+});
+
 describe("send-hiring-credentials", () => {
   const creds = (uid: string, accountId: string) => post("send-hiring-credentials", { idToken: uid, profileId: TECH, accountId });
 
@@ -289,8 +361,11 @@ describe("connect-hiring-account", () => {
   const start = (uid: string) => handleGmailRequest(new Request(`https://app.test/api/gmail?action=connect-hiring-account&idToken=${uid}`), ENV);
   const callback = (state: string) => handleGmailRequest(new Request(`https://app.test/api/gmail?code=abc&state=${encodeURIComponent(state)}`), ENV);
   const stateFrom = (res: Response) => new URL(res.headers.get("location")!).searchParams.get("state")!;
-  const decode = (s: string) => JSON.parse(Buffer.from(s, "base64url").toString("utf8"));
   const encode = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+  const alter = (state: string, change: Record<string, unknown>) => {
+    const [body, sig] = state.split(".");
+    return `${encode({ ...JSON.parse(Buffer.from(body, "base64url").toString("utf8")), ...change })}.${sig}`;
+  };
 
   it.each(["ana", "admin", "extra"])("lets %s connect, and shows Google's account chooser", async (uid) => {
     const res = await start(uid);
@@ -316,10 +391,17 @@ describe("connect-hiring-account", () => {
   it.each([
     ["someone else's name", { profileId: BEA }],
     ["another company", { companyId: OTHER_COMPANY }],
-    ["a missing signature", { sig: undefined }],
+    ["a fixed slot like Payroll", { hiringAccount: false, region: "US" }],
   ])("rejects a callback altered to use %s", async (_what, change) => {
-    const forged = encode({ ...decode(stateFrom(await start("ana"))), ...change });
-    const res = await callback(forged);
+    const res = await callback(alter(stateFrom(await start("ana")), change));
+    expect(res.headers.get("location")).toContain("gmailConnected=0");
+    expect(exchanges).toBe(0);
+    expect(upserts).toHaveLength(0);
+    expect(slotUpserts).toHaveLength(0);
+  });
+
+  it("rejects a state with its signature removed", async () => {
+    const res = await callback(stateFrom(await start("ana")).split(".")[0]);
     expect(res.headers.get("location")).toContain("gmailConnected=0");
     expect(upserts).toHaveLength(0);
   });
