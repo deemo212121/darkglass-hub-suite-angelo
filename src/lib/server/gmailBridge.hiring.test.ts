@@ -13,8 +13,6 @@ vi.mock("./supabaseTokenBridge", async (importActual) => ({
 vi.mock("./defaultPasswordBridge", () => ({ resolveDefaultPassword: vi.fn(async () => "default-pw") }));
 
 import { handleGmailRequest } from "./gmailBridge";
-import { resolveDefaultPassword } from "./defaultPasswordBridge";
-import { DEFAULT_PASSWORD_TOKEN } from "../hiringEmails";
 
 const COMPANY = "c0000000-0000-0000-0000-000000000001";
 const OTHER_COMPANY = "c0000000-0000-0000-0000-000000000002";
@@ -264,38 +262,6 @@ describe("send-candidate-email: signature", () => {
     await email("ana", ACCOUNTS.anaOwn.id, { signatureId: SIGNATURES.anaOwn.id, body, image: "data:image/png;base64,RVZJTA==", signature_image: "RVZJTA==" });
     expect(gmailSends[0]).not.toContain("RVZJTA");
     expect(gmailSends[0].replace(/\r\n/g, "")).toContain(PNG);
-  });
-});
-
-describe("send-candidate-email: default password", () => {
-  const body = `Username: Ana.Cruz\nPassword: ${DEFAULT_PASSWORD_TOKEN}\nUnique ID: USIHS`;
-
-  it("swaps in the company's real password only when sending", async () => {
-    const res = await email("ana", ACCOUNTS.anaOwn.id, { body });
-    expect(res.status).toBe(200);
-    expect(gmailSends[0]).toContain("Password: default-pw\n");
-    expect(gmailSends[0]).not.toContain(DEFAULT_PASSWORD_TOKEN);
-    expect(JSON.stringify(await res.clone().json())).not.toContain("default-pw");
-  });
-
-  it("does the same in an email with a signature", async () => {
-    await email("ana", ACCOUNTS.anaOwn.id, { body, signatureId: SIGNATURES.anaOwn.id });
-    const decoded = [...gmailSends[0].matchAll(/base64\r\n\r\n([A-Za-z0-9+/=\r\n]+?)\r\n\r\n--/g)].map((m) => Buffer.from(m[1].replace(/\r\n/g, ""), "base64").toString("utf8")).join("\n");
-    expect(decoded).toContain("Password: default-pw");
-    expect(decoded).not.toContain(DEFAULT_PASSWORD_TOKEN);
-  });
-
-  it("stops if no default password is set, rather than sending the stand-in", async () => {
-    vi.mocked(resolveDefaultPassword).mockResolvedValueOnce(null);
-    const res = await email("ana", ACCOUNTS.anaOwn.id, { body });
-    expect(res.status).toBe(409);
-    expect(gmailSends).toHaveLength(0);
-  });
-
-  it("leaves other emails alone", async () => {
-    vi.mocked(resolveDefaultPassword).mockClear();
-    await email("ana", ACCOUNTS.anaOwn.id, { body: "Hi there" });
-    expect(resolveDefaultPassword).not.toHaveBeenCalled();
   });
 });
 

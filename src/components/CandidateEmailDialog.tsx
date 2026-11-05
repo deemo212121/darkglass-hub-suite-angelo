@@ -150,10 +150,10 @@ export function CandidateEmailDialog({
     !!candidate.position?.trim() &&
     ((kind === "congratulations_technician" && !isTechnicianPosition(candidate.position)) || (kind === "congratulations" && isTechnicianPosition(candidate.position)));
 
-  const textField = (key: "location" | "contactPerson" | "contactNumber" | "username" | "discordLink", label: string, placeholder?: string) => (
+  const textField = (key: "location" | "contactPerson" | "contactNumber" | "username" | "password" | "discordLink", label: string, placeholder?: string) => (
     <label className="block">
       <span className={labelClass}>{label} *</span>
-      <input type="text" value={fields[key]} onChange={(e) => updateFields({ [key]: e.target.value })} placeholder={placeholder} className={inputClass} />
+      <input type="text" autoComplete="off" value={fields[key]} onChange={(e) => updateFields({ [key]: e.target.value })} placeholder={placeholder} className={inputClass} />
     </label>
   );
 
@@ -241,14 +241,13 @@ export function CandidateEmailDialog({
                   {textField("contactNumber", "Contact Number")}
                 </div>
               )}
-              {has("username") ? (
+              {has("username") && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {textField("username", "Username", "John.Smith")}
-                  {textField("discordLink", "Discord Link", "https://discord.gg/...")}
+                  {textField("password", "Password")}
                 </div>
-              ) : (
-                has("discordLink") && textField("discordLink", "Discord Link", "https://discord.gg/...")
               )}
+              {has("discordLink") && textField("discordLink", "Discord Link", "https://discord.gg/...")}
 
               <label className="block">
                 <span className={labelClass}>Subject *</span>

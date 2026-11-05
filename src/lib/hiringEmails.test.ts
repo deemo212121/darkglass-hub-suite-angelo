@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_PASSWORD_TOKEN,
   HIRING_EMAIL_KINDS,
   HIRING_EMAIL_TEMPLATES,
   NO_SIGNATURE,
@@ -42,6 +41,7 @@ const filled: EmailFields = {
   contactPerson: "Alyssa Diones",
   contactNumber: "555-0100",
   username: "Ana.Cruz",
+  password: "typed-by-hr",
   discordLink: "https://discord.gg/abc123",
 };
 
@@ -83,7 +83,7 @@ describe("congratsBody", () => {
     expect(body).toContain("\nDate: November 10, 2026\n");
     expect(body).toContain("\nTime: 1:30 PM CST\n");
     expect(body).toContain("\nDiscord Link: https://discord.gg/abc123\n");
-    expect(body.endsWith("Best regards,\nHR Team USIHS")).toBe(true);
+    expect(body.endsWith("\n\nBest regards,")).toBe(true);
     expect(hasUnfilledPlaceholder(body)).toBe(false);
   });
   it("uses 'an' before a vowel", () => {
@@ -129,18 +129,16 @@ describe("Technician email", () => {
   it("fills in every field where your template has it", () => {
     expect(body.startsWith("Hi Ana,\n\nCongratulations! We are pleased")).toBe(true);
     expect(body).toContain("Training Details\n\nDate: November 10, 2026\nTime: 1:30 PM CST\nLocation: 100 Main St, Atlanta, GA 30301\nContact Person: Alyssa Diones\nContact Number: 555-0100\n");
-    expect(body).toContain("   Link: https://adminhubsolution.com/\n   Username: Ana.Cruz\n");
+    expect(body).toContain("   Link: https://adminhubsolution.com/\n   Username: Ana.Cruz\n   Password: typed-by-hr\n");
     expect(body).toContain("   Unique ID: USIHS\n");
     expect(body).toContain("on your scheduled orientation day:\n\nhttps://discord.gg/abc123\n\nOnce you join");
-    expect(body.endsWith("Best regards,\nHR Team USIHS")).toBe(true);
+    expect(body.endsWith("\n\nBest regards,")).toBe(true);
     expect(hasUnfilledPlaceholder(body)).toBe(false);
   });
-  it("never has the real password in it, only the stand-in", () => {
-    expect(body).toContain(`   Password: ${DEFAULT_PASSWORD_TOKEN}\n`);
-    expect(body.match(/Password: .*/g)).toEqual([`Password: ${DEFAULT_PASSWORD_TOKEN}`]);
-    expect(hasUnfilledPlaceholder(DEFAULT_PASSWORD_TOKEN)).toBe(false);
+  it("no longer has the leftover schedule-change line", () => {
+    expect(body).not.toContain("schedule change");
   });
-  it.each(["date", "time", "location", "contactPerson", "contactNumber", "username", "discordLink"] as const)("flags an empty %s", (key) => {
+  it.each(["date", "time", "location", "contactPerson", "contactNumber", "username", "password", "discordLink"] as const)("flags an empty %s", (key) => {
     expect(hasUnfilledPlaceholder(technicianCongratsBody({ ...filled, [key]: "" }))).toBe(true);
   });
   it("has a fixed Technician subject", () => {
@@ -191,11 +189,12 @@ describe("emailFieldProblem", () => {
     expect(tech({ contactPerson: "" })).toBe("Enter the contact person.");
     expect(tech({ contactNumber: "" })).toBe("Enter the contact number.");
     expect(tech({ username: "" })).toBe("Enter the username.");
+    expect(tech({ password: " " })).toBe("Enter the password.");
     expect(tech({ discordLink: "" })).toBe("Enter the Discord link.");
     expect(tech({ discordLink: "tomorrow" })).toContain("Check the Discord link");
   });
   it("needs nothing for the Status Update", () => {
-    const empty = { ...filled, date: "", time: "", location: "", contactPerson: "", contactNumber: "", username: "", discordLink: "", position: "" };
+    const empty = { ...filled, date: "", time: "", location: "", contactPerson: "", contactNumber: "", username: "", password: "", discordLink: "", position: "" };
     expect(emailFieldProblem("status_update", empty, today)).toBeNull();
   });
 });
@@ -237,6 +236,24 @@ describe("prefillEmailFields", () => {
   });
   it("keeps today's date", () => {
     expect(prefillEmailFields("interview_reminder", { ...src, interviewDate: today }, today).date).toBe(today);
+  });
+  it("never fills in the password", () => {
+    for (const kind of HIRING_EMAIL_KINDS) expect(prefillEmailFields(kind, src, today).password).toBe("");
+  });
+  it("starts Technician training at 8:00 AM CST if no time is saved", () => {
+    const f = prefillEmailFields("congratulations_technician", { ...src, trainingTimeIn: null }, today);
+    expect(f).toMatchObject({ time: "08:00", zone: "CST" });
+    expect(technicianCongratsBody(f)).toContain("Time: 8:00 AM CST\n");
+  });
+  it("uses a saved training time over that default", () => {
+    expect(prefillEmailFields("congratulations_technician", { ...src, trainingTimeIn: "09:15" }, today)).toMatchObject({ time: "09:15", zone: "EST" });
+  });
+  it("still defaults the time when an old date is dropped", () => {
+    expect(prefillEmailFields("congratulations_technician", { ...src, trainingStartDate: "2026-11-01", startDate: null }, today)).toMatchObject({ date: "", time: "08:00", zone: "CST" });
+  });
+  it("only defaults the time for Technician training", () => {
+    expect(prefillEmailFields("congratulations", { ...src, trainingTimeIn: null }, today).time).toBe("");
+    expect(prefillEmailFields("screening_passed", { ...src, interviewTime: null }, today).time).toBe("");
   });
   it("defaults the time zone to CST", () => {
     expect(prefillEmailFields("congratulations", { ...src, interviewTimezone: null }, today).zone).toBe("CST");
@@ -314,12 +331,22 @@ describe("formatOrientationTime", () => {
   });
 });
 
+describe("sign-off", () => {
+  it("ends every email on Best regards, with nothing after it", () => {
+    for (const kind of HIRING_EMAIL_KINDS) {
+      const body = HIRING_EMAIL_TEMPLATES[kind].body(filled, "2026-11-05");
+      expect(body.endsWith("\n\nBest regards,")).toBe(true);
+      expect(body).not.toContain("HR Team USIHS");
+    }
+  });
+});
+
 describe("statusUpdateBody", () => {
   it("greets by name and signs off", () => {
     const body = statusUpdateBody("John Michael");
     expect(body.startsWith("Dear John Michael,\n")).toBe(true);
     expect(body).toContain("we regret to inform you");
-    expect(body.endsWith("Best regards,\nHR Team USIHS")).toBe(true);
+    expect(body.endsWith("Best regards,")).toBe(true);
   });
 });
 
