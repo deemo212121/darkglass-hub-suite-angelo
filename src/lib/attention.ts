@@ -72,7 +72,7 @@ export interface Attention {
   tabCounts: Record<string, number>;
 }
 
-const COMPANY_WIDE_ROLES = new Set(["ADMIN", "SUPERADMIN", "SUPERSUPERADMIN", "HR", "FINANCE"]);
+const COMPANY_WIDE_ROLES = new Set(["ADMIN", "SUPERADMIN", "SUPERSUPERADMIN", "HR", "FINANCE", "ACCOUNTING_MANAGER"]);
 const LIMIT_ROLES = new Set(["ADMIN", "HR", "SUPERADMIN"]);
 // Told when someone finishes every form on Staff Form Checklist.
 const FORMS_DONE_ROLES = new Set(["ADMIN", "HR", "SUPERADMIN", "SUPERSUPERADMIN"]);

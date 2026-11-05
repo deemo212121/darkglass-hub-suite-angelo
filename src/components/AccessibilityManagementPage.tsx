@@ -4,7 +4,7 @@ import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Loader2, ArrowRight, Inbox, CheckCircle2, Plus, X, Settings, Pencil, Trash2, Check } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { MODULES } from "@/lib/modules";
-import { ROLE_LABELS, ROLE_OPTIONS } from "@/lib/roleLabels";
+import { ROLE_LABELS, ROLE_OPTIONS, withIncludedRoles } from "@/lib/roleLabels";
 import { useAllRoleOptions, useCustomRoles, createCustomRole, setRoleLabel, deleteCustomRole } from "@/lib/customRoles";
 import { DASHBOARD_ROLE_GATES } from "@/lib/dashboardAccess";
 import { BORROWED_DEFAULT_GATES } from "@/lib/submoduleAccess";
@@ -42,8 +42,27 @@ const NON_RENAMABLE_BUILTIN_CODES = new Set(["ADMIN", "SUPERADMIN", "SUPERSUPERA
 // here means the same thing it does everywhere else in the app.
 const moduleAccentBySlug = new Map(MODULES.map((m) => [m.slug, m.accent]));
 
-export function ModuleAccessCard({ title, moduleLabel, moduleSlug, onMove, direction }: { title: string; moduleLabel: string; moduleSlug: string; onMove: () => void; direction: "grant" | "revoke" }) {
+export function ModuleAccessCard({ title, moduleLabel, moduleSlug, onMove, direction, inheritedVia }: { title: string; moduleLabel: string; moduleSlug: string; onMove: () => void; direction: "grant" | "revoke"; inheritedVia?: string }) {
   const accent = moduleAccentBySlug.get(moduleSlug) ?? "#94a3b8";
+  // Granted through a role this one includes (Accounting Manager ← Accounting):
+  // nothing to revoke here — it follows that role's own access.
+  if (inheritedVia) {
+    const viaLabel = ROLE_LABELS[inheritedVia] ?? inheritedVia;
+    return (
+      <div
+        title={`Comes with ${viaLabel} — change it on ${viaLabel}`}
+        style={{ borderLeftColor: accent, borderLeftWidth: "3px" }}
+        className="flex w-full items-center gap-2.5 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5 text-left"
+      >
+        <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: accent }} />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium truncate" title={title}>{title}</div>
+          <div className="text-xs truncate" style={{ color: accent }}>{moduleLabel}</div>
+        </div>
+        <span className="shrink-0 rounded-md border border-white/10 px-1.5 py-0.5 text-[11px] text-muted-foreground">via {viaLabel}</span>
+      </div>
+    );
+  }
   return (
     <button
       type="button"
@@ -132,9 +151,14 @@ export function ModuleAccessEditor({
 
   const q = filter.trim().toLowerCase();
   const filtered = q ? gateRows.filter((r) => r.title.toLowerCase().includes(q) || r.moduleLabel.toLowerCase().includes(q)) : gateRows;
-  const isGranted = (row: GateRow) => (dashboardGates[`${row.moduleSlug}:${row.slug}`] ?? allRoleValues).includes(selectedRole);
-  const granted = filtered.filter(isGranted);
-  const available = filtered.filter((r) => !isGranted(r));
+  const gateOf = (row: GateRow) => dashboardGates[`${row.moduleSlug}:${row.slug}`] ?? allRoleValues;
+  // Roles the selected one includes (ROLE_INCLUDES — Accounting for an Accounting Manager).
+  const includedRoles = withIncludedRoles([selectedRole]).filter((r) => r !== selectedRole);
+  const isGranted = (row: GateRow) => gateOf(row).includes(selectedRole);
+  /** The included role this page comes through, when it isn't granted to the selected role itself. */
+  const grantedVia = (row: GateRow) => (isGranted(row) ? undefined : includedRoles.find((r) => gateOf(row).includes(r)));
+  const granted = filtered.filter((r) => isGranted(r) || grantedVia(r));
+  const available = filtered.filter((r) => !isGranted(r) && !grantedVia(r));
 
   const move = (row: GateRow, toGranted: boolean) => onToggle(row.moduleSlug, row.slug, selectedRole, toGranted);
 
@@ -426,6 +450,7 @@ export function ModuleAccessEditor({
               moduleSlug={row.moduleSlug}
               direction="revoke"
               onMove={() => move(row, false)}
+              inheritedVia={grantedVia(row)}
             />
           ))}
           {granted.length === 0 && <div className="text-sm text-muted-foreground italic px-1 py-4 text-center">Nothing here.</div>}

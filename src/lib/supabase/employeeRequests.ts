@@ -530,8 +530,8 @@ export async function notifyRequestReviewers(input: {
   const recipients = profiles.filter((p) => {
     if (p.id === input.senderId || !p.is_active) return false;
     const primary = (p.role || "").toUpperCase();
-    if (["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes(primary)) return true;
-    return (p.extra_roles || []).some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes((r || "").toUpperCase()));
+    if (["ADMIN", "SUPERADMIN", "HR", "FINANCE", "ACCOUNTING_MANAGER"].includes(primary)) return true;
+    return (p.extra_roles || []).some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE", "ACCOUNTING_MANAGER"].includes((r || "").toUpperCase()));
   });
   await Promise.all(
     recipients.map((r) =>
@@ -565,7 +565,7 @@ export function canReviewTicketDispute(
   profiles: { id: string; display_name: string | null; manager_name: string | null }[]
 ): boolean {
   const heldRoles = [viewerRole, ...(viewerExtraRoles ?? [])].map((r) => (r || "").toUpperCase()).filter(Boolean);
-  if (heldRoles.some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes(r))) return true;
+  if (heldRoles.some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE", "ACCOUNTING_MANAGER"].includes(r))) return true;
   const requester = profiles.find((p) => p.id === requesterProfileId);
   const requesterManagerName = (requester?.manager_name || "").trim().toLowerCase();
   const viewerName = (viewerDisplayName || "").trim().toLowerCase();

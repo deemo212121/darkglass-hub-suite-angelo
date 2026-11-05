@@ -523,7 +523,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // so this flag just needs to admit manager-tier roles at all, not re-scope
   // per row. normalizeRole() so legacy space-separated role values (e.g.
   // "CSR Manager") still match, same fix as hasDashboardAccess.
-  const canManageNotes = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes(normalizeRole(r))) || isAttendanceManagerTierRole(role, extraRoles);
+  const canManageNotes = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE", "ACCOUNTING_MANAGER"].includes(normalizeRole(r))) || isAttendanceManagerTierRole(role, extraRoles);
   // Settings tab (grace-warning emails) — company-scoped SUPERADMIN only,
   // same role migration 0217's RLS restricts attendance_warning_subscriptions
   // to. Not is_superadmin() (that means the platform-level SUPERSUPERADMIN,

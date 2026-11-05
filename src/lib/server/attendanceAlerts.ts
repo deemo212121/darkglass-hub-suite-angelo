@@ -160,7 +160,7 @@ interface FiredGraceWarning {
 
 // Admin/SuperAdmin deliberately excluded — routine attendance misses are
 // HR/Finance's job to track, not something every admin needs pinged about.
-const NOTIFY_ROLES = new Set(["HR", "FINANCE"]);
+const NOTIFY_ROLES = new Set(["HR", "FINANCE", "ACCOUNTING_MANAGER"]);
 
 function normalizeRole(role: string | null | undefined): string {
   return String(role ?? "").trim().toUpperCase().replace(/\s+/g, "_");

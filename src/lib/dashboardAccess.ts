@@ -1,4 +1,4 @@
-import { normalizeRole, ATTENDANCE_MANAGER_TIER_ROLES_ARRAY } from "./roleLabels";
+import { normalizeRole, withIncludedRoles, ATTENDANCE_MANAGER_TIER_ROLES_ARRAY } from "./roleLabels";
 import { getModuleRoleGate } from "./moduleAccess";
 
 /**
@@ -163,7 +163,9 @@ export function getDashboardRoleGate(subSlug: string): string[] | null {
 
 /**
  * True if `role` (primary) or anything in `extraRoles` satisfies one of the
- * `allowedRoles` for a gated page. SUPERADMIN always passes.
+ * `allowedRoles` for a gated page. SUPERADMIN always passes. A role passes
+ * wherever a role it includes does (ROLE_INCLUDES — Accounting Manager
+ * wherever Accounting is allowed), company overrides included.
  */
 export function hasDashboardAccess(
   allowedRoles: string[],
@@ -175,6 +177,5 @@ export function hasDashboardAccess(
   // normalizeRole() so legacy space-separated role values (e.g. "CSR Manager")
   // still match the underscore-form codes in allowedRoles (e.g. "CSR_MANAGER").
   const normalizedAllowed = allowedRoles.map((r) => normalizeRole(r));
-  if (normalizedAllowed.includes(primary)) return true;
-  return (extraRoles || []).some((r) => normalizedAllowed.includes(normalizeRole(r)));
+  return withIncludedRoles([role, ...(extraRoles || [])]).some((r) => normalizedAllowed.includes(r));
 }

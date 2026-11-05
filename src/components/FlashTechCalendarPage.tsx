@@ -182,7 +182,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { uid, role, extraRoles, displayName, companyId } = useAuth();
-  const canManage = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN", "FINANCE"].includes(normalizeRole(r)));
+  const canManage = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN", "FINANCE", "ACCOUNTING_MANAGER"].includes(normalizeRole(r)));
   // Tracker fields (everything beyond scheduling itself) are also editable
   // by HR — see migration 0257's widened update policy.
   const canEditTracker = canManage || [role, ...extraRoles].some((r) => normalizeRole(r) === "HR");

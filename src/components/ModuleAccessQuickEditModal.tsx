@@ -17,7 +17,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { X, Inbox, Loader2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
-import { ROLE_LABELS } from "@/lib/roleLabels";
+import { ROLE_LABELS, rolesIncludedVia } from "@/lib/roleLabels";
 import { useAllRoleOptions } from "@/lib/customRoles";
 import { DASHBOARD_ROLE_GATES } from "@/lib/dashboardAccess";
 import { hydrateModuleRoleGates, MODULE_LEVEL_GATE_SLUG } from "@/lib/moduleAccess";
@@ -105,7 +105,18 @@ function RoleDropZone({
             </button>
           </span>
         ))}
-        {roles.length === 0 && <span className="text-xs italic text-slate-500 py-1.5">Drop a role here to grant it.</span>}
+        {/* Roles that come with a granted one (Accounting Manager with Accounting) — they follow it, so no X. */}
+        {rolesIncludedVia(roles).map(({ role, via }) => (
+          <span
+            key={`via-${role}`}
+            title={`Comes with ${ROLE_LABELS[via] ?? via} — change it on ${ROLE_LABELS[via] ?? via}`}
+            className="inline-flex items-center gap-1 rounded-md border border-dashed border-emerald-500/30 px-2 py-1 text-xs text-emerald-200/70"
+          >
+            {ROLE_LABELS[role] ?? role}
+            <span className="text-[10px] text-slate-400">via {ROLE_LABELS[via] ?? via}</span>
+          </span>
+        ))}
+        {roles.length === 0 &&<span className="text-xs italic text-slate-500 py-1.5">Drop a role here to grant it.</span>}
       </div>
     </div>
   );

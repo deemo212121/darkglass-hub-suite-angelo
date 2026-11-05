@@ -113,7 +113,7 @@ export function ExpenseTrackingPage({
   // Approve / Reject / Mark Reimbursed are Accounting's call (Admin / SuperAdmin too) — primary or extra role.
   // The database enforces the same rule (migration 0396).
   const canReviewExpenses = [role, ...(extraRoles ?? [])].some((r) =>
-    ["FINANCE", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(String(r || "").trim().toUpperCase().replace(/\s+/g, "_"))
+    ["FINANCE", "ACCOUNTING_MANAGER", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(String(r || "").trim().toUpperCase().replace(/\s+/g, "_"))
   );
   const [loading, setLoading] = useState(true);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);

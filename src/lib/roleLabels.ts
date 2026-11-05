@@ -26,6 +26,8 @@ export const ROLE_LABELS: Record<string, string> = {
   IT: "IT",
   PARTS: "Parts",
   FINANCE: "Accounting",
+  // Everything Accounting can do, wherever it can do it — see ROLE_INCLUDES.
+  ACCOUNTING_MANAGER: "Accounting Manager",
   CLAIMS: "Claims Associate",
   CSR_AGENT: "CSR Associate",
   CSR_TEAM_LEADER: "CSR Team Leader",
@@ -92,6 +94,7 @@ export const ROLE_DEPARTMENT_BREAKDOWN: Record<string, { department: string; rol
   IT: { department: "IT", roleLabel: "IT" },
   PARTS: { department: "Parts", roleLabel: "Parts" },
   FINANCE: { department: "Accounting", roleLabel: "Accounting" },
+  ACCOUNTING_MANAGER: { department: "Accounting", roleLabel: "Manager" },
   CLAIMS: { department: "Claims", roleLabel: "Associate" },
   CSR_AGENT: { department: "CSR", roleLabel: "Associate" },
   CSR_TEAM_LEADER: { department: "CSR", roleLabel: "Team Leader" },
@@ -284,10 +287,43 @@ export function normalizeRole(role: string | null | undefined): string {
   return String(role ?? "").trim().toUpperCase().replace(/\s+/g, "_");
 }
 
-/** `role` (primary) plus every entry in `extraRoles`, normalized, deduped. */
+/**
+ * Roles that carry another role's access with them: an Accounting Manager
+ * can open and do everything Accounting (FINANCE) can — every page gate,
+ * Accessibility Management grant and role check that lets FINANCE in lets
+ * them in too. The database mirrors this (is_finance() and the other
+ * FINANCE checks, migration 0427).
+ */
+export const ROLE_INCLUDES: Record<string, string[]> = {
+  ACCOUNTING_MANAGER: ["FINANCE"],
+};
+
+/** These role codes plus every role they include (ROLE_INCLUDES), normalized, deduped. */
+export function withIncludedRoles(roles: readonly (string | null | undefined)[]): string[] {
+  const out = new Set<string>();
+  for (const r of roles) {
+    const code = normalizeRole(r);
+    if (!code) continue;
+    out.add(code);
+    for (const included of ROLE_INCLUDES[code] ?? []) out.add(included);
+  }
+  return Array.from(out);
+}
+
+/** The roles that come with `granted` without being in it — Accounting Manager when only Accounting is granted. */
+export function rolesIncludedVia(granted: readonly string[]): { role: string; via: string }[] {
+  const have = new Set(granted.map((r) => normalizeRole(r)));
+  return Object.entries(ROLE_INCLUDES)
+    .filter(([role]) => !have.has(role))
+    .flatMap(([role, includes]) => {
+      const via = includes.find((r) => have.has(r));
+      return via ? [{ role, via }] : [];
+    });
+}
+
+/** `role` (primary) plus every entry in `extraRoles`, normalized, deduped — plus the roles they include (ROLE_INCLUDES). */
 function allHeldRoles(role: string | null | undefined, extraRoles?: string[] | null): string[] {
-  const all = [role, ...(extraRoles ?? [])].map((r) => normalizeRole(r)).filter(Boolean);
-  return Array.from(new Set(all));
+  return withIncludedRoles([role, ...(extraRoles ?? [])]);
 }
 
 /**

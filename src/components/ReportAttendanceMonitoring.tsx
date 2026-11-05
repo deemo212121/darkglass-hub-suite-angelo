@@ -37,7 +37,7 @@ function roleLabel(role: string | null | undefined): string {
 const DEPARTMENTS: { name: string; roles: string[] }[] = [
   { name: "Technician", roles: ["TECHNICIAN", "TECHNICIAN_MANAGER", "TECHNICAL_DIRECTOR", "TECHNICAL_ASSISTANT_DIRECTOR", "SENIOR_BRANCH_MANAGER", "BRANCH_MANAGER"] },
   { name: "CSR", roles: ["CSR", "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER"] },
-  { name: "Accounting", roles: ["FINANCE"] },
+  { name: "Accounting", roles: ["FINANCE", "ACCOUNTING_MANAGER"] },
   { name: "BizOps", roles: ["BIZOPS_ASSOCIATE", "BIZOPS_TEAM_LEADER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"] },
   { name: "Senior Managers", roles: ["SENIOR_MANAGER", "SENIOR_DIRECTOR", "MANAGER", "ASSISTANT_MANAGER"] },
   { name: "Triage", roles: ["TRIAGE_USER", "TRIAGE_MANAGER"] },

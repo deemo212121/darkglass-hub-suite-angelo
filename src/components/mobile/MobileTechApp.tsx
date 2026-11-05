@@ -10085,7 +10085,7 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
       for (const p of companyProfiles) {
         if (!p.is_active) continue;
         const primary = (p.role || "").toUpperCase();
-        if (primary === "HR" || primary === "FINANCE") recipients.set(p.id, p);
+        if (primary === "HR" || primary === "FINANCE" || primary === "ACCOUNTING_MANAGER") recipients.set(p.id, p);
       }
       if (myProfile) recipients.set(myProfile.id, myProfile);
       await Promise.all(

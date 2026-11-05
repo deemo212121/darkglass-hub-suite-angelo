@@ -12,6 +12,7 @@
  * remindTruckStockApprovers in truckStockNotify.ts.
  */
 import { findPersonByName } from "@/lib/personName";
+import { withIncludedRoles } from "@/lib/roleLabels";
 import { createNotification } from "./notifications";
 import { getCompanyUsers, type ProfileRow } from "./users";
 import { logModuleActivity, type ActivityLogModule } from "./moduleActivityLog";
@@ -22,8 +23,9 @@ export const REMINDER_STAGE_LABEL: Record<ReminderStage, string> = { manager: "M
 
 const STAGE_ROLE: Record<Exclude<ReminderStage, "manager">, string> = { hr: "HR", accounting: "FINANCE" };
 
+/** Holds `wanted`, primary or extra, or a role that includes it (an Accounting Manager holds Finance). */
 function holdsRole(role: string | null | undefined, extraRoles: readonly (string | null)[] | null | undefined, wanted: string): boolean {
-  return [role, ...(extraRoles ?? [])].some((r) => (r || "").trim().toUpperCase() === wanted);
+  return withIncludedRoles([role, ...(extraRoles ?? [])]).includes(wanted);
 }
 
 /**

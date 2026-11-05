@@ -121,7 +121,7 @@ const USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v2/userinfo";
 const GMAIL_SEND_ENDPOINT = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
 
 const CONNECT_ROLES = new Set(["ADMIN", "SUPERADMIN"]);
-const PAYSLIP_SENDER_ROLES = new Set(["ADMIN", "SUPERADMIN", "FINANCE"]);
+const PAYSLIP_SENDER_ROLES = new Set(["ADMIN", "SUPERADMIN", "FINANCE", "ACCOUNTING_MANAGER"]);
 // Same role set ticket.$ticketNo.tsx's own canOrderParts/canEditParts checks
 // already gate the Part Transaction table's edit/delete controls with
 // (PARTS_ORDER_ONLY_ROLES ∪ PARTS_EDIT_ONLY_ROLES) — sending a drop-ship

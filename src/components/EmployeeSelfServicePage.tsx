@@ -1165,7 +1165,7 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
             }
             for (const p of companyProfiles) {
               const primary = (p.role || "").toUpperCase();
-              if (primary === "HR" || primary === "FINANCE") recipients.set(p.id, p);
+              if (primary === "HR" || primary === "FINANCE" || primary === "ACCOUNTING_MANAGER") recipients.set(p.id, p);
             }
             const requesterProfile = companyProfiles.find((p) => p.id === myProfileId);
             if (requesterProfile) recipients.set(requesterProfile.id, requesterProfile);

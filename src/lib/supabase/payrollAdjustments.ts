@@ -143,7 +143,7 @@ export function sumPayrollAdjustments(
   return { reimbursements, deductions, tax, net: round3(reimbursements - deductions - tax) };
 }
 
-const US_OFFICE_ADJUSTMENT_ROLES = new Set(["PARTS_MANAGER", "PARTS_TEAM_LEADER", "PARTS", "FINANCE", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"]);
+const US_OFFICE_ADJUSTMENT_ROLES = new Set(["PARTS_MANAGER", "PARTS_TEAM_LEADER", "PARTS", "FINANCE", "ACCOUNTING_MANAGER", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"]);
 
 /**
  * Who gets adjustments: everyone on PH payroll; on US payroll only Office

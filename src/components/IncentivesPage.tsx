@@ -57,7 +57,7 @@ import { anyHeldRoleIn, isCompanySuperAdminRole, isFinanceRole } from "@/lib/rol
 import { addDaysISO, todayISO } from "@/lib/localDate";
 import { payPeriodContaining } from "@/lib/payPeriods";
 
-const SUBMIT_ROLES = new Set(["HR", "ADMIN", "FINANCE"]);
+const SUBMIT_ROLES = new Set(["HR", "ADMIN", "FINANCE", "ACCOUNTING_MANAGER"]);
 const money = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 const fmtDate = (iso: string | null | undefined) =>
   iso ? new Date(`${iso.slice(0, 10)}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";

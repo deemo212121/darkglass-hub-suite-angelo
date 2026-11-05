@@ -658,6 +658,7 @@ function CompanyDetailPage() {
                   <option value="IT">IT Support</option>
                   <option value="PARTS">Parts Management</option>
                   <option value="FINANCE">Accounting</option>
+                  <option value="ACCOUNTING_MANAGER">Accounting Manager</option>
                 </select>
               </div>
               <div>

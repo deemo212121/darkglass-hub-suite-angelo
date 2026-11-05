@@ -376,7 +376,7 @@ export function canReviewCorrectionStage(
     return isAttendanceManagerTierRole(viewerRole, viewerExtraRoles);
   }
   if (stage === "hr") return has("HR");
-  return has("FINANCE");
+  return has("FINANCE") || has("ACCOUNTING_MANAGER");
 }
 
 /**
@@ -818,7 +818,7 @@ export async function reviewCorrectionStage(
         const heldRoles = [p.role, ...(p.extra_roles ?? [])].map((r) => (r || "").toUpperCase());
         const isManager = correction.managerId ? p.id === correction.managerId : heldRoles.includes("MANAGER");
         const isHr = heldRoles.includes("HR");
-        const isFinance = heldRoles.includes("FINANCE");
+        const isFinance = heldRoles.includes("FINANCE") || heldRoles.includes("ACCOUNTING_MANAGER");
         if (stage === "manager") return isHr || isFinance;
         if (stage === "hr") return isManager || isFinance;
         return isManager || isHr; // stage === "accounting"
