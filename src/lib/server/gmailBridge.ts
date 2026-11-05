@@ -40,6 +40,7 @@
 
 import { resolveDefaultPassword } from "./defaultPasswordBridge";
 import { verifyFirebaseToken, strToB64url, b64urlToString } from "./supabaseTokenBridge";
+import { CANDIDATE_EMAIL_SENDER_ROLES, emailBodyHtml, isValidEmail, parseEmailList, parseSignatureImage } from "../hiringEmails";
 
 export interface EnvBag {
   supabaseUrl: string;
@@ -85,9 +86,10 @@ export function readEnv(env?: Record<string, string | undefined>): EnvBag | { er
 // (migration 0217) is the grace-period warning emails slot — see
 // attendanceAlerts.ts, which sends through it directly (not via an
 // action= branch in this file, since that job already runs server-side).
-// "HR_HIRING" (migration 0249) is the Hiring panel's own connect-only slot —
-// connected ahead of an actual candidate-emailing feature, so there's no
-// send action for it here yet, just connect/disconnect/status.
+// "HR_HIRING" (migration 0249) was the Hiring panel's single slot; it now only
+// decides where the connect round-trip lands. Hiring sends use
+// hiring_gmail_accounts instead (migration 0426, resolveHiringSender below),
+// since every HR person connects their own.
 // "FLASH_TECH" (migration 0267/0268) sends the "trip turned Open" alert — same
 // as ATTENDANCE, only ever sent by flashTechOpenAlerts.ts's cron job
 // directly, not via an action= branch here.
@@ -142,8 +144,6 @@ const IT_TICKET_SENDER_ROLES = new Set(["IT", "ADMIN", "SUPERADMIN"]);
 // Same audience as the Hiring panel itself (HR_ADMIN_ROLES in ReportHRDaily.tsx) —
 // sending a new hire their login credentials is gated no tighter than being
 // able to see the Hiring table at all.
-const HIRING_CREDENTIALS_SENDER_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN"]);
-
 function b64urlEncode(input: string): string {
   return btoa(unescape(encodeURIComponent(input))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
@@ -207,6 +207,115 @@ export async function fetchGmailConnection(env: EnvBag, companyId: string, regio
   const rows = (await res.json()) as Array<{ refresh_token: string; connected_email: string | null }>;
   const r = rows[0];
   return r ? { refreshToken: r.refresh_token, connectedEmail: r.connected_email } : null;
+}
+
+// ---- Hiring panel Gmail accounts (migration 0426) ----
+
+const holdsCandidateEmailRole = (profile: { role: string | null; extraRoles: string[] }) =>
+  [profile.role, ...profile.extraRoles].some((r) => r && CANDIDATE_EMAIL_SENDER_ROLES.has(r.toUpperCase()));
+
+// The connect round-trip passes through the browser, so its state is signed:
+// nobody can add a mailbox under someone else's name, or to another company,
+// by making up their own callback.
+function hiringStateKey(env: EnvBag): Promise<CryptoKey> {
+  return crypto.subtle.importKey("raw", new TextEncoder().encode(env.supabaseServiceKey), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+}
+async function signHiringState(env: EnvBag, companyId: string, profileId: string): Promise<string> {
+  const mac = await crypto.subtle.sign("HMAC", await hiringStateKey(env), new TextEncoder().encode(`hiring-gmail-account|${companyId}|${profileId}`));
+  return Array.from(new Uint8Array(mac), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function upsertHiringGmailAccount(
+  env: EnvBag,
+  companyId: string,
+  connectedBy: { id: string; name: string },
+  connectedAccountName: string,
+  connectedEmail: string,
+  refreshToken: string
+): Promise<void> {
+  // "shared" is left out, so reconnecting an account keeps its setting.
+  const res = await fetch(`${env.supabaseUrl}/rest/v1/hiring_gmail_accounts?on_conflict=company_id,connected_email`, {
+    method: "POST",
+    headers: {
+      apikey: env.supabaseServiceKey,
+      Authorization: `Bearer ${env.supabaseServiceKey}`,
+      "Content-Type": "application/json",
+      Prefer: "resolution=merge-duplicates,return=minimal",
+    },
+    body: JSON.stringify({
+      company_id: companyId,
+      connected_by: connectedBy.id,
+      connected_by_name: connectedBy.name,
+      connected_account_name: connectedAccountName,
+      connected_email: connectedEmail.toLowerCase(),
+      refresh_token: refreshToken,
+    }),
+  });
+  if (!res.ok) throw new Error(`Supabase Hiring Gmail upsert failed (${res.status}): ${await res.text()}`);
+}
+
+/**
+ * The account a Hiring email goes out from. It must be in the sender's company
+ * and be their own or shared with HR. An Admin gets no exception here: they can
+ * disconnect anyone's account, but not send as them.
+ */
+async function resolveHiringSender(
+  env: EnvBag,
+  caller: { id: string; companyId: string },
+  accountId: string
+): Promise<{ ok: true; accessToken: string; fromEmail: string } | { ok: false; status: number; body: Record<string, unknown> }> {
+  if (!/^[0-9a-f-]{36}$/i.test(accountId)) return { ok: false, status: 400, body: { error: "Pick which Gmail to send from." } };
+  const res = await fetch(
+    `${env.supabaseUrl}/rest/v1/hiring_gmail_accounts?select=company_id,connected_by,connected_email,refresh_token,shared&id=eq.${encodeURIComponent(accountId)}&limit=1`,
+    { headers: { apikey: env.supabaseServiceKey, Authorization: `Bearer ${env.supabaseServiceKey}` } }
+  );
+  if (!res.ok) throw new Error(`Supabase Hiring Gmail lookup failed (${res.status}): ${await res.text()}`);
+  const [account] = (await res.json()) as Array<{ company_id: string; connected_by: string | null; connected_email: string; refresh_token: string; shared: boolean }>;
+  if (!account || account.company_id !== caller.companyId) {
+    return { ok: false, status: 404, body: { error: "That Gmail account isn't connected anymore. Pick another one." } };
+  }
+  if (account.connected_by !== caller.id && !account.shared) {
+    return { ok: false, status: 403, body: { error: "You can only send from your own Gmail or one shared with HR." } };
+  }
+  try {
+    return { ok: true, accessToken: await refreshAccessToken(env, account.refresh_token), fromEmail: account.connected_email };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("invalid_grant")) {
+      return {
+        ok: false,
+        status: 409,
+        body: { error: `The Gmail connection for ${account.connected_email} has expired or was revoked. Click "Connect my Gmail" on the Hiring panel to reconnect it, then try again.`, reauthRequired: true },
+      };
+    }
+    throw err;
+  }
+}
+
+/**
+ * A signature the sender may use: their own or one shared with HR, in their
+ * company. Admins get no exception, so nobody can sign an email as a coworker.
+ * Always read here, never taken from the request.
+ */
+async function resolveHiringSignature(
+  env: EnvBag,
+  caller: { id: string; companyId: string },
+  signatureId: string
+): Promise<{ ok: true; image: { mimeType: string; base64: string } } | { ok: false; status: number; error: string }> {
+  const gone = { ok: false as const, status: 404, error: "That signature isn't available anymore. Pick another one." };
+  if (!/^[0-9a-f-]{36}$/i.test(signatureId)) return gone;
+  const res = await fetch(`${env.supabaseUrl}/rest/v1/hiring_email_signatures?select=company_id,created_by,shared,image&id=eq.${encodeURIComponent(signatureId)}&limit=1`, {
+    headers: { apikey: env.supabaseServiceKey, Authorization: `Bearer ${env.supabaseServiceKey}` },
+  });
+  if (!res.ok) throw new Error(`Supabase signature lookup failed (${res.status}): ${await res.text()}`);
+  const [row] = (await res.json()) as Array<{ company_id: string; created_by: string | null; shared: boolean; image: string }>;
+  if (!row || row.company_id !== caller.companyId) return gone;
+  if (row.created_by !== caller.id && !row.shared) {
+    return { ok: false, status: 403, error: "You can only use your own signature or one shared with HR." };
+  }
+  const image = parseSignatureImage(row.image);
+  if (!image) return { ok: false, status: 409, error: "That signature's photo couldn't be used. Upload it again, or pick None to send without one." };
+  return { ok: true, image };
 }
 
 async function upsertGmailConnection(
@@ -365,6 +474,69 @@ async function sendGmailMessageWithAttachment(
   if (!res.ok) throw new Error(`Gmail send failed (${res.status}): ${await res.text()}`);
 }
 
+/**
+ * sendGmailMessage plus a signature photo after the last line. The photo is
+ * embedded in the email (cid:) rather than linked, so email apps show it
+ * without a "load images" step. The plain-text part is there for apps that
+ * only read text.
+ */
+async function sendGmailMessageWithSignature(
+  accessToken: string,
+  fromEmail: string,
+  toEmail: string,
+  subject: string,
+  body: string,
+  ccEmail: string | undefined,
+  image: { mimeType: string; base64: string }
+): Promise<void> {
+  const related = `related_${crypto.randomUUID()}`;
+  const alternative = `alternative_${crypto.randomUUID()}`;
+  const cid = `signature.${crypto.randomUUID()}@usihs`;
+  const filename = `signature.${image.mimeType.split("/")[1]}`;
+  const utf8Base64 = (text: string) => wrapBase64(btoa(unescape(encodeURIComponent(text))));
+  const message = [
+    `From: ${fromEmail}`,
+    `To: ${toEmail}`,
+    ...(ccEmail ? [`Cc: ${ccEmail}`] : []),
+    `Subject: ${encodeHeaderValue(subject)}`,
+    "MIME-Version: 1.0",
+    `Content-Type: multipart/related; boundary="${related}"`,
+    "",
+    `--${related}`,
+    `Content-Type: multipart/alternative; boundary="${alternative}"`,
+    "",
+    `--${alternative}`,
+    "Content-Type: text/plain; charset=UTF-8",
+    "Content-Transfer-Encoding: base64",
+    "",
+    utf8Base64(body),
+    "",
+    `--${alternative}`,
+    "Content-Type: text/html; charset=UTF-8",
+    "Content-Transfer-Encoding: base64",
+    "",
+    utf8Base64(emailBodyHtml(body, cid)),
+    "",
+    `--${alternative}--`,
+    "",
+    `--${related}`,
+    `Content-Type: ${image.mimeType}; name="${filename}"`,
+    "Content-Transfer-Encoding: base64",
+    `Content-ID: <${cid}>`,
+    `Content-Disposition: inline; filename="${filename}"`,
+    "",
+    wrapBase64(image.base64),
+    "",
+    `--${related}--`,
+  ].join("\r\n");
+  const res = await fetch(GMAIL_SEND_ENDPOINT, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ raw: b64urlEncode(message) }),
+  });
+  if (!res.ok) throw new Error(`Gmail send failed (${res.status}): ${await res.text()}`);
+}
+
 export async function handleGmailRequest(request: Request, env?: Record<string, string | undefined>): Promise<Response> {
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
@@ -403,13 +575,22 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
     const appOrigin = url.origin;
     let region: Region = "US";
     try {
-      const decoded = JSON.parse(b64urlToString(state)) as { companyId: string; profileId: string; connectedByName: string; region: string };
+      const decoded = JSON.parse(b64urlToString(state)) as { companyId: string; profileId: string; connectedByName: string; region: string; hiringAccount?: boolean; sig?: string };
       region = parseRegion(decoded.region) ?? "US";
+      if (decoded.hiringAccount && decoded.sig !== (await signHiringState(envBag, decoded.companyId, decoded.profileId))) {
+        throw new Error("Invalid Hiring Gmail state");
+      }
       const redirectUri = `${url.origin}${url.pathname}`;
       const { refreshToken } = await exchangeCodeForTokens(envBag, code, redirectUri);
       const accessToken = await refreshAccessToken(envBag, refreshToken);
       const { email: connectedEmail, name: connectedAccountName } = await fetchConnectedProfile(accessToken);
-      await upsertGmailConnection(envBag, decoded.companyId, region, decoded.profileId, decoded.connectedByName, connectedAccountName, connectedEmail, refreshToken);
+      if (decoded.hiringAccount) {
+        const person = await fetchProfileById(envBag, decoded.profileId);
+        if (!person || person.companyId !== decoded.companyId) throw new Error("Hiring Gmail: profile not found");
+        await upsertHiringGmailAccount(envBag, decoded.companyId, person, connectedAccountName, connectedEmail, refreshToken);
+      } else {
+        await upsertGmailConnection(envBag, decoded.companyId, region, decoded.profileId, decoded.connectedByName, connectedAccountName, connectedEmail, refreshToken);
+      }
       return Response.redirect(returnUrlFor(appOrigin, region, { gmailConnected: "1", gmailRegion: region }), 302);
     } catch (err) {
       console.error("[gmail] callback error:", err);
@@ -454,6 +635,34 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       return Response.redirect(authUrl.toString(), 302);
     } catch (err) {
       console.error("[gmail] connect error:", err);
+      return json({ error: err instanceof Error ? err.message : "Connect failed" }, 500);
+    }
+  }
+
+  // Hiring panel → "Connect my Gmail". HR, Admin or Super Admin; the account is
+  // saved under whoever started this, and starts out theirs alone. Google's
+  // account chooser is forced so someone signed into several picks the right one.
+  if (url.searchParams.get("action") === "connect-hiring-account") {
+    const idToken = url.searchParams.get("idToken");
+    if (!idToken) return json({ error: "Missing idToken" }, 400);
+    try {
+      const claims = await verifyFirebaseToken(idToken, envBag.firebaseProjectId);
+      const profile = await fetchProfileByFirebaseUid(envBag, claims.sub);
+      if (!profile) return json({ error: "Profile not found" }, 404);
+      if (!holdsCandidateEmailRole(profile)) return json({ error: "Only HR, Admin and Super Admin can connect a Hiring Gmail." }, 403);
+      const sig = await signHiringState(envBag, profile.companyId, profile.id);
+      const state = strToB64url(JSON.stringify({ companyId: profile.companyId, profileId: profile.id, region: "HR_HIRING", hiringAccount: true, sig }));
+      const authUrl = new URL(AUTH_ENDPOINT);
+      authUrl.searchParams.set("client_id", envBag.googleClientId);
+      authUrl.searchParams.set("redirect_uri", `${url.origin}${url.pathname}`);
+      authUrl.searchParams.set("response_type", "code");
+      authUrl.searchParams.set("scope", GMAIL_SCOPES);
+      authUrl.searchParams.set("access_type", "offline");
+      authUrl.searchParams.set("prompt", "select_account consent");
+      authUrl.searchParams.set("state", state);
+      return Response.redirect(authUrl.toString(), 302);
+    } catch (err) {
+      console.error("[gmail] connect-hiring-account error:", err);
       return json({ error: err instanceof Error ? err.message : "Connect failed" }, 500);
     }
   }
@@ -710,13 +919,14 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       const payload = (await request.json().catch(() => ({}))) as Record<string, unknown>;
       const idToken = typeof payload.idToken === "string" ? payload.idToken : "";
       const profileId = typeof payload.profileId === "string" ? payload.profileId : "";
+      const accountId = typeof payload.accountId === "string" ? payload.accountId : "";
       if (!idToken) return json({ error: "Missing idToken" }, 400);
       if (!profileId) return json({ error: "Missing profileId" }, 400);
 
       const claims = await verifyFirebaseToken(idToken, envBag.firebaseProjectId);
       const caller = await fetchProfileByFirebaseUid(envBag, claims.sub);
       if (!caller) return json({ error: "Profile not found" }, 403);
-      if (!caller.role || !HIRING_CREDENTIALS_SENDER_ROLES.has(caller.role.toUpperCase())) {
+      if (!holdsCandidateEmailRole(caller)) {
         return json({ error: "Not authorized to send hiring credential emails" }, 403);
       }
 
@@ -724,28 +934,13 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       if (!target || target.companyId !== caller.companyId) return json({ error: "Employee not found" }, 404);
       if (!target.email) return json({ error: `${target.name} has no email on file` }, 400);
 
-      const connection = await fetchGmailConnection(envBag, caller.companyId, "HR_HIRING");
-      if (!connection) return json({ error: "Gmail is not connected for the Hiring panel yet. Connect it above first." }, 409);
-
-      let accessToken: string;
-      try {
-        accessToken = await refreshAccessToken(envBag, connection.refreshToken);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg.includes("invalid_grant")) {
-          return json({
-            error: `The Hiring Gmail connection has expired or was revoked. Click "Connect Gmail" above to reconnect, then try again.`,
-            reauthRequired: true,
-            region: "HR_HIRING",
-          }, 409);
-        }
-        throw err;
-      }
+      const sender = await resolveHiringSender(envBag, caller, accountId);
+      if (!sender.ok) return json(sender.body, sender.status);
+      const { accessToken, fromEmail } = sender;
       const defaultPassword = await resolveDefaultPassword(envBag, caller.companyId, env);
       if (!defaultPassword) {
         return json({ error: "No default password is set yet. An Admin can set one in Login Security → Default Password." }, 409);
       }
-      const fromEmail = connection.connectedEmail || "me";
       const subject = "Your AHS account details";
       const body = [
         `Hi ${target.name},`,
@@ -768,6 +963,61 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       return json({ ok: true, sentTo: target.email });
     } catch (err) {
       console.error("[gmail] send-hiring-credentials error:", err);
+      return json({ error: err instanceof Error ? err.message : "Send failed" }, 500);
+    }
+  }
+
+  // Hiring table → Actions: the Congratulatory and Status Update emails
+  // (CandidateEmailDialog.tsx). HR writes the final text in the dialog, so this
+  // sends what it's given — after checking the sender, the From account they
+  // picked, and that the candidate is in their company. The page logs the send
+  // to hr_activity_log afterwards.
+  if (url.searchParams.get("action") === "send-candidate-email") {
+    if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+    try {
+      const payload = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const text = (key: string) => (typeof payload[key] === "string" ? (payload[key] as string) : "");
+      const idToken = text("idToken");
+      const candidateId = text("candidateId");
+      const to = text("to").trim();
+      const ccList = parseEmailList(text("cc"));
+      const subject = text("subject").replace(/[\r\n]+/g, " ").trim();
+      const body = text("body");
+      const accountId = text("accountId");
+      const signatureId = text("signatureId");
+      if (!idToken) return json({ error: "Missing idToken" }, 400);
+      if (!candidateId) return json({ error: "Missing candidateId" }, 400);
+      if (!isValidEmail(to)) return json({ error: "Enter a valid recipient email address." }, 400);
+      if (ccList.some((a) => !isValidEmail(a))) return json({ error: "Check the CC addresses." }, 400);
+      if (!subject || subject.length > 300) return json({ error: "Enter a subject of 300 characters or fewer." }, 400);
+      if (!body.trim() || body.length > 20000) return json({ error: "Enter an email body of 20,000 characters or fewer." }, 400);
+
+      const claims = await verifyFirebaseToken(idToken, envBag.firebaseProjectId);
+      const caller = await fetchProfileByFirebaseUid(envBag, claims.sub);
+      if (!caller) return json({ error: "Profile not found" }, 403);
+      if (!holdsCandidateEmailRole(caller)) return json({ error: "Not authorized to email candidates" }, 403);
+
+      const candidateRes = await fetch(`${envBag.supabaseUrl}/rest/v1/hr_candidates?select=company_id&id=eq.${encodeURIComponent(candidateId)}&limit=1`, {
+        headers: { apikey: envBag.supabaseServiceKey, Authorization: `Bearer ${envBag.supabaseServiceKey}` },
+      });
+      if (!candidateRes.ok) throw new Error(`Supabase candidate lookup failed (${candidateRes.status}): ${await candidateRes.text()}`);
+      const [candidate] = (await candidateRes.json()) as Array<{ company_id: string }>;
+      if (!candidate || candidate.company_id !== caller.companyId) return json({ error: "Candidate not found" }, 404);
+
+      const sender = await resolveHiringSender(envBag, caller, accountId);
+      if (!sender.ok) return json(sender.body, sender.status);
+      const cc = ccList.length ? ccList.join(", ") : undefined;
+      if (signatureId) {
+        // Stops rather than quietly sending without it — HR asked for this signature.
+        const signature = await resolveHiringSignature(envBag, caller, signatureId);
+        if (!signature.ok) return json({ error: signature.error }, signature.status);
+        await sendGmailMessageWithSignature(sender.accessToken, sender.fromEmail, to, subject, body, cc, signature.image);
+      } else {
+        await sendGmailMessage(sender.accessToken, sender.fromEmail, to, subject, body, cc);
+      }
+      return json({ ok: true, sentTo: to, sentFrom: sender.fromEmail });
+    } catch (err) {
+      console.error("[gmail] send-candidate-email error:", err);
       return json({ error: err instanceof Error ? err.message : "Send failed" }, 500);
     }
   }

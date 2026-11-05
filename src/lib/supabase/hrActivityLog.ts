@@ -8,6 +8,14 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   candidate_attempt_logged: "Logged call/text attempt",
   candidate_deleted: "Deleted candidate",
   candidate_cv_forwarded: "Forwarded CV",
+  candidate_email_sent: "Emailed candidate",
+  hiring_gmail_disconnected: "Disconnected a Hiring Gmail",
+  hiring_gmail_shared: "Shared a Hiring Gmail with HR",
+  hiring_gmail_unshared: "Stopped sharing a Hiring Gmail",
+  hiring_signature_added: "Added an email signature",
+  hiring_signature_removed: "Removed an email signature",
+  hiring_signature_shared: "Shared an email signature with HR",
+  hiring_signature_unshared: "Stopped sharing an email signature",
   staffing_target_updated: "Updated Staff Needed",
   onboarding_document_added: "Filed onboarding document",
   onboarding_document_deleted: "Removed onboarding document",
@@ -203,6 +211,40 @@ export async function logActivity(input: LogActivityInput): Promise<void> {
   } catch (err) {
     console.error("Failed to write HR activity log entry:", err);
   }
+}
+
+export interface CandidateEmailLogEntry {
+  kind: "congratulations" | "status_update";
+  from: string;
+  to: string;
+  cc: string;
+  subject: string;
+  /** The signature's name, if one was added. */
+  signature: string;
+  sentByName: string | null;
+  date: string;
+}
+
+/** The Congratulatory / Status Update emails sent so far, by candidate id, newest first — from the "candidate_email_sent" log entries. */
+export async function getCandidateEmailLog(): Promise<Map<string, CandidateEmailLogEntry[]>> {
+  const rows = await getActivityLog({ action: "candidate_email_sent", targetType: "candidate", limit: 1000 });
+  const byCandidate = new Map<string, CandidateEmailLogEntry[]>();
+  for (const r of rows) {
+    if (!r.targetId) continue;
+    const entry: CandidateEmailLogEntry = {
+      kind: r.details?.kind === "congratulations" ? "congratulations" : "status_update",
+      from: r.details?.from ?? "",
+      to: r.details?.to ?? "",
+      cc: r.details?.cc ?? "",
+      subject: r.details?.subject ?? "",
+      signature: r.details?.signature ?? "",
+      sentByName: r.actorName,
+      date: r.createdAt,
+    };
+    const list = byCandidate.get(r.targetId);
+    if (list) list.push(entry); else byCandidate.set(r.targetId, [entry]);
+  }
+  return byCandidate;
 }
 
 export interface GetActivityLogFilters {

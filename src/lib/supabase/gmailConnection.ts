@@ -118,18 +118,134 @@ export async function sendPayslipEmail(params: {
   return { sentTo: body.sentTo || "" };
 }
 
+// ---- Hiring panel Gmail accounts (migration 0426) ----
+
+export interface HiringGmailAccount {
+  id: string;
+  email: string;
+  accountName: string | null;
+  connectedByName: string | null;
+  shared: boolean;
+  /** This person connected it. */
+  mine: boolean;
+  connectedAt: string | null;
+}
+
+/** Every connected account, for HR / Admin / Super Admin. null = migration 0426 hasn't been run yet. */
+export async function getHiringGmailAccounts(): Promise<HiringGmailAccount[] | null> {
+  const { data, error } = await supabase.rpc("get_hiring_gmail_accounts");
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42883") return null;
+    throw error;
+  }
+  return ((data ?? []) as any[]).map((r) => ({
+    id: r.id,
+    email: r.connected_email,
+    accountName: r.connected_account_name ?? null,
+    connectedByName: r.connected_by_name ?? null,
+    shared: !!r.shared,
+    mine: !!r.mine,
+    connectedAt: r.created_at ?? null,
+  }));
+}
+
+/** Your own, or anyone's if you're an Admin / Super Admin — enforced in the database function. */
+export async function disconnectHiringGmail(id: string): Promise<void> {
+  const { error } = await supabase.rpc("disconnect_hiring_gmail", { p_id: id });
+  if (error) throw error;
+}
+
+/** Your own, or anyone's if you're an Admin / Super Admin — enforced in the database function. */
+export async function setHiringGmailShared(id: string, shared: boolean): Promise<void> {
+  const { error } = await supabase.rpc("set_hiring_gmail_shared", { p_id: id, p_shared: shared });
+  if (error) throw error;
+}
+
+export interface HiringEmailSignature {
+  id: string;
+  name: string;
+  createdByName: string | null;
+  shared: boolean;
+  /** This person uploaded it. */
+  mine: boolean;
+}
+
+const isMissingFunction = (error: { code?: string }) => error.code === "PGRST202" || error.code === "42883";
+
+/** Your signatures and shared ones; an Admin also gets everyone else's, by name, to manage. null = migration 0428 hasn't been run yet. */
+export async function getHiringEmailSignatures(): Promise<HiringEmailSignature[] | null> {
+  const { data, error } = await supabase.rpc("get_hiring_email_signatures");
+  if (error) {
+    if (isMissingFunction(error)) return null;
+    throw error;
+  }
+  return ((data ?? []) as any[]).map((r) => ({
+    id: r.id,
+    name: r.name,
+    createdByName: r.created_by_name ?? null,
+    shared: !!r.shared,
+    mine: !!r.mine,
+  }));
+}
+
+/** The picture (a data: URL), if it's yours or shared with HR. */
+export async function getHiringEmailSignatureImage(id: string): Promise<string | null> {
+  const { data, error } = await supabase.rpc("get_hiring_email_signature_image", { p_id: id });
+  if (error) throw error;
+  return (data as string | null) ?? null;
+}
+
+export async function addHiringEmailSignature(name: string, image: string, shared: boolean): Promise<string> {
+  const { data, error } = await supabase.rpc("add_hiring_email_signature", { p_name: name, p_image: image, p_shared: shared });
+  if (error) throw error;
+  return data as string;
+}
+
+/** Your own, or anyone's if you're an Admin / Super Admin — enforced in the database function. */
+export async function setHiringEmailSignatureShared(id: string, shared: boolean): Promise<void> {
+  const { error } = await supabase.rpc("set_hiring_email_signature_shared", { p_id: id, p_shared: shared });
+  if (error) throw error;
+}
+
+/** Your own, or anyone's if you're an Admin / Super Admin — enforced in the database function. */
+export async function deleteHiringEmailSignature(id: string): Promise<void> {
+  const { error } = await supabase.rpc("delete_hiring_email_signature", { p_id: id });
+  if (error) throw error;
+}
+
+/** "Connect my Gmail" — a real navigation, since Google's consent screen has to run in the top-level window. */
+export async function startHiringGmailConnect(): Promise<void> {
+  const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
+  if (!idToken) throw new Error("You need to be logged in to connect Gmail.");
+  window.location.href = `/api/gmail?action=connect-hiring-account&idToken=${encodeURIComponent(idToken)}`;
+}
+
+/** Hiring table → Actions: sends a Congratulatory or Status Update email exactly as HR finalized it (CandidateEmailDialog.tsx). */
+export async function sendCandidateEmail(input: { accountId: string; candidateId: string; to: string; cc: string; subject: string; body: string; signatureId: string | null }): Promise<{ sentTo: string; sentFrom: string }> {
+  const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
+  if (!idToken) throw new Error("You need to be logged in to send this email.");
+  const res = await fetch("/api/gmail?action=send-candidate-email", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idToken, ...input }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { ok?: boolean; sentTo?: string; sentFrom?: string; error?: string };
+  if (!res.ok || !body.ok) throw new Error(body.error || "Failed to send the email.");
+  return { sentTo: body.sentTo || input.to, sentFrom: body.sentFrom || "" };
+}
+
 /**
  * Emails a just-created employee (see ReportHRDaily.tsx's Hiring panel,
  * Account Status column) their username, the app-wide default password,
- * and their Technician ID — always through the single HR_HIRING connection.
+ * and their Technician ID — from the Hiring Gmail account the sender picks.
  */
-export async function sendHiringCredentialsEmail(profileId: string): Promise<{ sentTo: string }> {
+export async function sendHiringCredentialsEmail(profileId: string, accountId: string): Promise<{ sentTo: string }> {
   const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
   if (!idToken) throw new Error("You need to be logged in to send this email.");
   const res = await fetch("/api/gmail?action=send-hiring-credentials", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ idToken, profileId }),
+    body: JSON.stringify({ idToken, profileId, accountId }),
   });
   const body = (await res.json().catch(() => ({}))) as { ok?: boolean; sentTo?: string; error?: string };
   if (!res.ok || !body.ok) throw new Error(body.error || "Failed to send credentials email.");
