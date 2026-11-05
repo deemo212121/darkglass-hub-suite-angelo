@@ -16,6 +16,11 @@
  * punctuation, a middle initial on only one form, "Jon" vs "Jonathan",
  * "Jr", a hyphenated or shortened last name, a birth date written day-first.
  *
+ * It also lists what's missing or incomplete on a form by itself
+ * (missingInfoFor): an address without its city, state or ZIP, an SSN that
+ * isn't 9 digits, a date of birth that isn't a date, a short phone number —
+ * and a blank field the form can't be complete without (REQUIRED).
+ *
  * Pure — no database calls, so the page and the on-sign check count the
  * same way.
  */
@@ -149,10 +154,13 @@ const givenWords = (v: unknown) => noApostrophes(v).split(/\s+/).map((w) => lett
 const NO_MIDDLE = new Set(["NA", "NONE", "NMN", "NO", "X", "NIL"]);
 
 function isoDate(v: unknown): string {
-  const t = text(v);
+  const t = text(v).trim();
   let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
   if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
-  m = t.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/);
+  // No separators: "04121990" (month first) or "19900412" (year first); "04/121990" (one slash left out).
+  m = t.match(/^(19|20)(\d{2})(\d{2})(\d{2})$/);
+  if (m && Number(m[3]) >= 1 && Number(m[3]) <= 12) return `${m[1]}${m[2]}-${m[3]}-${m[4]}`;
+  m = t.match(/^(\d{2})[/.-]?(\d{2})[/.-]?(\d{4})$/) ?? t.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/);
   if (m) {
     const y = m[3].length === 2 ? (Number(m[3]) > 30 ? "19" : "20") + m[3] : m[3];
     // Month first, unless the first number can't be a month ("31/08/2004").
@@ -311,6 +319,10 @@ export interface Inconsistency {
   hint: string | null;
   /** Newest signing among the forms involved. */
   latestAt: string;
+  /** "missing": one form is missing part of this field (missingInfoFor) — one group, one form. Unset: forms disagree. */
+  kind?: "missing";
+  /** What's missing or wrong, e.g. ["state", "ZIP"] or ["only 8 digits"]. */
+  missing?: string[];
 }
 
 /** Whose form this is — form_data.employeeId, else recipient_id. */
@@ -333,17 +345,26 @@ function hash(s: string): string {
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 }
 
-/** One person's differences across their latest signed copy of each form type. */
-export function inconsistenciesFor(docs: SignableDocument[]): Inconsistency[] {
+/** The latest signed copy of each form type (oldest first), with what it says. */
+function latestSignedForms(docs: SignableDocument[]): { doc: SignableDocument; raw: RawIdentity }[] {
   const latest = new Map<SignableDocumentType, SignableDocument>();
   for (const d of docs) {
     if ((d.status !== "signed" && d.status !== "confirmed") || !EXTRACT[d.documentType]) continue;
     const prev = latest.get(d.documentType);
     if (!prev || signedAtOf(d) > signedAtOf(prev)) latest.set(d.documentType, d);
   }
-  const forms = [...latest.values()]
+  return [...latest.values()]
     .sort((a, b) => signedAtOf(a).localeCompare(signedAtOf(b)) || a.id.localeCompare(b.id))
     .map((d) => ({ doc: d, raw: EXTRACT[d.documentType]!(d.formData ?? {}) }));
+}
+
+const formRef = (doc: SignableDocument): ConsistencyForm => ({
+  docId: doc.id, documentType: doc.documentType, status: doc.status, label: SIGNABLE_DOCUMENT_REGISTRY[doc.documentType]?.label ?? doc.documentType, signedAt: signedAtOf(doc), pdfUrl: doc.pdfUrl,
+});
+
+/** One person's differences across their latest signed copy of each form type. */
+export function inconsistenciesFor(docs: SignableDocument[]): Inconsistency[] {
+  const forms = latestSignedForms(docs);
 
   const out: Inconsistency[] = [];
   for (const field of CONSISTENCY_FIELDS) {
@@ -351,7 +372,7 @@ export function inconsistenciesFor(docs: SignableDocument[]): Inconsistency[] {
     for (const { doc, raw } of forms) {
       const v = PARSE[field](raw);
       if (!v) continue;
-      const form: ConsistencyForm = { docId: doc.id, documentType: doc.documentType, status: doc.status, label: SIGNABLE_DOCUMENT_REGISTRY[doc.documentType]?.label ?? doc.documentType, signedAt: signedAtOf(doc), pdfUrl: doc.pdfUrl };
+      const form = formRef(doc);
       const g = groups.find((x) => SAME[field](x.rep.data, v.data));
       if (g) g.forms.push(form);
       else groups.push({ rep: v, forms: [form] });
@@ -369,7 +390,140 @@ export function inconsistenciesFor(docs: SignableDocument[]): Inconsistency[] {
   return out;
 }
 
-/** Everyone's differences, by owner profile id (people with none are left out). */
+// ─── Missing / incomplete on one form ───────────────────────────────────────
+
+const STATE_CODES = new Set(Object.values(STATES));
+
+/** Address as typed, split into its parts — from the separate boxes, or out of one "City, ST 12345" line. */
+function addressParts(a: NonNullable<RawIdentity["address"]>): { street: string; city: string; state: string; zip: string } {
+  const street = text(a.street).trim();
+  if (a.cityStateZip === undefined) return { street, city: text(a.city).trim(), state: text(a.state).trim(), zip: text(a.zip).trim() };
+  const line = text(a.cityStateZip);
+  const zip = (line.match(/\b\d{5}(?:-\d{4})?\b/) ?? [""])[0];
+  const words = line.replace(zip, " ").split(/[\s,]+/).filter(Boolean);
+  // The state is the last word(s): a 2-letter code ("LA") or a state's name ("Louisiana", "New York").
+  for (let n = Math.min(3, words.length); n >= 1; n--) {
+    const tail = letters(words.slice(-n).join(" ")).replace(/ /g, "");
+    if ((n === 1 && tail.length === 2 && STATE_CODES.has(tail)) || STATES[tail]) {
+      return { street, city: words.slice(0, -n).join(" "), state: words.slice(-n).join(" "), zip };
+    }
+  }
+  return { street, city: words.join(" "), state: "", zip };
+}
+
+/**
+ * A blank field that leaves the form incomplete. Anything not listed here is
+ * only flagged when it's filled in wrong (an 8-digit SSN, a 7-digit phone),
+ * never for being blank — phone, email and the like are optional on most
+ * forms.
+ */
+const REQUIRED: Partial<Record<ConsistencyField, ReadonlySet<SignableDocumentType>>> = {
+  address: new Set<SignableDocumentType>(["i9", "w4", "w4r", "w9"]),
+  ssn: new Set<SignableDocumentType>(["w4", "w4r", "w9", "ssn_card_form"]),
+  dob: new Set<SignableDocumentType>(["i9"]),
+  license: new Set<SignableDocumentType>(["drivers_license_form"]),
+};
+
+/** What's missing or wrong in this field on this form — [] when it's complete, null when the form doesn't ask for it. */
+function missingIn(field: ConsistencyField, type: SignableDocumentType, raw: RawIdentity): string[] | null {
+  const required = !!REQUIRED[field]?.has(type);
+  switch (field) {
+    case "name": {
+      if (!raw.name) return null;
+      const first = raw.name.firstMiddle !== undefined ? givenWords(raw.name.firstMiddle)[0] : givenWords(raw.name.first)[0];
+      return [...(first ? [] : ["first name"]), ...(nameWords(raw.name.last).length ? [] : ["last name"])];
+    }
+    case "address": {
+      if (!raw.address) return null;
+      const p = addressParts(raw.address);
+      if (!p.street && !p.city && !p.state && !p.zip) return required ? ["address"] : [];
+      return [
+        ...(p.street ? [] : ["street"]),
+        ...(p.city ? [] : ["city"]),
+        ...(p.state ? [] : ["state"]),
+        // 4 digits is a full Philippine postal code.
+        ...(digits(p.zip).length >= 4 ? [] : [p.zip ? "a full ZIP" : "ZIP"]),
+      ];
+    }
+    case "ssn": {
+      if (!("ssn" in raw)) return null;
+      const n = digits(raw.ssn).length;
+      return n === 0 ? (required ? ["SSN"] : []) : n === 9 ? [] : [`${n} digits instead of 9`];
+    }
+    case "dob":
+      if (!("dob" in raw)) return null;
+      return !text(raw.dob).trim() ? (required ? ["date of birth"] : []) : isoDate(raw.dob) ? [] : ["a readable date"];
+    case "phone": {
+      if (!("phone" in raw)) return null;
+      const n = digits(raw.phone).length;
+      return n === 0 || n >= 10 ? [] : [`${n} digits instead of 10`];
+    }
+    case "email": {
+      if (!("email" in raw)) return null;
+      const e = text(raw.email).trim();
+      return !e || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) ? [] : ["a valid email"];
+    }
+    case "license": {
+      if (!("license" in raw)) return null;
+      const k = text(raw.license).replace(/[^A-Za-z0-9]/g, "");
+      return !k ? (required ? ["license #"] : []) : k.length >= 4 ? [] : ["a full license #"];
+    }
+  }
+}
+
+/** The field as typed on that form, for showing next to what's missing. */
+function asTyped(field: ConsistencyField, raw: RawIdentity): string {
+  if (field === "address" && raw.address) {
+    const a = raw.address;
+    const place = a.cityStateZip !== undefined ? text(a.cityStateZip) : [text(a.city), [text(a.state), text(a.zip)].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+    return [text(a.street), place].map((s) => s.trim()).filter(Boolean).join(", ").replace(/\s+/g, " ");
+  }
+  if (field === "name" && raw.name) return [raw.name.firstMiddle ?? raw.name.first, raw.name.firstMiddle !== undefined ? "" : raw.name.middle, raw.name.last].map(text).filter(Boolean).join(" ").replace(/\s+/g, " ");
+  if (field === "ssn") {
+    const d = digits(raw.ssn);
+    return d ? `${"•".repeat(Math.max(0, d.length - 4))}${d.slice(-4)}` : "";
+  }
+  if (field === "license") {
+    const k = text(raw.license).replace(/[^A-Za-z0-9]/g, "");
+    return k ? `••••${k.slice(-4)}` : "";
+  }
+  return text(raw[field as "dob" | "phone" | "email"]).trim();
+}
+
+const listOf = (xs: string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+
+/** One person's latest signed forms that are missing part of a field, one entry per form and field. */
+export function missingInfoFor(docs: SignableDocument[]): Inconsistency[] {
+  const out: Inconsistency[] = [];
+  for (const { doc, raw } of latestSignedForms(docs)) {
+    for (const field of CONSISTENCY_FIELDS) {
+      const missing = missingIn(field, doc.documentType, raw);
+      if (!missing || missing.length === 0) continue;
+      const form = formRef(doc);
+      // "Missing the state and ZIP" / "Has 8 digits instead of 9" / "Needs a valid email".
+      const blank = missing.filter((x) => !/instead of|^a /.test(x));
+      const count = missing.filter((x) => /instead of/.test(x));
+      const needs = missing.filter((x) => /^a /.test(x));
+      const hint = [
+        ...(blank.length ? [`Missing the ${listOf(blank)}`] : []),
+        ...count.map((x) => `Has ${x}`),
+        ...(needs.length ? [`Needs ${listOf(needs)}`] : []),
+      ].join("; ");
+      out.push({
+        field,
+        kind: "missing",
+        missing,
+        valuesKey: hash(`missing:${field}:${doc.id}:${missing.join("|")}`),
+        groups: [{ display: asTyped(field, raw) || "(blank)", forms: [form] }],
+        hint,
+        latestAt: form.signedAt,
+      });
+    }
+  }
+  return out;
+}
+
+/** Everyone's differences and missing information, by owner profile id (people with none are left out). */
 export function findInconsistencies(docs: SignableDocument[]): Map<string, Inconsistency[]> {
   const byOwner = new Map<string, SignableDocument[]>();
   for (const d of docs) {
@@ -381,7 +535,7 @@ export function findInconsistencies(docs: SignableDocument[]): Map<string, Incon
   }
   const out = new Map<string, Inconsistency[]>();
   for (const [owner, list] of byOwner) {
-    const found = inconsistenciesFor(list);
+    const found = [...inconsistenciesFor(list), ...missingInfoFor(list)];
     if (found.length > 0) out.set(owner, found);
   }
   return out;

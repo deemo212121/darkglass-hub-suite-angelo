@@ -70,7 +70,8 @@ export function FormInconsistenciesPanel({ canViewCompleted }: { canViewComplete
   const [error, setError] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
-  const [field, setField] = useState<"" | ConsistencyField>("");
+  // A field, or "missing" — only what's missing or incomplete on a form by itself.
+  const [field, setField] = useState<"" | ConsistencyField | "missing">("");
   const [showChecked, setShowChecked] = useState(false);
   const [activeOnly, setActiveOnly] = useState(true);
   // The difference whose "Mark as checked" note box is open, and its note.
@@ -83,7 +84,7 @@ export function FormInconsistenciesPanel({ canViewCompleted }: { canViewComplete
   const [sendNote, setSendNote] = useState("");
   const [sentFor, setSentFor] = useState<string | null>(null);
   // The signed form open in place (SignedFormViewer), and the difference it was opened from.
-  const [viewing, setViewing] = useState<{ docId: string; profileId: string; field: ConsistencyField; rowKey: string } | null>(null);
+  const [viewing, setViewing] = useState<{ docId: string; profileId: string; field: ConsistencyField; rowKey: string; note: string | null } | null>(null);
   // Who the message comes from.
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   useEffect(() => {
@@ -136,11 +137,13 @@ export function FormInconsistenciesPanel({ canViewCompleted }: { canViewComplete
     for (const p of scoped) for (const it of p.items) if (!it.review) counts.set(it.inc.field, (counts.get(it.inc.field) ?? 0) + 1);
     return counts;
   }, [scoped]);
+  const openMissing = useMemo(() => scoped.reduce((n, p) => n + p.items.filter((it) => !it.review && it.inc.kind === "missing").length, 0), [scoped]);
+  const fieldMatches = (inc: Inconsistency) => !field || (field === "missing" ? inc.kind === "missing" : inc.field === field);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return scoped
-      .map((p) => ({ ...p, items: p.items.filter((it) => (!field || it.inc.field === field) && (showChecked || !it.review)) }))
+      .map((p) => ({ ...p, items: p.items.filter((it) => fieldMatches(it.inc) && (showChecked || !it.review)) }))
       .filter((p) => p.items.length > 0 && (!q || p.name.toLowerCase().includes(q) || p.branch.toLowerCase().includes(q)))
       .sort((a, b) => {
         const latest = (p: Person) => p.items.reduce((m, it) => (it.inc.latestAt > m ? it.inc.latestAt : m), "");
@@ -183,7 +186,7 @@ export function FormInconsistenciesPanel({ canViewCompleted }: { canViewComplete
           const signed = docById.get(f.docId);
           return signed ? [{ signed, waiting: waitingCopy(person.profileId, f) }] : [];
         });
-      const copies = await sendFormsAgain({ profileId: person.profileId, personName: person.name, field: inc.field, forms, note: sendNote, senderProfileId: myProfileId, senderName: displayName });
+      const copies = await sendFormsAgain({ profileId: person.profileId, personName: person.name, field: inc.field, incomplete: inc.kind === "missing" ? inc.hint : null, forms, note: sendNote, senderProfileId: myProfileId, senderName: displayName });
       setDocs((prev) => [...copies.filter((c) => !prev.some((p) => p.id === c.id)), ...prev]);
       setSendFor(null);
       setSentFor(key);
@@ -232,6 +235,7 @@ export function FormInconsistenciesPanel({ canViewCompleted }: { canViewComplete
           title={SIGNABLE_DOCUMENT_REGISTRY[viewedDoc.documentType]?.label ?? viewedDoc.documentType}
           personName={viewedPerson?.name ?? "this person"}
           focusField={viewing.field}
+          focusNote={viewing.note}
           editor={{ profileId: myProfileId, name: displayName }}
           onSaved={(updated) => setDocs((prev) => prev.map((d) => (d.id === updated.id ? updated : d)))}
           onSendAgain={
@@ -258,6 +262,7 @@ export function FormInconsistenciesPanel({ canViewCompleted }: { canViewComplete
           <p className="text-sm text-slate-400">
             Each person's signed forms checked against each other — name, SSN, date of birth, address, phone, email and driver's license #.
             Only the latest signed copy of each form counts, and formatting ("Street" / "St", a missing middle initial) isn't a difference.
+            Anything missing on a form by itself — an address without its state or ZIP, an SSN that isn't 9 digits — is listed too.
           </p>
         </div>
         <span className="shrink-0 rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-xs font-semibold text-slate-300">
@@ -312,6 +317,14 @@ export function FormInconsistenciesPanel({ canViewCompleted }: { canViewComplete
               {CONSISTENCY_FIELD_LABEL[f]} <span className="ml-0.5 text-[10px] text-slate-500">({openByField.get(f) ?? 0})</span>
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => setField(field === "missing" ? "" : "missing")}
+            title="Only what's missing or incomplete on a form by itself"
+            className={`rounded-md border px-2.5 py-1.5 text-xs font-semibold ${field === "missing" ? "border-rose-400/50 bg-rose-500/10 text-foreground" : "border-rose-400/20 text-rose-200/80 hover:bg-rose-500/10 hover:text-foreground"}`}
+          >
+            Missing info <span className="ml-0.5 text-[10px] text-slate-500">({openMissing})</span>
+          </button>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <label className="flex cursor-pointer items-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-muted-foreground">
@@ -330,7 +343,7 @@ export function FormInconsistenciesPanel({ canViewCompleted }: { canViewComplete
       ) : visible.length === 0 ? (
         <div className="rounded-xl border border-white/10 bg-slate-900/40 px-6 py-16 text-center text-sm text-slate-400">
           <CheckCircle2 className="mx-auto mb-2 h-6 w-6 text-emerald-400" />
-          {search || field ? "Nothing matches these filters." : "No differences to check — everyone's forms agree."}
+          {search || field ? "Nothing matches these filters." : "Nothing to check — everyone's forms agree and nothing's missing."}
         </div>
       ) : (
         <div className="space-y-3">
@@ -341,7 +354,13 @@ export function FormInconsistenciesPanel({ canViewCompleted }: { canViewComplete
                 {person.roleLabel && <span className="text-xs text-slate-400">{person.roleLabel}</span>}
                 {person.branch && <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">{person.branch}</span>}
                 {!person.active && <span className="rounded bg-slate-500/20 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">Inactive</span>}
-                <span className="ml-auto text-xs text-slate-500">{person.items.length} {person.items.length === 1 ? "difference" : "differences"}</span>
+                <span className="ml-auto text-xs text-slate-500">
+                  {(() => {
+                    const missing = person.items.filter((it) => it.inc.kind === "missing").length;
+                    const diffs = person.items.length - missing;
+                    return [diffs ? `${diffs} ${diffs === 1 ? "difference" : "differences"}` : "", missing ? `${missing} missing` : ""].filter(Boolean).join(" · ");
+                  })()}
+                </span>
               </div>
               <div className="divide-y divide-white/5">
                 {person.items.map(({ inc, review }) => {
@@ -350,7 +369,8 @@ export function FormInconsistenciesPanel({ canViewCompleted }: { canViewComplete
                     <div key={key} className={`flex flex-col gap-3 px-4 py-3 lg:flex-row ${review ? "opacity-60" : ""}`}>
                       <div className="w-44 shrink-0">
                         <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-200">{CONSISTENCY_FIELD_LABEL[inc.field]}</span>
-                        {inc.hint && <p className="mt-1 text-[11px] leading-4 text-amber-200/70">{inc.hint}</p>}
+                        {inc.kind === "missing" && <span className="ml-1 rounded bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-200">Missing</span>}
+                        {inc.hint && <p className={`mt-1 text-[11px] leading-4 ${inc.kind === "missing" ? "text-rose-200/80" : "text-amber-200/70"}`}>{inc.hint}</p>}
                       </div>
                       <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
                         {inc.groups.map((g, i) => (
@@ -368,7 +388,7 @@ export function FormInconsistenciesPanel({ canViewCompleted }: { canViewComplete
                                     {f.pdfUrl && canOpen(f) ? (
                                       <button
                                         type="button"
-                                        onClick={() => setViewing({ docId: f.docId, profileId: person.profileId, field: inc.field, rowKey: key })}
+                                        onClick={() => setViewing({ docId: f.docId, profileId: person.profileId, field: inc.field, rowKey: key, note: inc.kind === "missing" ? inc.hint : null })}
                                         title={`Open the signed ${f.label} — view, edit or send it again`}
                                         className="inline-flex items-center gap-1 rounded border border-sky-400/30 bg-sky-500/10 px-1.5 py-0.5 text-[11px] text-sky-200 hover:bg-sky-500/20"
                                       >

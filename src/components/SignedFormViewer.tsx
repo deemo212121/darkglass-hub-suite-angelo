@@ -19,6 +19,7 @@ export function SignedFormViewer({
   title,
   personName,
   focusField,
+  focusNote,
   editor,
   onSaved,
   onSendAgain,
@@ -29,6 +30,8 @@ export function SignedFormViewer({
   personName: string;
   /** The difference it was opened from — its fields come first, highlighted. */
   focusField: ConsistencyField | null;
+  /** What's wrong with that field when it's missing information ("Missing the state and ZIP"); unset = it doesn't match their other forms. */
+  focusNote?: string | null;
   editor: { profileId: string | null; name: string | null };
   onSaved: (doc: SignableDocument) => void;
   /** Send this form to the person to fill out again instead (unset = not offered). */
@@ -138,7 +141,9 @@ export function SignedFormViewer({
                   <div key={g.field} className={g.field === focusField ? "rounded-lg border border-amber-400/30 bg-amber-500/5 p-2.5" : ""}>
                     <p className={`mb-1.5 text-[11px] font-semibold uppercase tracking-wide ${g.field === focusField ? "text-amber-200" : "text-slate-500"}`}>
                       {CONSISTENCY_FIELD_LABEL[g.field]}
-                      {g.field === focusField && <span className="ml-1 normal-case tracking-normal text-amber-200/70">— doesn't match their other forms</span>}
+                      {g.field === focusField && (
+                        <span className="ml-1 normal-case tracking-normal text-amber-200/70">— {focusNote ? focusNote.charAt(0).toLowerCase() + focusNote.slice(1) : "doesn't match their other forms"}</span>
+                      )}
                     </p>
                     <div className="space-y-2">
                       {g.items.map((x) => {

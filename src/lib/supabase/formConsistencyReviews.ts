@@ -14,7 +14,7 @@ import { logActivity } from "./hrActivityLog";
 import { getAppUrl } from "@/lib/appUrl";
 import { SIGNABLE_DOCUMENT_REGISTRY, currentTemplateVersion } from "@/lib/signableDocumentRegistry";
 import { CONTRACTOR_AGREEMENT_SHORT_TITLE, contractorAgreementCountryOf } from "@/lib/masterPhContractorAgreementFormTemplate";
-import { CONSISTENCY_FIELD_LABEL, inconsistenciesFor, type ConsistencyField } from "@/lib/formConsistency";
+import { CONSISTENCY_FIELD_LABEL, inconsistenciesFor, missingInfoFor, type ConsistencyField } from "@/lib/formConsistency";
 
 /** HR Paperworks → Form Inconsistencies. */
 export const FORM_INCONSISTENCIES_LINK = "/m/hr/hr-paperworks?tab=formInconsistencies";
@@ -102,6 +102,8 @@ export async function sendFormsAgain(input: {
   profileId: string;
   personName: string;
   field: ConsistencyField;
+  /** Set when the form is missing part of the field rather than disagreeing with the others — the check's hint, e.g. "Missing the state and ZIP". */
+  incomplete?: string | null;
   forms: { signed: SignableDocument; waiting: SignableDocument | null }[];
   note: string;
   senderProfileId: string;
@@ -134,10 +136,13 @@ export async function sendFormsAgain(input: {
       : SIGNABLE_DOCUMENT_REGISTRY[d.documentType]?.label ?? d.documentType;
   const what = FIELD_IN_MESSAGE[input.field];
   const note = input.note.trim();
+  const why = input.incomplete
+    ? `is incomplete — ${input.incomplete.charAt(0).toLowerCase()}${input.incomplete.slice(1)}`
+    : `doesn't match your other forms`;
   const body = [
     copies.length === 1
-      ? `📋 Please fill out your ${label(copies[0])} again — the ${what} on it doesn't match your other forms.`
-      : `📋 Please fill out these forms again — the ${what} on them doesn't match your other forms.`,
+      ? `📋 Please fill out your ${label(copies[0])} again — the ${what} on it ${why}.`
+      : `📋 Please fill out these forms again — the ${what} on them ${input.incomplete ? why : "doesn't match your other forms"}.`,
     ...(note ? [`HR's note: ${note}`] : []),
     ...copies.map((d) => `${copies.length === 1 ? "" : `• ${label(d)}: `}${getAppUrl()}${SIGNABLE_DOCUMENT_REGISTRY[d.documentType].internalPath}/${d.id}`),
   ].join("\n");
@@ -172,13 +177,20 @@ export async function notifyHrOfNewInconsistencies(input: { docId: string; profi
       const mine = inc.groups.find((g) => g.forms.some((f) => f.docId === input.docId));
       return !!mine && mine.forms.length === 1;
     });
-    if (fresh.length === 0) return;
-    const signed = fresh[0].groups.flatMap((g) => g.forms).find((f) => f.docId === input.docId);
+    // What the form just signed is missing by itself (an address without its state / ZIP…).
+    const missing = missingInfoFor(docs).filter((inc) => !checked.has(`${inc.field}|${inc.valuesKey}`) && inc.groups[0]?.forms[0]?.docId === input.docId);
+    if (fresh.length === 0 && missing.length === 0) return;
+    const signed = [...fresh, ...missing][0].groups.flatMap((g) => g.forms).find((f) => f.docId === input.docId);
     const parts = fresh.map((inc) => {
       const others = inc.groups.flatMap((g) => g.forms).filter((f) => f.docId !== input.docId).map((f) => f.label);
       return `${CONSISTENCY_FIELD_LABEL[inc.field]} (differs from ${[...new Set(others)].join(", ")})`;
     });
-    const body = `Form check: ${input.signerName || "Someone"}'s ${signed?.label ?? "form"} doesn't match their other forms — ${parts.join("; ")}. Review it on HR Paperworks → Form Inconsistencies.`;
+    const missingParts = missing.map((inc) => `${CONSISTENCY_FIELD_LABEL[inc.field]} (${(inc.hint ?? "incomplete").toLowerCase()})`);
+    const what = [
+      ...(parts.length ? [`doesn't match their other forms — ${parts.join("; ")}`] : []),
+      ...(missingParts.length ? [`${parts.length ? "and it's" : "is"} missing information — ${missingParts.join("; ")}`] : []),
+    ].join(" ");
+    const body = `Form check: ${input.signerName || "Someone"}'s ${signed?.label ?? "form"} ${what}. Review it on HR Paperworks → Form Inconsistencies.`;
     const hrIds = (await getCompanyHrRoleProfileIds()).filter((id) => id !== input.profileId);
     await Promise.all(
       hrIds.map((recipientId) =>
