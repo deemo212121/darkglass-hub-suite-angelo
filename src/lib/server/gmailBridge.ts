@@ -40,7 +40,7 @@
 
 import { resolveDefaultPassword } from "./defaultPasswordBridge";
 import { verifyFirebaseToken, strToB64url, b64urlToString } from "./supabaseTokenBridge";
-import { CANDIDATE_EMAIL_SENDER_ROLES, emailBodyHtml, isValidEmail, parseEmailList, parseSignatureImage } from "../hiringEmails";
+import { CANDIDATE_EMAIL_SENDER_ROLES, DEFAULT_PASSWORD_TOKEN, emailBodyHtml, isValidEmail, parseEmailList, parseSignatureImage } from "../hiringEmails";
 
 export interface EnvBag {
   supabaseUrl: string;
@@ -982,7 +982,7 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       const to = text("to").trim();
       const ccList = parseEmailList(text("cc"));
       const subject = text("subject").replace(/[\r\n]+/g, " ").trim();
-      const body = text("body");
+      let body = text("body");
       const accountId = text("accountId");
       const signatureId = text("signatureId");
       if (!idToken) return json({ error: "Missing idToken" }, 400);
@@ -1006,6 +1006,12 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
 
       const sender = await resolveHiringSender(envBag, caller, accountId);
       if (!sender.ok) return json(sender.body, sender.status);
+      // The Technician email's login details: the real password only ever exists here, at send time.
+      if (body.includes(DEFAULT_PASSWORD_TOKEN)) {
+        const defaultPassword = await resolveDefaultPassword(envBag, caller.companyId, env);
+        if (!defaultPassword) return json({ error: "No default password is set yet. An Admin can set one in Login Security → Default Password." }, 409);
+        body = body.split(DEFAULT_PASSWORD_TOKEN).join(defaultPassword);
+      }
       const cc = ccList.length ? ccList.join(", ") : undefined;
       if (signatureId) {
         // Stops rather than quietly sending without it — HR asked for this signature.

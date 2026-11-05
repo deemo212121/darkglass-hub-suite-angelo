@@ -1,4 +1,5 @@
 import { supabase } from "./client";
+import { isHiringEmailKind, type HiringEmailKind } from "@/lib/hiringEmails";
 
 /** Human-readable label for each action code — new codes just show as-is (title-cased) if not listed here, so logging a new action never needs a UI change to be readable. */
 export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
@@ -214,13 +215,15 @@ export async function logActivity(input: LogActivityInput): Promise<void> {
 }
 
 export interface CandidateEmailLogEntry {
-  kind: "congratulations" | "status_update";
+  kind: HiringEmailKind;
   from: string;
   to: string;
   cc: string;
   subject: string;
   /** The signature's name, if one was added. */
   signature: string;
+  /** The Discord link it went out with: the next email of this kind starts on the latest one. */
+  discordLink: string;
   sentByName: string | null;
   date: string;
 }
@@ -232,12 +235,13 @@ export async function getCandidateEmailLog(): Promise<Map<string, CandidateEmail
   for (const r of rows) {
     if (!r.targetId) continue;
     const entry: CandidateEmailLogEntry = {
-      kind: r.details?.kind === "congratulations" ? "congratulations" : "status_update",
+      kind: isHiringEmailKind(r.details?.kind) ? r.details.kind : "status_update",
       from: r.details?.from ?? "",
       to: r.details?.to ?? "",
       cc: r.details?.cc ?? "",
       subject: r.details?.subject ?? "",
       signature: r.details?.signature ?? "",
+      discordLink: r.details?.discordLink ?? "",
       sentByName: r.actorName,
       date: r.createdAt,
     };

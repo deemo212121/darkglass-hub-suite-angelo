@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { isCompletedPaper, canViewCompletedPapers } from "@/lib/completedPapers";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, KeyRound, ShieldAlert, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, UserPlus, Search, Bell, Download, Forward, History, FileText, ClipboardList, ClipboardCheck, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, ShieldCheck, GraduationCap, LogOut, PhoneCall, Briefcase, Star, Route as RouteIcon, RefreshCw, PartyPopper } from "lucide-react";
+import { ChevronLeft, KeyRound, ShieldAlert, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, UserPlus, Search, Bell, Download, Forward, History, FileText, ClipboardList, ClipboardCheck, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, ShieldCheck, GraduationCap, LogOut, PhoneCall, Briefcase, Star, Route as RouteIcon, RefreshCw } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import { StickyHorizontalScrollbar } from "@/components/StickyHorizontalScrollbar";
@@ -197,8 +197,9 @@ import { fillI9Pdf } from "@/lib/i9PdfFill";
 import type { SubstanceScreeningFormData } from "@/lib/substanceScreeningFormTemplate";
 import { fillSubstanceScreeningPdf } from "@/lib/substanceScreeningPdfFill";
 import { logActivity, getActivityLog, activityActionLabel, getCandidateEmailLog, type CandidateEmailLogEntry, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
-import { CandidateEmailDialog, CandidateEmailHistoryDialog } from "@/components/CandidateEmailDialog";
-import { CANDIDATE_EMAIL_SENDER_ROLES, HIRING_EMAIL_SHORT, sendableAccounts, type HiringEmailKind } from "@/lib/hiringEmails";
+import { CandidateEmailDialog, CandidateEmailHistoryDialog, CandidateEmailMenu, CandidateEmailSentLines } from "@/components/CandidateEmailDialog";
+import { CANDIDATE_EMAIL_SENDER_ROLES, formatLocationAddress, latestDiscordLink, prefillEmailFields, sendableAccounts, type EmailFields, type HiringEmailKind } from "@/lib/hiringEmails";
+import { getLocations, type LocationRow } from "@/lib/supabase/locationManagement";
 import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
 import { InterviewCalendarTab, type InterviewCalendarCandidate } from "@/components/InterviewCalendarTab";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
@@ -1226,7 +1227,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       .catch((err) => console.error("Failed to load Hiring Gmail accounts:", err));
   };
   useEffect(() => {
-    if (canEmailCandidates) loadHiringGmailAccounts();
+    if (!canEmailCandidates) return;
+    loadHiringGmailAccounts();
+    getLocations().then(setEmailLocations).catch((err) => console.error("Failed to load branch locations for candidate emails:", err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canEmailCandidates]);
   // Google redirects back here with ?gmailConnected=1|0 after the consent
@@ -2003,6 +2006,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [candidateEmail, setCandidateEmail] = useState<{ candidate: Candidate; kind: HiringEmailKind } | null>(null);
   const [candidateEmailLog, setCandidateEmailLog] = useState<Map<string, CandidateEmailLogEntry[]>>(new Map());
   const [candidateEmailHistoryId, setCandidateEmailHistoryId] = useState<string | null>(null);
+  // Location Management's branches: fills in a candidate email's address and, failing a person's own, phone number.
+  const [emailLocations, setEmailLocations] = useState<LocationRow[]>([]);
   // Who created the User Management account behind each "Created" Account
   // Status badge — keyed by email since that's the only field hr_candidates
   // and profiles share (same join key candidateHasAccount already uses).
@@ -2833,6 +2838,46 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     (c.assignedManagerId && employeesById.get(c.assignedManagerId)?.name) || null;
   const trainerNameForCandidate = (c: Candidate): string | null =>
     (c.trainerId && employeesById.get(c.trainerId)?.name) || null;
+
+  /**
+   * What a candidate email can fill in: the trainer as Contact Person, else the
+   * manager on the row, skipping anyone no longer active; their phone, else the
+   * branch's; the branch's address, else its name; and the same Firstname.Lastname
+   * login Add User and Send Credentials use.
+   */
+  const candidateEmailPrefill = (c: Candidate, kind: HiringEmailKind): EmailFields => {
+    const active = (id: string | null) => {
+      const e = id ? employeesById.get(id) : undefined;
+      return e && e.status === "active" ? e : undefined;
+    };
+    const managerName = branchManagerNameForCandidate(c);
+    const contact =
+      active(c.trainerId) ||
+      active(c.assignedManagerId) ||
+      active(c.branchManagerId) ||
+      employees.find((e) => e.status === "active" && e.name === managerName);
+    const location = c.branch ? emailLocations.find((l) => l.location.trim().toLowerCase() === c.branch!.trim().toLowerCase()) : undefined;
+    const account = c.email ? employeesById.get(profileIdByEmail.get(c.email.trim().toLowerCase()) ?? "") : undefined;
+    return prefillEmailFields(
+      kind,
+      {
+        candidateName: c.name,
+        position: c.position,
+        interviewDate: c.interviewDate,
+        interviewTime: c.interviewTime,
+        interviewTimezone: c.interviewTimezone,
+        trainingStartDate: c.trainingStartDate,
+        startDate: c.startDate,
+        trainingTimeIn: c.trainingTimeIn,
+        location: (location && formatLocationAddress(location)) || c.branch || "",
+        contactPerson: contact?.name || managerName || "",
+        contactNumber: contact?.phone || location?.phoneNo || "",
+        username: deriveLoginName(account?.name || c.name),
+        lastDiscordLink: latestDiscordLink(Array.from(candidateEmailLog.values()).flat(), kind),
+      },
+      todayISO()
+    );
+  };
 
   // Forward Candidate's recipient prefill — ALWAYS both people shown in the
   // Assigned Interviewer column: the manager acting as interviewer (top
@@ -20811,44 +20856,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         >
                           <Forward className="h-4 w-4" />
                         </button>
-                        {canEmailCandidates && (
-                          <>
-                            <button
-                              onClick={() => setCandidateEmail({ candidate: c, kind: "congratulations" })}
-                              title="Congratulatory email"
-                              aria-label={`Congratulatory email to ${c.name}`}
-                              className="btn text-emerald-400 hover:text-emerald-300 text-sm p-1"
-                            >
-                              <PartyPopper className="h-4 w-4" />
-                            </button>
-                            <button
-                              onClick={() => setCandidateEmail({ candidate: c, kind: "status_update" })}
-                              title="Status update email"
-                              aria-label={`Status update email to ${c.name}`}
-                              className="btn text-amber-400 hover:text-amber-300 text-sm p-1"
-                            >
-                              <Mail className="h-4 w-4" />
-                            </button>
-                          </>
-                        )}
+                        {canEmailCandidates && <CandidateEmailMenu candidateName={c.name} onPick={(kind) => setCandidateEmail({ candidate: c, kind })} />}
                         {isHrOrAdmin && (
                           <button onClick={() => handleDeleteCandidate(c.id)} className="btn text-red-400 hover:text-red-300 text-sm p-1"><Trash2 className="h-4 w-4" /></button>
                         )}
                       </div>
-                      {(["congratulations", "status_update"] as const).map((kind) => {
-                        const last = candidateEmailLog.get(c.id)?.find((e) => e.kind === kind);
-                        if (!last) return null;
-                        return (
-                          <button
-                            key={kind}
-                            onClick={() => setCandidateEmailHistoryId(c.id)}
-                            title="Click to see what was sent"
-                            className={`block mt-1 text-[10px] font-medium hover:underline whitespace-nowrap ${kind === "congratulations" ? "text-emerald-400 hover:text-emerald-300" : "text-amber-400 hover:text-amber-300"}`}
-                          >
-                            {HIRING_EMAIL_SHORT[kind]} sent {new Date(last.date).toLocaleDateString()}
-                          </button>
-                        );
-                      })}
+                      {candidateEmailLog.has(c.id) && <CandidateEmailSentLines entries={candidateEmailLog.get(c.id)!} onOpen={() => setCandidateEmailHistoryId(c.id)} />}
                       {(() => {
                         const forwards = cvForwardsByCandidateId.get(c.id);
                         if (!forwards || forwards.length === 0) return null;
@@ -38153,15 +38166,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           candidate={candidateEmail.candidate}
           kind={candidateEmail.kind}
           statusLabel={CANDIDATE_STATUS_LABEL[candidateEmail.candidate.status]}
+          prefill={candidateEmailPrefill(candidateEmail.candidate, candidateEmail.kind)}
           accounts={hiringGmailAccounts}
           canManageAll={heldRoles.some((r) => r === "ADMIN" || r === "SUPERADMIN")}
           signerName={displayName || ""}
           onSignatureChanged={({ action, name }) => void logActivity({ action: `hiring_signature_${action}`, targetType: "hiring_signature", targetLabel: name })}
           previous={candidateEmailLog.get(candidateEmail.candidate.id) ?? []}
           onClose={() => setCandidateEmail(null)}
-          onSent={async ({ from, to, cc, subject, signature }) => {
+          onSent={async ({ from, to, cc, subject, signature, discordLink }) => {
             const { candidate, kind } = candidateEmail;
-            await logActivity({ action: "candidate_email_sent", targetType: "candidate", targetId: candidate.id, targetLabel: candidate.name, details: { kind, from, to, cc, subject, signature } });
+            await logActivity({ action: "candidate_email_sent", targetType: "candidate", targetId: candidate.id, targetLabel: candidate.name, details: { kind, from, to, cc, subject, signature, discordLink } });
             getCandidateEmailLog().then(setCandidateEmailLog).catch((err) => console.error("Failed to load candidate emails:", err));
           }}
         />
