@@ -1,5 +1,5 @@
 /**
- * Employee Monitoring → Attendance Status. Every active employee for one
+ * Employee Monitoring → Attendance Status. Active employees and deactivated employees with selected-date punches for one
  * day, filterable by department and role, with a status derived from what's
  * already recorded — no manual step:
  *   Completed  — checked in and out (meal, if started, also ended)
@@ -268,12 +268,22 @@ export function EmployeeAttendanceStatusTab() {
       restHistory,
     });
 
+  // Single-day mode also loads history for the editor. Only punches inside
+  // the selected dates qualify a deactivated employee for the roster.
+  const profilesWithStamps = useMemo(
+    () => new Set(entries
+      .filter((e) => e.workDate >= startDate && e.workDate <= date &&
+        Boolean(e.checkIn || e.checkOut || e.mealStart || e.mealEnd))
+      .map((e) => e.profileId)),
+    [entries, startDate, date]
+  );
+
   const visibleProfiles = useMemo(
     () =>
       profiles
-        .filter((p) => p.is_active && (teamScopedIds === null || teamScopedIds.has(p.id)))
+        .filter((p) => (p.is_active || profilesWithStamps.has(p.id)) && (teamScopedIds === null || teamScopedIds.has(p.id)))
         .sort((a, b) => (a.display_name || a.email || "").localeCompare(b.display_name || b.email || "")),
-    [profiles, teamScopedIds]
+    [profiles, teamScopedIds, profilesWithStamps]
   );
 
   const departmentOf = (p: ProfileRow) => getRoleDepartmentBreakdown(p.role).department || "Other";
@@ -647,7 +657,9 @@ export function EmployeeAttendanceStatusTab() {
                     className="text-blue-400 hover:text-blue-300 hover:underline font-medium text-left inline-flex items-center gap-1"
                   >
                     <ChevronRight className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`} />
-                    {p.display_name || p.email}
+                    {p.is_active
+                      ? (p.display_name || p.email)
+                      : `${(p.display_name || p.email || "").replace(/\s*\(\s*deactivated\s*\)/gi, "").trim()} (Deactivated)`}
                   </button>
                 </td>
                 <td className="px-3 py-2.5 text-slate-300">{departmentOf(p)}</td>
