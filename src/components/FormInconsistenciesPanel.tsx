@@ -9,17 +9,20 @@
  *
  * A difference that's fine (the person moved) can be marked as checked
  * (form_consistency_reviews, migration 0425); it stays hidden until a new,
- * different value shows up. HR also gets a bell notification when someone
+ * different value shows up. One that's a mistake can be sent back: "Send
+ * form again" sends the person a fresh copy of the forms HR picks to fill
+ * out once more (formConsistencyReviews.ts's sendFormsAgain) — signed forms
+ * are never edited here. HR also gets a bell notification when someone
  * signs a form that disagrees with all of their other forms
  * (formConsistencyReviews.ts's notifyHrOfNewInconsistencies).
  */
-import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, RefreshCw, Search, ShieldAlert, Undo2 } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, CheckCircle2, Clock, ExternalLink, Loader2, RefreshCw, Search, Send, ShieldAlert, Undo2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { Switch } from "@/components/ui/switch";
 import { getSignableDocumentsByTypes, type SignableDocument } from "@/lib/supabase/signableDocuments";
-import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
-import { getFormConsistencyReviews, markInconsistencyChecked, undoInconsistencyChecked, type FormConsistencyReview } from "@/lib/supabase/formConsistencyReviews";
+import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
+import { getFormConsistencyReviews, markInconsistencyChecked, sendFormsAgain, undoInconsistencyChecked, type FormConsistencyReview } from "@/lib/supabase/formConsistencyReviews";
 import {
   CONSISTENCY_FIELDS,
   CONSISTENCY_FIELD_LABEL,
@@ -27,6 +30,7 @@ import {
   documentOwner,
   findInconsistencies,
   type ConsistencyField,
+  type ConsistencyForm,
   type Inconsistency,
 } from "@/lib/formConsistency";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
@@ -51,7 +55,7 @@ interface Person {
 
 /** `canViewCompleted`: HR Paperworks' own completedPapers.ts check for this viewer. */
 export function FormInconsistenciesPanel({ canViewCompleted }: { canViewCompleted: boolean }) {
-  const { displayName } = useAuth();
+  const { displayName, uid } = useAuth();
   const canOpen = (f: { documentType: SignableDocument["documentType"]; status: SignableDocument["status"] }) => canViewCompleted || !isCompletedPaper(f);
   const [docs, setDocs] = useState<SignableDocument[]>([]);
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
@@ -68,6 +72,16 @@ export function FormInconsistenciesPanel({ canViewCompleted }: { canViewComplete
   const [noteFor, setNoteFor] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  // The difference whose "Send form again" picker is open, the forms picked, and the note to the person.
+  const [sendFor, setSendFor] = useState<string | null>(null);
+  const [sendPick, setSendPick] = useState<Set<string>>(new Set());
+  const [sendNote, setSendNote] = useState("");
+  const [sentFor, setSentFor] = useState<string | null>(null);
+  // Who the message comes from.
+  const [myProfileId, setMyProfileId] = useState<string | null>(null);
+  useEffect(() => {
+    if (uid) getMyProfileId(uid).then(setMyProfileId).catch(() => setMyProfileId(null));
+  }, [uid]);
 
   const load = async () => {
     setLoading(true);
@@ -128,6 +142,50 @@ export function FormInconsistenciesPanel({ canViewCompleted }: { canViewComplete
   }, [scoped, field, showChecked, search]);
 
   const openPeople = scoped.filter((p) => p.items.some((it) => !it.review)).length;
+
+  const docById = useMemo(() => new Map(docs.map((d) => [d.id, d])), [docs]);
+  // Each person's newest unsigned copy of each form ("owner|type").
+  const newestUnsigned = useMemo(() => {
+    const m = new Map<string, SignableDocument>();
+    for (const d of docs) {
+      const owner = d.status === "pending_signature" ? documentOwner(d) : null;
+      if (!owner) continue;
+      const k = `${owner}|${d.documentType}`;
+      const prev = m.get(k);
+      if (!prev || d.createdAt > prev.createdAt) m.set(k, d);
+    }
+    return m;
+  }, [docs]);
+  /** A copy of this form sent after the signed one that isn't signed yet — sent again, still out. */
+  const waitingCopy = (profileId: string, f: ConsistencyForm) => {
+    const d = newestUnsigned.get(`${profileId}|${f.documentType}`);
+    return d && d.createdAt > f.signedAt ? d : null;
+  };
+  /** Filled out again by the person, now waiting on HR's countersignature (Master agreements) — nothing to send them. */
+  const waitingOnHr = (d: SignableDocument | null) => !!d && d.recipientSlot !== "employee";
+
+  const handleSendAgain = async (person: Person, inc: Inconsistency) => {
+    const key = reviewKey(person.profileId, inc.field, inc.valuesKey);
+    if (!myProfileId) return;
+    setBusy(key);
+    try {
+      const forms = inc.groups
+        .flatMap((g) => g.forms)
+        .filter((f) => sendPick.has(f.docId))
+        .flatMap((f) => {
+          const signed = docById.get(f.docId);
+          return signed ? [{ signed, waiting: waitingCopy(person.profileId, f) }] : [];
+        });
+      const copies = await sendFormsAgain({ profileId: person.profileId, personName: person.name, field: inc.field, forms, note: sendNote, senderProfileId: myProfileId, senderName: displayName });
+      setDocs((prev) => [...copies.filter((c) => !prev.some((p) => p.id === c.id)), ...prev]);
+      setSendFor(null);
+      setSentFor(key);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const handleCheck = async (person: Person, inc: Inconsistency) => {
     const key = reviewKey(person.profileId, inc.field, inc.valuesKey);
@@ -269,24 +327,37 @@ export function FormInconsistenciesPanel({ canViewCompleted }: { canViewComplete
                               <p className="text-xs italic text-slate-500" title="Completed papers can only be opened by the people allowed to view them">Hidden — only completed-paper viewers can see it</p>
                             )}
                             <div className="mt-1.5 flex flex-wrap gap-1">
-                              {g.forms.map((f) =>
-                                f.pdfUrl && canOpen(f) ? (
-                                  <a
-                                    key={f.docId}
-                                    href={f.pdfUrl}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    title={`Open the signed ${f.label}`}
-                                    className="inline-flex items-center gap-1 rounded border border-sky-400/30 bg-sky-500/10 px-1.5 py-0.5 text-[11px] text-sky-200 hover:bg-sky-500/20"
-                                  >
-                                    {f.label} · {shortDate(f.signedAt)} <ExternalLink className="h-3 w-3" />
-                                  </a>
-                                ) : (
-                                  <span key={f.docId} className="rounded border border-white/10 px-1.5 py-0.5 text-[11px] text-slate-400">
-                                    {f.label} · {shortDate(f.signedAt)}
-                                  </span>
-                                ),
-                              )}
+                              {g.forms.map((f) => {
+                                const waiting = waitingCopy(person.profileId, f);
+                                return (
+                                  <Fragment key={f.docId}>
+                                    {f.pdfUrl && canOpen(f) ? (
+                                      <a
+                                        href={f.pdfUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        title={`Open the signed ${f.label}`}
+                                        className="inline-flex items-center gap-1 rounded border border-sky-400/30 bg-sky-500/10 px-1.5 py-0.5 text-[11px] text-sky-200 hover:bg-sky-500/20"
+                                      >
+                                        {f.label} · {shortDate(f.signedAt)} <ExternalLink className="h-3 w-3" />
+                                      </a>
+                                    ) : (
+                                      <span className="rounded border border-white/10 px-1.5 py-0.5 text-[11px] text-slate-400">
+                                        {f.label} · {shortDate(f.signedAt)}
+                                      </span>
+                                    )}
+                                    {waiting && (
+                                      <span
+                                        title={waitingOnHr(waiting) ? `They filled out the ${f.label} again — it's waiting for the company signature` : `A new ${f.label} was sent ${shortDate(waiting.createdAt)} — this difference updates once they sign it`}
+                                        className="inline-flex items-center gap-1 rounded border border-amber-400/30 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-200"
+                                      >
+                                        <Clock className="h-3 w-3" />
+                                        {waitingOnHr(waiting) ? "Filled again · needs countersign" : `Sent again ${shortDate(waiting.createdAt)} · waiting`}
+                                      </span>
+                                    )}
+                                  </Fragment>
+                                );
+                              })}
                             </div>
                           </div>
                         ))}
@@ -331,16 +402,95 @@ export function FormInconsistenciesPanel({ canViewCompleted }: { canViewComplete
                               </button>
                             </div>
                           </div>
+                        ) : sendFor === key ? (
+                          <div className="space-y-1.5">
+                            <p className="text-[11px] font-semibold text-slate-300">Which form should they fill out again?</p>
+                            {inc.groups.flatMap((g) =>
+                              g.forms.map((f) => {
+                                const waiting = waitingCopy(person.profileId, f);
+                                const onHr = waitingOnHr(waiting);
+                                return (
+                                  <label
+                                    key={f.docId}
+                                    className={`flex items-start gap-1.5 text-[11px] leading-4 ${onHr ? "cursor-not-allowed text-slate-500" : "cursor-pointer text-slate-200"}`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      disabled={onHr}
+                                      checked={!onHr && sendPick.has(f.docId)}
+                                      onChange={(e) =>
+                                        setSendPick((prev) => {
+                                          const next = new Set(prev);
+                                          if (e.target.checked) next.add(f.docId);
+                                          else next.delete(f.docId);
+                                          return next;
+                                        })
+                                      }
+                                      className="mt-0.5 shrink-0"
+                                    />
+                                    <span className="min-w-0">
+                                      {f.label} · {shortDate(f.signedAt)}
+                                      {canOpen(f) && <span className={`block text-slate-400 ${inc.field === "ssn" || inc.field === "phone" || inc.field === "license" ? "font-mono" : ""}`}>{g.display}</span>}
+                                      {onHr ? (
+                                        <span className="block text-amber-200/80">Filled again — countersign it to finish</span>
+                                      ) : waiting ? (
+                                        <span className="block text-amber-200/80">Already sent {shortDate(waiting.createdAt)} — sends the same link again</span>
+                                      ) : null}
+                                    </span>
+                                  </label>
+                                );
+                              }),
+                            )}
+                            <input
+                              type="text"
+                              value={sendNote}
+                              onChange={(e) => setSendNote(e.target.value)}
+                              onKeyDown={(e) => { if (e.key === "Escape") setSendFor(null); }}
+                              placeholder="Note to them (optional)"
+                              className="glass-input w-full rounded-md px-2 py-1 text-xs"
+                            />
+                            <div className="flex gap-1.5">
+                              <button
+                                type="button"
+                                disabled={busy === key || sendPick.size === 0 || !myProfileId}
+                                title={!myProfileId ? "Couldn't find your account to send from — refresh the page" : undefined}
+                                onClick={() => void handleSendAgain(person, inc)}
+                                className="inline-flex items-center gap-1 rounded bg-sky-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
+                              >
+                                {busy === key ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />} Send
+                              </button>
+                              <button type="button" onClick={() => setSendFor(null)} className="rounded border border-white/15 px-2 py-1 text-[11px] text-slate-300 hover:bg-white/10">
+                                Cancel
+                              </button>
+                            </div>
+                            <p className="text-[10px] leading-4 text-slate-500">They get a message with a link to a new copy. Their signed copy stays on file until they sign the new one.</p>
+                          </div>
                         ) : (
-                          <button
-                            type="button"
-                            disabled={reviews === null}
-                            title={reviews === null ? "Needs migration 0425" : "Hide this difference — it shows again if a new, different value is signed"}
-                            onClick={() => { setNoteFor(key); setNote(""); }}
-                            className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-40"
-                          >
-                            <CheckCircle2 className="h-3 w-3" /> Mark as checked
-                          </button>
+                          <div className="flex flex-wrap gap-1.5">
+                            <button
+                              type="button"
+                              disabled={reviews === null}
+                              title={reviews === null ? "Needs migration 0425" : "Hide this difference — it shows again if a new, different value is signed"}
+                              onClick={() => { setNoteFor(key); setNote(""); setSendFor(null); }}
+                              className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-40"
+                            >
+                              <CheckCircle2 className="h-3 w-3" /> Mark as checked
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!person.active}
+                              title={person.active ? "Send them a new copy of a form to fill out again" : "Inactive account — they can't sign in to fill out a form"}
+                              onClick={() => { setSendFor(key); setSendPick(new Set()); setSendNote(""); setNoteFor(null); setSentFor(null); }}
+                              className="inline-flex items-center gap-1 rounded border border-sky-400/40 bg-sky-500/10 px-2 py-1 text-[11px] font-semibold text-sky-200 hover:bg-sky-500/20 disabled:opacity-40"
+                            >
+                              <Send className="h-3 w-3" /> Send form again
+                            </button>
+                            {sentFor === key && (
+                              <p className="flex w-full items-center gap-1 text-[11px] text-emerald-300">
+                                <CheckCircle2 className="h-3 w-3" /> Sent to their messages
+                              </p>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>
