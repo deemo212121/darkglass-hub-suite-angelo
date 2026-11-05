@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { isCompletedPaper, canViewCompletedPapers } from "@/lib/completedPapers";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, KeyRound, ShieldAlert, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, UserPlus, Search, Bell, Download, Forward, History, FileText, ClipboardList, ClipboardCheck, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, ShieldCheck, GraduationCap, LogOut, PhoneCall, Briefcase, Star, Route as RouteIcon, RefreshCw } from "lucide-react";
+import { ChevronLeft, KeyRound, ShieldAlert, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, AlertTriangle, CheckCircle, XCircle, Paperclip, Users, Clock, UserCheck, UserX, UserMinus, UserPlus, Search, Bell, Download, Forward, History, FileText, ClipboardList, ClipboardCheck, Landmark, GripVertical, FileCheck, Link2, Copy, Calendar, Check, Pencil, Filter, Columns3, Mail, PenLine, X, ExternalLink, Loader2, Send, ShieldCheck, GraduationCap, LogOut, PhoneCall, Briefcase, Star, Route as RouteIcon, RefreshCw, PartyPopper } from "lucide-react";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 import { StickyHorizontalScrollbar } from "@/components/StickyHorizontalScrollbar";
@@ -22,7 +22,8 @@ import {
   type HrJobPostingStatus,
 } from "@/lib/supabase/hrJobPostings";
 import { getHrBranchPostingStatuses, setHrBranchPostingStatus } from "@/lib/supabase/hrBranchPostingStatus";
-import { getGmailConnectionStatus, disconnectGmail, sendHiringCredentialsEmail, type GmailConnectionStatus } from "@/lib/supabase/gmailConnection";
+import { getHiringGmailAccounts, sendHiringCredentialsEmail, type HiringGmailAccount } from "@/lib/supabase/gmailConnection";
+import { HiringGmailAccountsBar, HiringGmailFromSelect } from "@/components/HiringGmailAccounts";
 
 /** Shared shape for a sidebar/header-dropdown nav tab entry — broad enough to structurally match every tabGroups[].tabs literal (they all share this key/label/count/icon shape, just with different literal `key`/`label` string types per group), so renderSidebarTabButton/renderDropdownTabButton can be called with tabs from any group. */
 type NavTabDef = { key: string; label: string; count: number; icon: typeof FileCheck };
@@ -195,7 +196,9 @@ import type { I9FormData } from "@/lib/i9FormTemplate";
 import { fillI9Pdf } from "@/lib/i9PdfFill";
 import type { SubstanceScreeningFormData } from "@/lib/substanceScreeningFormTemplate";
 import { fillSubstanceScreeningPdf } from "@/lib/substanceScreeningPdfFill";
-import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
+import { logActivity, getActivityLog, activityActionLabel, getCandidateEmailLog, type CandidateEmailLogEntry, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
+import { CandidateEmailDialog, CandidateEmailHistoryDialog } from "@/components/CandidateEmailDialog";
+import { CANDIDATE_EMAIL_SENDER_ROLES, HIRING_EMAIL_SHORT, sendableAccounts, type HiringEmailKind } from "@/lib/hiringEmails";
 import { HrActivityLogPanel } from "@/components/HrActivityLogPage";
 import { InterviewCalendarTab, type InterviewCalendarCandidate } from "@/components/InterviewCalendarTab";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
@@ -1126,6 +1129,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const normalizedMyExtraRoles = myExtraRoles.map(normalizeRole);
   const heldRoles = [normalizedMyRole, ...normalizedMyExtraRoles];
   const isHrOrAdmin = ready && heldRoles.some((r) => HR_ADMIN_ROLES.has(r));
+  const canEmailCandidates = ready && heldRoles.some((r) => CANDIDATE_EMAIL_SENDER_ROLES.has(r));
   // "Pile up" semantics, same as isCsrRestrictedRole/everyHeldRoleIn in
   // roleLabels.ts: only restrict to "my branch" when EVERY role this person
   // holds is branch-manager-tier. Someone who's SUPERADMIN/ADMIN/HR and
@@ -1211,23 +1215,20 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const [deepLinkCvPreview, setDeepLinkCvPreview] = useState<{ url: string; title: string } | null>(null);
 
-  // ── Connect Gmail (Hiring panel) — connect-only for now, ahead of an
-  // actual candidate-emailing feature ("we need to send email at some
-  // point so add it first"). Same HR_HIRING region/connect-flow
-  // AccountingDashboard.tsx's US/PH Payroll connection uses, just this
-  // panel's own slot (see gmailConnection.ts's header comment). ──
-  const canConnectHiringGmail = normalizedMyRole === "ADMIN" || normalizedMyRole === "SUPERADMIN";
-  const [hiringGmailStatus, setHiringGmailStatus] = useState<GmailConnectionStatus | null>(null);
-  const [connectingHiringGmail, setConnectingHiringGmail] = useState(false);
-  const [disconnectingHiringGmail, setDisconnectingHiringGmail] = useState(false);
-  const loadHiringGmailStatus = () => {
-    getGmailConnectionStatus("HR_HIRING")
-      .then(setHiringGmailStatus)
-      .catch((err) => console.error("Failed to load Hiring Gmail connection status:", err));
+  // ── Hiring panel Gmail accounts — HR, Admin and Super Admin each connect
+  // their own (HiringGmailAccounts.tsx, migration 0428), and pick From when
+  // sending. null = that migration hasn't been run yet. ──
+  const [hiringGmailAccounts, setHiringGmailAccounts] = useState<HiringGmailAccount[] | null>([]);
+  const hiringGmailSenders = sendableAccounts(hiringGmailAccounts ?? []);
+  const loadHiringGmailAccounts = () => {
+    getHiringGmailAccounts()
+      .then(setHiringGmailAccounts)
+      .catch((err) => console.error("Failed to load Hiring Gmail accounts:", err));
   };
   useEffect(() => {
-    loadHiringGmailStatus();
-  }, []);
+    if (canEmailCandidates) loadHiringGmailAccounts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canEmailCandidates]);
   // Google redirects back here with ?gmailConnected=1|0 after the consent
   // screen (see gmailBridge.ts) — show the result once, then strip the
   // param so refreshing the page doesn't re-show it.
@@ -1236,36 +1237,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     const result = params.get("gmailConnected");
     if (result === null) return;
     setError(result === "1" ? null : "Couldn't connect Gmail — please try again.");
-    if (result === "1") loadHiringGmailStatus();
+    if (result === "1") loadHiringGmailAccounts();
     params.delete("gmailConnected");
     const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}`;
     window.history.replaceState(null, "", next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const handleConnectHiringGmail = async () => {
-    setConnectingHiringGmail(true);
-    try {
-      const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
-      if (!idToken) { setError("You need to be logged in to connect Gmail."); return; }
-      // A real navigation (not fetch) — Google's consent screen has to run in the top-level window.
-      window.location.href = `/api/gmail?action=connect&region=HR_HIRING&idToken=${encodeURIComponent(idToken)}`;
-    } finally {
-      setConnectingHiringGmail(false);
-    }
-  };
-  const handleDisconnectHiringGmail = async () => {
-    if (!confirm("Disconnect Gmail from the Hiring panel?")) return;
-    setDisconnectingHiringGmail(true);
-    try {
-      await disconnectGmail("HR_HIRING");
-      loadHiringGmailStatus();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to disconnect Gmail.");
-    } finally {
-      setDisconnectingHiringGmail(false);
-    }
-  };
-
   // "Send Credentials" — lives inside the Forward Candidate dialog
   // (alongside forwarding to a manager), shown once the candidate has a
   // created account. Fetches a live preview (username/Technician ID) so
@@ -1276,15 +1253,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [credentialsPreview, setCredentialsPreview] = useState<{ username: string | null; technicianId: string | null; email: string | null; name: string | null } | null>(null);
   const [credentialsPreviewLoading, setCredentialsPreviewLoading] = useState(false);
   const [credentialsSentTo, setCredentialsSentTo] = useState<string | null>(null);
+  const [credentialsAccountId, setCredentialsAccountId] = useState("");
+  const credentialsFrom = hiringGmailSenders.find((a) => a.id === credentialsAccountId) ?? hiringGmailSenders[0] ?? null;
   const handleSendCredentials = async (profileId: string) => {
-    if (!hiringGmailStatus?.connected) {
-      setError("Connect Gmail above first before sending credentials.");
+    if (!credentialsFrom) {
+      setError("Connect your Gmail on the Hiring panel first before sending credentials.");
       return;
     }
     setSendingCredentialsId(profileId);
     setCredentialsSentTo(null);
     try {
-      const { sentTo } = await sendHiringCredentialsEmail(profileId);
+      const { sentTo } = await sendHiringCredentialsEmail(profileId, credentialsFrom.id);
       setCredentialsSentTo(sentTo);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to send credentials email.");
@@ -2020,6 +1999,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // Hiring table's "Sent {date}" indicator next to the Forward button.
   const [cvForwardsByCandidateId, setCvForwardsByCandidateId] = useState<Map<string, CvForwardDetail[]>>(new Map());
   const [cvForwardHistoryCandidateId, setCvForwardHistoryCandidateId] = useState<string | null>(null);
+  // Hiring table → Actions: the Congratulatory / Status Update email being written, and what's already gone out.
+  const [candidateEmail, setCandidateEmail] = useState<{ candidate: Candidate; kind: HiringEmailKind } | null>(null);
+  const [candidateEmailLog, setCandidateEmailLog] = useState<Map<string, CandidateEmailLogEntry[]>>(new Map());
+  const [candidateEmailHistoryId, setCandidateEmailHistoryId] = useState<string | null>(null);
   // Who created the User Management account behind each "Created" Account
   // Status badge — keyed by email since that's the only field hr_candidates
   // and profiles share (same join key candidateHasAccount already uses).
@@ -2059,6 +2042,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         getAccountCreatorsByEmail().then(setAccountCreatorsByEmail),
         getLatestFieldEdits().then(setFieldEditsByKey),
         getCvForwardsByCandidateId().then(setCvForwardsByCandidateId),
+        getCandidateEmailLog().then(setCandidateEmailLog).catch((err) => console.error("Failed to load candidate emails:", err)),
         getCandidateAttemptSummaries().then(setAttemptSummariesByCandidateId),
       ]);
       setCandidates(rows);
@@ -19838,43 +19822,20 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           </div>
         </div>
 
-        {/* Connect Gmail — connect-only for now (no send action yet); lets
-            HR link an account ahead of a candidate-emailing feature. */}
-        <div className="px-4 py-2.5 border-b border-white/10 bg-white/5">
-          <div className="flex items-center gap-2 px-3 py-2 bg-slate-900/50 border border-white/10 rounded-lg text-sm w-fit">
-            <Mail className={`h-4 w-4 shrink-0 ${hiringGmailStatus?.connected ? "text-green-400" : "text-slate-500"}`} />
-            <span className="text-xs text-slate-400 uppercase font-semibold">Hiring Gmail:</span>
-            {hiringGmailStatus?.connected ? (
-              <>
-                <span className="text-slate-200" title={hiringGmailStatus.connectedByName ? `Connected by ${hiringGmailStatus.connectedByName}` : undefined}>
-                  {hiringGmailStatus.connectedAccountName || "Unknown"}
-                  {hiringGmailStatus.connectedEmail && <span className="text-slate-500"> ({hiringGmailStatus.connectedEmail})</span>}
-                </span>
-                {canConnectHiringGmail && (
-                  <button
-                    type="button"
-                    onClick={() => void handleDisconnectHiringGmail()}
-                    disabled={disconnectingHiringGmail}
-                    className="text-red-300 hover:text-red-200 disabled:opacity-40 disabled:no-underline text-xs underline ml-1"
-                  >
-                    {disconnectingHiringGmail ? "Disconnecting…" : "Disconnect"}
-                  </button>
-                )}
-              </>
-            ) : canConnectHiringGmail ? (
-              <button
-                type="button"
-                onClick={() => void handleConnectHiringGmail()}
-                disabled={connectingHiringGmail}
-                className="text-blue-300 hover:text-blue-200 text-xs underline disabled:opacity-50"
-              >
-                {connectingHiringGmail ? "Connecting…" : "Connect Gmail"}
-              </button>
-            ) : (
-              <span className="text-slate-500 text-xs">Not connected — ask an Admin</span>
-            )}
+        {/* Connected Hiring Gmail accounts — HR, Admin and Super Admin only. */}
+        {canEmailCandidates && (
+          <div className="px-4 py-2.5 border-b border-white/10 bg-white/5">
+            <HiringGmailAccountsBar
+              accounts={hiringGmailAccounts}
+              canManageAll={heldRoles.some((r) => r === "ADMIN" || r === "SUPERADMIN")}
+              onChanged={({ action, email }) => {
+                void logActivity({ action: `hiring_gmail_${action}`, targetType: "hiring_gmail", targetLabel: email });
+                loadHiringGmailAccounts();
+              }}
+              onError={setError}
+            />
           </div>
-        </div>
+        )}
 
         {/* Hiring Filters */}
         <div className="px-4 py-3 border-b border-white/10 bg-white/5">
@@ -20850,10 +20811,44 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         >
                           <Forward className="h-4 w-4" />
                         </button>
+                        {canEmailCandidates && (
+                          <>
+                            <button
+                              onClick={() => setCandidateEmail({ candidate: c, kind: "congratulations" })}
+                              title="Congratulatory email"
+                              aria-label={`Congratulatory email to ${c.name}`}
+                              className="btn text-emerald-400 hover:text-emerald-300 text-sm p-1"
+                            >
+                              <PartyPopper className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={() => setCandidateEmail({ candidate: c, kind: "status_update" })}
+                              title="Status update email"
+                              aria-label={`Status update email to ${c.name}`}
+                              className="btn text-amber-400 hover:text-amber-300 text-sm p-1"
+                            >
+                              <Mail className="h-4 w-4" />
+                            </button>
+                          </>
+                        )}
                         {isHrOrAdmin && (
                           <button onClick={() => handleDeleteCandidate(c.id)} className="btn text-red-400 hover:text-red-300 text-sm p-1"><Trash2 className="h-4 w-4" /></button>
                         )}
                       </div>
+                      {(["congratulations", "status_update"] as const).map((kind) => {
+                        const last = candidateEmailLog.get(c.id)?.find((e) => e.kind === kind);
+                        if (!last) return null;
+                        return (
+                          <button
+                            key={kind}
+                            onClick={() => setCandidateEmailHistoryId(c.id)}
+                            title="Click to see what was sent"
+                            className={`block mt-1 text-[10px] font-medium hover:underline whitespace-nowrap ${kind === "congratulations" ? "text-emerald-400 hover:text-emerald-300" : "text-amber-400 hover:text-amber-300"}`}
+                          >
+                            {HIRING_EMAIL_SHORT[kind]} sent {new Date(last.date).toLocaleDateString()}
+                          </button>
+                        );
+                      })}
                       {(() => {
                         const forwards = cvForwardsByCandidateId.get(c.id);
                         if (!forwards || forwards.length === 0) return null;
@@ -38153,6 +38148,32 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       })()}
 
       {/* CV forward history for one candidate — who it's been sent to and when, opened from the Hiring table's "Sent {date}" indicator */}
+      {candidateEmail && (
+        <CandidateEmailDialog
+          candidate={candidateEmail.candidate}
+          kind={candidateEmail.kind}
+          statusLabel={CANDIDATE_STATUS_LABEL[candidateEmail.candidate.status]}
+          accounts={hiringGmailAccounts}
+          canManageAll={heldRoles.some((r) => r === "ADMIN" || r === "SUPERADMIN")}
+          signerName={displayName || ""}
+          onSignatureChanged={({ action, name }) => void logActivity({ action: `hiring_signature_${action}`, targetType: "hiring_signature", targetLabel: name })}
+          previous={candidateEmailLog.get(candidateEmail.candidate.id) ?? []}
+          onClose={() => setCandidateEmail(null)}
+          onSent={async ({ from, to, cc, subject, signature }) => {
+            const { candidate, kind } = candidateEmail;
+            await logActivity({ action: "candidate_email_sent", targetType: "candidate", targetId: candidate.id, targetLabel: candidate.name, details: { kind, from, to, cc, subject, signature } });
+            getCandidateEmailLog().then(setCandidateEmailLog).catch((err) => console.error("Failed to load candidate emails:", err));
+          }}
+        />
+      )}
+      {candidateEmailHistoryId && (
+        <CandidateEmailHistoryDialog
+          candidateName={candidates.find((c) => c.id === candidateEmailHistoryId)?.name ?? "Candidate"}
+          entries={candidateEmailLog.get(candidateEmailHistoryId) ?? []}
+          onClose={() => setCandidateEmailHistoryId(null)}
+        />
+      )}
+
       {cvForwardHistoryCandidateId && (() => {
         const forwards = cvForwardsByCandidateId.get(cvForwardHistoryCandidateId) ?? [];
         const candidateName = candidates.find((c) => c.id === cvForwardHistoryCandidateId)?.name;
@@ -38290,8 +38311,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 ) : (
                   <p className="text-xs text-red-300">Couldn't load this account's details.</p>
                 )}
-                {!hiringGmailStatus?.connected && (
-                  <p className="text-[11px] text-amber-300 mt-2">Connect Gmail on the Hiring panel first before sending.</p>
+                {credentialsFrom ? (
+                  <label className="block mt-2">
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">From</span>
+                    <HiringGmailFromSelect accounts={hiringGmailSenders} value={credentialsFrom.id} onChange={setCredentialsAccountId} className="glass-input text-sm py-1.5 px-3 rounded-md w-full mt-1" />
+                  </label>
+                ) : (
+                  <p className="text-[11px] text-amber-300 mt-2">Connect your Gmail on the Hiring panel first before sending.</p>
                 )}
                 {credentialsSentTo && (
                   <p className="text-[11px] text-green-300 mt-2">Sent to {credentialsSentTo}.</p>
@@ -38300,7 +38326,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   <button
                     type="button"
                     onClick={() => void handleSendCredentials(forwardDialogProfileId)}
-                    disabled={!credentialsPreview?.email || sendingCredentialsId === forwardDialogProfileId || !hiringGmailStatus?.connected}
+                    disabled={!credentialsPreview?.email || sendingCredentialsId === forwardDialogProfileId || !credentialsFrom}
                     className="btn text-sm px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
                   >
                     {sendingCredentialsId === forwardDialogProfileId ? "Sending…" : credentialsSentTo ? "Send Again" : "Send Credentials"}
