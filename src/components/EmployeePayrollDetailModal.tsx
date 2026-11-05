@@ -108,7 +108,7 @@ interface Props {
     items: PayrollAdjustment[];
     /** The payroll table's gross pay for this employee and period. */
     grossPay: number | null;
-    /** How gross pay was made up, when it's worth showing (hourly days + fixed days ÷ 10). */
+    /** Gross pay breakdown: hourly earnings plus the full fixed cutoff salary. */
     grossBreakdown?: { label: string; amount: number }[];
     createdByName?: string | null;
     onChanged: () => void | Promise<void>;
@@ -932,20 +932,19 @@ export function EmployeePayrollDetailModal({
   }, [attendance, rateHistory, dailyHoursSplitByDate, otMultiplier, traineeWindow.start, traineeWindow.end]);
 
   // Hourly ↔ fixed switch inside the viewed range: hourly days by the hour +
-  // fixed days ÷ 10, same rule as the payroll table (mixedPeriodFixedPay).
+  // the full fixed cutoff salary, before manual deductions, as in the payroll table.
   const mixedFixed = useMemo(
     () =>
       mixedPeriodFixedPay(
         rangeStart,
         rangeEnd,
-        [...dailyHoursSplitByDate.entries()].filter(([, h]) => h.regular + h.overtime > 0.0005).map(([date]) => date),
         (date) => {
           const e = entryEffectiveOn(rateHistory, date);
           return e ? { type: e.compensationType === "fixed" ? "fixed" : "hourly", annualSalary: e.annualSalary ?? null } : null;
         },
         isPhPayroll
       ),
-    [rangeStart, rangeEnd, dailyHoursSplitByDate, rateHistory, isPhPayroll]
+    [rangeStart, rangeEnd, rateHistory, isPhPayroll]
   );
 
   const payViewTotals = useMemo(() => {
@@ -1442,7 +1441,7 @@ export function EmployeePayrollDetailModal({
               <p className="text-lg font-bold text-green-300 mt-1">${displayedPayFlat.toFixed(2)}</p>
               {mixedFixed && (
                 <p className="text-xs text-amber-300 mt-0.5">
-                  Hourly days ${(displayedPayFlat - mixedFixed.fixedPay).toFixed(2)} + fixed ${mixedFixed.dailyRate.toFixed(2)} × {mixedFixed.fixedDays} day{mixedFixed.fixedDays === 1 ? "" : "s"} = ${mixedFixed.fixedPay.toFixed(2)}
+                  Hourly days ${(displayedPayFlat - mixedFixed.fixedPay).toFixed(2)} + fixed salary ${mixedFixed.fixedPay.toFixed(2)}/cutoff (before manual deductions)
                 </p>
               )}
               {!isCurrentlyFixed && !mixedFixed && (

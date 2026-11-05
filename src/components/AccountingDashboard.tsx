@@ -101,7 +101,7 @@ import { upsertPayrollReviewBreakdown, type PayrollReviewAmounts } from "@/lib/s
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, linkPayrollDisputeCustomPayItem, modifyPayrollDispute, restorePayrollDisputeOriginal, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
-import { perCutoffSalary, getSalaryHistory, mixedPeriodFixedPay, FIXED_WORKING_DAYS_PER_CUTOFF, type MixedPeriodFixedPay } from "@/lib/supabase/salary";
+import { perCutoffSalary, getSalaryHistory, mixedPeriodFixedPay, type MixedPeriodFixedPay } from "@/lib/supabase/salary";
 import { stateMinWageOn } from "@/lib/stateMinWage";
 import { getPayrollReviewMarks, markPayrollReviewed, clearPayrollReviewMark, type PayrollReviewMark } from "@/lib/supabase/payrollReviewMarks";
 import { cents, centsSummaryTotal, groupCustomPayLines } from "@/lib/payRounding";
@@ -442,11 +442,7 @@ export interface EmployeePayrollRow {
    * still gets paid instead of silently dropped.
    */
   isTechPortion?: boolean;
-  /** Fixed salary paid pro rata for a deactivated employee: days worked of
-   *  FIXED_WORKING_DAYS_PER_CUTOFF. Unset when the full per-cutoff salary is paid. */
-  fixedDaysWorked?: number;
-  /** Set when the period switches between hourly and a fixed salary part-way
-   *  (mixedPeriodFixedPay): hourly days by the hour + fixed days ÷ 10. */
+  /** Hourly earnings plus the full fixed cutoff salary, before manual deductions. */
   mixedPay?: MixedPeriodFixedPay & { hourlyHours: number; hourlyPay: number };
   /** Tech row only: grossPay split into Finance's summary columns (Reviewed Periods). */
   techSummary?: PayrollReviewAmounts;
@@ -3114,20 +3110,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // so the payroll line's gross, any % tax and the net all start from the
       // same cent figure the table shows (Angelo Mendoza 9/27–10/10: net was
       // worked out from $474.4069, giving $534.42 against $474.41 + $60.00).
-      // A fixed-salary employee who left (deactivated) gets the per-cutoff
-      // salary pro rata — ÷ 10 working days × the days they actually worked in
-      // the period, never more than the full amount (Finance, 2026-10-26: Raul
-      // Bayuyos Jr. was getting the whole $576.92 for 37.6 hours). Active
-      // fixed-salary staff still get the full per-cutoff amount.
+      // Fixed salary always pays annual / 26; accountants apply deductions manually.
       const workedDays = (dailyHoursByEmployeeId.get(emp.id) ?? []).filter((d) => (!genStart || d.date >= genStart) && (!genEnd || d.date <= genEnd) && d.regular + d.overtime > 0.0005);
-      // Hourly ↔ fixed switch inside the period (e.g. fixed salary from the
-      // 4th day of the cutoff): hourly days by the hour (officeDailyPay pays a
-      // fixed day $0) + fixed days ÷ 10 — not the whole per-cutoff salary
-      // (Finance, 2026-10-29). See mixedPeriodFixedPay.
+      // Preserve hourly earnings when compensation changes within the cutoff.
       const mixedFixed = mixedPeriodFixedPay(
         genStart,
         genEnd,
-        workedDays.map((d) => d.date),
         (date) => {
           const se = salaryEntryOnDate(emp.id, date);
           return se ? { type: se.compensation_type === "fixed" ? "fixed" : "hourly", annualSalary: se.annual_salary ?? null } : null;
@@ -3141,12 +3129,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             hourlyPay: cents(cents(officeDailyPay.regularPay) + cents(officeDailyPay.overtimePayAt1_5x)),
           }
         : undefined;
-      const fixedDaysWorked = !mixedPay && isFixed && annualSalary && !emp.isActive ? workedDays.length : undefined;
       const fullCutoffSalary = isFixed && annualSalary ? perCutoffSalary(annualSalary, emp.country === "PH") : 0;
-      const officeGrossPay = mixedPay
+      // Keep inactive staff with no work in this period out of the payroll.
+      const officeGrossPay = !emp.isActive && workedDays.length === 0
+        ? 0
+        : mixedPay
         ? cents(mixedPay.hourlyPay + mixedPay.fixedPay)
         : isFixed && annualSalary
-        ? cents(fixedDaysWorked != null ? Math.min(fullCutoffSalary, (fullCutoffSalary / FIXED_WORKING_DAYS_PER_CUTOFF) * fixedDaysWorked) : fullCutoffSalary)
+        ? cents(fullCutoffSalary)
         : cents(cents(officeDailyPay.regularPay) + cents(officeDailyPay.overtimePayAt1_5x));
       const officeRow: EmployeePayrollRow = {
         employee: emp,
@@ -3181,7 +3171,6 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         grossPay: officeGrossPay,
         grossPayUSD: officeGrossPay,
         isTechPortion: false,
-        ...(fixedDaysWorked != null ? { fixedDaysWorked } : {}),
         ...(mixedPay ? { mixedPay } : {}),
       };
       return techRow ? [officeRow, techRow] : [officeRow];
@@ -5420,14 +5409,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               <td className="px-3 py-2 text-center text-slate-400">
                                 {row.employee.mealMinutes ? `${row.employee.mealMinutes} min` : "—"}
                               </td>
-                              <td className="px-3 py-2 text-center text-slate-300" title={row.compensationType === "fixed" && row.annualSalary ? `$${perCutoffSalary(row.annualSalary, row.employee.country === "PH").toFixed(2)}/cutoff${row.fixedDaysWorked != null ? ` ÷ ${FIXED_WORKING_DAYS_PER_CUTOFF} days × ${row.fixedDaysWorked} worked` : ""}` : undefined}>
+                              <td className="px-3 py-2 text-center text-slate-300" title={row.compensationType === "fixed" && row.annualSalary ? `$${perCutoffSalary(row.annualSalary, row.employee.country === "PH").toFixed(2)}/cutoff` : undefined}>
                                 {rateLabel(row)}
-                                {row.fixedDaysWorked != null && (
-                                  <div className="text-[10px] text-amber-300">Pro rata · {row.fixedDaysWorked} of {FIXED_WORKING_DAYS_PER_CUTOFF} days</div>
-                                )}
                                 {row.mixedPay && (
-                                  <div className="text-[10px] text-amber-300" title={`Hourly days ${row.mixedPay.hourlyHours.toFixed(3)} hrs = $${row.mixedPay.hourlyPay.toFixed(2)} + fixed $${row.mixedPay.perCutoff.toFixed(2)} ÷ ${FIXED_WORKING_DAYS_PER_CUTOFF} × ${row.mixedPay.fixedDays} days = $${row.mixedPay.fixedPay.toFixed(2)}`}>
-                                    Hourly + {row.mixedPay.fixedDays} of {FIXED_WORKING_DAYS_PER_CUTOFF} fixed days
+                                  <div className="text-[10px] text-amber-300" title={`Hourly pay $${row.mixedPay.hourlyPay.toFixed(2)} + fixed salary $${row.mixedPay.fixedPay.toFixed(2)}/cutoff, before manual deductions`}>
+                                    Hourly + full fixed cutoff
                                   </div>
                                 )}
                               </td>
@@ -6771,7 +6757,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     return m
                       ? [
                           { label: `Hourly days: ${m.hourlyHours.toFixed(3)} hrs`, amount: m.hourlyPay },
-                          { label: `Fixed salary: $${m.perCutoff.toFixed(2)}/cutoff ÷ ${FIXED_WORKING_DAYS_PER_CUTOFF} × ${m.fixedDays} day${m.fixedDays === 1 ? "" : "s"} worked`, amount: m.fixedPay },
+                          { label: `Fixed salary: $${m.perCutoff.toFixed(2)}/cutoff`, amount: m.fixedPay },
                         ]
                       : undefined;
                   })(),
