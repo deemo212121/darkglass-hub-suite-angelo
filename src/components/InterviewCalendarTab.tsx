@@ -10,6 +10,8 @@ import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, X } from "lucide-react";
 
+export type InterviewStaffGroup = "tech" | "us" | "ph" | "mx";
+
 export interface InterviewCalendarCandidate {
   id: string;
   name: string;
@@ -22,7 +24,18 @@ export interface InterviewCalendarCandidate {
   interviewTimezone: "CST" | "EST" | null;
   interviewerName: string | null;
   notes: string | null;
+  /** The Hiring table's staff group, worked out by the page that knows the rule. */
+  staffGroup?: InterviewStaffGroup;
 }
+
+const STAFF_GROUPS: { key: "all" | InterviewStaffGroup; label: string; title: string }[] = [
+  { key: "all", label: "All", title: "Every candidate" },
+  { key: "tech", label: "Technician", title: "Technical positions, every branch except Philippines and Mexico" },
+  { key: "us", label: "US Staff", title: "Every branch except Philippines and Mexico — non-technical positions" },
+  { key: "ph", label: "PH Staff", title: "Branch Philippines — every position" },
+  { key: "mx", label: "Mexico", title: "Branch Mexico — every position" },
+];
+const STAFF_GROUP_KEY = "hrInterviewCalendar:staffGroup";
 
 /** "2:30 PM" + "CST" -> "2:30 PM CST"; falls back to "No time set" with no time. */
 function formatInterviewTime(time: string | null, timezone: string | null): string {
@@ -35,6 +48,8 @@ interface Props {
   onGoToHiring: () => void;
   /** Button label for onGoToHiring — defaults to "Go to Hiring" (HR's own Hiring table); a personalized instance (InterviewCalendarPage) points this at Candidate Reviews instead, since a non-HR viewer has no access to Hiring. */
   goToLabel?: string;
+  /** Shows the All / Technician / US Staff / PH Staff / Mexico filter. Needs each candidate's staffGroup. */
+  showStaffGroups?: boolean;
 }
 
 const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -56,9 +71,30 @@ function formatHHMM(hhmm: string): string {
   return `${hour12}:${String(m).padStart(2, "0")} ${period}`;
 }
 
-export function InterviewCalendarTab({ candidates, onGoToHiring, goToLabel = "Go to Hiring" }: Props) {
+export function InterviewCalendarTab({ candidates, onGoToHiring, goToLabel = "Go to Hiring", showStaffGroups = false }: Props) {
   const [monthOffset, setMonthOffset] = useState(0);
   const [detail, setDetail] = useState<InterviewCalendarCandidate | null>(null);
+  // Remembered per browser, like the Hiring table's own filter, but kept separate from it.
+  const [staffGroup, setStaffGroupState] = useState<"all" | InterviewStaffGroup>(() => {
+    try {
+      const v = localStorage.getItem(STAFF_GROUP_KEY);
+      return v === "tech" || v === "us" || v === "ph" || v === "mx" ? v : "all";
+    } catch {
+      return "all";
+    }
+  });
+  const setStaffGroup = (g: "all" | InterviewStaffGroup) => {
+    setStaffGroupState(g);
+    try {
+      localStorage.setItem(STAFF_GROUP_KEY, g);
+    } catch {
+      /* private mode: just not remembered */
+    }
+  };
+  const shownCandidates = useMemo(
+    () => (showStaffGroups && staffGroup !== "all" ? candidates.filter((c) => c.staffGroup === staffGroup) : candidates),
+    [candidates, showStaffGroups, staffGroup]
+  );
 
   const monthDate = useMemo(() => addMonths(new Date(), monthOffset), [monthOffset]);
   const monthKey = `${monthDate.getFullYear()}-${String(monthDate.getMonth() + 1).padStart(2, "0")}`;
@@ -85,7 +121,7 @@ export function InterviewCalendarTab({ candidates, onGoToHiring, goToLabel = "Go
 
   const byDate = useMemo(() => {
     const map = new Map<string, InterviewCalendarCandidate[]>();
-    for (const c of candidates) {
+    for (const c of shownCandidates) {
       const list = map.get(c.interviewDate) ?? [];
       list.push(c);
       map.set(c.interviewDate, list);
@@ -94,12 +130,22 @@ export function InterviewCalendarTab({ candidates, onGoToHiring, goToLabel = "Go
       list.sort((a, b) => (a.interviewTime || "99:99").localeCompare(b.interviewTime || "99:99"));
     }
     return map;
-  }, [candidates]);
+  }, [shownCandidates]);
 
   const monthCandidateCount = useMemo(
-    () => candidates.filter((c) => c.interviewDate.slice(0, 7) === monthKey).length,
-    [candidates, monthKey]
+    () => shownCandidates.filter((c) => c.interviewDate.slice(0, 7) === monthKey).length,
+    [shownCandidates, monthKey]
   );
+  // How many in the month on screen, so each button matches what clicking it shows.
+  const staffGroupCounts = useMemo(() => {
+    const counts = { all: 0, tech: 0, us: 0, ph: 0, mx: 0 };
+    for (const c of candidates) {
+      if (c.interviewDate.slice(0, 7) !== monthKey) continue;
+      counts.all++;
+      if (c.staffGroup) counts[c.staffGroup]++;
+    }
+    return counts;
+  }, [candidates, monthKey]);
 
   const todayStr = toDateStr(new Date());
 
@@ -132,8 +178,29 @@ export function InterviewCalendarTab({ candidates, onGoToHiring, goToLabel = "Go
         </div>
       </div>
 
-      <div className="px-4 py-2 border-b border-white/10 text-xs text-muted-foreground">
-        {monthCandidateCount} interview{monthCandidateCount === 1 ? "" : "s"} scheduled this month
+      <div className="px-4 py-2 border-b border-white/10 text-xs text-muted-foreground flex flex-wrap items-center justify-between gap-2">
+        <span>
+          {monthCandidateCount} interview{monthCandidateCount === 1 ? "" : "s"} scheduled this month
+        </span>
+        {showStaffGroups && (
+          <div className="inline-flex flex-wrap rounded-lg border border-white/10 bg-white/5 p-0.5" role="group" aria-label="Staff group">
+            {STAFF_GROUPS.map(({ key, label, title }) => (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={staffGroup === key}
+                onClick={() => setStaffGroup(key)}
+                title={title}
+                className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-semibold transition ${
+                  staffGroup === key ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {label}
+                <span className="rounded-full bg-black/20 px-1.5 text-[10px] tabular-nums">{staffGroupCounts[key]}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="overflow-x-auto">
