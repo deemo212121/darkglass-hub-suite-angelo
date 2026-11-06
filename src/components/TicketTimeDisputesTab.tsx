@@ -22,8 +22,9 @@ import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { getProfileIdByFirebaseUid } from "@/lib/supabase/timecards";
 import { StageNote } from "@/components/StageNote";
 import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, canReviewTicketDispute, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
-import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
-import { resetMileageRouteConfirmation } from "@/lib/supabase/mileage";
+import { applyTicketDisputeTimes } from "@/lib/supabase/decisionReverts";
+import { RevertHistory, TicketDisputeRevertButton, useDecisionReverts } from "@/components/RevertDecision";
+import { isRevertSuperAdmin } from "@/lib/decisionRevertRules";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { TicketDisputeManagerSignModal, TicketDisputeHrSignModal } from "@/components/TicketDisputeSignModals";
 import { StageRemindButton } from "@/components/RemindButton";
@@ -45,6 +46,8 @@ export function TicketTimeDisputesTab() {
   // available — see canReviewTicketDispute in employeeRequests.ts).
   const isFullRequestsAdmin = [role, ...(extraRoles ?? [])].some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE"].includes(normalizeRole(r)));
   const canAccessTab = isFullRequestsAdmin || isAttendanceManagerTierRole(role, extraRoles);
+  const isSuperAdmin = isRevertSuperAdmin([role, ...(extraRoles ?? [])]);
+  const disputeReverts = useDecisionReverts("ticket_time_dispute");
 
   const [employees, setEmployees] = useState<ProfileRow[]>([]);
   useEffect(() => {
@@ -126,24 +129,13 @@ export function TicketTimeDisputesTab() {
 
   // Approving doesn't just change the request's own status — it writes the
   // technician's claimed start/end time straight onto the disputed ticket's
-  // own onsite_arrived_at/onsite_done_at columns. "arrived" must go first:
-  // setTicketOnsiteCheckIn's own "arrived" path clears onsite_done_at as a
-  // side effect, so doing "done" first would just get wiped out.
+  // own onsite_arrived_at/onsite_done_at columns (applyTicketDisputeTimes,
+  // which keeps a copy of the old times for a Revert).
   const handleTicketTimeDisputeAction = async (id: string, status: "approved" | "rejected") => {
     try {
       if (status === "approved") {
         const dispute = ticketTimeDisputes.find((d) => d.id === id);
-        if (dispute?.ticketNo && dispute.disputedStartTime && dispute.disputedEndTime) {
-          await setTicketOnsiteCheckIn(dispute.ticketNo, "arrived", dispute.disputedStartTime);
-          await setTicketOnsiteCheckIn(dispute.ticketNo, "done", dispute.disputedEndTime);
-          // The corrected time can move this ticket earlier/later in its
-          // day's real visit order — invalidate that day's mileage
-          // route-order confirmation so the next Mileage sync re-chains it
-          // against the corrected time instead of skipping it as settled.
-          await resetMileageRouteConfirmation(dispute.ticketNo).catch((err) =>
-            console.error("Failed to invalidate mileage route order after dispute approval:", err)
-          );
-        }
+        if (dispute) await applyTicketDisputeTimes(dispute);
       }
       await updateEmployeeRequestStatus(id, status, myProfileId, ticketTimeDisputeNote[id]);
       const rows = await getCompanyEmployeeRequests();
@@ -224,6 +216,7 @@ export function TicketTimeDisputesTab() {
               <div key={r.id} className="border border-white/10 rounded-lg p-3">
                 <p className="text-sm font-semibold text-white">{profileName(r.profileId)}</p>
                 <p className="text-xs text-slate-400 mt-1">Submitted: {r.createdAt.slice(0, 10)}</p>
+                <RevertHistory entries={disputeReverts.byRecord.get(r.id)} className="mt-1" />
                 {r.ticketNo && (
                   <p className="text-sm mt-2">
                     Ticket:{" "}
@@ -342,6 +335,21 @@ export function TicketTimeDisputesTab() {
                 <p className="text-xs text-slate-400 mt-1">
                   Submitted: {r.createdAt.slice(0, 10)}{r.reviewedAt ? ` · Reviewed: ${r.reviewedAt.slice(0, 10)}` : ""}
                 </p>
+                <RevertHistory entries={disputeReverts.byRecord.get(r.id)} className="mt-1" />
+                <div className="mt-2">
+                  <TicketDisputeRevertButton
+                    dispute={r}
+                    requesterName={profileName(r.profileId)}
+                    myProfileId={myProfileId}
+                    myName={displayName || "Reviewer"}
+                    isSuperAdmin={isSuperAdmin}
+                    onReverted={async () => {
+                      const rows = await getCompanyEmployeeRequests();
+                      setTicketTimeDisputes(rows.filter((x) => x.requestType === "ticket_time_dispute"));
+                      disputeReverts.reload();
+                    }}
+                  />
+                </div>
                 {r.ticketNo && (
                   <p className="text-sm mt-2">
                     Ticket:{" "}

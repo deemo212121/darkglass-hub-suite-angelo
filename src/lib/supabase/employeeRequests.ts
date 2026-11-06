@@ -111,6 +111,8 @@ export interface EmployeeRequestRow {
   originalMissingAmount: number | null;
   modifiedBy: string | null;
   modifiedAt: string | null;
+  /** ticket_time_dispute only (migration 0429): when the ticket's times were copied just before approval, so a Revert can put them back. */
+  originalOnsiteSavedAt: string | null;
 }
 
 function mapRow(row: any): EmployeeRequestRow {
@@ -165,6 +167,7 @@ function mapRow(row: any): EmployeeRequestRow {
     originalMissingAmount: row.original_missing_amount == null ? null : Number(row.original_missing_amount),
     modifiedBy: row.modified_by ?? null,
     modifiedAt: row.modified_at ?? null,
+    originalOnsiteSavedAt: row.original_onsite_saved_at ?? null,
   };
 }
 
@@ -173,6 +176,8 @@ const SELECT_COLUMNS =
 // Migration 0382's Modify columns — selected separately so request screens
 // keep working (without the Modify details) until that migration is run.
 const MODIFY_COLUMNS = ", original_total_received, original_total_expected, original_missing_amount, modified_by, modified_at";
+// Migration 0429's saved ticket times. A database without it still loads.
+let originalOnsiteMissing = false;
 let modifyColumnsMissing = false;
 
 // Supabase caps an unbounded select at 1000 rows — a company's full request
@@ -190,13 +195,14 @@ export async function getCompanyEmployeeRequests(): Promise<EmployeeRequestRow[]
     const runQuery = () =>
       supabase
         .from("employee_requests")
-        .select(SELECT_COLUMNS + (hrNoteMissing ? "" : ", hr_note") + (modifyColumnsMissing ? "" : MODIFY_COLUMNS))
+        .select(SELECT_COLUMNS + (hrNoteMissing ? "" : ", hr_note") + (modifyColumnsMissing ? "" : MODIFY_COLUMNS) + (originalOnsiteMissing ? "" : ", original_onsite_saved_at"))
         .order("created_at", { ascending: false })
         .range(from, from + PAGE_SIZE - 1);
     let { data, error } = await runQuery();
-    for (let retry = 0; error && retry < 2; retry++) {
+    for (let retry = 0; error && retry < 3; retry++) {
       if (!hrNoteMissing && /hr_note/.test(error.message)) hrNoteMissing = true;
       else if (!modifyColumnsMissing && /original_total_received|original_total_expected|original_missing_amount|modified_by|modified_at/.test(error.message)) modifyColumnsMissing = true;
+      else if (!originalOnsiteMissing && /original_onsite_saved_at/.test(error.message)) originalOnsiteMissing = true;
       else break;
       ({ data, error } = await runQuery());
     }

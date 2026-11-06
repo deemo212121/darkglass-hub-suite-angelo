@@ -877,7 +877,7 @@ async function signCorrectionAsAccounting(correctionId: string, reviewerName: st
  * Out keeps the punch already on the timecard (incl. one made after the
  * request was sent); notes are kept.
  */
-async function applyCorrectionToTimecard(
+export async function applyCorrectionToTimecard(
   c: Pick<TimecardCorrectionRow, "profileId" | "workDate" | "correctedCheckIn" | "correctedCheckOut" | "correctedMealStart" | "correctedMealEnd">
 ): Promise<void> {
   const { data: existing } = await supabase
@@ -904,147 +904,13 @@ async function applyCorrectionToTimecard(
   }
 }
 
-/** The stages of a correction that are currently "rejected". */
-export function rejectedCorrectionStages(c: Pick<TimecardCorrectionRow, "managerStatus" | "hrStatus" | "accountingStatus">): CorrectionStage[] {
-  return (["manager", "hr", "accounting"] as const).filter((s) =>
-    (s === "manager" ? c.managerStatus : s === "hr" ? c.hrStatus : c.accountingStatus) === "rejected"
-  );
-}
-
-/**
- * Undo a rejection — every rejected stage goes back to pending (its reviewer,
- * time and note cleared), so it can be reviewed again. The DB trigger
- * re-derives the overall status: back to pending, or — when the other
- * stages had already approved it (e.g. HR rejected a fully approved one) —
- * approved again, in which case the corrected punch is put back on the
- * timecard. The undo is noted in review_note and the employee is told.
- */
-export async function undoCorrectionRejection(
-  c: Pick<TimecardCorrectionRow, "id" | "profileId" | "workDate" | "managerStatus" | "hrStatus" | "accountingStatus">,
-  undoneById: string,
-  undoneByName: string
-): Promise<TimecardCorrectionRow> {
-  const stages = rejectedCorrectionStages(c);
-  if (stages.length === 0) throw new Error("This correction isn't rejected.");
-  const payload: Record<string, unknown> = {};
-  for (const s of stages) {
-    payload[`${s}_status`] = "pending";
-    payload[`${s}_reviewed_by`] = null;
-    payload[`${s}_reviewed_at`] = null;
-    if (!stageNotesMissing) payload[`${s}_note`] = null;
-  }
-  const stageNames = stages.map((s) => (s === "manager" ? "Manager" : s === "hr" ? "HR" : "Accounting")).join(" / ");
-  const { data: prev } = await supabase.from("timecard_corrections").select("review_note").eq("id", c.id).maybeSingle();
-  const line = `Rejection (${stageNames}) undone by ${undoneByName} — back in review`;
-  payload.review_note = prev?.review_note ? `${prev.review_note}\n${line}` : line;
-
-  let { data, error } = await supabase.from("timecard_corrections").update(payload).eq("id", c.id).select(noteColumnMissing ? SELECT_COLUMNS_NO_NOTE : SELECT_COLUMNS).single();
-  if (isStageNoteError(error)) {
-    stageNotesMissing = true;
-    for (const s of stages) delete payload[`${s}_note`];
-    ({ data, error } = await supabase.from("timecard_corrections").update(payload).eq("id", c.id).select(noteColumnMissing ? SELECT_COLUMNS_NO_NOTE : SELECT_COLUMNS).single());
-  }
-  if (error && /review_note/.test(error.message)) {
-    delete payload.review_note;
-    ({ data, error } = await supabase.from("timecard_corrections").update(payload).eq("id", c.id).select(SELECT_COLUMNS_NO_NOTE).single());
-  }
-  if (error) {
-    console.error("undoCorrectionRejection error:", error.message);
-    throw new Error(error.message);
-  }
-  const updated = mapRow(data);
-  if (updated.status === "approved") await applyCorrectionToTimecard(updated);
-  await createNotification({
-    recipientId: c.profileId,
-    senderId: undoneById,
-    senderName: undoneByName,
-    body: updated.status === "approved"
-      ? `✅ The rejection of your time correction for ${c.workDate} was undone — it's approved and on your timecard.`
-      : `↩️ The rejection of your time correction for ${c.workDate} was undone — it's back in review.`,
-    linkTo: "/m/dashboard/employee-self-service?tab=requests",
-  }).catch((err) => console.error("Failed to notify correction un-rejection:", err));
-  return updated;
-}
-
-/** The stages of a correction that are currently "approved". */
-export function approvedCorrectionStages(c: Pick<TimecardCorrectionRow, "managerStatus" | "hrStatus" | "accountingStatus">): CorrectionStage[] {
-  return (["manager", "hr", "accounting"] as const).filter((s) =>
-    (s === "manager" ? c.managerStatus : s === "hr" ? c.hrStatus : c.accountingStatus) === "approved"
-  );
-}
-
-/**
- * Undo an approval — the given approved stages (default: all of them) go
- * back to pending, reviewer / time / note cleared, so it's reviewed again.
- * Same idea as PTO Management's undo (resetPtoStage). If the correction was
- * fully approved, the corrected punch had been merged into the timecard, so
- * the actual times are put back until it's approved again (same restore as
- * rejectCorrectionAsHr). The undo and its reason are noted in review_note
- * and the employee is told it's back in review, with the reason.
- */
-export async function undoCorrectionApproval(
-  c: Pick<
-    TimecardCorrectionRow,
-    | "id" | "profileId" | "workDate" | "status" | "managerStatus" | "hrStatus" | "accountingStatus"
-    | "originalCheckIn" | "originalCheckOut" | "originalMealStart" | "originalMealEnd"
-    | "correctedCheckIn" | "correctedCheckOut" | "correctedMealStart" | "correctedMealEnd"
-  >,
-  undoneById: string,
-  undoneByName: string,
-  reason: string,
-  onlyStages?: CorrectionStage[]
-): Promise<TimecardCorrectionRow> {
-  if (!reason.trim()) throw new Error("Please give a reason for undoing the approval.");
-  const stages = approvedCorrectionStages(c).filter((s) => !onlyStages || onlyStages.includes(s));
-  if (stages.length === 0) throw new Error("This correction has no approval to undo.");
-  const wasApproved = c.status === "approved";
-  const payload: Record<string, unknown> = {};
-  for (const s of stages) {
-    payload[`${s}_status`] = "pending";
-    payload[`${s}_reviewed_by`] = null;
-    payload[`${s}_reviewed_at`] = null;
-    if (!stageNotesMissing) payload[`${s}_note`] = null;
-  }
-  const stageNames = stages.map((s) => (s === "manager" ? "Manager" : s === "hr" ? "HR" : "Accounting")).join(" / ");
-  const { data: prev } = await supabase.from("timecard_corrections").select("review_note").eq("id", c.id).maybeSingle();
-  const line = `Approval (${stageNames}) undone by ${undoneByName} — back in review. Reason: ${reason.trim()}`;
-  payload.review_note = prev?.review_note ? `${prev.review_note}\n${line}` : line;
-
-  let { data, error } = await supabase.from("timecard_corrections").update(payload).eq("id", c.id).select(noteColumnMissing ? SELECT_COLUMNS_NO_NOTE : SELECT_COLUMNS).single();
-  if (isStageNoteError(error)) {
-    stageNotesMissing = true;
-    for (const s of stages) delete payload[`${s}_note`];
-    ({ data, error } = await supabase.from("timecard_corrections").update(payload).eq("id", c.id).select(noteColumnMissing ? SELECT_COLUMNS_NO_NOTE : SELECT_COLUMNS).single());
-  }
-  if (error && /review_note/.test(error.message)) {
-    delete payload.review_note;
-    ({ data, error } = await supabase.from("timecard_corrections").update(payload).eq("id", c.id).select(SELECT_COLUMNS_NO_NOTE).single());
-  }
-  if (error) {
-    console.error("undoCorrectionApproval error:", error.message);
-    throw new Error(error.message);
-  }
-  const updated = mapRow(data);
-  if (wasApproved && updated.status !== "approved") await restoreOriginalTimecard(c);
-  await createNotification({
-    recipientId: c.profileId,
-    senderId: undoneById,
-    senderName: undoneByName,
-    body: wasApproved
-      ? `↩️ The approval of your time correction for ${c.workDate} was undone — it's back in review, and your timecard shows your actual times until it's approved again. Reason: ${reason.trim()}`
-      : `↩️ The approval of your time correction for ${c.workDate} was undone — it's back in review. Reason: ${reason.trim()}`,
-    linkTo: "/m/dashboard/employee-self-service?tab=requests",
-  }).catch((err) => console.error("Failed to notify correction un-approval:", err));
-  return updated;
-}
-
 /**
  * Puts the actual punch times back on the timecard for a correction that had
  * been applied — only what the correction changed. A punch it didn't touch
  * keeps what's on the timecard now (e.g. a Time Out punched after the request
  * was sent, whose "original" was still blank then, is never erased).
  */
-async function restoreOriginalTimecard(
+export async function restoreOriginalTimecard(
   c: Pick<
     TimecardCorrectionRow,
     | "profileId" | "workDate"

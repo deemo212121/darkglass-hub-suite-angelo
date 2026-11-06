@@ -974,6 +974,13 @@ export async function setTicketOnsiteCheckIn(
  * the `.or` filter above skips a stale double-tap — either way, nothing to
  * recompute.
  */
+/** After a Revert has put a ticket's on-site times back: drop cached tickets and re-chain that day's mileage. */
+export async function refreshTicketAfterOnsiteRevert(ticketNo: string): Promise<void> {
+  const { data } = await supabase.from("tickets").select("technician, schedule_date").eq("ticket_no", ticketNo).maybeSingle();
+  invalidateCompanyTicketsCache();
+  triggerMileageRecompute(data);
+}
+
 function triggerMileageRecompute(data: { technician: string | null; schedule_date: string | null } | null): void {
   if (!data?.technician || !data.schedule_date) return;
   syncMileageForTicketDay(data.technician, data.schedule_date).catch((err) =>

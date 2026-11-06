@@ -20,7 +20,6 @@ import {
   getCompanyPtoRequests,
   createPtoRequest,
   reviewPtoStage,
-  resetPtoStage,
   canReviewPtoStage,
   isEligibleForPto,
   ptoEligibleDate,
@@ -34,6 +33,8 @@ import { PtoReasonCell, PtoPhotoCell } from "@/components/PtoReasonPhotoCells";
 import { StageRemindButton } from "@/components/RemindButton";
 import { pendingStagesOf } from "@/lib/supabase/approvalReminders";
 import { PtoUsageRanking } from "@/components/PtoUsageRanking";
+import { PtoRevertButtons, RevertHistory, useDecisionReverts } from "@/components/RevertDecision";
+import { isRevertSuperAdmin } from "@/lib/decisionRevertRules";
 import { AbsenceRanking } from "@/components/AbsenceRanking";
 
 // Same split as Attendance Monitoring's PTO Management (Paid Leave / Unpaid Leave).
@@ -51,6 +52,8 @@ const PTO_TYPE_LABELS: Record<PtoType, string> = {
 
 export function PtoManagementTab() {
   const { uid, role, extraRoles, displayName, companyId } = useAuth();
+  const canRevertAnything = isRevertSuperAdmin([role, ...(extraRoles ?? [])]);
+  const ptoReverts = useDecisionReverts("pto_request");
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   useEffect(() => {
     if (!uid) return;
@@ -206,47 +209,6 @@ export function PtoManagementTab() {
       });
     } catch (error) {
       alert(`Failed to update PTO request: ${error instanceof Error ? error.message : "Unknown error"}`);
-    } finally {
-      setBusyPtoId(null);
-    }
-  };
-
-  // Undo a mistaken Approve/Reject on one stage — the review buttons above
-  // only render while that stage is "pending" (see the JSX below), so once
-  // someone has clicked, there's otherwise no way to revisit it even for a
-  // plain misclick. Resets just that one stage back to pending; the other
-  // two stages, and their own history, are untouched. On an approved
-  // request it's also how leave is taken back from someone who came in to
-  // work instead (MaryGrace Cosio, 10/29): with one approval undone the
-  // request is pending again (any two of three approve — migration 0335), so
-  // the time clock stops treating the day as leave and payroll stops paying
-  // it, until it's decided again.
-  const handleReconsiderStage = async (request: PtoRequestRow, stage: PtoStage) => {
-    const stageLabel = stage === "manager" ? "Manager" : stage === "hr" ? "HR" : "Accounting";
-    const stageStatus = stage === "manager" ? request.managerStatus : stage === "hr" ? request.hrStatus : request.accountingStatus;
-    const question = stageStatus === "approved"
-      ? `Undo the ${stageLabel} approval on this ${PTO_TYPE_LABELS[request.ptoType]} request (${request.startDate} to ${request.endDate})? It goes back to pending — not approved — until it's decided again, so the time clock and payroll stop treating those days as leave. Use this when the person came in to work instead.`
-      : `Undo the ${stageLabel} decision on this request and set it back to pending? The reviewer will need to re-decide.`;
-    if (!window.confirm(question)) return;
-    setBusyPtoId(request.id);
-    try {
-      await resetPtoStage(request.id, stage);
-      setPtoRequests(await getCompanyPtoRequests());
-      void logModuleActivity({
-        module: "attendance-monitoring",
-        actorName: displayName || "Admin",
-        action: "pto_stage_reconsidered",
-        targetType: "pto_request",
-        targetId: request.id,
-        targetLabel: `${profileName(request.profileId)} (${request.startDate} – ${request.endDate})`,
-        details: {
-          stage,
-          ptoType: request.ptoType,
-          previousStatus: stage === "manager" ? request.managerStatus : stage === "hr" ? request.hrStatus : request.accountingStatus,
-        },
-      });
-    } catch (error) {
-      alert(`Failed to reset this stage: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setBusyPtoId(null);
     }
@@ -484,31 +446,6 @@ export function PtoManagementTab() {
               <p className="text-slate-400 text-sm">No PTO history yet</p>
             </div>
           ) : visiblePtoRequests.filter(r => r.status !== "pending").map((request) => {
-            const requesterManagerName = profileById.get(request.profileId)?.manager_name ?? null;
-            const requesterManagersManagerName = requesterManagerName
-              ? profiles.find((p) => (p.display_name || "").trim().toLowerCase() === requesterManagerName.trim().toLowerCase())?.manager_name ?? null
-              : null;
-            // A "Reconsider" button per stage that's rejected — or approved,
-            // on an approved request (take the leave back from someone who
-            // came in to work) — AND that this viewer could act on in the
-            // first place (same canReviewPtoStage gate the live Approve/Reject
-            // buttons use above) — the only way to undo a decision, since this
-            // history row otherwise has no controls once it leaves "pending".
-            const reconsiderable: { stage: PtoStage; label: string; approved: boolean }[] = (
-              [
-                ["manager", "Manager"],
-                ["hr", "HR"],
-                ["accounting", "Accounting"],
-              ] as [PtoStage, string][]
-            ).filter(([stage]) => {
-              const status = stage === "manager" ? request.managerStatus : stage === "hr" ? request.hrStatus : request.accountingStatus;
-              const undoable = status === "rejected" || (status === "approved" && request.status === "approved");
-              return undoable && canReviewPtoStage(request, stage, myProfileId, role, extraRoles, displayName, requesterManagerName, requesterManagersManagerName);
-            }).map(([stage, label]) => ({
-              stage,
-              label,
-              approved: (stage === "manager" ? request.managerStatus : stage === "hr" ? request.hrStatus : request.accountingStatus) === "approved",
-            }));
             return (
             <div key={request.id} className="bg-slate-800/50 border border-white/10 rounded-lg p-4">
               <div className="flex items-start justify-between gap-3">
@@ -531,23 +468,20 @@ export function PtoManagementTab() {
                   <p className="text-xs text-slate-500">
                     Accounting: {request.accountingStatus}{request.accountingReviewedBy ? ` by ${profileName(request.accountingReviewedBy)}` : ""}{request.accountingReviewedAt ? ` on ${request.accountingReviewedAt.slice(0, 10)}` : ""}
                   </p>
+                  <RevertHistory entries={ptoReverts.byRecord.get(request.id)} className="mt-1" />
                 </div>
-                {reconsiderable.length > 0 && (
-                  <div className="flex flex-col gap-1.5 shrink-0">
-                    {reconsiderable.map(({ stage, label, approved }) => (
-                      <button
-                        key={stage}
-                        type="button"
-                        title={approved ? `Undo the ${label} approval — the request goes back to pending (e.g. they came in to work)` : `Undo the ${label} rejection and set it back to pending`}
-                        disabled={busyPtoId === request.id}
-                        onClick={() => void handleReconsiderStage(request, stage)}
-                        className="px-2 py-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-slate-200 rounded text-[10px] font-semibold transition whitespace-nowrap"
-                      >
-                        {busyPtoId === request.id ? "…" : `Reconsider (${label})`}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                <PtoRevertButtons
+                  request={request}
+                  requesterName={profileName(request.profileId)}
+                  myProfileId={myProfileId}
+                  myName={displayName || "Reviewer"}
+                  isSuperAdmin={canRevertAnything}
+                  className="flex flex-col gap-1.5 shrink-0"
+                  onReverted={async () => {
+                    setPtoRequests(await getCompanyPtoRequests());
+                    ptoReverts.reload();
+                  }}
+                />
               </div>
             </div>
             );
