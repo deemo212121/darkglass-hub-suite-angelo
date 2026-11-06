@@ -21455,9 +21455,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 interviewTimezone: c.interviewTimezone,
                 interviewerName: assignedInterviewerNameForCandidate(c),
                 notes: c.notes,
+                staffGroup: candidateStaffGroup(c),
               })
             )}
           onGoToHiring={() => setActiveTab("hiring")}
+          showStaffGroups
         />
       )}
 
