@@ -354,6 +354,7 @@ export function PtoManagementTab() {
                       Accounting: {request.accountingStatus.charAt(0).toUpperCase() + request.accountingStatus.slice(1)}
                       {request.accountingReviewedBy ? ` — ${profileName(request.accountingReviewedBy)}` : ""}
                     </span>
+                    <RevertHistory entries={ptoReverts.byRecord.get(request.id)} />
                   </div>
                 </td>
                 <td className="px-3 py-3">
@@ -428,6 +429,17 @@ export function PtoManagementTab() {
                       linkTo="/m/dashboard/attendance-monitoring?tab=pto-management"
                       logModule="attendance-monitoring"
                       className="self-start"
+                    />
+                    <PtoRevertButtons
+                      request={request}
+                      requesterName={profileName(request.profileId)}
+                      myProfileId={myProfileId}
+                      myName={displayName || "Reviewer"}
+                      isSuperAdmin={canRevertAnything}
+                      onReverted={async () => {
+                        setPtoRequests(await getCompanyPtoRequests());
+                        ptoReverts.reload();
+                      }}
                     />
                   </div>
                 </td>
