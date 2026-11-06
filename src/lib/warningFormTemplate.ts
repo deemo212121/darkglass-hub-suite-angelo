@@ -65,6 +65,10 @@ export interface WarningFormData {
    * itself — chosen separately by HR as report-only metadata.
    */
   warningCategory: "" | "time_card_warning" | "employee_error_manipulation";
+  /** Signed outside AHS and attached as the PDF — the PDF is the record, so nothing re-renders over it. */
+  paperCopy?: boolean;
+  /** Who signed the attached PDF, by slot — shown in the Signers column, since their signatures aren't in `signatures`. */
+  paperSigners?: Partial<Record<SignatureSlot, string>>;
 }
 
 export interface SignatureEntry {

@@ -52,21 +52,24 @@ export function SignersChecklist({
   recipientDisplayName?: string | null;
 }) {
   const slotList = slots ?? SLOTS_BY_TYPE[doc.documentType] ?? [];
-  const data = doc.formData as { recipientName?: string; recipientNames?: Partial<Record<string, string>>; employeeName?: string };
+  const data = doc.formData as { recipientName?: string; recipientNames?: Partial<Record<string, string>>; employeeName?: string; paperSigners?: Partial<Record<string, string>> };
   const open = doc.status === "pending_signature";
   return (
     <div className="text-xs leading-5">
       {slotList.map(({ slot, label }) => {
-        const signed = doc.signatures?.[slot];
+        const signature = doc.signatures?.[slot];
+        const paperSigner = data.paperSigners?.[slot];
+        const signed = !!signature || !!paperSigner;
         const current = open && doc.recipientSlot === slot;
         const name =
-          signed?.name ||
+          signature?.name ||
+          paperSigner ||
           data.recipientNames?.[slot] ||
           (doc.recipientSlot === slot ? data.recipientName || recipientDisplayName || doc.recipientName : "") ||
           (slot === "employee" ? data.employeeName : "") ||
           "—";
         return (
-          <div key={slot} className="whitespace-nowrap" title={signed ? `Signed ${new Date(signed.signedAt).toLocaleDateString()}` : current ? "Waiting on this signature" : "Not signed yet"}>
+          <div key={slot} className="whitespace-nowrap" title={signature ? `Signed ${new Date(signature.signedAt).toLocaleDateString()}` : paperSigner ? "Signed on the attached PDF" : current ? "Waiting on this signature" : "Not signed yet"}>
             <span className={signed ? "text-green-400" : current ? "text-amber-300" : "text-slate-500"}>{signed ? "✓" : current ? "●" : "○"}</span>{" "}
             <span className={signed || current ? "text-slate-200" : "text-slate-400"}>{label}: {name}</span>
           </div>

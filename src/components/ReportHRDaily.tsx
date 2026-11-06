@@ -24968,6 +24968,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   const data = doc.formData as unknown as WarningFormData;
                   const recipient = employees.find((e) => e.id === doc.recipientId);
                   const busy = warnActionBusyId === doc.id;
+                  // Signed outside AHS — the PDF is the signed copy, so nothing here may re-render over it.
+                  const paperCopy = !!data.paperCopy;
                   return (
                     <tr key={doc.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="px-4 py-3 font-medium">
@@ -25001,11 +25003,12 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                         }`}>
                           {doc.status === "pending_signature" ? "Awaiting Signature" : doc.status === "signed" ? "Signed — Awaiting Confirmation" : doc.status === "confirmed" ? "Confirmed" : "Cancelled"}
                         </span>
+                        {paperCopy && <span className="ml-1.5 px-2 py-1 rounded text-xs font-semibold bg-sky-500/15 text-sky-300" title="Signed outside AHS — the PDF is the signed copy">Signed copy</span>}
                       </td>
                       <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(doc.createdAt).toLocaleDateString()}</td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-1.5">
-                          {doc.status !== "cancelled" && (
+                          {doc.status !== "cancelled" && !paperCopy && (
                             <>
                               <button type="button" disabled={busy} onClick={() => openWarnEdit(doc)} className="btn text-[10px] px-2 py-1 disabled:opacity-50" title="Edit Previous Warnings 1, 2, 3 and regenerate the PDF">
                                 Edit Warnings 1-3
@@ -25022,14 +25025,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           )}
                           {(doc.status === "pending_signature" || doc.status === "signed") && (
                             <>
-                              <button
-                                type="button"
-                                disabled={busy}
-                                onClick={() => { setReassignDialog(doc); setReassignRecipientId(""); setReassignRecipientSearch(""); setReassignSlot(doc.recipientSlot as SignatureSlot); setReassignMode("teammate"); setReassignExternalName(""); setReassignSentLink(null); }}
-                                className="btn text-[10px] px-2 py-1 disabled:opacity-50"
-                              >
-                                {doc.status === "signed" ? "Send to Next Recipient" : "Send to Another Recipient"}
-                              </button>
+                              {!paperCopy && (
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => { setReassignDialog(doc); setReassignRecipientId(""); setReassignRecipientSearch(""); setReassignSlot(doc.recipientSlot as SignatureSlot); setReassignMode("teammate"); setReassignExternalName(""); setReassignSentLink(null); }}
+                                  className="btn text-[10px] px-2 py-1 disabled:opacity-50"
+                                >
+                                  {doc.status === "signed" ? "Send to Next Recipient" : "Send to Another Recipient"}
+                                </button>
+                              )}
                               {doc.status === "signed" && (
                                 <button
                                   type="button"
@@ -36357,6 +36362,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
               </div>
               <button onClick={() => setWarnViewDoc(null)} className="text-muted-foreground hover:text-foreground">✕</button>
             </div>
+            {(warnViewDoc.formData as unknown as WarningFormData).paperCopy && warnViewDoc.pdfUrl ? (
+              <div className="flex-1 min-h-0 bg-white/5">
+                <iframe src={warnViewDoc.pdfUrl} title="Signed warning form" className="w-full h-full border-0" />
+              </div>
+            ) : (
             <div className="flex-1 overflow-y-auto p-5 bg-white/5 flex justify-center">
               <div style={{ transform: "scale(0.85)", transformOrigin: "top center" }}>
                 <style dangerouslySetInnerHTML={{ __html: warningFormStyles }} />
@@ -36367,6 +36377,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 />
               </div>
             </div>
+            )}
             <div className="px-5 py-3 border-t border-white/10 flex justify-end gap-2">
               {warnViewDoc.pdfUrl && (
                 <a href={warnViewDoc.pdfUrl} target="_blank" rel="noreferrer noopener" className="btn text-sm px-4 py-2">Open PDF</a>
