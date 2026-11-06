@@ -41,7 +41,7 @@
 import { resolveDefaultPassword } from "./defaultPasswordBridge";
 import { verifyFirebaseToken } from "./supabaseTokenBridge";
 import { peekOAuthState, readOAuthState, signOAuthState } from "./oauthState";
-import { CANDIDATE_EMAIL_SENDER_ROLES, emailBodyHtml, isValidEmail, parseEmailList, parseSignatureImage } from "../hiringEmails";
+import { CANDIDATE_EMAIL_SENDER_ROLES, DEFAULT_PASSWORD_MARKER, emailBodyHtml, fillDefaultPassword, isValidEmail, parseEmailList, parseSignatureImage } from "../hiringEmails";
 
 export interface EnvBag {
   supabaseUrl: string;
@@ -967,9 +967,11 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
   // Hiring table → Actions: the Congratulatory and Status Update emails
   // (CandidateEmailDialog.tsx). HR writes the final text in the dialog, so this
   // sends what it's given — after checking the sender, the From account they
-  // picked, and that the candidate is in their company. The page logs the send
-  // to hr_activity_log afterwards.
-  if (url.searchParams.get("action") === "send-candidate-email") {
+  // picked, and that the candidate is in their company. The one thing it fills
+  // in is the default-password marker: the page can't read that password, and
+  // this reply never contains it. The page logs the send to hr_activity_log
+  // afterwards.
+  if (url.searchParams.get("action") === "send-candidate-email" || url.searchParams.get("action") === "send-candidate-email-default-password") {
     if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
     try {
       const payload = (await request.json().catch(() => ({}))) as Record<string, unknown>;
@@ -979,7 +981,7 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       const to = text("to").trim();
       const ccList = parseEmailList(text("cc"));
       const subject = text("subject").replace(/[\r\n]+/g, " ").trim();
-      const body = text("body");
+      const draft = text("body");
       const accountId = text("accountId");
       const signatureId = text("signatureId");
       if (!idToken) return json({ error: "Missing idToken" }, 400);
@@ -987,7 +989,7 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       if (!isValidEmail(to)) return json({ error: "Enter a valid recipient email address." }, 400);
       if (ccList.some((a) => !isValidEmail(a))) return json({ error: "Check the CC addresses." }, 400);
       if (!subject || subject.length > 300) return json({ error: "Enter a subject of 300 characters or fewer." }, 400);
-      if (!body.trim() || body.length > 20000) return json({ error: "Enter an email body of 20,000 characters or fewer." }, 400);
+      if (!draft.trim() || draft.length > 20000) return json({ error: "Enter an email body of 20,000 characters or fewer." }, 400);
 
       const claims = await verifyFirebaseToken(idToken, envBag.firebaseProjectId);
       const caller = await fetchProfileByFirebaseUid(envBag, claims.sub);
@@ -1004,6 +1006,15 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       const sender = await resolveHiringSender(envBag, caller, accountId);
       if (!sender.ok) return json(sender.body, sender.status);
       const cc = ccList.length ? ccList.join(", ") : undefined;
+      let body = draft;
+      if (draft.includes(DEFAULT_PASSWORD_MARKER)) {
+        // Stops rather than emailing the candidate the marker.
+        const defaultPassword = await resolveDefaultPassword(envBag, caller.companyId, env);
+        if (!defaultPassword) {
+          return json({ error: "No default password is set yet. An Admin can set one in Login Security → Default Password." }, 409);
+        }
+        body = fillDefaultPassword(draft, defaultPassword);
+      }
       if (signatureId) {
         // Stops rather than quietly sending without it — HR asked for this signature.
         const signature = await resolveHiringSignature(envBag, caller, signatureId);

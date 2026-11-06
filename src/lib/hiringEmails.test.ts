@@ -1,19 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_PASSWORD_MARKER,
   HIRING_EMAIL_KINDS,
   HIRING_EMAIL_TEMPLATES,
   NO_SIGNATURE,
+  candidateEmailAction,
   carryFieldChanges,
   congratsBody,
   congratsSubject,
   defaultSignatureId,
   emailBodyHtml,
   emailFieldProblem,
+  fillDefaultPassword,
   formatLocationAddress,
   formatOrientationTime,
   greetingName,
   hasUnfilledPlaceholder,
   interviewReminderBody,
+  isPartsPosition,
   isTechnicianPosition,
   isValidEmail,
   isValidLink,
@@ -21,12 +25,14 @@ import {
   normalizeLink,
   parseEmailList,
   parseSignatureImage,
+  partsInterviewResultsBody,
   positionTitles,
   prefillEmailFields,
   screeningPassedBody,
   selectableSignatures,
   statusUpdateBody,
   technicianCongratsBody,
+  technicianInterviewResultsBody,
   type EmailFields,
   type EmailPrefillSource,
 } from "./hiringEmails";
@@ -168,6 +174,57 @@ describe("Interview Reminder email", () => {
   });
 });
 
+describe("Appliance Technician Interview Results email", () => {
+  it("is your template, with only the name filled in", () => {
+    expect(technicianInterviewResultsBody("Brady")).toBe(
+      "Hi Brady,\n\nCongratulations! We are pleased to inform you that you have successfully passed the interview for the Appliance Technician position with US In Home Services.\n\nYour onboarding details will be sent to you 3 days before your start date. If there are any changes or if you change your mind, please let us know.\n\nBest regards,"
+    );
+  });
+  it("has its own subject and asks HR for nothing", () => {
+    const empty = { ...filled, date: "", time: "", location: "", contactPerson: "", contactNumber: "", username: "", password: "", discordLink: "", position: "" };
+    expect(HIRING_EMAIL_TEMPLATES.interview_results_technician.subject(empty, "2026-11-05")).toBe("Appliance Technician Interview Results");
+    expect(HIRING_EMAIL_TEMPLATES.interview_results_technician.fields).toEqual([]);
+    expect(emailFieldProblem("interview_results_technician", empty, "2026-11-05")).toBeNull();
+  });
+});
+
+describe("Parts Interview Results email", () => {
+  const tina: EmailFields = { ...filled, name: "Tina", position: "Parts Manager", date: "2026-11-16", time: "08:00", location: "179 Belle Terre Blvd, Ste B, Laplace, LA 70068", username: "Tina.Ruffin", password: "typed-by-hr", discordLink: "https://discord.gg/emWCPwRyh" };
+  const body = partsInterviewResultsBody(tina);
+  it("fills in every field where your template has it", () => {
+    expect(body.startsWith("Hi Tina,\n\nCongratulations! We are pleased to inform you that you have successfully passed your interview for the Parts Manager position with US In Home Services.\n")).toBe(true);
+    expect(body).toContain("Training Details\n\nPosition: Parts Manager\nStart Date: November 16, 2026\nTime: 8:00 AM CST\nLocation: 179 Belle Terre Blvd, Ste B, Laplace, LA 70068\n");
+    expect(body).toContain("   Link: https://adminhubsolution.com/\n   Username: Tina.Ruffin\n   Password: typed-by-hr\n   Unique ID: USIHS\n");
+    expect(body).toContain("on your scheduled orientation day:\n\nhttps://discord.gg/emWCPwRyh\n\nOnce you join");
+    expect(body).toContain("Please reply to confirm that you received this email and will be available to attend.");
+    expect(body.endsWith("\n\nBest regards,")).toBe(true);
+    expect(hasUnfilledPlaceholder(body)).toBe(false);
+  });
+  it("doesn't ask for a contact person, unlike the Technician email", () => {
+    expect(body).not.toContain("Contact Person");
+    expect(emailFieldProblem("interview_results_parts", { ...tina, contactPerson: "", contactNumber: "" }, "2026-11-05")).toBeNull();
+  });
+  it.each(["position", "date", "time", "location", "username", "password", "discordLink"] as const)("flags an empty %s", (key) => {
+    expect(hasUnfilledPlaceholder(partsInterviewResultsBody({ ...tina, [key]: "" }))).toBe(true);
+    expect(emailFieldProblem("interview_results_parts", { ...tina, [key]: "" }, "2026-11-05")).not.toBeNull();
+  });
+  it("calls the date the start date", () => {
+    expect(emailFieldProblem("interview_results_parts", { ...tina, date: "" }, "2026-11-05")).toBe("Pick the start date.");
+    expect(emailFieldProblem("interview_results_parts", { ...tina, date: "2026-11-01" }, "2026-11-05")).toBe("The start date has already passed.");
+    expect(emailFieldProblem("interview_results_parts", { ...tina, time: "" }, "2026-11-05")).toBe("Pick the start time.");
+  });
+  it("has its own subject", () => {
+    expect(HIRING_EMAIL_TEMPLATES.interview_results_parts.subject(tina, "2026-11-05")).toBe("Parts Interview Results");
+  });
+  it("updates both position lines when the position changes", () => {
+    const edited = body.replace("We are excited", "We are thrilled");
+    const out = carryFieldChanges(edited, body, partsInterviewResultsBody({ ...tina, position: "Parts Associate" }));
+    expect(out).toContain("for the Parts Associate position with");
+    expect(out).toContain("\nPosition: Parts Associate\n");
+    expect(out).toContain("We are thrilled");
+  });
+});
+
 describe("emailFieldProblem", () => {
   const today = "2026-11-05";
   it("is clear once everything's filled in", () => {
@@ -237,8 +294,13 @@ describe("prefillEmailFields", () => {
   it("keeps today's date", () => {
     expect(prefillEmailFields("interview_reminder", { ...src, interviewDate: today }, today).date).toBe(today);
   });
-  it("never fills in the password", () => {
-    for (const kind of HIRING_EMAIL_KINDS) expect(prefillEmailFields(kind, src, today).password).toBe("");
+  it("starts the password on the marker, for the emails with a password, and never a real one", () => {
+    for (const kind of HIRING_EMAIL_KINDS) {
+      const hasPassword = HIRING_EMAIL_TEMPLATES[kind].fields.includes("password");
+      expect(prefillEmailFields(kind, src, today).password).toBe(hasPassword ? DEFAULT_PASSWORD_MARKER : "");
+    }
+    expect(prefillEmailFields("congratulations_technician", src, today).password).toBe(DEFAULT_PASSWORD_MARKER);
+    expect(prefillEmailFields("interview_results_parts", src, today).password).toBe(DEFAULT_PASSWORD_MARKER);
   });
   it("starts Technician training at 8:00 AM CST if no time is saved", () => {
     const f = prefillEmailFields("congratulations_technician", { ...src, trainingTimeIn: null }, today);
@@ -251,7 +313,17 @@ describe("prefillEmailFields", () => {
   it("still defaults the time when an old date is dropped", () => {
     expect(prefillEmailFields("congratulations_technician", { ...src, trainingStartDate: "2026-11-01", startDate: null }, today)).toMatchObject({ date: "", time: "08:00", zone: "CST" });
   });
-  it("only defaults the time for Technician training", () => {
+  it("fills the Parts email from the candidate, starting at 8:00 AM CST", () => {
+    const f = prefillEmailFields("interview_results_parts", { ...src, position: "Parts Manager", trainingTimeIn: null }, today);
+    expect(f).toMatchObject({ position: "Parts Manager", date: "2026-11-09", time: "08:00", zone: "CST", location: src.location, username: "ANA.CRUZ", password: DEFAULT_PASSWORD_MARKER, discordLink: "https://discord.gg/emWCPwRyh" });
+  });
+  it("uses the start date for the Parts email when there's no training date", () => {
+    expect(prefillEmailFields("interview_results_parts", { ...src, trainingStartDate: null }, today).date).toBe("2026-11-20");
+  });
+  it("needs no link for the Appliance Technician results email", () => {
+    expect(prefillEmailFields("interview_results_technician", src, today).discordLink).toBe("");
+  });
+  it("only defaults the time for Technician and Parts training", () => {
     expect(prefillEmailFields("congratulations", { ...src, trainingTimeIn: null }, today).time).toBe("");
     expect(prefillEmailFields("screening_passed", { ...src, interviewTime: null }, today).time).toBe("");
   });
@@ -270,6 +342,34 @@ describe("prefillEmailFields", () => {
   });
 });
 
+describe("login details", () => {
+  it("are only in the emails that ask \"are you sure?\" when there's no account", () => {
+    expect(HIRING_EMAIL_KINDS.filter((kind) => HIRING_EMAIL_TEMPLATES[kind].fields.includes("username"))).toEqual(["interview_results_parts", "congratulations_technician"]);
+  });
+});
+
+describe("the default password marker", () => {
+  const today = "2026-11-05";
+  const withMarker = { ...filled, password: DEFAULT_PASSWORD_MARKER };
+  it.each(["congratulations_technician", "interview_results_parts"] as const)("%s can be sent with it, and shows it in the draft", (kind) => {
+    expect(emailFieldProblem(kind, withMarker, today)).toBeNull();
+    const body = HIRING_EMAIL_TEMPLATES[kind].body(withMarker, today);
+    expect(body).toContain(`   Password: ${DEFAULT_PASSWORD_MARKER}\n`);
+    expect(hasUnfilledPlaceholder(body)).toBe(false);
+  });
+  it("still asks for a password if the box is emptied", () => {
+    expect(emailFieldProblem("congratulations_technician", { ...withMarker, password: " " }, today)).toBe("Enter the password.");
+  });
+  it("swaps in the real password, taking every character literally", () => {
+    expect(fillDefaultPassword(`Password: ${DEFAULT_PASSWORD_MARKER}\nAgain: ${DEFAULT_PASSWORD_MARKER}`, "Pa$&s$1")).toBe("Password: Pa$&s$1\nAgain: Pa$&s$1");
+    expect(fillDefaultPassword("Password: Typed1!", "Other")).toBe("Password: Typed1!");
+  });
+  it("only uses the marker-filling action when the draft has the marker", () => {
+    expect(candidateEmailAction(`Password: ${DEFAULT_PASSWORD_MARKER}`)).toBe("send-candidate-email-default-password");
+    expect(candidateEmailAction("Password: Typed1!")).toBe("send-candidate-email");
+  });
+});
+
 describe("latestDiscordLink", () => {
   const sent = [
     { kind: "congratulations" as const, discordLink: "https://discord.gg/old", date: "2026-11-01T10:00:00Z" },
@@ -283,6 +383,12 @@ describe("latestDiscordLink", () => {
   });
   it("shares one link across the two interview emails", () => {
     expect(latestDiscordLink(sent, "interview_reminder")).toBe("https://discord.gg/screen");
+  });
+  it("keeps the Parts link separate from every other email's", () => {
+    expect(latestDiscordLink(sent, "interview_results_parts")).toBeNull();
+    const withParts = [...sent, { kind: "interview_results_parts" as const, discordLink: "https://discord.gg/parts2", date: "2026-11-02T10:00:00Z" }];
+    expect(latestDiscordLink(withParts, "interview_results_parts")).toBe("https://discord.gg/parts2");
+    expect(latestDiscordLink(withParts, "congratulations")).toBe("https://discord.gg/new");
   });
   it("is nothing when none has gone out", () => {
     expect(latestDiscordLink(sent, "congratulations_technician")).toBeNull();
@@ -299,8 +405,17 @@ describe("branch address and position checks", () => {
   it("spots a technician position, even the misspelled one on file", () => {
     expect(isTechnicianPosition("Technician")).toBe(true);
     expect(isTechnicianPosition("Technicain")).toBe(true);
+    expect(isTechnicianPosition("Appliance Technician")).toBe(true);
     expect(isTechnicianPosition("Parts Manager")).toBe(false);
     expect(isTechnicianPosition(null)).toBe(false);
+  });
+  it("spots a Parts position", () => {
+    expect(isPartsPosition("Parts Manager")).toBe(true);
+    expect(isPartsPosition("parts associate")).toBe(true);
+    expect(isPartsPosition("Team Leader Parts")).toBe(true);
+    expect(isPartsPosition("Technician")).toBe(false);
+    expect(isPartsPosition("Partner Relations")).toBe(false);
+    expect(isPartsPosition(null)).toBe(false);
   });
 });
 

@@ -13,6 +13,8 @@ vi.mock("./supabaseTokenBridge", async (importActual) => ({
 vi.mock("./defaultPasswordBridge", () => ({ resolveDefaultPassword: vi.fn(async () => "default-pw") }));
 
 import { handleGmailRequest } from "./gmailBridge";
+import { resolveDefaultPassword } from "./defaultPasswordBridge";
+import { DEFAULT_PASSWORD_MARKER, candidateEmailAction } from "../hiringEmails";
 
 const COMPANY = "c0000000-0000-0000-0000-000000000001";
 const OTHER_COMPANY = "c0000000-0000-0000-0000-000000000002";
@@ -200,11 +202,75 @@ describe("send-candidate-email: who and what", () => {
   });
 });
 
+/** One part of a signed email, decoded. */
+const part = (raw: string, type: string) => {
+  const m = new RegExp(`Content-Type: ${type}; charset=UTF-8\\r\\nContent-Transfer-Encoding: base64\\r\\n\\r\\n([A-Za-z0-9+/=\\r\\n]+?)\\r\\n\\r\\n--`).exec(raw);
+  return m ? Buffer.from(m[1].replace(/\r\n/g, ""), "base64").toString("utf8") : null;
+};
+
+describe("send-candidate-email: the default password", () => {
+  const lookups = vi.mocked(resolveDefaultPassword);
+  const draft = `Hi Ana,\n\n   Username: Ana.Cruz\n   Password: ${DEFAULT_PASSWORD_MARKER}\n\nBest regards,`;
+  const sendDraft = (uid: string, accountId: string, extra: Record<string, unknown> = {}) =>
+    post(candidateEmailAction(draft), { idToken: uid, accountId, candidateId: "cand-1", to: "cand@x.com", cc: "", subject: "Hello", body: draft, ...extra });
+  beforeEach(() => lookups.mockClear());
+
+  it("puts the real password in the email and never sends it back to the page", async () => {
+    const res = await sendDraft("ana", ACCOUNTS.anaOwn.id);
+    expect(res.status).toBe(200);
+    expect(gmailSends).toHaveLength(1);
+    expect(gmailSends[0]).toContain("   Password: default-pw");
+    expect(gmailSends[0]).not.toContain(DEFAULT_PASSWORD_MARKER);
+    expect(JSON.stringify(await res.json())).not.toContain("default-pw");
+  });
+
+  it("uses the sender's own company's password", async () => {
+    await sendDraft("ana", ACCOUNTS.anaOwn.id);
+    expect(lookups).toHaveBeenCalledTimes(1);
+    expect(lookups.mock.calls[0][1]).toBe(COMPANY);
+  });
+
+  it("fills in both the text and the HTML when there's a signature, escaping the HTML", async () => {
+    lookups.mockResolvedValueOnce("Pa$&s<1>&2");
+    const res = await sendDraft("ana", ACCOUNTS.anaOwn.id, { signatureId: SIGNATURES.anaOwn.id });
+    expect(res.status).toBe(200);
+    expect(part(gmailSends[0], "text/plain")).toContain("   Password: Pa$&s<1>&2\n");
+    const html = part(gmailSends[0], "text/html")!;
+    expect(html).toContain("Password: Pa$&amp;s&lt;1&gt;&amp;2");
+    expect(html).not.toContain(DEFAULT_PASSWORD_MARKER);
+  });
+
+  it("sends nothing if no default password is set, rather than emailing the marker", async () => {
+    lookups.mockResolvedValueOnce(null);
+    const res = await sendDraft("ana", ACCOUNTS.anaOwn.id);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toContain("Login Security");
+    expect(gmailSends).toHaveLength(0);
+  });
+
+  it("leaves a password HR typed alone, without looking the default up", async () => {
+    const res = await email("ana", ACCOUNTS.anaOwn.id, { body: "   Password: Typed1!\n\nBest regards," });
+    expect(res.status).toBe(200);
+    expect(gmailSends[0]).toContain("   Password: Typed1!");
+    expect(gmailSends[0]).not.toContain("default-pw");
+    expect(lookups).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a technician", "tech", () => ACCOUNTS.hiringShared.id, 403],
+    ["a manager", "mgr", () => ACCOUNTS.hiringShared.id, 403],
+    ["HR at another company", "outsider", () => ACCOUNTS.hiringShared.id, 404],
+    ["HR using a coworker's private Gmail", "ana", () => ACCOUNTS.beaPrivate.id, 403],
+    ["HR picking no Gmail", "ana", () => "", 400],
+  ])("doesn't read the password for %s", async (_who, uid, account, status) => {
+    const res = await sendDraft(uid, account());
+    expect(res.status).toBe(status);
+    expect(lookups).not.toHaveBeenCalled();
+    expect(gmailSends).toHaveLength(0);
+  });
+});
+
 describe("send-candidate-email: signature", () => {
-  const part = (raw: string, type: string) => {
-    const m = new RegExp(`Content-Type: ${type}; charset=UTF-8\\r\\nContent-Transfer-Encoding: base64\\r\\n\\r\\n([A-Za-z0-9+/=\\r\\n]+?)\\r\\n\\r\\n--`).exec(raw);
-    return m ? Buffer.from(m[1].replace(/\r\n/g, ""), "base64").toString("utf8") : null;
-  };
   const body = "Hi Ana,\n\nJoin: https://discord.gg/nEbbTFxRa\n\nWe’re glad ñ.\n\nBest regards,\nHR Team USIHS";
 
   it("embeds the saved photo after the sign-off, keeping the headers and a plain-text copy", async () => {

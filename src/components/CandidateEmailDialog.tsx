@@ -16,11 +16,13 @@ import { HiringSignaturePicker, rememberSignature, type SignatureChange, type Si
 import type { CandidateEmailLogEntry } from "@/lib/supabase/hrActivityLog";
 import { todayISO } from "@/lib/localDate";
 import {
+  DEFAULT_PASSWORD_MARKER,
   HIRING_EMAIL_KINDS,
   HIRING_EMAIL_TEMPLATES,
   carryFieldChanges,
   emailFieldProblem,
   hasUnfilledPlaceholder,
+  isPartsPosition,
   isTechnicianPosition,
   isValidEmail,
   normalizeLink,
@@ -40,9 +42,19 @@ const STOPPED: CandidateStatus[] = ["rejected", "withdrawn", "cancelled"];
 const STATUSES_AGAINST: Record<HiringEmailKind, { statuses: CandidateStatus[]; meaning: string }> = {
   screening_passed: { statuses: STOPPED, meaning: "This email invites them to the next interview." },
   interview_reminder: { statuses: STOPPED, meaning: "This email reminds them about an interview." },
+  interview_results_technician: { statuses: STOPPED, meaning: "This email tells them they passed the interview." },
+  interview_results_parts: { statuses: STOPPED, meaning: "This email tells them they passed the interview." },
   congratulations: { statuses: STOPPED, meaning: "This email tells them they were selected." },
   congratulations_technician: { statuses: STOPPED, meaning: "This email tells them they were selected." },
   status_update: { statuses: ["selected", "training", "hired"], meaning: "This email tells them they weren't selected." },
+};
+
+// Emails written for certain positions, to warn when the candidate's says otherwise.
+const WRITTEN_FOR: Partial<Record<HiringEmailKind, { label: string; fits: (position: string) => boolean }>> = {
+  interview_results_technician: { label: "Appliance Technician", fits: isTechnicianPosition },
+  interview_results_parts: { label: "Parts", fits: isPartsPosition },
+  congratulations: { label: "Non-Technician", fits: (position) => !isTechnicianPosition(position) },
+  congratulations_technician: { label: "Technician", fits: isTechnicianPosition },
 };
 
 const sentLine = (e: CandidateEmailLogEntry) =>
@@ -52,6 +64,7 @@ export function CandidateEmailDialog({
   candidate,
   kind,
   statusLabel,
+  noAccount,
   prefill,
   accounts,
   canManageAll,
@@ -64,6 +77,8 @@ export function CandidateEmailDialog({
   candidate: Pick<Candidate, "id" | "name" | "email" | "position" | "status">;
   kind: HiringEmailKind;
   statusLabel: string;
+  /** The Hiring table's Account Status says they have no account. An email with login details asks "are you sure?" first. */
+  noAccount: boolean;
   /** What the app already knows (prefillEmailFields). */
   prefill: EmailFields;
   /** Every connected Hiring Gmail; null if migration 0428 hasn't been run. */
@@ -92,6 +107,8 @@ export function CandidateEmailDialog({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sentTo, setSentTo] = useState<string | null>(null);
+  const [confirmingNoAccount, setConfirmingNoAccount] = useState(false);
+  const sendButtonRef = useRef<HTMLButtonElement>(null);
 
   // Starts blocked, until the picker has loaded and reported its first choice.
   const [signature, setSignature] = useState<SignatureSelection>({ signatureId: null, signatureName: null, blocked: "Waiting for the signature…" });
@@ -144,11 +161,19 @@ export function CandidateEmailDialog({
     }
   };
 
+  const pressSend = () => {
+    if (noAccount && has("username")) setConfirmingNoAccount(true);
+    else void handleSend();
+  };
+  const goBackFromNoAccount = () => {
+    setConfirmingNoAccount(false);
+    sendButtonRef.current?.focus();
+  };
+
   const against = STATUSES_AGAINST[kind].statuses.includes(candidate.status);
   // Only when the position says otherwise; a blank position has nothing to compare.
-  const wrongTemplate =
-    !!candidate.position?.trim() &&
-    ((kind === "congratulations_technician" && !isTechnicianPosition(candidate.position)) || (kind === "congratulations" && isTechnicianPosition(candidate.position)));
+  const writtenFor = WRITTEN_FOR[kind];
+  const wrongTemplate = !!candidate.position?.trim() && !!writtenFor && !writtenFor.fits(candidate.position);
 
   const textField = (key: "location" | "contactPerson" | "contactNumber" | "username" | "password" | "discordLink", label: string, placeholder?: string) => (
     <label className="block">
@@ -187,7 +212,7 @@ export function CandidateEmailDialog({
                 <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                 <div className="space-y-1">
                   {against && <p>{candidate.name} is marked {statusLabel}. {STATUSES_AGAINST[kind].meaning}</p>}
-                  {wrongTemplate && <p>{candidate.name}'s position is {candidate.position}, but this is the {kind === "congratulations" ? "Non-Technician" : "Technician"} email.</p>}
+                  {wrongTemplate && <p>{candidate.name}'s position is {candidate.position}, but this is the {writtenFor?.label} email.</p>}
                   {previous.map((e, i) => <p key={i}>Already sent: {sentLine(e)}.</p>)}
                 </div>
               </div>
@@ -244,7 +269,12 @@ export function CandidateEmailDialog({
               {has("username") && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {textField("username", "Username", "John.Smith")}
-                  {textField("password", "Password")}
+                  <div>
+                    {textField("password", "Password")}
+                    {fields.password === DEFAULT_PASSWORD_MARKER && (
+                      <p className="mt-1 text-[11px] text-muted-foreground">Send puts in the company's default password, which stays hidden here. Type over this to use a different one.</p>
+                    )}
+                  </div>
                 </div>
               )}
               {has("discordLink") && textField("discordLink", "Discord Link", "https://discord.gg/...")}
@@ -267,7 +297,7 @@ export function CandidateEmailDialog({
               <p className="text-xs text-amber-300">{problem}</p>
               <div className="flex gap-2 ml-auto">
                 <button type="button" onClick={onClose} disabled={sending} className="rounded-lg border border-white/10 px-4 py-2 text-sm font-semibold text-slate-300 hover:bg-white/5 disabled:opacity-40">Cancel</button>
-                <button type="button" onClick={handleSend} disabled={!!problem || sending} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40">
+                <button ref={sendButtonRef} type="button" onClick={pressSend} disabled={!!problem || sending} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40">
                   {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                   {sending ? "Sending…" : "Send"}
                 </button>
@@ -276,6 +306,28 @@ export function CandidateEmailDialog({
           </>
         )}
       </div>
+
+      {confirmingNoAccount && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="no-account-title"
+            aria-describedby="no-account-text"
+            onKeyDown={(e) => { if (e.key === "Escape") goBackFromNoAccount(); }}
+            className="bg-slate-800 border border-white/10 rounded-lg p-6 max-w-md w-full"
+          >
+            <h3 id="no-account-title" className="text-lg font-bold mb-2">Are you sure?</h3>
+            <p id="no-account-text" className="text-sm text-muted-foreground mb-4">
+              There's no account tied to <span className="font-semibold text-white">{candidate.name}</span> yet. The username and password in this email won't work until one is created.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button type="button" autoFocus onClick={goBackFromNoAccount} className="rounded-lg border border-white/10 px-4 py-2 text-sm font-semibold text-slate-300 hover:bg-white/5">Go back</button>
+              <button type="button" onClick={() => { setConfirmingNoAccount(false); void handleSend(); }} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">Send anyway</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -285,8 +337,8 @@ export function CandidateEmailMenu({ candidateName, onPick }: { candidateName: s
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const WIDTH = 272;
-  const HEIGHT = 8 + HIRING_EMAIL_KINDS.length * 34;
+  const WIDTH = 304;
+  const HEIGHT = 10 + HIRING_EMAIL_KINDS.length * 32;
   const isOpen = !!pos;
 
   useEffect(() => {
@@ -361,6 +413,8 @@ export function CandidateEmailMenu({ candidateName, onPick }: { candidateName: s
 const SENT_LINE_COLOR: Record<HiringEmailKind, string> = {
   screening_passed: "text-sky-400 hover:text-sky-300",
   interview_reminder: "text-sky-400 hover:text-sky-300",
+  interview_results_technician: "text-emerald-400 hover:text-emerald-300",
+  interview_results_parts: "text-emerald-400 hover:text-emerald-300",
   congratulations: "text-emerald-400 hover:text-emerald-300",
   congratulations_technician: "text-emerald-400 hover:text-emerald-300",
   status_update: "text-amber-400 hover:text-amber-300",

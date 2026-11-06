@@ -8,7 +8,8 @@
  *     from Admin User Management (created with a random password, then reset
  *     to this through the same endpoint),
  *   - passwordResetRequestBridge.ts — Forgot Password on the login screen,
- *   - gmailBridge.ts — the Hiring panel's "Send Credentials" email.
+ *   - gmailBridge.ts — the Hiring panel's "Send Credentials" email, and the
+ *     candidate emails' login details (DEFAULT_PASSWORD_MARKER in hiringEmails.ts).
  * Falls back to the DEFAULT_RESET_PASSWORD secret when the company hasn't
  * set one yet.
  *

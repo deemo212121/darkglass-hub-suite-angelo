@@ -26,6 +26,7 @@
  */
 import { supabase } from "./client";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
+import { candidateEmailAction } from "@/lib/hiringEmails";
 
 export type GmailRegion = "US" | "PH" | "PARTS" | "IT_1" | "IT_2" | "IT_3" | "ATTENDANCE" | "HR_HIRING" | "FLASH_TECH";
 export const IT_TICKET_GMAIL_REGIONS: GmailRegion[] = ["IT_1", "IT_2", "IT_3"];
@@ -224,7 +225,7 @@ export async function startHiringGmailConnect(): Promise<void> {
 export async function sendCandidateEmail(input: { accountId: string; candidateId: string; to: string; cc: string; subject: string; body: string; signatureId: string | null }): Promise<{ sentTo: string; sentFrom: string }> {
   const idToken = await firebaseAuth?.currentUser?.getIdToken(false);
   if (!idToken) throw new Error("You need to be logged in to send this email.");
-  const res = await fetch("/api/gmail?action=send-candidate-email", {
+  const res = await fetch(`/api/gmail?action=${candidateEmailAction(input.body)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ idToken, ...input }),

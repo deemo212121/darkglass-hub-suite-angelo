@@ -38179,6 +38179,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           candidate={candidateEmail.candidate}
           kind={candidateEmail.kind}
           statusLabel={CANDIDATE_STATUS_LABEL[candidateEmail.candidate.status]}
+          noAccount={!employeesLoading && !candidateHasAccount(candidateEmail.candidate)}
           prefill={candidateEmailPrefill(candidateEmail.candidate, candidateEmail.kind)}
           accounts={hiringGmailAccounts}
           canManageAll={heldRoles.some((r) => r === "ADMIN" || r === "SUPERADMIN")}

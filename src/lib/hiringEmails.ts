@@ -6,7 +6,14 @@
  */
 
 /** "congratulations" is the Non-Technician email; that's the name already saved on past send records. */
-export type HiringEmailKind = "screening_passed" | "interview_reminder" | "congratulations" | "congratulations_technician" | "status_update";
+export type HiringEmailKind =
+  | "screening_passed"
+  | "interview_reminder"
+  | "interview_results_technician"
+  | "interview_results_parts"
+  | "congratulations"
+  | "congratulations_technician"
+  | "status_update";
 export type OrientationZone = "CST" | "EST";
 
 /** Who may send these. Checked against the person's primary and extra roles, in the page and on the server. */
@@ -23,6 +30,26 @@ const NEEDS_NUMBER = "[enter the number above]";
 const NEEDS_USERNAME = "[enter the username above]";
 const NEEDS_PASSWORD = "[enter the password above]";
 export const hasUnfilledPlaceholder = (text: string) => /\[(enter|pick) the \w+ above\]/.test(text);
+
+// ---- The default password ----------------------------------------------------
+
+/**
+ * Stands in for the company's default password (Login Security → Default
+ * Password) in the draft. Only the server can read the real one, and it puts it
+ * in as the email goes out, so the page never has it.
+ */
+export const DEFAULT_PASSWORD_MARKER = "[default password]";
+
+/** split/join rather than replace, so a "$" in the password is taken literally. */
+export const fillDefaultPassword = (body: string, password: string) => body.split(DEFAULT_PASSWORD_MARKER).join(password);
+
+/**
+ * A draft with the marker goes to an action only a server that can fill it in
+ * knows. One that hasn't been updated yet answers "Unknown request" and sends
+ * nothing, rather than emailing the candidate the marker itself.
+ */
+export const candidateEmailAction = (body: string) =>
+  body.includes(DEFAULT_PASSWORD_MARKER) ? "send-candidate-email-default-password" : "send-candidate-email";
 
 // ---- The name in the greeting ----------------------------------------------
 
@@ -79,7 +106,7 @@ export interface EmailFields {
   contactPerson: string;
   contactNumber: string;
   username: string;
-  /** Always typed by HR. It's only ever in the email itself, never in the send record. */
+  /** Starts on DEFAULT_PASSWORD_MARKER; HR can type a different one. It's only ever in the email itself, never in the send record. */
   password: string;
   /** As typed; see normalizeLink. */
   discordLink: string;
@@ -250,6 +277,70 @@ export function interviewReminderBody(f: EmailFields, today: string): string {
   ].join("\n");
 }
 
+export function technicianInterviewResultsBody(name: string): string {
+  return [
+    `Hi ${name},`,
+    "",
+    "Congratulations! We are pleased to inform you that you have successfully passed the interview for the Appliance Technician position with US In Home Services.",
+    "",
+    "Your onboarding details will be sent to you 3 days before your start date. If there are any changes or if you change your mind, please let us know.",
+    "",
+    ...SIGN_OFF,
+  ].join("\n");
+}
+
+export function partsInterviewResultsBody(f: EmailFields): string {
+  const title = positionTitles(f.position).full || NEEDS_POSITION;
+  return [
+    `Hi ${f.name},`,
+    "",
+    `Congratulations! We are pleased to inform you that you have successfully passed your interview for the ${title} position with US In Home Services.`,
+    "",
+    "We are excited to welcome you to our team and have you move forward with the hiring and onboarding process.",
+    "",
+    "Training Details",
+    "",
+    `Position: ${title}`,
+    `Start Date: ${dateText(f)}`,
+    `Time: ${timeText(f)}`,
+    `Location: ${f.location.trim() || NEEDS_LOCATION}`,
+    "",
+    "Next Steps and Onboarding Instructions",
+    "",
+    "Please complete the following before your start date:",
+    "",
+    "1. Change your Discord display name to Full Name_Branch Location.",
+    "2. Log in to your AHS Employee Account using the credentials provided below:",
+    "   Link: https://adminhubsolution.com/",
+    `   Username: ${f.username.trim() || NEEDS_USERNAME}`,
+    `   Password: ${f.password.trim() || NEEDS_PASSWORD}`,
+    "   Unique ID: USIHS",
+    "3. Complete your account setup and enter all required information.",
+    "4. All required onboarding forms, including your employment contract, have been sent to your AHS Employee Account. Please log in and click the Chat icon to access your forms.",
+    "5. Complete and sign your employment contract before your scheduled orientation date. Please ensure that all required information and signatures are submitted on time.",
+    "6. Complete all other required onboarding forms before your first day of training.",
+    "7. Attend your scheduled training and follow all instructions from the training team.",
+    "",
+    "Discord Orientation",
+    "",
+    "Please join Discord using the link below on your scheduled orientation day:",
+    "",
+    linkText(f),
+    "",
+    "Once you join the Discord server, proceed to the Orientation Room for your orientation.",
+    "",
+    "On your first day, please arrive at the onsite location on time. Additional information regarding your orientation and training will be provided accordingly.",
+    "",
+    "Please reply to confirm that you received this email and will be available to attend.",
+    "",
+    "Once again, congratulations and welcome to US In Home Services! We look forward to having you on the team.",
+    "",
+    "NOTE: If you have any questions or concerns regarding your contract or onboarding requirements, please feel free to reach out to us. We will be happy to assist you and can also address any questions during your scheduled orientation.",
+    "",
+    ...SIGN_OFF,
+  ].join("\n");
+}
+
 export const STATUS_UPDATE_SUBJECT = "Application Status Update";
 
 export function statusUpdateBody(name: string): string {
@@ -273,14 +364,22 @@ export interface HiringEmailTemplate {
   /** The Actions column's "Congrats sent 11/5/2026" line. */
   short: string;
   /** What the date and time are for: the labels and messages say "Orientation Date", and so on. */
-  dateWord: "Orientation" | "Training" | "Interview" | null;
+  dateWord: "Orientation" | "Training" | "Interview" | "Start" | null;
   fields: EmailFieldKey[];
   subject: (f: EmailFields, today: string) => string;
   body: (f: EmailFields, today: string) => string;
 }
 
 /** In hiring order, which is also the Actions menu's order. */
-export const HIRING_EMAIL_KINDS: HiringEmailKind[] = ["screening_passed", "interview_reminder", "congratulations", "congratulations_technician", "status_update"];
+export const HIRING_EMAIL_KINDS: HiringEmailKind[] = [
+  "screening_passed",
+  "interview_reminder",
+  "interview_results_technician",
+  "interview_results_parts",
+  "congratulations",
+  "congratulations_technician",
+  "status_update",
+];
 export const isHiringEmailKind = (value: unknown): value is HiringEmailKind => HIRING_EMAIL_KINDS.includes(value as HiringEmailKind);
 
 export const HIRING_EMAIL_TEMPLATES: Record<HiringEmailKind, HiringEmailTemplate> = {
@@ -301,6 +400,24 @@ export const HIRING_EMAIL_TEMPLATES: Record<HiringEmailKind, HiringEmailTemplate
     fields: ["date", "time", "discordLink"],
     subject: (f) => `Interview Reminder – ${dateText(f)} at ${timeText(f)}`,
     body: interviewReminderBody,
+  },
+  interview_results_technician: {
+    title: "Appliance Technician Interview Results Email",
+    menuLabel: "Appliance Technician Interview Results",
+    short: "Results (Tech)",
+    dateWord: null,
+    fields: [],
+    subject: () => "Appliance Technician Interview Results",
+    body: (f) => technicianInterviewResultsBody(f.name),
+  },
+  interview_results_parts: {
+    title: "Parts Interview Results Email",
+    menuLabel: "Parts Interview Results",
+    short: "Results (Parts)",
+    dateWord: "Start",
+    fields: ["position", "date", "time", "location", "username", "password", "discordLink"],
+    subject: () => "Parts Interview Results",
+    body: partsInterviewResultsBody,
   },
   congratulations: {
     title: "Congratulatory Email – Non-Technician",
@@ -370,7 +487,7 @@ export function carryFieldChanges(current: string, before: string, after: string
 
 // ---- What gets filled in for you ---------------------------------------------
 
-/** Technician training starts here unless the candidate has their own time saved. HR can change it. */
+/** Technician and Parts training starts here unless the candidate has their own time saved. HR can change it. */
 const DEFAULT_TRAINING_TIME = "08:00";
 const DEFAULT_TRAINING_ZONE: OrientationZone = "CST";
 
@@ -378,6 +495,8 @@ const DEFAULT_TRAINING_ZONE: OrientationZone = "CST";
 const DISCORD_LINK_GROUP: Record<HiringEmailKind, string> = {
   screening_passed: "interview",
   interview_reminder: "interview",
+  interview_results_technician: "none",
+  interview_results_parts: "parts",
   congratulations: "non_technician",
   congratulations_technician: "technician",
   status_update: "none",
@@ -386,6 +505,7 @@ const STARTING_DISCORD_LINK: Record<string, string> = {
   interview: "https://discord.gg/cZ42d28Dr",
   non_technician: "https://discord.gg/nEbbTFxRa",
   technician: "https://discord.gg/7xx2R7TYc",
+  parts: "https://discord.gg/emWCPwRyh",
 };
 
 /** The Discord link most recently sent for this kind of email, by anyone. Interview emails share one room, so they share a link. */
@@ -423,8 +543,9 @@ export interface EmailPrefillSource {
 /**
  * Everything the app already knows for this email. HR can still change any of
  * it. A date that's already passed isn't used, nor its time, since they'd be
- * out of date; those stay empty and Send asks for them. Technician training
- * falls back to 8:00 AM CST. The password is never filled in.
+ * out of date; those stay empty and Send asks for them. Technician and Parts
+ * training fall back to 8:00 AM CST. The password starts on the default-password
+ * marker, never a real password.
  */
 export function prefillEmailFields(kind: HiringEmailKind, src: EmailPrefillSource, today: string): EmailFields {
   const isInterview = HIRING_EMAIL_TEMPLATES[kind].dateWord === "Interview";
@@ -432,7 +553,7 @@ export function prefillEmailFields(kind: HiringEmailKind, src: EmailPrefillSourc
   const time = (isInterview ? src.interviewTime : src.trainingTimeIn)?.slice(0, 5) ?? "";
   const stale = !!date && date < today;
   const savedTime = stale ? "" : time;
-  const useDefaultTime = kind === "congratulations_technician" && !savedTime;
+  const useDefaultTime = (kind === "congratulations_technician" || kind === "interview_results_parts") && !savedTime;
   return {
     name: greetingName(src.candidateName),
     position: src.position?.trim() ?? "",
@@ -443,13 +564,14 @@ export function prefillEmailFields(kind: HiringEmailKind, src: EmailPrefillSourc
     contactPerson: src.contactPerson,
     contactNumber: src.contactNumber,
     username: src.username,
-    password: "",
+    password: HIRING_EMAIL_TEMPLATES[kind].fields.includes("password") ? DEFAULT_PASSWORD_MARKER : "",
     discordLink: src.lastDiscordLink ?? STARTING_DISCORD_LINK[DISCORD_LINK_GROUP[kind]] ?? "",
   };
 }
 
-/** For warning when the Technician / Non-Technician email doesn't match the candidate. */
-export const isTechnicianPosition = (position: string | null | undefined) => /^technic/i.test(position?.trim() ?? "");
+/** For warning when the email picked doesn't match the candidate's position. */
+export const isTechnicianPosition = (position: string | null | undefined) => /^(appliance\s+)?technic/i.test(position?.trim() ?? "");
+export const isPartsPosition = (position: string | null | undefined) => /\bparts?\b/i.test(position?.trim() ?? "");
 
 // ---- Signature photo ---------------------------------------------------------
 
