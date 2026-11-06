@@ -137,6 +137,7 @@ import { resolveTierCode } from "@/lib/tierCodes";
 import { getModelResources, saveModelResources, type ModelResources } from "@/lib/supabase/modelResources";
 import { getUndismissedMobilePopupAlerts, dismissTicketAlert, type TicketAlert } from "@/lib/supabase/ticketAlerts";
 import { createItTicket, getItTickets, type ItTicketRow, type ItTicketPriority } from "@/lib/supabase/itTickets";
+import { applyTicketDisputeTimes } from "@/lib/supabase/decisionReverts";
 import { createEmployeeRequest, getCompanyEmployeeRequests, updateEmployeeRequestStatus, canReviewTicketDispute, notifyRequestReviewers, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { createPtoRequest, getCompanyPtoRequests, canReviewPtoStage, reviewPtoStage, isEligibleForPto, ptoEligibleDate, ptoYearWindow, ptoDaysUsed, ptoDaysPending, workingDayCount, noLeaveDaysMessage, leaveFilingDateError, earliestLeaveStart, setPtoAttachmentUrl, type PtoType, type PtoRequestRow } from "@/lib/supabase/pto";
 import {
@@ -7773,9 +7774,7 @@ function MobileTeamApprovalsView({
         // ticket write never leaves this marked approved. Reschedule-mode
         // rows have no disputedStartTime/EndTime (null-guarded above), so
         // this is skipped for those — nothing to backfill.
-        await setTicketOnsiteCheckIn(r.ticketNo, "arrived", r.disputedStartTime);
-        await setTicketOnsiteCheckIn(r.ticketNo, "done", r.disputedEndTime);
-        await resetMileageRouteConfirmation(r.ticketNo).catch((err) => console.error("Failed to invalidate mileage route order after dispute approval:", err));
+        await applyTicketDisputeTimes(r);
       }
       await updateEmployeeRequestStatus(r.id, decision, profileId);
       setTicketDisputes((prev) => prev.filter((x) => x.id !== r.id));

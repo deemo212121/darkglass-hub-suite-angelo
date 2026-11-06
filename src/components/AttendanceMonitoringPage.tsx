@@ -21,6 +21,9 @@ import { getPendingCheckoutProposals, approveCheckoutProposal, type CheckoutProp
 import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
 import { RequestedTime } from "@/components/CorrectionRequestedTime";
 import { TicketTimeDisputesTab } from "@/components/TicketTimeDisputesTab";
+import { CorrectionRevertButtons, PtoRevertButtons, RevertHistory, useDecisionReverts } from "@/components/RevertDecision";
+import { RevertsLogTab } from "@/components/RevertsLogTab";
+import { isRevertSuperAdmin } from "@/lib/decisionRevertRules";
 import { TraineeAttendanceTab } from "@/components/TraineeAttendanceTab";
 import { AttendanceWarningSettingsTab } from "@/components/AttendanceWarningSettingsTab";
 import {
@@ -73,9 +76,6 @@ import {
   getCompanyTimecardCorrectionHistory,
   reviewCorrectionStage,
   canReviewCorrectionStage,
-  undoCorrectionRejection,
-  undoCorrectionApproval,
-  approvedCorrectionStages,
   type TimecardCorrectionRow,
   type TimecardCorrectionHistoryRow,
   type CorrectionStage,
@@ -529,6 +529,9 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // to. Not is_superadmin() (that means the platform-level SUPERSUPERADMIN,
   // a different and much narrower role — see that migration's own comment).
   const isSuperAdmin = [role, ...extraRoles].some((r) => normalizeRole(r) === "SUPERADMIN");
+  const canRevertAnything = isRevertSuperAdmin([role, ...extraRoles]);
+  const ptoReverts = useDecisionReverts("pto_request");
+  const correctionReverts = useDecisionReverts("timecard_correction");
 
   const [loading, setLoading] = useState(true);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
@@ -571,7 +574,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const ptoHireDates = usePtoHireDates(ptoRequests);
   const [corrections, setCorrections] = useState<TimecardCorrectionRow[]>([]);
   const [correctionHistory, setCorrectionHistory] = useState<TimecardCorrectionHistoryRow[]>([]);
-  const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "ticket-attendance", "off-techs", "ticket-dispute", "trainee-attendance", "settings"] as const;
+  const ATTENDANCE_TABS = ["daily-attendance", "pto-management", "corrections", "ticket-attendance", "off-techs", "ticket-dispute", "trainee-attendance", "reverts", "settings"] as const;
   const [activeTab, setActiveTab] = usePersistedTab<typeof ATTENDANCE_TABS[number]>(
     "ahs:attendance-monitoring-active-tab",
     ATTENDANCE_TABS,
@@ -2095,59 +2098,6 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     setCorrectionHistory(await getCompanyTimecardCorrectionHistory());
   };
 
-  // Undo a rejection — whoever rejected it, or Admin / HR / Super Admin
-  // (full attendance access). The rejected stage goes back to pending.
-  const [undoingCorrectionId, setUndoingCorrectionId] = useState<string | null>(null);
-  const canUndoCorrectionRejection = (c: TimecardCorrectionRow) =>
-    isAttendanceFullAccessRole(role, extraRoles) ||
-    (!!myProfileId && [c.managerStatus === "rejected" ? c.managerReviewedBy : null, c.hrStatus === "rejected" ? c.hrReviewedBy : null, c.accountingStatus === "rejected" ? c.accountingReviewedBy : null].includes(myProfileId));
-  // Undo an approval — back to pending for review again. Only the person who
-  // approved a step can undo it (no one else, not even Admin / HR), with a reason.
-  const undoableApprovalStages = (c: TimecardCorrectionRow) => {
-    if (c.status === "rejected" || !myProfileId) return [];
-    const by = { manager: c.managerReviewedBy, hr: c.hrReviewedBy, accounting: c.accountingReviewedBy };
-    return approvedCorrectionStages(c).filter((s) => by[s] === myProfileId);
-  };
-  const [undoingApprovalId, setUndoingApprovalId] = useState<string | null>(null);
-  const [undoApproval, setUndoApproval] = useState<{ c: TimecardCorrectionRow; reason: string } | null>(null);
-  const handleUndoCorrectionApproval = async () => {
-    if (!undoApproval) return;
-    const { c, reason } = undoApproval;
-    const stages = undoableApprovalStages(c);
-    if (stages.length === 0 || !reason.trim()) return;
-    setUndoingApprovalId(c.id);
-    try {
-      await undoCorrectionApproval(c, myProfileId || "", displayName || "Reviewer", reason, stages);
-      void logModuleActivity({
-        module: "attendance-monitoring",
-        actorName: displayName || "Reviewer",
-        action: "timecard_correction_approval_undone",
-        targetType: "timecard_correction",
-        targetId: c.id,
-        targetLabel: `${profileName(c.profileId)} (${c.workDate})`,
-        details: { stages, wasApproved: c.status === "approved", reason: reason.trim() },
-      });
-      setUndoApproval(null);
-      await refreshCorrections();
-    } catch (err) {
-      alert(`Couldn't undo the approval: ${err instanceof Error ? err.message : "unknown error"}`);
-    } finally {
-      setUndoingApprovalId(null);
-    }
-  };
-  const handleUndoCorrectionRejection = async (c: TimecardCorrectionRow) => {
-    if (!confirm(`Undo the rejection of ${profileName(c.profileId)}'s ${c.workDate} correction? It goes back to review.`)) return;
-    setUndoingCorrectionId(c.id);
-    try {
-      await undoCorrectionRejection(c, myProfileId || "", displayName || "Reviewer");
-      await refreshCorrections();
-    } catch (err) {
-      alert(`Couldn't undo the rejection: ${err instanceof Error ? err.message : "unknown error"}`);
-    } finally {
-      setUndoingCorrectionId(null);
-    }
-  };
-
   const handleCorrectionStageAction = async (stage: CorrectionStage, decision: "approved" | "rejected") => {
     if (!selectedCorrection) return;
     setCorrectionStageBusy(true);
@@ -2323,6 +2273,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
     { id: "off-techs", label: "Off Techs with Tickets", Icon: UserX },
     { id: "ticket-dispute", label: "Ticket Dispute", Icon: AlertTriangle },
     { id: "trainee-attendance", label: "Trainee Attendance", Icon: Clock },
+    ...(canRevertAnything ? [{ id: "reverts", label: "Reverts", Icon: Undo2 }] : []),
     ...(isSuperAdmin ? [{ id: "settings", label: "Settings", Icon: Settings }] : []),
   ];
 
@@ -3332,6 +3283,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               {request.accountingReviewedBy ? ` — ${profileName(request.accountingReviewedBy)}` : ""}
                             </span>
                             <StageNote note={request.accountingNote} status={request.accountingStatus} />
+                            <RevertHistory entries={ptoReverts.byRecord.get(request.id)} />
                           </div>
                         </td>
                         <td className="px-3 py-3">
@@ -3406,6 +3358,17 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               linkTo="/m/dashboard/attendance-monitoring?tab=pto-management"
                               logModule="attendance-monitoring"
                               className="self-start"
+                            />
+                            <PtoRevertButtons
+                              request={request}
+                              requesterName={profileName(request.profileId)}
+                              myProfileId={myProfileId}
+                              myName={displayName || "Reviewer"}
+                              isSuperAdmin={canRevertAnything}
+                              onReverted={async () => {
+                                setPtoRequests(await getCompanyPtoRequests());
+                                ptoReverts.reload();
+                              }}
                             />
                           </div>
                         </td>
@@ -3681,17 +3644,6 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                           ) : (
                             <div className="flex flex-col items-start gap-1.5">
                               <CorrectionOverallBadge status={correction.status} size="md" />
-                              {correction.status === "rejected" && canUndoCorrectionRejection(correction) && (
-                                <button
-                                  type="button"
-                                  onClick={() => void handleUndoCorrectionRejection(correction)}
-                                  disabled={undoingCorrectionId === correction.id}
-                                  className="inline-flex items-center gap-1 rounded border border-white/15 bg-white/5 px-2 py-0.5 text-[11px] font-semibold text-slate-200 hover:bg-white/10 disabled:opacity-50"
-                                  title="Put it back in review — the rejected stage goes back to pending"
-                                >
-                                  {undoingCorrectionId === correction.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Undo2 className="h-3 w-3" />} Undo
-                                </button>
-                              )}
                             </div>
                           )}
                           <StageRemindButton
@@ -3706,17 +3658,18 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                             linkTo="/m/dashboard/attendance-monitoring?tab=corrections"
                             logModule="attendance-monitoring"
                           />
-                          {undoableApprovalStages(correction).length > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => setUndoApproval({ c: correction, reason: "" })}
-                              disabled={undoingApprovalId === correction.id}
-                              className="inline-flex items-center gap-1 rounded border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                              title="Undo your approval — back to pending for review (the timecard goes back to the actual times until it's approved again)"
-                            >
-                              {undoingApprovalId === correction.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Undo2 className="h-3 w-3" />} Undo approval
-                            </button>
-                          )}
+                          <RevertHistory entries={correctionReverts.byRecord.get(correction.id)} />
+                          <CorrectionRevertButtons
+                            correction={correction}
+                            requesterName={profileName(correction.profileId)}
+                            myProfileId={myProfileId}
+                            myName={displayName || "Reviewer"}
+                            isSuperAdmin={canRevertAnything}
+                            onReverted={async () => {
+                              await refreshCorrections();
+                              correctionReverts.reload();
+                            }}
+                          />
                           </div>
                         </td>
                       </tr>
@@ -3788,6 +3741,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
             </div>
           )}
 
+
+          {activeTab === "reverts" && canRevertAnything && <RevertsLogTab />}
 
           {activeTab === "settings" && isSuperAdmin && (
             <AttendanceWarningSettingsTab myProfileId={myProfileId} myDisplayName={displayName} />
@@ -4111,63 +4066,6 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
             </div>
           </div>
         )}
-
-        {undoApproval && (() => {
-          const c = undoApproval.c;
-          const stages = undoableApprovalStages(c);
-          const names = stages.map((s) => (s === "manager" ? "Manager" : s === "hr" ? "HR" : "Accounting")).join(" / ");
-          const busy = undoingApprovalId === c.id;
-          return (
-            <AppModal
-              title="Undo your approval?"
-              description={`${profileName(c.profileId)} · ${c.workDate} · ${names} approval`}
-              icon={<Undo2 className="h-5 w-5" />}
-              tone="warning"
-              busy={busy}
-              onClose={() => setUndoApproval(null)}
-              footer={
-                <>
-                  <button type="button" onClick={() => setUndoApproval(null)} disabled={busy} className="btn text-sm px-4 py-2">
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleUndoCorrectionApproval()}
-                    disabled={busy || !undoApproval.reason.trim()}
-                    className="btn btn-primary text-sm px-4 py-2 inline-flex items-center gap-1.5 disabled:opacity-50"
-                  >
-                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Undo2 className="h-4 w-4" />} Undo approval
-                  </button>
-                </>
-              }
-            >
-              <div className="space-y-3 text-sm">
-                <p className="text-slate-300">
-                  It goes back to <span className="font-semibold text-white">pending</span> for review.
-                  {c.status === "approved" && (
-                    <>
-                      {" "}Their timecard goes back to the actual times ({c.originalCheckIn || "—"} → {c.originalCheckOut || "—"}) until it&apos;s approved again.
-                    </>
-                  )}{" "}
-                  {profileName(c.profileId)} will be told, with your reason.
-                </p>
-                <div>
-                  <label className="block text-xs text-slate-400 uppercase mb-1">
-                    Reason <span className="text-red-400 normal-case">* required</span>
-                  </label>
-                  <textarea
-                    autoFocus
-                    rows={3}
-                    value={undoApproval.reason}
-                    onChange={(e) => setUndoApproval({ c, reason: e.target.value })}
-                    placeholder="Why are you undoing the approval? e.g. approved the wrong day, times need checking"
-                    className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none resize-none"
-                  />
-                </div>
-              </div>
-            </AppModal>
-          );
-        })()}
 
         {selectedCorrection && signingManagerCorrection && (
           <CorrectionManagerSignModal

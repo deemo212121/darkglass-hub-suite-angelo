@@ -28,8 +28,7 @@ import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import type { ProfileRow } from "@/lib/supabase/users";
 import { signTicketDisputeManager, signTicketDisputeHrPaperwork, updateEmployeeRequestStatus, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
-import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
-import { resetMileageRouteConfirmation } from "@/lib/supabase/mileage";
+import { applyTicketDisputeTimes } from "@/lib/supabase/decisionReverts";
 import { buildTicketDisputeManagerSignaturePdf, buildTicketDisputeHrSignaturePdf, type TicketDisputeEmployeeInfo } from "@/lib/ticketDisputeReportPdf";
 import { todayISO } from "@/lib/localDate";
 import { logAppError } from "@/lib/appErrorLog";
@@ -82,11 +81,7 @@ export function TicketDisputeManagerSignModal({ request, companyId, profiles, re
       // Ticket write BEFORE the status/signature update — same safety
       // ordering TicketTimeDisputesTab.tsx's own plain approve already
       // uses, so a failed ticket write never leaves this marked approved.
-      if (request.ticketNo && request.disputedStartTime && request.disputedEndTime) {
-        await setTicketOnsiteCheckIn(request.ticketNo, "arrived", request.disputedStartTime);
-        await setTicketOnsiteCheckIn(request.ticketNo, "done", request.disputedEndTime);
-        await resetMileageRouteConfirmation(request.ticketNo).catch((err) => console.error("Failed to invalidate mileage route order after dispute approval:", err));
-      }
+      await applyTicketDisputeTimes(request);
       await signTicketDisputeManager(request.id, reviewerId, { url: managerSignatureUrl, name: reviewerName, comments, pdfUrl });
       onSigned();
     } catch (err) {
@@ -156,11 +151,7 @@ export function TicketDisputeHrSignModal({ request, companyId, profiles, reviewe
       // still-pending dispute, with the same ticket write the manager's approve
       // does (ticket first, so a failed write never leaves it marked approved).
       if (actionStatus === "approved" && request.status === "pending") {
-        if (request.ticketNo && request.disputedStartTime && request.disputedEndTime) {
-          await setTicketOnsiteCheckIn(request.ticketNo, "arrived", request.disputedStartTime);
-          await setTicketOnsiteCheckIn(request.ticketNo, "done", request.disputedEndTime);
-          await resetMileageRouteConfirmation(request.ticketNo).catch((err) => console.error("Failed to invalidate mileage route order after dispute approval:", err));
-        }
+        await applyTicketDisputeTimes(request);
         await updateEmployeeRequestStatus(request.id, "approved", reviewerId, hrNotes.trim());
       }
       await signTicketDisputeHrPaperwork(request.id, reviewerName, { url: hrSignatureUrl, name: reviewerName }, receivedDate, actionStatus, pdfUrl, hrNotes.trim());

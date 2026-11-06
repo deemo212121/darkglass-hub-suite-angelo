@@ -28,6 +28,8 @@ import { EXCEPTION_TYPE_LABELS, correctionIssueLabel, correctionIssueKey, correc
 import { TICKET_DISPUTE_EXCEPTION_TYPE_LABELS } from "@/lib/ticketDisputeReportTemplate";
 import { downloadSignableDocumentPdf } from "@/lib/downloadSignableDocumentPdf";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
+import { CorrectionRevertButtons, PtoRevertButtons, RevertHistory, TicketDisputeRevertButton, useDecisionReverts } from "@/components/RevertDecision";
+import { isRevertSuperAdmin } from "@/lib/decisionRevertRules";
 import { employeeInfoFor, CorrectionHrSignModal } from "@/components/CorrectionSignModals";
 import { regenerateCorrectionPdf } from "@/lib/timecardCorrectionPdf";
 import { resolveEmployeeInfo as resolveTicketDisputeEmployeeInfo, TicketDisputeHrSignModal } from "@/components/TicketDisputeSignModals";
@@ -122,6 +124,10 @@ function ReviewAgainButton({ onClick }: { onClick: () => void }) {
 
 export function ExceptionReportsTab() {
   const { uid, role, extraRoles, displayName, companyId } = useAuth();
+  const canRevertAnything = isRevertSuperAdmin([role, ...(extraRoles ?? [])]);
+  const correctionReverts = useDecisionReverts("timecard_correction");
+  const disputeReverts = useDecisionReverts("ticket_time_dispute");
+  const ptoReverts = useDecisionReverts("pto_request");
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   useEffect(() => {
     if (!uid) return;
@@ -575,6 +581,16 @@ export function ExceptionReportsTab() {
                   <td className="px-3 py-3 text-slate-300">{correctionIssueLabel(c.exceptionType, c.otherDescription)}</td>
                   <td className="px-3 py-3">
                     <PaperworkStatus status={c.status} badges={[{ ...mgrBadge, stage: c.managerStatus }, { ...hrStatusBadge, stage: c.hrStatus }, accountingBadge(c.accountingStatus)]} />
+                    <RevertHistory entries={correctionReverts.byRecord.get(c.id)} className="mt-1" />
+                    <CorrectionRevertButtons
+                      correction={c}
+                      requesterName={profileName(c.profileId)}
+                      myProfileId={myProfileId}
+                      myName={displayName || "Reviewer"}
+                      isSuperAdmin={canRevertAnything}
+                      className="mt-1.5 flex flex-col gap-1"
+                      onReverted={async () => { await load(); correctionReverts.reload(); }}
+                    />
                   </td>
                   <td className="px-3 py-3">
                     <div className="flex items-center gap-1.5">
@@ -711,6 +727,17 @@ export function ExceptionReportsTab() {
                   </td>
                   <td className="px-3 py-3">
                     <PaperworkStatus status={r.status} badges={[mgrBadge, hrStatusBadge]} />
+                    <RevertHistory entries={disputeReverts.byRecord.get(r.id)} className="mt-1" />
+                    <div className="mt-1.5">
+                      <TicketDisputeRevertButton
+                        dispute={r}
+                        requesterName={profileName(r.profileId)}
+                        myProfileId={myProfileId}
+                        myName={displayName || "Reviewer"}
+                        isSuperAdmin={canRevertAnything}
+                        onReverted={async () => { await load(); disputeReverts.reload(); }}
+                      />
+                    </div>
                   </td>
                   <td className="px-3 py-3">
                     <div className="flex items-center gap-1.5">
@@ -819,6 +846,16 @@ export function ExceptionReportsTab() {
                   </td>
                   <td className="px-3 py-3">
                     <PaperworkStatus status={r.status} badges={[{ ...mgrBadge, stage: r.managerStatus }, { ...hrStatusBadge, stage: r.hrStatus }, accountingBadge(r.accountingStatus)]} />
+                    <RevertHistory entries={ptoReverts.byRecord.get(r.id)} className="mt-1" />
+                    <PtoRevertButtons
+                      request={r}
+                      requesterName={profileName(r.profileId)}
+                      myProfileId={myProfileId}
+                      myName={displayName || "Reviewer"}
+                      isSuperAdmin={canRevertAnything}
+                      className="mt-1.5 flex flex-col gap-1"
+                      onReverted={async () => { await load(); ptoReverts.reload(); }}
+                    />
                   </td>
                   <td className="px-3 py-3">
                     <div className="flex items-center gap-1.5">
