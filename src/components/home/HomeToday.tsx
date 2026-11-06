@@ -24,6 +24,7 @@ const ICONS: Record<AttentionKind | "parts-done", ReactNode> = {
   trainee: <GraduationCap />,
   "over-limit": <Flag />,
   coaching: <ClipboardCheck />,
+  "accounting-coaching": <ClipboardCheck />,
   "forms-complete": <BadgeCheck />,
   notifications: <Bell />,
   messages: <MessageCircle />,

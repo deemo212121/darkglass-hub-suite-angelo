@@ -159,6 +159,7 @@ const CsrRescheduleRequestsPage = lazy(() => import("@/components/CsrRescheduleR
 const CsrGhTracker = lazy(() => import("@/components/CsrGhTracker").then((m) => ({ default: m.CsrGhTracker })));
 const CsrLtpReport = lazy(() => import("@/components/CsrLtpReport").then((m) => ({ default: m.CsrLtpReport })));
 const CsrCoachingLogPage = lazy(() => import("@/components/CsrCoachingLogPage").then((m) => ({ default: m.CsrCoachingLogPage })));
+const AccountingCoachingLogPage = lazy(() => import("@/components/AccountingCoachingLogPage").then((m) => ({ default: m.AccountingCoachingLogPage })));
 const CSRCallTracker = lazy(() => import("@/components/CSRCallTracker").then((m) => ({ default: m.CSRCallTracker })));
 const CSRStatusSummary = lazy(() => import("@/components/CSRStatusSummary").then((m) => ({ default: m.CSRStatusSummary })));
 const ExpenseTrackingPage = lazy(() => import("@/components/ExpenseTrackingPage").then((m) => ({ default: m.ExpenseTrackingPage })));
@@ -622,6 +623,8 @@ function SubModule() {
         ? <CsrLtpReport mod={mod} sub={sub} />
         : (sub as any).custom === "csr-coaching-log"
         ? <CsrCoachingLogPage mod={mod} sub={sub} />
+        : (sub as any).custom === "accounting-coaching-log"
+        ? <AccountingCoachingLogPage mod={mod} sub={sub} />
         : (sub as any).custom === "csr-daily-report"
         ? <ReportCSRDaily mod={mod} sub={sub} />
         : (sub as any).custom === "call-tracker"
