@@ -387,6 +387,17 @@ const accountingMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    // Accounting's own copy of CSR → Coaching Log (AccountingCoachingLogPage,
+    // migration 0431). Own slug, not the bare "coaching-log" — role gates are
+    // keyed by slug alone, so that one would hand this page CSR's audience.
+    {
+      slug: "accounting-coaching-log",
+      title: "Coaching Log",
+      description: "Accounting coaching sessions: the coach and the accounting staff member each fill in their part, then both sign.",
+      custom: "accounting-coaching-log" as any,
+      fields: [],
+      seed: () => ({}),
+    },
     // Same shortcut-copy pattern as HR's own Candidate Reviews tile.
     {
       slug: "candidate-reviews",

@@ -42,11 +42,12 @@ import { collectTimeCardWarnings } from "@/lib/timeCardWarnings";
 import { getMyNotifications } from "@/lib/supabase/notifications";
 import { getUnreadCounts } from "@/lib/supabase/messaging";
 import { getCoachingWaitingCount } from "@/lib/supabase/csrCoachingLogs";
+import { getAccountingCoachingWaitingCount } from "@/lib/supabase/accountingCoachingLogs";
 
 /** Corrections allowed per person per month (Exceeded → Time Corrections). */
 export const MAX_CORRECTIONS_PER_MONTH = 2;
 
-export type AttentionKind = "pto" | "sick" | "corrections" | "disputes" | "trainee" | "over-limit" | "coaching" | "forms-complete" | "notifications" | "messages";
+export type AttentionKind = "pto" | "sick" | "corrections" | "disputes" | "trainee" | "over-limit" | "coaching" | "accounting-coaching" | "forms-complete" | "notifications" | "messages";
 export type AttentionTone = "warn" | "alert" | "info" | "good";
 
 export interface AttentionItem {
@@ -78,6 +79,8 @@ const LIMIT_ROLES = new Set(["ADMIN", "HR", "SUPERADMIN"]);
 const FORMS_DONE_ROLES = new Set(["ADMIN", "HR", "SUPERADMIN", "SUPERSUPERADMIN"]);
 // Can be coached or coach on CSR → Coaching Log.
 const COACHING_ROLES = new Set(["CSR", "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER", "ADMIN", "SUPERADMIN"]);
+// Can be coached or coach on Accounting → Coaching Log.
+const ACCOUNTING_COACHING_ROLES = new Set(["FINANCE", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"]);
 const CACHE_MS = 60_000;
 
 let cache: { key: string; at: number; data: Attention } | null = null;
@@ -259,6 +262,19 @@ async function compute(who: Who): Promise<Attention> {
       tone: "warn",
       title: "CSR → Coaching Log",
       to: coachingPage,
+    });
+  }
+  const accountingCoachingWaiting = myId && heldRoles.some((r) => ACCOUNTING_COACHING_ROLES.has(r)) ? await getAccountingCoachingWaitingCount(myId).catch(() => 0) : 0;
+  if (accountingCoachingWaiting > 0) {
+    const accountingCoachingPage: [string, string] = ["accounting", "accounting-coaching-log"];
+    bump(accountingCoachingPage, accountingCoachingWaiting);
+    items.push({
+      kind: "accounting-coaching",
+      count: accountingCoachingWaiting,
+      label: accountingCoachingWaiting === 1 ? "Accounting coaching log to fill in or sign" : "Accounting coaching logs to fill in or sign",
+      tone: "warn",
+      title: "Accounting → Coaching Log",
+      to: accountingCoachingPage,
     });
   }
 
