@@ -6251,6 +6251,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             myName={displayName || email || null}
             actualTotals={new Map(payrollRows.filter((r) => r.isTechPortion).map((r) => [r.employee.id, r.grossPay]))}
             actualBreakdowns={new Map(payrollRows.filter((r) => r.isTechPortion && r.techSummary).map((r) => [r.employee.id, r.techSummary!]))}
+            actualDetails={new Map(payrollRows.filter((r) => r.isTechPortion).map((r) => [r.employee.id, {
+              mileage: r.techManual.mileagePay,
+              items: techCustomItemsByProfile.get(r.employee.id) ?? [],
+            }]))}
             actualTotalsLoading={periodDataLoading > 0 || loading}
             onPeriodChange={(start, end) => { setGenStart(start); setGenEnd(end); }}
           />
