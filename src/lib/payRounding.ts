@@ -25,6 +25,11 @@ export function centsSummaryTotal(a: PayrollReviewAmounts): number {
 }
 
 const BONUS_LINE = /ltp|bonus|performance|incentive|flash tech allowance/i;
+/** Uses the same bonus classification as the payroll summary. */
+export function isBonusPayLine(label: string): boolean {
+  return BONUS_LINE.test(label);
+}
+
 const INSURANCE_LINE = /insur|pre-?tax/i;
 
 /**
@@ -45,7 +50,7 @@ export function groupCustomPayLines(items: { label: string; value: number; rate:
   for (const item of items) {
     const amount = item.value * item.rate;
     if (item.isWageIncludable) {
-      if (BONUS_LINE.test(item.label)) out.bonus += amount;
+      if (isBonusPayLine(item.label)) out.bonus += amount;
       else out.commission += amount;
     } else if (amount < 0) {
       if (INSURANCE_LINE.test(item.label)) out.pretaxInsurance += -amount;

@@ -251,14 +251,14 @@ export function ReviewedPeriodsTab({
   const downloadExcel = async () => {
     if (!actualReady || loading) return;
     const detailRows = new Map(visible.map((r) => [r.id, reviewedPeriodDetails(r, actualDetails.get(r.profileId))]));
-    const detailColumns = new Map<string, { key: string; label: string; group: "mileageOtherReimb" | "deduction" | "pretaxInsurance" }>();
+    const detailColumns = new Map<string, { key: string; label: string; group: "bonus" | "mileageOtherReimb" | "deduction" | "pretaxInsurance" }>();
     for (const lines of detailRows.values()) for (const line of lines) detailColumns.set(line.key, line);
-    // Replace the three combined buckets with each named item in that bucket.
+    // Itemize bonuses, reimbursements and deductions without changing saved totals.
     const exportColumns = COLUMNS.flatMap<{
       key: string; label: string; sub: string[] | undefined; group: keyof PayrollReviewAmounts;
       subtract: boolean; value: (r: PayrollReviewBreakdown) => number;
     }>((c) => {
-      if (c.key !== "mileageOtherReimb" && c.key !== "deduction" && c.key !== "pretaxInsurance") {
+      if (c.key !== "bonus" && c.key !== "mileageOtherReimb" && c.key !== "deduction" && c.key !== "pretaxInsurance") {
         return [{ key: c.key as string, label: c.label, sub: c.sub, group: c.key, subtract: !!c.subtract,
           value: (r: PayrollReviewBreakdown) => r[c.key] }];
       }
