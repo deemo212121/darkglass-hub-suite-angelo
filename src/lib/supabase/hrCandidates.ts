@@ -10,6 +10,7 @@ import { supabase } from "./client";
 import { createNotification } from "./notifications";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import { INACTIVE_BRANCHES, normalizeLocationForRegionMatch } from "@/lib/locations";
+import { storageFileName } from "@/lib/storageFileName";
 import { localISODate } from "@/lib/localDate";
 import { HIRE_NOTIFICATION_EXTRA_RECIPIENT_IDS } from "@/lib/hireNotificationRecipients";
 
@@ -454,7 +455,7 @@ export async function addCandidate(input: {
 
 /** Uploads a CV to the private bucket and records its path on the candidate row. */
 export async function uploadCandidateCv(candidateId: string, companyId: string, file: File): Promise<void> {
-  const path = `${companyId}/${candidateId}/${Date.now()}_${file.name}`;
+  const path = `${companyId}/${candidateId}/${Date.now()}_${storageFileName(file.name)}`;
   const { error: uploadError } = await supabase.storage.from("candidate-cvs").upload(path, file, { upsert: true });
   if (uploadError) throw new Error(uploadError.message);
 

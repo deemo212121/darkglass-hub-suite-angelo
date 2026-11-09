@@ -12,6 +12,7 @@
  * neither a US driver's license nor a US SSN.
  */
 import { supabase } from "./client";
+import { storageFileName } from "@/lib/storageFileName";
 
 export type TechnicianIdDocumentKind = "license" | "ssn_card" | "government_id";
 
@@ -22,7 +23,7 @@ export async function uploadTechnicianIdDocument(
   kind: TechnicianIdDocumentKind,
   file: File
 ): Promise<string> {
-  const path = `${companyId}/${docId}/${kind}-${Date.now()}_${file.name}`;
+  const path = `${companyId}/${docId}/${kind}-${Date.now()}_${storageFileName(file.name)}`;
   const { error } = await supabase.storage.from("technician-id-documents").upload(path, file, { upsert: true });
   if (error) throw new Error(error.message);
   return path;
