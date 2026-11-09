@@ -11,6 +11,7 @@ import {
   type PayrollReviewAmounts,
   type PayrollReviewBreakdown,
 } from "@/lib/supabase/payrollReviewBreakdowns";
+import { reviewedPeriodDetails, excelColumnLetter, type ReviewedPeriodDetailSource } from "@/lib/reviewedPeriodDetails";
 import { formatISODate } from "@/lib/localDate";
 import { getTechTaxLinesForPeriod, taxLineAmount, type TechTaxLine } from "@/lib/supabase/techTaxLines";
 
@@ -55,6 +56,7 @@ export function ReviewedPeriodsTab({
   myName,
   actualTotals,
   actualBreakdowns,
+  actualDetails,
   actualTotalsLoading,
   onPeriodChange,
 }: {
@@ -67,6 +69,8 @@ export function ReviewedPeriodsTab({
   actualTotals: Map<string, number>;
   /** The same actual pay split into this tab's columns, live from the timecard and Tech Activity Report. */
   actualBreakdowns: Map<string, PayrollReviewAmounts>;
+  /** Individual reimbursement/deduction lines for the dashboard period. */
+  actualDetails: Map<string, ReviewedPeriodDetailSource>;
   actualTotalsLoading: boolean;
   /** Switches the dashboard's period so actualTotals covers the period picked here. */
   onPeriodChange: (start: string, end: string) => void;
@@ -245,11 +249,30 @@ export function ReviewedPeriodsTab({
   };
 
   const downloadExcel = async () => {
-    const ExcelJS = await import("exceljs");
+    if (!actualReady || loading) return;
+    const detailRows = new Map(visible.map((r) => [r.id, reviewedPeriodDetails(r, actualDetails.get(r.profileId))]));
+    const detailColumns = new Map<string, { key: string; label: string; group: "mileageOtherReimb" | "deduction" | "pretaxInsurance" }>();
+    for (const lines of detailRows.values()) for (const line of lines) detailColumns.set(line.key, line);
+    // Replace the three combined buckets with each named item in that bucket.
+    const exportColumns = COLUMNS.flatMap<{
+      key: string; label: string; sub: string[] | undefined; group: keyof PayrollReviewAmounts;
+      subtract: boolean; value: (r: PayrollReviewBreakdown) => number;
+    }>((c) => {
+      if (c.key !== "mileageOtherReimb" && c.key !== "deduction" && c.key !== "pretaxInsurance") {
+        return [{ key: c.key as string, label: c.label, sub: c.sub, group: c.key, subtract: !!c.subtract,
+          value: (r: PayrollReviewBreakdown) => r[c.key] }];
+      }
+      return [...detailColumns.values()].filter((d) => d.group === c.key)
+        .sort((a, b) => a.label.localeCompare(b.label))
+        .map((d) => ({ key: d.key, label: `${c.subtract ? "(-)" : "(+)"} ${d.label}`, sub: undefined, group: d.group, subtract: !!c.subtract,
+          value: (r: PayrollReviewBreakdown) => detailRows.get(r.id)?.find((l) => l.key === d.key)?.amount ?? 0 }));
+    });
+    const excelModule = await import("exceljs");
+    const ExcelJS = excelModule.default ?? excelModule;
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Reviewed Period", { properties: { tabColor: { argb: "FF0F766E" } } });
-    const lastCol = COLUMNS.length + 6; // A name, B branch, C..K amounts, L not in columns, M gross, N taxes, O total (net)
-    const colLetter = (i: number) => String.fromCharCode(64 + i);
+    const lastCol = exportColumns.length + 6;
+    const colLetter = excelColumnLetter;
     const fill = (argb: string) => ({ type: "pattern" as const, pattern: "solid" as const, fgColor: { argb } });
     const thin = { style: "thin" as const, color: { argb: "FFD9E1EC" } };
     const moneyFmt = '"$"#,##0.00;[Red]-"$"#,##0.00;"–"';
@@ -285,7 +308,7 @@ export function ReviewedPeriodsTab({
     const headers: { text: string; key: keyof PayrollReviewAmounts | "notInColumns" | "gross" | "taxes" | "total" | "name" }[] = [
       { text: "Technician", key: "name" },
       { text: "Branch", key: "name" },
-      ...COLUMNS.map((c) => ({ text: [c.label, ...(c.sub ?? [])].join("\n"), key: c.key })),
+      ...exportColumns.map((c) => ({ text: [c.label, ...(c.sub ?? [])].join("\n"), key: c.group })),
       { text: "Not in Columns\nGross − columns", key: "notInColumns" },
       { text: "Gross Pay\nTimecard + Tech Activity Report", key: "gross" },
       { text: "(−) Taxes\nMCWH · SSWH · FITW · SITW", key: "taxes" },
@@ -307,7 +330,7 @@ export function ReviewedPeriodsTab({
       const n = first + i;
       const row = ws.getRow(n);
       // Gross = the technician's actual pay; Total = net after the report's tax lines, as on the tab.
-      row.values = [nameOf(r), r.branch ?? "", ...COLUMNS.map((c) => r[c.key]), notInColumns(r) ?? 0, Math.round(totalOf(r) * 100) / 100, taxesOf(r), netOf(r)];
+      row.values = [nameOf(r), r.branch ?? "", ...exportColumns.map((c) => c.value(r)), notInColumns(r) ?? 0, Math.round(totalOf(r) * 100) / 100, taxesOf(r), netOf(r)];
       row.height = 18;
       for (let c = 1; c <= lastCol; c++) {
         const cell = row.getCell(c);
@@ -317,10 +340,9 @@ export function ReviewedPeriodsTab({
         if (c >= 3) { cell.numFmt = moneyFmt; cell.alignment = { horizontal: "right" }; }
       }
       // Subtracted columns in red, Total in green.
-      for (const key of ["deduction", "pretaxInsurance"] as const) {
-        const cell = row.getCell(COLUMNS.findIndex((c) => c.key === key) + 3);
-        cell.font = { name: "Calibri", size: 11, color: { argb: "FFB91C1C" } };
-      }
+      exportColumns.forEach((column, index) => {
+        if (column.subtract) row.getCell(index + 3).font = { name: "Calibri", size: 11, color: { argb: "FFB91C1C" } };
+      });
       row.getCell(lastCol - 1).font = { name: "Calibri", size: 11, color: { argb: "FFB91C1C" } };
       row.getCell(lastCol).font = { name: "Calibri", size: 11, bold: true, color: { argb: "FF15803D" } };
       row.getCell(lastCol).fill = fill(i % 2 ? "FFE8F5EC" : "FFF0FAF3");
@@ -332,7 +354,7 @@ export function ReviewedPeriodsTab({
     totalRow.getCell(1).value = `TOTAL  (${visible.length})`;
     for (let c = 3; c <= lastCol; c++) {
       const col = colLetter(c);
-      totalRow.getCell(c).value = visible.length ? { formula: `SUM(${col}${first}:${col}${last})`, result: 0 } : 0;
+      totalRow.getCell(c).value = visible.length ? { formula: `SUM(${col}${first}:${col}${last})`, result: visible.reduce((sum, _, index) => sum + Number(ws.getRow(first + index).getCell(c).value || 0), 0) } : 0;
       totalRow.getCell(c).numFmt = moneyFmt;
       totalRow.getCell(c).alignment = { horizontal: "right" };
     }
@@ -443,10 +465,10 @@ export function ReviewedPeriodsTab({
           <button
             type="button"
             onClick={() => void downloadExcel()}
-            disabled={visible.length === 0}
+            disabled={visible.length === 0 || !actualReady || loading}
             className="px-3 py-1.5 rounded-md bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm font-semibold flex items-center gap-1.5"
           >
-            <Download className="h-4 w-4" /> Download Excel
+            <Download className="h-4 w-4" /> {loading || !actualReady ? "Loading export..." : "Download Excel"}
           </button>
         </div>
       </div>
