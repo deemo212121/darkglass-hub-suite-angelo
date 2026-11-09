@@ -1,7 +1,7 @@
 /**
  * Company Holidays — see migration 0252. One row per (company, year,
  * holiday), fully editable (including moving a specific year's date) and
- * scoped per country (US/PH) since the two offices don't share a calendar.
+ * used as a shared calendar by U.S. and Philippines staff.
  * Read by Absent List / Time Off Calendar (excludes holidays from "who's
  * missing a clock-in") — see HolidayCalendarTab.tsx for the US federal
  * holiday date computation used to seed a year the first time it's viewed.
@@ -15,12 +15,15 @@ export interface CompanyHolidayRow {
   name: string;
   date: string; // "YYYY-MM-DD"
   isCustom: boolean;
+  hourlyPaid?: boolean | null;
+  fixedSalaryPaid?: boolean | null;
 }
 
-const SELECT_COLUMNS = "id, year, country, name, date, is_custom";
+// Wildcard allows calendars to remain readable before migration 0434 is applied.
+const SELECT_COLUMNS = "*";
 
 function mapRow(r: any): CompanyHolidayRow {
-  return { id: r.id, year: r.year, country: r.country, name: r.name, date: r.date, isCustom: !!r.is_custom };
+  return { id: r.id, year: r.year, country: r.country, name: r.name, date: r.date, isCustom: !!r.is_custom, hourlyPaid: r.hourly_paid ?? null, fixedSalaryPaid: r.fixed_salary_paid ?? null };
 }
 
 /** All holidays on file for a given year (both countries) — callers filter by country as needed. */
@@ -53,12 +56,17 @@ export async function addCompanyHoliday(input: { year: number; country: "US" | "
   return mapRow(data);
 }
 
-export async function updateCompanyHoliday(id: string, fields: Partial<{ name: string; date: string }>): Promise<void> {
-  const payload: Record<string, string> = {};
+export async function updateCompanyHoliday(id: string, fields: Partial<{ name: string; date: string; hourlyPaid: boolean | null; fixedSalaryPaid: boolean | null }>): Promise<void> {
+  const payload: Record<string, string | boolean | null> = {};
   if (fields.name !== undefined) payload.name = fields.name;
   if (fields.date !== undefined) payload.date = fields.date;
+  if (fields.hourlyPaid !== undefined) payload.hourly_paid = fields.hourlyPaid;
+  if (fields.fixedSalaryPaid !== undefined) payload.fixed_salary_paid = fields.fixedSalaryPaid;
   const { error } = await supabase.from("company_holidays").update(payload).eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (error.code === "PGRST204" || error.code === "42703") throw new Error("Holiday pay settings require database migration 0434_company_holiday_pay_policies.sql.");
+    throw new Error(error.message);
+  }
 }
 
 export async function deleteCompanyHoliday(id: string): Promise<void> {

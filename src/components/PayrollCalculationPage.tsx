@@ -1,16 +1,21 @@
+import { paidHolidayDates } from "@/lib/holidayPay";
+import { getCompanyHolidaysInRange, type CompanyHolidayRow } from "@/lib/supabase/companyHolidays";
+import { resolveScheduledNetHours } from "@/lib/supabase/timecards";
+import { fixedSalaryForPaidDates, approvedPaidDates } from "@/lib/fixedSalaryPaidDays";
+import { getCompanyPtoRequests, ptoEligibleDate, type PtoRequestRow } from "@/lib/supabase/pto";
 import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Download } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
-import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsers, getHireDatesByProfileIds, type ProfileRow } from "@/lib/supabase/users";
 import { getCompanyTimecardEntries, calcWorkedHours, computeScheduledDutyHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
 import { getCompanySalaryEntries, rateEffectiveOn, entryEffectiveOn, currentRate, perCutoffSalary, type SalaryEntryRow } from "@/lib/supabase/salary";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
-import { getRoleDepartmentBreakdown, isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, hasAnyTechnicianPayRole } from "@/lib/roleLabels";
 import { payGraceMinutesFor } from "@/lib/attendanceGrace";
 import { todayISO, localISODate } from "@/lib/localDate";
 
@@ -61,6 +66,9 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
   // weekly overtime carry-over for a period that happens to start mid-week.
   // See splitRegularOvertimeWeekly.
   const [seedEntries, setSeedEntries] = useState<CompanyTimecardEntry[]>([]);
+  const [companyHolidays, setCompanyHolidays] = useState<CompanyHolidayRow[]>([]);
+  const [ptoRequests, setPtoRequests] = useState<PtoRequestRow[]>([]);
+  const [hireDates, setHireDates] = useState<Map<string, string>>(new Map());
   const [salaryEntries, setSalaryEntries] = useState<SalaryEntryRow[]>([]);
 
   const [search, setSearch] = useState("");
@@ -79,11 +87,13 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
     try {
       const seedStart = startOfWeekSunday(startDate);
       const needsSeed = seedStart < startDate;
-      const [profileRows, entryRows, seedRows, salaryRows] = await Promise.all([
+      const [profileRows, entryRows, seedRows, salaryRows, ptoRows, holidays] = await Promise.all([
         getCompanyUsers(),
         getCompanyTimecardEntries(startDate, endDate),
         needsSeed ? getCompanyTimecardEntries(seedStart, startDate) : Promise.resolve([]),
         getCompanySalaryEntries(),
+        getCompanyPtoRequests(),
+        getCompanyHolidaysInRange(startDate, endDate),
       ]);
       setProfiles(profileRows.filter((p) => p.is_active));
       setEntries(entryRows);
@@ -92,6 +102,9 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
       // itself alongside entryRows — drop it here.
       setSeedEntries(needsSeed ? seedRows.filter((e) => e.workDate < startDate) : []);
       setSalaryEntries(salaryRows);
+      setPtoRequests(ptoRows);
+      setCompanyHolidays(holidays);
+      setHireDates(await getHireDatesByProfileIds(profileRows.map((p) => p.id)));
     } catch (err) {
       console.error("Failed to load payroll data:", err);
     } finally {
@@ -132,7 +145,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
   // a mid-period raise/promotion is handled automatically instead of
   // needing one flat rate for the whole period. Fixed-salary employees
   // (migration 0118) are the exception: they're paid a flat per-cutoff
-  // amount (annual / 26, see perCutoffSalary) regardless of hours actually worked, with no
+  // amount (annual / 26, see perCutoffSalary), prorated by paid dates up to ten, with no
   // overtime — regularHours/overtimeHours are still tallied from real
   // attendance for visibility, they just don't feed into grossPay.
   //
@@ -157,6 +170,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
       const dayEntries = (entriesByProfile.get(p.id) ?? []).slice().sort((a, b) => a.workDate.localeCompare(b.workDate));
       const seedDayEntries = seedEntriesByProfile.get(p.id) ?? [];
       const history = historyByProfile.get(p.id) ?? [];
+      const isTechnicianTier = hasAnyTechnicianPayRole(p.role, p.extra_roles);
       const currentEntry = entryEffectiveOn(history, endDate);
       const isFixed = currentEntry?.compensationType === "fixed";
       let regularHours = 0;
@@ -246,7 +260,20 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
           grossPay += reg * rate + ot * rate * (isPhPayroll ? 1 : OT_MULTIPLIER);
         }
       }
-      if (isFixed && currentEntry?.annualSalary) grossPay = perCutoffSalary(currentEntry.annualSalary, isPhPayroll);
+      const paidPto = approvedPaidDates(ptoRequests.filter((r) => r.profileId === p.id), startDate, endDate, p.off_days ?? [], ptoEligibleDate(hireDates.get(p.id), p.created_at));
+      const holidayDates = isTechnicianTier ? [] : paidHolidayDates(companyHolidays, startDate, endDate, p.off_days ?? [], [...dayEntries.filter((d) => d.checkIn).map((d) => d.workDate), ...paidPto],
+        (date) => entryEffectiveOn(history, date)?.compensationType === "fixed" ? "fixed" : "hourly");
+      const holidayHours = resolveScheduledNetHours(p.required_check_in || "", p.required_check_out || "", p.working_hours, p.meal_minutes);
+      if (isFixed && currentEntry?.annualSalary) {
+        grossPay = isTechnicianTier
+          ? perCutoffSalary(currentEntry.annualSalary, isPhPayroll)
+          : fixedSalaryForPaidDates(perCutoffSalary(currentEntry.annualSalary, isPhPayroll), [...realDates, ...paidPto, ...holidayDates]);
+      } else if (holidayHours > 0) {
+        for (const date of holidayDates) {
+          regularHours += holidayHours;
+          grossPay += holidayHours * rateEffectiveOn(history, date);
+        }
+      }
       const { department, roleLabel } = getRoleDepartmentBreakdown(p.role);
       return {
         profileId: p.id,
@@ -262,7 +289,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
         grossPay,
       };
     });
-  }, [profiles, entriesByProfile, seedEntriesByProfile, historyByProfile, startDate, endDate]);
+  }, [profiles, entriesByProfile, seedEntriesByProfile, historyByProfile, startDate, endDate, ptoRequests, hireDates, companyHolidays]);
 
   const countryRows = rows.filter((r) => r.country === selectedCountry);
   const departments = Array.from(new Set(countryRows.map((r) => r.department).filter(Boolean)));

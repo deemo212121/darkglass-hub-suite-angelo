@@ -720,6 +720,9 @@ export function hoursDiff(t1: string, t2: string): number {
  * user didn't clock in at all are included with status="absent".
  */
 export interface AttendanceRow {
+  /** Scheduled non-worked holiday credit, separate from actual worked hours. */
+  paidHolidayHours?: number;
+  holidayPaid?: boolean | null;
   date: string;          // "YYYY-MM-DD"
   clockIn: string;       // "HH:MM" or ""
   clockOut: string;      // "HH:MM" or ""

@@ -1,3 +1,6 @@
+import { paidHolidayDates } from "@/lib/holidayPay";
+import { resolveScheduledNetHours } from "@/lib/supabase/timecards";
+import { fixedSalaryForPaidDates } from "@/lib/fixedSalaryPaidDays";
 import { getTrainingDates } from "@/lib/supabase/trainingDates";
 import { PayrollAdjustmentsSection } from "@/components/PayrollAdjustmentsSection";
 import type { PayrollAdjustment } from "@/lib/supabase/payrollAdjustments";
@@ -204,6 +207,7 @@ const PTO_TYPE_LABEL: Record<string, string> = {
 };
 /** "Vacation Leave" etc. when the specific PTO type is known, else the generic STATUS_LABEL fallback ("Paid Leave"/"Unpaid Leave"). */
 function statusLabelFor(row: AttendanceRow): string {
+  if (row.status === "holiday" && row.holidayPaid !== undefined) return row.holidayPaid == null ? "Holiday - Not configured" : row.holidayPaid ? "Holiday - Paid" : "Holiday - Unpaid";
   if ((row.status === "paid-leave" || row.status === "unpaid-leave") && row.leaveType) {
     return PTO_TYPE_LABEL[row.leaveType] ?? STATUS_LABEL[row.status];
   }
@@ -514,7 +518,16 @@ export function EmployeePayrollDetailModal({
         unpaidLeaveDates,
       });
       if (cancelledRef.current) return;
-      setAttendance(attRows);
+      const holidayCreditDates = new Set(isTechnicianTier ? [] : paidHolidayDates(holidays, rangeStart, rangeEnd, offDays ?? [],
+        attRows.filter((r) => r.hoursWorked > 0 || !!r.clockIn || r.status === "paid-leave").map((r) => r.date),
+        (date) => entryEffectiveOn(payRateHistory(hist, isTechnicianTier), date)?.compensationType === "fixed" ? "fixed" : "hourly"));
+      const scheduledHolidayHours = resolveScheduledNetHours(requiredCheckIn || "", requiredCheckOut || "", workingHours, mealMinutes);
+      setAttendance(attRows.map((row) => {
+        const policy = holidays.find((h) => h.date === row.date);
+        const fixed = entryEffectiveOn(payRateHistory(hist, isTechnicianTier), row.date)?.compensationType === "fixed";
+        return { ...row, holidayPaid: isTechnicianTier ? undefined : policy ? (fixed ? policy.fixedSalaryPaid : policy.hourlyPaid) ?? null : null,
+          paidHolidayHours: holidayCreditDates.has(row.date) ? Math.max(scheduledHolidayHours, 0) : 0 };
+      }));
       setSeedAttendance(seedRows);
       setNotesByDate(noteMap);
       setPendingCorrectionByDate(new Map(pendingCorrections.filter((c) => c.profileId === profileId).map((c) => [c.workDate, c])));
@@ -853,7 +866,7 @@ export function EmployeePayrollDetailModal({
     // two ways: it could get capped away in an already-full week, or push
     // real hours elsewhere in the week into overtime it never actually
     // caused.
-    const isPaidLeave = (row: AttendanceRow) => row.status === "paid-leave";
+    const isPaidLeave = (row: AttendanceRow) => row.status === "paid-leave" || (row.paidHolidayHours ?? 0) > 0;
     // Paid meal credit (mealCreditByDate) is added straight into the raw
     // hours here, BEFORE the regular/overtime weekly split — treated exactly
     // like real worked time. It fills whatever room is left in the week's
@@ -875,9 +888,10 @@ export function EmployeePayrollDetailModal({
       return splitRegularOvertimeWeekly(days, { requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, offDays }, 8, usesFlatWeeklyThreshold ? CSR_WEEKLY_OVERTIME_THRESHOLD : undefined);
     })();
     for (const row of attendance) {
-      if (!isPaidLeave(row) || !row.hoursWorked) continue;
+      const paidHours = row.paidHolidayHours || row.hoursWorked;
+      if (!isPaidLeave(row) || !paidHours) continue;
       const prev = map.get(row.date) ?? { regular: 0, overtime: 0 };
-      map.set(row.date, { regular: prev.regular + row.hoursWorked, overtime: prev.overtime });
+      map.set(row.date, { regular: prev.regular + paidHours, overtime: prev.overtime });
     }
     return map;
   }, [attendance, seedAttendance, requiredCheckIn, requiredCheckOut, workingHours, mealMinutes, offDays, rangeStart, rangeEnd, usesFlatWeeklyThreshold, mealCreditByDate]);
@@ -932,7 +946,7 @@ export function EmployeePayrollDetailModal({
   }, [attendance, rateHistory, dailyHoursSplitByDate, otMultiplier, traineeWindow.start, traineeWindow.end]);
 
   // Hourly ↔ fixed switch inside the viewed range: hourly days by the hour +
-  // the full fixed cutoff salary, before manual deductions, as in the payroll table.
+  // the fixed salary for paid dates (up to ten), as in the payroll table.
   const mixedFixed = useMemo(
     () =>
       mixedPeriodFixedPay(
@@ -942,9 +956,10 @@ export function EmployeePayrollDetailModal({
           const e = entryEffectiveOn(rateHistory, date);
           return e ? { type: e.compensationType === "fixed" ? "fixed" : "hourly", annualSalary: e.annualSalary ?? null } : null;
         },
-        isPhPayroll
+        isPhPayroll,
+        [...dailyHoursSplitByDate].filter(([, hours]) => hours.regular + hours.overtime > 0.0005).map(([date]) => date)
       ),
-    [rangeStart, rangeEnd, rateHistory, isPhPayroll]
+    [rangeStart, rangeEnd, rateHistory, isPhPayroll, dailyHoursSplitByDate]
   );
 
   const payViewTotals = useMemo(() => {
@@ -974,7 +989,8 @@ export function EmployeePayrollDetailModal({
       // pay is shown (Current Rate tile, Tech Activity Report's Hourly Pay
       // line). Using monthlySalary here inflated it to annual/12 (e.g. a
       // $72,000/yr salary showed $6,000.00 instead of the correct $2,769.23).
-      const fixed = perCutoffSalary(currentEntry.annualSalary, isPhPayroll);
+      const fixed = isTechnicianTier ? perCutoffSalary(currentEntry.annualSalary, isPhPayroll) : fixedSalaryForPaidDates(perCutoffSalary(currentEntry.annualSalary, isPhPayroll),
+        [...dailyHoursSplitByDate].filter(([date, hours]) => date >= rangeStart && date <= rangeEnd && hours.regular + hours.overtime > 0.0005).map(([date]) => date));
       return {
         calculated: { regularPay: fixed, overtimePay: 0, total: fixed },
         compliant: { regularPay: fixed, overtimePay: 0, total: fixed },
@@ -996,7 +1012,7 @@ export function EmployeePayrollDetailModal({
     totals.calculated.total = totals.calculated.regularPay + totals.calculated.overtimePay;
     totals.compliant.total = totals.compliant.regularPay + totals.compliant.overtimePay;
     return totals;
-  }, [attendance, rateHistory, dailyHoursSplitByDate, dailyPayByDate, isCurrentlyFixed, currentEntry, otMultiplier, isPhPayroll, mixedFixed]);
+  }, [attendance, rateHistory, dailyHoursSplitByDate, dailyPayByDate, isCurrentlyFixed, currentEntry, otMultiplier, isPhPayroll, mixedFixed, rangeStart, rangeEnd, isTechnicianTier]);
   const downloadAttendanceExcel = async () => {
     if (downloadingAttendance || loading || attendance.length === 0 || attendanceEditing || savingRates || pendingRateChanges.length > 0) return;
     setDownloadingAttendance(true);
@@ -1776,7 +1792,7 @@ export function EmployeePayrollDetailModal({
                       const dayIsFixed = entryEffectiveOn(rateHistory, row.date)?.compensationType === "fixed";
                       const dayNote = notesByDate.get(row.date);
                       const edit = attendanceEdits[row.date];
-                      const isRestDay = row.status === "day-off" || row.status === "holiday";
+                      const isRestDay = row.status === "day-off" || (row.status === "holiday" && !row.paidHolidayHours);
                       // dailyHoursSplitByDate's regular/overtime is correct (meal credit
                       // merged into the raw hours BEFORE the weekly cap runs, so the cap
                       // trips on the right day even when credit is what pushes a day over)
@@ -1796,7 +1812,7 @@ export function EmployeePayrollDetailModal({
                       // shows the real punched break duration, not a derived credit amount
                       // (see actualMealHours).
                       const folded = dailyHoursSplitByDate.get(row.date) ?? { regular: 0, overtime: 0 };
-                      const realHours = row.hoursWorked;
+                      const realHours = row.paidHolidayHours || row.hoursWorked;
                       const regularHours = Math.min(realHours, folded.regular);
                       const overtimeHours = folded.overtime;
                       const totalDayHours = folded.regular + folded.overtime;
@@ -1931,7 +1947,7 @@ export function EmployeePayrollDetailModal({
                         <td className={`py-1.5 text-right ${overtimeHours > 0 ? "text-orange-300 font-semibold" : "text-slate-500"}`}>
                           {overtimeHours > 0 ? fmtDecimal(overtimeHours) : "—"}
                         </td>
-                        <td className="py-1.5 text-right text-slate-200">{row.hoursWorked ? fmtDecimal(totalDayHours) : "—"}</td>
+                        <td className="py-1.5 text-right text-slate-200">{totalDayHours > 0 ? fmtDecimal(totalDayHours) : "—"}</td>
                         <td className={`py-1.5 text-right font-semibold ${STATUS_COLOR[row.status]}`}>
                           {(() => {
                             const approved = approvedCorrectionByDate.get(row.date);

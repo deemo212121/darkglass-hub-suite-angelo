@@ -7,6 +7,7 @@
  * instead of needing a single flat rate per period.
  */
 
+import { fixedSalaryForPaidDates } from "@/lib/fixedSalaryPaidDays";
 import { supabase } from "./client";
 import { todayISO } from "@/lib/localDate";
 
@@ -180,19 +181,21 @@ export function perCutoffSalary(annualSalary: number, isPH: boolean = false): nu
 
 export interface MixedPeriodFixedPay {
   perCutoff: number;
-  /** Full annual salary / 26. Any proration is a manual payroll deduction. */
+  paidDays: number;
+  /** Fixed cutoff salary prorated by credited fixed dates, capped at ten. */
   fixedPay: number;
 }
 
-/** Hourly days retain their hourly pay; the fixed portion pays the full cutoff
- * salary. Accountants apply any needed deductions through payroll adjustments.
+/** Hourly days retain their hourly pay; the fixed portion counts only paid dates
+ * under fixed compensation, capped at ten days per cutoff.
  * Returns null when the period has only one compensation type.
  */
 export function mixedPeriodFixedPay(
   periodStart: string,
   periodEnd: string,
   compOn: (date: string) => { type: "hourly" | "fixed"; annualSalary: number | null } | null,
-  isPH: boolean
+  isPH: boolean,
+  paidDates: Iterable<string>
 ): MixedPeriodFixedPay | null {
   if (!periodStart || !periodEnd || periodStart > periodEnd) return null;
   const types = new Set<string>();
@@ -208,7 +211,8 @@ export function mixedPeriodFixedPay(
     }
   }
   if (types.size < 2) return null;
-  return { perCutoff, fixedPay: perCutoff };
+  const fixedDates = [...new Set(paidDates)].filter((date) => date >= periodStart && date <= periodEnd && compOn(date)?.type === "fixed");
+  return { perCutoff, paidDays: Math.min(fixedDates.length, 10), fixedPay: fixedSalaryForPaidDates(perCutoff, fixedDates) };
 }
 
 /** Monthly pay for a fixed annual salary — annual / 12. */
