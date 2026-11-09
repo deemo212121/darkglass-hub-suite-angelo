@@ -11,9 +11,8 @@
  *
  * Read by Absent List, Time Off Calendar, and Attendance Monitoring
  * (excludes a holiday date from "who's missing a clock-in" the same way a
- * rest day already is). Payroll integration is intentionally limited to
- * this reference calendar — pay is already driven by actual clocked
- * hours, so no separate holiday-pay calculation was needed.
+ * rest day already is). Explicit Hourly / Fixed Salary pay settings feed
+ * payroll; unconfigured holidays do not automatically add pay.
  */
 import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Plus, Trash2, Pencil, Check } from "lucide-react";
@@ -105,6 +104,20 @@ export function HolidayCalendarTab({ myProfileId }: { myProfileId: string | null
     }
   };
 
+  const handlePayPolicy = async (holiday: CompanyHolidayRow, field: "hourlyPaid" | "fixedSalaryPaid", value: string) => {
+    const paid = value === "unset" ? null : value === "paid";
+    setSaving(true);
+    setError(null);
+    try {
+      await updateCompanyHoliday(holiday.id, { [field]: paid });
+      setHolidays((prev) => prev.map((h) => h.id === holiday.id ? { ...h, [field]: paid } : h));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save holiday pay policy.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleDelete = async (id: string, name: string) => {
     if (!confirm(`Remove "${name}" from ${year}'s holiday calendar?`)) return;
     try {
@@ -148,6 +161,8 @@ export function HolidayCalendarTab({ myProfileId }: { myProfileId: string | null
                   <tr className="text-slate-400 border-b border-white/10 text-left">
                     <th className="py-2 pr-3">Holiday</th>
                     <th className="py-2 pr-3">Date</th>
+                    <th className="py-2 pr-3">Hourly</th>
+                    <th className="py-2 pr-3">Fixed Salary</th>
                     <th className="py-2 w-20">Actions</th>
                   </tr>
                 </thead>
@@ -178,6 +193,21 @@ export function HolidayCalendarTab({ myProfileId }: { myProfileId: string | null
                           formatDate(h.date)
                         )}
                       </td>
+                      {(["hourlyPaid", "fixedSalaryPaid"] as const).map((field) => (
+                        <td key={field} className="py-2 pr-3">
+                          <select
+                            aria-label={`${h.name}: ${field === "hourlyPaid" ? "Hourly" : "Fixed Salary"} holiday pay`}
+                            value={h[field] == null ? "unset" : h[field] ? "paid" : "unpaid"}
+                            disabled={saving}
+                            onChange={(e) => void handlePayPolicy(h, field, e.target.value)}
+                            className="glass-input text-sm py-1 px-2 rounded-md min-w-36 disabled:opacity-50"
+                          >
+                            <option value="unset">Not configured</option>
+                            <option value="paid">Paid</option>
+                            <option value="unpaid">Unpaid</option>
+                          </select>
+                        </td>
+                      ))}
                       <td className="py-2">
                         <div className="flex items-center gap-2">
                           {editingId === h.id ? (
@@ -201,6 +231,7 @@ export function HolidayCalendarTab({ myProfileId }: { myProfileId: string | null
             </div>
           )}
 
+          <p className="text-xs text-muted-foreground mb-3">For an unworked scheduled day, Paid adds scheduled hours for hourly pay or one paid day toward fixed salary. Worked dates and paid PTO count once. These settings apply to office payroll only; technician payroll is unchanged. Not configured adds no holiday-pay credit.</p>
           <div className="flex flex-wrap items-end gap-2 pt-3 border-t border-white/10">
             <div className="flex flex-col gap-1">
               <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Holiday name</label>

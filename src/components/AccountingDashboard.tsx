@@ -1,3 +1,5 @@
+import { paidHolidayDates } from "@/lib/holidayPay";
+import { fixedSalaryForPaidDates } from "@/lib/fixedSalaryPaidDays";
 import { TraineeMonitoringTab } from "@/components/TraineeMonitoringTab";
 import { resolveTrainingRecord, trainingWindow } from "@/lib/fieldStartDate";
 import { getTrainingDates } from "@/lib/supabase/trainingDates";
@@ -442,7 +444,9 @@ export interface EmployeePayrollRow {
    * still gets paid instead of silently dropped.
    */
   isTechPortion?: boolean;
-  /** Hourly earnings plus the full fixed cutoff salary, before manual deductions. */
+  /** Credited paid dates for a fixed salary, capped at ten. */
+  fixedPaidDays?: number;
+  /** Hourly earnings plus the prorated fixed salary. */
   mixedPay?: MixedPeriodFixedPay & { hourlyHours: number; hourlyPay: number };
   /** Tech row only: grossPay split into Finance's summary columns (Reviewed Periods). */
   techSummary?: PayrollReviewAmounts;
@@ -496,6 +500,7 @@ function computeDutyHoursByEmployee(
  * rate change) can do so, instead of collapsing straight to one period total
  * and one flat rate. See dailyHoursByEmployeeId/hourlyRateOnDate below. */
 export interface DailyHours {
+  paidHoliday?: boolean;
   date: string;
   regular: number;
   overtime: number;
@@ -2338,6 +2343,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     }
   }, [genStart, genEnd, beginPeriodLoad, endPeriodLoad]);
   useEffect(() => { void loadCompanyHolidays(); }, [loadCompanyHolidays]);
+  useEffect(() => {
+    // Pick up HR policy changes when returning from the Holiday Calendar tab.
+    const refresh = () => { void loadCompanyHolidays(); };
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [loadCompanyHolidays]);
 
   // ── Derived data ─────────────────────────────────────────────────────────────
   // Salary entry effective as of this payroll period (genEnd) per employee.
@@ -2451,6 +2462,30 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       const best = salaryEntryOnDate(profileId, date);
       return best ? (best.compensation_type === "hourly" ? best.hourly_rate : 0) : fallbackRate;
     };
+
+    // Non-worked paid holidays are regular paid time, added AFTER the worked
+    // weekly split so they cannot create overtime. PTO/work dates take precedence.
+    for (const emp of employees) {
+      // Holiday pay settings apply to office payroll only; technician pay is unchanged.
+      if (hasAnyTechnicianPayRole(emp.role, emp.extraRoles)) continue;
+      const daily = dailyHoursByEmployeeId.get(emp.id) ?? [];
+      const credited = [...daily.filter((d) => d.regular + d.overtime > 0.0005).map((d) => d.date),
+        ...timecardEntries.filter((e) => e.profile_id === emp.id && !!e.check_in).map((e) => e.work_date)];
+      const dates = paidHolidayDates(companyHolidays, genStart, genEnd, emp.offDays ?? [], credited,
+        (date) => salaryEntryOnDate(emp.id, date)?.compensation_type === "fixed" ? "fixed" : "hourly");
+      const netHours = resolveScheduledNetHours(emp.requiredCheckIn || "", emp.requiredCheckOut || "", emp.workingHours, emp.mealMinutes);
+      const hireDate = employeeInfoByProfileId.get(emp.id)?.hireDate;
+      for (const date of dates) {
+        if (hireDate && date < hireDate) continue;
+        if (!emp.isActive && !timecardEntries.some((e) => e.profile_id === emp.id)) continue;
+        if (netHours <= 0) continue;
+        daily.push({ date, regular: netHours, overtime: 0, paidHoliday: true });
+        const totals = hoursMap.get(emp.id) ?? { regular: 0, overtime: 0 };
+        hoursMap.set(emp.id, { regular: totals.regular + netHours, overtime: totals.overtime });
+      }
+      daily.sort((a, b) => a.date.localeCompare(b.date));
+      dailyHoursByEmployeeId.set(emp.id, daily);
+    }
 
     // "YYYY-MM-DD" dates recognized as a company holiday this period — feeds
     // the Holiday Premium below. Multiple rows can share a date across US/PH,
@@ -2712,7 +2747,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // are just hourlyRate/grossPay verbatim.
     //
     // Fixed-salary employees (migration 0118) are paid a flat per-cutoff
-    // amount (annual / 26, see perCutoffSalary) regardless of hours actually worked or overtime —
+    // amount (annual / 26, see perCutoffSalary), prorated by paid dates up to ten —
     // hoursWorked/overtimeHours/dutyHours are still computed for attendance
     // visibility, they just don't feed into grossPay for these employees.
     // Technicians (Tech Payroll) take priority over both: hoursWorked/
@@ -3110,7 +3145,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // so the payroll line's gross, any % tax and the net all start from the
       // same cent figure the table shows (Angelo Mendoza 9/27–10/10: net was
       // worked out from $474.4069, giving $534.42 against $474.41 + $60.00).
-      // Fixed salary always pays annual / 26; accountants apply deductions manually.
+      // Daily records include eligible paid PTO; count each paid date once, up to ten.
       const workedDays = (dailyHoursByEmployeeId.get(emp.id) ?? []).filter((d) => (!genStart || d.date >= genStart) && (!genEnd || d.date <= genEnd) && d.regular + d.overtime > 0.0005);
       // Preserve hourly earnings when compensation changes within the cutoff.
       const mixedFixed = mixedPeriodFixedPay(
@@ -3120,7 +3155,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           const se = salaryEntryOnDate(emp.id, date);
           return se ? { type: se.compensation_type === "fixed" ? "fixed" : "hourly", annualSalary: se.annual_salary ?? null } : null;
         },
-        emp.country === "PH"
+        emp.country === "PH",
+        workedDays.map((d) => d.date)
       );
       const mixedPay = mixedFixed
         ? {
@@ -3136,7 +3172,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         : mixedPay
         ? cents(mixedPay.hourlyPay + mixedPay.fixedPay)
         : isFixed && annualSalary
-        ? cents(fullCutoffSalary)
+        ? cents(fixedSalaryForPaidDates(fullCutoffSalary, workedDays.map((d) => d.date)))
         : cents(cents(officeDailyPay.regularPay) + cents(officeDailyPay.overtimePayAt1_5x));
       const officeRow: EmployeePayrollRow = {
         employee: emp,
@@ -3171,6 +3207,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         grossPay: officeGrossPay,
         grossPayUSD: officeGrossPay,
         isTechPortion: false,
+        ...(isFixed ? { fixedPaidDays: Math.min(new Set(workedDays.map((d) => d.date)).size, 10) } : {}),
         ...(mixedPay ? { mixedPay } : {}),
       };
       return techRow ? [officeRow, techRow] : [officeRow];
@@ -5411,9 +5448,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               </td>
                               <td className="px-3 py-2 text-center text-slate-300" title={row.compensationType === "fixed" && row.annualSalary ? `$${perCutoffSalary(row.annualSalary, row.employee.country === "PH").toFixed(2)}/cutoff` : undefined}>
                                 {rateLabel(row)}
+                                {!row.mixedPay && row.fixedPaidDays != null && (
+                                  <div className="text-[10px] text-amber-300" title="Worked days plus eligible approved paid PTO; each date counts once.">
+                                    {row.fixedPaidDays} of 10 paid days
+                                  </div>
+                                )}
                                 {row.mixedPay && (
                                   <div className="text-[10px] text-amber-300" title={`Hourly pay $${row.mixedPay.hourlyPay.toFixed(2)} + fixed salary $${row.mixedPay.fixedPay.toFixed(2)}/cutoff, before manual deductions`}>
-                                    Hourly + full fixed cutoff
+                                    Hourly + {row.mixedPay.paidDays} of 10 fixed days
                                   </div>
                                 )}
                               </td>
