@@ -146,7 +146,7 @@ const AuthContext = createContext<AuthState | null>(null);
 // Roles allowed to trigger the legacy-user import. Only privileged company
 // roles (they can read the company's Firestore users). Runs once per browser
 // session per company to avoid repeating on every auth state change.
-const MIGRATION_ROLES = new Set(["SUPERADMIN", "ADMIN", "MANAGER", "HR"]);
+const MIGRATION_ROLES = new Set(["SUPERADMIN", "ADMIN", "MANAGER", "HR", "HR_MANAGER"]);
 const migrationAttempted = new Set<string>();
 
 // Load this company's Supabase coverage zips into the runtime zip lookup so

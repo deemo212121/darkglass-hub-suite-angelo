@@ -393,7 +393,7 @@ export function useMergedNotifications(options?: { limit?: number }) {
   // extraRoles during a "View as" preview) rather than a separate
   // getMyRoles(uid) DB call this file used to make, which read the REAL
   // signed-in account's own extra_roles regardless of any active preview.
-  const isHr = (role ?? "").toUpperCase() === "HR" || extraRoles.some((r) => (r ?? "").toUpperCase() === "HR");
+  const isHr = [role, ...extraRoles].some((r) => ["HR", "HR_MANAGER"].includes((r ?? "").toUpperCase()));
   const [profileId, setProfileId] = useState<string | null>(null);
   const [tableNotifs, setTableNotifs] = useState<NotificationRow[]>([]);
   const [firestoreNotifs, setFirestoreNotifs] = useState<AppNotification[]>([]);

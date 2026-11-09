@@ -672,7 +672,7 @@ export function HiringAnalyticsPage() {
     const loggedKeys = new Set(branchFilteredEntries.map((e) => e.targetId).filter((id): id is string => !!id));
     const hrNameById = new Map(
       profiles
-        .filter((p) => normalizeRole(p.role) === "HR" || (p.extra_roles ?? []).some((r) => normalizeRole(r) === "HR"))
+        .filter((p) => [p.role, ...(p.extra_roles ?? [])].some((r) => ["HR", "HR_MANAGER"].includes(normalizeRole(r))))
         .map((p) => [p.id, p.display_name || p.email || "Unknown"])
     );
     for (const r of filteredEmpNotes) {

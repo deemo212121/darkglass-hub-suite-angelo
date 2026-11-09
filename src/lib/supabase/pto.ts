@@ -595,7 +595,7 @@ export function canReviewPtoStage(
   }
   // HR and Accounting no longer wait for the manager — any 2 of the 3 stages
   // decide a leave request, in any order (migration 0335).
-  if (stage === "hr") return has("HR");
+  if (stage === "hr") return has("HR") || has("HR_MANAGER");
   return has("FINANCE") || has("ACCOUNTING_MANAGER");
 }
 
@@ -994,7 +994,7 @@ ${line}` : line;
       const recipients = roster.filter((p) => {
         if (p.id === reviewerId || !p.is_active) return false;
         const heldRoles = [p.role, ...(p.extra_roles ?? [])].map((r) => (r || "").toUpperCase());
-        return heldRoles.includes("HR") || heldRoles.includes("FINANCE") || heldRoles.includes("ACCOUNTING_MANAGER");
+        return heldRoles.includes("HR") || heldRoles.includes("HR_MANAGER") || heldRoles.includes("FINANCE") || heldRoles.includes("ACCOUNTING_MANAGER");
       });
       await Promise.all(
         recipients.map((r) =>

@@ -354,7 +354,7 @@ export async function handleRunFlashTechOpenAlertsRequest(request: Request, env:
     const caller = await fetchProfileByFirebaseUid(envResult, claims.sub);
     if (!caller) return json({ error: "Profile not found" }, 403);
     const callerRoles = [caller.role, ...caller.extraRoles].map((r) => (r || "").toUpperCase());
-    const canRun = callerRoles.some((r) => r === "ADMIN" || r === "SUPERADMIN" || r === "HR");
+    const canRun = callerRoles.some((r) => r === "ADMIN" || r === "SUPERADMIN" || r === "HR" || r === "HR_MANAGER");
     if (!canRun) return json({ error: "Only HR/Admin can run this" }, 403);
 
     const dryRun = payload.dryRun === true;

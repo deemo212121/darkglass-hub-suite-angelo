@@ -54,7 +54,7 @@ function TraineeFlag() {
 const nameOf = (p: ProfileRow | null | undefined) => (p ? p.display_name || p.email || "Unknown" : "—");
 const roleLabel = (p: ProfileRow) => ROLE_LABELS[normalizeRole(p.role)] ?? p.role;
 const holds = (p: ProfileRow, role: string) => [p.role, ...(p.extra_roles ?? [])].some((r) => String(r || "").toUpperCase() === role);
-const FULL_CLOCK_IN = ["SUPERADMIN", "SUPERSUPERADMIN", "ADMIN", "HR", "FINANCE", "ACCOUNTING_MANAGER", "TECHNICAL_DIRECTOR", "TECHNICAL_ASSISTANT_DIRECTOR"];
+const FULL_CLOCK_IN = ["SUPERADMIN", "SUPERSUPERADMIN", "ADMIN", "HR", "HR_MANAGER", "FINANCE", "ACCOUNTING_MANAGER", "TECHNICAL_DIRECTOR", "TECHNICAL_ASSISTANT_DIRECTOR"];
 
 export function ApprovalChainPage({ mod, sub }: Props) {
   const navigate = useNavigate();

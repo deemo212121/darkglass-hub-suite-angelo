@@ -19,6 +19,7 @@ const SCHEDULE_EDIT_ROLES = new Set([
   "SUPERADMIN",
   "ADMIN",
   "HR",
+  "HR_MANAGER",
   "MANAGER",
   "SENIOR_MANAGER",
   "BRANCH_MANAGER",

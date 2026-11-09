@@ -125,13 +125,13 @@ async function fetchHrRoleAndCreatorFirebaseUids(
   const url =
     `${env.supabaseUrl}/rest/v1/profiles` +
     `?select=id,firebase_uid,role,extra_roles&company_id=eq.${encodeURIComponent(companyId)}&is_active=eq.true` +
-    `&or=(${idFilter}role.eq.HR,extra_roles.cs.{HR})`;
+    `&or=(${idFilter}role.eq.HR,role.eq.HR_MANAGER,extra_roles.cs.{HR},extra_roles.cs.{HR_MANAGER})`;
   const res = await fetch(url, { headers: { apikey: env.supabaseServiceKey, Authorization: `Bearer ${env.supabaseServiceKey}` } });
   if (!res.ok) throw new Error(`profiles lookup failed (${res.status}): ${await res.text()}`);
   const rows = (await res.json()) as NotifyProfileRow[];
   const creatorRow = createdByProfileId ? rows.find((r) => r.id === createdByProfileId) : undefined;
   const isHrRole = (r: NotifyProfileRow) =>
-    r.role?.toUpperCase() === "HR" || (r.extra_roles ?? []).some((x) => x.toUpperCase() === "HR");
+    [r.role, ...(r.extra_roles ?? [])].some((x) => ["HR", "HR_MANAGER"].includes((x ?? "").toUpperCase()));
   const hrFirebaseUids = rows.filter((r) => isHrRole(r) && r.id !== createdByProfileId).map((r) => r.firebase_uid).filter(Boolean);
   return { creatorFirebaseUid: creatorRow?.firebase_uid ?? null, hrFirebaseUids };
 }

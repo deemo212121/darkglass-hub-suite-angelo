@@ -1243,7 +1243,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
             </button>
           </div>
         )}
-        {view === "exceededSickDays" && exceededTab === "timeCorrections" && <ExceededTimeCorrectionsTab profiles={visibleProfiles} canExempt={[role, ...(extraRoles ?? [])].some((r) => ["ADMIN", "HR", "SUPERADMIN"].includes(normalizeRole(r)))} myName={displayName || ""} myProfileId={myProfileId} />}
+        {view === "exceededSickDays" && exceededTab === "timeCorrections" && <ExceededTimeCorrectionsTab profiles={visibleProfiles} canExempt={[role, ...(extraRoles ?? [])].some((r) => ["ADMIN", "HR", "HR_MANAGER", "SUPERADMIN"].includes(normalizeRole(r)))} myName={displayName || ""} myProfileId={myProfileId} />}
         {view === "exceededSickDays" && exceededTab === "sickDays" && (
           <div className="panel p-4">
             <div className="flex items-center gap-2 mb-1">

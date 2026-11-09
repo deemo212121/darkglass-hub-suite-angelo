@@ -48,7 +48,7 @@ import { findPersonByName } from "@/lib/personName";
 import { timezoneForBranch } from "../attendanceGrace";
 import { TECHNICIAN_PAY_ROLES, normalizeRole } from "../roleLabels";
 
-const NOTIFY_ROLES = new Set(["HR", "FINANCE", "ACCOUNTING_MANAGER"]);
+const NOTIFY_ROLES = new Set(["HR", "HR_MANAGER", "FINANCE", "ACCOUNTING_MANAGER"]);
 
 function fmtHoursMinutes(hours: number): string {
   const totalMinutes = Math.max(0, Math.round(hours * 60));

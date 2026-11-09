@@ -17,7 +17,7 @@ export type HiringEmailKind =
 export type OrientationZone = "CST" | "EST";
 
 /** Who may send these. Checked against the person's primary and extra roles, in the page and on the server. */
-export const CANDIDATE_EMAIL_SENDER_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN"]);
+export const CANDIDATE_EMAIL_SENDER_ROLES = new Set(["HR", "HR_MANAGER", "ADMIN", "SUPERADMIN"]);
 
 // Shown in the draft until the field above it is filled in. Send stays off while one is left.
 const NEEDS_POSITION = "[enter the position above]";

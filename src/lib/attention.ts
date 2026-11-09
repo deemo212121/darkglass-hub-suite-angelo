@@ -73,10 +73,10 @@ export interface Attention {
   tabCounts: Record<string, number>;
 }
 
-const COMPANY_WIDE_ROLES = new Set(["ADMIN", "SUPERADMIN", "SUPERSUPERADMIN", "HR", "FINANCE", "ACCOUNTING_MANAGER"]);
-const LIMIT_ROLES = new Set(["ADMIN", "HR", "SUPERADMIN"]);
+const COMPANY_WIDE_ROLES = new Set(["ADMIN", "SUPERADMIN", "SUPERSUPERADMIN", "HR", "HR_MANAGER", "FINANCE", "ACCOUNTING_MANAGER"]);
+const LIMIT_ROLES = new Set(["ADMIN", "HR", "HR_MANAGER", "SUPERADMIN"]);
 // Told when someone finishes every form on Staff Form Checklist.
-const FORMS_DONE_ROLES = new Set(["ADMIN", "HR", "SUPERADMIN", "SUPERSUPERADMIN"]);
+const FORMS_DONE_ROLES = new Set(["ADMIN", "HR", "HR_MANAGER", "SUPERADMIN", "SUPERSUPERADMIN"]);
 // Can be coached or coach on CSR → Coaching Log.
 const COACHING_ROLES = new Set(["CSR", "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER", "ADMIN", "SUPERADMIN"]);
 // Can be coached or coach on Accounting → Coaching Log.

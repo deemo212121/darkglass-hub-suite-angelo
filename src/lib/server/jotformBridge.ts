@@ -654,7 +654,7 @@ async function mirrorSubmissionFiles(
 // entry in src/lib/supabase/notificationRoleGates.ts (the client-side
 // registry the Accessibility Management grid reads/writes) so the two
 // stay in sync.
-const JOTFORM_HR_ROLES_DEFAULT = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER", "SENIOR_MANAGER"]);
+const JOTFORM_HR_ROLES_DEFAULT = new Set(["HR", "HR_MANAGER", "ADMIN", "SUPERADMIN", "MANAGER", "SENIOR_MANAGER"]);
 const JOTFORM_NOTIFY_TRIGGER_KEY = "jotform_submission_hr";
 
 /**
@@ -719,7 +719,8 @@ async function findHrFirebaseUids(
   const candidateUids = rows
     .filter((r) => {
       const roles = [r.role, ...(r.extra_roles ?? [])].map((v) => String(v ?? "").trim().toUpperCase());
-      return roles.some((v) => notifyRoles.has(v));
+      // An HR Manager gets whatever HR gets (ROLE_INCLUDES in roleLabels.ts — not imported, this file stays dependency-free).
+      return roles.some((v) => notifyRoles.has(v) || (v === "HR_MANAGER" && notifyRoles.has("HR")));
     })
     .map((r) => r.firebase_uid)
     .filter((uid): uid is string => Boolean(uid));

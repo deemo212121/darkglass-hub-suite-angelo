@@ -45,7 +45,7 @@ export function ClockInCodesTab({ standalone, backModule = "hr" }: { standalone?
   const navigate = useNavigate();
   // Branch leaders can see the code; only HR / Admin / SuperAdmin make a new one (migration 0346).
   const { role, extraRoles } = useAuth();
-  const canRegenerate = [role, ...(extraRoles ?? [])].some((r) => ["HR", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(String(r || "").toUpperCase()));
+  const canRegenerate = [role, ...(extraRoles ?? [])].some((r) => ["HR", "HR_MANAGER", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(String(r || "").toUpperCase()));
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [code, setCode] = useState("");
   const [day, setDay] = useState("");

@@ -88,7 +88,7 @@ const PH_DEPT_BY_ROLE: Record<string, string> = {
   // requests go to the top level unless Admin names Sales managers (0405).
   SALES_MANAGER: "Sales",
   MANAGER: "Management", SENIOR_MANAGER: "Management",
-  FINANCE: "Accounting", ACCOUNTING_MANAGER: "Accounting", HR: "HR", IT: "IT", DISPATCHER: "Dispatch",
+  FINANCE: "Accounting", ACCOUNTING_MANAGER: "Accounting", HR: "HR", HR_MANAGER: "HR", IT: "IT", DISPATCHER: "Dispatch",
   TECHNICIAN: "Technician", TECHNICIAN_MANAGER: "Technician", TECHNICAL_DIRECTOR: "Technician",
   TECHNICAL_ASSISTANT_DIRECTOR: "Technician", BRANCH_MANAGER: "Technician", SENIOR_BRANCH_MANAGER: "Technician",
 };
@@ -209,7 +209,7 @@ export function chainCanClockInWith(data: ChainData, viewerId: string | null | u
   if (!v) return false;
   const roles = heldRoles(v);
   const has = (...xs: string[]) => xs.some((x) => roles.includes(x));
-  if (has("SUPERADMIN", "SUPERSUPERADMIN", "ADMIN", "HR", "FINANCE", "ACCOUNTING_MANAGER", "TECHNICAL_DIRECTOR", "TECHNICAL_ASSISTANT_DIRECTOR")) return true;
+  if (has("SUPERADMIN", "SUPERSUPERADMIN", "ADMIN", "HR", "HR_MANAGER", "FINANCE", "ACCOUNTING_MANAGER", "TECHNICAL_DIRECTOR", "TECHNICAL_ASSISTANT_DIRECTOR")) return true;
   // The Approval Chain's top level clocks in at every branch (migration 0340).
   if (isTopApprover(data, v)) return true;
   const sameBranch = !!normBranch(v.assigned_branch) && normBranch(v.assigned_branch) === normBranch(t.assigned_branch);
@@ -256,7 +256,7 @@ export function chainCanApproveCorrectionWith(data: ChainData, viewerId: string 
   }
   if (!v || v.id === r.id) return false;
   const roles = heldRoles(v);
-  if (roles.some((x) => ["SUPERADMIN", "SUPERSUPERADMIN", "ADMIN", "HR"].includes(x))) return true;
+  if (roles.some((x) => ["SUPERADMIN", "SUPERSUPERADMIN", "ADMIN", "HR", "HR_MANAGER"].includes(x))) return true;
   if (heldRoles(r).includes("PARTS_MANAGER")) return false;
   const sameBranch = !!normBranch(v.assigned_branch) && normBranch(v.assigned_branch) === normBranch(r.assigned_branch);
   return roles.includes("PARTS_MANAGER") && sameBranch;

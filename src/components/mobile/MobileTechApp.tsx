@@ -495,7 +495,7 @@ export function MobileTechApp() {
   const isBranchReportRole = [role, ...extraRoles].some(
     (r) =>
       r &&
-      ["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER", "HR", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(r.toUpperCase()),
+      ["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER", "HR", "HR_MANAGER", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(r.toUpperCase()),
   );
 
   // Resolved once for the whole app shell — needed by DetailView to know
@@ -8202,7 +8202,7 @@ function MobileBranchDailyReportView({
   const isSbm = [role, ...extraRoles].some((r) => r && r.toUpperCase() === "SENIOR_BRANCH_MANAGER");
   const isBm = [role, ...extraRoles].some((r) => r && r.toUpperCase() === "BRANCH_MANAGER");
   const isHrAndAbove = [role, ...extraRoles].some(
-    (r) => r && ["HR", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(r.toUpperCase()),
+    (r) => r && ["HR", "HR_MANAGER", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(r.toUpperCase()),
   );
   const reportDate = branchReportTodayKey();
 
@@ -9109,7 +9109,7 @@ function MobileTimeOffView({ userName, profileId, companyId, role }: { userName:
       for (const p of companyProfiles) {
         if (p.id === profileId || !p.is_active) continue;
         const primary = (p.role || "").toUpperCase();
-        if (primary === "HR" || (!managerProfile && (primary === "ADMIN" || primary === "SUPERADMIN"))) recipients.set(p.id, p);
+        if (primary === "HR" || primary === "HR_MANAGER" || (!managerProfile && (primary === "ADMIN" || primary === "SUPERADMIN"))) recipients.set(p.id, p);
       }
       const emoji = ptoType === "sick" ? "🤒" : "🗓️";
       const label = ptoType === "sick" ? "Sick Leave" : ptoType === "unpaid" ? "Unpaid Leave" : ptoType === "personal" ? "Personal Leave" : "PTO";
@@ -10084,7 +10084,7 @@ function MobileTimeCorrectionView({ userName, profileId, companyId, role, prefil
       for (const p of companyProfiles) {
         if (!p.is_active) continue;
         const primary = (p.role || "").toUpperCase();
-        if (primary === "HR" || primary === "FINANCE" || primary === "ACCOUNTING_MANAGER") recipients.set(p.id, p);
+        if (primary === "HR" || primary === "HR_MANAGER" || primary === "FINANCE" || primary === "ACCOUNTING_MANAGER") recipients.set(p.id, p);
       }
       if (myProfile) recipients.set(myProfile.id, myProfile);
       await Promise.all(

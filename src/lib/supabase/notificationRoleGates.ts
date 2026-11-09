@@ -53,7 +53,7 @@ export const NOTIFICATION_TRIGGERS: NotificationTrigger[] = [
     label: "Custom Form Submission (HR)",
     description:
       "Sent when any custom (Jotform) form gets a submission. Note: who can see the Jotform Submissions tab on the HR Dashboard is a separate hardcoded check (isJotformHrRole in roleLabels.ts), kept in sync with this list by default — widening/narrowing this can let someone get notified without being able to open the tab, or vice versa.",
-    defaultRoles: ["HR", "ADMIN", "SUPERADMIN", "MANAGER", "SENIOR_MANAGER"],
+    defaultRoles: ["HR", "HR_MANAGER", "ADMIN", "SUPERADMIN", "MANAGER", "SENIOR_MANAGER"],
   },
 ];
 

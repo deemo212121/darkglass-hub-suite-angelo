@@ -171,7 +171,7 @@ const BRANCH_MANAGER_ROLES = new Set(["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER"]
 export const isBranchManagerPerson = (p: Pick<IncentivePerson, "role" | "extra_roles">) =>
   [p.role, ...(p.extra_roles ?? [])].some((r) => BRANCH_MANAGER_ROLES.has(normalizeRole(r)));
 /** HR is their main role (not just an extra one) — who can receive the HR Incentive. */
-export const isHrPerson = (p: Pick<IncentivePerson, "role">) => normalizeRole(p.role) === "HR";
+export const isHrPerson = (p: Pick<IncentivePerson, "role">) => ["HR", "HR_MANAGER"].includes(normalizeRole(p.role));
 
 type HiringRecord = AttendanceStartCandidate & { created_by: string | null; created_at: string | null };
 

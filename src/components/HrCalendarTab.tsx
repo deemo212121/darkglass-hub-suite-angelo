@@ -649,7 +649,7 @@ export function HrCalendarTab({ employees, myProfileId, myDisplayName, readOnly 
 
   // Held roles pile up (primary + extra), same convention as
   // canReviewPtoStage/reviewPtoStage elsewhere in this file.
-  const isHrUser = [role, ...(extraRoles ?? [])].map((r) => (r || "").toUpperCase()).includes("HR");
+  const isHrUser = [role, ...(extraRoles ?? [])].map((r) => (r || "").toUpperCase()).some((r) => r === "HR" || r === "HR_MANAGER");
 
   // Vacation PTO needs 1 year of tenure (ptoYearWindow returns null below
   // that — see pto.ts); Sick Leave has no such wait (sickYearWindow allows

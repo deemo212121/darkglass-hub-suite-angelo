@@ -44,7 +44,7 @@ export function TicketTimeDisputesTab() {
   // Any other manager-tier role only sees their own team's (hierarchy
   // fallback to that manager's own manager when the direct manager isn't
   // available — see canReviewTicketDispute in employeeRequests.ts).
-  const isFullRequestsAdmin = [role, ...(extraRoles ?? [])].some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE", "ACCOUNTING_MANAGER"].includes(normalizeRole(r)));
+  const isFullRequestsAdmin = [role, ...(extraRoles ?? [])].some((r) => ["ADMIN", "SUPERADMIN", "HR", "HR_MANAGER", "FINANCE", "ACCOUNTING_MANAGER"].includes(normalizeRole(r)));
   const canAccessTab = isFullRequestsAdmin || isAttendanceManagerTierRole(role, extraRoles);
   const isSuperAdmin = isRevertSuperAdmin([role, ...(extraRoles ?? [])]);
   const disputeReverts = useDecisionReverts("ticket_time_dispute");

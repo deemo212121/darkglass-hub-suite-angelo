@@ -19,7 +19,7 @@ export async function getCompanyHrRoleProfileIds(): Promise<string[]> {
     .from("profiles")
     .select("id, role, extra_roles")
     .eq("is_active", true)
-    .or("role.eq.HR,extra_roles.cs.{HR}");
+    .or("role.eq.HR,role.eq.HR_MANAGER,extra_roles.cs.{HR},extra_roles.cs.{HR_MANAGER}");
   if (error) {
     console.error("getCompanyHrRoleProfileIds error:", error.message);
     return [];

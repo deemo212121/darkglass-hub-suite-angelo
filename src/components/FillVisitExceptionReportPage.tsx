@@ -269,7 +269,7 @@ export function FillVisitExceptionReportPage({ docId }: Props) {
           for (const p of companyProfiles) {
             if (!p.is_active) continue;
             const primary = (p.role || "").toUpperCase();
-            if (primary === "HR" || primary === "FINANCE" || primary === "ACCOUNTING_MANAGER") recipients.set(p.id, p);
+            if (primary === "HR" || primary === "HR_MANAGER" || primary === "FINANCE" || primary === "ACCOUNTING_MANAGER") recipients.set(p.id, p);
           }
           await Promise.all(
             Array.from(recipients.values()).map((r) =>

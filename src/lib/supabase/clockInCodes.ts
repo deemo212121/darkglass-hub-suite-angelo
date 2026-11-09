@@ -66,7 +66,7 @@ export async function redeemClockInCode(profileId: string, code: string): Promis
 }
 
 /** Roles that can always see the code (and edit who else can) — not editable. */
-export const CLOCK_CODE_ALWAYS_VIEWERS = ["HR", "ADMIN", "SUPERADMIN"] as const;
+export const CLOCK_CODE_ALWAYS_VIEWERS = ["HR", "HR_MANAGER", "ADMIN", "SUPERADMIN"] as const;
 const DEFAULT_VIEWER_ROLES = ["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER", "TECHNICAL_DIRECTOR", "TECHNICAL_ASSISTANT_DIRECTOR"];
 
 /** The company's extra roles that can see the code (migration 0347; default before it's run). */

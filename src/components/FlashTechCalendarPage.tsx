@@ -185,8 +185,8 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   const canManage = [role, ...extraRoles].some((r) => ["ADMIN", "SUPERADMIN", "FINANCE", "ACCOUNTING_MANAGER"].includes(normalizeRole(r)));
   // Tracker fields (everything beyond scheduling itself) are also editable
   // by HR — see migration 0257's widened update policy.
-  const canEditTracker = canManage || [role, ...extraRoles].some((r) => normalizeRole(r) === "HR");
-  const isHrRole = [role, ...extraRoles].some((r) => normalizeRole(r) === "HR");
+  const canEditTracker = canManage || [role, ...extraRoles].some((r) => ["HR", "HR_MANAGER"].includes(normalizeRole(r)));
+  const isHrRole = [role, ...extraRoles].some((r) => ["HR", "HR_MANAGER"].includes(normalizeRole(r)));
   // Connect (OAuth) is Admin/SuperAdmin only — same CONNECT_ROLES gate every
   // other Gmail slot's server-side connect action enforces. Editing WHO the
   // "trip turned Open" alert goes to is a little wider (HR too), matching

@@ -23,7 +23,7 @@ import { verifyFirebaseToken } from "./supabaseTokenBridge";
 
 const BUCKET = "employee-files";
 const MAX_BYTES = 20 * 1024 * 1024;
-const ADMIN_ROLES = new Set(["FINANCE", "ACCOUNTING_MANAGER", "HR", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"]);
+const ADMIN_ROLES = new Set(["FINANCE", "ACCOUNTING_MANAGER", "HR", "HR_MANAGER", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"]);
 
 interface Env {
   supabaseUrl: string;

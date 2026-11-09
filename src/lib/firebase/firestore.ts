@@ -16,7 +16,7 @@ export interface UserProfile {
   uid: string;
   email: string;
   companyId: string;
-  role: "SUPERSUPERADMIN" | "SUPERADMIN" | "ADMIN" | "MANAGER" | "CSR" | "TECHNICIAN" | "DISPATCHER" | "HR" | "IT" | "PARTS" | "FINANCE" | "ACCOUNTING_MANAGER";
+  role: "SUPERSUPERADMIN" | "SUPERADMIN" | "ADMIN" | "MANAGER" | "CSR" | "TECHNICIAN" | "DISPATCHER" | "HR" | "IT" | "PARTS" | "FINANCE" | "ACCOUNTING_MANAGER" | "HR_MANAGER";
   displayName: string;
   supabaseUserId: string;
   isActive: boolean;

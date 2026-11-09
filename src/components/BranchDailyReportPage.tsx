@@ -98,7 +98,7 @@ const fmtHours = (n: number) => (Math.round(n * 10) / 10).toString();
 // every place that already trusts HR-and-above on this page (Urgency,
 // Manage Branch Access, note moderation, extra-editor management) is
 // meant to trust this role exactly the same way here.
-const HR_AND_ABOVE = new Set(["HR", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN", "TECHNICAL_ASSISTANT_DIRECTOR"]);
+const HR_AND_ABOVE = new Set(["HR", "HR_MANAGER", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN", "TECHNICAL_ASSISTANT_DIRECTOR"]);
 const hasRole = (role: string | null, extraRoles: string[], set: Set<string>) =>
   (role && set.has(normalizeRole(role))) || extraRoles.some((r) => set.has(normalizeRole(r)));
 

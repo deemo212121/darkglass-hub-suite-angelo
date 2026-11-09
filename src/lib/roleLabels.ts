@@ -23,6 +23,8 @@ export const ROLE_LABELS: Record<string, string> = {
   TECHNICIAN_MANAGER: "Tech Manager",
   DISPATCHER: "Dispatcher",
   HR: "HR",
+  // Everything HR can do, wherever it can do it — see ROLE_INCLUDES.
+  HR_MANAGER: "HR Manager",
   IT: "IT",
   PARTS: "Parts",
   FINANCE: "Accounting",
@@ -91,6 +93,7 @@ export const ROLE_DEPARTMENT_BREAKDOWN: Record<string, { department: string; rol
   TECHNICAL_ASSISTANT_DIRECTOR: { department: "Technician", roleLabel: "Assistant Director" },
   DISPATCHER: { department: "Dispatch", roleLabel: "Dispatcher" },
   HR: { department: "HR", roleLabel: "HR" },
+  HR_MANAGER: { department: "HR", roleLabel: "Manager" },
   IT: { department: "IT", roleLabel: "IT" },
   PARTS: { department: "Parts", roleLabel: "Parts" },
   FINANCE: { department: "Accounting", roleLabel: "Accounting" },
@@ -289,13 +292,15 @@ export function normalizeRole(role: string | null | undefined): string {
 
 /**
  * Roles that carry another role's access with them: an Accounting Manager
- * can open and do everything Accounting (FINANCE) can — every page gate,
- * Accessibility Management grant and role check that lets FINANCE in lets
- * them in too. The database mirrors this (is_finance() and the other
- * FINANCE checks, migration 0427).
+ * can open and do everything Accounting (FINANCE) can, and an HR Manager
+ * everything HR can — every page gate, Accessibility Management grant and
+ * role check that lets FINANCE / HR in lets them in too. The database
+ * mirrors this (is_finance() and the other FINANCE checks, migration 0427;
+ * is_hr() and the other HR checks, migration 0434).
  */
 export const ROLE_INCLUDES: Record<string, string[]> = {
   ACCOUNTING_MANAGER: ["FINANCE"],
+  HR_MANAGER: ["HR"],
 };
 
 /** These role codes plus every role they include (ROLE_INCLUDES), normalized, deduped. */

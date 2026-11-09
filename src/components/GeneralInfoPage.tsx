@@ -125,7 +125,7 @@ export function GeneralInfoPage({ mod, sub }: Props) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { role } = useAuth();
-  const canEdit = ["ADMIN", "HR", "SUPERADMIN"].includes(String(role || "").toUpperCase());
+  const canEdit = ["ADMIN", "HR", "HR_MANAGER", "SUPERADMIN"].includes(String(role || "").toUpperCase());
 
   const [activeTab, setActiveTab] = usePersistedTab<"branchRoles" | "regions" | "leadership" | "abbreviations">(
     "ahs:general-info-active-tab",

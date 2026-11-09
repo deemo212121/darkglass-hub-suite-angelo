@@ -308,7 +308,7 @@ const PH_BRANCH_NAMES = new Set(LOCATIONS_DATA.filter(l => l.isPhilippines).map(
 // HR/Admin/Superadmin/Manager see every candidate and can finalize hires;
 // Branch Managers only see + decide on their own branch's applicants —
 // they run the final interview, HR finalizes the hire.
-const HR_ADMIN_ROLES = new Set(["HR", "ADMIN", "SUPERADMIN", "MANAGER", "SENIOR_MANAGER"]);
+const HR_ADMIN_ROLES = new Set(["HR", "HR_MANAGER", "ADMIN", "SUPERADMIN", "MANAGER", "SENIOR_MANAGER"]);
 const BRANCH_MANAGER_ROLES = new Set(["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER"]);
 
 // Mirrors HrCalendarTab.tsx's HR_STATUS_TO_PTO_TYPE — Absent List's HR
@@ -1179,7 +1179,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // people + Super Admin can View / Download them. Papers still in progress are unchanged.
   const canViewCompleted = canViewCompletedPapers({ uid, companyId, role: myRole, extraRoles: myExtraRoles });
   // Form Inconsistencies (SSNs, addresses across forms) — HR / Admin / Super Admin, same as form_consistency_reviews' RLS (migration 0425).
-  const canSeeFormInconsistencies = heldRoles.some((r) => r === "HR" || r === "ADMIN" || r === "SUPERADMIN" || r === "SUPERSUPERADMIN");
+  const canSeeFormInconsistencies = heldRoles.some((r) => r === "HR" || r === "HR_MANAGER" || r === "ADMIN" || r === "SUPERADMIN" || r === "SUPERSUPERADMIN");
   const canViewPaper = (doc: SignableDocument) => canViewCompleted || !isCompletedPaper(doc);
   const [openCategory, setOpenCategory] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -2748,7 +2748,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const hrPersonnelOptions = useMemo(
     () =>
       employees
-        .filter((e) => e.status === "active" && (normalizeRole(e.position) === "HR" || e.extraRoles.map(normalizeRole).includes("HR")))
+        .filter((e) => e.status === "active" && [e.position, ...e.extraRoles].some((r) => ["HR", "HR_MANAGER"].includes(normalizeRole(r))))
         .sort((a, b) => a.name.localeCompare(b.name)),
     [employees]
   );
@@ -3396,7 +3396,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // reference certificate has "Frederick Ian Cabilao" as the letter's
   // Authorized Representative and a different person, "Raul Bayuyos", in
   // the Office Use box), so each gets its own dropdown/state.
-  const COE_OFFICE_USE_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"]);
+  const COE_OFFICE_USE_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR", "HR_MANAGER", "BIZOPS_MANAGER", "BIZOPS_SENIOR_MANAGER"]);
   // Office Use box signer is any manager (Branch, CSR, Parts, BizOps, etc.
   // — anything with "MANAGER" in the role code) as well as Admin/HR/BizOps,
   // since a branch-level manager like the reference's "CSR Manager" isn't
@@ -17692,7 +17692,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // "Save Changes" batch, not a standalone per-field commit) — only once
   // the Firebase Auth update succeeds does profiles.email itself get
   // updated, so the two never end up desynced from a partial failure.
-  const canEditEmployeeEmail = [myRole, ...(myExtraRoles ?? [])].some((r) => ["ADMIN", "SUPERADMIN", "HR"].includes(String(r || "").toUpperCase()));
+  const canEditEmployeeEmail = [myRole, ...(myExtraRoles ?? [])].some((r) => ["ADMIN", "SUPERADMIN", "HR", "HR_MANAGER"].includes(String(r || "").toUpperCase()));
 
   // ── Onboarding Documents: per-employee checklist, persisted on
   // employee_info (same flexible JSON field bank info/address/etc. already

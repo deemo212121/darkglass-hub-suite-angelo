@@ -136,7 +136,7 @@ export function ExceptionReportsTab() {
   // Sign HR is only for actual HR/Admin/Finance/Superadmin — a manager who
   // can see a row here (their own team's) still can't sign the HR paperwork,
   // same gate TicketTimeDisputesTab.tsx/CorrectionsTab.tsx already enforce.
-  const isFullRequestsAdmin = [role, ...(extraRoles ?? [])].some((r) => ["ADMIN", "SUPERADMIN", "HR", "FINANCE", "ACCOUNTING_MANAGER"].includes(normalizeRole(r)));
+  const isFullRequestsAdmin = [role, ...(extraRoles ?? [])].some((r) => ["ADMIN", "SUPERADMIN", "HR", "HR_MANAGER", "FINANCE", "ACCOUNTING_MANAGER"].includes(normalizeRole(r)));
 
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);

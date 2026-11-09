@@ -222,7 +222,7 @@ export async function runLateClockOutCheck(env: Record<string, string | undefine
       hrByCompany.set(
         companyId,
         profiles
-          .filter((x) => x.company_id === companyId && x.is_active && [x.role, ...(x.extra_roles ?? [])].some((r) => normalizeRole(r) === "HR"))
+          .filter((x) => x.company_id === companyId && x.is_active && [x.role, ...(x.extra_roles ?? [])].some((r) => ["HR", "HR_MANAGER"].includes(normalizeRole(r))))
           .map((x) => x.id),
       );
     }

@@ -44,7 +44,7 @@ import {
 
 const PROMPT_LINK = "/home?traineeDecision=open";
 const TRAINING_LIST_LINK = "/m/hr/training-list";
-const HR_ADMIN_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR"]);
+const HR_ADMIN_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR", "HR_MANAGER"]);
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 type Rest = {
@@ -107,7 +107,7 @@ async function notify(rest: Rest, rows: { company_id: string; recipient_id: stri
 }
 
 async function hrRecipientIds(rest: Rest, companyId: string): Promise<string[]> {
-  const rows = await rest.get<{ id: string }>(`profiles?select=id&company_id=eq.${companyId}&is_active=eq.true&or=(role.eq.HR,extra_roles.cs.%7BHR%7D)`);
+  const rows = await rest.get<{ id: string }>(`profiles?select=id&company_id=eq.${companyId}&is_active=eq.true&or=(role.eq.HR,role.eq.HR_MANAGER,extra_roles.cs.%7BHR%7D,extra_roles.cs.%7BHR_MANAGER%7D)`);
   return rows.map((r) => r.id);
 }
 

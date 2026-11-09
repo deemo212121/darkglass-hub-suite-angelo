@@ -665,6 +665,7 @@ export default function UserManagementPage() {
                   <SelectItem value="MANAGER">Manager</SelectItem>
                   <SelectItem value="TECHNICIAN">Technician</SelectItem>
                   <SelectItem value="HR">HR</SelectItem>
+                  <SelectItem value="HR_MANAGER">HR Manager</SelectItem>
                   <SelectItem value="IT">IT</SelectItem>
                   <SelectItem value="PARTS">Parts</SelectItem>
                   <SelectItem value="FINANCE">Accounting</SelectItem>

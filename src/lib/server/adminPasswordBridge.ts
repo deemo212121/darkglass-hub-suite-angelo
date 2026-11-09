@@ -67,7 +67,7 @@ function readEnv(env?: Record<string, string | undefined>): EnvBag | { error: st
 
 // Roles allowed to trigger a reset-to-default. Matched against the caller's
 // primary role AND their extra_roles (see holdsResetRole).
-const RESET_PASSWORD_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR"]);
+const RESET_PASSWORD_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR", "HR_MANAGER"]);
 
 // The default password is the company's (Login Security → Default Password,
 // resolveDefaultPassword), the same value used at account creation. Never

@@ -70,7 +70,7 @@ function readEnv(env?: Record<string, string | undefined>): EnvBag | { error: st
 // from the Master List's quick-edit popup (ReportHRDaily.tsx) — everywhere
 // else in this app that gates on "holds a role", primary OR extra_roles
 // both count, so this checks both too (see fetchProfile's select below).
-const ADMIN_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR"]);
+const ADMIN_ROLES = new Set(["ADMIN", "SUPERADMIN", "HR", "HR_MANAGER"]);
 
 // ---- base64url + JWT signing (see adminPasswordBridge.ts re: not sharing jotformBridge's cache) ----
 function bytesToB64url(bytes: Uint8Array): string {

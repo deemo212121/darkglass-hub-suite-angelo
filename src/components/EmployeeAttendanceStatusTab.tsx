@@ -169,7 +169,7 @@ function computeStatus(args: {
 export function EmployeeAttendanceStatusTab() {
   const { uid, role, extraRoles, realRole } = useAuth();
   // HR (and Admin/SuperAdmin) can fix punches straight from the name popup.
-  const canEditPunches = [role, ...(extraRoles ?? [])].some((r) => ["HR", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(normalizeRole(r)));
+  const canEditPunches = [role, ...(extraRoles ?? [])].some((r) => ["HR", "HR_MANAGER", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(normalizeRole(r)));
   const [editingDay, setEditingDay] = useState<string | null>(null);
   const [draft, setDraft] = useState({ checkIn: "", mealStart: "", mealEnd: "", checkOut: "" });
   const [savingEdit, setSavingEdit] = useState(false);
