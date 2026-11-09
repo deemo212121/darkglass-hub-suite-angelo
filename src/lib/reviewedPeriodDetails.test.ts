@@ -8,7 +8,7 @@ const item = (label: string, amount: number, isWageIncludable = false) => ({ lab
 describe("Reviewed Period itemized export", () => {
   it("separates mileage, phone allowance, every deduction and insurance", () => {
     const lines = reviewedPeriodDetails(saved, { mileage: 554.24, items: [
-      item("Phone Allowance", 30), item("Lost Part", -50), item("Uniform Deduction", -25), item("Pre-Tax Insurance", -20), item("Bonus", 100, true),
+      item("Phone Allowance", 30), item("Lost Part", -50), item("Uniform Deduction", -25), item("Pre-Tax Insurance", -20), item("Piece rate", 100, true),
     ] });
     expect(lines.map((l) => [l.label, l.amount])).toEqual([
       ["Mileage", 554.24], ["Phone Allowance", 30], ["Lost Part", 50], ["Uniform Deduction", 25], ["Pre-Tax Insurance", 20],
@@ -39,6 +39,25 @@ describe("Reviewed Period itemized export", () => {
       items: [item("A", .005), item("B", .005), item("Unused", 0)] });
     expect(lines.reduce((sum, l) => sum + l.amount, 0)).toBeCloseTo(.01, 8);
     expect(lines.some((l) => l.label === "Unused")).toBe(false);
+  });
+  it("separates Performance and LTP bonuses and keeps other bonuses distinct", () => {
+    const lines = reviewedPeriodDetails({ ...saved, bonus: 350 }, { mileage: 0, items: [
+      item("Performance", 100, true), item("performance bonus", 50, true), item("LTP", 175, true),
+      item("Incentive", 25, true), item("Ticket Pay", 900, true),
+    ] }).filter((l) => l.group === "bonus");
+    expect(lines.map((l) => [l.label, l.amount])).toEqual([
+      ["Performance Bonus", 150], ["LTP Bonus", 175], ["Incentive", 25],
+    ]);
+    expect(lines.reduce((sum, l) => sum + l.amount, 0)).toBe(350);
+  });
+  it("preserves bonus reversals and manually edited or historical bonus totals", () => {
+    const lines = reviewedPeriodDetails({ ...saved, bonus: 100 }, { mileage: 0, items: [
+      item("Performance", 150, true), item("LTP", -25, true), item("Phone Allowance", 30),
+    ] }).filter((l) => l.group === "bonus");
+    expect(lines.find((l) => l.label === "LTP Bonus")?.amount).toBe(-25);
+    expect(lines.find((l) => l.label === "Unitemized bonus adjustment")?.amount).toBe(-25);
+    expect(lines.reduce((sum, l) => sum + l.amount, 0)).toBe(100);
+    expect(reviewedPeriodDetails({ ...saved, bonus: 100 }).find((l) => l.group === "bonus")?.amount).toBe(100);
   });
   it("supports Excel totals beyond column Z", () => {
     expect([1, 26, 27, 52, 53, 703].map(excelColumnLetter)).toEqual(["A", "Z", "AA", "AZ", "BA", "AAA"]);

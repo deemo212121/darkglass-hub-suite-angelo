@@ -1,4 +1,4 @@
-import { cents } from "./payRounding";
+import { cents, isBonusPayLine } from "./payRounding";
 import type { PayrollReviewAmounts } from "./supabase/payrollReviewBreakdowns";
 
 export interface ReviewedPeriodDetailSource {
@@ -9,7 +9,7 @@ export interface ReviewedPeriodDetailSource {
 export interface ReviewedPeriodDetail {
   key: string;
   label: string;
-  group: "mileageOtherReimb" | "deduction" | "pretaxInsurance";
+  group: "bonus" | "mileageOtherReimb" | "deduction" | "pretaxInsurance";
   amount: number;
 }
 
@@ -29,19 +29,25 @@ export function reviewedPeriodDetails(saved: PayrollReviewAmounts, source?: Revi
   if (source) {
     add("mileageOtherReimb", "Mileage", source.mileage);
     for (const item of source.items) {
-      if (item.isWageIncludable) continue;
       const amount = item.value * item.rate;
       if (!Number.isFinite(amount) || !amount) continue;
+      if (item.isWageIncludable) {
+        if (isBonusPayLine(item.label)) {
+          const label = /performance/i.test(item.label) ? "Performance Bonus" : /ltp/i.test(item.label) ? "LTP Bonus" : item.label;
+          add("bonus", label, amount);
+        }
+        continue;
+      }
       const group = amount < 0 ? (/insur|pre-?tax/i.test(item.label) ? "pretaxInsurance" : "deduction") : "mileageOtherReimb";
       add(group, item.label || (amount < 0 ? "Deduction" : "Reimbursement"), Math.abs(amount));
     }
   }
   for (const line of lines.values()) line.amount = cents(line.amount);
-  for (const group of ["mileageOtherReimb", "deduction", "pretaxInsurance"] as const) {
+  for (const group of ["bonus", "mileageOtherReimb", "deduction", "pretaxInsurance"] as const) {
     const itemized = [...lines.values()].filter((l) => l.group === group).reduce((sum, l) => sum + l.amount, 0);
     const difference = cents(cents(saved[group]) - itemized);
     if (difference) {
-      const label = group === "mileageOtherReimb" ? "Unitemized reimbursement adjustment" : group === "deduction" ? "Unitemized deduction adjustment" : "Unitemized pre-tax insurance adjustment";
+      const label = group === "bonus" ? "Unitemized bonus adjustment" : group === "mileageOtherReimb" ? "Unitemized reimbursement adjustment" : group === "deduction" ? "Unitemized deduction adjustment" : "Unitemized pre-tax insurance adjustment";
       lines.set(`${group}:unitemized`, { key: `${group}:unitemized`, label, group, amount: difference });
     }
   }
