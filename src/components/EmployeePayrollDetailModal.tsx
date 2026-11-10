@@ -924,8 +924,12 @@ export function EmployeePayrollDetailModal({
   const dailyPayByDate = useMemo(() => {
     const map = new Map<string, { companyRate: number; effectiveRate: number; isMatched: boolean; calculatedPay: number; compliantPay: number }>();
     for (const row of attendance) {
-      const companyRate = rateEffectiveOn(rateHistory, row.date);
       const folded = dailyHoursSplitByDate.get(row.date) ?? { regular: 0, overtime: 0 };
+      const leaveGuarantee = row.status === "paid-leave" && isTechnicianTier
+        ? guaranteeEffectiveOn(history, isTechnicianTier, row.date) : null;
+      const companyRate = leaveGuarantee?.annualSalary && folded.regular > 0
+        ? perCutoffSalary(leaveGuarantee.annualSalary, isPhPayroll) / 10 / folded.regular
+        : rateEffectiveOn(rateHistory, row.date);
       if (companyRate <= 0) {
         map.set(row.date, { companyRate: 0, effectiveRate: 0, isMatched: false, calculatedPay: 0, compliantPay: 0 });
         continue;
@@ -943,7 +947,7 @@ export function EmployeePayrollDetailModal({
       });
     }
     return map;
-  }, [attendance, rateHistory, dailyHoursSplitByDate, otMultiplier, traineeWindow.start, traineeWindow.end]);
+  }, [attendance, rateHistory, history, isTechnicianTier, isPhPayroll, dailyHoursSplitByDate, otMultiplier, traineeWindow.start, traineeWindow.end]);
 
   // Hourly ↔ fixed switch inside the viewed range: hourly days by the hour +
   // the fixed salary for paid dates (up to ten), as in the payroll table.
@@ -989,7 +993,7 @@ export function EmployeePayrollDetailModal({
       // pay is shown (Current Rate tile, Tech Activity Report's Hourly Pay
       // line). Using monthlySalary here inflated it to annual/12 (e.g. a
       // $72,000/yr salary showed $6,000.00 instead of the correct $2,769.23).
-      const fixed = isTechnicianTier ? perCutoffSalary(currentEntry.annualSalary, isPhPayroll) : fixedSalaryForPaidDates(perCutoffSalary(currentEntry.annualSalary, isPhPayroll),
+      const fixed = fixedSalaryForPaidDates(perCutoffSalary(currentEntry.annualSalary, isPhPayroll),
         [...dailyHoursSplitByDate].filter(([date, hours]) => date >= rangeStart && date <= rangeEnd && hours.regular + hours.overtime > 0.0005).map(([date]) => date));
       return {
         calculated: { regularPay: fixed, overtimePay: 0, total: fixed },
@@ -1001,7 +1005,7 @@ export function EmployeePayrollDetailModal({
       compliant: { regularPay: 0, overtimePay: 0, total: 0 },
     };
     for (const row of attendance) {
-      const rate = rateEffectiveOn(rateHistory, row.date);
+      const rate = dailyPayByDate.get(row.date)?.companyRate ?? rateEffectiveOn(rateHistory, row.date);
       const { regular, overtime } = dailyHoursSplitByDate.get(row.date) ?? { regular: 0, overtime: 0 };
       const effectiveRate = dailyPayByDate.get(row.date)?.effectiveRate ?? rate;
       totals.calculated.regularPay += regular * rate;
@@ -1405,8 +1409,8 @@ export function EmployeePayrollDetailModal({
                     <p className="text-lg font-bold text-white mt-1">${rateNow.toFixed(2)}/hr</p>
                   )}
                   {currentGuarantee?.annualSalary ? (
-                    <p className="text-[11px] text-amber-300/90 mt-0.5" title="Guaranteed minimum: if hourly + incentive pay falls short of this per cutoff, the difference is paid as a salary match. The hourly rate above still drives hours, OT and state matches.">
-                      Guaranteed ${perCutoffSalary(currentGuarantee.annualSalary, isPhPayroll).toFixed(2)}/cutoff · from {currentGuarantee.effectiveDate}
+                    <p className="text-[11px] text-amber-300/90 mt-0.5" title="Guaranteed minimum: worked dates and approved paid PTO dates count once, up to 10 days per cutoff. PTO uses the guaranteed daily rate. The remaining shortfall is paid as a salary match. The hourly rate above still drives hours, OT and state matches.">
+                      Guaranteed ${(perCutoffSalary(currentGuarantee.annualSalary, isPhPayroll) / 10).toFixed(2)}/paid day (max 10) · from {currentGuarantee.effectiveDate}
                     </p>
                   ) : null}
                 </div>

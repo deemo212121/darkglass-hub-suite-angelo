@@ -902,20 +902,20 @@ export function TechActivityReportModal({
                     <tr title="Hours actually worked this period (regular + overtime), State-matched total from the payroll detail step's Compliant/State toggle. Set via their name link on the Tech Payroll table → Add Rate Change.">
                       <td className="px-3 py-2 text-slate-300">Hourly Pay</td>
                       <td className="px-3 py-2 text-right text-slate-300">
-                        {hoursWorked.toFixed(3)}{overtimeHours > 0 ? ` + ${overtimeHours.toFixed(3)} OT` : ""}
+                        {Math.max(hoursWorked - (row.techPaidLeaveHours ?? 0), 0).toFixed(3)}{overtimeHours > 0 ? ` + ${overtimeHours.toFixed(3)} OT` : ""}
                       </td>
                       <td className="px-3 py-2 text-right text-slate-300">{fmt(hourlyRate)}/hr</td>
-                      <td className="px-3 py-2 text-right text-slate-200">{fmt(techHourlyPay)}</td>
+                      <td className="px-3 py-2 text-right text-slate-200">{fmt(techHourlyPay - (row.techPaidLeavePay ?? 0))}</td>
                     </tr>
                   ) : (
                     <>
                       <tr title="All hours worked this period (regular + overtime), once, at this technician's flat hourly rate. Set via their name link on the Tech Payroll table → Add Rate Change, same as an office employee's rate.">
                         <td className="px-3 py-2 text-slate-300">Hourly Pay</td>
                         <td className="px-3 py-2 text-right text-slate-300">
-                          {hoursWorked.toFixed(3)}{overtimeHours > 0 ? ` + ${overtimeHours.toFixed(3)} OT` : ""}
+                          {Math.max(hoursWorked - (row.techPaidLeaveHours ?? 0), 0).toFixed(3)}{overtimeHours > 0 ? ` + ${overtimeHours.toFixed(3)} OT` : ""}
                         </td>
                         <td className="px-3 py-2 text-right text-slate-300">{fmt(hourlyRate)}/hr</td>
-                        <td className="px-3 py-2 text-right text-slate-200">{fmt(techHourlyPayStraight)}</td>
+                        <td className="px-3 py-2 text-right text-slate-200">{fmt(techHourlyPayStraight - (row.techPaidLeavePay ?? 0))}</td>
                       </tr>
                       {overtimeHours > 0 && techWeeklyOt.some((w) => w.premiumHours > 0) ? (
                         // One row per workweek: FLSA sets the regular rate per week,
@@ -942,8 +942,16 @@ export function TechActivityReportModal({
                       )}
                     </>
                   )}
+                  {(row.techPaidLeavePay ?? 0) > 0 && (
+                    <tr title="Approved paid PTO. Excluded from worked hours and the weighted OT rate; counted once toward the paid-day guarantee.">
+                      <td className="px-3 py-2 text-slate-300">PTO Pay</td>
+                      <td className="px-3 py-2 text-right text-slate-300">{(row.techPaidLeaveHours ?? 0).toFixed(3)} paid leave hours</td>
+                      <td className="px-3 py-2 text-right text-slate-300">Paid leave</td>
+                      <td className="px-3 py-2 text-right text-slate-200">{fmt(row.techPaidLeavePay ?? 0)}</td>
+                    </tr>
+                  )}
                   {techGuaranteedSalaryMatch > 0.005 && (
-                    <tr title="A Guaranteed Minimum in Salary History (in effect by the end of this period) acts as a floor under their hourly + incentive pay — the shortfall between that salary's per-cutoff equivalent and their actual earned compensation (excluding reimbursements) this period, checked against the state-matched total (see the Guaranteed Minimum Salary Match box).">
+                    <tr title="A Guaranteed Minimum in Salary History (in effect by the end of this period) acts as a floor under their hourly + incentive pay — the shortfall between the guarantee for eligible paid dates (worked days plus approved paid PTO, capped at 10) and their actual earned compensation (excluding reimbursements) this period, checked against the state-matched total (see the Guaranteed Minimum Salary Match box).">
                       <td className="px-3 py-2 text-slate-300">Guaranteed Minimum Salary Match</td>
                       <td className="px-3 py-2 text-right text-slate-300">—</td>
                       <td className="px-3 py-2 text-right text-slate-300">{fmt(techGuaranteedSalaryTarget)}/cutoff</td>
@@ -1530,14 +1538,14 @@ export function TechActivityReportModal({
               })()}
 
               {techGuaranteedSalaryTarget > 0 && (
-                <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="A Guaranteed Minimum in Salary History (in effect by the end of this period) acts as a floor under their hourly + incentive pay — if actual earned compensation (excluding reimbursements and any state minimum-wage floor match) falls short of that salary's per-cutoff equivalent, the shortfall is added on top, already folded into grossPay/Total Payment below. Earned Toward Minimum = Company Hourly/OT + Includable + Holiday Premium — company-rate earnings before any state floor match, which is paid separately and doesn't count toward this guarantee.">
+                <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="A Guaranteed Minimum in Salary History (in effect by the end of this period) acts as a floor under their hourly + incentive pay — if actual earned compensation (excluding reimbursements and any state minimum-wage floor match) falls short of the guarantee for eligible paid dates (worked days plus approved paid PTO, capped at 10), the shortfall is added on top, already folded into grossPay/Total Payment below. Earned Toward Minimum = Company Hourly/OT + Includable + Holiday Premium — company-rate earnings before any state floor match, which is paid separately and doesn't count toward this guarantee.">
                   <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1.5">Guaranteed Minimum Salary Match</p>
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-slate-400">Earned Toward Minimum</span>
                     <span className="text-slate-200">{fmt(techEarnedTowardMinimum)}</span>
                   </div>
                   <div className="flex items-center justify-between text-xs mt-1">
-                    <span className="text-slate-400">Per-Cutoff Minimum</span>
+                    <span className="text-slate-400">Minimum ({row.techGuaranteedPaidDays ?? 0} of 10 paid days)</span>
                     <span className="text-slate-200">{fmt(techGuaranteedSalaryTarget)}</span>
                   </div>
                   <div className="flex items-center justify-between text-xs mt-1 pt-1 border-t border-white/10">

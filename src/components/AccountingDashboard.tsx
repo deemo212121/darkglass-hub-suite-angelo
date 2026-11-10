@@ -1,3 +1,5 @@
+import { weeklyOtPremium, type TechWeeklyOt } from "@/lib/techWeeklyOvertime";
+export type { TechWeeklyOt } from "@/lib/techWeeklyOvertime";
 import { paidHolidayDates } from "@/lib/holidayPay";
 import { fixedSalaryForPaidDates } from "@/lib/fixedSalaryPaidDays";
 import { TraineeMonitoringTab } from "@/components/TraineeMonitoringTab";
@@ -410,6 +412,10 @@ export interface EmployeePayrollRow {
    * shortfall already folded into grossPay, kept separate for display.
    */
   techGuaranteedSalaryTarget: number;
+  techGuaranteedPaidDays?: number;
+  techGuaranteedWorkedDays?: number;
+  techPaidLeavePay?: number;
+  techPaidLeaveHours?: number;
   techGuaranteedSalaryMatch: number;
   /** Extra 0.5x bonus for hours actually worked on a recognized company
    * holiday (see holidayPremiumFor in payrollRows) — already folded into
@@ -500,6 +506,8 @@ function computeDutyHoursByEmployee(
  * rate change) can do so, instead of collapsing straight to one period total
  * and one flat rate. See dailyHoursByEmployeeId/hourlyRateOnDate below. */
 export interface DailyHours {
+  /** Paid leave is paid separately from worked hours for technician OT. */
+  paidLeave?: boolean;
   paidHoliday?: boolean;
   date: string;
   regular: number;
@@ -687,69 +695,15 @@ function computeHoursMap(
       if (unpaidDates?.has(iso)) continue;
       const eligibleOn = ptoEligibleOnById.get(pto.profileId);
       if (eligibleOn && iso < eligibleOn) continue;
+      if ((dailyMap.get(pto.profileId) ?? []).some((day) => day.date === iso && day.paidLeave)) continue;
       const prev = hoursMap.get(pto.profileId) ?? { regular: 0, overtime: 0 };
       hoursMap.set(pto.profileId, { regular: prev.regular + netHours, overtime: prev.overtime });
       const prevDaily = dailyMap.get(pto.profileId) ?? [];
-      prevDaily.push({ date: iso, regular: netHours, overtime: 0 });
+      prevDaily.push({ date: iso, regular: netHours, overtime: 0, paidLeave: true });
       dailyMap.set(pto.profileId, prevDaily);
     }
   }
   return { totals: hoursMap, daily: dailyMap };
-}
-
-/** One Sunday workweek's piece of a technician's OT premium — see EmployeePayrollRow.techWeeklyOt. */
-export interface TechWeeklyOt {
-  weekStart: string;
-  hours: number;
-  /** OT hours that earn the premium (training days excluded). */
-  premiumHours: number;
-  straightPay: number;
-  /** Includable pay counted in this week: its week-tagged lines + its hours-share of the untagged pay. */
-  includablePay: number;
-  regularRate: number;
-  premium: number;
-}
-
-/**
- * FLSA overtime premium computed per workweek, then summed for the pay
- * period. `taggedIncludable` holds includable pay already tied to a week
- * (custom lines with work_week_start); `untaggedIncludable` is spread over
- * the weeks by hours, which with one hourly rate gives exactly the old
- * period-wide result — so nothing changes until lines are tagged.
- */
-function weeklyOtPremium(
-  dailyHours: DailyHours[],
-  rateForDate: (date: string) => number,
-  earnsPremium: (date: string) => boolean,
-  taggedIncludable: Map<string, number> | undefined,
-  untaggedIncludable: number
-): TechWeeklyOt[] {
-  const weeks = new Map<string, TechWeeklyOt>();
-  for (const day of dailyHours) {
-    const weekStart = startOfWeekSunday(day.date);
-    const week = weeks.get(weekStart) ?? { weekStart, hours: 0, premiumHours: 0, straightPay: 0, includablePay: 0, regularRate: 0, premium: 0 };
-    const dayHours = day.regular + day.overtime;
-    week.hours += dayHours;
-    week.straightPay += dayHours * rateForDate(day.date);
-    if (earnsPremium(day.date)) week.premiumHours += day.overtime;
-    weeks.set(weekStart, week);
-  }
-  const list = [...weeks.values()].sort((a, b) => a.weekStart.localeCompare(b.weekStart));
-  const totalHours = list.reduce((sum, w) => sum + w.hours, 0);
-  // A line tagged with a week that has no hours in this period can't raise
-  // any week's rate — it's left in the untagged pool rather than dropped.
-  let unplaced = untaggedIncludable;
-  for (const [weekStart, amount] of taggedIncludable ?? []) {
-    const week = weeks.get(weekStart);
-    if (week && week.hours > 0) week.includablePay += amount;
-    else unplaced += amount;
-  }
-  for (const week of list) {
-    if (totalHours > 0) week.includablePay += unplaced * (week.hours / totalHours);
-    week.regularRate = week.hours > 0 ? (week.straightPay + week.includablePay) / week.hours : 0;
-    week.premium = week.premiumHours * week.regularRate * 0.5;
-  }
-  return list;
 }
 
 /** One employee's period totals for straight-time-all-hours pay (hours × that
@@ -2405,8 +2359,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     // Fixed Salary entry dated on or before genEnd, for those whose fixed
     // salary is a guarantee (fixedIsGuaranteeFor above). They keep their $/hr
     // base (hours, OT, state matches) and get topped up to annual / 26 per
-    // cutoff when earnings fall short. A guarantee starting any day up to
-    // genEnd covers the whole period at the full per-cutoff amount.
+    // cutoff when earnings fall short. The target is prorated by eligible
+    // paid dates, using the guarantee effective on each date, capped at ten.
     // Previously the Fixed entry only counted as a guarantee while an hourly
     // entry was dated after it, so dating it later silently switched the
     // person to salaried at $0/hr (Darius Brown, 2026-10-20). See
@@ -2912,7 +2866,37 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // through genStart..genEnd) gets each day's hours paid at THAT day's
       // rate, same as the Attendance table already shows per day. See
       // blendedDailyPay/hourlyRateOnDate above.
-      const techDailyPay = blendedDailyPay(dailyHoursByEmployeeId.get(emp.id), hours, (date) => hourlyRateOnDate(emp.id, date, hourlyRate), hourlyRate);
+      // Approved paid PTO rows come from computeHoursMap; actual work includes rest days.
+      const salaryPaidDates = (dailyHoursByEmployeeId.get(emp.id) ?? [])
+        .filter((day) => day.date >= genStart && day.date <= genEnd && day.regular + day.overtime > 0.0005)
+        .map((day) => day.date);
+      const paidLeaveByDate = new Map((dailyHoursByEmployeeId.get(emp.id) ?? [])
+        .filter((day) => day.paidLeave).map((day) => [day.date, day.regular + day.overtime]));
+      const guaranteeOnDate = (date: string): SalaryEntry | null => {
+        if (!includeTech || isFixed || !fixedIsGuaranteeFor.has(emp.id)) return null;
+        let best: SalaryEntry | null = null;
+        for (const entry of salaryEntries) {
+          if (entry.profile_id !== emp.id || entry.compensation_type !== "fixed" || !entry.annual_salary || entry.effective_date > date) continue;
+          if (!best || entry.effective_date > best.effective_date || (entry.effective_date === best.effective_date && entry.created_at > best.created_at)) best = entry;
+        }
+        return best;
+      };
+      const techDailyPay = blendedDailyPay(dailyHoursByEmployeeId.get(emp.id), hours, (date) => {
+        const leaveHours = paidLeaveByDate.get(date);
+        const guarantee = guaranteeOnDate(date);
+        if (leaveHours && guarantee?.annual_salary) {
+          return perCutoffSalary(guarantee.annual_salary) / 10 / leaveHours;
+        }
+        return hourlyRateOnDate(emp.id, date, hourlyRate);
+      }, hourlyRate);
+      const techPaidLeaveHours = !isFixed && includeTech && isTechRole(emp)
+        ? [...paidLeaveByDate.values()].reduce((sum, value) => sum + value, 0) : 0;
+      const techPaidLeavePay = !isFixed && includeTech && isTechRole(emp)
+        ? [...paidLeaveByDate].reduce((sum, [date, leaveHours]) => {
+            const guarantee = guaranteeOnDate(date);
+            return sum + (guarantee?.annual_salary ? perCutoffSalary(guarantee.annual_salary) / 10
+              : leaveHours * hourlyRateOnDate(emp.id, date, hourlyRate));
+          }, 0) : 0;
       const techTotalHours = techDailyPay.totalHours;
       const techStraightTimeAllHours = techDailyPay.straightAllHours;
       const techPeriodRegularRate = techTotalHours > 0 ? (techStraightTimeAllHours + techIncludablePay) / techTotalHours : hourlyRate;
@@ -2972,7 +2956,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // of hours + OT + commission against the salary.)
       const techHourlyPay = isFixed && annualSalary
         ? (isTechRole(emp)
-            ? Math.max(perCutoffSalary(annualSalary) - techIncludablePay, 0)
+            ? Math.max(fixedSalaryForPaidDates(perCutoffSalary(annualSalary), salaryPaidDates) - techIncludablePay, 0)
             // A secondary-role technician's salary is paid on their office row;
             // the technician row only carries ticket / commission pay — paying
             // perCutoffSalary here too paid the salary twice.
@@ -3031,7 +3015,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // ("Earnings before reimbursements", confirmed 2026-10-16 on Daven Hodge:
       // $2,574.41 vs $4,615.38). Reimbursements are paid on top.
       const techEarnedBeforeReimbursements = techHourlyPayCompanyOnly + techIncludablePay + techHolidayPremium;
-      const techGuaranteedSalaryTarget = guaranteedAnnualSalary ? perCutoffSalary(guaranteedAnnualSalary) : 0;
+      const guaranteePaidDates = [...new Set(salaryPaidDates)].sort().filter((date) => guaranteeOnDate(date)).slice(0, 10);
+      const techGuaranteedSalaryTarget = guaranteePaidDates.reduce((sum, date) =>
+        sum + perCutoffSalary(guaranteeOnDate(date)!.annual_salary!) / 10, 0);
       const techGuaranteedSalaryMatch = guaranteedAnnualSalary
         ? Math.max(techGuaranteedSalaryTarget - techEarnedBeforeReimbursements, 0)
         : 0;
@@ -3059,7 +3045,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         ? stateOverride!.regularAmount ?? techDailyPay.regularPay
         : techDailyPay.regularPay;
       const customColumns = groupCustomPayLines(includeTech ? techCustomItemsByProfile.get(emp.id) ?? [] : []);
-      const regularColumn = techRegularHourly + techTraineeMatch + techHolidayPremium;
+      const regularColumn = techRegularHourly - techPaidLeavePay + techTraineeMatch + techHolidayPremium;
       const otColumn = isFixed ? 0 : techHourlyPay - techRegularHourly;
       const reimbursementColumn = effectiveMileagePay + customColumns.reimbursement;
       // Finance's summary columns, live — also what Reviewed Periods compares
@@ -3070,8 +3056,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         bonus: customColumns.bonus,
         commission:
           techGrossPayExact - regularColumn - otColumn - customColumns.bonus - reimbursementColumn +
-          customColumns.deduction + customColumns.pretaxInsurance - techGuaranteedSalaryMatch,
-        ptoPay: 0,
+          customColumns.deduction + customColumns.pretaxInsurance - techGuaranteedSalaryMatch - techPaidLeavePay,
+        ptoPay: techPaidLeavePay,
         deduction: customColumns.deduction,
         mileageOtherReimb: reimbursementColumn,
         pretaxInsurance: customColumns.pretaxInsurance,
@@ -3119,6 +3105,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               techWeightedRegularRate,
               techWeeklyOt,
               techGuaranteedSalaryTarget,
+              techGuaranteedPaidDays: guaranteedAnnualSalary ? guaranteePaidDates.length : undefined,
+              techGuaranteedWorkedDays: guaranteedAnnualSalary
+                ? guaranteePaidDates.filter((date) => workingDatesByProfile.get(emp.id)?.has(date)).length : undefined,
+              techPaidLeavePay,
+              techPaidLeaveHours,
               techGuaranteedSalaryMatch,
               techHolidayPremium,
               techTraineeMatch,
@@ -5451,6 +5442,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 {!row.mixedPay && row.fixedPaidDays != null && (
                                   <div className="text-[10px] text-amber-300" title="Worked days plus eligible approved paid PTO; each date counts once.">
                                     {row.fixedPaidDays} of 10 paid days
+                                  </div>
+                                )}
+                                {row.techGuaranteedPaidDays != null && (
+                                  <div className="text-[10px] text-amber-300" title="This cutoff's salary guarantee counts worked dates and eligible approved PTO dates once, capped at 10 paid days.">
+                                    {row.techGuaranteedPaidDays} of 10 paid days
+                                    <span className="block text-slate-400">
+                                      {row.techGuaranteedWorkedDays ?? 0} worked / {Math.max(row.techGuaranteedPaidDays - (row.techGuaranteedWorkedDays ?? 0), 0)} PTO
+                                    </span>
                                   </div>
                                 )}
                                 {row.mixedPay && (
