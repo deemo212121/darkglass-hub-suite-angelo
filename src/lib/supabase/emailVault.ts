@@ -7,6 +7,10 @@
  * Passwords never come down with the list — they sit in a table signed-in
  * users can't read. revealEmailVaultPassword reads one at a time and the
  * database records who viewed or copied it.
+ *
+ * Two levels (migration 0439): Email only, or Email and password — only the
+ * second (and Super Admin) can show, copy or set a password. Before 0439 is
+ * run there's one level and everyone with access sees passwords, as before.
  */
 import { supabase } from "./client";
 
@@ -23,12 +27,14 @@ export interface EmailVaultEntry {
 
 export interface EmailVaultAccessRow {
   profileId: string;
+  /** Email and password (true) or Email only. Null before migration 0439. */
+  canSeePassword: boolean | null;
   grantedBy: string | null;
   grantedAt: string;
 }
 
 export type EmailVaultEventAction =
-  | "added" | "edited" | "password_changed" | "deleted" | "viewed" | "copied" | "access_granted" | "access_removed";
+  | "added" | "edited" | "password_changed" | "deleted" | "viewed" | "copied" | "access_granted" | "access_removed" | "access_changed";
 
 export interface EmailVaultEvent {
   id: string;
@@ -102,17 +108,47 @@ export async function getMyEmailVaultAccess(): Promise<boolean> {
   return data === true;
 }
 
-/** People a Super Admin added — Super Admins themselves always have access and aren't listed here. */
-export async function getEmailVaultAccess(): Promise<EmailVaultAccessRow[]> {
-  const { data, error } = await supabase.from("email_vault_access").select("profile_id, granted_by, granted_at").order("granted_at", { ascending: true });
-  if (error) throw vaultError(error);
-  return (data ?? []).map((r: any) => ({ profileId: r.profile_id, grantedBy: r.granted_by ?? null, grantedAt: r.granted_at }));
+/** Whether the signed-in person may show / copy / set passwords. True before migration 0439 (no levels yet). */
+export async function getMyEmailVaultPasswordAccess(): Promise<boolean> {
+  const { data, error } = await supabase.rpc("email_vault_can_see_password");
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42883") return true;
+    throw vaultError(error);
+  }
+  return data === true;
 }
 
-/** Super Admin only (RLS). */
-export async function grantEmailVaultAccess(profileId: string): Promise<void> {
-  const { error } = await supabase.from("email_vault_access").insert({ profile_id: profileId });
+/** People a Super Admin added — Super Admins themselves always have access and aren't listed here. */
+export async function getEmailVaultAccess(): Promise<EmailVaultAccessRow[]> {
+  let res: { data: any[] | null; error: { message: string; code?: string } | null } = await supabase.from("email_vault_access").select("profile_id, granted_by, granted_at, can_see_password").order("granted_at", { ascending: true });
+  // Before migration 0439 there's no can_see_password column.
+  if (res.error && /can_see_password/.test(res.error.message)) {
+    res = await supabase.from("email_vault_access").select("profile_id, granted_by, granted_at").order("granted_at", { ascending: true });
+  }
+  const { data, error } = res;
   if (error) throw vaultError(error);
+  return (data ?? []).map((r: any) => ({
+    profileId: r.profile_id,
+    grantedBy: r.granted_by ?? null,
+    grantedAt: r.granted_at,
+    canSeePassword: typeof r.can_see_password === "boolean" ? r.can_see_password : null,
+  }));
+}
+
+/** Super Admin only (RLS). `canSeePassword` needs migration 0439. */
+export async function grantEmailVaultAccess(profileId: string, canSeePassword = false): Promise<void> {
+  const { error } = await supabase.from("email_vault_access").insert({ profile_id: profileId, can_see_password: canSeePassword });
+  if (error) {
+    if (/can_see_password/.test(error.message)) throw new Error("Choosing Email only or Email and password needs database migration 0439_email_vault_password_access.sql.");
+    throw vaultError(error);
+  }
+}
+
+/** Super Admin only (RLS): move someone between Email only and Email and password. */
+export async function setEmailVaultPasswordAccess(profileId: string, canSeePassword: boolean): Promise<void> {
+  const { data, error } = await supabase.from("email_vault_access").update({ can_see_password: canSeePassword }).eq("profile_id", profileId).select("profile_id");
+  if (error) throw vaultError(error);
+  if (!data || data.length === 0) throw new Error("Couldn't change that — only a Super Admin can change who has access.");
 }
 
 /** Super Admin only (RLS). */
