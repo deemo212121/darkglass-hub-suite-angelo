@@ -2399,6 +2399,17 @@ const serverStatusMod: ModuleDef = {
       count: 0,
       seed: () => ({}),
     },
+    {
+      // How long pages take for the people using them (PageSpeedPage,
+      // migration 0438), measured in their browsers by PageLoadTracker.
+      slug: "page-speed",
+      title: "Page Speed",
+      description: "How long each page takes to show and to finish loading, for the people using it — slowest pages first, by day and by device.",
+      custom: "page-speed" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
   ],
 };
 

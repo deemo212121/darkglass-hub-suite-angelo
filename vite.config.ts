@@ -899,6 +899,33 @@ function storageUploadDevPlugin() {
   };
 }
 
+// Every module the app needs before the first page can render: reached
+// from the entry by plain (static) imports only. Anything outside this set is
+// only ever reached through a dynamic import() — a page, an export button, a
+// guided tour — and must not be put in an up-front chunk, or the download it
+// was written to avoid comes back on every page. Worked out once per build
+// (client and server each have their own module graph).
+type ChunkMeta = {
+  getModuleIds: () => IterableIterator<string>;
+  getModuleInfo: (id: string) => { isEntry: boolean; importedIds: readonly string[] } | null;
+};
+const eagerModuleSets = new WeakMap<object, Set<string>>();
+function eagerModules(meta: ChunkMeta): Set<string> {
+  const cached = eagerModuleSets.get(meta.getModuleInfo);
+  if (cached) return cached;
+  const seen = new Set<string>();
+  const stack: string[] = [];
+  for (const id of meta.getModuleIds()) if (meta.getModuleInfo(id)?.isEntry) stack.push(id);
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    for (const next of meta.getModuleInfo(id)?.importedIds ?? []) if (!seen.has(next)) stack.push(next);
+  }
+  eagerModuleSets.set(meta.getModuleInfo, seen);
+  return seen;
+}
+
 // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
 // @cloudflare/vite-plugin builds from this — wrangler.jsonc main alone is insufficient.
 export default defineConfig({
@@ -949,8 +976,12 @@ export default defineConfig({
       emptyOutDir: false,
       rollupOptions: {
         output: {
-          manualChunks(id) {
+          manualChunks(id, meta) {
             const normalized = id.replace(/\\/g, "/");
+            // Loaded up front (see eagerModules above). The shared "vendor" and
+            // "ui-kit" chunks only take these; everything else is left to
+            // Rollup, which puts it with the pages that use it.
+            const eager = eagerModules(meta as unknown as ChunkMeta).has(id);
 
             // Rollup's shared CommonJS helpers (commonjsRequire etc.) — pinned
             // to "react", or they land in the first lazy chunk that needs
@@ -1075,7 +1106,11 @@ export default defineConfig({
                 return "interactive";
               }
 
-              return "vendor";
+              // Only what startup needs. A library reached only by a dynamic
+              // import() (html2canvas / jsPDF for PDF capture, docx for Word
+              // exports, @dnd-kit for the form builders, ...) used to land here
+              // anyway and download on every page.
+              return eager ? "vendor" : undefined;
             }
 
             if (normalized.includes("/src/lib/modules.ts")) return "module-registry";
@@ -1091,7 +1126,12 @@ export default defineConfig({
             // an export from the other chunk before its own top-level code
             // had finished running. Putting them in the same chunk removes
             // the boundary (and the ordering hazard) entirely.
-            if (normalized.includes("/src/lib/")) return "vendor";
+            // Only the src/lib files startup needs (2026-11-10). The rest — e.g.
+            // teamUpdates.json (1.2 MB, AHS Updates only) — go with the pages
+            // that use them. This can't bring back the cycle above: a startup
+            // file can't statically import a file left out here, or that file
+            // would be a startup file too.
+            if (normalized.includes("/src/lib/")) return eager ? "vendor" : undefined;
             // Statically imported by src/lib/formElements/factories.tsx
             // (chunked "vendor" above), which would otherwise create a
             // backward "vendor -> ui-kit" edge — same class of hazard the
@@ -1100,8 +1140,8 @@ export default defineConfig({
             // Tiptap, and lucide-react (its own "icons" chunk) — nothing
             // else under src/components/ui/ or src/components/, so this
             // doesn't just relocate the cycle.
-            if (normalized.includes("/src/components/ui/rich-text-editor.tsx")) return "vendor";
-            if (normalized.includes("/src/components/ui/")) return "ui-kit";
+            if (normalized.includes("/src/components/ui/rich-text-editor.tsx")) return eager ? "vendor" : undefined;
+            if (normalized.includes("/src/components/ui/")) return eager ? "ui-kit" : undefined;
             // Page components are no longer forced into one shared
             // "app-components" chunk (2026-10-26): with each module page
             // lazy-loaded (src/routes/m.$module.$submodule.tsx), Rollup gives

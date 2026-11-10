@@ -6,6 +6,7 @@ import { PageTrail } from "@/components/PageTrail";
 import { useRedirectGuard } from "@/lib/useRedirectGuard";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
+import { PageShownMarker } from "@/components/PageLoadTracker";
 import { useAuth } from "@/lib/auth";
 import { getModule, getSubModule, type ModuleDef, type SubModuleDef } from "@/lib/modules";
 // Richer parts components pulled from the upstream usapp repo. Where they
@@ -120,6 +121,7 @@ const SelfServiceGuidePage = lazy(() => import("@/components/SelfServiceGuidePag
 const GettingStartedGuidePage = lazy(() => import("@/components/GettingStartedGuidePage").then((m) => ({ default: m.GettingStartedGuidePage })));
 const ServerStatusPage = lazy(() => import("@/components/ServerStatusPage").then((m) => ({ default: m.ServerStatusPage })));
 const TeamUpdatesPage = lazy(() => import("@/components/TeamUpdatesPanel").then((m) => ({ default: m.TeamUpdatesPage })));
+const PageSpeedPage = lazy(() => import("@/components/PageSpeedPage").then((m) => ({ default: m.PageSpeedPage })));
 const ApproverGuidePage = lazy(() => import("@/components/ApproverGuidePage").then((m) => ({ default: m.ApproverGuidePage })));
 const BizOpsGuidePage = lazy(() => import("@/components/BizOpsGuidePage").then((m) => ({ default: m.BizOpsGuidePage })));
 const PreAuthPage = lazy(() => import("@/components/PreAuthPage").then((m) => ({ default: m.PreAuthPage })));
@@ -668,6 +670,8 @@ function SubModule() {
         ? <GettingStartedGuidePage />
         : (sub as any).custom === "server-status"
         ? <ServerStatusPage />
+        : (sub as any).custom === "page-speed"
+        ? <PageSpeedPage />
         : (sub as any).custom === "team-updates"
         ? <TeamUpdatesPage />
         : (sub as any).custom === "approver-guide"
@@ -777,6 +781,8 @@ function SubModule() {
         : (sub as any).custom === "add-branch"
         ? <AddBranchPage mod={mod} sub={sub} />
         : <GenericModulePage mod={mod} sub={sub} />}
+      {/* Page Speed: mounts once the page above has rendered — that's when it counts as shown. */}
+      <PageShownMarker key={`${mod.slug}/${sub.slug}`} />
       </Suspense>
       <Footer />
     </>

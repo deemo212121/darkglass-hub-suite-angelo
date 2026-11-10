@@ -10,7 +10,7 @@
  * ReportHRDaily.tsx, same pattern as ExceptionReportsTab.tsx.
  */
 import { useEffect, useMemo, useState } from "react";
-import { Copy, Download, Eye, Loader2, PenLine, Send, Trash2, XCircle } from "lucide-react";
+import { Copy, Download, Eye, Loader2, PenLine, RotateCcw, Send, Trash2, XCircle } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
 import {
@@ -19,6 +19,8 @@ import {
   reassignSignableDocument,
   confirmSignableDocument,
   cancelSignableDocument,
+  undoCancelSignableDocument,
+  undoCancelOutcome,
   deleteSignableDocument,
   signDocument,
   type SignableDocument,
@@ -311,6 +313,21 @@ export function CompensationUpdateTab() {
     }
   };
 
+  // Undo Cancel: back where it was (waiting for the same signer, or signed).
+  const handleUndoCancel = async (doc: SignableDocument) => {
+    if (!window.confirm(`Undo the cancel? This Promotion Paper and Wage Increase goes ${undoCancelOutcome(doc)}.`)) return;
+    setBusyId(doc.id);
+    setError(null);
+    try {
+      await undoCancelSignableDocument(doc.id);
+      await loadDocs();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to undo.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const handleDelete = async (doc: SignableDocument) => {
     if (!window.confirm("Permanently delete this Promotion Paper and Wage Increase? This can't be undone.")) return;
     setBusyId(doc.id);
@@ -485,6 +502,11 @@ export function CompensationUpdateTab() {
                       {open && (
                         <button type="button" onClick={() => handleCancel(doc)} disabled={busy} className="px-2 py-1 bg-red-600/80 hover:bg-red-600 disabled:opacity-50 text-white rounded text-xs font-semibold inline-flex items-center gap-1">
                           <XCircle className="h-3 w-3" /> Cancel
+                        </button>
+                      )}
+                      {doc.status === "cancelled" && (
+                        <button type="button" onClick={() => handleUndoCancel(doc)} disabled={busy} title="Put it back where it was before it was cancelled" className="px-2 py-1 bg-emerald-600/80 hover:bg-emerald-600 disabled:opacity-50 text-white rounded text-xs font-semibold inline-flex items-center gap-1">
+                          <RotateCcw className="h-3 w-3" /> Undo Cancel
                         </button>
                       )}
                       {!isCompletedPaper(doc) && (

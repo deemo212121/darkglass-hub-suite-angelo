@@ -1,6 +1,4 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { initDatabase } from "./db-api";
-import { getFirebaseAnalytics } from "./firebase";
 import { onAuthStateChanged, signInWithCustomToken, type User as FirebaseUser } from "firebase/auth";
 import { auth, isFirebaseReady } from "./firebase/config";
 import { getUserAccount, updateLastLogin } from "./firebase/users";
@@ -305,10 +303,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // this firing has nothing left to do anyway.
   const justClaimedUidRef = useRef<string | null>(null);
   useEffect(() => {
-    // Initialize database on app startup (client-side only)
     if (typeof window !== "undefined") {
-      initDatabase().then(() => {
-        void getFirebaseAnalytics();
+      // The Repair Forecast page's sample data (a local browser database) and
+      // Firebase Analytics aren't needed to sign in. They used to load first,
+      // holding up every page until both were done; now they load alongside.
+      void import("./db-api").then((m) => m.initDatabase()).catch(() => undefined);
+      void import("./firebase").then((m) => m.getFirebaseAnalytics()).catch(() => undefined);
+      Promise.resolve().then(() => {
         
         // Check if Firebase is ready
         if (!isFirebaseReady() || !auth) {
