@@ -118,6 +118,7 @@ import {
   confirmSignableDocument,
   cancelSignableDocument,
   undoCancelSignableDocument,
+  undoConfirmSignableDocument,
   statusBeforeCancel,
   undoCancelOutcome,
   deleteSignableDocument,
@@ -14529,6 +14530,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // Undo Confirm: off the employee's record, back to Awaiting Signature for
+  // the same signer — they sign again, then it's confirmed again as normal.
+  const handleUndoConfirmWarningForm = async (doc: SignableDocument) => {
+    const data = doc.formData as unknown as WarningFormData;
+    const who = (doc.formData as { recipientName?: string }).recipientName || doc.recipientName || "the signer";
+    const message = `Undo the confirm? This warning goes back to Awaiting Signature for ${who}${data.employeeId ? `, and it comes off ${data.employeeName}'s official record until it's confirmed again` : ""}.`;
+    if (!window.confirm(message)) return;
+    setWarnActionBusyId(doc.id);
+    setWarnActionError(null);
+    try {
+      await undoConfirmSignableDocument(doc.id);
+      await Promise.all([loadSentWarningForms(), (async () => setAllNotes(await getAllAgentNotes()))()]);
+      void logActivity({ action: "warning_form_confirm_undone", targetType: "employee", targetId: data.employeeId, targetLabel: data.employeeName });
+    } catch (err) {
+      setWarnActionError(err instanceof Error ? err.message : "Failed to undo the confirm.");
+    } finally {
+      setWarnActionBusyId(null);
+    }
+  };
+
   // Undo Cancel / Undo Revert: the warning goes back where it was. One that
   // had been confirmed goes back on the employee's official record too — a
   // new record entry dated when it was first confirmed (occurredAt), since
@@ -25134,6 +25155,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               className="btn text-[10px] px-2 py-1 text-yellow-300 hover:bg-yellow-500/10 disabled:opacity-50"
                             >
                               Revert Warning
+                            </button>
+                          )}
+                          {doc.status === "confirmed" && (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => handleUndoConfirmWarningForm(doc)}
+                              className="btn text-[10px] px-2 py-1 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50"
+                              title="Back to Awaiting Signature — off the employee's record until confirmed again"
+                            >
+                              Undo Confirm
                             </button>
                           )}
                           {doc.pdfUrl && (
