@@ -163,6 +163,7 @@ const CsrGhTracker = lazy(() => import("@/components/CsrGhTracker").then((m) => 
 const CsrLtpReport = lazy(() => import("@/components/CsrLtpReport").then((m) => ({ default: m.CsrLtpReport })));
 const CsrCoachingLogPage = lazy(() => import("@/components/CsrCoachingLogPage").then((m) => ({ default: m.CsrCoachingLogPage })));
 const AccountingCoachingLogPage = lazy(() => import("@/components/AccountingCoachingLogPage").then((m) => ({ default: m.AccountingCoachingLogPage })));
+const TechDamagesPage = lazy(() => import("@/components/TechDamagesPage").then((m) => ({ default: m.TechDamagesPage })));
 const CSRCallTracker = lazy(() => import("@/components/CSRCallTracker").then((m) => ({ default: m.CSRCallTracker })));
 const CSRStatusSummary = lazy(() => import("@/components/CSRStatusSummary").then((m) => ({ default: m.CSRStatusSummary })));
 const ExpenseTrackingPage = lazy(() => import("@/components/ExpenseTrackingPage").then((m) => ({ default: m.ExpenseTrackingPage })));
@@ -642,6 +643,8 @@ function SubModule() {
         ? <CsrCoachingLogPage mod={mod} sub={sub} />
         : (sub as any).custom === "accounting-coaching-log"
         ? <AccountingCoachingLogPage mod={mod} sub={sub} />
+        : (sub as any).custom === "tech-damages"
+        ? <TechDamagesPage mod={mod} sub={sub} />
         : (sub as any).custom === "csr-daily-report"
         ? <ReportCSRDaily mod={mod} sub={sub} />
         : (sub as any).custom === "call-tracker"

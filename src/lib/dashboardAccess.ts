@@ -106,6 +106,8 @@ export const DASHBOARD_ROLE_GATES: Record<string, string[]> = {
   "coaching-log": ["ADMIN", "CSR_MANAGER", "CSR_TEAM_LEADER", "CSR_AGENT", "HR", "SENIOR_MANAGER"],
   // Accounting Coaching Log (migration 0433): plain Accounting staff only ever see their own logs (RLS).
   "accounting-coaching-log": ["ADMIN", "FINANCE", "HR", "SENIOR_MANAGER"],
+  // Tech Damages (migration 0440): Finance / Admin write, HR reads (RLS too).
+  "tech-damages": ["ADMIN", "FINANCE", "HR"],
   // IT Tickets now lives only in the Admin module (m.$module.$submodule.tsx
   // reuses this same list via getDashboardRoleGate("it-tickets") to carve
   // an exception into the Admin-module's Admin/SuperAdmin-only gate) — IT
