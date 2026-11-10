@@ -616,6 +616,55 @@ export async function cancelSignableDocument(id: string): Promise<void> {
 }
 
 /**
+ * Where a cancelled document was before it was cancelled. Cancel only stamps
+ * the status (and drops a warning's record entry) — confirmed_at and the
+ * signatures stay — so it can be told exactly: confirmed if it had been
+ * confirmed; signed if its current signer's signature is there (that's what
+ * "signed" means — see signDocument; sending it on to the next signer moves
+ * recipient_slot to a slot that hasn't signed yet); otherwise waiting for
+ * that signer.
+ */
+export function statusBeforeCancel(doc: Pick<SignableDocument, "confirmedAt" | "signatures" | "recipientSlot">): Exclude<SignableDocumentStatus, "cancelled"> {
+  if (doc.confirmedAt) return "confirmed";
+  const signatures = (doc.signatures ?? {}) as Record<string, unknown>;
+  if (doc.recipientSlot && signatures[doc.recipientSlot]) return "signed";
+  return "pending_signature";
+}
+
+/**
+ * Undo a Cancel (or a Revert): the document goes back where it was
+ * (statusBeforeCancel) — a form waiting for a signature works again from the
+ * same link. A warning that had been confirmed also goes back on the
+ * employee's record: the caller re-adds the record entry first and passes its
+ * id (see handleUndoCancelWarningForm in ReportHRDaily.tsx). Only a document
+ * still cancelled is touched, so two people undoing at once can't both apply.
+ */
+export async function undoCancelSignableDocument(id: string, agentNoteId: string | null = null): Promise<Exclude<SignableDocumentStatus, "cancelled">> {
+  const doc = await getSignableDocument(id);
+  if (!doc) throw new Error("Document not found.");
+  if (doc.status !== "cancelled") throw new Error("This form isn't cancelled anymore — refresh the list.");
+  const status = statusBeforeCancel(doc);
+  const { data, error } = await supabase
+    .from("hr_signable_documents")
+    .update({ status, cancelled_at: null, agent_note_id: agentNoteId })
+    .eq("id", id)
+    .eq("status", "cancelled")
+    .select("id");
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) throw new Error("Couldn't undo — it may have just been changed, or you don't have permission. Refresh and try again.");
+  return status;
+}
+
+/** "back to waiting for Maria to sign", for Undo's confirmation. */
+export function undoCancelOutcome(doc: SignableDocument): string {
+  const back = statusBeforeCancel(doc);
+  if (back === "confirmed") return "back to confirmed";
+  if (back === "signed") return "back to signed, waiting for you to confirm it";
+  const who = (doc.formData as { recipientName?: string }).recipientName || doc.recipientName || "the signer";
+  return `back to waiting for ${who} to sign — the link they were sent works again`;
+}
+
+/**
  * Permanently erases the document — for when the whole thing was raised in
  * error and shouldn't leave any trace, not even a "cancelled" row. Retracts
  * the linked warning note first (same as cancel), then hard-deletes the

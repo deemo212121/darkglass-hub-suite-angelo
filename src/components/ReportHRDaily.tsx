@@ -117,6 +117,9 @@ import {
   getSignableDocumentsByTypes,
   confirmSignableDocument,
   cancelSignableDocument,
+  undoCancelSignableDocument,
+  statusBeforeCancel,
+  undoCancelOutcome,
   deleteSignableDocument,
   reassignSignableDocument,
   reopenEmployerSignature,
@@ -14526,6 +14529,63 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
+  // Undo Cancel / Undo Revert: the warning goes back where it was. One that
+  // had been confirmed goes back on the employee's official record too — a
+  // new record entry dated when it was first confirmed (occurredAt), since
+  // the old one was removed by the revert.
+  const handleUndoCancelWarningForm = async (doc: SignableDocument) => {
+    const back = statusBeforeCancel(doc);
+    const data = doc.formData as unknown as WarningFormData;
+    const backOnRecord = back === "confirmed" && !!data.employeeId;
+    const message = backOnRecord
+      ? `Undo the revert? This warning goes back on ${data.employeeName}'s official record, and their warning count goes up again.`
+      : `Undo the ${back === "confirmed" ? "revert" : "cancel"}? This warning goes ${undoCancelOutcome(doc)}.`;
+    if (!window.confirm(message)) return;
+    setWarnActionBusyId(doc.id);
+    setWarnActionError(null);
+    try {
+      let noteId: string | null = null;
+      if (backOnRecord) {
+        noteId = await addAgentNote({ agentProfileId: data.employeeId, type: "warning", note: buildWarnNoteText(data), occurredAt: doc.confirmedAt ?? undefined, fastTrackToApproved: true });
+      }
+      try {
+        await undoCancelSignableDocument(doc.id, noteId);
+      } catch (err) {
+        // The form didn't come back, so neither should the record entry.
+        if (noteId) await deleteAgentNote(noteId).catch(() => undefined);
+        throw err;
+      }
+      await Promise.all([loadSentWarningForms(), (async () => setAllNotes(await getAllAgentNotes()))()]);
+      void logActivity({ action: back === "confirmed" ? "warning_form_revert_undone" : "warning_form_cancel_undone", targetType: "employee", targetId: data.employeeId, targetLabel: data.employeeName });
+    } catch (err) {
+      setWarnActionError(err instanceof Error ? err.message : "Failed to undo.");
+    } finally {
+      setWarnActionBusyId(null);
+    }
+  };
+
+  // Undo Cancel / Undo Revert for the Promotion, Action Plan and Termination
+  // forms — documents only, so nothing else to put back.
+  const undoCancelledForm = async (
+    doc: SignableDocument,
+    opts: { what: string; activity: string; reload: () => Promise<void>; setBusyId: (id: string | null) => void; setError: (e: string | null) => void },
+  ) => {
+    const back = statusBeforeCancel(doc);
+    if (!window.confirm(`Undo the ${back === "confirmed" ? "revert" : "cancel"}? This ${opts.what} goes ${undoCancelOutcome(doc)}.`)) return;
+    opts.setBusyId(doc.id);
+    opts.setError(null);
+    try {
+      await undoCancelSignableDocument(doc.id);
+      await opts.reload();
+      const data = doc.formData as { employeeId?: string; employeeName?: string };
+      void logActivity({ action: `${opts.activity}_${back === "confirmed" ? "revert" : "cancel"}_undone`, targetType: "employee", targetId: data.employeeId, targetLabel: data.employeeName });
+    } catch (err) {
+      opts.setError(err instanceof Error ? err.message : "Failed to undo.");
+    } finally {
+      opts.setBusyId(null);
+    }
+  };
+
   /** Permanently erases the whole document — for when it was raised entirely in error and shouldn't leave a trace, not even a "cancelled" row. */
   const handleDeleteWarningForm = async (doc: SignableDocument) => {
     if (!window.confirm("Permanently delete this warning form? This can't be undone — it removes the record entirely, including any logged warning against the employee.")) return;
@@ -25050,6 +25110,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               </button>
                             </>
                           )}
+                          {doc.status === "cancelled" && (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => handleUndoCancelWarningForm(doc)}
+                              className="btn text-[10px] px-2 py-1 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50"
+                              title="Put it back where it was before it was cancelled"
+                            >
+                              {statusBeforeCancel(doc) === "confirmed" ? "Undo Revert" : "Undo Cancel"}
+                            </button>
+                          )}
                           {doc.status === "confirmed" && (
                             <button
                               type="button"
@@ -25439,6 +25510,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                               </button>
                             </>
                           )}
+                          {doc.status === "cancelled" && (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => undoCancelledForm(doc, { what: "promotion form", activity: "promotion_form", reload: loadSentPromotionForms, setBusyId: setPromoActionBusyId, setError: setPromoActionError })}
+                              className="btn text-[10px] px-2 py-1 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50"
+                              title="Put it back where it was before it was cancelled"
+                            >
+                              {statusBeforeCancel(doc) === "confirmed" ? "Undo Revert" : "Undo Cancel"}
+                            </button>
+                          )}
                           {doc.status === "confirmed" && (
                             <button
                               type="button"
@@ -25684,6 +25766,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                                 Cancel
                               </button>
                             </>
+                          )}
+                          {doc.status === "cancelled" && (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => undoCancelledForm(doc, { what: "action plan form", activity: "action_plan_form", reload: loadSentActionPlanForms, setBusyId: setActionPlanActionBusyId, setError: setActionPlanActionError })}
+                              className="btn text-[10px] px-2 py-1 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50"
+                              title="Put it back where it was before it was cancelled"
+                            >
+                              {statusBeforeCancel(doc) === "confirmed" ? "Undo Revert" : "Undo Cancel"}
+                            </button>
                           )}
                           {doc.status === "confirmed" && (
                             <button
@@ -25961,6 +26054,17 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                                 Cancel
                               </button>
                             </>
+                          )}
+                          {doc.status === "cancelled" && (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => undoCancelledForm(doc, { what: "termination notice", activity: "termination_form", reload: loadSentTerminationForms, setBusyId: setTerminationActionBusyId, setError: setTerminationActionError })}
+                              className="btn text-[10px] px-2 py-1 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50"
+                              title="Put it back where it was before it was cancelled"
+                            >
+                              {statusBeforeCancel(doc) === "confirmed" ? "Undo Revert" : "Undo Cancel"}
+                            </button>
                           )}
                           {doc.status === "confirmed" && (
                             <button
