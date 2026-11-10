@@ -69,6 +69,7 @@ import { invalidateCompanyTicketsCache } from "./tickets";
 import { invalidateErBackfillIds } from "./erBackfill";
 import { aliasTechName } from "@/lib/techNameMatch";
 import { parseCsv } from "@/lib/csvParse";
+import { isGridTicketHeader, normalizeTicketExportRow } from "@/lib/ticketExportFormat";
 
 export type ImportRow = Record<string, string>;
 
@@ -147,21 +148,25 @@ export async function readImportFile(file: File): Promise<ImportRow[]> {
   let table: string[][];
   let ticketNoWasNumber: boolean[] = [];
   if (/\.csv$/i.test(file.name) || file.type === "text/csv") {
-    table = parseCsv(await file.text());
+    table = parseCsv((await file.text()).replace(/^\uFEFF/, ""));
   } else {
     const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
     const ws = wb.Sheets[wb.SheetNames[0]];
     const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true, defval: "" });
-    const ticketCol = (raw[0] ?? []).findIndex((h) => String(h).trim().replace(/^﻿/, "") === "TicketNo");
+    const rawHeader = (raw[0] ?? []).map((h) => String(h).trim().replace(/^\uFEFF/, ""));
+    const grid = isGridTicketHeader(rawHeader);
+    const ticketCol = rawHeader.findIndex((h) => h === (grid ? "Ticket No" : "TicketNo"));
     ticketNoWasNumber = raw.map((r) => ticketCol >= 0 && typeof r[ticketCol] === "number");
-    table = raw.map((r) => r.map(cellText));
+    table = raw.map((r) => r.map((v) => grid && v instanceof Date
+      ? `${v.getFullYear()}-${pad(v.getMonth() + 1)}-${pad(v.getDate())}`
+      : cellText(v)));
   }
   if (table.length === 0) return [];
   const header = table[0].map((h) => h.trim().replace(/^﻿/, ""));
   return table.slice(1).map((r, i) => {
     const row: ImportRow = Object.fromEntries(header.map((h, j) => [h, (r[j] ?? "").trim()]));
     if (ticketNoWasNumber[i + 1]) row[TICKET_NO_WAS_NUMBER] = "1";
-    return row;
+    return normalizeTicketExportRow(row);
   });
 }
 

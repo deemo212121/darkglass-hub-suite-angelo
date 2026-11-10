@@ -44,7 +44,7 @@ function ImportBulkTicketsModal({ onClose }: { onClose: () => void }) {
     try {
       const parsed = await readImportFile(file);
       if (!looksLikeTicketExport(parsed)) {
-        setError("This file doesn't look like a ticket export — it needs the TicketNo, StatusDesc and CxUserName columns.");
+        setError("This file doesn't look like a ticket export — expected TicketNo / StatusDesc / CxUserName or Ticket No / Status / Cx Name columns.");
         return;
       }
       setFileName(file.name);
