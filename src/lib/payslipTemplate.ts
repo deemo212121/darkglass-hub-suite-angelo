@@ -317,6 +317,7 @@ export const PAYSLIP_STYLES = `
 /** The <body> markup only — see this file's header comment for why it's split from PAYSLIP_STYLES. */
 export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
   const currentDate = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  const isFixedSalary = employee.compensationType === "fixed";
   const adjustments = employee.adjustments ?? [];
   const adjustmentsNet = adjustments.reduce((s, a) => s + (a.kind === "reimbursement" ? a.amount : -a.amount), 0);
   const grandTotal = employee.grossPay + employee.extraPay + adjustmentsNet;
@@ -425,8 +426,8 @@ export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
             <td>${formatClockTime(r.mealEnd)}</td>
             <td>${formatClockTime(r.clockOut)}</td>
             <td class="amount">${r.hours.toFixed(3)}</td>
-            <td class="amount">$${r.rate.toFixed(2)}</td>
-            <td class="amount">$${r.amount.toFixed(2)}</td>
+            <td class="amount">${isFixedSalary ? "Fixed salary" : `$${r.rate.toFixed(2)}`}</td>
+            <td class="amount">${isFixedSalary ? "&mdash;" : `$${r.amount.toFixed(2)}`}</td>
           </tr>
           `).join('') : `
           <tr>
@@ -436,8 +437,8 @@ export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
         </tbody>
         <tfoot>
           <tr style="font-weight: 700; background: #f3f4f6;">
-            <td colspan="${employee.showState ? 8 : 7}">${employee.hasTechActivityPage ? "Hourly Pay Total" : "Total"}</td>
-            <td class="amount">$${(employee.hasTechActivityPage ? employee.dailyRows.reduce((s, r) => s + r.amount, 0) : employee.grossPay).toFixed(2)}</td>
+            <td colspan="${employee.showState ? 8 : 7}">${isFixedSalary ? "Fixed Salary Total" : employee.hasTechActivityPage ? "Hourly Pay Total" : "Total"}</td>
+            <td class="amount">$${(!isFixedSalary && employee.hasTechActivityPage ? employee.dailyRows.reduce((s, r) => s + r.amount, 0) : employee.grossPay).toFixed(2)}</td>
           </tr>
         </tfoot>
       </table>

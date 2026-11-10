@@ -3681,12 +3681,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // server bridge's runtime doesn't have, so the PDF is built here and
   // handed to the server as base64 to attach as-is.
   const buildPayslipPdfBase64 = async (row: EmployeePayrollRow): Promise<string> => {
-    // Fixed-salary employees are paid a flat per-cutoff amount, not an
-    // hourly breakdown — an hours × $0/hr daily table would read as "you
-    // earned $0 today" despite the correct total below, so this skips the
-    // daily rows entirely for them (the template already shows "No daily
-    // attendance recorded" when dailyRows is empty).
-    const dailyRows: PayslipDailyRow[] = row.compensationType === "fixed" ? [] : await (async () => {
+    // Attendance is shown for both hourly and fixed-salary employees.
+    // The shared template labels fixed daily rows without hourly earnings.
+    const dailyRows: PayslipDailyRow[] = await (async () => {
       const emp = row.employee;
       const graceMinutes = payGraceMinutesFor(emp.country);
       const scheduled = {
