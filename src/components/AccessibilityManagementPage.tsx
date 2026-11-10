@@ -528,9 +528,10 @@ export function AccessibilityManagementPage({ mod, sub }: Props) {
   // Every submodule across every module — the source list for the
   // Available/Granted editor below. A row with no override (and, for
   // Dashboard, no hardcoded DASHBOARD_ROLE_GATES entry either) is open to
-  // every role today.
+  // every role today. Email Vault is left out: it's opened by person (its
+  // own page's access list), so a role grant here would do nothing.
   const gateRows = useMemo<GateRow[]>(
-    () => MODULES.flatMap((m) => m.submodules.map((s) => ({ moduleSlug: m.slug, moduleLabel: m.label, slug: s.slug, title: s.title }))),
+    () => MODULES.flatMap((m) => m.submodules.filter((s) => (s.custom as string | undefined) !== "email-vault").map((s) => ({ moduleSlug: m.slug, moduleLabel: m.label, slug: s.slug, title: s.title }))),
     []
   );
 

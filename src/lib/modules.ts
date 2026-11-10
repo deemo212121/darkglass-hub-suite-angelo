@@ -1877,6 +1877,16 @@ const adminMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      // Super Admin, plus the people a Super Admin adds on the page itself
+      // (by person, not role — see submoduleAccess.ts's canOpenEmailVault).
+      slug: "email-vault",
+      title: "Email Vault",
+      description: "Company email logins, their passwords, and who uses each mailbox.",
+      custom: "email-vault" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
       slug: "technician-whereabouts",
       title: "Technician Whereabouts",
       description: "Each technician's current job site, per branch or company-wide.",

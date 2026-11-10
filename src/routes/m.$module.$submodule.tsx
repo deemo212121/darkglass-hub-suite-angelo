@@ -15,14 +15,14 @@ import { getModule, getSubModule, type ModuleDef, type SubModuleDef } from "@/li
 import { canAccessUserManagement, getUserManagementRecord, canAccessAdminModule } from "@/lib/user-management";
 import { isSubmoduleAllowed, isSubmoduleAllowedForTrainee, isSubmoduleAllowedForFrozen, isCompanySuperAdminRole, isCsrRestrictedRole } from "@/lib/roleLabels";
 import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
-import { useModuleRoleGate, useModuleRoleGateOverrides } from "@/lib/moduleAccess";
+import { useModuleRoleGate, useModuleRoleGateOverrides, useEmailVaultGrant } from "@/lib/moduleAccess";
 // Roles allowed into the admin module overall, and into User Management /
 // Activity Logs specifically. Checked via hasDashboardAccess so a secondary
 // role (profiles.extra_roles) grants access too, not just the primary role —
 // e.g. a Parts Manager who's also been given Admin as a secondary role.
 // Shared with submoduleAccess.ts (used by home.tsx/ModuleNavigator.tsx to
 // decide what to even list) so both surfaces can never drift apart.
-import { ADMIN_MODULE_ROLES, USER_MANAGEMENT_DEFAULT_ROLES, ACTIVITY_LOG_DEFAULT_ROLES, WHEREABOUTS_DEFAULT_ROLES, BIZOPS_GUIDE_DEFAULT_ROLES, PRE_AUTH_DEFAULT_ROLES, resolveSubmoduleAllowedRoles, passesModuleLevelGate } from "@/lib/submoduleAccess";
+import { ADMIN_MODULE_ROLES, USER_MANAGEMENT_DEFAULT_ROLES, ACTIVITY_LOG_DEFAULT_ROLES, WHEREABOUTS_DEFAULT_ROLES, BIZOPS_GUIDE_DEFAULT_ROLES, PRE_AUTH_DEFAULT_ROLES, resolveSubmoduleAllowedRoles, passesModuleLevelGate, canOpenEmailVault } from "@/lib/submoduleAccess";
 import { ROLE_LABELS } from "@/lib/roleLabels";
 import { guideDepartmentFor } from "@/lib/tours/guideDepartments";
 import { canSeeTicketTour } from "@/lib/tours/ticketTours";
@@ -104,6 +104,7 @@ const NewTicketPage = lazy(() => import("@/components/NewTicketPage").then((m) =
 const TodoListPage = lazy(() => import("@/components/TodoListPage").then((m) => ({ default: m.TodoListPage })));
 const AdminUserManagementPage = lazy(() => import("@/components/AdminUserManagementPage").then((m) => ({ default: m.AdminUserManagementPage })));
 const AccountManagementPage = lazy(() => import("@/components/AccountManagementPage").then((m) => ({ default: m.AccountManagementPage })));
+const EmailVaultPage = lazy(() => import("@/components/EmailVaultPage").then((m) => ({ default: m.EmailVaultPage })));
 const LocationManagementPage = lazy(() => import("@/components/LocationManagementPage").then((m) => ({ default: m.LocationManagementPage })));
 const TechnicianWhereaboutsPage = lazy(() => import("@/components/TechnicianWhereaboutsPage").then((m) => ({ default: m.TechnicianWhereaboutsPage })));
 const AddBranchPage = lazy(() => import("@/components/AddBranchPage").then((m) => ({ default: m.AddBranchPage })));
@@ -259,6 +260,9 @@ function SubModule() {
   // Dashboard-family fallbacks below read the cache synchronously), not just
   // this exact (module, submodule) pair.
   useModuleRoleGateOverrides();
+  // Admin → Email Vault is opened by person (migration 0436); null while
+  // that's still being checked after sign-in.
+  const emailVaultGrant = useEmailVaultGrant();
   // moduleAllowedRoles covers every module, not just Dashboard: the
   // Dashboard module additionally has a hardcoded default per submodule
   // (getDashboardRoleGate, DASHBOARD_ROLE_GATES) for when there's no
@@ -344,11 +348,20 @@ function SubModule() {
     );
   }
 
+  // Admin → Email Vault: Super Admin, plus whoever a Super Admin added on
+  // the page itself — by person, so none of the role gates below apply to
+  // it (each one skips isEmailVault). RLS enforces the same rule.
+  const isEmailVault = mod.slug === "admin" && (sub as any).custom === "email-vault";
+  if (isEmailVault && !canOpenEmailVault(role, extraRoles)) {
+    if (emailVaultGrant === null) return <BrandedLoader label="Checking access..." delayMs={150} />;
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
+  }
+
   // CSR Agents/Team Leaders get a narrow allow-list (their own Dashboard
   // tools + Tickets) — this is what actually stops someone from bypassing
   // the hidden tiles by typing the URL directly. Skipped entirely when an
   // admin has explicitly overridden this exact submodule's roles.
-  if (!explicitModuleOverride && !isSubmoduleAllowed(role, mod.slug, sub.slug, extraRoles)) {
+  if (!explicitModuleOverride && !isEmailVault && !isSubmoduleAllowed(role, mod.slug, sub.slug, extraRoles)) {
     return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
@@ -382,6 +395,7 @@ function SubModule() {
 
   if (
     mod.slug === "admin" &&
+    !isEmailVault &&
     !hasAdminAccess &&
     !hasItTicketsAccess &&
     !ALL_ROLES_ADMIN_SUBMODULES.has(sub.slug) &&
@@ -461,6 +475,7 @@ function SubModule() {
   // Team Messenger, defeating the whole point of that carve-out.
   const moduleAccessOk =
     !moduleAllowedRoles ||
+    isEmailVault ||
     (mod.slug === "admin" && ALL_ROLES_ADMIN_SUBMODULES.has(sub.slug)) ||
     hasDashboardAccess(moduleAllowedRoles, role, extraRoles);
 
@@ -745,6 +760,8 @@ function SubModule() {
         ? <AdminUserManagementPage mod={mod} sub={sub} />
         : sub.custom === "account-management"
         ? <AccountManagementPage mod={mod} sub={sub} />
+        : (sub as any).custom === "email-vault"
+        ? <EmailVaultPage mod={mod} sub={sub} />
         : sub.custom === "location-management"
         ? <LocationManagementPage mod={mod} sub={sub} />
         : (sub as any).custom === "technician-whereabouts"

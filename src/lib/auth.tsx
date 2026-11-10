@@ -536,6 +536,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   }
                   if (isStale()) return;
                   startModuleGateWatch(sbProfile.companyId);
+                  // Email Vault access is by person (migration 0436) — not
+                  // awaited: only the Email Vault tile/page depend on it,
+                  // and that page waits while it's still null.
+                  void (async () => {
+                    const { hydrateEmailVaultGrant } = await import("./moduleAccess");
+                    try {
+                      const { getMyEmailVaultAccess } = await import("./supabase/emailVault");
+                      const granted = await getMyEmailVaultAccess();
+                      if (!isStale()) hydrateEmailVaultGrant(granted);
+                    } catch (e) {
+                      console.warn("Email Vault access check skipped:", e);
+                      if (!isStale()) hydrateEmailVaultGrant(false);
+                    }
+                  })();
                   // Compute location access. Two overrides win over the
                   // work-plan-based filter:
                   //   1. branch_access = "*" (admin set "All Locations") →
@@ -641,6 +655,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             stopTokenRefresh();
             stopSessionWatchIfAny();
             stopModuleGateWatchIfAny();
+            void import("./moduleAccess").then(({ hydrateEmailVaultGrant }) => hydrateEmailVaultGrant(null));
             // Clear Supabase session
             clearSupabaseSession();
             // Clear auth state

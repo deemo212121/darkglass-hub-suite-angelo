@@ -6,7 +6,7 @@
  * database. The Firestore console — and any UI that needs a "User Type"
  * label — uses the values from this map instead of the raw code.
  */
-import { getModuleRoleGate, MODULE_LEVEL_GATE_SLUG } from "./moduleAccess";
+import { getModuleRoleGate, getEmailVaultGrant, MODULE_LEVEL_GATE_SLUG } from "./moduleAccess";
 
 export const ROLE_LABELS: Record<string, string> = {
   SUPERSUPERADMIN: "Super Super Admin",
@@ -437,6 +437,9 @@ export function isModuleAllowed(role: string | null | undefined, moduleSlug: str
     }
   }
   if (!isCsrRestrictedRole(role, extraRoles)) return true;
+  // Someone a Super Admin added to Admin → Email Vault (by person, migration
+  // 0436) — the Admin module opens for them, with just that tile.
+  if (moduleSlug === "admin" && getEmailVaultGrant() === true) return true;
   return CSR_ALLOWED_MODULES.has(moduleSlug);
 }
 

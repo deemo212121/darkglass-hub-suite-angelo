@@ -11,9 +11,9 @@
  * remain the actual enforcement; this is a read-only mirror of them, not a
  * replacement.
  */
-import { isSubmoduleAllowed, isSubmoduleAllowedForTrainee, isSubmoduleAllowedForFrozen, isCompanySuperAdminRole } from "./roleLabels";
+import { isSubmoduleAllowed, isSubmoduleAllowedForTrainee, isSubmoduleAllowedForFrozen, isCompanySuperAdminRole, normalizeRole } from "./roleLabels";
 import { getDashboardRoleGate, hasDashboardAccess } from "./dashboardAccess";
-import { getModuleRoleGate, MODULE_LEVEL_GATE_SLUG } from "./moduleAccess";
+import { getModuleRoleGate, getEmailVaultGrant, MODULE_LEVEL_GATE_SLUG } from "./moduleAccess";
 import { canSeeTicketTour } from "./tours/ticketTours";
 import { guideDepartmentFor } from "./tours/guideDepartments";
 
@@ -29,6 +29,21 @@ const DASHBOARD_FAMILY_MODULES = new Set(["dashboard", "hr", "accounting", "csr"
  * to) silently ignored a real ("accounting", "expenses") override and read
  * Accounting → Expenses as open to every role.
  */
+/** Super Admin as primary or extra role — the same test as the database's is_company_superadmin(). */
+export function isEmailVaultSuperAdmin(role: string | null | undefined, extraRoles: string[] | null | undefined): boolean {
+  return [role, ...(extraRoles ?? [])].some((r) => normalizeRole(r) === "SUPERADMIN");
+}
+
+/**
+ * Admin → Email Vault (migration 0436): Super Admin, or someone a Super
+ * Admin added on the page itself (moduleAccess.ts's getEmailVaultGrant).
+ * By person, so no role gate or Accessibility Management override applies —
+ * RLS enforces the same rule.
+ */
+export function canOpenEmailVault(role: string | null | undefined, extraRoles: string[] | null | undefined): boolean {
+  return isEmailVaultSuperAdmin(role, extraRoles) || getEmailVaultGrant() === true;
+}
+
 export function resolveSubmoduleAllowedRoles(moduleSlug: string, subSlug: string, explicitModuleOverride: string[] | null): string[] | null {
   if (explicitModuleOverride) return explicitModuleOverride;
   const borrowed = BORROWED_DEFAULT_GATES[`${moduleSlug}:${subSlug}`];
@@ -107,6 +122,7 @@ export function canAccessSubmodule(
 
   const isAllRolesAdminSubmodule = moduleSlug === "admin" && ALL_ROLES_ADMIN_SUBMODULES.has(sub.slug);
   if (!passesModuleLevelGate(role, extraRoles, moduleSlug)) return false;
+  if (moduleSlug === "admin" && sub.custom === "email-vault") return canOpenEmailVault(role, extraRoles);
 
   const explicitModuleOverride = getModuleRoleGate(moduleSlug, sub.slug);
   // Same resolver m.$module.$submodule.tsx uses — keep them identical.

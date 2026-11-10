@@ -94,3 +94,26 @@ export function useModuleRoleGate(moduleSlug: string, submoduleSlug: string): st
 export function useModuleRoleGateOverrides(): Record<string, string[]> {
   return useSyncExternalStore(subscribe, () => overrides, () => overrides);
 }
+
+// Admin → Email Vault (migration 0436) is opened by person, not by role:
+// true once the database says a Super Admin added this person on the page
+// itself. null = not checked yet this session — the page waits instead of
+// redirecting. Hydrated by auth.tsx after sign-in; Super Admins don't need it
+// (see submoduleAccess.ts's canOpenEmailVault).
+let emailVaultGrant: boolean | null = null;
+
+export function hydrateEmailVaultGrant(granted: boolean | null): void {
+  if (granted === emailVaultGrant) return;
+  emailVaultGrant = granted;
+  // List views re-render off the overrides snapshot (useModuleRoleGateOverrides).
+  overrides = { ...overrides };
+  notify();
+}
+
+export function getEmailVaultGrant(): boolean | null {
+  return emailVaultGrant;
+}
+
+export function useEmailVaultGrant(): boolean | null {
+  return useSyncExternalStore(subscribe, getEmailVaultGrant, getEmailVaultGrant);
+}
