@@ -616,6 +616,29 @@ export async function cancelSignableDocument(id: string): Promise<void> {
 }
 
 /**
+ * Undo Confirm: a confirmed document goes back to Awaiting Signature for its
+ * current signer (signatures and the PDF stay; signing again replaces theirs).
+ * A warning's record entry is removed, so the employee's warning count drops
+ * until it's confirmed again. Only a document still confirmed is touched.
+ */
+export async function undoConfirmSignableDocument(id: string): Promise<void> {
+  const doc = await getSignableDocument(id);
+  if (!doc) throw new Error("Document not found.");
+  if (doc.status !== "confirmed") throw new Error("This form isn't confirmed anymore — refresh the list.");
+  const { data, error } = await supabase
+    .from("hr_signable_documents")
+    .update({ status: "pending_signature", confirmed_at: null, agent_note_id: null })
+    .eq("id", id)
+    .eq("status", "confirmed")
+    .select("id");
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) throw new Error("Couldn't undo — it may have just been changed, or you don't have permission. Refresh and try again.");
+  if (doc.agentNoteId) {
+    await deleteAgentNote(doc.agentNoteId).catch((err) => console.error("Failed to retract warning note on undo confirm:", err));
+  }
+}
+
+/**
  * Where a cancelled document was before it was cancelled. Cancel only stamps
  * the status (and drops a warning's record entry) — confirmed_at and the
  * signatures stay — so it can be told exactly: confirmed if it had been

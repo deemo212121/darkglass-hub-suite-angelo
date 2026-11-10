@@ -26,7 +26,7 @@ vi.mock("./client", () => {
   return { supabase: { from: () => query() } };
 });
 vi.mock("@/lib/appErrorLog", () => ({ logAppError: vi.fn() }));
-vi.mock("./csrAgentNotes", () => ({ deleteAgentNote: vi.fn() }));
+vi.mock("./csrAgentNotes", () => ({ deleteAgentNote: vi.fn(async () => undefined) }));
 vi.mock("./technicianFormExemptions", () => ({ getTechnicianFormExemptions: vi.fn() }));
 vi.mock("./users", () => ({ setProfileFrozen: vi.fn() }));
 vi.mock("@/lib/completedPapers", () => ({ isCompletedPaper: () => false }));
@@ -122,5 +122,26 @@ describe("undoCancelSignableDocument", () => {
   it("a form that's gone", async () => {
     db.row = null;
     await expect(undoCancelSignableDocument("d1")).rejects.toThrow(/not found/);
+  });
+});
+
+describe("undoConfirmSignableDocument", () => {
+  it("puts a confirmed warning back to awaiting signature and takes it off the record", async () => {
+    const { undoConfirmSignableDocument } = await import("./signableDocuments");
+    const { deleteAgentNote } = await import("./csrAgentNotes");
+    db.row = row({ status: "confirmed", confirmed_at: "2026-11-09T00:00:00Z", agent_note_id: "note-1", cancelled_at: null });
+    await undoConfirmSignableDocument("d1");
+    expect(db.row).toMatchObject({ status: "pending_signature", confirmed_at: null, agent_note_id: null });
+    expect(db.filters[0]).toEqual([["id", "d1"], ["status", "confirmed"]]);
+    expect(deleteAgentNote).toHaveBeenCalledWith("note-1");
+  });
+  it("refuses a form that isn't confirmed anymore, and leaves the record alone", async () => {
+    const { undoConfirmSignableDocument } = await import("./signableDocuments");
+    const { deleteAgentNote } = await import("./csrAgentNotes");
+    (deleteAgentNote as any).mockClear();
+    db.row = row({ status: "pending_signature", agent_note_id: "note-1" });
+    await expect(undoConfirmSignableDocument("d1")).rejects.toThrow(/isn't confirmed anymore/);
+    expect(db.updates).toEqual([]);
+    expect(deleteAgentNote).not.toHaveBeenCalled();
   });
 });

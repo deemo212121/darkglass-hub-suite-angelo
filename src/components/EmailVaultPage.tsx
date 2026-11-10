@@ -33,6 +33,8 @@ import {
   getEmailVaultAccess,
   grantEmailVaultAccess,
   removeEmailVaultAccess,
+  setEmailVaultPasswordAccess,
+  getMyEmailVaultPasswordAccess,
   getEmailVaultEvents,
   type EmailVaultEntry,
   type EmailVaultAccessRow,
@@ -53,6 +55,7 @@ const EVENT_LABEL: Record<EmailVaultEvent["action"], string> = {
   copied: "Copied password",
   access_granted: "Gave access",
   access_removed: "Removed access",
+  access_changed: "Changed access",
 };
 
 function nameOf(u: ProfileRow | undefined): string {
@@ -142,6 +145,10 @@ export function EmailVaultPage({ mod, sub }: Props) {
   const [confirmDelete, setConfirmDelete] = useState<EmailVaultEntry | null>(null);
   const [managingAccess, setManagingAccess] = useState(false);
   const [grantPick, setGrantPick] = useState<string[]>([]);
+  /** Level for people added in Manage access. */
+  const [grantWithPassword, setGrantWithPassword] = useState(false);
+  /** Can I show / copy / set passwords? (Email and password, or Super Admin.) */
+  const [canSeePasswords, setCanSeePasswords] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
@@ -156,13 +163,15 @@ export function EmailVaultPage({ mod, sub }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const [rows, acc, ev, userRows, pid] = await Promise.all([
+      const [rows, acc, ev, userRows, pid, seePasswords] = await Promise.all([
         getEmailVaultEntries(),
         getEmailVaultAccess(),
         getEmailVaultEvents(),
         getCompanyUsers(),
         uid ? getMyProfileId(uid) : Promise.resolve(null),
+        getMyEmailVaultPasswordAccess().catch(() => false),
       ]);
+      setCanSeePasswords(seePasswords);
       setEntries(rows);
       setAccess(acc);
       setEvents(ev);
@@ -225,14 +234,14 @@ export function EmailVaultPage({ mod, sub }: Props) {
     if (!editing) return;
     const email = form.email.trim();
     if (!email) { toast.error("Enter the email address."); return; }
-    if (editing === "new" && !form.password) { toast.error("Enter the password."); return; }
+    if (editing === "new" && canSeePasswords && !form.password) { toast.error("Enter the password."); return; }
     setBusy(true);
     try {
       if (editing === "new") {
-        await addEmailVaultEntry({ email, password: form.password, people: form.people });
+        await addEmailVaultEntry({ email, password: canSeePasswords ? form.password : "", people: form.people });
         toast.success(`${email} added.`);
       } else {
-        await updateEmailVaultEntry(editing.id, { email, people: form.people, password: form.password ? form.password : undefined });
+        await updateEmailVaultEntry(editing.id, { email, people: form.people, password: canSeePasswords && form.password ? form.password : undefined });
         hidePassword(editing.id);
         toast.success(`${email} saved.`);
       }
@@ -269,14 +278,28 @@ export function EmailVaultPage({ mod, sub }: Props) {
     if (grantPick.length === 0) return;
     setBusy(true);
     try {
-      for (const id of grantPick) await grantEmailVaultAccess(id);
-      toast.success(`Gave access to ${grantPick.map((id) => nameOf(userById.get(id))).join(", ")}.`);
+      for (const id of grantPick) await grantEmailVaultAccess(id, grantWithPassword);
+      toast.success(`Gave ${grantPick.map((id) => nameOf(userById.get(id))).join(", ")} ${grantWithPassword ? "email and password" : "email only"} access.`);
       setGrantPick([]);
       setAccess(await getEmailVaultAccess());
       refreshEvents();
     } catch (e: any) {
       toast.error(e?.message || "Couldn't give access.");
       setAccess(await getEmailVaultAccess().catch(() => access));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const changeLevel = async (profileId: string, canSeePassword: boolean) => {
+    setBusy(true);
+    try {
+      await setEmailVaultPasswordAccess(profileId, canSeePassword);
+      toast.success(`${nameOf(userById.get(profileId))} can now see ${canSeePassword ? "emails and passwords" : "emails only"}.`);
+      setAccess((rows) => rows.map((r) => (r.profileId === profileId ? { ...r, canSeePassword } : r)));
+      refreshEvents();
+    } catch (e: any) {
+      toast.error(e?.message || "Couldn't change their access.");
     } finally {
       setBusy(false);
     }
@@ -402,13 +425,17 @@ export function EmailVaultPage({ mod, sub }: Props) {
                     <td className="px-3 py-2 font-medium break-all">{entry.email}</td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-1.5">
-                        <span className="font-mono text-xs min-w-[7rem] break-all">{shown !== undefined ? shown || "(none)" : "••••••••"}</span>
-                        <button type="button" className="btn btn-sm hover:bg-white/15" title={shown !== undefined ? "Hide" : "Show"} disabled={revealing === entry.id} onClick={() => void showPassword(entry)}>
-                          {shown !== undefined ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                        </button>
-                        <button type="button" className="btn btn-sm hover:bg-white/15" title="Copy password" disabled={revealing === entry.id} onClick={() => void copyPassword(entry)}>
-                          <Copy className="h-3.5 w-3.5" />
-                        </button>
+                        <span className="font-mono text-xs min-w-[7rem] break-all" title={canSeePasswords ? undefined : "You can see email addresses only — a Super Admin can give you password access."}>{shown !== undefined ? shown || "(none)" : "••••••••"}</span>
+                        {canSeePasswords && (
+                          <>
+                            <button type="button" className="btn btn-sm hover:bg-white/15" title={shown !== undefined ? "Hide" : "Show"} disabled={revealing === entry.id} onClick={() => void showPassword(entry)}>
+                              {shown !== undefined ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                            </button>
+                            <button type="button" className="btn btn-sm hover:bg-white/15" title="Copy password" disabled={revealing === entry.id} onClick={() => void copyPassword(entry)}>
+                              <Copy className="h-3.5 w-3.5" />
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                     <td className="px-3 py-2">
@@ -463,6 +490,9 @@ export function EmailVaultPage({ mod, sub }: Props) {
               <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Email</span>
               <input type="email" autoComplete="off" className="glass-input text-sm w-full mt-1" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} placeholder="name@company.com" />
             </label>
+            {!canSeePasswords ? (
+              <p className="text-xs text-muted-foreground">You can see email addresses only, so the password is left for someone with password access to set.</p>
+            ) : (
             <label className="block">
               <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Password</span>
               <div className="mt-1 flex gap-1.5">
@@ -479,6 +509,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
                 </button>
               </div>
             </label>
+            )}
             <div>
               <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">People with access to this email</span>
               {form.people.length > 0 && (
@@ -521,7 +552,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
       {managingAccess && isSuperAdmin && (
         <AppModal
           title="Who can open the Email Vault"
-          description="Super Admins always can. Add anyone else here — they'll see Email Vault under Admin the next time they open the app."
+          description="Super Admins always can, and see passwords. Add anyone else as Email only or Email and password — they'll see Email Vault under Admin the next time they open the app."
           icon={<Users className="h-4 w-4" />}
           size="lg"
           busy={busy}
@@ -537,32 +568,58 @@ export function EmailVaultPage({ mod, sub }: Props) {
                 ))}
               </div>
             </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Added by a Super Admin ({access.length})</p>
-              {access.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No one yet.</p>
-              ) : (
-                <ul className="divide-y divide-[var(--color-panel-border)] rounded-md border border-[var(--color-panel-border)]">
-                  {access.map((a) => (
-                    <li key={a.profileId} className="flex items-center gap-2 px-3 py-2 text-sm">
-                      <span className="flex-1">
-                        {nameOf(userById.get(a.profileId))}
-                        <span className="block text-xs text-muted-foreground">
-                          Added {fmtDateTime(a.grantedAt)}{a.grantedBy ? ` by ${nameOf(userById.get(a.grantedBy))}` : ""}
-                        </span>
-                      </span>
-                      <button type="button" className="btn btn-sm hover:bg-white/15 text-red-300" onClick={() => void removeAccess(a.profileId)} disabled={busy}>
-                        <X className="h-3.5 w-3.5" /> Remove
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+            {access.some((a) => a.canSeePassword === null) && (
+              <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                Email only / Email and password needs database migration 0439_email_vault_password_access.sql. Until then everyone below can see passwords.
+              </p>
+            )}
+            {([
+              { level: true, title: "Can see email and password", empty: "No one yet.", move: "Email only", moveTitle: "Keep their access, but hide passwords from them" },
+              { level: false, title: "Can see email only", empty: "No one yet.", move: "Allow password", moveTitle: "Let them show and copy passwords too" },
+            ] as const).map((group) => {
+              const people = access.filter((a) => (a.canSeePassword ?? true) === group.level);
+              return (
+                <div key={String(group.level)}>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">{group.title} ({people.length})</p>
+                  {people.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">{group.empty}</p>
+                  ) : (
+                    <ul className="divide-y divide-[var(--color-panel-border)] rounded-md border border-[var(--color-panel-border)]">
+                      {people.map((a) => (
+                        <li key={a.profileId} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+                          <span className="flex-1 min-w-[10rem]">
+                            {nameOf(userById.get(a.profileId))}
+                            <span className="block text-xs text-muted-foreground">
+                              Added {fmtDateTime(a.grantedAt)}{a.grantedBy ? ` by ${nameOf(userById.get(a.grantedBy))}` : ""}
+                            </span>
+                          </span>
+                          {a.canSeePassword !== null && (
+                            <button type="button" className="btn btn-sm hover:bg-white/15" title={group.moveTitle} onClick={() => void changeLevel(a.profileId, !group.level)} disabled={busy}>
+                              {group.level ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />} {group.move}
+                            </button>
+                          )}
+                          <button type="button" className="btn btn-sm hover:bg-white/15 text-red-300" onClick={() => void removeAccess(a.profileId)} disabled={busy}>
+                            <X className="h-3.5 w-3.5" /> Remove
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Add people</p>
               <PeoplePicker users={activeUsers} value={grantPick} onChange={setGrantPick} exclude={notGrantable} />
-              <div className="mt-2 flex justify-end">
+              <div className="mt-2 flex flex-wrap items-center justify-end gap-3">
+                <div role="radiogroup" aria-label="What they can see" className="mr-auto flex flex-wrap gap-3 text-sm">
+                  <label className="inline-flex items-center gap-1.5">
+                    <input type="radio" name="vault-level" checked={!grantWithPassword} onChange={() => setGrantWithPassword(false)} /> Email only
+                  </label>
+                  <label className="inline-flex items-center gap-1.5">
+                    <input type="radio" name="vault-level" checked={grantWithPassword} onChange={() => setGrantWithPassword(true)} /> Email and password
+                  </label>
+                </div>
                 <button type="button" className="btn btn-primary" onClick={() => void addAccess()} disabled={busy || grantPick.length === 0}>
                   <UserPlus className="h-4 w-4" /> {grantPick.length > 1 ? `Give access to ${grantPick.length} people` : "Give access"}
                 </button>
