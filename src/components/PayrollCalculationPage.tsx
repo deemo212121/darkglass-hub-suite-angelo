@@ -265,9 +265,7 @@ export function PayrollCalculationPage({ mod, sub }: { mod: ModuleDef; sub: SubM
         (date) => entryEffectiveOn(history, date)?.compensationType === "fixed" ? "fixed" : "hourly");
       const holidayHours = resolveScheduledNetHours(p.required_check_in || "", p.required_check_out || "", p.working_hours, p.meal_minutes);
       if (isFixed && currentEntry?.annualSalary) {
-        grossPay = isTechnicianTier
-          ? perCutoffSalary(currentEntry.annualSalary, isPhPayroll)
-          : fixedSalaryForPaidDates(perCutoffSalary(currentEntry.annualSalary, isPhPayroll), [...realDates, ...paidPto, ...holidayDates]);
+        grossPay = fixedSalaryForPaidDates(perCutoffSalary(currentEntry.annualSalary, isPhPayroll), [...realDates, ...paidPto, ...holidayDates]);
       } else if (holidayHours > 0) {
         for (const date of holidayDates) {
           regularHours += holidayHours;
