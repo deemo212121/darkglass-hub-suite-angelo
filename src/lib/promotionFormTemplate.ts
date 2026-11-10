@@ -12,6 +12,8 @@
  * for the matching hr_signable_documents.recipient_slot widening.
  */
 
+import { todayISO } from "@/lib/localDate";
+
 export type PromotionSignatureSlot = "employee" | "manager" | "senior_manager" | "hr_staff" | "executive";
 
 export interface PromotionRoleChangeType {
@@ -48,9 +50,17 @@ export interface PromotionFormData {
   currentPosition: string;
   department: string;
   dateOfHire: string;
+  /**
+   * Promotion Notification Date — the day the employee is told about the
+   * promotion, i.e. the day HR sends this form (set automatically on send).
+   * Optional: forms sent before it existed use the document's sent date
+   * instead — see withPromotionNotificationDate.
+   */
+  notificationDate?: string;
   roleChangeType: PromotionRoleChangeType;
   newPositionTitle: string;
   newDepartment: string;
+  /** The day the new position and pay rate begin — before it, the previous position and pay rate apply. */
   effectiveDate: string;
   /**
    * Wage details (Role Change Details). All optional — forms sent before
@@ -139,6 +149,8 @@ export const promotionFormStyles = `
   .promo-section { margin-top: 16px; border-top: 1px solid #9ca3af; padding-top: 10px; }
   .promo-section-title { font-weight: 700; font-size: 12.5px; margin-bottom: 6px; }
   .promo-field { padding: 3px 0; }
+  .promo-field-pair { display: flex; }
+  .promo-field-pair > span { flex: 1 1 50%; min-width: 0; }
   .promo-label { color: #374151; }
   .promo-checks { display: flex; flex-direction: column; gap: 4px; padding: 4px 0; }
   .promo-other-row { padding-top: 2px; }
@@ -154,6 +166,13 @@ export const promotionFormStyles = `
 /** A signed slot's captured name always wins (it's the real signer); otherwise falls back to that slot's own remembered pre-fill name, then (for documents saved before recipientNames existed) the legacy single current-recipient field. */
 function resolvedSignerName(data: PromotionFormData, slot: PromotionSignatureSlot, signatures: PromotionFormSignatures): string {
   return signatures[slot]?.name || data.recipientNames?.[slot] || (data.recipientSlot === slot ? data.recipientName : "") || "";
+}
+
+/** A form sent before notificationDate existed gets the day it was sent (the document's created_at, in the same time zone a new send uses). */
+export function withPromotionNotificationDate(data: PromotionFormData, sentAt: string | null | undefined): PromotionFormData {
+  if (data.notificationDate || !sentAt) return data;
+  const d = new Date(sentAt);
+  return Number.isNaN(d.getTime()) ? data : { ...data, notificationDate: todayISO(d) };
 }
 
 /** "$20.00 per hour" etc., or null when the form carries no wage info (older forms). */
@@ -212,7 +231,10 @@ export function buildPromotionFormBodyMarkup(data: PromotionFormData, logoDataUr
         <div class="promo-field"><span class="promo-label">Employee Name:</span> <strong>${blank(data.employeeName)}</strong></div>
         <div class="promo-field"><span class="promo-label">Current Position:</span> <strong>${blank(data.currentPosition)}</strong></div>
         <div class="promo-field"><span class="promo-label">Department/Branch:</span> <strong>${blank(data.department)}</strong></div>
-        <div class="promo-field"><span class="promo-label">Date of Hire:</span> <strong>${blank(fmtDate(data.dateOfHire))}</strong></div>
+        <div class="promo-field promo-field-pair">
+          <span><span class="promo-label">Date of Hire:</span> <strong>${blank(fmtDate(data.dateOfHire))}</strong></span>
+          <span><span class="promo-label">Promotion Notification Date:</span> <strong>${blank(fmtDate(data.notificationDate ?? ""))}</strong></span>
+        </div>
       </div>
 
       <div class="promo-section">

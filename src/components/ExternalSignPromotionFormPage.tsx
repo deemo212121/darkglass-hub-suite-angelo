@@ -10,7 +10,7 @@ import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
 import { captureHtmlToPdfBlob, loadAssetDataUrl, resolveSignaturesForCapture } from "@/lib/pdfCapture";
-import { buildPromotionFormBodyMarkup, promotionFormStyles, type PromotionFormData, type PromotionSignatureSlot } from "@/lib/promotionFormTemplate";
+import { buildPromotionFormBodyMarkup, promotionFormStyles, withPromotionNotificationDate, type PromotionFormData, type PromotionSignatureSlot } from "@/lib/promotionFormTemplate";
 import { useSignaturePad } from "@/hooks/useSignaturePad";
 import { SignaturePadControls } from "@/components/SignaturePad";
 
@@ -26,6 +26,8 @@ interface ExternalDoc {
   status: string;
   recipientSlot: PromotionSignatureSlot;
   recipientName: string | null;
+  /** When the form was sent — the Promotion Notification Date for forms sent before that field existed. */
+  createdAt?: string;
 }
 
 const SLOT_LABEL: Record<string, string> = {
@@ -99,7 +101,7 @@ export function ExternalSignPromotionFormPage({ docId }: Props) {
         doc.recipientSlot,
         dataUrl,
       );
-      const pdfBlob = await captureHtmlToPdfBlob(buildPromotionFormBodyMarkup(doc.formData, logoDataUrl, captureSignatures), promotionFormStyles);
+      const pdfBlob = await captureHtmlToPdfBlob(buildPromotionFormBodyMarkup(withPromotionNotificationDate(doc.formData, doc.createdAt), logoDataUrl, captureSignatures), promotionFormStyles);
 
       const body = new FormData();
       body.set("signatureFile", signatureBlob, "signature.png");
@@ -149,7 +151,7 @@ export function ExternalSignPromotionFormPage({ docId }: Props) {
             <div className="overflow-x-auto bg-white/5 p-4 flex justify-center">
               <div style={{ transform: "scale(0.78)", transformOrigin: "top center" }}>
                 <style dangerouslySetInnerHTML={{ __html: promotionFormStyles }} />
-                <div dangerouslySetInnerHTML={{ __html: buildPromotionFormBodyMarkup(doc.formData, logoDataUrl, doc.signatures) }} />
+                <div dangerouslySetInnerHTML={{ __html: buildPromotionFormBodyMarkup(withPromotionNotificationDate(doc.formData, doc.createdAt), logoDataUrl, doc.signatures) }} />
               </div>
             </div>
 

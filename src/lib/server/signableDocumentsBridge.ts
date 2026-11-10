@@ -82,12 +82,13 @@ interface DocRow {
   recipient_name: string | null;
   recipient_slot: string;
   created_by: string | null;
+  created_at: string;
 }
 
 async function fetchExternalDoc(env: EnvBag, id: string): Promise<DocRow | null> {
   const url =
     `${env.supabaseUrl}/rest/v1/hr_signable_documents` +
-    `?select=id,company_id,document_type,form_data,signatures,status,recipient_id,recipient_name,recipient_slot,created_by` +
+    `?select=id,company_id,document_type,form_data,signatures,status,recipient_id,recipient_name,recipient_slot,created_by,created_at` +
     `&id=eq.${encodeURIComponent(id)}&limit=1`;
   const res = await fetch(url, { headers: { apikey: env.supabaseServiceKey, Authorization: `Bearer ${env.supabaseServiceKey}` } });
   if (!res.ok) throw new Error(`Supabase document lookup failed (${res.status}): ${await res.text()}`);
@@ -195,6 +196,7 @@ export async function handleSignableDocumentsRequest(request: Request, env?: Rec
         status: doc.status,
         recipientSlot: doc.recipient_slot,
         recipientName: doc.recipient_name,
+        createdAt: doc.created_at,
       });
     }
 

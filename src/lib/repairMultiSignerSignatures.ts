@@ -17,7 +17,7 @@ import { getSignableDocuments, updateSignableDocumentPdfUrl, type SignableDocume
 import { captureHtmlToPdfBlob, loadAssetDataUrl, resolveSignaturesForCapture } from "@/lib/pdfCapture";
 import { uploadWarningForm, uploadPromotionForm, uploadActionPlanForm, uploadTerminationForm } from "@/lib/firebase/storage";
 import { buildWarningFormBodyMarkup, warningFormStyles, type WarningFormData } from "@/lib/warningFormTemplate";
-import { buildPromotionFormBodyMarkup, promotionFormStyles, type PromotionFormData } from "@/lib/promotionFormTemplate";
+import { buildPromotionFormBodyMarkup, promotionFormStyles, withPromotionNotificationDate, type PromotionFormData } from "@/lib/promotionFormTemplate";
 import { buildActionPlanFormBodyMarkup, actionPlanFormStyles, type ActionPlanFormData } from "@/lib/actionPlanFormTemplate";
 import { buildTerminationFormBodyMarkup, terminationFormStyles, type TerminationFormData } from "@/lib/terminationFormTemplate";
 
@@ -60,7 +60,7 @@ export async function repairMultiSignerPdfs(onProgress?: (msg: string) => void):
           pdfBlob = await captureHtmlToPdfBlob(buildWarningFormBodyMarkup(doc.formData as unknown as WarningFormData, logo, captureSignatures), warningFormStyles);
           pdfUrl = await uploadWarningForm(doc.companyId, employeeName, pdfBlob);
         } else if (type === "promotion_form") {
-          pdfBlob = await captureHtmlToPdfBlob(buildPromotionFormBodyMarkup(doc.formData as unknown as PromotionFormData, logo, captureSignatures), promotionFormStyles);
+          pdfBlob = await captureHtmlToPdfBlob(buildPromotionFormBodyMarkup(withPromotionNotificationDate(doc.formData as unknown as PromotionFormData, doc.createdAt), logo, captureSignatures), promotionFormStyles);
           pdfUrl = await uploadPromotionForm(doc.companyId, employeeName, pdfBlob);
         } else if (type === "action_plan_form") {
           pdfBlob = await captureHtmlToPdfBlob(buildActionPlanFormBodyMarkup(doc.formData as unknown as ActionPlanFormData, logo, ribbon, footer, captureSignatures), actionPlanFormStyles);

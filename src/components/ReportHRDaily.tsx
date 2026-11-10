@@ -150,7 +150,7 @@ import { getCandidateRequiredFormTypes, setCandidateRequiredFormTypes } from "@/
 import { buildWarningFormBodyMarkup, buildWarnNoteText, warningFormStyles, type WarningFormData, type SignatureSlot } from "@/lib/warningFormTemplate";
 import { buildNdaFormPages, ndaFormStyles, type NdaFormData } from "@/lib/ndaFormTemplate";
 import { buildWarningFormDocxBlob } from "@/lib/warningFormDocx";
-import { buildPromotionFormBodyMarkup, promotionFormStyles, promotionWageScheduleFields, type PromotionFormData, type PromotionSignatureSlot, type PromotionWageBasis } from "@/lib/promotionFormTemplate";
+import { buildPromotionFormBodyMarkup, promotionFormStyles, promotionWageScheduleFields, withPromotionNotificationDate, type PromotionFormData, type PromotionSignatureSlot, type PromotionWageBasis } from "@/lib/promotionFormTemplate";
 import { buildPromotionFormDocxBlob } from "@/lib/promotionFormDocx";
 import { buildActionPlanFormBodyMarkup, actionPlanFormStyles, type ActionPlanFormData, type ActionPlanSignatureSlot } from "@/lib/actionPlanFormTemplate";
 import { buildActionPlanFormDocxBlob } from "@/lib/actionPlanFormDocx";
@@ -14784,6 +14784,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     currentPosition: promoForm.currentPosition,
     department: promoForm.department,
     dateOfHire: promoForm.dateOfHire,
+    // The day it's sent is the day the employee is told (Promotion Notification Date).
+    notificationDate: todayISO(),
     roleChangeType: promoForm.roleChangeType,
     newPositionTitle: promoForm.newPositionTitle,
     newDepartment: promoForm.newDepartment,
@@ -25269,6 +25271,11 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Date of Hire</label>
             <input type="date" value={promoForm.dateOfHire} onChange={(e) => updatePromoField("dateOfHire", e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
           </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Promotion Notification Date</label>
+            <input type="text" value={formatISODate(todayStr)} readOnly aria-readonly="true" className="glass-input text-sm py-1.5 px-3 rounded-md opacity-70 cursor-default" />
+            <p className="text-[10px] text-muted-foreground">The day the employee is told — filled in automatically with the day you send this form.</p>
+          </div>
         </div>
 
         <div className="px-4 grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -25309,6 +25316,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             <div className="mt-2 flex flex-col gap-1">
               <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Effective Date</label>
               <input type="date" value={promoForm.effectiveDate} onChange={(e) => updatePromoField("effectiveDate", e.target.value)} className="glass-input text-sm py-1.5 px-3 rounded-md" />
+              <p className="text-[10px] text-muted-foreground">The new position and pay rate begin on this date; before it, the previous position and pay rate apply.</p>
             </div>
             <div className="mt-2 flex flex-col gap-1">
               <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Wage</label>
@@ -36821,7 +36829,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 <style dangerouslySetInnerHTML={{ __html: promotionFormStyles }} />
                 <div
                   dangerouslySetInnerHTML={{
-                    __html: buildPromotionFormBodyMarkup(promoViewDoc.formData as unknown as PromotionFormData, promoLogoDataUrl, promoViewDoc.signatures),
+                    __html: buildPromotionFormBodyMarkup(withPromotionNotificationDate(promoViewDoc.formData as unknown as PromotionFormData, promoViewDoc.createdAt), promoLogoDataUrl, promoViewDoc.signatures),
                   }}
                 />
               </div>

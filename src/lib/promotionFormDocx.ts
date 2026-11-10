@@ -134,6 +134,7 @@ export async function buildPromotionFormDocxBlob(data: PromotionFormData, logoDa
       new TableRow({ children: [new TableCell({ borders: BOTTOM_RULE_CELL_BORDERS, margins: CELL_MARGINS, children: [labelValue("Current Position", data.currentPosition)] })] }),
       new TableRow({ children: [new TableCell({ borders: BOTTOM_RULE_CELL_BORDERS, margins: CELL_MARGINS, children: [labelValue("Department/Branch", data.department)] })] }),
       new TableRow({ children: [new TableCell({ borders: BOTTOM_RULE_CELL_BORDERS, margins: CELL_MARGINS, children: [labelValue("Date of Hire", fmtDate(data.dateOfHire))] })] }),
+      new TableRow({ children: [new TableCell({ borders: BOTTOM_RULE_CELL_BORDERS, margins: CELL_MARGINS, children: [labelValue("Promotion Notification Date", fmtDate(data.notificationDate ?? ""))] })] }),
     ],
   });
 

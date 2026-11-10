@@ -18,7 +18,7 @@ import { getMyProfileId } from "@/lib/supabase/users";
 import { getSignableDocument, signDocument, type SignableDocument } from "@/lib/supabase/signableDocuments";
 import { uploadSignableDocumentSignature, uploadPromotionForm, refreshStorageAuthToken, describeStorageError } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, loadAssetDataUrl, resolveSignaturesForCapture } from "@/lib/pdfCapture";
-import { buildPromotionFormBodyMarkup, buildPromotionCongratsMessage, promotionFormStyles, type PromotionFormData } from "@/lib/promotionFormTemplate";
+import { buildPromotionFormBodyMarkup, buildPromotionCongratsMessage, promotionFormStyles, withPromotionNotificationDate, type PromotionFormData } from "@/lib/promotionFormTemplate";
 import { getOrCreateDmThread, sendMessage } from "@/lib/supabase/messaging";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getHrNotificationSettings } from "@/lib/supabase/companySettings";
@@ -123,7 +123,7 @@ export function SignPromotionFormPage({ docId }: Props) {
       // displays fine in the live browser preview.
       begin("Creating the signed PDF");
       const captureSignatures = await resolveSignaturesForCapture(signatures, doc.recipientSlot, dataUrl);
-      const pdfBlob = await captureHtmlToPdfBlob(buildPromotionFormBodyMarkup(formData, logoDataUrl, captureSignatures), promotionFormStyles);
+      const pdfBlob = await captureHtmlToPdfBlob(buildPromotionFormBodyMarkup(withPromotionNotificationDate(formData, doc.createdAt), logoDataUrl, captureSignatures), promotionFormStyles);
       begin("Uploading the signed PDF");
       const pdfUrl = await uploadPromotionForm(companyId, formData.employeeName, pdfBlob);
 
@@ -226,7 +226,7 @@ export function SignPromotionFormPage({ docId }: Props) {
             <div className="overflow-x-auto bg-white/5 p-4 flex justify-center">
               <div style={{ transform: "scale(0.78)", transformOrigin: "top center" }}>
                 <style dangerouslySetInnerHTML={{ __html: promotionFormStyles }} />
-                <div dangerouslySetInnerHTML={{ __html: buildPromotionFormBodyMarkup(doc.formData as unknown as PromotionFormData, logoDataUrl, doc.signatures) }} />
+                <div dangerouslySetInnerHTML={{ __html: buildPromotionFormBodyMarkup(withPromotionNotificationDate(doc.formData as unknown as PromotionFormData, doc.createdAt), logoDataUrl, doc.signatures) }} />
               </div>
             </div>
 
