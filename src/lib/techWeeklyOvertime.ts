@@ -51,16 +51,14 @@ export function weeklyOtPremium(
   }
   const list = [...weeks.values()].sort((a, b) => a.weekStart.localeCompare(b.weekStart));
   const totalHours = list.reduce((sum, w) => sum + w.hours, 0);
-  // A line tagged with a week that has no hours in this period can't raise
-  // any week's rate — it's left in the untagged pool rather than dropped.
-  let unplaced = untaggedIncludable;
+  // Tagged pay stays in its assigned week. A zero-hour week's pay remains
+  // payable through the custom lines, but cannot change another week's OT.
   for (const [weekStart, amount] of taggedIncludable ?? []) {
     const week = weeks.get(weekStart);
     if (week && week.hours > 0) week.includablePay += amount;
-    else unplaced += amount;
   }
   for (const week of list) {
-    if (totalHours > 0) week.includablePay += unplaced * (week.hours / totalHours);
+    if (totalHours > 0) week.includablePay += untaggedIncludable * (week.hours / totalHours);
     week.regularRate = week.hours > 0 ? (week.straightPay + week.includablePay) / week.hours : 0;
     week.premium = week.premiumHours * week.regularRate * 0.5;
   }
