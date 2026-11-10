@@ -86,8 +86,9 @@ import { getSignableDocumentRecipients } from "@/lib/supabase/signableDocuments"
 import { getCompanyTimecardEntries, calcWorkedHours, computeMealTimeCredit, startOfWeekSunday, addDaysISO } from "@/lib/supabase/timecards";
 import { getCorrectionsInRange } from "@/lib/supabase/timecardCorrections";
 import { getClockInMeetingsInRange } from "@/lib/supabase/clockInMeetings";
+import { getFlashTripSpans, flashTripDates } from "@/lib/supabase/myPerformance";
 import {
-  FIRST_PAY_PERIOD, payPeriodsThrough, fmtPayDate, shortTotalTicket, shortRedoPct, shortDailyAvg, shortAvgHours, shortAvgMiles, shortErrorCount, fmtRedoPct, Grade, GRADE_META, GRADE_ORDER, GRADE_HEX, gradeAtLeast, GRADERS, GRADE_POINTS, CAPPED_GRADE_POINTS, AVG_HOURS_POINTS, AVG_MILES_POINTS, ShortRowInput, shortPoints, LetterGrade, LETTER_GRADES, letterGrade, LETTER_META, gradeName, GradeMedal, fmtPoints, GRADE_SCALE, GradePill,
+  FIRST_PAY_PERIOD, payPeriodsThrough, fmtPayDate, shortTotalTicket, shortRedoPct, shortDailyAvg, shortFlashAvg, flashAvgPoints, FLASH_AVG_SCALE, shortAvgHours, shortAvgMiles, shortErrorCount, fmtRedoPct, Grade, GRADE_META, GRADE_ORDER, GRADE_HEX, gradeAtLeast, GRADERS, GRADE_POINTS, CAPPED_GRADE_POINTS, AVG_HOURS_POINTS, AVG_MILES_POINTS, ShortRowInput, shortPoints, LetterGrade, LETTER_GRADES, letterGrade, LETTER_META, gradeName, GradeMedal, fmtPoints, gradeScaleFor, usesFlashScoring, pointsRangeText, GradePill,
 } from "@/components/techPerformanceGrading";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
@@ -227,7 +228,7 @@ function MultiSelect({
 // "custom" = one pay period picked from the dropdown.
 type PeriodMode = "total" | "custom";
 
-type SortKey = "techId" | "name" | "location" | "manager" | "tier" | "daysWorked" | "hoursWorked" | "totalTickets" | "minorTicketCount" | "majorTicketCount" | "redoCount" | "redoRatePct" | "miles" | "milesPerTicket" | "ticketsPerHour" | "rescheduleCount" | "cancelledCount" | "damageAssessmentCount" | "shortTotalTicket" | "shortRedoPct" | "shortDailyAvg" | "shortPoints" | "shortAvgHours" | "shortAvgMiles" | "shortErrorCount";
+type SortKey = "techId" | "name" | "location" | "manager" | "tier" | "daysWorked" | "hoursWorked" | "totalTickets" | "minorTicketCount" | "majorTicketCount" | "redoCount" | "redoRatePct" | "miles" | "milesPerTicket" | "ticketsPerHour" | "rescheduleCount" | "cancelledCount" | "damageAssessmentCount" | "shortTotalTicket" | "shortRedoPct" | "shortDailyAvg" | "shortFlashAvg" | "shortPoints" | "shortAvgHours" | "shortAvgMiles" | "shortErrorCount";
 // Hover text for the summary tiles in the short view.
 const KPI_HINTS: Record<string, string> = {
   "Technicians": "Technicians in the table (after filters)",
@@ -284,6 +285,9 @@ interface TechPerfRow {
   timecardIssueCount: number;
   /** Scheduled work days with no Time In (migration 0348 — "meeting required"). */
   missedClockInCount: number;
+  /** Flash Tech Completion: Minor + Major on the working days inside a Flashtech trip (Flash Tech Calendar), and how many such days. */
+  flashTicketCount: number;
+  flashDaysWorked: number;
   /** No live source at all (see this file's header comment) — purely
    *  whatever's been manually entered via a technician_daily_performance_
    *  overrides correction, 0 otherwise. */
@@ -343,6 +347,11 @@ const countOffDaysInRange = (offDays: number[] | null | undefined, start: string
 /** Signed "+12.3% / -4.5%" display for the Variance column — null (no
  *  team average to compare against, i.e. every visible technician has 0
  *  Total Completion) renders as "—". */
+/** Flash Tech Completion to one decimal, "—" without a worked flash-trip day. */
+const fmtFlashAvg = (r: { flashTicketCount: number; flashDaysWorked: number }): string => {
+  const v = shortFlashAvg(r);
+  return v == null ? "—" : fmt1(v);
+};
 const fmtVariance = (v: number | null): string => (v == null ? "—" : `${v > 0 ? "+" : ""}${fmt1(v)}%`);
 
 /** Repair types (techPayroll.ts's REPAIR_TYPES) that count as a MAJOR
@@ -366,6 +375,11 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
   const [users, setUsers] = useState<ProfileRow[]>([]);
   const [csrComposition, setCsrComposition] = useState<CsrTeamComposition | null>(null);
   const [rows, setRows] = useState<TechPerfRow[]>([]);
+  // The start of the period `rows` were loaded for — it decides which
+  // points apply (the new Average Tickets points and Flash Tech Avg only
+  // from the 11/08/2026 pay period on, see usesFlashScoring).
+  const [gradedPeriodStart, setGradedPeriodStart] = useState(FIRST_PAY_PERIOD.start);
+  const flashScored = usesFlashScoring(gradedPeriodStart);
   const [dailyTickets, setDailyTickets] = useState<TechCompletedTicketDaily[]>([]);
   const [mileageDaily, setMileageDaily] = useState<MileageDayDetail[]>([]);
   /** profileId -> workDate -> hours worked that day, for the current period — mirrors mileageDaily/dailyTickets, kept for the import-template export (see handleDownloadImportTemplate). */
@@ -468,7 +482,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       setError(`Still loading — this is taking longer than usual (waiting on: ${names.join(", ") || "calculations"}). It will finish on its own; if it never does, send this message to IT.`);
     }, 25_000);
     try {
-      const [allUsers, composition, repairCounts, redoMap, mileageEntries, timecardEntries, dailyCompleted, overrides, reschedules, cancelledCounts, damageDocs, timecardCorrections, missedClockIns] = await Promise.race([Promise.all([
+      const [allUsers, composition, repairCounts, redoMap, mileageEntries, timecardEntries, dailyCompleted, overrides, reschedules, cancelledCounts, damageDocs, timecardCorrections, missedClockIns, flashTrips] = await Promise.race([Promise.all([
         // Own lean roster, not the app-wide getCompanyUsers (which can stall
         // behind other pages and once held this report up indefinitely).
         track("users", getCompanyUsersLite()),
@@ -489,6 +503,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         track("damage documents", getSignableDocumentRecipients("damage").catch(() => [])),
         track("timecard issues", getCorrectionsInRange(periodStart, periodEnd).catch(() => [])),
         track("missed clock-ins", getClockInMeetingsInRange(periodStart, periodEnd).catch(() => [])),
+        track("flash trips", getFlashTripSpans(periodStart, periodEnd)),
       ])]);
       clearTimeout(watchdog);
       console.info(`[tech-perf] data loaded in ${((Date.now() - started) / 1000).toFixed(1)}s`);
@@ -793,6 +808,18 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         const shownWorkedDates = workedDates.filter((d) => d < BLANK_LIVE_TIME_FROM || overrideWorkedDays.includes(d));
         const offDaysUntil = periodEnd < BLANK_LIVE_TIME_FROM ? periodEnd : addDaysISO(BLANK_LIVE_TIME_FROM, -1);
         const shownOffDays = periodStart <= offDaysUntil ? countOffDaysInRange(t.off_days, periodStart, offDaysUntil) : 0;
+        // Flash Tech Completion: the same per-day Minor / Major as the columns
+        // (a correction wins; live values only before BLANK_LIVE_TIME_FROM),
+        // over the shown working days that fall inside a Flashtech trip.
+        const shownWorkedSet = new Set(shownWorkedDates);
+        const dayCount = (live: Map<string, number> | undefined, field: "minorTicket" | "majorTicket", day: string) =>
+          techOverrides?.get(day)?.[field] ?? (day >= BLANK_LIVE_TIME_FROM ? 0 : live?.get(day) ?? 0);
+        let flashTicketCount = 0, flashDaysWorked = 0;
+        for (const day of flashTripDates(flashTrips, t.id, periodStart, periodEnd)) {
+          if (!shownWorkedSet.has(day)) continue;
+          flashDaysWorked += 1;
+          flashTicketCount += dayCount(minorByNameByDay.get(nameKey), "minorTicket", day) + dayCount(majorByNameByDay.get(nameKey), "majorTicket", day);
+        }
         const redoRatePct = totalTickets > 0 ? (redoCount / totalTickets) * 100 : null;
         const milesPerTicket = totalTickets > 0 ? miles / totalTickets : null;
         const ticketsPerHour = hoursWorked > 0 ? totalTickets / hoursWorked : null;
@@ -823,6 +850,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           damageAssessmentCount,
           timecardIssueCount: timecardIssuesByProfileId.get(t.id) ?? 0,
           missedClockInCount: missedClockIns.filter((m) => m.profileId === t.id).length,
+          flashTicketCount,
+          flashDaysWorked,
           ncnsCount,
           highRedoAlert: redoRatePct != null && redoRatePct > 5,
           routeMileageAlert: milesPerTicket != null && milesPerTicket > 30,
@@ -831,6 +860,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         };
       });
       setRows(computed);
+      setGradedPeriodStart(periodStart);
     } catch (err) {
       if (!isStale()) setError(err instanceof Error ? err.message : "Failed to load technician performance data.");
     } finally {
@@ -1037,7 +1067,8 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         case "shortTotalTicket": return shortTotalTicket(r);
         case "shortRedoPct": return shortRedoPct(r) ?? -1;
         case "shortDailyAvg": return shortDailyAvg(r);
-        case "shortPoints": return shortPoints(r);
+        case "shortFlashAvg": return shortFlashAvg(r) ?? -1;
+        case "shortPoints": return shortPoints(r, gradedPeriodStart);
         case "shortAvgHours": return shortAvgHours(r);
         case "shortAvgMiles": return shortAvgMiles(r);
         case "shortErrorCount": return shortErrorCount(r);
@@ -1053,7 +1084,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       }
       return diff;
     });
-  }, [filteredRows, sortKey, sortDir]);
+  }, [filteredRows, sortKey, sortDir, gradedPeriodStart]);
 
   const groupedRows = useMemo(() => {
     if (groupBy === "none") return [{ groupName: null as string | null, rows: sortedRows }];
@@ -1109,11 +1140,11 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     () => filteredRows
       .filter(inChartScope)
       // Ranked by Points; ties go to the higher Total Ticket.
-      .sort((a, b) => shortPoints(b) - shortPoints(a) || shortTotalTicket(b) - shortTotalTicket(a))
+      .sort((a, b) => shortPoints(b, gradedPeriodStart) - shortPoints(a, gradedPeriodStart) || shortTotalTicket(b) - shortTotalTicket(a))
       .slice(0, 10)
-      .map((r) => ({ name: r.name.split(" ")[0] || r.name, fullName: r.name, value: shortPoints(r) })),
+      .map((r) => ({ name: r.name.split(" ")[0] || r.name, fullName: r.name, value: shortPoints(r, gradedPeriodStart) })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filteredRows, scopeBranches],
+    [filteredRows, scopeBranches, gradedPeriodStart],
   );
 
   // Trend by pay period: the median technician's Average Tickets, Total
@@ -1263,13 +1294,13 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
     if (!showAllColumns) {
       exportToCSV(
         "technician_performance",
-        ["Name", "Grade", "Points", "Average Tickets", "Total Ticket", "Redo %", "Working Days", "Average Hours", "Average Mileage", "Error Count", "Minor Comp", "Major Comp", "Redo Count", "Mileage", "Hours of Work"],
+        ["Name", "Grade", "Points", "Average Tickets", ...(flashScored ? ["Flash Tech Avg"] : []), "Total Ticket", "Redo %", "Working Days", "Average Hours", "Average Mileage", "Error Count", "Minor Comp", "Major Comp", "Redo Count", "Mileage", "Hours of Work"],
         sortedRows.map((r) => {
           const p = shortRedoPct(r);
           const a = shortDailyAvg(r);
-          const pts = shortPoints(r);
+          const pts = shortPoints(r, gradedPeriodStart);
           return [
-            r.name, gradeName(letterGrade(pts)), pts, fmt1(a), shortTotalTicket(r), fmtRedoPct(p), r.daysWorked,
+            r.name, gradeName(letterGrade(pts)), pts, fmt1(a), ...(flashScored ? [fmtFlashAvg(r)] : []), shortTotalTicket(r), fmtRedoPct(p), r.daysWorked,
             fmt1(shortAvgHours(r)), fmt1(shortAvgMiles(r)), shortErrorCount(r),
             r.minorTicketCount, r.majorTicketCount, r.redoCount, fmt1(r.miles), fmt1(r.hoursWorked),
           ];
@@ -1340,6 +1371,9 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
         // those four back. Average Tickets is reference-block only (a day
         // row has no working-days figure to divide by).
         { header: "Average Tickets", key: "shortDailyAvg", width: 14, style: { numFmt: "0.0" } },
+        // Reference block only (from the Flash Tech Calendar); never read back.
+        // Scored from the 11/08/2026 pay period on, so only listed from then.
+        ...(flashScored ? [{ header: "Flash Tech Avg", key: "shortFlashAvg", width: 14, style: { numFmt: "0.0" } }] : []),
         { header: "Total Ticket", key: "shortTotalTicket", width: 13 },
         { header: "Redo %", key: "shortRedoPct", width: 10, style: { numFmt: "0.0%" } },
         { header: "Working Days", key: "daysWorked", width: 14 },
@@ -1508,7 +1542,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
       const noteRow = sheet.addRow({
         name: showAllColumns
           ? "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. Damage Assessment/Minor Ticket/Major Ticket/Redo/Total Completion/Reschedule/NCNS/Mileage/Hours Worked below are the CURRENT totals, for reference."
-          : "All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. The numbers below are the CURRENT totals, for reference. Grade, Points, Average Tickets, Total Ticket, Redo %, Working Days, Average Hours, Average Mileage and Error Count are calculated, not read back on import. Grade: Master 11–12, Expert 10, Advanced 9, Proficient 8, Competent 7, Developing 5–6, Needs Attention 4 or less. Points: Maximum 3, Great 2, Median 1, Effort 0, Alert −1 over Average Tickets/Total Ticket/Redo %/Working Days (Redo % and Working Days top out at 2); Average Hours over 12 a day is −1; Average Mileage 250+ a day is +1; Error Count 0–1 is +1, 2 is 0, 3 is −1, 4 or more −2. Colors: blue Maximum, green Great, yellow Median, orange Effort, red Alert.",
+          : `All technicians — add a row below (Name + Date + at least one value) to correct a day with no activity yet. The numbers below are the CURRENT totals, for reference. Grade, Points, Average Tickets, ${flashScored ? "Flash Tech Avg, " : ""}Total Ticket, Redo %, Working Days, Average Hours, Average Mileage and Error Count are calculated, not read back on import. Grade: Master 11 or more, Expert 10, Advanced 9, Proficient 8, Competent 7, Developing 5–6, Needs Attention 4 or less. Points: ${flashScored ? "Average Tickets Maximum 4, Great 3, Median 2, Effort 1, Alert 0; Maximum 3, Great 2, Median 1, Effort 0, Alert −1 over Total Ticket/Redo %/Working Days" : "Maximum 3, Great 2, Median 1, Effort 0, Alert −1 over Average Tickets/Total Ticket/Redo %/Working Days"} (Redo % and Working Days top out at 2); Average Hours over 12 a day is −1; Average Mileage 250+ a day is +1; Error Count 0–1 is +1, 2 is 0, 3 is −1, 4 or more −2${flashScored ? `; Flash Tech Avg (tickets a day on Flashtech trip days) ${FLASH_AVG_SCALE}` : ""}. Colors: blue Maximum, green Great, yellow Median, orange Effort, red Alert.`,
       });
       noteRow.font = { italic: true, color: { argb: "FF64748B" } };
       for (const r of sortedRows) {
@@ -1546,6 +1580,11 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
             cell.font = { bold: true, color: { argb: GRADE_META[grade].xlsxFont } };
           };
           paint("shortDailyAvg", GRADERS.dailyAvg(shortDailyAvg(r)));
+          if (flashScored) {
+            const flashAvg = shortFlashAvg(r);
+            row.getCell("shortFlashAvg").value = flashAvg == null ? "—" : Math.round(flashAvg * 10) / 10;
+            paint("shortFlashAvg", GRADERS.flashAvg(flashAvg));
+          }
           paint("shortTotalTicket", GRADERS.totalTicket(shortTotalTicket(r)));
           paint("shortRedoPct", GRADERS.redoPct(shortRedoPct(r)));
           paint("daysWorked", GRADERS.workingDays(r.daysWorked));
@@ -1553,7 +1592,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
           paint("shortAvgMiles", GRADERS.avgMiles(shortAvgMiles(r)));
           row.getCell("shortErrorCount").value = shortErrorCount(r);
           paint("shortErrorCount", GRADERS.errorCount(shortErrorCount(r)));
-          const pts = shortPoints(r);
+          const pts = shortPoints(r, gradedPeriodStart);
           const letter = letterGrade(pts);
           row.getCell("shortPoints").value = pts;
           row.getCell("shortPoints").font = { bold: true };
@@ -2227,7 +2266,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                       </tr>
                     </thead>
                     <tbody>
-                      {GRADE_SCALE.map((s) => (
+                      {gradeScaleFor(gradedPeriodStart).map((s) => (
                         <tr key={s.factor} className="border-t border-white/5">
                           <td className="px-2 py-1.5 font-medium whitespace-nowrap">{s.factor}</td>
                           {GRADE_ORDER.map((g) => (
@@ -2264,7 +2303,12 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                       <span className="font-semibold">Disclaimer:</span> Grades and points are calculated automatically from the data in this report (tickets, timecards, mileage and any imported corrections). Some of that data can be incomplete or wrong — for example a missed clock-in, a ticket not yet closed or synced, or mileage not yet logged — so a grade may not reflect a technician's actual performance. Please verify with the technician's manager before acting on it.
                     </p>
                   </div>
-                  <p className="mt-2 text-[10px] text-muted-foreground">Points = the sum over Average Tickets, Total Ticket, Redo %, Working Days, Average Hours, Average Mileage and Error Count (−7 to 12). Total Ticket and Working Days are scaled for a 2-week pay period.</p>
+                  {flashScored && (
+                    <p className="mt-2 text-[11px] text-muted-foreground">
+                      <span className="font-medium text-foreground">Flash Tech Avg</span> (tickets a day on the days worked during a Flashtech trip on the Flash Tech Calendar): {FLASH_AVG_SCALE}.
+                    </p>
+                  )}
+                  <p className="mt-2 text-[10px] text-muted-foreground">Points = the sum over Average Tickets, {flashScored ? "Flash Tech Avg, " : ""}Total Ticket, Redo %, Working Days, Average Hours, Average Mileage and Error Count ({pointsRangeText(gradedPeriodStart)}). Total Ticket and Working Days are scaled for a 2-week pay period.{flashScored ? "" : " From the 11/08/2026 pay period on, Average Tickets is worth one more point and Flash Tech Avg is scored."}</p>
                 </div>
               </details>
             )}
@@ -2287,14 +2331,19 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                       <>
                       <tr className="bg-white/[0.03]">
                         <th />
-                        <th colSpan={9} className="px-3 pt-2 pb-0.5 text-center text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-300/80 border-x border-white/10">Main Factors</th>
+                        <th colSpan={flashScored ? 10 : 9} className="px-3 pt-2 pb-0.5 text-center text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-300/80 border-x border-white/10">Main Factors</th>
                         <th colSpan={5} className="px-3 pt-2 pb-0.5 text-center text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Breakdown</th>
                       </tr>
                       <tr className="border-b border-white/10 bg-white/5">
                         <th className={`${thClass} sticky left-0 z-20 bg-[var(--background)]`} onClick={() => toggleSort("name")}>Name{sortIndicator("name")}</th>
-                        <th className={`${thClass} border-l border-white/10`} onClick={() => toggleSort("shortPoints")} title="Master 11–12 · Expert 10 · Advanced 9 · Proficient 8 · Competent 7 · Developing 5–6 · Needs Attention 4 or less">Grade</th>
-                        <th className={`${thClass} text-right`} onClick={() => toggleSort("shortPoints")} title="Maximum 3 · Great 2 · Median 1 · Effort 0 · Alert −1 (Redo % and Working Days max 2), summed over Average Tickets, Total Ticket, Redo % and Working Days; Average Hours over 12 a day −1; Average Mileage 250+ a day +1">Points{sortIndicator("shortPoints")}</th>
+                        <th className={`${thClass} border-l border-white/10`} onClick={() => toggleSort("shortPoints")} title="Master 11+ · Expert 10 · Advanced 9 · Proficient 8 · Competent 7 · Developing 5–6 · Needs Attention 4 or less">Grade</th>
+                        <th className={`${thClass} text-right`} onClick={() => toggleSort("shortPoints")} title={flashScored
+                          ? "Average Tickets: Maximum 4 · Great 3 · Median 2 · Effort 1 · Alert 0; Total Ticket, Redo % and Working Days: Maximum 3 · Great 2 · Median 1 · Effort 0 · Alert −1 (Redo % and Working Days max 2); Average Hours over 12 a day −1; Average Mileage 250+ a day +1; Error Count +1 to −2; Flash Tech Avg 0 to +5"
+                          : "Maximum 3 · Great 2 · Median 1 · Effort 0 · Alert −1 (Redo % and Working Days max 2), summed over Average Tickets, Total Ticket, Redo % and Working Days; Average Hours over 12 a day −1; Average Mileage 250+ a day +1; Error Count +1 to −2"}>Points{sortIndicator("shortPoints")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("shortDailyAvg")} title="Total Ticket ÷ Working Days">Average Tickets{sortIndicator("shortDailyAvg")}</th>
+                        {flashScored && (
+                          <th className={`${thClass} text-right`} onClick={() => toggleSort("shortFlashAvg")} title={`Minor + Major on the days worked during a Flashtech trip (Flash Tech Calendar) ÷ those days. ${FLASH_AVG_SCALE}`}>Flash Tech Avg{sortIndicator("shortFlashAvg")}</th>
+                        )}
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("shortTotalTicket")} title="Minor + Major − Redo">Total Ticket{sortIndicator("shortTotalTicket")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("shortRedoPct")} title="Redo ÷ (Minor + Major)">Redo %{sortIndicator("shortRedoPct")}</th>
                         <th className={`${thClass} text-right`} onClick={() => toggleSort("daysWorked")}>Working Days{sortIndicator("daysWorked")}</th>
@@ -2338,7 +2387,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                     </thead>
                     <tbody>
                       {groupRows.length === 0 ? (
-                        <tr><td colSpan={showAllColumns ? 23 : 15} className="px-4 py-8 text-center text-muted-foreground text-sm">No technicians match.</td></tr>
+                        <tr><td colSpan={showAllColumns ? 23 : flashScored ? 16 : 15} className="px-4 py-8 text-center text-muted-foreground text-sm">No technicians match.</td></tr>
                       ) : (
                         groupRows.map((r) => {
                           const variance = varianceByRowId.get(r.id) ?? null;
@@ -2430,7 +2479,7 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                             const total = shortTotalTicket(r);
                             const redoPct = shortRedoPct(r);
                             const dailyAvg = shortDailyAvg(r);
-                            const points = shortPoints(r);
+                            const points = shortPoints(r, gradedPeriodStart);
                             // Clickable figures keep their breakdown popups;
                             // the pill carries the grade color instead of blue.
                             const linkish = (value: ReactNode, onClick: () => void, title: string, clickable: boolean) =>
@@ -2453,6 +2502,16 @@ export function TechnicianPerformanceReport({ mod }: { mod: ModuleDef; sub: SubM
                                   <span className="inline-flex justify-end min-w-[2.5rem] rounded-md bg-white/10 px-2 py-0.5 tabular-nums font-bold">{points}</span>
                                 </td>
                                 {gradedTd(GRADERS.dailyAvg(dailyAvg), fmt1(dailyAvg))}
+                                {flashScored && (
+                                <td
+                                  className="px-2 py-1.5 text-right"
+                                  title={r.flashDaysWorked > 0
+                                    ? `${r.flashTicketCount} ticket${r.flashTicketCount === 1 ? "" : "s"} over ${r.flashDaysWorked} flash-trip day${r.flashDaysWorked === 1 ? "" : "s"} · ${fmtPoints(flashAvgPoints(shortFlashAvg(r)))}`
+                                    : "No working day on a Flashtech trip this period"}
+                                >
+                                  <GradePill grade={GRADERS.flashAvg(shortFlashAvg(r))}>{fmtFlashAvg(r)}</GradePill>
+                                </td>
+                                )}
                                 {gradedTd(GRADERS.totalTicket(total), total)}
                                 {gradedTd(GRADERS.redoPct(redoPct), fmtRedoPct(redoPct))}
                                 {gradedTd(GRADERS.workingDays(r.daysWorked), linkish(r.daysWorked, () => setWorkDaysListFor({ id: r.id, name: r.name }), "View working dates", r.daysWorked > 0))}

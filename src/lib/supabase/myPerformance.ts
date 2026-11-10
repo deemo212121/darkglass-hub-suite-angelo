@@ -4,11 +4,13 @@
  * view uses from 08/27 on: the per-day corrections (minor/major/redo/
  * mileage/hours, working days = days with hours entered), plus errors
  * (timecard correction requests, damage documents, missed clock-in /
- * Time Out meetings). Everything is read as the technician themselves, so
- * RLS limits it to their own rows.
+ * Time Out meetings), and the Flash Tech Completion figures (their
+ * Flashtech trips on the Flash Tech Calendar). Everything is read as the
+ * technician themselves, so RLS limits it to their own rows.
  */
 import { supabase } from "./client";
 import { getClockInMeetingsInRange, type ClockInMeeting } from "./clockInMeetings";
+import { addDaysISO } from "@/lib/localDate";
 
 export interface MyPerformance {
   minorTicketCount: number;
@@ -20,11 +22,52 @@ export interface MyPerformance {
   timecardIssueCount: number;
   damageAssessmentCount: number;
   missedClockInCount: number;
+  /** Minor + Major on the days worked (hours entered) during a Flashtech trip, and how many such days. */
+  flashTicketCount: number;
+  flashDaysWorked: number;
   meetings: ClockInMeeting[];
 }
 
+/** One Flashtech trip's dates (Flash Tech Calendar). */
+export interface FlashTripSpan {
+  profileId: string;
+  startDate: string;
+  endDate: string;
+}
+
+/**
+ * The Flashtech trips overlapping a date range (one technician's, or every
+ * technician's) — Education / Inspection trips and cancelled ones don't count.
+ */
+export async function getFlashTripSpans(startDate: string, endDate: string, profileId?: string): Promise<FlashTripSpan[]> {
+  const { rows, error } = await readAll((from, to) => {
+    let q = supabase
+      .from("flash_tech_trips")
+      .select("id, technician_profile_id, start_date, end_date, trip_type, status_override")
+      .lte("start_date", endDate)
+      .gte("end_date", startDate);
+    if (profileId) q = q.eq("technician_profile_id", profileId);
+    return q.order("id").range(from, to);
+  });
+  if (error) throw new Error(error);
+  return rows
+    .filter((r) => r.technician_profile_id && (r.trip_type ?? "Flashtech") === "Flashtech" && r.status_override !== "Cancelled")
+    .map((r) => ({ profileId: r.technician_profile_id, startDate: r.start_date, endDate: r.end_date }));
+}
+
+/** The dates from periodStart to periodEnd that one of the technician's flash trips covers. */
+export function flashTripDates(trips: FlashTripSpan[], profileId: string, periodStart: string, periodEnd: string): Set<string> {
+  const dates = new Set<string>();
+  for (const t of trips) {
+    if (t.profileId !== profileId) continue;
+    const last = t.endDate < periodEnd ? t.endDate : periodEnd;
+    for (let d = t.startDate > periodStart ? t.startDate : periodStart; d <= last; d = addDaysISO(d, 1)) dates.add(d);
+  }
+  return dates;
+}
+
 export async function getMyPerformance(profileId: string, startDate: string, endDate: string): Promise<MyPerformance> {
-  const [overrides, corrections, damages, meetings] = await Promise.all([
+  const [overrides, corrections, damages, meetings, flashTrips] = await Promise.all([
     supabase
       .from("technician_daily_performance_overrides")
       .select("work_date, redo_count, miles, hours_worked, minor_ticket, major_ticket")
@@ -45,14 +88,22 @@ export async function getMyPerformance(profileId: string, startDate: string, end
       .gte("created_at", `${startDate}T00:00:00`)
       .lte("created_at", `${endDate}T23:59:59`),
     getClockInMeetingsInRange(startDate, endDate),
+    getFlashTripSpans(startDate, endDate, profileId),
   ]);
   if (overrides.error) throw new Error(overrides.error.message);
-  return toPerformance(overrides.data ?? [], corrections.count ?? 0, damages.count ?? 0, meetings.filter((m) => m.profileId === profileId));
+  return toPerformance(
+    overrides.data ?? [],
+    corrections.count ?? 0,
+    damages.count ?? 0,
+    meetings.filter((m) => m.profileId === profileId),
+    flashTripDates(flashTrips, profileId, startDate, endDate)
+  );
 }
 
 /** One technician's period figures from their per-day rows and error counts — shared by getMyPerformance and getPerformanceLoader. */
-function toPerformance(rows: any[], timecardIssueCount: number, damageAssessmentCount: number, meetings: ClockInMeeting[]): MyPerformance {
+function toPerformance(rows: any[], timecardIssueCount: number, damageAssessmentCount: number, meetings: ClockInMeeting[], flashDates: Set<string>): MyPerformance {
   const sum = (k: string) => rows.reduce((s, r: any) => s + (Number(r[k]) || 0), 0);
+  const flashDays = rows.filter((r: any) => flashDates.has(r.work_date) && Number(r.hours_worked) > 0);
   return {
     minorTicketCount: sum("minor_ticket"),
     majorTicketCount: sum("major_ticket"),
@@ -63,6 +114,8 @@ function toPerformance(rows: any[], timecardIssueCount: number, damageAssessment
     timecardIssueCount,
     damageAssessmentCount,
     missedClockInCount: meetings.length,
+    flashTicketCount: flashDays.reduce((s, r: any) => s + (Number(r.minor_ticket) || 0) + (Number(r.major_ticket) || 0), 0),
+    flashDaysWorked: flashDays.length,
     meetings,
   };
 }
@@ -99,7 +152,7 @@ export async function getPerformanceLoader(
     const parts = await Promise.all(groups.map((g) => readAll((from, to) => build(g, from, to))));
     return { rows: parts.flatMap((p) => p.rows), error: parts.find((p) => p.error)?.error ?? null };
   };
-  const [overrides, corrections, damages, meetings] = await Promise.all([
+  const [overrides, corrections, damages, meetings, flashTrips] = await Promise.all([
     eachGroup((g, from, to) =>
       supabase
         .from("technician_daily_performance_overrides")
@@ -126,6 +179,7 @@ export async function getPerformanceLoader(
         .range(from, to)
     ),
     getClockInMeetingsInRange(startDate, endDate),
+    getFlashTripSpans(startDate, endDate),
   ]);
   // Same as getMyPerformance: the per-day rows must load; a failed error-count read counts as none.
   if (overrides.error) throw new Error(overrides.error);
@@ -143,7 +197,8 @@ export async function getPerformanceLoader(
       (days.get(profileId) ?? []).filter((r) => r.work_date >= periodStart && r.work_date <= periodEnd),
       (corrDays.get(profileId) ?? []).filter((r) => r.work_date >= periodStart && r.work_date <= periodEnd).length,
       (damageTimes.get(profileId) ?? []).filter((r) => r.created_at >= `${periodStart}T00:00:00` && r.created_at <= `${periodEnd}T23:59:59`).length,
-      (meetingsBy.get(profileId) ?? []).filter((m) => m.missedDate >= periodStart && m.missedDate <= periodEnd)
+      (meetingsBy.get(profileId) ?? []).filter((m) => m.missedDate >= periodStart && m.missedDate <= periodEnd),
+      flashTripDates(flashTrips, profileId, periodStart, periodEnd)
     );
 }
 

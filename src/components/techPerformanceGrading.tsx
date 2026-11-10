@@ -49,6 +49,20 @@ export const shortAvgMiles = (r: { miles: number; daysWorked: number }): number 
 // documents issued). Shown, not scored.
 export const shortErrorCount = (r: { timecardIssueCount: number; damageAssessmentCount: number; missedClockInCount: number }): number =>
   r.timecardIssueCount + r.damageAssessmentCount + r.missedClockInCount;
+// From the 11/08/2026 pay period on, Average Tickets is worth one more
+// point and Flash Tech Completion is scored; earlier pay periods (and the
+// all-periods total, which starts 08/27) keep the old points.
+export const FLASH_SCORING_FROM = "2026-11-08";
+export const usesFlashScoring = (periodStart: string) => periodStart >= FLASH_SCORING_FROM;
+// Flash Tech Completion = Minor + Major on the days a technician worked
+// during a Flashtech trip (Flash Tech Calendar) ÷ those days. Null with no
+// worked flash-trip day in the period — shown as "—", worth 0 points.
+export const shortFlashAvg = (r: { flashTicketCount: number; flashDaysWorked: number }): number | null =>
+  r.flashDaysWorked > 0 ? r.flashTicketCount / r.flashDaysWorked : null;
+// 4–4.9 +1, 5–5.9 +2, 6–6.9 +3, 7–8.9 +4, 9 or more +5; under 4 is 0.
+export const flashAvgPoints = (v: number | null): number =>
+  v == null ? 0 : v >= 9 ? 5 : v >= 7 ? 4 : v >= 6 ? 3 : v >= 5 ? 2 : v >= 4 ? 1 : 0;
+export const FLASH_AVG_SCALE = "4–4.9 +1 · 5–5.9 +2 · 6–6.9 +3 · 7–8.9 +4 · 9 or more +5 · under 4 or no flash trip 0";
 // Redo % with no tickets reads (and grades) as 0%, same as any other 0.
 export const fmtRedoPct = (p: number | null) => `${fmt1(p ?? 0)}%`;
 
@@ -88,14 +102,23 @@ export const GRADERS = {
   // Error Count (lower is better): 0 Maximum, 1 Great, 2 Median, 3 Effort,
   // 4 or more Alert — see ERROR_COUNT_POINTS.
   errorCount: (v: number): Grade => (v <= 0 ? "max" : v === 1 ? "great" : v === 2 ? "median" : v === 3 ? "effort" : "alert"),
+  // Flash Tech Completion, colored by the points it earns: +5 Maximum,
+  // +3 / +4 Great, +2 Median, +1 Effort; no color when it earns nothing.
+  flashAvg: (v: number | null): Grade | null => {
+    const p = flashAvgPoints(v);
+    return p >= 5 ? "max" : p >= 3 ? "great" : p === 2 ? "median" : p === 1 ? "effort" : null;
+  },
 };
 // Points per grade; a technician's Points = the sum over the scored
-// factors, −7 to 12. Redo % and Working Days top out at 2 (their Maximum
-// is worth the same as Great). Average Hours only ever takes a point
-// away (over 12 hours a day is −1); Average Mileage only ever adds one
-// (250+ miles a day is +1). Error Count: 0 or 1 error +1, 2 errors 0,
-// 3 errors −1, 4 or more −2.
+// factors, −7 to 12 (−6 to 18 from FLASH_SCORING_FROM, when Average
+// Tickets is worth one more — Maximum 4 … Alert 0 — and Flash Tech
+// Completion adds 0 to 5, see flashAvgPoints). Redo % and Working Days top
+// out at 2 (their Maximum is worth the same as Great). Average Hours only
+// ever takes a point away (over 12 hours a day is −1); Average Mileage
+// only ever adds one (250+ miles a day is +1). Error Count: 0 or 1 error
+// +1, 2 errors 0, 3 errors −1, 4 or more −2.
 export const GRADE_POINTS: Record<Grade, number> = { max: 3, great: 2, median: 1, effort: 0, alert: -1 };
+export const DAILY_AVG_POINTS: Record<Grade, number> = { max: 4, great: 3, median: 2, effort: 1, alert: 0 };
 export const CAPPED_GRADE_POINTS: Record<Grade, number> = { ...GRADE_POINTS, max: 2 };
 export const AVG_HOURS_POINTS: Record<Grade, number> = { max: 0, great: 0, median: 0, effort: -1, alert: 0 };
 export const AVG_MILES_POINTS: Record<Grade, number> = { max: 0, great: 1, median: 0, effort: 0, alert: 0 };
@@ -103,18 +126,23 @@ export const ERROR_COUNT_POINTS: Record<Grade, number> = { max: 1, great: 1, med
 export type ShortRowInput = {
   minorTicketCount: number; majorTicketCount: number; redoCount: number; daysWorked: number; hoursWorked: number; miles: number;
   timecardIssueCount: number; damageAssessmentCount: number; missedClockInCount: number;
+  flashTicketCount: number; flashDaysWorked: number;
 };
-export const shortPoints = (r: ShortRowInput): number => {
+/** `periodStart` = the first day of the pay period (or range) being graded — it decides which points apply. */
+export const shortPoints = (r: ShortRowInput, periodStart: string): number => {
   const pts = (g: Grade | null, table: Record<Grade, number>) => (g ? table[g] : 0);
-  return pts(GRADERS.dailyAvg(shortDailyAvg(r)), GRADE_POINTS)
+  const flash = usesFlashScoring(periodStart);
+  return pts(GRADERS.dailyAvg(shortDailyAvg(r)), flash ? DAILY_AVG_POINTS : GRADE_POINTS)
     + pts(GRADERS.totalTicket(shortTotalTicket(r)), GRADE_POINTS)
     + pts(GRADERS.redoPct(shortRedoPct(r)), CAPPED_GRADE_POINTS)
     + pts(GRADERS.workingDays(r.daysWorked), CAPPED_GRADE_POINTS)
     + pts(GRADERS.avgHours(shortAvgHours(r)), AVG_HOURS_POINTS)
     + pts(GRADERS.avgMiles(shortAvgMiles(r)), AVG_MILES_POINTS)
-    + pts(GRADERS.errorCount(shortErrorCount(r)), ERROR_COUNT_POINTS);
+    + pts(GRADERS.errorCount(shortErrorCount(r)), ERROR_COUNT_POINTS)
+    + (flash ? flashAvgPoints(shortFlashAvg(r)) : 0);
 };
-// Grade from Points: Master 11–12, Expert 10, Advanced 9, Proficient 8,
+export const pointsRangeText = (periodStart: string) => (usesFlashScoring(periodStart) ? "−6 to 18" : "−7 to 12");
+// Grade from Points: Master 11 or more, Expert 10, Advanced 9, Proficient 8,
 // Competent 7, Developing 5–6, Needs Attention 4 or less — shown as medals
 // (royal with a crown, diamond, gold, silver, bronze, steel, iron). The
 // letter keys (SSS…D) are internal; people see the names.
@@ -123,7 +151,7 @@ export const LETTER_GRADES: LetterGrade[] = ["SSS", "SS", "S", "A", "B", "C", "D
 export const letterGrade = (points: number): LetterGrade =>
   points >= 11 ? "SSS" : points >= 10 ? "SS" : points >= 9 ? "S" : points >= 8 ? "A" : points >= 7 ? "B" : points >= 5 ? "C" : "D";
 export const LETTER_META: Record<LetterGrade, { medal: string; range: string; bg: string; text: string; rim: string; xlsxFill: string; xlsxFont: string }> = {
-  SSS: { medal: "👑 Master", range: "11–12 pts", bg: "linear-gradient(135deg,#fef3c7 0%,#f59e0b 20%,#be123c 55%,#581c87 100%)", text: "#fffbeb", rim: "#fde68a", xlsxFill: "FFBE123C", xlsxFont: "FFFFFBEB" },
+  SSS: { medal: "👑 Master", range: "11+ pts", bg: "linear-gradient(135deg,#fef3c7 0%,#f59e0b 20%,#be123c 55%,#581c87 100%)", text: "#fffbeb", rim: "#fde68a", xlsxFill: "FFBE123C", xlsxFont: "FFFFFBEB" },
   SS: { medal: "💎 Expert", range: "10 pts", bg: "linear-gradient(135deg,#ffffff 0%,#cffafe 22%,#a5b4fc 48%,#f0abfc 72%,#e0f2fe 100%)", text: "#3b0764", rim: "#ffffff", xlsxFill: "FFC7D2FE", xlsxFont: "FF3B0764" },
   S: { medal: "🥇 Advanced", range: "9 pts", bg: "linear-gradient(135deg,#fff7c2 0%,#fcd34d 30%,#d97706 75%,#92400e 100%)", text: "#451a03", rim: "#fde68a", xlsxFill: "FFFCD34D", xlsxFont: "FF451A03" },
   A: { medal: "🥈 Proficient", range: "8 pts", bg: "linear-gradient(135deg,#ffffff 0%,#e2e8f0 30%,#94a3b8 75%,#475569 100%)", text: "#0f172a", rim: "#f1f5f9", xlsxFill: "FFE2E8F0", xlsxFont: "FF0F172A" },
@@ -173,8 +201,8 @@ export function GradeMedal({ grade, size = "md" }: { grade: LetterGrade; size?: 
 }
 
 export const fmtPoints =(p: number) => `${p > 0 ? `+${p}` : p < 0 ? `−${-p}` : "0"} pt${Math.abs(p) === 1 ? "" : "s"}`;
-export const GRADE_SCALE: { factor: string; ranges: Record<Grade, string>; points?: Record<Grade, number> }[] = [
-  { factor: "Average Tickets", ranges: { max: "6+", great: "5–5.9", median: "4–4.9", effort: "3–3.9", alert: "2.9 or less" } },
+export const gradeScaleFor = (periodStart: string): { factor: string; ranges: Record<Grade, string>; points?: Record<Grade, number> }[] => [
+  { factor: "Average Tickets", ranges: { max: "6+", great: "5–5.9", median: "4–4.9", effort: "3–3.9", alert: "2.9 or less" }, points: usesFlashScoring(periodStart) ? DAILY_AVG_POINTS : GRADE_POINTS },
   { factor: "Total Ticket", ranges: { max: "61+", great: "50–60", median: "40–49", effort: "30–39", alert: "29 or less" } },
   { factor: "Redo %", ranges: { max: "2% or less", great: "4% or less", median: "6% or less", effort: "7–9%", alert: "10%+" }, points: CAPPED_GRADE_POINTS },
   { factor: "Working Days", ranges: { max: "13–14", great: "11–12", median: "10", effort: "8–9", alert: "7 or less" }, points: CAPPED_GRADE_POINTS },

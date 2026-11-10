@@ -100,7 +100,8 @@ async function gradeEveryone(cases: IncentiveCase[], today: string): Promise<Rec
   const perf = await getPerformanceLoader(windows.map((w) => w.c.technician.id), spanStart, spanEnd);
   for (const w of windows) {
     const graded = w.periods.map((p) => {
-      const points = shortPoints(perf(w.c.technician.id, p.start, p.end));
+      // Each pay period is graded by its own rules (see usesFlashScoring).
+      const points = shortPoints(perf(w.c.technician.id, p.start, p.end), p.start);
       return { start: p.start, end: p.end, points, grade: letterGrade(points) };
     });
     const points = graded.length ? graded.reduce((s, g) => s + g.points, 0) / graded.length : null;

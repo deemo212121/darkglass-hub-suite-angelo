@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Loader2 } from "lucide-react";
 import {
   GRADERS, GRADE_META, GradeMedal, LETTER_META, fmtPayDate, gradeName, letterGrade, payPeriodsThrough,
-  shortAvgHours, shortAvgMiles, shortDailyAvg, shortErrorCount, shortPoints, shortRedoPct, shortTotalTicket,
+  shortAvgHours, shortAvgMiles, shortDailyAvg, shortErrorCount, shortFlashAvg, shortPoints, shortRedoPct, shortTotalTicket, usesFlashScoring,
   type Grade,
 } from "@/components/techPerformanceGrading";
 import { getMyPerformance, getUncorrectedAutoClockOut, type MyPerformance } from "@/lib/supabase/myPerformance";
@@ -87,7 +87,7 @@ export function MyStandingCard({ profileId, today }: { profileId: string; today:
     );
   }
 
-  const points = shortPoints(data);
+  const points = shortPoints(data, period.start);
   const grade = letterGrade(points);
   const total = shortTotalTicket(data);
   const redo = shortRedoPct(data);
@@ -99,6 +99,9 @@ export function MyStandingCard({ profileId, today }: { profileId: string; today:
     { label: "Avg Hours", value: fmt1(shortAvgHours(data)), grade: GRADERS.avgHours(shortAvgHours(data)) },
     { label: "Avg Mileage", value: fmt1(shortAvgMiles(data)), grade: GRADERS.avgMiles(shortAvgMiles(data)) },
   ];
+  // Only from the 11/08/2026 pay period on, and only with working days on a Flashtech trip.
+  const flashAvg = usesFlashScoring(period.start) ? shortFlashAvg(data) : null;
+  if (flashAvg != null) factors.splice(1, 0, { label: "Flash Avg", value: fmt1(flashAvg), grade: GRADERS.flashAvg(flashAvg) });
   const errors = shortErrorCount(data);
   const openMeetings = data.meetings.filter((m) => m.status === "required");
 
