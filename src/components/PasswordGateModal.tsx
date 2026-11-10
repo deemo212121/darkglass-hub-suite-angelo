@@ -1,10 +1,12 @@
 /**
  * "Enter your password to continue" — a check before opening a sensitive
- * view (Employee Monitoring → Attendance Status). Verifies the viewer's OWN
+ * view (Employee Monitoring → Attendance Status) or before a Truck Stock
+ * import (TruckStockImportModal, which asks every time). Verifies the viewer's OWN
  * login password with Firebase (reauthenticateWithCredential, same as the
  * profile page's password change) — no shared password is stored anywhere.
- * Once passed, the view stays unlocked for the rest of the browser tab's
- * session (sessionStorage), so it isn't asked again on every click.
+ * Once passed, a caller that checks isGateUnlocked() stays unlocked for the
+ * rest of the browser tab's session (sessionStorage), so it isn't asked again
+ * on every click; a caller that doesn't check it asks every time.
  */
 import { useState } from "react";
 import { createPortal } from "react-dom";

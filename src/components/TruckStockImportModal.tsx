@@ -7,10 +7,15 @@
  * sheet was last updated) can be left out. Parts the file marks Used come
  * along as used parts with their ticket number (the Used list), unless the
  * user unticks them. Saving is the parent's job.
+ *
+ * Every import asks for the importer's own login password first (after the
+ * "Clear first" confirmation), checked with Firebase like Employee Monitoring
+ * → Attendance Status. Unlike that page it asks every time, not once per tab.
  */
 import { useMemo, useState } from "react";
 import { ArrowLeft, ArrowRight, Copy, Upload, X } from "lucide-react";
 import type { TruckStockRow, TruckStockUsedRow } from "@/lib/supabase/truckStock";
+import { PasswordGateModal } from "@/components/PasswordGateModal";
 import {
   planTruckStockImport,
   planUsedImport,
@@ -72,6 +77,7 @@ export function TruckStockImportModal({
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [askingPassword, setAskingPassword] = useState(false);
 
   const plan = useMemo(
     () => planTruckStockImport(parsed.parts, existing, { fallbackBranch, mode, separate }),
@@ -106,7 +112,7 @@ export function TruckStockImportModal({
       return next;
     });
 
-  const handleImport = async () => {
+  const handleImport = () => {
     const removing = count("remove", selected);
     if (
       mode === "clear" &&
@@ -116,6 +122,11 @@ export function TruckStockImportModal({
       )
     )
       return;
+    setAskingPassword(true);
+  };
+
+  // Runs once the password checks out.
+  const applyImport = async () => {
     setBusy(true);
     setError(null);
     try {
@@ -153,6 +164,7 @@ export function TruckStockImportModal({
   ];
 
   return (
+    <>
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4" onClick={busy ? undefined : onClose}>
       <div className="flex max-h-[92vh] w-full max-w-5xl flex-col rounded-xl border border-white/10 bg-slate-950 text-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <header className="flex items-start justify-between gap-4 rounded-t-xl border-b border-white/10 bg-white/5 px-5 py-3">
@@ -553,5 +565,19 @@ export function TruckStockImportModal({
         </div>
       </div>
     </div>
+      {/* Outside the window above, so clicking around the password box (Cancel)
+          can't also reach the window's own click-outside-to-close. */}
+      {askingPassword ? (
+        <PasswordGateModal
+          gateKey="truck-stock-import"
+          title={`Import ${plural(totalChanges, "change")} to Truck Stock`}
+          onUnlocked={() => {
+            setAskingPassword(false);
+            void applyImport();
+          }}
+          onCancel={() => setAskingPassword(false)}
+        />
+      ) : null}
+    </>
   );
 }
