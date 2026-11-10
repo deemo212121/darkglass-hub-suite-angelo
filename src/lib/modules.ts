@@ -409,6 +409,16 @@ const accountingMod: ModuleDef = {
       fields: [],
       seed: () => ({}),
     },
+    // Accounting's damages sheet (TechDamagesPage, migration 0440): house /
+    // parts damages by technician, deduction per payroll, cut-off and balance.
+    {
+      slug: "tech-damages",
+      title: "Tech Damages",
+      description: "House and parts damages by technician — deduction per payroll, cut-off date and balance, by cut-off period or year.",
+      custom: "tech-damages" as any,
+      fields: [],
+      seed: () => ({}),
+    },
     // Same shortcut-copy pattern as HR's own Candidate Reviews tile.
     {
       slug: "candidate-reviews",
