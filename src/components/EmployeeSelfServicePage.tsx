@@ -1259,12 +1259,10 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
   // attendance for the selected payslip's exact pay period and apply that
   // run's stored hourly rate per day (payroll runs use one flat rate per
   // employee for the whole period, so no per-day rate lookup is needed).
-  // Fixed-salary payslips (migration 0119) skip this entirely — an hours ×
-  // $0/hr table would read as "you earned $0 today" despite the correct
-  // flat Total below, so the template's own "No daily attendance recorded"
-  // fallback is shown instead (see payslipTemplate.ts).
+  // Fixed salary still shows attendance; daily amounts are labeled separately
+  // by the shared template and never replace the saved salary total.
   useEffect(() => {
-    if (!payslipModalOpen || !selectedPayslip || !myProfileId || selectedPayslip.compensationType === "fixed") {
+    if (!payslipModalOpen || !selectedPayslip || !myProfileId) {
       setPayslipDailyRows([]);
       return;
     }
