@@ -17,6 +17,7 @@ import { NotificationsMenu } from "@/components/NotificationsMenu";
 import { TimeClockButtons } from "@/components/TimeClockMenu";
 import { useTheme } from "@/lib/theme";
 import { setDesktopOverride, setMobileMode } from "@/lib/device";
+import { isTabVisible, onTabVisible } from "@/lib/pageVisibility";
 import { getMyFullProfile } from "@/lib/supabase/users";
 import { LocationSharingBadge } from "@/components/LocationSharingBadge";
 import { ModuleNavigator } from "@/components/ModuleNavigator";
@@ -54,29 +55,34 @@ function CentralClock({ zoneKey }: { zoneKey: string }) {
   const [date, setDate] = useState<string | null>(null);
 
   useEffect(() => {
+    // Built once per time zone — making a new formatter every second is the
+    // costly part of a ticking clock that's on every page.
+    const timeFormat = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone.timeZone,
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true,
+    });
+    const dateFormat = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone.timeZone,
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
     const update = () => {
       const now = new Date();
-      setTime(
-        new Intl.DateTimeFormat("en-US", {
-          timeZone: zone.timeZone,
-          hour: "numeric",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: true,
-        }).format(now)
-      );
-      setDate(
-        new Intl.DateTimeFormat("en-US", {
-          timeZone: zone.timeZone,
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        }).format(now)
-      );
+      setTime(timeFormat.format(now));
+      setDate(dateFormat.format(now));
     };
     update();
-    const interval = setInterval(update, 1000);
-    return () => clearInterval(interval);
+    // Nobody sees it in a background tab; it catches up the moment the tab is shown again.
+    const interval = setInterval(() => { if (isTabVisible()) update(); }, 1000);
+    const stopWatching = onTabVisible(update);
+    return () => {
+      clearInterval(interval);
+      stopWatching();
+    };
   }, [zone.timeZone]);
 
   if (!time) return null;

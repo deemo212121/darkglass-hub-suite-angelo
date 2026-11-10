@@ -3,7 +3,6 @@ import { useNavigate } from "@tanstack/react-router";
 import { Search } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { normalizeTicketSearchValue } from "@/lib/ticket-search";
-import { getCompanyTickets } from "@/lib/supabase/tickets";
 import { getCoverage, type CoverageRow } from "@/lib/supabase/locationManagement";
 import type { Ticket } from "@/lib/ticketData";
 
@@ -28,6 +27,10 @@ export function TicketSearchFab() {
     (async () => {
       try {
         setLoading(true);
+        // Loaded here, not at the top: this button is on every page, and the
+        // ticket code (with the ZIP coverage list it pulls in) is only needed
+        // once someone actually opens the search.
+        const { getCompanyTickets } = await import("@/lib/supabase/tickets");
         const rows = await getCompanyTickets();
         if (!cancelled) setTickets(rows);
       } catch (err) {
