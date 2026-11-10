@@ -14,12 +14,16 @@
  *  - PENDING_BY_STATUS            — donut slices grouped by repair status
  *  - PENDING_BY_LOCATION          — donut slices grouped by office / branch
  *  - CSR_ACTIVITY                 — donut slices grouped by created-by user
+ *                                    (loadCsrActivity, loaded on its own)
  *  - TECH_RANKING                 — table rows ranked by 30-day completion rate
  *                                    (completed / assigned, cancelled voided out)
  *  - ALL_LOCATIONS_FILTER         — flat list for the location dropdown
+ *
+ * Tickets and profiles are downloaded once (loadOverallStatusSource); the
+ * date range only re-runs computeOverallStatus on them, no refetch.
  */
 
-import { getCompanyTickets, getTicketAuditLog } from "./supabase/tickets";
+import { getCompanyTicketSummaries, getTicketAuditActionCounts } from "./supabase/tickets";
 import { getCompanyUsers } from "./supabase/users";
 import { isPendingStatus, statusGroupOf, type Ticket } from "./ticketData";
 
@@ -79,9 +83,16 @@ export interface OverallStatusData {
   statLines: { key: string; color: string }[];
   pendingByStatus: DonutSlice[];
   pendingByLocation: DonutSlice[];
-  csrActivity: DonutSlice[];
   techRanking: RankingRow[];
   allLocationsFilter: string[];
+}
+
+type Profile = Awaited<ReturnType<typeof getCompanyUsers>>[number];
+
+/** What computeOverallStatus works from — downloaded once per page visit. */
+export interface OverallStatusSource {
+  tickets: Ticket[];
+  profiles: Profile[];
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -206,65 +217,73 @@ function inPostingRange(created: string, startDate?: string, endDate?: string): 
 }
 
 /**
- * Pull live tickets for the caller's company and compute every section the
- * OverallStatusPage renders. Lightweight enough to call on mount.
- *
- * `startDate`/`endDate` (bare "YYYY-MM-DD") scope the Ticket Statistics
- * chart and the two Pending-by donuts to tickets posted in that window;
- * CSR Activity and the ranking tables keep their own fixed windows.
+ * Live tickets (only the columns this page reads) and the profiles roster for
+ * the caller's company. If the roster fails the rest of the dashboard still
+ * renders — the ranking just can't drop non-technician names.
  */
-export async function loadOverallStatusData(opts?: { startDate?: string; endDate?: string }): Promise<OverallStatusData> {
-  const { startDate, endDate } = opts ?? {};
-  const [ticketsAll, profiles, auditLog] = await Promise.all([
-    getCompanyTickets(),
-    // Profiles roster — we need this to know which display_name/email/username
-    // belong to users that hold the CSR role (primary or in extra_roles).
-    // If the call fails, we still want the rest of the dashboard to render.
+export async function loadOverallStatusSource(): Promise<OverallStatusSource> {
+  const [tickets, profiles] = await Promise.all([
+    getCompanyTicketSummaries(),
     getCompanyUsers().catch((err) => {
-      console.error("Failed to load profiles for CSR activity:", err);
-      return [] as Awaited<ReturnType<typeof getCompanyUsers>>;
-    }),
-    // Full change history (every status/reassign/reschedule action, not just
-    // the "last changer" pointer stored on the ticket) — see csrCounts below
-    // for why this matters.
-    getTicketAuditLog().catch((err) => {
-      console.error("Failed to load ticket audit log for CSR activity:", err);
-      return [] as Awaited<ReturnType<typeof getTicketAuditLog>>;
+      console.error("Failed to load profiles for Overall Status:", err);
+      return [] as Profile[];
     }),
   ]);
+  return { tickets, profiles };
+}
 
-  // Build a lookup of CSR-role users. A user counts as "CSR" if their
-  // primary role OR any entry in extra_roles starts with "CSR" (covers
-  // CSR, CSR_AGENT, CSR_TEAM_LEADER, CSR_MANAGER). The Postgres audit
-  // trigger writes tickets.status_changed_by = profiles.id (UUID), so the
-  // primary lookup key MUST be the profile id. We also index by
-  // display_name, username, and email as a safety net for older rows that
-  // may have stamped a string instead of a uuid.
-  const csrIdentities = new Map<string, string>(); // lowercased identifier → display name
+/**
+ * CSR Activity donut: per CSR-role user (primary role OR any extra_roles
+ * entry starting with "CSR" — CSR, CSR_AGENT, CSR_TEAM_LEADER, CSR_MANAGER),
+ * every status/reassign/reschedule action they've ever made — read from the
+ * FULL ticket_audit_log history, not tickets.status_changed_by. That column
+ * only stores the single most recent changer per ticket, so a CSR's
+ * early-stage edits disappear from it the moment anyone else (a manager
+ * closing the ticket, etc.) touches the same ticket later — undercounting
+ * exactly the CSRs who work tickets at an early stage and hand them off.
+ * changed_by is a profiles.id, so rows are counted by profile id; two
+ * profiles with the same display name share one slice.
+ */
+export async function loadCsrActivity(): Promise<DonutSlice[]> {
+  const profiles = await getCompanyUsers();
+  const displayById = new Map<string, string>();
   for (const p of profiles) {
     const primary = String((p as any).role || "").toUpperCase();
     const extras = ((p as any).extra_roles as string[] | null | undefined) || [];
     const isCsr = primary.startsWith("CSR") || extras.some((r) => String(r).toUpperCase().startsWith("CSR"));
     if (!isCsr) continue;
-    const display = (p as any).display_name || (p as any).username || (p as any).email || "CSR";
-    [
-      (p as any).id,
-      (p as any).firebase_uid,
-      (p as any).display_name,
-      (p as any).username,
-      (p as any).email,
-    ].forEach((k) => {
-      if (!k) return;
-      csrIdentities.set(String(k).trim().toLowerCase(), display);
-    });
+    displayById.set((p as any).id, (p as any).display_name || (p as any).username || (p as any).email || "CSR");
   }
+  const byProfile = await getTicketAuditActionCounts([...displayById.keys()]);
+  const csrCounts = new Map<string, number>();
+  for (const [id, n] of byProfile) {
+    const display = displayById.get(id);
+    if (display) csrCounts.set(display, (csrCounts.get(display) ?? 0) + n);
+  }
+  return Array.from(csrCounts.entries())
+    .sort(([, a], [, b]) => b - a)
+    .map(([name, value], i) => ({ name, value, color: DONUT_PALETTE[i % DONUT_PALETTE.length] }));
+}
+
+/**
+ * Compute every section the OverallStatusPage renders except CSR Activity
+ * from an already-downloaded source — cheap, so it re-runs on every filter
+ * change.
+ *
+ * `startDate`/`endDate` (bare "YYYY-MM-DD") scope the Ticket Statistics
+ * chart and the two Pending-by donuts to tickets posted in that window;
+ * the ranking table keeps its own fixed window.
+ */
+export function computeOverallStatus(source: OverallStatusSource, opts?: { startDate?: string; endDate?: string }): OverallStatusData {
+  const { startDate, endDate } = opts ?? {};
+  const { tickets: ticketsAll, profiles } = source;
 
   // Ticket Statistics (the line chart below) is scoped to the selected
   // Posting-date range as a flow metric — how many tickets were posted
   // within [startDate, endDate]. The two Pending-by donuts use a different,
-  // "as of" snapshot instead (see `pendingAsOf` further down); CSR Activity
-  // and the ranking tables keep using the full roster (`ticketsAll`) with
-  // their own fixed windows.
+  // "as of" snapshot instead (see `pendingAsOf` further down); the ranking
+  // table keeps using the full roster (`ticketsAll`) with its own fixed
+  // window.
   const tickets = ticketsAll.filter((t) => inPostingRange(t.created, startDate, endDate));
 
   // ── Source totals (for line ordering + chart legend) ───────────────────
@@ -363,26 +382,6 @@ export async function loadOverallStatusData(opts?: { startDate?: string; endDate
     locationCounts.set(key, (locationCounts.get(key) ?? 0) + 1);
   }
   const pendingByLocation: DonutSlice[] = Array.from(locationCounts.entries())
-    .sort(([, a], [, b]) => b - a)
-    .map(([name, value], i) => ({ name, value, color: DONUT_PALETTE[i % DONUT_PALETTE.length] }));
-
-  // ── CSR activity (donut) ────────────────────────────────────────────────
-  // Count, per CSR-role user, every status/reassign/reschedule action they've
-  // ever made — read from the FULL ticket_audit_log history, not
-  // tickets.status_changed_by. That column only stores the single most
-  // recent changer per ticket, so a CSR's early-stage edits disappear from
-  // it the moment anyone else (a manager closing the ticket, etc.) touches
-  // the same ticket later — undercounting exactly the CSRs who work tickets
-  // at an early stage and hand them off.
-  const csrCounts = new Map<string, number>();
-  for (const entry of auditLog) {
-    const who = String(entry.changedBy || "").trim();
-    if (!who) continue;
-    const display = csrIdentities.get(who.toLowerCase());
-    if (!display) continue; // not a CSR-role user
-    csrCounts.set(display, (csrCounts.get(display) ?? 0) + 1);
-  }
-  const csrActivity: DonutSlice[] = Array.from(csrCounts.entries())
     .sort(([, a], [, b]) => b - a)
     .map(([name, value], i) => ({ name, value, color: DONUT_PALETTE[i % DONUT_PALETTE.length] }));
 
@@ -503,7 +502,6 @@ export async function loadOverallStatusData(opts?: { startDate?: string; endDate
     statLines,
     pendingByStatus,
     pendingByLocation,
-    csrActivity,
     techRanking,
     allLocationsFilter,
   };
@@ -516,7 +514,6 @@ export const EMPTY_OVERALL_STATUS: OverallStatusData = {
   statLines: [{ key: "TOTAL", color: SOURCE_COLOR.TOTAL }],
   pendingByStatus: [],
   pendingByLocation: [],
-  csrActivity: [],
   techRanking: [],
   allLocationsFilter: ["ALL"],
 };

@@ -357,12 +357,14 @@ async function fetchTicketPage(
   sinceDate?: string,
   /** A PostgREST `or` filter (e.g. statuses) — see getCompanyTicketsWithStatuses. */
   orFilter?: string,
+  /** Columns to read — see getCompanyTicketSummaries. */
+  select: string = SELECT,
 ): Promise<{ data: any[] | null; error: { message: string } | null; count?: number | null }> {
   let lastError: { message: string } | null = null;
   for (let attempt = 0; attempt <= PAGE_FETCH_RETRIES; attempt++) {
     let query = supabase
       .from("tickets")
-      .select(SELECT, withCount ? { count: "exact" } : undefined)
+      .select(select, withCount ? { count: "exact" } : undefined)
       .order("created_at", { ascending: false })
       .order("id", { ascending: false });
     if (sinceDate) query = query.gte("created_at", sinceDate);
@@ -481,7 +483,25 @@ export async function getCompanyTicketsWithStatuses(statuses: string[]): Promise
   return fetchCompanyTicketsUncached(undefined, terms.map((s) => `status.ilike.*${s}*`).join(","));
 }
 
-async function fetchCompanyTicketsUncached(sinceDate?: string, orFilter?: string, tracker?: { maxUpdatedAt: string }): Promise<Ticket[]> {
+// Only the columns Overall Status reads (source, posting date, status,
+// location, technician, cancellation reason, customer name) — ~7 MB for
+// 20,000 tickets instead of ~44 MB for every column.
+const SUMMARY_SELECT = `
+  id, ticket_no, ticket_source, source_edited_by_user, manufacturer, account,
+  location, technician, status, created_at, cancellation_reason,
+  customer:customers ( full_name )
+`;
+
+/**
+ * Every company ticket (same rows as getCompanyTickets, same closed-ER-history
+ * rule) with only the SUMMARY_SELECT columns filled in — every other Ticket
+ * field comes back empty. Not cached — unlike getCompanyTickets.
+ */
+export async function getCompanyTicketSummaries(): Promise<Ticket[]> {
+  return fetchCompanyTicketsUncached(undefined, undefined, undefined, SUMMARY_SELECT);
+}
+
+async function fetchCompanyTicketsUncached(sinceDate?: string, orFilter?: string, tracker?: { maxUpdatedAt: string }, select: string = SELECT): Promise<Ticket[]> {
   const track = (rows: any[] | null) => {
     if (!tracker) return;
     for (const r of rows ?? []) if (r.updated_at && r.updated_at > tracker.maxUpdatedAt) tracker.maxUpdatedAt = r.updated_at;
@@ -494,7 +514,7 @@ async function fetchCompanyTicketsUncached(sinceDate?: string, orFilter?: string
   // First page carries an exact count so we know how many more to fetch.
   // Small tenants (<= PAGE_SIZE) are done in this one request; larger ones
   // get the remaining pages concurrently instead of one-after-another.
-  const first = await fetchTicketPage(0, true, sinceDate, orFilter);
+  const first = await fetchTicketPage(0, true, sinceDate, orFilter, select);
   if (first.error) {
     console.error("getCompanyTickets error:", first.error.message);
     throw new Error(first.error.message);
@@ -506,7 +526,7 @@ async function fetchCompanyTicketsUncached(sinceDate?: string, orFilter?: string
   if (total <= PAGE_SIZE) return all;
 
   const rest = await Promise.all(
-    Array.from({ length: Math.ceil(total / PAGE_SIZE) - 1 }, (_, k) => fetchTicketPage(k + 1, false, sinceDate, orFilter)),
+    Array.from({ length: Math.ceil(total / PAGE_SIZE) - 1 }, (_, k) => fetchTicketPage(k + 1, false, sinceDate, orFilter, select)),
   );
   for (const { data, error } of rest) {
     if (error) {
@@ -2690,6 +2710,39 @@ export async function getTicketAuditLog(opts?: { ticketId?: string; startDate?: 
     if (!data || data.length < PAGE_SIZE) break;
   }
   return all;
+}
+
+/**
+ * How many ticket_audit_log rows each of `profileIds` wrote (changed_by is a
+ * profiles.id FK), all time. Reads only id + changed_by of those people's rows,
+ * walked by id in 16 id ranges at once — paging the whole log by created_at
+ * offset re-sorted all 100,000+ rows on every page and could time out.
+ */
+export async function getTicketAuditActionCounts(profileIds: string[]): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  const ids = Array.from(new Set(profileIds.filter(Boolean)));
+  if (ids.length === 0) return counts;
+  const starts = "0123456789abcdef".split("").map((h) => `${h}0000000-0000-0000-0000-000000000000`);
+  await Promise.all(
+    starts.map(async (start, i) => {
+      const end = starts[i + 1];
+      let after: string | null = null;
+      for (;;) {
+        let query = supabase.from("ticket_audit_log").select("id, changed_by").in("changed_by", ids);
+        query = after ? query.gt("id", after) : query.gte("id", start);
+        if (end) query = query.lt("id", end);
+        const { data, error } = await query.order("id", { ascending: true }).limit(PAGE_SIZE);
+        if (error) {
+          console.error("getTicketAuditActionCounts error:", error.message);
+          throw new Error(error.message);
+        }
+        for (const r of data ?? []) counts.set(r.changed_by, (counts.get(r.changed_by) ?? 0) + 1);
+        if (!data || data.length < PAGE_SIZE) break;
+        after = data[data.length - 1].id;
+      }
+    }),
+  );
+  return counts;
 }
 
 export interface TicketStatusDailyStat {

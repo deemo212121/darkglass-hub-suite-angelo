@@ -9,9 +9,11 @@ import {
   PieChart, Pie, Cell, Legend,
 } from "recharts";
 import {
-  loadOverallStatusData,
+  loadOverallStatusSource,
+  computeOverallStatus,
+  loadCsrActivity,
   EMPTY_OVERALL_STATUS,
-  type OverallStatusData,
+  type OverallStatusSource,
   type RankingRow,
   type DonutSlice,
 } from "@/lib/overallStatusData";
@@ -19,7 +21,7 @@ import {
 /**
  * Overall Status dashboard. Layout mirrors janeyyy16/usapp's OverallStatusPage
  * (filters → line chart → 3 donuts → 2 ranking tables) but every number is
- * computed live from the company's tickets via `loadOverallStatusData`.
+ * computed live from the company's tickets via `computeOverallStatus`.
  */
 
 // Custom Tooltip for the Ticket Statistics chart. The default Recharts
@@ -29,10 +31,11 @@ import {
 // visually floats over the donut cards below it. Filtering to only the
 // nonzero entries keeps it to the handful of sources actually active on
 // that point; maxHeight+scroll is a safety net for the rare day/month where
-// most sources are active at once.
+// most sources are active at once. Lines hidden by a legend click are left
+// out too.
 function StatTooltip({ active, payload, label }: any) {
   if (!active || !payload || payload.length === 0) return null;
-  const nonZero = payload.filter((p: any) => Number(p.value) > 0);
+  const nonZero = payload.filter((p: any) => !p.hide && Number(p.value) > 0);
   return (
     <div
       style={{
@@ -60,12 +63,12 @@ function StatTooltip({ active, payload, label }: any) {
   );
 }
 
-function Donut({ data, title }: { data: DonutSlice[]; title: string }) {
+function Donut({ data, title, emptyText = "No data yet." }: { data: DonutSlice[]; title: string; emptyText?: string }) {
   if (!data || data.length === 0) {
     return (
       <div className="rounded-xl border border-white/10 bg-white/5 p-2">
         <p className="mb-0.5 text-center text-sm font-semibold">{title}</p>
-        <p className="text-center text-xs text-slate-400 py-5">No data yet.</p>
+        <p className="text-center text-xs text-slate-400 py-5">{emptyText}</p>
       </div>
     );
   }
@@ -381,11 +384,15 @@ export function OverallStatusPage({ mod, companyId }: { mod: ModuleDef; sub: Sub
   // shown to the user in the caption below.
   const { companyLoginAlias } = useAuth();
   const companyDisplay = companyLoginAlias || companyId;
-  const [data, setData] = useState<OverallStatusData>(EMPTY_OVERALL_STATUS);
+  const [source, setSource] = useState<OverallStatusSource | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [csrActivity, setCsrActivity] = useState<DonutSlice[]>([]);
+  const [csrStatus, setCsrStatus] = useState<"loading" | "done" | "error">("loading");
   const [statType, setStatType] = useState<"monthly" | "daily">("monthly");
   const [location, setLocation] = useState("ALL");
+  // Ticket Statistics legend click: show only that line (click it again for all).
+  const [onlyLine, setOnlyLine] = useState<string | null>(null);
 
   // Default date range: last 30 days.
   const today = new Date();
@@ -402,30 +409,41 @@ export function OverallStatusPage({ mod, companyId }: { mod: ModuleDef; sub: Sub
     setEndDate(DEFAULT_END);
   };
 
-  // Refetch automatically whenever the date range changes — no explicit
-  // "Refresh" click needed. Location is filtered client-side (see
-  // filteredByLocation below) so it doesn't need a refetch.
+  // Tickets and profiles download once per visit; the date range and
+  // location only recompute from them (computeOverallStatus), no refetch.
+  // CSR Activity loads on its own so the rest of the page doesn't wait on it.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         setLoading(true);
         setError(null);
-        const next = await loadOverallStatusData({ startDate, endDate });
-        if (!cancelled) setData(next);
+        const next = await loadOverallStatusSource();
+        if (!cancelled) setSource(next);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load overall status data.");
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
+    loadCsrActivity().then(
+      (slices) => { if (!cancelled) { setCsrActivity(slices); setCsrStatus("done"); } },
+      (err) => { console.error("Failed to load CSR activity:", err); if (!cancelled) setCsrStatus("error"); },
+    );
     return () => { cancelled = true; };
-  }, [startDate, endDate]);
+  }, []);
+
+  const data = useMemo(
+    () => (source ? computeOverallStatus(source, { startDate, endDate }) : EMPTY_OVERALL_STATUS),
+    [source, startDate, endDate],
+  );
 
   const statData = statType === "monthly" ? data.monthlyStats : data.dailyStats;
   // Show every line on both monthly and daily — sources come straight from
   // the data so any source present in tickets gets a line on the chart.
   const activeLines = data.statLines;
+  // A source that drops out of the date range un-isolates the chart.
+  const shownOnly = onlyLine && activeLines.some((l) => l.key === onlyLine) ? onlyLine : null;
 
   // Apply the location filter to the donuts that are location-scoped.
   const filteredByLocation = useMemo(() => {
@@ -495,7 +513,23 @@ export function OverallStatusPage({ mod, companyId }: { mod: ModuleDef; sub: Sub
         {/* Ticket Statistics line chart */}
         <section className="rounded-xl border border-white/10 bg-white/5 p-2 mb-2">
           <div className="mb-1 flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Ticket Statistics ({statType === "monthly" ? "Monthly" : "Daily"})</h2>
+            <h2 className="text-sm font-semibold">
+              Ticket Statistics ({statType === "monthly" ? "Monthly" : "Daily"})
+              {shownOnly ? (
+                <>
+                  <span className="ml-2 text-xs font-normal text-slate-300">{shownOnly} only</span>
+                  <button
+                    type="button"
+                    onClick={() => setOnlyLine(null)}
+                    className="ml-2 rounded-md border border-white/15 bg-slate-800/70 px-1.5 py-0.5 text-[10px] font-semibold text-slate-200 hover:bg-slate-700"
+                  >
+                    Show all
+                  </button>
+                </>
+              ) : (
+                statData.length > 0 && <span className="ml-2 text-[10px] font-normal text-slate-500">Click a name below the chart to show only that line</span>
+              )}
+            </h2>
             <div className="flex gap-1.5">
               <button
                 className={`rounded-md px-2 py-0.5 text-xs font-semibold border ${statType === "monthly" ? "border-blue-400/40 bg-blue-600/30 text-blue-200" : "border-white/15 bg-slate-800/70 text-slate-300 hover:bg-slate-700"}`}
@@ -512,7 +546,7 @@ export function OverallStatusPage({ mod, companyId }: { mod: ModuleDef; sub: Sub
             </div>
           </div>
           {statData.length === 0 ? (
-            <p className="text-xs text-slate-400 py-5 text-center">No ticket activity recorded for this range.</p>
+            <p className="text-xs text-slate-400 py-5 text-center">{loading ? "Loading…" : "No ticket activity recorded for this range."}</p>
           ) : (
             <ResponsiveContainer width="100%" height={190} debounce={200}>
               <LineChart data={statData} margin={{ top: 10, right: 20, bottom: 10, left: 0 }}>
@@ -520,9 +554,15 @@ export function OverallStatusPage({ mod, companyId }: { mod: ModuleDef; sub: Sub
                 <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#cbd5e1" }} />
                 <YAxis tick={{ fontSize: 10, fill: "#cbd5e1" }} />
                 <Tooltip content={<StatTooltip />} />
-                <Legend wrapperStyle={{ fontSize: 10 }} />
+                <Legend
+                  wrapperStyle={{ fontSize: 10, cursor: "pointer" }}
+                  onClick={(entry) => {
+                    const key = String(entry.dataKey ?? "");
+                    if (key) setOnlyLine((cur) => (cur === key ? null : key));
+                  }}
+                />
                 {activeLines.map((line) => (
-                  <Line key={line.key} type="monotone" dataKey={line.key} stroke={line.color} strokeWidth={line.key === "TOTAL" ? 3 : 1.5} dot={{ r: 2 }} />
+                  <Line key={line.key} type="monotone" dataKey={line.key} stroke={line.color} strokeWidth={line.key === "TOTAL" ? 3 : 1.5} dot={{ r: 2 }} hide={!!shownOnly && line.key !== shownOnly} />
                 ))}
               </LineChart>
             </ResponsiveContainer>
@@ -531,16 +571,20 @@ export function OverallStatusPage({ mod, companyId }: { mod: ModuleDef; sub: Sub
 
         {/* Three donuts */}
         <section className="grid gap-2 mb-2 sm:grid-cols-2 xl:grid-cols-3">
-          <Donut data={data.pendingByStatus} title="Pending Tickets by Status" />
-          <Donut data={filteredByLocation} title="Pending Tickets by Location" />
-          <Donut data={data.csrActivity} title="CSR Activity" />
+          <Donut data={data.pendingByStatus} title="Pending Tickets by Status" emptyText={loading ? "Loading…" : undefined} />
+          <Donut data={filteredByLocation} title="Pending Tickets by Location" emptyText={loading ? "Loading…" : undefined} />
+          <Donut
+            data={csrActivity}
+            title="CSR Activity"
+            emptyText={csrStatus === "loading" ? "Loading…" : csrStatus === "error" ? "Couldn't load CSR activity." : "No data yet."}
+          />
         </section>
 
         {/* Ranking table */}
         <RankingTable title="Tech Completion Rate" rows={data.techRanking} label="Tech Name" locationFilter={location} />
 
         <p className="text-[10px] text-slate-500 italic mb-2">
-          All numbers above are computed live from the <code className="text-slate-300">tickets</code> table (company-scoped via RLS). Date pickers and filters narrow the visible records; pull "Refresh" to re-query.
+          All numbers above are computed live from the <code className="text-slate-300">tickets</code> table (company-scoped via RLS). Date pickers and filters narrow the visible records; reload the page to re-query.
         </p>
       </main>
     </div>
