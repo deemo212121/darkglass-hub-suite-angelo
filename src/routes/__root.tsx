@@ -24,6 +24,7 @@ import { FrozenAccountModal } from "@/components/FrozenAccountModal";
 import { LateTicketCompletionModal } from "@/components/LateTicketCompletionModal";
 import { TicketSearchFab } from "@/components/TicketSearchFab";
 import { FloatingMessenger } from "@/components/FloatingMessenger";
+import { PageLoadTracker } from "@/components/PageLoadTracker";
 import { SessionKickedOutBanner } from "@/components/SessionKickedOutBanner";
 import { ViewAsRoleBanner } from "@/components/ViewAsRoleBanner";
 import { TechnicianLocationTracker } from "@/components/TechnicianLocationTracker";
@@ -171,6 +172,8 @@ function RootComponent() {
         <AuthProvider>
           <LiveLocationProvider>
             <SuperSuperAdminGuard />
+            {/* Page Speed: times every page (AHS Server Status → Page Speed). */}
+            <PageLoadTracker />
             {/* Unconditional, same as SuperSuperAdminGuard above — must run
                 on /mobile too, since that's exactly where technicians clock
                 in/out day to day. */}
