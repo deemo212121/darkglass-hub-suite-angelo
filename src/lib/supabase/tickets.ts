@@ -846,6 +846,24 @@ export async function updateTicketStatus(ticketNo: string, status: string): Prom
 }
 
 /**
+ * Set the branch (tickets.location) on these tickets — No-Coverage Tickets'
+ * Add ZIP, for open tickets with that ZIP and no branch yet (the branch the
+ * SP sync would now resolve from the ZIP anyway). Audit trigger records it.
+ */
+export async function updateTicketsLocation(ticketNos: string[], location: string): Promise<void> {
+  if (ticketNos.length === 0) return;
+  const { error } = await supabase
+    .from("tickets")
+    .update({ location, updated_at: new Date().toISOString() })
+    .in("ticket_no", ticketNos);
+  if (error) {
+    console.error("updateTicketsLocation error:", error.message);
+    throw new Error(error.message);
+  }
+  invalidateCompanyTicketsCache();
+}
+
+/**
  * The ticket's Square Trade appointment link (migration 0403), saved so
  * everyone gets it — not only the browser that pasted it. "" when none is
  * saved, null when the column isn't there yet (migration not run) so the

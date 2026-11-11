@@ -1155,3 +1155,28 @@ export function isPendingStatus(status: string): boolean {
 export function isClosedStatus(status: string): boolean {
   return statusGroupOf(status) === "completed" || statusGroupOf(status) === "cancelled";
 }
+
+// The ticket status codes (tickets.status) a person can pick — the same list
+// ticket.$ticketNo.tsx's Visit Log editor offers (inline JSX there, kept in
+// sync by hand), NOT the unrelated admin-configurable repair_statuses table
+// RepairStatusesPage.tsx manages. CL-Cancelled isn't here: callers add it
+// only when roleLabels.ts's canSetCancelledStatus allows, with a reason.
+// Used by Work Planner and No-Coverage Tickets.
+export const REPAIR_STATUS_CODES = [
+  "CL-Claimed",
+  "CL-Data-Closed",
+  "CL-Need Cancel",
+  "CL-Parts Back Ordered",
+  "CL-Ready to Complete",
+  "CSR-Acknowledged",
+  "CSR-Assigned to ASC",
+  "CSR-Left Message for Cx",
+  "CSR-Needs Scheduling",
+  "OP-Ready for Service",
+  "OP-Reschedule Follow up",
+  "OP-UPDATE HOLD",
+  "OP-Waiting for Part",
+  "PT-Need PreAuthorization",
+  "TR-Need PO",
+  "TR-Need Triage",
+] as const;

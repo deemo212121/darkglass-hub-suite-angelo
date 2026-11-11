@@ -12,23 +12,40 @@
  * Same location access rule as Ticket List (allowedLocations). Coverage is
  * re-read on every load so a ZIP just added in Location Management drops off
  * on Refresh — the copy loaded at sign-in can be stale.
+ *
+ * Each row can be fixed right here: Add ZIP puts the ticket's ZIP in a
+ * branch's coverage (same location_mgmt_coverage row Location Management
+ * adds — so only people who can open Location Management get it), and gives
+ * open tickets with that ZIP and no branch yet that branch. Status is a
+ * dropdown (same codes and CL-Cancelled rule as Work Planner / the ticket
+ * page; CL-Cancelled asks for the reason).
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import * as XLSX from "xlsx";
-import { ChevronLeft, Download, Printer, RefreshCw } from "lucide-react";
+import { ChevronLeft, Download, MapPin, Printer, RefreshCw } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { useAuth } from "@/lib/auth";
 import { BrandedLoader } from "@/components/BrandedLoader";
-import { getCompanyTickets, invalidateCompanyTicketsCache } from "@/lib/supabase/tickets";
-import { isZipCovered } from "@/lib/zipCoverage";
+import { getCompanyTickets, invalidateCompanyTicketsCache, updateTicketFields, updateTicketsLocation, updateTicketStatus } from "@/lib/supabase/tickets";
+import { getLocations, upsertCoverage } from "@/lib/supabase/locationManagement";
+import { isZipCovered, registerZipCoverage } from "@/lib/zipCoverage";
 import { ensureCompanyZipCoverage } from "@/lib/zipCoverageLoader";
-import { isPendingStatus, type Ticket } from "@/lib/ticketData";
+import { isPendingStatus, REPAIR_STATUS_CODES, type Ticket } from "@/lib/ticketData";
 import { formatISODate, todayISO } from "@/lib/localDate";
+import { ACTIVE_LOCATIONS, normalizeLocationName } from "@/lib/locations";
+import { CANCEL_REASONS } from "@/lib/operationsBranchMetrics";
+import { canSetCancelledStatus } from "@/lib/roleLabels";
+import { useOnClCancelList } from "@/lib/supabase/clCancelPeople";
+import { canAccessSubmodule } from "@/lib/submoduleAccess";
 
 const PAGE_SIZES = [10, 20, 50, 100, 500];
+
+// Same normalizing as zipCoverage.ts's lookup (ZIP+4 and a dropped leading zero).
+const zip5 = (zip: string | null | undefined) => String(zip ?? "").replace(/\D/g, "").padStart(5, "0").slice(0, 5);
+const hasZip = (zip: string | null | undefined) => /\d/.test(String(zip ?? ""));
 
 const COLUMNS: { label: string; value: (t: Ticket) => string; align?: "right" }[] = [
   { label: "Ticket No", value: (t) => t.ticketNo },
@@ -53,15 +70,51 @@ const escapeHtml = (s: string) =>
 export function NoCoverageTicketsPage({ mod }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
-  const { allowedLocations } = useAuth();
+  const { allowedLocations, role, extraRoles, isTrainee, isFrozen } = useAuth();
+  const onClCancelList = useOnClCancelList();
+  const canCancel = canSetCancelledStatus(role, extraRoles, isTrainee, onClCancelList);
+  const canAddZip = canAccessSubmodule(role, extraRoles, "admin", { slug: "location-management", custom: "location-management" }, isTrainee, isFrozen);
+  const statusOptions: string[] = canCancel ? ["CL-Cancelled", ...REPAIR_STATUS_CODES] : [...REPAIR_STATUS_CODES];
 
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null);
   const [search, setSearch] = useState("");
   const [pageSize, setPageSize] = useState(50);
   const [page, setPage] = useState(1);
+
+  // Branches for Add ZIP: the active roster plus any branch added in Location Management.
+  const [branchOptions, setBranchOptions] = useState<string[]>(() => ACTIVE_LOCATIONS.filter((l) => l !== "Philippines"));
+  const [addZipFor, setAddZipFor] = useState<Ticket | null>(null);
+  const [addZipBranch, setAddZipBranch] = useState("");
+  const [addZipCity, setAddZipCity] = useState("");
+  const [addZipBusy, setAddZipBusy] = useState(false);
+  const [addZipError, setAddZipError] = useState<string | null>(null);
+
+  const [statusBusy, setStatusBusy] = useState<string | null>(null);
+  const [cancelFor, setCancelFor] = useState<Ticket | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!canAddZip) return;
+    getLocations()
+      .then((rows) => {
+        setBranchOptions((current) => {
+          const names = new Set(current);
+          for (const r of rows) {
+            const name = normalizeLocationName(r.location);
+            // Same clean-name check as Location Management's coverage branch list.
+            if (/[A-Za-z]/.test(name) && !/^\d{3,}/.test(name) && name.length <= 40 && name !== "Philippines" && name !== "Mexico") names.add(name);
+          }
+          return Array.from(names).sort((a, b) => a.localeCompare(b));
+        });
+      })
+      .catch((err) => console.warn("No-Coverage Tickets: branch list from Location Management skipped:", err));
+  }, [canAddZip]);
 
   const load = async (fresh = false) => {
     try {
@@ -111,6 +164,99 @@ export function NoCoverageTicketsPage({ mod }: { mod: ModuleDef; sub: SubModuleD
   const pageSafe = Math.min(page, pageCount);
   const pagedRows = filtered.slice((pageSafe - 1) * pageSize, pageSafe * pageSize);
 
+  const openAddZip = (t: Ticket) => {
+    setAddZipFor(t);
+    setAddZipBranch(branchOptions.includes(t.location) ? t.location : "");
+    setAddZipCity(t.city || "");
+    setAddZipError(null);
+  };
+
+  const saveAddZip = async () => {
+    if (!addZipFor) return;
+    const zip = zip5(addZipFor.zip);
+    const branch = addZipBranch.trim();
+    if (!branch) { setAddZipError("Pick the branch this ZIP belongs to."); return; }
+    setAddZipBusy(true);
+    setAddZipError(null);
+    try {
+      // Someone may have added it since this list loaded — don't add it twice.
+      await ensureCompanyZipCoverage(true);
+      const alreadyAdded = isZipCovered(zip);
+      const city = addZipCity.trim();
+      if (!alreadyAdded) {
+        await upsertCoverage({ id: "", location: branch, zipCode: zip, city, selfSchedule: "", daysLater: "", tierCode: "" });
+        registerZipCoverage([{ zipCode: zip, location: branch, city }]);
+      }
+      // Open tickets with this ZIP and no branch yet get the branch, so branch-limited staff see them.
+      const noBranch = tickets.filter((t) => isPendingStatus(t.status) && hasZip(t.zip) && zip5(t.zip) === zip && !t.location).map((t) => t.ticketNo);
+      let branchNote = "";
+      let filled = new Set<string>();
+      try {
+        await updateTicketsLocation(noBranch, branch);
+        filled = new Set(noBranch);
+        if (noBranch.length) branchNote = ` ${noBranch.length} ticket${noBranch.length === 1 ? "" : "s"} with no branch now ${noBranch.length === 1 ? "has" : "have"} ${branch}.`;
+      } catch (err) {
+        branchNote = ` Couldn't set the branch on ${noBranch.join(", ")}: ${err instanceof Error ? err.message : "unknown error"}.`;
+      }
+      // New array either way — the list re-checks coverage on it.
+      setTickets((prev) => prev.map((t) => (filled.has(t.ticketNo) ? { ...t, location: branch } : t)));
+      setNotice(alreadyAdded ? `ZIP ${zip} was already in coverage (added since this list loaded).${branchNote}` : `ZIP ${zip} added to ${branch} in Location Management.${branchNote}`);
+      setAddZipFor(null);
+    } catch (err) {
+      setAddZipError(err instanceof Error ? err.message : "Couldn't add the ZIP.");
+    } finally {
+      setAddZipBusy(false);
+    }
+  };
+
+  const setStatus = (ticketNo: string, status: string) =>
+    setTickets((prev) => prev.map((t) => (t.ticketNo === ticketNo ? { ...t, status } : t)));
+
+  const droppedNote = (status: string) => (isPendingStatus(status) ? "" : " It's no longer open, so it's off this list.");
+
+  const changeStatus = async (t: Ticket, next: string) => {
+    if (!next || next === t.status) return;
+    if (next === "CL-Cancelled") {
+      setCancelFor(t);
+      setCancelReason("");
+      setCancelError(null);
+      return;
+    }
+    setStatusBusy(t.ticketNo);
+    try {
+      await updateTicketStatus(t.ticketNo, next);
+      setStatus(t.ticketNo, next);
+      window.dispatchEvent(new CustomEvent("ticket-data-updated", { detail: { ticketNo: t.ticketNo } }));
+      setNotice(`${t.ticketNo} is now ${next}.${droppedNote(next)}`);
+    } catch (err) {
+      alert(`Failed to save status: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setStatusBusy(null);
+    }
+  };
+
+  const saveCancel = async () => {
+    if (!cancelFor) return;
+    if (!cancelReason) { setCancelError("Pick the cancellation reason."); return; }
+    setCancelBusy(true);
+    setCancelError(null);
+    try {
+      await updateTicketStatus(cancelFor.ticketNo, "CL-Cancelled");
+      setStatus(cancelFor.ticketNo, "CL-Cancelled");
+      // Same as the ticket page: the reason goes in its own column.
+      await updateTicketFields(cancelFor.ticketNo, { cancellationReason: cancelReason }).catch((e) => {
+        alert(`${cancelFor.ticketNo} is cancelled, but its reason didn't save: ${e instanceof Error ? e.message : "Unknown error"}`);
+      });
+      window.dispatchEvent(new CustomEvent("ticket-data-updated", { detail: { ticketNo: cancelFor.ticketNo } }));
+      setNotice(`${cancelFor.ticketNo} is now CL-Cancelled (${cancelReason}).${droppedNote("CL-Cancelled")}`);
+      setCancelFor(null);
+    } catch (err) {
+      setCancelError(err instanceof Error ? err.message : "Couldn't cancel the ticket.");
+    } finally {
+      setCancelBusy(false);
+    }
+  };
+
   const exportToXlsx = () => {
     const data = filtered.map((t) => Object.fromEntries(COLUMNS.map((c) => [c.label, c.value(t)])));
     const worksheet = XLSX.utils.json_to_sheet(data);
@@ -153,7 +299,7 @@ export function NoCoverageTicketsPage({ mod }: { mod: ModuleDef; sub: SubModuleD
           <div>
             <h1 className="text-lg font-bold">No-Coverage Tickets</h1>
             <p className="mt-0.5 text-[11px] text-slate-400">
-              Open tickets whose ZIP isn&apos;t in our coverage (Location Management). Add the ZIP there, or cancel the ticket as Out of Coverage / Not Covered.
+              Open tickets whose ZIP isn&apos;t in our coverage (Location Management). Add the ZIP to a branch, or change the status (cancel as Out of Coverage / Not Covered).
             </p>
           </div>
           <button
@@ -167,6 +313,12 @@ export function NoCoverageTicketsPage({ mod }: { mod: ModuleDef; sub: SubModuleD
         </div>
 
         {error && <p className="mb-2 text-xs text-rose-400">Error: {error}</p>}
+        {notice && (
+          <div className="mb-2 flex items-start justify-between gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-200">
+            <span>{notice}</span>
+            <button type="button" onClick={() => setNotice(null)} className="text-emerald-300 hover:text-emerald-100" aria-label="Dismiss">✕</button>
+          </div>
+        )}
 
         <div className="rounded-xl border border-white/10 bg-white/5">
           <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-white/10">
@@ -201,12 +353,13 @@ export function NoCoverageTicketsPage({ mod }: { mod: ModuleDef; sub: SubModuleD
                     {COLUMNS.map((c) => (
                       <th key={c.label} className={`px-2 py-2 font-semibold text-slate-400 whitespace-nowrap ${c.align === "right" ? "text-right" : "text-left"}`}>{c.label}</th>
                     ))}
+                    <th className="px-2 py-2 font-semibold text-slate-400 whitespace-nowrap text-left">Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {pagedRows.length === 0 ? (
                     <tr>
-                      <td colSpan={COLUMNS.length} className="px-4 py-12 text-center text-slate-400">
+                      <td colSpan={COLUMNS.length + 1} className="px-4 py-12 text-center text-slate-400">
                         {search.trim() ? "No tickets match this search." : "Every open ticket's ZIP is covered."}
                       </td>
                     </tr>
@@ -219,11 +372,40 @@ export function NoCoverageTicketsPage({ mod }: { mod: ModuleDef; sub: SubModuleD
                               <Link to="/ticket/$ticketNo" params={{ ticketNo: t.ticketNo }} className="font-mono text-blue-400 hover:underline">
                                 {t.ticketNo}
                               </Link>
+                            ) : c.label === "Status" ? (
+                              <select
+                                value={t.status}
+                                disabled={statusBusy === t.ticketNo}
+                                onChange={(e) => void changeStatus(t, e.target.value)}
+                                title="Change this ticket's status"
+                                className="max-w-[190px] rounded border border-white/15 bg-slate-950 px-1.5 py-0.5 text-xs text-slate-200 focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                              >
+                                {/* Keep the current value selectable even if this list doesn't offer it. */}
+                                {!statusOptions.includes(t.status) && <option value={t.status}>{t.status || "—"}</option>}
+                                {statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+                              </select>
                             ) : (
                               c.value(t) || "—"
                             )}
                           </td>
                         ))}
+                        <td className="px-2 py-1.5 whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => openAddZip(t)}
+                            disabled={!canAddZip || !hasZip(t.zip)}
+                            title={
+                              !hasZip(t.zip)
+                                ? "This ticket has no ZIP — fix the customer's address on the ticket first"
+                                : canAddZip
+                                  ? `Add ZIP ${zip5(t.zip)} to a branch's coverage`
+                                  : "Only people who can open Admin → Location Management can add ZIPs"
+                            }
+                            className="inline-flex items-center gap-1 rounded-md border border-blue-400/40 bg-blue-600/20 px-2 py-0.5 text-xs font-semibold text-blue-200 hover:bg-blue-600/40 disabled:opacity-40 disabled:hover:bg-blue-600/20"
+                          >
+                            <MapPin className="h-3 w-3" /> Add ZIP
+                          </button>
+                        </td>
                       </tr>
                     ))
                   )}
@@ -255,6 +437,72 @@ export function NoCoverageTicketsPage({ mod }: { mod: ModuleDef; sub: SubModuleD
           </div>
         </div>
       </main>
+
+      {addZipFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" onClick={() => { if (!addZipBusy) setAddZipFor(null); }}>
+          <div className="w-full max-w-sm rounded-xl border border-white/10 bg-slate-900 p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-sm font-bold">Add ZIP {zip5(addZipFor.zip)} to coverage</h2>
+            <p className="mt-0.5 text-[11px] text-slate-400">
+              From ticket {addZipFor.ticketNo}{addZipFor.city ? ` · ${addZipFor.city}` : ""}{addZipFor.state ? `, ${addZipFor.state}` : ""}. Saved in Location Management → Covered Zip Codes.
+            </p>
+            <label className="mt-3 block text-[11px] uppercase tracking-wide text-slate-400">
+              Branch <span className="text-rose-400">*</span>
+              <select
+                value={addZipBranch}
+                onChange={(e) => setAddZipBranch(e.target.value)}
+                className={`mt-1 w-full rounded-md border bg-slate-950 px-2 py-1.5 text-sm normal-case tracking-normal text-white focus:outline-none focus:border-blue-500 ${addZipBranch ? "border-white/15" : "border-rose-400/40"}`}
+              >
+                <option value="">— select branch —</option>
+                {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+              </select>
+            </label>
+            <label className="mt-2 block text-[11px] uppercase tracking-wide text-slate-400">
+              City
+              <input
+                value={addZipCity}
+                onChange={(e) => setAddZipCity(e.target.value)}
+                placeholder="City"
+                className="mt-1 w-full rounded-md border border-white/15 bg-slate-950 px-2 py-1.5 text-sm normal-case tracking-normal text-white focus:outline-none focus:border-blue-500"
+              />
+            </label>
+            <p className="mt-2 text-[11px] text-slate-500">Open tickets with this ZIP and no branch get the branch too. Self-schedule and tier code can be set later in Location Management.</p>
+            {addZipError && <p className="mt-2 text-xs text-rose-400">{addZipError}</p>}
+            <div className="mt-3 flex justify-end gap-2">
+              <button type="button" onClick={() => setAddZipFor(null)} disabled={addZipBusy} className="rounded-md border border-white/15 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-50">Cancel</button>
+              <button type="button" onClick={() => void saveAddZip()} disabled={addZipBusy || !addZipBranch} className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-50">
+                {addZipBusy ? "Adding…" : "Add ZIP"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cancelFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" onClick={() => { if (!cancelBusy) setCancelFor(null); }}>
+          <div className="w-full max-w-sm rounded-xl border border-white/10 bg-slate-900 p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-sm font-bold">Cancel ticket {cancelFor.ticketNo}</h2>
+            <p className="mt-0.5 text-[11px] text-slate-400">Sets the status to CL-Cancelled. Currently {cancelFor.status || "—"}.</p>
+            <label className="mt-3 block text-[11px] uppercase tracking-wide text-slate-400">
+              Cancellation Reason <span className="text-rose-400">*</span>
+              <select
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                className={`mt-1 w-full rounded-md border bg-slate-950 px-2 py-1.5 text-sm normal-case tracking-normal text-white focus:outline-none focus:border-blue-500 ${cancelReason ? "border-white/15" : "border-rose-400/40"}`}
+              >
+                <option value="">— select —</option>
+                {CANCEL_REASONS.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </label>
+            {cancelError && <p className="mt-2 text-xs text-rose-400">{cancelError}</p>}
+            <div className="mt-3 flex justify-end gap-2">
+              <button type="button" onClick={() => setCancelFor(null)} disabled={cancelBusy} className="rounded-md border border-white/15 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-50">Back</button>
+              <button type="button" onClick={() => void saveCancel()} disabled={cancelBusy || !cancelReason} className="rounded-md bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-50">
+                {cancelBusy ? "Cancelling…" : "Cancel ticket"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -8,7 +8,7 @@ import type * as Leaflet from "leaflet";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { LOCATIONS, normalizeLocationName } from "@/lib/locations";
 import { getLocationManagementZoomAddress, getLocationManagementCoordinates } from "@/components/LocationManagementPage";
-import { getTicketByNumber, type Ticket } from "@/lib/ticketData";
+import { getTicketByNumber, REPAIR_STATUS_CODES, type Ticket } from "@/lib/ticketData";
 import { TIME_FRAMES, FRAME_START_TIME, type TimeFrame, normalizeTimePeriod } from "@/lib/timeframes";
 import {
   getCompanyTickets,
@@ -85,31 +85,6 @@ function shortAddress(t: { city?: string; state?: string; zip?: string; location
 }
 
 const LOCATION_OPTIONS = LOCATIONS;
-// Same real repair-status codes ticket.$ticketNo.tsx's own Visit Log editor
-// offers (tickets.status, NOT the unrelated admin-configurable
-// repair_statuses table RepairStatusesPage.tsx manages — those are
-// different short codes for a different purpose). Kept in sync by hand
-// since ticket.$ticketNo.tsx's own list is inline JSX, not an exported
-// constant; CL-Cancelled is appended separately, gated the same way that
-// page gates it (BizOps Manager+ only — roleLabels.ts's canSetCancelledStatus).
-const REPAIR_STATUS_CODES = [
-  "CL-Claimed",
-  "CL-Data-Closed",
-  "CL-Need Cancel",
-  "CL-Parts Back Ordered",
-  "CL-Ready to Complete",
-  "CSR-Acknowledged",
-  "CSR-Assigned to ASC",
-  "CSR-Left Message for Cx",
-  "CSR-Needs Scheduling",
-  "OP-Ready for Service",
-  "OP-Reschedule Follow up",
-  "OP-UPDATE HOLD",
-  "OP-Waiting for Part",
-  "PT-Need PreAuthorization",
-  "TR-Need PO",
-  "TR-Need Triage",
-] as const;
 // Daily schedule columns: each time frame, plus an ANYTIME catch-all.
 const TIME_SLOTS: Array<PlannerTicket["slot"]> = [...TIME_FRAMES, "ANYTIME"];
 const SLOT_TIMES: Record<string, string> = FRAME_START_TIME;
@@ -429,7 +404,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
   }, []);
   // Same real status codes + cancellation permission gate as
   // ticket.$ticketNo.tsx's own Visit Log editor — see REPAIR_STATUS_CODES
-  // above.
+  // (ticketData.ts).
   // Same rule as the ticket page (roleLabels.ts): main or secondary role; a trainee only once granted access.
   const onClCancelList = useOnClCancelList();
   const canSetCancelledStatus = useMemo(() => canSetCancelled(role, extraRoles, isTrainee, onClCancelList), [role, extraRoles, isTrainee, onClCancelList]);
