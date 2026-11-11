@@ -288,8 +288,13 @@ export async function encompassCreateOrder(args: {
 
 export interface EncompassOrderStatusPart {
   status?: string;
+  /** "ORDER" for an ordered line (a return / credit line has its own type). */
+  type?: string;
   lineNumber?: number;
   partNumber?: string;
+  originalPartNumber?: string;
+  unitPrice?: number;
+  extendedPrice?: number;
   description?: string;
   orderQuantity?: number;
   shipQuantity?: number;
@@ -313,18 +318,19 @@ export interface EncompassOrderStatusRecord {
 
 export async function encompassOrderStatus(args: {
   referenceNumber: string;
-}): Promise<{ success: boolean; records: EncompassOrderStatusRecord[]; error?: string }> {
+}): Promise<{ success: boolean; records: EncompassOrderStatusRecord[]; error?: string; /** encompass.com's HTTP status — 429 when it's rate-limiting. */ httpStatus?: number }> {
   if (!args.referenceNumber?.trim()) return { success: false, records: [], error: "referenceNumber is required" };
 
   const result = await encompassRequest<{ open?: boolean; records?: any[] }>("/restfulservice/orderStatus", {
     referenceNumber: args.referenceNumber.trim(),
   });
   if (!result.data) {
-    return { success: false, records: [], error: result.error || "No response from Encompass bridge" };
+    return { success: false, records: [], error: result.error || "No response from Encompass bridge", httpStatus: result.status };
   }
   const status = result.data.status;
   if (!isEncompassSuccess(status)) {
-    return { success: false, records: [], error: status?.errorMessage || `Encompass error ${status?.errorCode ?? "?"}` };
+    const error = result.status === 429 ? "Encompass is limiting how fast we look up (HTTP 429)" : status?.errorMessage || `Encompass error ${status?.errorCode ?? "?"}`;
+    return { success: false, records: [], error, httpStatus: result.status };
   }
   const rawRecords = result.data?.data?.records || [];
   const records: EncompassOrderStatusRecord[] = rawRecords.map((r: any) => ({
@@ -339,8 +345,12 @@ export async function encompassOrderStatus(args: {
     parts: Array.isArray(r.parts)
       ? r.parts.map((p: any) => ({
           status: p.status,
+          type: p.type,
           lineNumber: toNum(p.lineNumber),
           partNumber: p.partNumber,
+          originalPartNumber: p.originalPartNumber,
+          unitPrice: toNum(p.unitPrice),
+          extendedPrice: toNum(p.extendedPrice),
           description: p.description,
           orderQuantity: toNum(p.orderQuantity),
           shipQuantity: toNum(p.shipQuantity),

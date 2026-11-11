@@ -1307,6 +1307,14 @@ const claimsMod: ModuleDef = {
       }),
     },
     {
+      slug: "distributor-parts-claims",
+      title: "Marcone & Encompass Parts",
+      description: "Invoiced Marcone / Encompass parts by month, checked on their APIs — claim date, paid / credited, and used parts never claimed.",
+      custom: "distributor-parts-claims" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
       slug: "pre-auth",
       title: "Pre-Auth",
       description: "ServicePower Call Auth (Request for Authorization) — fill in, save and track pre-auths for tickets in PT-Need PreAuthorization.",

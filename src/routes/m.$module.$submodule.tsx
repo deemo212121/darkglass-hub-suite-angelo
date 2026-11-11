@@ -48,6 +48,7 @@ const PartReturnStatusPage = lazy(() => import("@/components/PartReturnStatus").
 const ClaimsPipeline = lazy(() => import("@/components/ClaimsPipeline").then((m) => ({ default: m.ClaimsPipeline })));
 const NeedClaimList = lazy(() => import("@/components/NeedClaimList").then((m) => ({ default: m.NeedClaimList })));
 const ClaimList = lazy(() => import("@/components/ClaimList").then((m) => ({ default: m.ClaimList })));
+const DistributorPartsClaimsPage = lazy(() => import("@/components/DistributorPartsClaimsPage").then((m) => ({ default: m.DistributorPartsClaimsPage })));
 const AuthorizationStatus = lazy(() => import("@/components/AuthorizationStatus").then((m) => ({ default: m.AuthorizationStatus })));
 const ClaimCalendarMonthly = lazy(() => import("@/components/ClaimCalendarMonthly").then((m) => ({ default: m.ClaimCalendarMonthly })));
 const ClaimCalendarWeekly = lazy(() => import("@/components/ClaimCalendarWeekly").then((m) => ({ default: m.ClaimCalendarWeekly })));
@@ -512,6 +513,8 @@ function SubModule() {
         ? <NeedClaimList mod={mod} sub={sub} />
         : (sub as any).custom === "claim-list"
         ? <ClaimList mod={mod} sub={sub} />
+        : (sub as any).custom === "distributor-parts-claims"
+        ? <DistributorPartsClaimsPage mod={mod} sub={sub} />
         : (sub as any).custom === "authorization-status"
         ? <AuthorizationStatus mod={mod} sub={sub} />
         : (sub as any).custom === "pre-auth"

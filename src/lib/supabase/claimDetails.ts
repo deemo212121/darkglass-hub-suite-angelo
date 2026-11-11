@@ -7,6 +7,7 @@
 
 import { supabase } from "./client";
 import { getTicketId } from "./tickets";
+import { localISODate } from "@/lib/localDate";
 
 /** A ticket picture sent to the ServicePower claim with Add Document to Claim (migration 0413). */
 export interface SpClaimDocument {
@@ -177,6 +178,47 @@ export async function getCompanyTicketClaimDetails(): Promise<Map<string, Ticket
     if (!data || data.length < PAGE_SIZE) break;
   }
   return map;
+}
+
+/**
+ * When each ticket last turned CL-Claimed (YYYY-MM-DD, from ticket history)
+ * and who did it, keyed by ticket id — Claim List's Claimed Date and
+ * Marcone & Encompass Parts' Claim Date.
+ */
+export async function getTicketClaimedBy(ticketIds: string[]): Promise<Record<string, { at: string; by: string }>> {
+  const latest: Record<string, { at: string; byId: string | null }> = {};
+  const BATCH = 200;
+  const PAGE = 1000;
+  const batches: string[][] = [];
+  for (let i = 0; i < ticketIds.length; i += BATCH) batches.push(ticketIds.slice(i, i + BATCH));
+  const fetchBatch = async (batch: string[]) => {
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from("ticket_audit_log")
+        .select("ticket_id, created_at, changed_by")
+        .eq("field", "status")
+        .eq("after_value", "CL-Claimed")
+        .in("ticket_id", batch)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, from + PAGE - 1);
+      if (error) throw error;
+      for (const r of (data ?? []) as Array<{ ticket_id: string; created_at: string; changed_by: string | null }>) {
+        if (!latest[r.ticket_id]) latest[r.ticket_id] = { at: r.created_at, byId: r.changed_by };
+      }
+      if (!data || data.length < PAGE) break;
+    }
+  };
+  for (let i = 0; i < batches.length; i += 4) await Promise.all(batches.slice(i, i + 4).map(fetchBatch));
+  const personIds = Array.from(new Set(Object.values(latest).map((v) => v.byId).filter((v): v is string => !!v)));
+  const names = new Map<string, string>();
+  for (let i = 0; i < personIds.length; i += BATCH) {
+    const { data } = await supabase.from("profiles").select("id, display_name").in("id", personIds.slice(i, i + BATCH));
+    for (const p of (data ?? []) as Array<{ id: string; display_name: string | null }>) names.set(p.id, p.display_name || "");
+  }
+  const out: Record<string, { at: string; by: string }> = {};
+  for (const [tid, v] of Object.entries(latest)) out[tid] = { at: v.at ? localISODate(new Date(v.at)) : "", by: v.byId ? names.get(v.byId) || "—" : "System" };
+  return out;
 }
 
 /** Create or update a ticket's claim details (upsert on the ticket_id unique key). */

@@ -12,7 +12,7 @@ import { localISODate } from "@/lib/localDate";
 import { useAuth } from "@/lib/auth";
 import { supabase } from "@/lib/supabase/client";
 import { getCompanyTicketsWithStatuses, getLatestVisitTriageNoteByTicketIds, updateTicketStatus } from "@/lib/supabase/tickets";
-import { getCompanyTicketClaimDetails, upsertTicketClaimDetails, type TicketClaimDetails } from "@/lib/supabase/claimDetails";
+import { getCompanyTicketClaimDetails, getTicketClaimedBy, upsertTicketClaimDetails, type TicketClaimDetails } from "@/lib/supabase/claimDetails";
 import { getMyProfileId } from "@/lib/supabase/users";
 import type { Ticket } from "@/lib/ticketData";
 import { isClaimablePart } from "@/lib/servicePowerClaimPayload";
@@ -167,43 +167,6 @@ function spStatusChip(code: string, shortPaid: boolean): string {
   return "bg-yellow-500/20 text-yellow-300 border border-yellow-500/30";
 }
 
-/** When each ticket last turned CL-Claimed, and who did it (ticket history), keyed by ticket id. */
-async function loadClaimedBy(ticketIds: string[]): Promise<Record<string, { at: string; by: string }>> {
-  const latest: Record<string, { at: string; byId: string | null }> = {};
-  const BATCH = 200;
-  const PAGE = 1000;
-  const batches: string[][] = [];
-  for (let i = 0; i < ticketIds.length; i += BATCH) batches.push(ticketIds.slice(i, i + BATCH));
-  const fetchBatch = async (batch: string[]) => {
-    for (let from = 0; ; from += PAGE) {
-      const { data, error } = await supabase
-        .from("ticket_audit_log")
-        .select("ticket_id, created_at, changed_by")
-        .eq("field", "status")
-        .eq("after_value", "CL-Claimed")
-        .in("ticket_id", batch)
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: false })
-        .range(from, from + PAGE - 1);
-      if (error) throw error;
-      for (const r of (data ?? []) as Array<{ ticket_id: string; created_at: string; changed_by: string | null }>) {
-        if (!latest[r.ticket_id]) latest[r.ticket_id] = { at: r.created_at, byId: r.changed_by };
-      }
-      if (!data || data.length < PAGE) break;
-    }
-  };
-  for (let i = 0; i < batches.length; i += 4) await Promise.all(batches.slice(i, i + 4).map(fetchBatch));
-  const personIds = Array.from(new Set(Object.values(latest).map((v) => v.byId).filter((v): v is string => !!v)));
-  const names = new Map<string, string>();
-  for (let i = 0; i < personIds.length; i += BATCH) {
-    const { data } = await supabase.from("profiles").select("id, display_name").in("id", personIds.slice(i, i + BATCH));
-    for (const p of (data ?? []) as Array<{ id: string; display_name: string | null }>) names.set(p.id, p.display_name || "");
-  }
-  const out: Record<string, { at: string; by: string }> = {};
-  for (const [tid, v] of Object.entries(latest)) out[tid] = { at: isoDay(v.at), by: v.byId ? names.get(v.byId) || "—" : "System" };
-  return out;
-}
-
 /** Part Fee per ticket (markup price of Used / Claimed parts — same as the Pre-Claim window), keyed by ticket id. */
 async function loadPartFees(ticketIds: string[]): Promise<Record<string, number>> {
   const out: Record<string, number> = {};
@@ -249,7 +212,7 @@ export function ClaimList({ mod, sub }: Props) {
       setDetails(det);
       const ids = claimStage.map((t) => String((t as { _id?: string })._id ?? "")).filter(Boolean);
       // Filled in while the table already shows.
-      void loadClaimedBy(ids).then(setClaimedBy).catch((err) => console.warn("[ClaimList] claimed dates failed:", err));
+      void getTicketClaimedBy(ids).then(setClaimedBy).catch((err) => console.warn("[ClaimList] claimed dates failed:", err));
       void getLatestVisitTriageNoteByTicketIds(ids)
         .then((m) => setTriageNotes(Object.fromEntries(m)))
         .catch((err) => console.warn("[ClaimList] triage notes failed:", err));

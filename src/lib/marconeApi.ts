@@ -37,6 +37,8 @@ interface MarconeRequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   query?: Record<string, string | number | boolean | undefined>;
   body?: unknown;
+  /** false: don't count this call toward apiHealth's failure streak — for batch lookups where "Order not found" is an expected answer, not an outage. */
+  trackHealth?: boolean;
 }
 
 /** The signed-in user's Firebase ID token — /api/marcone only answers signed-in, active users. */
@@ -77,22 +79,24 @@ export async function marconeRequest<T = unknown>(
   // (e.g. /parts/lookup vs /orders/orderstatus). Failures + logical
   // failures both feed into apiHealth.runWithApiHealth → admins get a
   // notification once a single endpoint fails three times in a row.
+  const call = async () => {
+    try {
+      return await postJson<MarconeApiResult<T>>({
+        action: "request",
+        path,
+        method: options.method || "GET",
+        query: options.query,
+        body: options.body,
+      });
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) } as MarconeApiResult<T>;
+    }
+  };
+  if (options.trackHealth === false) return call();
   const { runWithApiHealth } = await import("./apiHealth");
   return runWithApiHealth(
     `marcone${path}`,
-    async () => {
-      try {
-        return await postJson<MarconeApiResult<T>>({
-          action: "request",
-          path,
-          method: options.method || "GET",
-          query: options.query,
-          body: options.body,
-        });
-      } catch (err) {
-        return { success: false, error: err instanceof Error ? err.message : String(err) } as MarconeApiResult<T>;
-      }
-    },
+    call,
     {
       isFailure: (r) => Boolean(r && (r as any).success === false),
       describeFailure: (r) => String((r as any)?.error ?? "Marcone request failed"),
