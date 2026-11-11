@@ -9,6 +9,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { ChevronDown, ChevronLeft, GitCommitHorizontal, Loader2, Search } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { isAdminOrAboveHolder } from "@/lib/roleLabels";
+import { splitUpdate } from "@/lib/splitUpdate";
 
 export function TeamUpdatesPage() {
   const navigate = useNavigate();
@@ -58,8 +59,6 @@ const PAGE = 50;
 
 const dayLabel = (iso: string) =>
   new Date(iso).toLocaleDateString("en-US", { timeZone: "America/Chicago", weekday: "short", month: "short", day: "numeric", year: "numeric" });
-const timeLabel = (iso: string) =>
-  new Date(iso).toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit" });
 
 /** Cut at the first sentence when it runs long — the full text opens below. */
 function shorten(line: string, max = 160): string {
@@ -115,8 +114,14 @@ export function TeamUpdatesPanel() {
     if (!data) return [];
     const days = RANGES.find((r) => r.key === range)?.days ?? null;
     const since = days == null ? 0 : Date.now() - days * 86400000;
+    // Each change listed in a commit is its own entry (splitUpdate), "1 of 3" with the same commit.
     return data.people.flatMap((p) =>
-      p.updates.filter((u) => new Date(u.date).getTime() >= since).map((u) => ({ ...u, personKey: p.key, personName: p.name })),
+      p.updates
+        .filter((u) => new Date(u.date).getTime() >= since)
+        .flatMap((u) => {
+          const parts = splitUpdate(u.text);
+          return parts.map((text, i) => ({ ...u, text, part: i + 1, parts: parts.length, personKey: p.key, personName: p.name }));
+        }),
     );
   }, [data, range]);
 
@@ -124,7 +129,7 @@ export function TeamUpdatesPanel() {
     const q = query.trim().toLowerCase();
     return inRange
       .filter((u) => !q || u.text.toLowerCase().includes(q))
-      .sort((a, b) => b.date.localeCompare(a.date));
+      .sort((a, b) => b.date.localeCompare(a.date) || a.part - b.part);
   }, [inRange, query]);
 
   const toggle = (key: string) =>
@@ -142,7 +147,7 @@ export function TeamUpdatesPanel() {
         <GitCommitHorizontal className="h-4 w-4 translate-y-0.5 text-slate-400" />
         <h2 className="text-sm font-bold uppercase tracking-wide text-slate-300">Updates</h2>
         <span className="text-xs text-slate-500">
-          What everyone changed in the app{data ? ` · list as of ${dayLabel(data.generatedAt)}, ${timeLabel(data.generatedAt)} CST` : ""}
+          What everyone changed in the app{data ? ` · list as of ${dayLabel(data.generatedAt)}` : ""}
         </span>
       </div>
 
@@ -156,7 +161,7 @@ export function TeamUpdatesPanel() {
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-xs text-slate-400 tabular-nums">
                 <span className="font-semibold text-white">{list.length.toLocaleString()}</span> update{list.length === 1 ? "" : "s"}
-                {" · "}{list.reduce((n, u) => n + u.files, 0).toLocaleString()} files
+                {" · "}{list.reduce((n, u) => n + (u.part === 1 ? u.files : 0), 0).toLocaleString()} files
               </p>
               <div className="ml-auto flex flex-wrap items-center gap-2">
                 <label className="relative">
@@ -186,7 +191,7 @@ export function TeamUpdatesPanel() {
             ) : (
               <ul className="space-y-1.5">
                 {list.slice(0, shown).map((u) => {
-                  const key = `${u.personKey}-${u.hash}`;
+                  const key = `${u.personKey}-${u.hash}-${u.part}`;
                   const day = dayLabel(u.date);
                   const showDay = day !== lastDay;
                   lastDay = day;
@@ -200,8 +205,8 @@ export function TeamUpdatesPanel() {
                         <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                           <h3 className="text-sm font-semibold text-white">{title}</h3>
                           <p className="text-xs text-slate-400">
-                            <span className="tabular-nums">{timeLabel(u.date)} CST</span>
-                            {` · ${u.files} file${u.files === 1 ? "" : "s"} · `}
+                            {u.parts > 1 && <span className="tabular-nums">{u.part} of {u.parts} · </span>}
+                            {`${u.files} file${u.files === 1 ? "" : "s"} · `}
                             <span className="font-mono text-[11px] text-slate-500">{u.hash}</span>
                           </p>
                         </div>
