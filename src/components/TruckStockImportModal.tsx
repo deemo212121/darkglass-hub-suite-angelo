@@ -15,7 +15,6 @@
 import { useMemo, useState } from "react";
 import { ArrowLeft, ArrowRight, Copy, Upload, X } from "lucide-react";
 import type { TruckStockRow, TruckStockUsedRow } from "@/lib/supabase/truckStock";
-import { PasswordGateModal } from "@/components/PasswordGateModal";
 import {
   planTruckStockImport,
   planUsedImport,
@@ -77,7 +76,6 @@ export function TruckStockImportModal({
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [askingPassword, setAskingPassword] = useState(false);
 
   const plan = useMemo(
     () => planTruckStockImport(parsed.parts, existing, { fallbackBranch, mode, separate }),
@@ -122,10 +120,10 @@ export function TruckStockImportModal({
       )
     )
       return;
-    setAskingPassword(true);
+    void applyImport();
   };
 
-  // Runs once the password checks out.
+  // The password was already asked for when Import was clicked (TruckStockPage).
   const applyImport = async () => {
     setBusy(true);
     setError(null);
@@ -565,19 +563,6 @@ export function TruckStockImportModal({
         </div>
       </div>
     </div>
-      {/* Outside the window above, so clicking around the password box (Cancel)
-          can't also reach the window's own click-outside-to-close. */}
-      {askingPassword ? (
-        <PasswordGateModal
-          gateKey="truck-stock-import"
-          title={`Import ${plural(totalChanges, "change")} to Truck Stock`}
-          onUnlocked={() => {
-            setAskingPassword(false);
-            void applyImport();
-          }}
-          onCancel={() => setAskingPassword(false)}
-        />
-      ) : null}
     </>
   );
 }

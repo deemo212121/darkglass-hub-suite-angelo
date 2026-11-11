@@ -1,5 +1,5 @@
 /**
- * Admin → Email Vault — company email logins: the address, its password,
+ * Admin → Password and Email Management (was "Email Vault") — company email logins: the address, its password,
  * and the people who use that mailbox (migration 0436).
  *
  * Who can open it: Super Admin always; anyone else only once a Super Admin
@@ -20,6 +20,7 @@ import { useAuth } from "@/lib/auth";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { AppModal } from "@/components/ui-kit/AppModal";
 import { EmptyState } from "@/components/ui-kit/EmptyState";
+import { PasswordChecksPanel } from "@/components/PasswordChecksPanel";
 import { TableSkeleton } from "@/components/ui-kit/TableSkeleton";
 import { isEmailVaultSuperAdmin } from "@/lib/submoduleAccess";
 import { hydrateEmailVaultGrant } from "@/lib/moduleAccess";
@@ -135,6 +136,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const [tab, setTab] = useState<"emails" | "history">("emails");
+  const [showPasswordChecks, setShowPasswordChecks] = useState(false);
   const [search, setSearch] = useState("");
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [revealing, setRevealing] = useState<string | null>(null);
@@ -178,7 +180,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
       setUsers(userRows);
       setMyId(pid);
     } catch (e: any) {
-      setError(e?.message || "Couldn't load the Email Vault.");
+      setError(e?.message || "Couldn't load Password and Email Management.");
     } finally {
       setLoading(false);
     }
@@ -333,13 +335,18 @@ export function EmailVaultPage({ mod, sub }: Props) {
           <div>
             <h1 className="text-4xl font-display font-bold tracking-tight mb-2">{sub.title}</h1>
             <p className="text-lg text-muted-foreground">
-              Company email logins and who uses each one. Passwords stay hidden — every Show and Copy is recorded on the History tab.
+              Company email logins and who uses each one. Passwords stay hidden — every Show and Copy is recorded on the History tab.{isSuperAdmin ? " Password Checks sets which pages and buttons ask for a password, and which password." : ""}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             {isSuperAdmin && (
               <button type="button" onClick={() => setManagingAccess(true)} className="btn hover:bg-white/15">
                 <Users className="h-4 w-4" /> Manage Access
+              </button>
+            )}
+            {isSuperAdmin && (
+              <button type="button" onClick={() => setShowPasswordChecks((v) => !v)} aria-pressed={showPasswordChecks} className={`btn hover:bg-white/15 ${showPasswordChecks ? "!border-amber-400/60 !bg-amber-500/15 text-amber-200" : ""}`}>
+                <KeyRound className="h-4 w-4" /> Password Checks
               </button>
             )}
             <button type="button" onClick={() => openForm("new")} className="btn btn-primary">
@@ -351,6 +358,19 @@ export function EmailVaultPage({ mod, sub }: Props) {
 
       {error && <div className="panel mb-4 border-red-500/30 bg-red-500/5 text-sm text-red-300 px-4 py-3">{error}</div>}
 
+      {/* Super Admin: Password Checks — which pages and buttons ask for a password (migration 0441). Its own view of this page. */}
+      {showPasswordChecks && isSuperAdmin ? (
+        <section>
+          <div className="flex flex-wrap items-center gap-3 mb-3">
+            <button type="button" className="btn text-sm" onClick={() => setShowPasswordChecks(false)}>
+              <ChevronLeft className="h-4 w-4" /> Emails
+            </button>
+            <h2 className="text-xl font-semibold flex items-center gap-2"><KeyRound className="h-5 w-5 text-amber-300" /> Password Checks</h2>
+          </div>
+          <PasswordChecksPanel />
+        </section>
+      ) : (
+      <>
       <div className="flex flex-wrap items-center gap-1 mb-3">
         {(["emails", "history"] as const).map((t) => (
           <button
@@ -470,6 +490,8 @@ export function EmailVaultPage({ mod, sub }: Props) {
           </table>
         )}
       </div>
+      </>
+      )}
 
       {editing && (
         <AppModal
@@ -551,8 +573,8 @@ export function EmailVaultPage({ mod, sub }: Props) {
 
       {managingAccess && isSuperAdmin && (
         <AppModal
-          title="Who can open the Email Vault"
-          description="Super Admins always can, and see passwords. Add anyone else as Email only or Email and password — they'll see Email Vault under Admin the next time they open the app."
+          title="Who can open Password and Email Management"
+          description="Super Admins always can, and see passwords. Add anyone else as Email only or Email and password — they'll see Password and Email Management under Admin the next time they open the app."
           icon={<Users className="h-4 w-4" />}
           size="lg"
           busy={busy}

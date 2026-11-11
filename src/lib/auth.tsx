@@ -537,6 +537,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   }
                   if (isStale()) return;
                   startModuleGateWatch(sbProfile.companyId);
+                  // Password checks (migration 0441) — not awaited; pages that
+                  // ask for a password wait for it (PagePasswordCheck).
+                  void import("./passwordChecks").then(({ startPasswordChecks }) => {
+                    if (!isStale()) startPasswordChecks(sbProfile.companyId);
+                  });
                   // Email Vault access is by person (migration 0436) — not
                   // awaited: only the Email Vault tile/page depend on it,
                   // and that page waits while it's still null.
@@ -657,6 +662,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             stopSessionWatchIfAny();
             stopModuleGateWatchIfAny();
             void import("./moduleAccess").then(({ hydrateEmailVaultGrant }) => hydrateEmailVaultGrant(null));
+            void import("./passwordChecks").then(({ stopPasswordChecks }) => stopPasswordChecks());
             // Clear Supabase session
             clearSupabaseSession();
             // Clear auth state

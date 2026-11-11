@@ -53,6 +53,10 @@ import {
   type ParsedImport,
 } from "@/lib/truckStockFile";
 import { TruckStockImportModal, type ImportSave } from "@/components/TruckStockImportModal";
+import { PasswordGateModal } from "@/components/PasswordGateModal";
+import { needsPassword } from "@/lib/passwordChecks";
+
+const TRUCK_STOCK_IMPORT_CHECK = "truck-stock-import";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 const PAGE_SIZE_OPTIONS = [25, 50, 75, 100, 125] as const;
@@ -140,6 +144,11 @@ export function TruckStockPanel() {
   const [readingFile, setReadingFile] = useState(false);
   const [importFile, setImportFile] = useState<{ name: string; parsed: ParsedImport } | null>(null);
   const [importNote, setImportNote] = useState<{ ok: boolean; text: string } | null>(null);
+  // Import asks for the importer's own login password first, every time. Once
+  // it checks out, the next file picked (within 2 minutes) is let through.
+  const [askingImportPassword, setAskingImportPassword] = useState(false);
+  const importUnlockedAt = useRef(0);
+  const IMPORT_UNLOCK_MS = 2 * 60_000;
   const [usagePartNo, setUsagePartNo] = useState<string | null>(null);
   const [showTransferForm, setShowTransferForm] = useState(false);
 
@@ -320,7 +329,14 @@ export function TruckStockPanel() {
   // Import is locked to Admin and above: anyone else is told so, and the
   // attempt goes on the Activity Log (Parts) as an alert.
   const handleImportClick = () => {
-    if (canImport) return fileInputRef.current?.click();
+    if (canImport) {
+      // Turned off (or once per session and already given) on Password and Email Management → Password Checks.
+      if (!needsPassword(TRUCK_STOCK_IMPORT_CHECK)) importUnlockedAt.current = Date.now();
+      if (Date.now() - importUnlockedAt.current < IMPORT_UNLOCK_MS) return fileInputRef.current?.click();
+      setImportNote(null);
+      setAskingImportPassword(true);
+      return;
+    }
     setImportNote({ ok: false, text: "Admin access required: only an Admin (or above) can import Truck Stock. Ask an Admin to import the file." });
     void logModuleActivity({
       module: "truck-stock",
@@ -336,6 +352,11 @@ export function TruckStockPanel() {
   // or one tab of it as CSV), then show the preview — nothing is saved until
   // the user confirms there.
   const handleImportFile = async (file: File) => {
+    if (Date.now() - importUnlockedAt.current >= IMPORT_UNLOCK_MS) {
+      setImportNote({ ok: false, text: "Click Import and enter your password first." });
+      return;
+    }
+    importUnlockedAt.current = 0; // used up — the next import asks again
     setImportNote(null);
     setReadingFile(true);
     try {
@@ -699,6 +720,20 @@ export function TruckStockPanel() {
             busy={busy}
             onSubmit={handleRequestTransfer}
             onClose={() => setShowTransferForm(false)}
+          />
+        ) : null}
+
+        {askingImportPassword ? (
+          <PasswordGateModal
+            gateKey={TRUCK_STOCK_IMPORT_CHECK}
+            title="Import to Truck Stock"
+            onUnlocked={() => {
+              setAskingImportPassword(false);
+              importUnlockedAt.current = Date.now();
+              setImportNote({ ok: true, text: "Password accepted — choose the file to import. If the file window didn't open, click Import again." });
+              fileInputRef.current?.click();
+            }}
+            onCancel={() => setAskingImportPassword(false)}
           />
         ) : null}
 
