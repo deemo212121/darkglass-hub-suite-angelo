@@ -187,7 +187,7 @@ export function ReviewedPeriodsTab({
 
   const syncingRef = useRef(false);
   const failedSyncs = useRef(new Set<string>());
-  const [syncing, setSyncing] = useState(false);
+  const [payrollSyncing, setPayrollSyncing] = useState(false);
   const [syncRevision, setSyncRevision] = useState(0);
   useEffect(() => {
     if (!actualReady || loading || error || syncingRef.current) return;
@@ -200,7 +200,7 @@ export function ReviewedPeriodsTab({
     });
     if (!pending.length) return;
     syncingRef.current = true;
-    setSyncing(true);
+    setPayrollSyncing(true);
     const cutoff = selected;
     void (async () => {
       for (const { row, amounts, key } of pending) {
@@ -217,7 +217,7 @@ export function ReviewedPeriodsTab({
       }
     })().finally(() => {
       syncingRef.current = false;
-      setSyncing(false);
+      setPayrollSyncing(false);
       setSyncRevision((value) => value + 1);
     });
   }, [actualReady, loading, error, rows, actualBreakdowns, actualTotals, periodStart, periodEnd, selected, myProfileId, myName, syncRevision]);
@@ -440,12 +440,12 @@ export function ReviewedPeriodsTab({
     if (box.firstElementChild) ro.observe(box.firstElementChild);
     return () => ro.disconnect();
   }, [visible.length, loading]);
-  const scrollSyncing = useRef(false);
+  const syncing = useRef(false);
   const syncScroll = (from: HTMLDivElement | null, to: HTMLDivElement | null) => {
-    if (!from || !to || scrollSyncing.current) return;
-    scrollSyncing.current = true;
+    if (!from || !to || syncing.current) return;
+    syncing.current = true;
     to.scrollLeft = from.scrollLeft;
-    requestAnimationFrame(() => { scrollSyncing.current = false; });
+    requestAnimationFrame(() => { syncing.current = false; });
   };
   const overflowing = scrollWidth > boxWidth + 1;
 
@@ -505,10 +505,10 @@ export function ReviewedPeriodsTab({
           <button
             type="button"
             onClick={() => void downloadExcel()}
-            disabled={visible.length === 0 || !actualReady || loading || syncing || rows.some((r) => r.source === "review" && !!reviewedPeriodSyncAmounts(r, actualBreakdowns.get(r.profileId), actualTotals.get(r.profileId)))}
+            disabled={visible.length === 0 || !actualReady || loading || payrollSyncing || rows.some((r) => r.source === "review" && !!reviewedPeriodSyncAmounts(r, actualBreakdowns.get(r.profileId), actualTotals.get(r.profileId)))}
             className="px-3 py-1.5 rounded-md bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm font-semibold flex items-center gap-1.5"
           >
-            <Download className="h-4 w-4" /> {syncing ? "Syncing payroll..." : loading || !actualReady ? "Loading export..." : "Download Excel"}
+            <Download className="h-4 w-4" /> {payrollSyncing ? "Syncing payroll..." : loading || !actualReady ? "Loading export..." : "Download Excel"}
           </button>
         </div>
       </div>
