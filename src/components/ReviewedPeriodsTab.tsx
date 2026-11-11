@@ -1,3 +1,4 @@
+import { reviewedPeriodSyncAmounts } from "@/lib/reviewedPeriodSync";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Download, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -45,8 +46,8 @@ const money = (n: number) => n.toLocaleString("en-US", { style: "currency", curr
 /**
  * Accounting Dashboard → Reviewed Periods: one row per technician for the
  * selected pay period, in Finance's summary format. Rows are snapshotted
- * when Finance clicks Done in the Tech Activity Report; every amount is
- * editable, and technicians can be added by hand (migration 0392).
+ * when Finance clicks Done in the Tech Activity Report, then synchronized
+ * from actual payroll. Manually added rows remain editable (migration 0392).
  */
 export function ReviewedPeriodsTab({
   periodStart: dashboardStart,
@@ -172,6 +173,7 @@ export function ReviewedPeriodsTab({
     setLoading(true);
     try {
       const [list, taxes] = await Promise.all([getPayrollReviewBreakdowns(periodStart, periodEnd), getTechTaxLinesForPeriod(periodStart, periodEnd)]);
+      if (selectedRef.current !== `${periodStart}|${periodEnd}`) return;
       setRows(list);
       setTaxLinesByProfile(taxes);
       setError(null);
@@ -182,6 +184,43 @@ export function ReviewedPeriodsTab({
     }
   }, [periodStart, periodEnd, validPeriod]);
   useEffect(() => { void load(); }, [load]);
+
+  const syncingRef = useRef(false);
+  const failedSyncs = useRef(new Set<string>());
+  const [syncing, setSyncing] = useState(false);
+  const [syncRevision, setSyncRevision] = useState(0);
+  useEffect(() => {
+    if (!actualReady || loading || error || syncingRef.current) return;
+    const pending = rows.flatMap((row) => {
+      if (row.source !== "review" || row.periodStart !== periodStart || row.periodEnd !== periodEnd) return [];
+      const amounts = reviewedPeriodSyncAmounts(row, actualBreakdowns.get(row.profileId), actualTotals.get(row.profileId));
+      if (!amounts) return [];
+      const key = JSON.stringify([row.id, amounts]);
+      return failedSyncs.current.has(key) ? [] : [{ row, amounts, key }];
+    });
+    if (!pending.length) return;
+    syncingRef.current = true;
+    setSyncing(true);
+    const cutoff = selected;
+    void (async () => {
+      for (const { row, amounts, key } of pending) {
+        if (selectedRef.current !== cutoff) break;
+        try {
+          await updatePayrollReviewBreakdown(row.id, amounts, myProfileId, myName);
+          if (selectedRef.current === cutoff) {
+            setRows((prev) => prev.map((r) => r.id === row.id ? { ...r, ...amounts, updatedByName: myName } : r));
+          }
+        } catch (err) {
+          failedSyncs.current.add(key);
+          toast.error(err instanceof Error ? err.message : "Automatic payroll sync failed. Use Update to retry.");
+        }
+      }
+    })().finally(() => {
+      syncingRef.current = false;
+      setSyncing(false);
+      setSyncRevision((value) => value + 1);
+    });
+  }, [actualReady, loading, error, rows, actualBreakdowns, actualTotals, periodStart, periodEnd, selected, myProfileId, myName, syncRevision]);
 
   const personById = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
   const nameOf = (r: PayrollReviewBreakdown) => r.technicianName || personById.get(r.profileId)?.name || "(unknown technician)";
@@ -204,6 +243,7 @@ export function ReviewedPeriodsTab({
   }, [visible]);
 
   const saveCell = async (row: PayrollReviewBreakdown, key: keyof PayrollReviewAmounts, raw: string) => {
+    if (row.source === "review") return;
     const value = Math.abs(Number(raw.replace(/[$,\s]/g, "")) || 0);
     if (Math.abs(value - row[key]) < 0.005) return;
     setSavingKey(`${row.id}:${key}`);
@@ -400,12 +440,12 @@ export function ReviewedPeriodsTab({
     if (box.firstElementChild) ro.observe(box.firstElementChild);
     return () => ro.disconnect();
   }, [visible.length, loading]);
-  const syncing = useRef(false);
+  const scrollSyncing = useRef(false);
   const syncScroll = (from: HTMLDivElement | null, to: HTMLDivElement | null) => {
-    if (!from || !to || syncing.current) return;
-    syncing.current = true;
+    if (!from || !to || scrollSyncing.current) return;
+    scrollSyncing.current = true;
     to.scrollLeft = from.scrollLeft;
-    requestAnimationFrame(() => { syncing.current = false; });
+    requestAnimationFrame(() => { scrollSyncing.current = false; });
   };
   const overflowing = scrollWidth > boxWidth + 1;
 
@@ -434,8 +474,8 @@ export function ReviewedPeriodsTab({
             </select>
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Filled in when a technician's Tech Activity Report is marked Done (Payroll tab); every amount can be edited. Clicking Done again refreshes that technician's row.
-            PTO $ isn't split out automatically — paid leave hours are inside Regular Hours $.
+            Reviewed rows automatically sync from actual payroll when this cutoff finishes loading. Make pay corrections in the Payroll tab; manually added rows remain editable.
+            PTO $ is split out automatically — paid leave hours are inside Regular Hours $.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -465,10 +505,10 @@ export function ReviewedPeriodsTab({
           <button
             type="button"
             onClick={() => void downloadExcel()}
-            disabled={visible.length === 0 || !actualReady || loading}
+            disabled={visible.length === 0 || !actualReady || loading || syncing || rows.some((r) => r.source === "review" && !!reviewedPeriodSyncAmounts(r, actualBreakdowns.get(r.profileId), actualTotals.get(r.profileId)))}
             className="px-3 py-1.5 rounded-md bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm font-semibold flex items-center gap-1.5"
           >
-            <Download className="h-4 w-4" /> {loading || !actualReady ? "Loading export..." : "Download Excel"}
+            <Download className="h-4 w-4" /> {syncing ? "Syncing payroll..." : loading || !actualReady ? "Loading export..." : "Download Excel"}
           </button>
         </div>
       </div>
@@ -534,6 +574,8 @@ export function ReviewedPeriodsTab({
                       type="number" step={0.01} min={0}
                       defaultValue={r[c.key] ? r[c.key].toFixed(2) : ""}
                       placeholder="0.00"
+                      readOnly={r.source === "review"}
+                      title={r.source === "review" ? "Automatically synced from payroll. Edit the Timecard or Tech Activity Report to change pay." : undefined}
                       disabled={savingKey === `${r.id}:${c.key}`}
                       onBlur={(e) => void saveCell(r, c.key, e.target.value)}
                       className={`${cellClass} ${c.subtract ? "text-red-300" : ""}`}
