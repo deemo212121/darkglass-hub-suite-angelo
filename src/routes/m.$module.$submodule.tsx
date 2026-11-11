@@ -7,6 +7,7 @@ import { useRedirectGuard } from "@/lib/useRedirectGuard";
 import { AppHeader } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { PageShownMarker } from "@/components/PageLoadTracker";
+import { PagePasswordCheck } from "@/components/PagePasswordCheck";
 import { useAuth } from "@/lib/auth";
 import { getModule, getSubModule, type ModuleDef, type SubModuleDef } from "@/lib/modules";
 // Richer parts components pulled from the upstream usapp repo. Where they
@@ -490,6 +491,8 @@ function SubModule() {
     <>
       <AppHeader />
       <PageTrail mod={mod} sub={sub} />
+      {/* Password and Email Management → Password Checks: some pages ask for the password first. */}
+      <PagePasswordCheck key={`${mod.slug}/${sub.slug}`} mod={mod} sub={sub}>
       <Suspense fallback={<BrandedLoader label="Loading page..." delayMs={150} />}>
       {sub.slug === "overall-status"
         ? <OverallStatusPage mod={mod} sub={sub} companyId={companyId} />
@@ -787,6 +790,7 @@ function SubModule() {
       {/* Page Speed: mounts once the page above has rendered — that's when it counts as shown. */}
       <PageShownMarker key={`${mod.slug}/${sub.slug}`} />
       </Suspense>
+      </PagePasswordCheck>
       <Footer />
     </>
   );
