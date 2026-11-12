@@ -119,6 +119,7 @@ import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, blobToBase64 } from "@
 import { renderPayslipBodyHtml, renderTechActivitySummaryPageHtml, PAYSLIP_STYLES, formatClockTime, offDaysInRange, ptoDaysInRange, type PayslipDailyRow, type EmployeePayslipData } from "@/lib/payslipTemplate";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { NewPromotionsButton } from "@/components/NewPromotionsButton";
+import { NewHiresFormsButton } from "@/components/NewHiresFormsButton";
 import { logModuleActivity, getModuleActivityLog, getModuleActivityLogByAction, moduleActivityActionLabel, type ModuleActivityLogEntry } from "@/lib/supabase/moduleActivityLog";
 import { todayISO, formatISODate, localISODate } from "@/lib/localDate";
 import { currentPayPeriod, isPayPeriod, listPayPeriods } from "@/lib/payPeriods";
@@ -4938,8 +4939,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     </button>
                   ))}
                 </div>
-                {/* Confirmed promotion forms / wage-increase letters from HR (red badge = new since last opened). */}
-                <NewPromotionsButton />
+                <div className="flex flex-wrap justify-end gap-2">
+                  {/* HR's promotion forms / wage-increase letters (red badge = completed, not marked Adjusted). */}
+                  <NewPromotionsButton />
+                  {/* People hired this pay period with their W-4 / Direct Deposit / I-9 (red badge = US new hires without a completed W-4). */}
+                  <NewHiresFormsButton periodStart={genStart} periodEnd={genEnd} />
+                </div>
                 </div>
               )}
             </div>

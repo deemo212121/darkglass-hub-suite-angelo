@@ -259,7 +259,7 @@ export function NewPromotionsButton() {
                           title={i.status !== "confirmed" ? "Available once all signatures are in and HR confirms it" : "Mark the rate as changed in Payroll"}
                           className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
                         >
-                          {busyId === i.id && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Adjusted
+                          {busyId === i.id && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Need to be adjusted
                         </button>
                       )}
                     </td>
