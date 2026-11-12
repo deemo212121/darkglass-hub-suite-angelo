@@ -7,7 +7,7 @@
  * Super Admin add, edit and delete.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, Building2, Download, Home, Loader2, Paperclip, Pencil, Phone, Plug, Receipt, Trash2, Wifi, X } from "lucide-react";
+import { Building2, Download, Home, Loader2, Paperclip, Pencil, Phone, Plug, Receipt, Trash2, Wifi, X } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole } from "@/lib/roleLabels";
 import { localISODate, todayISO } from "@/lib/localDate";
@@ -22,7 +22,6 @@ import {
   type BranchExpense,
   type BranchExpenseCategory,
   type BranchExpenseFile,
-  type BranchReportRow,
 } from "@/lib/branchExpenses";
 import {
   addBranchExpense,
@@ -64,7 +63,6 @@ const fmtDay = (iso: string | null) => {
 /** Every branch the company has (US, PH, Mexico), A–Z — the form's branch suggestions. */
 const KNOWN_BRANCHES = Array.from(new Set(LOCATIONS_DATA.map((l) => l.location).filter(Boolean))).sort((a, b) => a.localeCompare(b));
 
-type ReportSort = { key: "branch" | "total" | BranchExpenseCategory; dir: "asc" | "desc" };
 
 function downloadCsv(name: string, header: string[], rows: (string | number)[][]) {
   const q = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
@@ -89,7 +87,8 @@ export function OtherExpensesPage() {
   const [category, setCategory] = useState<BranchExpenseCategory | "all">("all");
   const [branch, setBranch] = useState("");
   const [search, setSearch] = useState("");
-  const [reportSort, setReportSort] = useState<ReportSort>({ key: "total", dir: "desc" });
+  /** Spend by branch order: biggest spend first, or A → Z (same as Flash Tech). */
+  const [branchSort, setBranchSort] = useState<"amount" | "name">("amount");
   const [form, setForm] = useState<{ editing: BranchExpense | null } | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ url: string; urls: string[] } | null>(null);
@@ -121,15 +120,15 @@ export function OtherExpensesPage() {
     return c;
   }, [inRange, branch]);
 
-  // Report: every category per branch — the category buttons don't narrow it (each has its own column).
+  // Spend by branch (same as Flash Tech's): everything in view except the branch choice itself —
+  // the date range, the category button and the search all apply.
   const report = useMemo(() => {
-    const r = buildBranchReport(inRange.filter(matchesSearch));
-    const sign = reportSort.dir === "asc" ? 1 : -1;
-    const val = (b: BranchReportRow) => (reportSort.key === "branch" ? 0 : reportSort.key === "total" ? b.total : b.byCategory[reportSort.key]);
-    r.branches.sort((a, b) => (reportSort.key === "branch" ? sign * a.branch.localeCompare(b.branch) : sign * (val(a) - val(b)) || a.branch.localeCompare(b.branch)));
+    const r = buildBranchReport(inRange.filter((e) => (category === "all" || e.category === category) && matchesSearch(e)));
+    r.branches.sort((a, b) => (branchSort === "name" ? a.branch.localeCompare(b.branch) : b.total - a.total || a.branch.localeCompare(b.branch)));
     return r;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inRange, search, reportSort]);
+  }, [inRange, category, search, branchSort]);
+  const maxBranchSpend = report.branches.reduce((m, b) => Math.max(m, b.total), 0);
 
   const branchOptions = useMemo(() => Array.from(new Set((rows ?? []).map((e) => e.branch))).sort((a, b) => a.localeCompare(b)), [rows]);
   const total = filtered.reduce((s, e) => s + e.amount, 0);
@@ -145,9 +144,6 @@ export function OtherExpensesPage() {
     setDateFrom(localISODate(first));
     setDateTo(localISODate(new Date(first.getFullYear(), first.getMonth() + 1, 0)));
   };
-
-  const sortReportBy = (key: ReportSort["key"]) =>
-    setReportSort((prev) => (prev.key === key ? { key, dir: prev.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "branch" ? "asc" : "desc" }));
 
   const exportReport = () =>
     downloadCsv(
@@ -189,19 +185,6 @@ export function OtherExpensesPage() {
   if (!canEdit) {
     return <p className="rounded-lg border border-white/10 bg-slate-900/50 p-6 text-sm text-slate-400">Other Expenses is for Accounting, Admin and Super Admin.</p>;
   }
-
-  const SortTh = ({ k, label, right }: { k: ReportSort["key"]; label: string; right?: boolean }) => {
-    const on = reportSort.key === k;
-    const Icon = !on ? ArrowUpDown : reportSort.dir === "asc" ? ArrowUp : ArrowDown;
-    return (
-      <th className={`px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 ${right ? "text-right" : "text-left"}`} aria-sort={on ? (reportSort.dir === "asc" ? "ascending" : "descending") : "none"}>
-        <button type="button" onClick={() => sortReportBy(k)} className={`inline-flex items-center gap-1 uppercase hover:text-white ${on ? "text-white" : ""}`}>
-          {label}
-          <Icon className={`h-3 w-3 ${on ? "text-blue-300" : "opacity-50"}`} />
-        </button>
-      </th>
-    );
-  };
 
   return (
     <div className="space-y-6">
@@ -259,61 +242,73 @@ export function OtherExpensesPage() {
         })}
       </div>
 
-      {/* Branch report — each category in its own column */}
-      <div className="rounded-xl border border-white/10 bg-slate-900/60 p-4">
-        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-          <div>
-            <p className="text-sm font-semibold text-white">Branch report</p>
-            <p className="text-xs text-slate-500">{rangeLabel} · every category in its own column. {branch ? "Click the branch again to show every branch." : "Click a branch to see only its bills."}</p>
+      {/* Spend by branch — same design as Flash Tech's; each bar split by category color. Click one to filter to it. */}
+      {rows && report.branches.length > 0 && (
+        <div className="rounded-xl border border-white/10 bg-slate-900/60 p-4">
+          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <p className="text-sm font-semibold text-white">Spend by branch</p>
+              {/* Which color is which category */}
+              <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-400">
+                {BRANCH_EXPENSE_CATEGORIES.filter((c) => category === "all" || category === c).map((c) => (
+                  <span key={c} className="inline-flex items-center gap-1.5">
+                    <span className={`h-2 w-2 rounded-full ${CAT_TONE[c].bar}`} /> {BRANCH_EXPENSE_LABEL[c]}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <p className="text-xs text-slate-500">{branch ? "Click the branch again to show every branch" : "Click a branch to see only its expenses"}</p>
+              <div className="flex gap-1" role="group" aria-label="Sort branches">
+                {([["amount", "Most → least"], ["name", "A → Z"]] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setBranchSort(key)}
+                    aria-pressed={branchSort === key}
+                    className={`rounded-md px-2 py-1 text-[11px] font-semibold transition ${branchSort === key ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <button type="button" onClick={exportReport} className="inline-flex items-center gap-1.5 rounded-md bg-slate-800 px-2 py-1 text-[11px] font-semibold text-slate-200 hover:bg-slate-700">
+                <Download className="h-3 w-3" /> Export
+              </button>
+            </div>
           </div>
-          <button type="button" onClick={exportReport} disabled={report.branches.length === 0} className="inline-flex items-center gap-2 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-50">
-            <Download className="h-3.5 w-3.5" /> Export report
-          </button>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-sm">
-            <thead>
-              <tr className="border-b border-white/10">
-                <SortTh k="branch" label="Branch" />
-                {BRANCH_EXPENSE_CATEGORIES.map((c) => <SortTh key={c} k={c} label={BRANCH_EXPENSE_LABEL[c]} right />)}
-                <SortTh k="total" label="Total" right />
-                <th className="px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-400">Bills</th>
-              </tr>
-            </thead>
-            <tbody>
-              {!rows ? (
-                <tr><td colSpan={9} className="px-3 py-6 text-center text-slate-400"><Loader2 className="inline h-4 w-4 animate-spin" /> Loading…</td></tr>
-              ) : report.branches.length === 0 ? (
-                <tr><td colSpan={9} className="px-3 py-6 text-center text-slate-500">No bills in this date range yet.</td></tr>
-              ) : (
-                report.branches.map((b) => {
-                  const on = branch === b.branch;
-                  return (
-                    <tr key={b.branch} onClick={() => setBranch(on ? "" : b.branch)} className={`cursor-pointer border-b border-white/5 transition ${on ? "bg-blue-500/15" : "hover:bg-white/5"}`}>
-                      <td className={`px-3 py-2 ${on ? "font-semibold text-white" : "text-slate-200"}`}>{b.branch}</td>
-                      {BRANCH_EXPENSE_CATEGORIES.map((c) => (
-                        <td key={c} className={`px-3 py-2 text-right tabular-nums ${b.byCategory[c] ? CAT_TONE[c].text : "text-slate-600"}`}>{b.byCategory[c] ? fmtMoney(b.byCategory[c]) : "—"}</td>
+          {/* Reads down the first column, then the second. */}
+          <div className="grid gap-x-6 gap-y-1 md:grid-flow-col" style={{ gridTemplateRows: `repeat(${Math.ceil(report.branches.length / 2)}, auto)` }}>
+            {report.branches.map((b) => {
+              const on = branch === b.branch;
+              const breakdown = BRANCH_EXPENSE_CATEGORIES.filter((c) => b.byCategory[c] > 0).map((c) => `${BRANCH_EXPENSE_LABEL[c]}: ${fmtMoney(b.byCategory[c])}`).join("\n");
+              return (
+                <button
+                  key={b.branch}
+                  type="button"
+                  onClick={() => setBranch(on ? "" : b.branch)}
+                  aria-pressed={on}
+                  title={`${b.branch}\n${breakdown}\nTotal: ${fmtMoney(b.total)} · ${b.count} bill${b.count === 1 ? "" : "s"}`}
+                  className={`group grid grid-cols-[9rem_1fr_7.5rem] items-center gap-3 rounded-md px-2 py-1 text-left text-xs transition ${on ? "bg-blue-500/15 ring-1 ring-blue-500/40" : "hover:bg-white/5"}`}
+                >
+                  <span className={`truncate ${on ? "font-semibold text-white" : "text-slate-300"}`}>{b.branch}</span>
+                  <span className="h-2 overflow-hidden rounded-full bg-white/5">
+                    {/* One bar, its length the branch's total; split into each category's share. */}
+                    <span className="flex h-full" style={{ width: `${maxBranchSpend > 0 ? Math.max(2, (b.total / maxBranchSpend) * 100) : 2}%` }}>
+                      {BRANCH_EXPENSE_CATEGORIES.filter((c) => b.byCategory[c] > 0).map((c) => (
+                        <span key={c} className={`h-full ${CAT_TONE[c].bar} ${on ? "opacity-100" : "opacity-80 group-hover:opacity-100"}`} style={{ width: `${b.total > 0 ? (b.byCategory[c] / b.total) * 100 : 0}%` }} />
                       ))}
-                      <td className="px-3 py-2 text-right font-semibold tabular-nums text-white">{fmtMoney(b.total)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-slate-400">{b.count}</td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-            {rows && report.branches.length > 0 && (
-              <tfoot>
-                <tr className="border-t border-white/20 bg-white/[0.03]">
-                  <td className="px-3 py-2 font-semibold text-white">All branches</td>
-                  {BRANCH_EXPENSE_CATEGORIES.map((c) => <td key={c} className="px-3 py-2 text-right font-semibold tabular-nums text-white">{fmtMoney(report.total.byCategory[c])}</td>)}
-                  <td className="px-3 py-2 text-right font-bold tabular-nums text-white">{fmtMoney(report.total.total)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-slate-300">{report.total.count}</td>
-                </tr>
-              </tfoot>
-            )}
-          </table>
+                    </span>
+                  </span>
+                  <span className="text-right tabular-nums text-slate-200">
+                    {fmtMoney(b.total)} <span className="text-slate-500">· {b.count}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Filters + actions */}
       <div className="rounded-lg border border-white/10 bg-slate-900/50 p-4">
@@ -471,7 +466,7 @@ function BranchExpenseForm({
       periodStart: periodStart || null, periodEnd: periodEnd || null, notes, receipts: kept,
     };
     try {
-      const id = editing ? editing.id : await addBranchExpense(companyId, input);
+      const id = editing ? editing.id : await addBranchExpense(input);
       if (editing) await updateBranchExpense(id, input);
       if (newFiles.length) {
         const uploaded: BranchExpenseFile[] = [];

@@ -71,9 +71,13 @@ const toRow = (i: BranchExpenseInput) => ({
   receipts: i.receipts,
 });
 
-/** company_id / who added it are stamped by the database (trigger). */
-export async function addBranchExpense(companyId: string, input: BranchExpenseInput): Promise<string> {
-  const { data, error } = await supabase.from("branch_expenses").insert({ ...toRow(input), company_id: companyId }).select("id").single();
+/**
+ * company_id and who added it are stamped by the database (trigger, from the
+ * signed-in profile) — never sent from here: the app's companyId is the
+ * company's code (e.g. "COMP001"), not the uuid the column holds.
+ */
+export async function addBranchExpense(input: BranchExpenseInput): Promise<string> {
+  const { data, error } = await supabase.from("branch_expenses").insert(toRow(input)).select("id").single();
   if (error) throw new Error(friendly(error.message));
   return (data as { id: string }).id;
 }
