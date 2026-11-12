@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronLeft, Plane, Receipt } from "lucide-react";
+import { Building2, ChevronLeft, Plane, Receipt } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
+import { OtherExpensesPage } from "@/components/OtherExpensesPage";
 
 /**
  * Accounting's "Expenses" module — a category-tabbed container, same
@@ -17,11 +18,13 @@ import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
  * Rental live inside Flash Tech (its All / Trips / Hotel / Car Rental /
  * Allowance buttons), not as tabs of their own.
  */
-type ExpensesTab = "flashTech" | "employeeRequests";
+type ExpensesTab = "flashTech" | "employeeRequests" | "otherExpenses";
 
+// Other Expenses: a branch's own bills — Utility, Lease, Internet, Phone, Other (OtherExpensesPage, migration 0444).
 const TABS: { key: ExpensesTab; label: string; icon: typeof Plane }[] = [
   { key: "flashTech", label: "Flash Tech", icon: Plane },
   { key: "employeeRequests", label: "Employee Requests", icon: Receipt },
+  { key: "otherExpenses", label: "Other Expenses", icon: Building2 },
 ];
 
 export function ExpensesModulePage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
@@ -58,6 +61,7 @@ export function ExpensesModulePage({ mod, sub }: { mod: ModuleDef; sub: SubModul
 
         {tab === "flashTech" && <ExpenseTrackingPage mod={mod} sub={sub} embedded flashTechOnly />}
         {tab === "employeeRequests" && <ExpenseTrackingPage mod={mod} sub={sub} embedded selfFiledOnly />}
+        {tab === "otherExpenses" && <OtherExpensesPage />}
       </div>
     </main>
   );
