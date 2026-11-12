@@ -47,7 +47,7 @@ import { getAccountingCoachingWaitingCount } from "@/lib/supabase/accountingCoac
 /** Corrections allowed per person per month (Exceeded → Time Corrections). */
 export const MAX_CORRECTIONS_PER_MONTH = 2;
 
-export type AttentionKind = "pto" | "sick" | "corrections" | "disputes" | "trainee" | "over-limit" | "coaching" | "accounting-coaching" | "forms-complete" | "notifications" | "messages";
+export type AttentionKind = "pto" | "sick" | "corrections" | "disputes" | "trainee" | "over-limit" | "coaching" | "accounting-coaching" | "forms-complete" | "wage-adjust" | "notifications" | "messages";
 export type AttentionTone = "warn" | "alert" | "info" | "good";
 
 export interface AttentionItem {
@@ -81,6 +81,8 @@ const FORMS_DONE_ROLES = new Set(["ADMIN", "HR", "HR_MANAGER", "SUPERADMIN", "SU
 const COACHING_ROLES = new Set(["CSR", "CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER", "ADMIN", "SUPERADMIN"]);
 // Can be coached or coach on Accounting → Coaching Log.
 const ACCOUNTING_COACHING_ROLES = new Set(["FINANCE", "ACCOUNTING_MANAGER", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"]);
+// Told when a promotion / wage increase is completed and the rate still needs changing in Payroll — Accounting, Admin, Super Admin.
+const WAGE_ADJUST_ROLES = new Set(["FINANCE", "ACCOUNTING_MANAGER", "ADMIN", "SUPERADMIN"]);
 const CACHE_MS = 60_000;
 
 let cache: { key: string; at: number; data: Attention } | null = null;
@@ -297,6 +299,25 @@ async function compute(who: Who): Promise<Attention> {
         tone: "good",
         title: `Staff Form Checklist — ${names}`,
         to: checklistPage,
+      });
+    }
+  }
+
+  // Completed promotions / wage increases whose new rate Accounting hasn't marked Adjusted yet.
+  const wagePage = heldRoles.some((r) => WAGE_ADJUST_ROLES.has(r)) ? firstPage([["accounting", "accounting-dashboard"]]) : null;
+  if (wagePage) {
+    const { countWagesToAdjust } = await import("@/lib/supabase/newPromotions");
+    const toAdjust = await countWagesToAdjust().catch(() => 0);
+    if (toAdjust > 0) {
+      bump(wagePage, toAdjust);
+      items.push({
+        kind: "wage-adjust",
+        count: toAdjust,
+        label: toAdjust === 1 ? "New promotion need to adjust rate" : "New promotions need to adjust rate",
+        tone: "alert",
+        title: "Accounting Dashboard → New Promotion / New wage",
+        to: wagePage,
+        search: { tab: "payroll", open: "newWages" },
       });
     }
   }

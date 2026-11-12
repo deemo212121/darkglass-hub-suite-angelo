@@ -118,6 +118,7 @@ import { listTicketPhotos, hasTicketPhotos, type TicketPhoto } from "@/lib/fireb
 import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, blobToBase64 } from "@/lib/pdfCapture";
 import { renderPayslipBodyHtml, renderTechActivitySummaryPageHtml, PAYSLIP_STYLES, formatClockTime, offDaysInRange, ptoDaysInRange, type PayslipDailyRow, type EmployeePayslipData } from "@/lib/payslipTemplate";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
+import { NewPromotionsButton } from "@/components/NewPromotionsButton";
 import { logModuleActivity, getModuleActivityLog, getModuleActivityLogByAction, moduleActivityActionLabel, type ModuleActivityLogEntry } from "@/lib/supabase/moduleActivityLog";
 import { todayISO, formatISODate, localISODate } from "@/lib/localDate";
 import { currentPayPeriod, isPayPeriod, listPayPeriods } from "@/lib/payPeriods";
@@ -4915,7 +4916,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   always US (forced by the effect above), so there's no PH
                   option to toggle to there. */}
               {activeTab === "payroll" && (
-                <div className="ml-auto flex gap-2">
+                <div className="ml-auto flex flex-col items-end gap-2">
+                <div className="flex gap-2">
                   {(["USD", "PHP"] as const).map((cur) => (
                     <button
                       key={cur}
@@ -4935,6 +4937,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                       {cur === "USD" ? "US Payroll" : "PH Payroll"}
                     </button>
                   ))}
+                </div>
+                {/* Confirmed promotion forms / wage-increase letters from HR (red badge = new since last opened). */}
+                <NewPromotionsButton />
                 </div>
               )}
             </div>
