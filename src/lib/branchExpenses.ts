@@ -95,6 +95,20 @@ export interface BranchExpenseFile {
   name: string;
 }
 
+/** One transaction behind a bill — the Car IQ import keeps every fuel-card swipe (migration 0447). */
+export interface BranchExpenseLine {
+  /** "YYYY-MM-DD" */
+  date: string;
+  /** "07:55" local time, when known. */
+  time: string;
+  driver: string;
+  vehicle: string;
+  service: string;
+  merchant: string;
+  address: string;
+  amount: number;
+}
+
 export interface BranchExpense {
   id: string;
   branch: string;
@@ -109,6 +123,8 @@ export interface BranchExpense {
   periodEnd: string | null;
   notes: string;
   receipts: BranchExpenseFile[];
+  /** The transactions that make up the amount (Car IQ imports); empty for bills typed in. */
+  lineItems: BranchExpenseLine[];
   createdByName: string | null;
   createdAt: string;
   updatedByName: string | null;

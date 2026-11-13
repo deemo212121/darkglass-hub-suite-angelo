@@ -7,8 +7,8 @@
  * branch (export = the sheet's columns), then the bills. Accounting, Admin
  * and Super Admin add, edit and delete.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Download, FileSpreadsheet, Loader2, Paperclip, Pencil, Receipt, Trash2, TrendingUp, Users, Wallet, X } from "lucide-react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, FileSpreadsheet, Loader2, Paperclip, Pencil, Receipt, Trash2, TrendingUp, Users, Wallet, X } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole } from "@/lib/roleLabels";
 import { localISODate, todayISO } from "@/lib/localDate";
@@ -28,6 +28,7 @@ import {
   type BranchExpense,
   type BranchExpenseCategory,
   type BranchExpenseFile,
+  type BranchExpenseLine,
 } from "@/lib/branchExpenses";
 import {
   addBranchExpense,
@@ -79,6 +80,18 @@ const CARD_TONE = {
   fuchsia: { chip: "bg-fuchsia-500/15 text-fuchsia-300", text: "text-fuchsia-300", bar: "bg-fuchsia-400/70", border: "border-fuchsia-500/20" },
   emerald: { chip: "bg-emerald-500/15 text-emerald-300", text: "text-emerald-300", bar: "bg-emerald-400/70", border: "border-emerald-500/20" },
 } as const;
+
+/** Sortable columns in a bill's transaction list. */
+type TxSortKey = "date" | "driver" | "vehicle" | "service" | "merchant" | "address" | "amount";
+const TX_SORT: Record<TxSortKey, (a: BranchExpenseLine, b: BranchExpenseLine) => number> = {
+  date: (a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`),
+  driver: (a, b) => a.driver.localeCompare(b.driver),
+  vehicle: (a, b) => (a.vehicle || "").localeCompare(b.vehicle || ""),
+  service: (a, b) => (a.service || "").localeCompare(b.service || ""),
+  merchant: (a, b) => (a.merchant || "").localeCompare(b.merchant || ""),
+  address: (a, b) => (a.address || "").localeCompare(b.address || ""),
+  amount: (a, b) => (Number(a.amount) || 0) - (Number(b.amount) || 0),
+};
 
 const fmtMoney = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDay = (iso: string | null) => {
@@ -156,6 +169,122 @@ export function OtherExpensesPage() {
   /** Branch Bills funnel filters: column key → picked values. */
   const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
   const [preview, setPreview] = useState<{ url: string; urls: string[] } | null>(null);
+  /** Bills opened to show their transactions (click the branch). */
+  const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
+  const toggleOpen = (id: string) =>
+    setOpenIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+
+  /** Per opened bill: the driver chip picked (shows only their transactions) and the column sort. */
+  const [txView, setTxView] = useState<Record<string, { driver: string | null; sort: TxSortKey; dir: "asc" | "desc" }>>({});
+  const viewOf = (id: string) => txView[id] ?? { driver: null, sort: "date" as TxSortKey, dir: "asc" as const };
+  const setView = (id: string, patch: Partial<{ driver: string | null; sort: TxSortKey; dir: "asc" | "desc" }>) =>
+    setTxView((prev) => ({ ...prev, [id]: { ...viewOf(id), ...patch } }));
+
+  /** A bill's transactions, one per line — so the branch total can be checked swipe by swipe. */
+  const renderTransactions = (e: BranchExpense) => {
+    const all = e.lineItems;
+    const view = viewOf(e.id);
+    const picked = view.driver;
+    const lines = (picked ? all.filter((l) => l.driver === picked) : all).slice().sort((a, b) => {
+      const by = TX_SORT[view.sort](a, b) || `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`);
+      return view.dir === "asc" ? by : -by;
+    });
+    const sum = Math.round(lines.reduce((s, l) => s + (Number(l.amount) || 0), 0) * 100) / 100;
+    const allSum = Math.round(all.reduce((s, l) => s + (Number(l.amount) || 0), 0) * 100) / 100;
+    const sortHead = (key: TxSortKey, label: string, cls = "px-2") => (
+      <th className={`${cls} py-1.5`}>
+        <button
+          type="button"
+          onClick={() => setView(e.id, { sort: key, dir: view.sort === key && view.dir === "asc" ? "desc" : "asc" })}
+          className={`inline-flex items-center gap-0.5 uppercase hover:text-slate-200 ${view.sort === key ? "text-blue-300" : ""}`}
+        >
+          {label}
+          {view.sort === key && (view.dir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+        </button>
+      </th>
+    );
+    const byDriver = new Map<string, { total: number; count: number }>();
+    for (const l of all) {
+      const d = byDriver.get(l.driver) ?? { total: 0, count: 0 };
+      d.total += Number(l.amount) || 0;
+      d.count++;
+      byDriver.set(l.driver, d);
+    }
+    const drivers = Array.from(byDriver, ([name, v]) => ({ name, ...v })).sort((a, b) => b.total - a.total);
+    return (
+      <div className="rounded-md border border-white/10 bg-slate-900/70">
+        <div className="flex flex-wrap items-center gap-2 border-b border-white/10 px-3 py-2">
+          <span className="text-xs font-semibold text-white">{e.branch} · {all.length} transaction{all.length === 1 ? "" : "s"}</span>
+          <span className="text-[11px] text-slate-400">by driver:</span>
+          {drivers.map((d) => {
+            const on = picked === d.name;
+            return (
+              <button
+                key={d.name}
+                type="button"
+                onClick={() => setView(e.id, { driver: on ? null : d.name })}
+                aria-pressed={on}
+                title={on ? "Show every driver" : `Show only ${d.name}`}
+                className={`rounded border px-1.5 py-0.5 text-[11px] transition ${on ? "border-blue-400 bg-blue-500/20 text-white" : "border-white/10 bg-white/5 text-slate-200 hover:border-blue-400/60 hover:bg-white/10"}`}
+              >
+                {d.name} <span className="font-mono text-slate-300">{fmtMoney(d.total)}</span> <span className="text-slate-500">({d.count})</span>
+              </button>
+            );
+          })}
+          {picked && (
+            <button type="button" onClick={() => setView(e.id, { driver: null })} className="text-[11px] font-semibold text-blue-300 hover:underline">
+              Show all
+            </button>
+          )}
+        </div>
+        <div className="max-h-[360px] overflow-auto">
+          <table className="w-full text-[11px]">
+            <thead className="sticky top-0 bg-slate-900">
+              <tr className="text-left text-[10px] font-semibold uppercase text-slate-500">
+                <th className="px-3 py-1.5">#</th>
+                {sortHead("date", "Date")}
+                <th className="px-2 py-1.5">Time</th>
+                {sortHead("driver", "Driver")}
+                {sortHead("vehicle", "Vehicle")}
+                {sortHead("service", "Type")}
+                {sortHead("merchant", "Station")}
+                {sortHead("address", "Address")}
+                {sortHead("amount", "Amount", "px-3 text-right")}
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l, i) => (
+                <tr key={i} className="border-t border-white/5 hover:bg-white/5">
+                  <td className="px-3 py-1 tabular-nums text-slate-500">{i + 1}</td>
+                  <td className="whitespace-nowrap px-2 py-1 tabular-nums text-slate-300">{fmtDay(l.date) || "—"}</td>
+                  <td className="whitespace-nowrap px-2 py-1 tabular-nums text-slate-400">{l.time || "—"}</td>
+                  <td className="whitespace-nowrap px-2 py-1 font-medium text-slate-200">{l.driver}</td>
+                  <td className="max-w-[200px] truncate px-2 py-1 text-slate-400" title={l.vehicle}>{l.vehicle || "—"}</td>
+                  <td className="whitespace-nowrap px-2 py-1 text-slate-400">{l.service || "—"}</td>
+                  <td className="max-w-[180px] truncate px-2 py-1 text-slate-300" title={l.merchant}>{l.merchant || "—"}</td>
+                  <td className="max-w-[260px] truncate px-2 py-1 text-slate-400" title={l.address}>{l.address || "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-1 text-right font-mono text-slate-200">{fmtMoney(Number(l.amount) || 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="sticky bottom-0 bg-slate-900">
+              <tr className="border-t border-white/10">
+                <td colSpan={8} className="px-3 py-1.5 text-right text-[11px] font-semibold text-slate-300">
+                  {picked ? `${picked}: ${lines.length} of ${all.length} transactions` : `Total of ${lines.length} transaction${lines.length === 1 ? "" : "s"}`}
+                  {!picked && Math.abs(allSum - e.amount) >= 0.01 && <span className="ml-2 font-normal text-amber-300">(bill amount is {fmtMoney(e.amount)} — it was edited after the import)</span>}
+                </td>
+                <td className="px-3 py-1.5 text-right font-mono text-xs font-bold text-white">{fmtMoney(sum)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    );
+  };
 
   const load = useCallback(() => {
     setError(null);
@@ -582,10 +711,27 @@ export function OtherExpensesPage() {
             ) : (
               filtered.map((e) => {
                 const urls = e.receipts.map((r) => r.url);
+                const lines = e.lineItems;
+                const open = lines.length > 0 && openIds.has(e.id);
                 return (
-                  <tr key={e.id} className="border-b border-white/5 transition hover:bg-white/5">
+                  <Fragment key={e.id}>
+                  <tr className={`border-b border-white/5 transition hover:bg-white/5 ${open ? "bg-white/5" : ""}`}>
                     <td className="whitespace-nowrap px-2 py-2 text-slate-300">{monthLabel(e.expenseDate.slice(0, 7))}</td>
-                    <td className="whitespace-nowrap px-2 py-2 font-medium text-white">{e.branch}</td>
+                    <td className="whitespace-nowrap px-2 py-2 font-medium text-white">
+                      {lines.length ? (
+                        <button
+                          type="button"
+                          onClick={() => toggleOpen(e.id)}
+                          aria-expanded={open}
+                          title={open ? "Hide transactions" : "Show every transaction"}
+                          className="group inline-flex items-center gap-1 rounded text-left hover:text-blue-300"
+                        >
+                          {open ? <ChevronDown className="h-3.5 w-3.5 text-blue-300" /> : <ChevronRight className="h-3.5 w-3.5 text-slate-500 group-hover:text-blue-300" />}
+                          <span>{e.branch}</span>
+                          <span className="ml-1 rounded bg-blue-500/15 px-1.5 py-px text-[10px] font-semibold text-blue-300">{lines.length} txn{lines.length === 1 ? "" : "s"}</span>
+                        </button>
+                      ) : e.branch}
+                    </td>
                     <td className="whitespace-nowrap px-2 py-2">
                       <span className="inline-flex items-center gap-1.5 rounded border border-white/10 bg-white/5 px-2 py-0.5 text-xs font-medium text-slate-200">
                         <span className={`h-2 w-2 rounded-full ${CAT_COLOR[e.category]}`} />
@@ -628,6 +774,12 @@ export function OtherExpensesPage() {
                       </div>
                     </td>
                   </tr>
+                  {open && (
+                    <tr className="border-b border-white/10 bg-slate-950/60">
+                      <td colSpan={10} className="px-3 pb-4 pt-2">{renderTransactions(e)}</td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })
             )}
