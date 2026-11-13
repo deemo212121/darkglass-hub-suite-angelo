@@ -11,6 +11,9 @@
  * Two levels (migration 0439): Email only, or Email and password — only the
  * second (and Super Admin) can show, copy or set a password. Before 0439 is
  * run there's one level and everyone with access sees passwords, as before.
+ *
+ * Platforms (migration 0449): the ✓ columns — which platforms each email is
+ * used on. Before 0449 the list still loads, just with no ticks.
  */
 import { supabase } from "./client";
 
@@ -19,6 +22,8 @@ export interface EmailVaultEntry {
   email: string;
   /** profiles.id of the people who use this mailbox. */
   people: string[];
+  /** Platform names ticked for this email (EmailVaultPage's VAULT_PLATFORMS). Empty before migration 0449. */
+  platforms: string[];
   createdBy: string | null;
   createdAt: string;
   updatedBy: string | null;
@@ -54,16 +59,19 @@ function vaultError(error: { message: string; code?: string }): Error {
   return new Error(error.message);
 }
 
+const ENTRY_SELECT = "id, email, people, created_by, created_at, updated_by, updated_at";
+
 export async function getEmailVaultEntries(): Promise<EmailVaultEntry[]> {
-  const { data, error } = await supabase
-    .from("email_vault_entries")
-    .select("id, email, people, created_by, created_at, updated_by, updated_at")
-    .order("email", { ascending: true });
+  const list = (select: string) => supabase.from("email_vault_entries").select(select).order("email", { ascending: true });
+  let { data, error } = await list(`${ENTRY_SELECT}, platforms`);
+  // Before migration 0449 there's no platforms column.
+  if (error && /platforms/.test(error.message)) ({ data, error } = await list(ENTRY_SELECT));
   if (error) throw vaultError(error);
   return (data ?? []).map((r: any) => ({
     id: r.id,
     email: r.email ?? "",
     people: r.people ?? [],
+    platforms: Array.isArray(r.platforms) ? r.platforms : [],
     createdBy: r.created_by ?? null,
     createdAt: r.created_at,
     updatedBy: r.updated_by ?? null,
@@ -92,6 +100,15 @@ export async function deleteEmailVaultEntry(id: string): Promise<void> {
   const { data, error } = await supabase.from("email_vault_entries").delete().eq("id", id).select("id");
   if (error) throw vaultError(error);
   if (!data || data.length === 0) throw new Error("That email couldn't be deleted — it may already be gone, or you no longer have access.");
+}
+
+/** Tick / untick platforms (the whole list for that email); recorded on History. Needs migration 0449. */
+export async function setEmailVaultPlatforms(id: string, platforms: string[]): Promise<void> {
+  const { error } = await supabase.rpc("email_vault_set_platforms", { p_id: id, p_platforms: platforms });
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42883") throw new Error("Ticking platforms needs database migration 0449_email_vault_platforms.sql.");
+    throw vaultError(error);
+  }
 }
 
 /** One password; the database records the view (or the copy). */

@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { Check, ChevronLeft, Copy, Eye, EyeOff, History, KeyRound, Mail, Pencil, Plus, Trash2, UserPlus, Users, X } from "lucide-react";
+import { Check, ChevronLeft, Copy, Eye, EyeOff, History, KeyRound, Loader2, Mail, Pencil, Plus, Trash2, UserPlus, Users, X } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -22,6 +22,7 @@ import { AppModal } from "@/components/ui-kit/AppModal";
 import { EmptyState } from "@/components/ui-kit/EmptyState";
 import { PasswordChecksPanel } from "@/components/PasswordChecksPanel";
 import { TableSkeleton } from "@/components/ui-kit/TableSkeleton";
+import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { isEmailVaultSuperAdmin } from "@/lib/submoduleAccess";
 import { hydrateEmailVaultGrant } from "@/lib/moduleAccess";
 import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
@@ -31,6 +32,7 @@ import {
   updateEmailVaultEntry,
   deleteEmailVaultEntry,
   revealEmailVaultPassword,
+  setEmailVaultPlatforms,
   getEmailVaultAccess,
   grantEmailVaultAccess,
   removeEmailVaultAccess,
@@ -46,6 +48,23 @@ type Props = { mod: ModuleDef; sub: SubModuleDef };
 
 /** A shown password hides itself again after this long. */
 const REVEAL_MS = 30_000;
+
+/**
+ * The ✓ columns, in the order of the sheet this page replaced (migration
+ * 0449 stores the ticked names on each email). Add a platform here and it
+ * becomes a column; a name taken out of here stays saved but isn't shown.
+ */
+const VAULT_PLATFORMS = [
+  "AHS", "ER", "Discord", "iWallet", "Car IQ", "Encompass", "Marcone", "NSA", "ServicePower", "ServiceBench",
+  "Miele", "Onpoint", "GE", "Samsung", "Electrolux", "LG", "LinkedIn", "Wix", "Facebook",
+] as const;
+
+const TICKED = "✓";
+const BLANK = "(blank)";
+
+/** Name and Email stay put while the ✓ columns scroll sideways. */
+const STICKY_NAME = "sticky left-0 z-10 w-[190px] min-w-[190px] max-w-[190px]";
+const STICKY_EMAIL = "sticky left-[190px] z-10 w-[260px] min-w-[260px] max-w-[260px] shadow-[1px_0_0_var(--color-panel-border)]";
 
 const EVENT_LABEL: Record<EmailVaultEvent["action"], string> = {
   added: "Added",
@@ -141,8 +160,13 @@ export function EmailVaultPage({ mod, sub }: Props) {
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [revealing, setRevealing] = useState<string | null>(null);
 
+  /** Sheet-style funnel filters: "name", "email", or a platform → picked values. */
+  const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
+  /** "<entry id>|<platform>" while that tick is saving. */
+  const [savingTick, setSavingTick] = useState<string | null>(null);
+
   const [editing, setEditing] = useState<EmailVaultEntry | "new" | null>(null);
-  const [form, setForm] = useState({ email: "", password: "", people: [] as string[] });
+  const [form, setForm] = useState({ email: "", password: "", people: [] as string[], platforms: [] as string[] });
   const [showFormPassword, setShowFormPassword] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<EmailVaultEntry | null>(null);
   const [managingAccess, setManagingAccess] = useState(false);
@@ -188,11 +212,54 @@ export function EmailVaultPage({ mod, sub }: Props) {
 
   useEffect(() => { void load(); }, [load]);
 
-  const filtered = useMemo(() => {
+  const peopleNames = useCallback((e: EmailVaultEntry) => e.people.map((id) => nameOf(userById.get(id))).sort((a, b) => a.localeCompare(b)).join(", "), [userById]);
+  /** A row's value in a filterable column — what the funnel lists and matches. */
+  const cellValue = useCallback(
+    (e: EmailVaultEntry, col: string) =>
+      col === "name" ? peopleNames(e) || BLANK : col === "email" ? e.email : e.platforms.includes(col) ? TICKED : BLANK,
+    [peopleNames],
+  );
+  const passesFilters = useCallback(
+    (e: EmailVaultEntry, skip?: string) => Object.entries(colFilters).every(([col, picked]) => col === skip || picked.size === 0 || picked.has(cellValue(e, col))),
+    [colFilters, cellValue],
+  );
+  const searched = useMemo(() => {
     const needle = search.trim().toLowerCase();
     if (!needle) return entries;
     return entries.filter((e) => e.email.toLowerCase().includes(needle) || e.people.some((id) => nameOf(userById.get(id)).toLowerCase().includes(needle)));
   }, [entries, search, userById]);
+  // One row per email like the sheet, by who uses it (unassigned last), then email.
+  const filtered = useMemo(
+    () =>
+      searched
+        .filter((e) => passesFilters(e))
+        .sort((a, b) => {
+          const an = peopleNames(a), bn = peopleNames(b);
+          return (an ? 0 : 1) - (bn ? 0 : 1) || an.localeCompare(bn) || a.email.localeCompare(b.email);
+        }),
+    [searched, passesFilters, peopleNames],
+  );
+  /** Funnel options for a column: its values among rows passing every OTHER filter (Excel's autofilter). */
+  const filterOptions = (col: string) => Array.from(new Set(searched.filter((e) => passesFilters(e, col)).map((e) => cellValue(e, col)))).sort((a, b) => a.localeCompare(b));
+  const setFilter = (col: string, next: Set<string>) => setColFilters((f) => ({ ...f, [col]: next }));
+  const anyFilter = Object.values(colFilters).some((s) => s.size > 0);
+
+  /** Tick / untick one platform for one email, right in the grid. */
+  const toggleTick = async (entry: EmailVaultEntry, platform: string) => {
+    const key = `${entry.id}|${platform}`;
+    const next = entry.platforms.includes(platform) ? entry.platforms.filter((p) => p !== platform) : [...entry.platforms, platform];
+    setSavingTick(key);
+    setEntries((rows) => rows.map((r) => (r.id === entry.id ? { ...r, platforms: next } : r)));
+    try {
+      await setEmailVaultPlatforms(entry.id, next);
+      refreshEvents();
+    } catch (e: any) {
+      setEntries((rows) => rows.map((r) => (r.id === entry.id ? { ...r, platforms: entry.platforms } : r)));
+      toast.error(e?.message || "Couldn't save that tick.");
+    } finally {
+      setSavingTick(null);
+    }
+  };
 
   const hidePassword = (id: string) => setRevealed((r) => { const next = { ...r }; delete next[id]; return next; });
 
@@ -228,7 +295,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
 
   const openForm = (entry: EmailVaultEntry | "new") => {
     setEditing(entry);
-    setForm(entry === "new" ? { email: "", password: "", people: [] } : { email: entry.email, password: "", people: entry.people });
+    setForm(entry === "new" ? { email: "", password: "", people: [], platforms: [] } : { email: entry.email, password: "", people: entry.people, platforms: entry.platforms });
     setShowFormPassword(false);
   };
 
@@ -240,10 +307,13 @@ export function EmailVaultPage({ mod, sub }: Props) {
     setBusy(true);
     try {
       if (editing === "new") {
-        await addEmailVaultEntry({ email, password: canSeePasswords ? form.password : "", people: form.people });
+        const id = await addEmailVaultEntry({ email, password: canSeePasswords ? form.password : "", people: form.people });
+        if (form.platforms.length > 0) await setEmailVaultPlatforms(id, form.platforms);
         toast.success(`${email} added.`);
       } else {
         await updateEmailVaultEntry(editing.id, { email, people: form.people, password: canSeePasswords && form.password ? form.password : undefined });
+        const was = [...editing.platforms].sort().join("|");
+        if ([...form.platforms].sort().join("|") !== was) await setEmailVaultPlatforms(editing.id, form.platforms);
         hidePassword(editing.id);
         toast.success(`${email} saved.`);
       }
@@ -335,7 +405,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
           <div>
             <h1 className="text-4xl font-display font-bold tracking-tight mb-2">{sub.title}</h1>
             <p className="text-lg text-muted-foreground">
-              Company email logins and who uses each one. Passwords stay hidden — every Show and Copy is recorded on the History tab.{isSuperAdmin ? " Password Checks sets which pages and buttons ask for a password, and which password." : ""}
+              Company email logins, who uses each one, and which platforms each email is on. Passwords stay hidden — every Show and Copy is recorded on the History tab, and so is every tick.{isSuperAdmin ? " Password Checks sets which pages and buttons ask for a password, and which password." : ""}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -385,12 +455,20 @@ export function EmailVaultPage({ mod, sub }: Props) {
       </div>
 
       {tab === "emails" && (
-        <div className="panel p-3 mb-3">
+        <div className="panel p-3 mb-3 flex flex-wrap items-center gap-3">
           <input className="glass-input text-sm w-full sm:max-w-sm" placeholder="Search email or person…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <span className="text-xs text-muted-foreground">
+            {filtered.length === entries.length ? `${entries.length} emails` : `${filtered.length} of ${entries.length} emails`} · click a box to tick or untick a platform
+          </span>
+          {anyFilter && (
+            <button type="button" className="text-xs font-semibold text-blue-300 hover:underline" onClick={() => setColFilters({})}>
+              Clear column filters
+            </button>
+          )}
         </div>
       )}
 
-      <div className="panel p-0 overflow-x-auto">
+      <div className={`panel p-0 overflow-x-auto ${tab === "emails" ? "max-h-[75vh] overflow-y-auto" : ""}`}>
         {loading ? (
           <TableSkeleton rows={5} cols={5} />
         ) : tab === "history" ? (
@@ -427,24 +505,48 @@ export function EmailVaultPage({ mod, sub }: Props) {
             hint={entries.length === 0 ? "Add the first email login with Add Email." : undefined}
           />
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase text-muted-foreground border-b border-[var(--color-panel-border)]">
-                <th className="px-3 py-2">Email</th>
-                <th className="px-3 py-2">Password</th>
-                <th className="px-3 py-2">People with access</th>
-                <th className="px-3 py-2">Last updated</th>
-                <th className="px-3 py-2 text-right">Actions</th>
+          <table className="w-max min-w-full border-collapse text-sm">
+            <thead className="sticky top-0 z-20">
+              <tr className="bg-blue-600 text-left text-xs font-semibold text-white">
+                <th className={`${STICKY_NAME} bg-blue-600 px-3 py-2`}>
+                  <span className="inline-flex items-center">
+                    Name
+                    <TicketColumnFilter options={filterOptions("name")} selected={colFilters.name ?? new Set()} onChange={(n) => setFilter("name", n)} label="Filter by Name" />
+                  </span>
+                </th>
+                <th className={`${STICKY_EMAIL} bg-blue-600 px-3 py-2`}>
+                  <span className="inline-flex items-center">
+                    Email
+                    <TicketColumnFilter options={filterOptions("email")} selected={colFilters.email ?? new Set()} onChange={(n) => setFilter("email", n)} label="Filter by Email" />
+                  </span>
+                </th>
+                <th className="border-l border-white/20 px-3 py-2 whitespace-nowrap">Email Password</th>
+                {VAULT_PLATFORMS.map((platform) => (
+                  <th key={platform} className="w-[84px] min-w-[84px] border-l border-white/20 px-1 py-2 text-center whitespace-nowrap">
+                    <span className="inline-flex items-center justify-center">
+                      {platform}
+                      <TicketColumnFilter options={filterOptions(platform)} selected={colFilters[platform] ?? new Set()} onChange={(n) => setFilter(platform, n)} label={`Filter by ${platform}`} />
+                    </span>
+                  </th>
+                ))}
+                <th className="border-l border-white/20 px-2 py-2 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((entry) => {
+              {filtered.map((entry, i) => {
                 const shown = revealed[entry.id];
+                const names = peopleNames(entry);
+                // The sheet's green / blue bands, tinted over a solid cell so the frozen columns cover what scrolls under them.
+                const cell = `bg-[var(--background)] ${i % 2 ? "shadow-[inset_0_0_0_9999px_rgba(59,130,246,0.08)]" : "shadow-[inset_0_0_0_9999px_rgba(16,185,129,0.08)]"}`;
+                const rowSaving = !!savingTick?.startsWith(`${entry.id}|`);
                 return (
-                  <tr key={entry.id} className="border-b border-[var(--color-panel-border)]/60 align-top">
-                    <td className="px-3 py-2 font-medium break-all">{entry.email}</td>
-                    <td className="px-3 py-2">
-                      <div className="flex items-center gap-1.5">
+                  <tr key={entry.id} className="border-b border-[var(--color-panel-border)]/60">
+                    <td className={`${STICKY_NAME} ${cell} px-3 py-1.5 truncate`} title={names || undefined}>
+                      {names || <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className={`${STICKY_EMAIL} ${cell} px-3 py-1.5 truncate font-medium`} title={entry.email}>{entry.email}</td>
+                    <td className={`${cell} border-l border-[var(--color-panel-border)] px-3 py-1.5`}>
+                      <div className="flex items-center gap-1">
                         <span className="font-mono text-xs min-w-[7rem] break-all" title={canSeePasswords ? undefined : "You can see email addresses only — a Super Admin can give you password access."}>{shown !== undefined ? shown || "(none)" : "••••••••"}</span>
                         {canSeePasswords && (
                           <>
@@ -458,22 +560,25 @@ export function EmailVaultPage({ mod, sub }: Props) {
                         )}
                       </div>
                     </td>
-                    <td className="px-3 py-2">
-                      {entry.people.length === 0 ? (
-                        <span className="text-muted-foreground">—</span>
-                      ) : (
-                        <div className="flex flex-wrap gap-1">
-                          {entry.people.map((id) => (
-                            <span key={id} className="rounded-full border border-[var(--color-panel-border)] bg-white/5 px-2 py-0.5 text-xs">{nameOf(userById.get(id))}</span>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">
-                      {fmtDateTime(entry.updatedAt)}
-                      {entry.updatedBy && <div>by {nameOf(userById.get(entry.updatedBy))}</div>}
-                    </td>
-                    <td className="px-3 py-2">
+                    {VAULT_PLATFORMS.map((platform) => {
+                      const on = entry.platforms.includes(platform);
+                      return (
+                        <td key={platform} className={`${cell} border-l border-[var(--color-panel-border)] p-0 text-center`}>
+                          <button
+                            type="button"
+                            disabled={rowSaving}
+                            onClick={() => void toggleTick(entry, platform)}
+                            aria-pressed={on}
+                            aria-label={`${platform} for ${entry.email}`}
+                            title={on ? `Used on ${platform} — click to untick` : `Click to tick ${platform}`}
+                            className="flex h-9 w-full items-center justify-center text-base font-bold text-emerald-500 hover:bg-white/10 disabled:cursor-wait"
+                          >
+                            {savingTick === `${entry.id}|${platform}` ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : on ? TICKED : ""}
+                          </button>
+                        </td>
+                      );
+                    })}
+                    <td className={`${cell} border-l border-[var(--color-panel-border)] px-2 py-1.5`}>
                       <div className="flex justify-end gap-1">
                         <button type="button" className="btn btn-sm hover:bg-white/15" title="Edit" onClick={() => openForm(entry)}>
                           <Pencil className="h-3.5 w-3.5" />
@@ -532,6 +637,21 @@ export function EmailVaultPage({ mod, sub }: Props) {
               </div>
             </label>
             )}
+            <div>
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Platforms this email is used on</span>
+              <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1 sm:grid-cols-4">
+                {VAULT_PLATFORMS.map((platform) => (
+                  <label key={platform} className="inline-flex items-center gap-1.5 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={form.platforms.includes(platform)}
+                      onChange={(e) => setForm((f) => ({ ...f, platforms: e.target.checked ? [...f.platforms, platform] : f.platforms.filter((x) => x !== platform) }))}
+                    />
+                    {platform}
+                  </label>
+                ))}
+              </div>
+            </div>
             <div>
               <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">People with access to this email</span>
               {form.people.length > 0 && (
