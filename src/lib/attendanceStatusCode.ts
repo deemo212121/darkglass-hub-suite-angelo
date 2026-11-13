@@ -46,15 +46,18 @@ export const AUTO_CLOCKOUT_REVIEWED_PREFIX = "[Reviewed auto clock-out — ";
 /**
  * Reads the day's timecard notes: was the Time Out written by the system
  * (both auto clock-out paths append "[Auto clock-out HH:MM:SS — …]"), and
- * has HR reviewed it since ("[Reviewed auto clock-out — Name]").
+ * has HR reviewed it since ("[Reviewed auto clock-out — Name]"). `reason`
+ * is what the system went by, capitalized: "Last Work Done", "Scheduled
+ * end of shift", "Arrived home (within 2 mi)"…
  */
-export function autoClockOutInfo(notes: string | null | undefined): { auto: boolean; time: string | null; reviewedBy: string | null } {
+export function autoClockOutInfo(notes: string | null | undefined): { auto: boolean; time: string | null; reviewedBy: string | null; reason: string | null } {
   const text = notes ?? "";
-  const m = /\[Auto clock-out (\d{1,2}:\d{2})/.exec(text);
-  if (!m) return { auto: false, time: null, reviewedBy: null };
+  const m = /\[Auto clock-out (\d{1,2}:\d{2})(?::\d{2})?(?: — ([^;\]]+))?/.exec(text);
+  if (!m) return { auto: false, time: null, reviewedBy: null, reason: null };
   const idx = text.lastIndexOf(AUTO_CLOCKOUT_REVIEWED_PREFIX);
   const reviewedBy = idx >= 0 ? text.slice(idx + AUTO_CLOCKOUT_REVIEWED_PREFIX.length).split("]")[0].trim() || "HR" : null;
-  return { auto: true, time: m[1], reviewedBy };
+  const basis = (m[2] ?? "").trim();
+  return { auto: true, time: m[1], reviewedBy, reason: basis ? basis.charAt(0).toUpperCase() + basis.slice(1) : null };
 }
 
 /** The last stage approver on an approved Time Correction (manager / HR / accounting), or the overall reviewer. */

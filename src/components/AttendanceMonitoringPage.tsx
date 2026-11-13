@@ -1,7 +1,7 @@
 import { getAttendanceStartByProfile } from "@/lib/supabase/attendanceStart";
 import { getRestDayHistory } from "@/lib/supabase/restDayHistory";
 import { isRestDayOn, requiredTimesOn, type RestDayHistory } from "@/lib/restDays";
-import { AlertCircle, AlertTriangle, Compass, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, ChevronRight, ChevronDown, Download, Calendar, FileText, CheckCircle, XCircle, Loader2, Settings, Undo2 } from "lucide-react";
+import { AlertCircle, AlertTriangle, Compass, Clock, Users, UserCheck, UserX, Bell, MessageSquare, ChevronLeft, ChevronRight, ChevronDown, Download, Calendar, FileText, CheckCircle, XCircle, Loader2, LogOut, Settings, Undo2 } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
 import { ManagerName } from "@/components/ManagerName";
 import { PtoBalanceSummary, usePtoHireDates } from "@/components/PtoBalanceSummary";
@@ -35,6 +35,7 @@ import {
   type CompanyTimecardEntry,
 } from "@/lib/supabase/timecards";
 import { getAttendanceNotes, upsertAttendanceNote } from "@/lib/supabase/attendanceNotes";
+import { autoClockOutInfo } from "@/lib/attendanceStatusCode";
 import { exportToCSV } from "@/lib/csvExport";
 import { downloadStyledReport } from "@/lib/styledReportExport";
 import { getCompanyTraineeEntries, type TraineeTimecardEntry } from "@/lib/supabase/traineeTimecards";
@@ -122,6 +123,8 @@ interface DailyRecord {
   lastTicketUpdate: LatestVisitUpdate | null;
   /** Ticket numbers scheduled to this person on this date — see ticketsByNameAndDate. Matched by name (tickets.technician is free text, not a profile FK), same convention Work Planner/mobile use. */
   tickets: string[];
+  /** The system wrote this day's Time Out (forced clock-out at end of day, or on arriving home — the "[Auto clock-out …]" timecard note, see autoClockOutInfo). Null for a normal clock-out. */
+  systemClockOut: { reason: string | null; reviewedBy: string | null } | null;
 }
 
 /**
@@ -634,6 +637,10 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // punch (absent, or clocked in but not out yet) so the table only shows
   // employees whose attendance for the day is actually complete.
   const [completeOnly, setCompleteOnly] = useState(false);
+  // Daily Attendance Tracker only — just the days the system clocked the
+  // person out (DailyRecord.systemClockOut). Offered once a past date or a
+  // date range is picked; ignored on today's view (see systemClockOutFilterOn).
+  const [systemClockOutOnly, setSystemClockOutOnly] = useState(false);
   // Daily Attendance Tracker only — narrow to rows that have an Alerts-column
   // flag ("issues") vs. rows showing "OK" (no flags). "issues" matches the
   // badges actually rendered in that column (late/missing punch, over/under
@@ -1347,6 +1354,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       const hasPendingCorrection = hasPendingCorrectionFor(p.id, dateISO);
       const alerts = computeAlerts(checkIn, checkOut, mealIn, mealOut, ...requiredFor(p, dateISO), isOffDay, rowNowHHMM, graceMinutes, p.working_hours, hasPendingCorrection);
       const clockedInByName = entry?.clockedInBy ? allProfileById.get(entry.clockedInBy)?.display_name || null : null;
+      const auto = checkOut ? autoClockOutInfo(entry?.notes) : null;
       return {
         profileId: p.id,
         date: dateISO,
@@ -1369,6 +1377,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         checkoutProposal: checkOut ? null : checkoutProposalsByKey.get(`${p.id}|${dateISO}`) ?? null,
         lastTicketUpdate: lastTicketUpdateByProfile.get(p.id) ?? null,
         tickets: ticketsByNameAndDate.get(`${(p.display_name || p.email || "").trim().toLowerCase()}|${dateISO}`) ?? [],
+        systemClockOut: auto?.auto ? { reason: auto.reason, reviewedBy: auto.reviewedBy } : null,
       };
     },
     [nowByTimezone, allProfileById, checkoutProposalsByKey, lastTicketUpdateByProfile, ticketsByNameAndDate, isCompanyHolidayFor, hasPendingCorrectionFor, isBeforeHireFor, isOnLeaveFor, isRestDayFor, requiredFor]
@@ -1408,6 +1417,11 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const presentToday = dailyRecords.filter((r) => r.checkIn !== "—").length;
   const absentToday = dailyRecords.filter((r) => r.checkIn === "—" && !r.isOffDay && !r.hasPendingCorrection).length;
   const lateToday = dailyRecords.filter((r) => r.alerts.some(isPenalizedLateAlert)).length;
+  // Forced clock-out by system: only for a finished day (a past date or a
+  // date range) — today's sweep hasn't run yet.
+  const systemClockOutOffered = !isDailyDateToday || dateRangeActive;
+  const systemClockOutFilterOn = systemClockOutOnly && systemClockOutOffered;
+  const systemClockOutCount = (dateRangeActive ? rangeRecords : dailyRecords).filter((r) => r.systemClockOut).length;
   const ptoPendingApproval = visiblePtoRequests.filter((r) => r.status === "pending").length;
 
   // Alert Details Modal (Missing Clock In/Out, Late Arrival) — the raw list
@@ -1463,6 +1477,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       // checkIn is already guaranteed above — this now only additionally
       // requires a completed checkOut.
       if (completeOnly && record.checkOut === "—") return false;
+      if (systemClockOutFilterOn && !record.systemClockOut) return false;
       // Both ticked (or neither) = no alert filter.
       if (alertFilters.length === 1 && alertFilters[0] === "issues" && record.alerts.length === 0) return false;
       if (alertFilters.length === 1 && alertFilters[0] === "clean" && record.alerts.length > 0) return false;
@@ -1872,7 +1887,8 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       ? "Date,Employee Name,Location,Department,Manager,Check In,Meal In,Meal Out,Check Out,Assigned Tickets,Tickets,Alerts,Notes\n"
       : "Employee Name,Location,Department,Manager,Check In,Meal In,Meal Out,Check Out,Assigned Tickets,Tickets,Alerts,Notes\n";
     filteredAndSortedData.forEach((record) => {
-      const alerts = record.alerts.join("; ");
+      const systemOut = record.systemClockOut ? [`Clocked out by system${record.systemClockOut.reason ? ` (${record.systemClockOut.reason})` : ""}`] : [];
+      const alerts = [...record.alerts, ...systemOut].join("; ");
       const notes = notesData[record.profileId]?.content || "";
       const dateCol = dateRangeActive ? `${q(record.date)},` : "";
       const ticketsCol = record.tickets.join("; ");
@@ -2356,6 +2372,27 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                 cards above and the Daily Attendance Tracker table below —
                 so HR/managers can review any earlier date from one control. */}
             <div className="flex flex-col-reverse items-end gap-2">
+            {/* Under the date (column-reverse): who the system clocked out on a finished day. */}
+            {activeTab === "daily-attendance" && systemClockOutOffered && (
+              <button
+                type="button"
+                aria-pressed={systemClockOutOnly}
+                onClick={() => setSystemClockOutOnly((v) => !v)}
+                title="Show only the people the system clocked out (they didn't clock out themselves)"
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                  systemClockOutOnly
+                    ? "border-orange-400/60 bg-orange-500/25 text-orange-200"
+                    : "border-white/10 bg-slate-800/50 text-slate-300 hover:border-orange-400/40 hover:text-orange-200"
+                }`}
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                Forced clock-out by system
+                <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${systemClockOutCount > 0 ? "bg-orange-500/30 text-orange-100" : "bg-white/10 text-slate-400"}`}>
+                  {systemClockOutCount}
+                </span>
+                {systemClockOutOnly && <XCircle className="h-3.5 w-3.5" aria-label="Clear filter" />}
+              </button>
+            )}
             <div className="flex items-center gap-2">
               {!isDailyDateToday && (
                 <button
@@ -2662,7 +2699,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                     {loading || dailyDateLoading || (dateRangeActive && rangeFilterLoading) ? (
                       <tr><td colSpan={dateRangeActive ? 12 : 11} className="px-3 py-8 text-center text-slate-400">Loading attendance…</td></tr>
                     ) : filteredAndSortedData.length === 0 ? (
-                      <tr><td colSpan={dateRangeActive ? 12 : 11} className="px-3 py-8 text-center text-slate-400">No employees match this filter.</td></tr>
+                      <tr><td colSpan={dateRangeActive ? 12 : 11} className="px-3 py-8 text-center text-slate-400">{systemClockOutFilterOn && systemClockOutCount === 0 ? "Nobody was clocked out by the system on this date." : "No employees match this filter."}</td></tr>
                     ) : dailyDataByDepartment.map((group) => (
                       <Fragment key={group.department}>
                         <tr className="bg-white/[0.03]">
@@ -2745,6 +2782,18 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
                               </span>
                             ) : (
                               <span>—</span>
+                            )}
+                            {record.systemClockOut && (
+                              <span
+                                className="inline-flex items-center gap-1 rounded border border-orange-500/40 bg-orange-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-orange-300"
+                                title={`Clocked out by the system — they didn't clock out themselves${record.systemClockOut.reason ? ` (went by: ${record.systemClockOut.reason})` : ""}`}
+                              >
+                                <LogOut className="h-3 w-3" /> By system
+                              </span>
+                            )}
+                            {record.systemClockOut?.reason && <span className="text-[10px] text-orange-300/70">{record.systemClockOut.reason}</span>}
+                            {record.systemClockOut && (
+                              <span className="text-[10px] text-slate-500">{record.systemClockOut.reviewedBy ? `Reviewed by ${record.systemClockOut.reviewedBy}` : "Not reviewed yet"}</span>
                             )}
                             {record.lastTicketUpdate && (
                               <span className="text-[10px] text-slate-500" title="This technician's own most recent ticket update">
