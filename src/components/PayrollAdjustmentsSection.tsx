@@ -51,6 +51,7 @@ export function PayrollAdjustmentsSection({
   grossBreakdown,
   createdByName,
   onChanged,
+  showDefaultTaxLines = false,
 }: {
   profileId: string;
   periodStart: string;
@@ -62,6 +63,7 @@ export function PayrollAdjustmentsSection({
   grossBreakdown?: { label: string; amount: number }[];
   createdByName?: string | null;
   onChanged: () => void | Promise<void>;
+  showDefaultTaxLines?: boolean;
 }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -92,7 +94,7 @@ export function PayrollAdjustmentsSection({
     if (!draft) return;
     let amount: number;
     let percent: number | null = null;
-    if (draft.kind === "tax") {
+    if (draft.kind === "tax" && draft.percent !== "") {
       percent = Number(draft.percent);
       if (!Number.isFinite(percent) || percent <= 0 || percent > 100) { setError("Enter the tax rate as a percent between 0 and 100 (e.g. 13)."); return; }
       amount = round3(gross * (percent / 100));
@@ -118,7 +120,7 @@ export function PayrollAdjustmentsSection({
 
   const remove = async (a: PayrollAdjustment) => {
     const shown = lines.find((l) => l.id === a.id) ?? a;
-    const label = a.kind === "tax" ? `Tax ${a.percent ?? 0}%` : a.description;
+    const label = a.kind === "tax" && a.percent != null ? `Tax ${a.percent}%` : a.description;
     if (!confirm(`Remove "${label}" (${a.kind === "reimbursement" ? "+" : "−"}${a.kind === "tax" ? money3(shown.amount) : money(shown.amount)})?`)) return;
     setBusy(true);
     try {
@@ -150,7 +152,18 @@ export function PayrollAdjustmentsSection({
         placeholder={draft.kind === "tax" ? "Description (optional) — e.g. Withholding tax" : "Description — e.g. Internet allowance, Cash advance"}
         className="min-w-[200px] flex-1 rounded border border-white/10 bg-slate-800 px-2 py-1 text-xs text-white placeholder-slate-500"
       />
-      {draft.kind === "tax" ? (
+      {draft.kind === "tax" && (
+        <select
+          aria-label="Tax calculation"
+          value={draft.percent === "" ? "fixed" : "percent"}
+          onChange={(e) => setDraft({ ...draft, percent: e.target.value === "fixed" ? "" : "1" })}
+          className="rounded border border-white/10 bg-slate-800 px-2 py-1 text-xs text-white"
+        >
+          <option value="fixed">$ Fixed</option>
+          <option value="percent">% of gross</option>
+        </select>
+      )}
+      {draft.kind === "tax" && draft.percent !== "" ? (
         <div className="flex items-center gap-1">
           <input
             type="number"
@@ -206,6 +219,27 @@ export function PayrollAdjustmentsSection({
         )}
       </div>
 
+      {showDefaultTaxLines && (
+        <div className="mt-2 divide-y divide-white/5">
+          {["MCWH", "SSWH", "FITW", "SITW"].filter((label) =>
+            !items.some((item) => item.description.trim().toUpperCase() === label)
+          ).map((label) => (
+            <div key={label} className="flex items-center justify-between gap-3 py-1.5 text-xs">
+              <span className="text-slate-200">{label}</span>
+              <button
+                type="button"
+                disabled={busy}
+                aria-label={`Enter ${label} tax`}
+                onClick={() => { setEditingId(null); setDraft({ kind: "tax", description: label, amount: "", percent: "" }); setError(null); }}
+                className="rounded border border-white/10 bg-slate-900 px-3 py-1 text-red-300 hover:bg-slate-700 disabled:opacity-40"
+              >
+                $0.00 · Enter amount
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {lines.length === 0 && !draft ? (
         <p className="mt-2 text-xs text-slate-500">No tax, reimbursements or deductions for this period.</p>
       ) : (
@@ -217,7 +251,7 @@ export function PayrollAdjustmentsSection({
               <li key={a.id} className="flex items-center justify-between gap-3 py-1.5 text-xs">
                 <span className="min-w-0 text-slate-200">
                   <span className={`mr-2 inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold ${KIND_BADGE[a.kind]}`}>
-                    {a.kind === "tax" ? `Tax ${a.percent ?? 0}%` : KIND_LABEL[a.kind]}
+                    {a.kind === "tax" && a.percent != null ? `Tax ${a.percent}%` : KIND_LABEL[a.kind]}
                   </span>
                   {a.description || (a.kind === "tax" ? <span className="text-slate-500">of gross pay</span> : null)}
                 </span>

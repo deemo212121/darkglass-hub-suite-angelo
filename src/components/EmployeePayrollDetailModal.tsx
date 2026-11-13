@@ -1678,6 +1678,7 @@ export function EmployeePayrollDetailModal({
           {/* Reimbursements / deductions (PH payroll + US Office staff) */}
           {adjustments && (
             <PayrollAdjustmentsSection
+              showDefaultTaxLines={!isPhPayroll}
               profileId={profileId}
               periodStart={adjustments.periodStart}
               periodEnd={adjustments.periodEnd}

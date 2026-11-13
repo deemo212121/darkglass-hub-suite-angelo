@@ -465,7 +465,7 @@ export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
         .map(
           (a) => `
       <div class="summary-row" style="border: none; grid-template-columns: 2fr 1fr;">
-        <div>${a.kind === "tax" ? `Tax (${a.percent ?? 0}%)` : a.kind === "deduction" ? "Deduction" : "Reimbursement"}${a.description ? ` — ${escapeText(a.description)}` : ""}</div>
+        <div>${a.kind === "tax" ? a.percent != null ? `Tax (${a.percent}%)` : "Tax" : a.kind === "deduction" ? "Deduction" : "Reimbursement"}${a.description ? ` — ${escapeText(a.description)}` : ""}</div>
         <div class="amount" style="color: ${a.kind === "reimbursement" ? "#15803d" : "#b91c1c"};">${a.kind === "reimbursement" ? "+" : "−"}$${a.amount.toFixed(a.kind === "tax" ? 3 : 2)}</div>
       </div>`
         )

@@ -5511,7 +5511,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                   return (
                                     <div
                                       className="text-[10px] font-normal leading-tight"
-                                      title={lines.map((l) => `${l.kind === "reimbursement" ? "+" : "−"}${fmt(l.amount)} ${l.kind === "tax" ? `Tax ${l.percent ?? 0}%` : ""}${l.description ? ` ${l.description}` : ""}`).join("\n")}
+                                      title={lines.map((l) => `${l.kind === "reimbursement" ? "+" : "−"}${fmt(l.amount)} ${l.kind === "tax" ? (l.percent != null ? `Tax ${l.percent}%` : "Tax") : ""}${l.description ? ` ${l.description}` : ""}`).join("\n")}
                                     >
                                       <span className={sums.net < 0 ? "text-red-300" : "text-emerald-300"}>
                                         {sums.net < 0 ? "−" : "+"}{fmt(Math.abs(sums.net))} adj.

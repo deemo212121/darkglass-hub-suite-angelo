@@ -78,7 +78,7 @@ export async function addPayrollAdjustment(input: {
       kind: input.kind,
       description: input.description.trim(),
       amount: round2(Math.abs(input.amount)),
-      ...(input.kind === "tax" ? { percent: input.percent ?? 0 } : {}),
+      ...(input.kind === "tax" ? { percent: input.percent ?? null } : {}),
       created_by_name: input.createdByName ?? null,
     })
     .select(input.kind === "tax" ? COLUMNS : COLUMNS_BASE)
@@ -102,7 +102,7 @@ export async function updatePayrollAdjustment(id: string, fields: { kind: Payrol
       kind: fields.kind,
       description: fields.description.trim(),
       amount: round2(Math.abs(fields.amount)),
-      ...(fields.kind === "tax" ? { percent: fields.percent ?? 0 } : {}),
+      percent: fields.kind === "tax" ? fields.percent ?? null : null,
     })
     .eq("id", id);
   if (error) throw new Error(/percent|kind_check/.test(error.message) ? "Tax lines need migration 0394 — run it in the Supabase SQL Editor first." : error.message);
@@ -120,7 +120,7 @@ export async function deletePayrollAdjustment(id: string): Promise<void> {
  */
 export function resolveAdjustmentLines<T extends PayrollAdjustmentLine>(lines: T[] | null | undefined, grossPay?: number | null): T[] {
   return (lines ?? []).map((l) =>
-    l.kind === "tax" && grossPay != null ? { ...l, amount: round3(Math.max(0, grossPay) * ((l.percent ?? 0) / 100)) } : l
+    l.kind === "tax" && l.percent != null && grossPay != null ? { ...l, amount: round3(Math.max(0, grossPay) * (l.percent / 100)) } : l
   );
 }
 
