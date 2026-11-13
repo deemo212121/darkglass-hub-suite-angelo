@@ -3,10 +3,16 @@
  * bill (migrations 0444 / 0445), and the per-branch report. The categories
  * are Accounting's branch sheet columns, in its order:
  *
- *   Lease · Auto Insurance / Payment · Internet · Utility · Travel / Lodging
- *   Food · Rental Car · Gas · Equipment / Office Supplies · Operation
+ *   Lease · Auto Insurance / Payment · Internet · Utility
+ *   Flash Tech Travel / Lodging · Flash Tech Food Reimbursement · Rental Car
+ *   CarIQ Transactions · CarIQ Mileage Reimbursement ($0.20)
+ *   NON CarIQ Mileage Reimbursement ($0.50) · Gas
+ *   Equipment / Office Supplies · Field Equipment · Operation
  *   Tech Payroll · US Office Payroll · PH Office Payroll
  *   → Payroll Total · EXP TOTAL (everything that isn't payroll) · TOTAL
+ *
+ * CarIQ Transactions can be filled from Car IQ's transaction report
+ * (Import Car IQ — lib/carIqImport.ts).
  *
  * "phone" / "other" are from the first version of the page — still read
  * (counted in EXP TOTAL) but no longer offered.
@@ -20,8 +26,12 @@ export type BranchExpenseCategory =
   | "travel_lodging"
   | "food"
   | "rental_car"
+  | "cariq_transactions"
+  | "cariq_mileage"
+  | "non_cariq_mileage"
   | "gas"
   | "equipment_supplies"
+  | "field_equipment"
   | "operation"
   | "tech_payroll"
   | "us_office_payroll"
@@ -38,8 +48,12 @@ export const BRANCH_EXPENSE_CATEGORIES: BranchExpenseCategory[] = [
   "travel_lodging",
   "food",
   "rental_car",
+  "cariq_transactions",
+  "cariq_mileage",
+  "non_cariq_mileage",
   "gas",
   "equipment_supplies",
+  "field_equipment",
   "operation",
   "tech_payroll",
   "us_office_payroll",
@@ -58,11 +72,15 @@ export const BRANCH_EXPENSE_LABEL: Record<BranchExpenseCategory, string> = {
   auto_insurance: "Auto Insurance / Payment",
   internet: "Internet",
   utility: "Utility",
-  travel_lodging: "Travel / Lodging",
-  food: "Food",
+  travel_lodging: "Flash Tech Travel / Lodging",
+  food: "Flash Tech Food Reimbursement",
   rental_car: "Rental Car",
+  cariq_transactions: "CarIQ Transactions",
+  cariq_mileage: "CarIQ Mileage Reimbursement ($0.20)",
+  non_cariq_mileage: "NON CarIQ Mileage Reimbursement ($0.50)",
   gas: "Gas",
   equipment_supplies: "Equipment / Office Supplies",
+  field_equipment: "Field Equipment",
   operation: "Operation",
   tech_payroll: "Tech Payroll",
   us_office_payroll: "US Office Payroll",

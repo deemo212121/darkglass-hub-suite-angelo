@@ -4,8 +4,9 @@ import { BRANCH_EXPENSE_CATEGORIES, BRANCH_EXPENSE_LABEL, branchExpenseCategoryT
 describe("categories", () => {
   it("are Accounting's branch sheet columns, in its order", () => {
     expect(BRANCH_EXPENSE_CATEGORIES.map((c) => BRANCH_EXPENSE_LABEL[c])).toEqual([
-      "Lease", "Auto Insurance / Payment", "Internet", "Utility", "Travel / Lodging", "Food", "Rental Car",
-      "Gas", "Equipment / Office Supplies", "Operation", "Tech Payroll", "US Office Payroll", "PH Office Payroll",
+      "Lease", "Auto Insurance / Payment", "Internet", "Utility", "Flash Tech Travel / Lodging", "Flash Tech Food Reimbursement",
+      "Rental Car", "CarIQ Transactions", "CarIQ Mileage Reimbursement ($0.20)", "NON CarIQ Mileage Reimbursement ($0.50)",
+      "Gas", "Equipment / Office Supplies", "Field Equipment", "Operation", "Tech Payroll", "US Office Payroll", "PH Office Payroll",
     ]);
   });
 });

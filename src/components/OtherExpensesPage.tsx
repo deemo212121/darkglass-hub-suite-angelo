@@ -8,13 +8,15 @@
  * and Super Admin add, edit and delete.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, Loader2, Paperclip, Pencil, Receipt, Trash2, TrendingUp, Users, Wallet, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, FileSpreadsheet, Loader2, Paperclip, Pencil, Receipt, Trash2, TrendingUp, Users, Wallet, X } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole } from "@/lib/roleLabels";
 import { localISODate, todayISO } from "@/lib/localDate";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import { deleteExpenseReceiptFile, uploadExpenseReceipt } from "@/lib/firebase/storage";
 import { ReceiptLightbox, isPdfReceipt } from "@/components/ReceiptLightbox";
+import { CarIqImportModal } from "@/components/CarIqImportModal";
+import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import {
   ALL_BRANCH_EXPENSE_CATEGORIES,
   BRANCH_EXPENSE_CATEGORIES,
@@ -30,6 +32,7 @@ import {
 import {
   addBranchExpense,
   deleteBranchExpense,
+  deleteBranchExpenses,
   getBranchExpenses,
   setBranchExpenseReceipts,
   updateBranchExpense,
@@ -47,8 +50,12 @@ const CAT_COLOR: Record<BranchExpenseCategory, string> = {
   travel_lodging: "bg-violet-400",
   food: "bg-orange-400",
   rental_car: "bg-rose-400",
+  cariq_transactions: "bg-blue-400",
+  cariq_mileage: "bg-sky-200",
+  non_cariq_mileage: "bg-purple-300",
   gas: "bg-yellow-300",
   equipment_supplies: "bg-teal-400",
+  field_equipment: "bg-green-300",
   operation: "bg-cyan-400",
   tech_payroll: "bg-fuchsia-400",
   us_office_payroll: "bg-pink-400",
@@ -80,6 +87,34 @@ const fmtDay = (iso: string | null) => {
   return isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 };
 
+/** "2026-11" for a date. */
+const monthKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+/** "2026-11" → first and last day. */
+function monthBounds(ym: string): { from: string; to: string } {
+  const [y, m] = ym.split("-").map(Number);
+  return { from: localISODate(new Date(y, m - 1, 1)), to: localISODate(new Date(y, m, 0)) };
+}
+/** "2026-11" + 1 → "2026-12". */
+function shiftMonth(ym: string, n: number): string {
+  const [y, m] = ym.split("-").map(Number);
+  return monthKey(new Date(y, m - 1 + n, 1));
+}
+/** "2026-11" → "November 2026". */
+const monthLabel = (ym: string) => {
+  const [y, m] = ym.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+};
+/** The month when [from, to] is exactly one whole month, else null. */
+function monthOfRange(from: string, to: string): string | null {
+  if (!from || !to) return null;
+  const ym = from.slice(0, 7);
+  const b = monthBounds(ym);
+  return b.from === from && b.to === to ? ym : null;
+}
+
+/** A picture (shown as a thumbnail) — Firebase download links keep the file name before "?". */
+const isImageFile = (url: string) => /.(png|jpe?g|gif|webp|bmp|heic)$/i.test(decodeURIComponent(url.split("?")[0]));
+
 /** Every branch the company has (US, PH, Mexico), A–Z — the form's branch suggestions. */
 const KNOWN_BRANCHES = Array.from(new Set(LOCATIONS_DATA.map((l) => l.location).filter(Boolean))).sort((a, b) => a.localeCompare(b));
 
@@ -99,18 +134,27 @@ function downloadCsv(name: string, header: string[], rows: (string | number)[][]
 export function OtherExpensesPage() {
   const { companyId, role, extraRoles } = useAuth();
   const canEdit = [role, ...(extraRoles ?? [])].some((r) => r && EDIT_ROLES.has(normalizeRole(r)));
+  // "Delete all" — Super Admin only.
+  const isSuperAdmin = [role, ...(extraRoles ?? [])].some((r) => r && ["SUPERADMIN", "SUPERSUPERADMIN"].includes(normalizeRole(r)));
 
   const [rows, setRows] = useState<BranchExpense[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  // Opens on this month — the branch sheet is one block per month.
+  const [dateFrom, setDateFrom] = useState(() => monthBounds(monthKey(new Date())).from);
+  const [dateTo, setDateTo] = useState(() => monthBounds(monthKey(new Date())).to);
+  /** "Custom dates" — the From / To boxes instead of the month picker. */
+  const [customDates, setCustomDates] = useState(false);
   const [category, setCategory] = useState<CategoryFilter>("all");
   const [branch, setBranch] = useState("");
   const [search, setSearch] = useState("");
   /** Spend by branch order: biggest spend first, or A → Z (same as Flash Tech). */
   const [branchSort, setBranchSort] = useState<"amount" | "name">("amount");
   const [form, setForm] = useState<{ editing: BranchExpense | null } | null>(null);
+  const [importing, setImporting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingAll, setDeletingAll] = useState(false);
+  /** Branch Bills funnel filters: column key → picked values. */
+  const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
   const [preview, setPreview] = useState<{ url: string; urls: string[] } | null>(null);
 
   const load = useCallback(() => {
@@ -128,7 +172,33 @@ export function OtherExpensesPage() {
   );
   const matchesSearch = (e: BranchExpense) =>
     !search.trim() || `${e.branch} ${e.vendor} ${e.notes} ${branchExpenseCategoryText(e)}`.toLowerCase().includes(search.trim().toLowerCase());
-  const filtered = inRange.filter((e) => matchesCategory(e.category, category) && (!branch || e.branch === branch) && matchesSearch(e));
+  // Funnel filter on each Branch Bills column (same as the Flash Tech list): column → picked values; empty = no filter.
+  const COLUMNS: { key: string; label: string; value: (e: BranchExpense) => string; right?: boolean }[] = [
+    { key: "month", label: "Month", value: (e) => monthLabel(e.expenseDate.slice(0, 7)) },
+    { key: "branch", label: "Branch", value: (e) => e.branch },
+    { key: "category", label: "Category", value: (e) => branchExpenseCategoryText(e) },
+    { key: "vendor", label: "Vendor / provider", value: (e) => e.vendor || "—" },
+    { key: "period", label: "Billing period", value: (e) => (e.periodStart || e.periodEnd ? `${fmtDay(e.periodStart) || "…"} – ${fmtDay(e.periodEnd) || "…"}` : "—") },
+    { key: "amount", label: "Amount", value: (e) => fmtMoney(e.amount), right: true },
+    { key: "notes", label: "Notes", value: (e) => (e.notes ? "Has notes" : "No notes") },
+    { key: "files", label: "Bill / receipt", value: (e) => (e.receipts.length ? "Has a file" : "No file") },
+    { key: "addedBy", label: "Added by", value: (e) => e.createdByName || "—" },
+  ];
+  const matchesColumns = (e: BranchExpense, skipKey?: string) =>
+    COLUMNS.every((c) => c.key === skipKey || !colFilters[c.key]?.size || colFilters[c.key].has(c.value(e)));
+  const anyColumnFilter = Object.values(colFilters).some((v) => v.size > 0);
+
+  const filtered = inRange.filter((e) => matchesCategory(e.category, category) && (!branch || e.branch === branch) && matchesSearch(e) && matchesColumns(e));
+
+  /** A column's funnel choices: its values among the bills every OTHER filter leaves. */
+  const columnOptions = (key: string) => {
+    const col = COLUMNS.find((c) => c.key === key)!;
+    const pool = inRange.filter((e) => matchesCategory(e.category, category) && (!branch || e.branch === branch) && matchesSearch(e) && matchesColumns(e, key));
+    const values = Array.from(new Set(pool.map(col.value)));
+    if (key === "amount") return values.sort((a, b) => Number(a.replace(/[$,]/g, "")) - Number(b.replace(/[$,]/g, "")));
+    if (key === "month") return values.sort((a, b) => Date.parse(`1 ${b}`) - Date.parse(`1 ${a}`));
+    return values.sort((a, b) => a.localeCompare(b));
+  };
 
   /** Bills per category in the date range (and branch) — shown in the Category dropdown. */
   const catCounts = useMemo(() => {
@@ -146,11 +216,11 @@ export function OtherExpensesPage() {
   // Spend by branch (same as Flash Tech's): everything in view except the branch choice itself —
   // the date range, the category filter and the search all apply.
   const report = useMemo(() => {
-    const r = buildBranchReport(inRange.filter((e) => matchesCategory(e.category, category) && matchesSearch(e)));
+    const r = buildBranchReport(inRange.filter((e) => matchesCategory(e.category, category) && matchesSearch(e) && matchesColumns(e, "branch")));
     r.branches.sort((a, b) => (branchSort === "name" ? a.branch.localeCompare(b.branch) : b.total - a.total || a.branch.localeCompare(b.branch)));
     return r;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inRange, category, search, branchSort]);
+  }, [inRange, category, search, branchSort, colFilters]);
   const maxBranchSpend = report.branches.reduce((m, b) => Math.max(m, b.total), 0);
 
   const branchOptions = useMemo(() => Array.from(new Set((rows ?? []).map((e) => e.branch))).sort((a, b) => a.localeCompare(b)), [rows]);
@@ -160,15 +230,33 @@ export function OtherExpensesPage() {
   const branchesInView = new Set(filtered.map((e) => e.branch)).size;
 
   const fmtRange = (d: string) => fmtDay(d);
-  const rangeLabel = dateFrom && dateTo ? `${fmtRange(dateFrom)} – ${fmtRange(dateTo)}` : dateFrom ? `From ${fmtRange(dateFrom)}` : dateTo ? `Until ${fmtRange(dateTo)}` : "All dates";
-  const setPreset = (p: "thisMonth" | "lastMonth" | "thisYear" | "all") => {
-    if (p === "all") { setDateFrom(""); setDateTo(""); return; }
-    const now = new Date();
-    if (p === "thisYear") { setDateFrom(`${now.getFullYear()}-01-01`); setDateTo(`${now.getFullYear()}-12-31`); return; }
-    const first = new Date(now.getFullYear(), now.getMonth() - (p === "lastMonth" ? 1 : 0), 1);
-    setDateFrom(localISODate(first));
-    setDateTo(localISODate(new Date(first.getFullYear(), first.getMonth() + 1, 0)));
+  /** The month in view ("2026-11") when the range is exactly one month, like a block of the branch sheet. */
+  const viewMonth = monthOfRange(dateFrom, dateTo);
+  const rangeLabel = viewMonth
+    ? monthLabel(viewMonth)
+    : dateFrom && dateTo ? `${fmtRange(dateFrom)} – ${fmtRange(dateTo)}` : dateFrom ? `From ${fmtRange(dateFrom)}` : dateTo ? `Until ${fmtRange(dateTo)}` : "All dates";
+  const setMonth = (ym: string) => {
+    const b = monthBounds(ym);
+    setDateFrom(b.from);
+    setDateTo(b.to);
+    setCustomDates(false);
   };
+  const setPreset = (p: "thisYear" | "all") => {
+    setCustomDates(false);
+    if (p === "all") { setDateFrom(""); setDateTo(""); return; }
+    const y = new Date().getFullYear();
+    setDateFrom(`${y}-01-01`);
+    setDateTo(`${y}-12-31`);
+  };
+  /** Months to pick from: the first month with a bill (or a year back) through next month, newest first. */
+  const monthOptions = useMemo(() => {
+    const now = monthKey(new Date());
+    const earliest = (rows ?? []).reduce((m, e) => (e.expenseDate.slice(0, 7) < m ? e.expenseDate.slice(0, 7) : m), shiftMonth(now, -12));
+    const out: string[] = [];
+    for (let m = shiftMonth(now, 1); m >= earliest; m = shiftMonth(m, -1)) out.push(m);
+    if (viewMonth && !out.includes(viewMonth)) out.push(viewMonth);
+    return out.sort().reverse();
+  }, [rows, viewMonth]);
 
   // The branch sheet's columns: every category, then Payroll Total, EXP TOTAL, TOTAL.
   const exportReport = () =>
@@ -187,9 +275,9 @@ export function OtherExpensesPage() {
   const exportBills = () =>
     downloadCsv(
       `other-expenses-${todayISO()}.csv`,
-      ["Bill date", "Branch", "Category", "Vendor", "Billing period", "Amount", "Notes", "Files", "Added by"],
+      ["Month", "Branch", "Category", "Vendor", "Billing period", "Amount", "Notes", "Files", "Added by"],
       filtered.map((e) => [
-        e.expenseDate,
+        monthLabel(e.expenseDate.slice(0, 7)),
         e.branch,
         branchExpenseCategoryText(e),
         e.vendor,
@@ -200,6 +288,30 @@ export function OtherExpensesPage() {
         e.createdByName ?? "",
       ]),
     );
+
+  /** Super Admin: delete every bill in view (this month / filters), after typing DELETE. */
+  const handleDeleteAll = async () => {
+    if (!filtered.length) return;
+    const total = filtered.reduce((sum, e) => sum + e.amount, 0);
+    const typed = prompt(
+      `Delete all ${filtered.length} bill${filtered.length === 1 ? "" : "s"} shown (${rangeLabel}${branch ? ` · ${branch}` : ""}, ${fmtMoney(total)})?\n\nThis cannot be undone. Type DELETE to confirm.`,
+    );
+    if ((typed ?? "").trim().toUpperCase() !== "DELETE") return;
+    setDeletingAll(true);
+    try {
+      const ids = new Set(filtered.map((e) => e.id));
+      await deleteBranchExpenses([...ids]);
+      // Remove their files unless a bill that's staying still uses them.
+      const stillUsed = new Set((rows ?? []).filter((x) => !ids.has(x.id)).flatMap((x) => x.receipts.map((r) => r.path)));
+      const paths = new Set(filtered.flatMap((e) => e.receipts.map((r) => r.path)).filter((p) => p && !stillUsed.has(p)));
+      for (const p of paths) deleteExpenseReceiptFile(p).catch(() => undefined);
+      load();
+    } catch (err) {
+      alert(`Couldn't delete: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDeletingAll(false);
+    }
+  };
 
   const handleDelete = async (e: BranchExpense) => {
     if (!confirm(`Delete this ${branchExpenseCategoryText(e)} bill for ${e.branch} (${fmtMoney(e.amount)})? This cannot be undone.`)) return;
@@ -223,16 +335,56 @@ export function OtherExpensesPage() {
 
   return (
     <div className="space-y-6">
-      {/* Date range */}
+      {/* Month picker — one month at a time, like the branch sheet ( ‹ January 2026 › ) */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-slate-900/50 px-4 py-3">
-        <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Bill date</span>
-        <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} aria-label="From date" className="rounded-lg border border-white/10 bg-slate-800/50 px-2 py-1.5 text-sm text-white [color-scheme:dark] focus:border-blue-500 focus:outline-none" />
-        <span className="text-xs text-slate-500">to</span>
-        <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} aria-label="To date" className="rounded-lg border border-white/10 bg-slate-800/50 px-2 py-1.5 text-sm text-white [color-scheme:dark] focus:border-blue-500 focus:outline-none" />
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Month</span>
+        {customDates ? (
+          <>
+            <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} aria-label="From date" className="rounded-lg border border-white/10 bg-slate-800/50 px-2 py-1.5 text-sm text-white [color-scheme:dark] focus:border-blue-500 focus:outline-none" />
+            <span className="text-xs text-slate-500">to</span>
+            <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} aria-label="To date" className="rounded-lg border border-white/10 bg-slate-800/50 px-2 py-1.5 text-sm text-white [color-scheme:dark] focus:border-blue-500 focus:outline-none" />
+          </>
+        ) : (
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setMonth(shiftMonth(viewMonth ?? monthKey(new Date()), -1))}
+              aria-label="Previous month"
+              className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <select
+              value={viewMonth ?? ""}
+              onChange={(e) => (e.target.value ? setMonth(e.target.value) : setPreset("all"))}
+              aria-label="Month"
+              className="min-w-[10.5rem] rounded-lg border border-white/10 bg-slate-800/50 px-2 py-1.5 text-sm font-semibold text-white focus:border-blue-500 focus:outline-none"
+            >
+              {!viewMonth && <option value="">{rangeLabel}</option>}
+              {monthOptions.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
+            </select>
+            <button
+              type="button"
+              onClick={() => setMonth(shiftMonth(viewMonth ?? monthKey(new Date()), 1))}
+              aria-label="Next month"
+              className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        )}
         <div className="flex gap-1">
-          {([["thisMonth", "This month"], ["lastMonth", "Last month"], ["thisYear", "This year"], ["all", "All dates"]] as const).map(([k, l]) => (
-            <button key={k} type="button" onClick={() => setPreset(k)} className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-slate-700">{l}</button>
-          ))}
+          <button type="button" onClick={() => setMonth(monthKey(new Date()))} className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-slate-700">This month</button>
+          <button type="button" onClick={() => setPreset("thisYear")} className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-slate-700">This year</button>
+          <button type="button" onClick={() => setPreset("all")} className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-slate-700">All dates</button>
+          <button
+            type="button"
+            onClick={() => setCustomDates((v) => !v)}
+            aria-pressed={customDates}
+            className={`rounded-lg px-2.5 py-1.5 text-xs transition ${customDates ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-200 hover:bg-slate-700"}`}
+          >
+            Custom dates
+          </button>
         </div>
         <span className="ml-auto text-xs text-slate-400">Showing: <span className="font-semibold text-white">{rangeLabel}{branch ? ` · ${branch}` : ""}</span></span>
       </div>
@@ -368,11 +520,31 @@ export function OtherExpensesPage() {
             <option value="">All branches</option>
             {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
           </select>
+          {anyColumnFilter && (
+            <button type="button" onClick={() => setColFilters({})} className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700">
+              Clear column filters
+            </button>
+          )}
         </div>
         <div className="mt-3 flex justify-end gap-2">
           <button type="button" onClick={exportBills} className="inline-flex items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-700">
             <Download className="h-4 w-4" /> Export CSV
           </button>
+          {/* Car IQ's transaction report → CarIQ Transactions per branch */}
+          <button type="button" onClick={() => setImporting(true)} className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600">
+            <FileSpreadsheet className="h-4 w-4" /> Import Car IQ
+          </button>
+          {isSuperAdmin && (
+            <button
+              type="button"
+              onClick={handleDeleteAll}
+              disabled={deletingAll || filtered.length === 0}
+              title="Super Admin only — deletes every bill shown (this month and filters)"
+              className="inline-flex items-center gap-2 rounded-lg bg-red-700 px-3 py-2 text-sm font-semibold text-white hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {deletingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Delete all ({filtered.length})
+            </button>
+          )}
           <button type="button" onClick={() => setForm({ editing: null })} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
             + Add Expense
           </button>
@@ -386,15 +558,19 @@ export function OtherExpensesPage() {
         <table className="w-full min-w-max text-xs">
           <thead>
             <tr className="border-b border-white/10 text-left text-[10px] font-semibold uppercase text-slate-400">
-              <th className="px-2 py-2">Bill date</th>
-              <th className="px-2 py-2">Branch</th>
-              <th className="px-2 py-2">Category</th>
-              <th className="px-2 py-2">Vendor / provider</th>
-              <th className="px-2 py-2">Billing period</th>
-              <th className="px-2 py-2 text-right">Amount</th>
-              <th className="px-2 py-2">Notes</th>
-              <th className="px-2 py-2">Bill / receipt</th>
-              <th className="px-2 py-2">Added by</th>
+              {COLUMNS.map((c) => (
+                <th key={c.key} className={`whitespace-nowrap px-2 py-2 ${c.right ? "text-right" : ""}`}>
+                  <span className={`inline-flex items-center ${c.right ? "justify-end" : ""}`}>
+                    {c.label}
+                    <TicketColumnFilter
+                      options={columnOptions(c.key)}
+                      selected={colFilters[c.key] ?? new Set()}
+                      onChange={(next) => setColFilters((prev) => ({ ...prev, [c.key]: next }))}
+                      label={`Filter by ${c.label}`}
+                    />
+                  </span>
+                </th>
+              ))}
               <th className="px-2 py-2">Actions</th>
             </tr>
           </thead>
@@ -408,7 +584,7 @@ export function OtherExpensesPage() {
                 const urls = e.receipts.map((r) => r.url);
                 return (
                   <tr key={e.id} className="border-b border-white/5 transition hover:bg-white/5">
-                    <td className="whitespace-nowrap px-2 py-2 tabular-nums text-slate-300">{fmtDay(e.expenseDate)}</td>
+                    <td className="whitespace-nowrap px-2 py-2 text-slate-300">{monthLabel(e.expenseDate.slice(0, 7))}</td>
                     <td className="whitespace-nowrap px-2 py-2 font-medium text-white">{e.branch}</td>
                     <td className="whitespace-nowrap px-2 py-2">
                       <span className="inline-flex items-center gap-1.5 rounded border border-white/10 bg-white/5 px-2 py-0.5 text-xs font-medium text-slate-200">
@@ -424,8 +600,15 @@ export function OtherExpensesPage() {
                       {urls.length === 0 ? <span className="text-slate-600">—</span> : (
                         <div className="flex items-center gap-1">
                           {urls.slice(0, 2).map((url) => (
-                            <button key={url} type="button" onClick={() => setPreview({ url, urls })} title="View" className="block h-8 w-8 overflow-hidden rounded border border-white/10 bg-slate-800 hover:border-blue-500">
-                              {isPdfReceipt(url) ? <span className="flex h-full w-full items-center justify-center text-slate-400"><Paperclip className="h-4 w-4" /></span> : <img src={url} alt="Bill" className="h-full w-full object-cover" />}
+                            <button
+                              key={url}
+                              type="button"
+                              // Pictures and PDFs open in the viewer; anything else (the Car IQ .xlsx) downloads.
+                              onClick={() => (isImageFile(url) || isPdfReceipt(url) ? setPreview({ url, urls: urls.filter((u) => isImageFile(u) || isPdfReceipt(u)) }) : window.open(url, "_blank", "noopener"))}
+                              title={e.receipts.find((r) => r.url === url)?.name || "View"}
+                              className="block h-8 w-8 overflow-hidden rounded border border-white/10 bg-slate-800 hover:border-blue-500"
+                            >
+                              {isImageFile(url) ? <img src={url} alt="Bill" className="h-full w-full object-cover" /> : <span className="flex h-full w-full items-center justify-center text-slate-400">{/\.xlsx?(\?|$)/i.test(url.split("?")[0]) ? <FileSpreadsheet className="h-4 w-4 text-emerald-300" /> : <Paperclip className="h-4 w-4" />}</span>}
                             </button>
                           ))}
                           {urls.length > 2 && <button type="button" onClick={() => setPreview({ url: urls[2], urls })} className="rounded bg-slate-800 px-1.5 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-700">+{urls.length - 2}</button>}
@@ -453,10 +636,20 @@ export function OtherExpensesPage() {
       </div>
 
       {preview && <ReceiptLightbox url={preview.url} urls={preview.urls} onClose={() => setPreview(null)} />}
+      {importing && (
+        <CarIqImportModal
+          companyId={companyId}
+          existing={rows ?? []}
+          branchSuggestions={Array.from(new Set([...KNOWN_BRANCHES, ...branchOptions])).sort((a, b) => a.localeCompare(b))}
+          onClose={() => setImporting(false)}
+          onSaved={() => { setImporting(false); load(); }}
+        />
+      )}
       {/* Add: every column for one branch at once (like a row of the sheet). Edit: one bill. */}
       {form && !form.editing && (
         <BranchSheetForm
           companyId={companyId}
+          defaultMonth={viewMonth ?? monthKey(new Date())}
           branchSuggestions={Array.from(new Set([...KNOWN_BRANCHES, ...branchOptions])).sort((a, b) => a.localeCompare(b))}
           defaultBranch={branch}
           onClose={() => setForm(null)}
@@ -509,17 +702,21 @@ function BranchSheetForm({
   companyId,
   branchSuggestions,
   defaultBranch,
+  defaultMonth,
   onClose,
   onSaved,
 }: {
   companyId: string | null;
   branchSuggestions: string[];
   defaultBranch: string;
+  /** "2026-11" — the month in view on the page. */
+  defaultMonth: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const [branch, setBranch] = useState(defaultBranch);
-  const [expenseDate, setExpenseDate] = useState(todayISO());
+  // Saved as the 1st of the month — the sheet is by month.
+  const [expenseDate, setExpenseDate] = useState(`${defaultMonth}-01`);
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
   const [amounts, setAmounts] = useState<Partial<Record<BranchExpenseCategory, string>>>({});
@@ -539,7 +736,7 @@ function BranchSheetForm({
 
   const problem =
     !branch.trim() ? "Pick or type the branch."
-    : !expenseDate ? "Pick the bill date."
+    : !expenseDate ? "Pick the month."
     : entered.length === 0 ? "Fill in at least one line."
     : bad ? `${BRANCH_EXPENSE_LABEL[bad]}: enter a valid amount.`
     : orphan ? `${BRANCH_EXPENSE_LABEL[orphan]} has notes or files but no amount.`
@@ -659,8 +856,8 @@ function BranchSheetForm({
             <datalist id="bs-branches">{branchSuggestions.map((b) => <option key={b} value={b} />)}</datalist>
           </div>
           <div>
-            <label className={label} htmlFor="bs-date">Bill date <span className="normal-case text-red-400">*</span></label>
-            <input id="bs-date" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} className={input} />
+            <label className={label} htmlFor="bs-date">Month <span className="normal-case text-red-400">*</span></label>
+            <input id="bs-date" type="month" value={expenseDate.slice(0, 7)} onChange={(e) => e.target.value && setExpenseDate(`${e.target.value}-01`)} className={input} />
           </div>
           <div>
             <span className={label}>Billing period (optional)</span>
@@ -739,7 +936,7 @@ function BranchExpenseForm({
     !branch.trim() ? "Pick or type the branch."
     : category === "other" && !otherLabel.trim() ? "Say what the Other expense is."
     : !amount.trim() || !isFinite(amountNum) || amountNum < 0 ? "Enter the amount."
-    : !expenseDate ? "Pick the bill date."
+    : !expenseDate ? "Pick the month."
     : periodStart && periodEnd && periodStart > periodEnd ? "The billing period ends before it starts."
     : null;
 
@@ -820,8 +1017,8 @@ function BranchExpenseForm({
               <input id="be-amount" type="text" inputMode="decimal" autoComplete="off" value={amount} onChange={(e) => setAmount(cleanAmount(e.target.value))} onFocus={(e) => e.currentTarget.select()} placeholder="0.00" className={input} />
             </div>
             <div>
-              <label className={label} htmlFor="be-date">Bill date <span className="normal-case text-red-400">*</span></label>
-              <input id="be-date" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} className={input} />
+              <label className={label} htmlFor="be-date">Month <span className="normal-case text-red-400">*</span></label>
+              <input id="be-date" type="month" value={expenseDate.slice(0, 7)} onChange={(e) => e.target.value && setExpenseDate(`${e.target.value}-01`)} className={input} />
             </div>
           </div>
 
