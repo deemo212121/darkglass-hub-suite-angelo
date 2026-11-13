@@ -897,18 +897,22 @@ export function TechActivityReportModal({
                   </tr>
 
                   {Math.abs(techHourlyPay - (techHourlyPayStraight + techHourlyPayOtPremium)) > 0.005 ? (
-                    // State-mode override in effect (payroll_hourly_ot_overrides) — an
-                    // externally-set total that can't be meaningfully split into
-                    // straight/premium pieces, so show it as the one combined figure
-                    // it's always been.
-                    <tr title="Hours actually worked this period (regular + overtime), State-matched total from the payroll detail step's Compliant/State toggle. Set via their name link on the Tech Payroll table → Add Rate Change.">
-                      <td className="px-3 py-2 text-slate-300">Hourly Pay</td>
-                      <td className="px-3 py-2 text-right text-slate-300">
-                        {Math.max(hoursWorked - (row.techPaidLeaveHours ?? 0), 0).toFixed(3)}{overtimeHours > 0 ? ` + ${overtimeHours.toFixed(3)} OT` : ""}
-                      </td>
-                      <td className="px-3 py-2 text-right text-slate-300">{fmt(hourlyRate)}/hr</td>
-                      <td className="px-3 py-2 text-right text-slate-200">{fmt(techHourlyPay - (row.techPaidLeavePay ?? 0))}</td>
-                    </tr>
+                    <>
+                      <tr title="Regular worked hours at the company rate plus the regular-hours state match. PTO is shown separately below. Same split as Reviewed Periods.">
+                        <td className="px-3 py-2 text-slate-300">Regular Pay (including State match)</td>
+                        <td className="px-3 py-2 text-right text-slate-300">{Math.max(hoursWorked - (row.techPaidLeaveHours ?? 0), 0).toFixed(3)}</td>
+                        <td className="px-3 py-2 text-right text-slate-300">Company + State match</td>
+                        <td className="px-3 py-2 text-right text-slate-200">{fmt(stateRegularShare - (row.techPaidLeavePay ?? 0))}</td>
+                      </tr>
+                      {overtimeHours > 0 && (
+                        <tr title="OT hours at the company rate, plus the weighted OT premium and additional state OT match. Same split as Reviewed Periods; already included in Total Payment.">
+                          <td className="px-3 py-2 text-slate-300">OT Pay (including State match)</td>
+                          <td className="px-3 py-2 text-right text-slate-300">{overtimeHours.toFixed(3)} OT</td>
+                          <td className="px-3 py-2 text-right text-slate-300">Base + premium + State match</td>
+                          <td className="px-3 py-2 text-right text-slate-200">{fmt(techHourlyPay - stateRegularShare)}</td>
+                        </tr>
+                      )}
+                    </>
                   ) : (
                     <>
                       <tr title="All hours worked this period (regular + overtime), once, at this technician's flat hourly rate. Set via their name link on the Tech Payroll table → Add Rate Change, same as an office employee's rate.">
