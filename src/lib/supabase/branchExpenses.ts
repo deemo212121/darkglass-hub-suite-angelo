@@ -92,6 +92,14 @@ export async function setBranchExpenseReceipts(id: string, receipts: BranchExpen
   if (error) throw new Error(friendly(error.message));
 }
 
+/** Super Admin's "Delete all" — every bill in view, in batches. */
+export async function deleteBranchExpenses(ids: string[]): Promise<void> {
+  for (let i = 0; i < ids.length; i += 200) {
+    const { error } = await supabase.from("branch_expenses").delete().in("id", ids.slice(i, i + 200));
+    if (error) throw new Error(friendly(error.message));
+  }
+}
+
 export async function deleteBranchExpense(id: string): Promise<void> {
   const { error } = await supabase.from("branch_expenses").delete().eq("id", id);
   if (error) throw new Error(friendly(error.message));
