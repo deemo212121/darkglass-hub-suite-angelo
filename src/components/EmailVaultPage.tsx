@@ -115,18 +115,39 @@ function DeactivatedTag() {
 }
 
 /** Searchable checklist of company accounts, by profile id. */
-function PeoplePicker({ users, value, onChange, exclude }: { users: ProfileRow[]; value: string[]; onChange: (next: string[]) => void; exclude?: Set<string> }) {
+function PeoplePicker({ users, value, onChange, exclude, deactivated }: {
+  users: ProfileRow[];
+  value: string[];
+  onChange: (next: string[]) => void;
+  exclude?: Set<string>;
+  /** Deactivated accounts — listed only when "Show deactivated" is on (a past employee's mailbox can still be in use). */
+  deactivated?: ProfileRow[];
+}) {
   const [q, setQ] = useState("");
+  const [withDeactivated, setWithDeactivated] = useState(false);
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return users
+    return [...users, ...(withDeactivated ? deactivated ?? [] : [])]
       .filter((u) => !exclude?.has(u.id))
       .filter((u) => !needle || nameOf(u).toLowerCase().includes(needle) || (u.email || "").toLowerCase().includes(needle));
-  }, [users, q, exclude]);
+  }, [users, deactivated, withDeactivated, q, exclude]);
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter((v) => v !== id) : [...value, id]);
   return (
     <div className="rounded-md border border-[var(--color-panel-border)]">
-      <input className="glass-input text-sm w-full rounded-b-none border-0 border-b border-[var(--color-panel-border)]" placeholder="Search people…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="flex items-center border-b border-[var(--color-panel-border)]">
+        <input className="glass-input text-sm w-full rounded-b-none border-0" placeholder="Search people…" value={q} onChange={(e) => setQ(e.target.value)} />
+        {!!deactivated?.length && (
+          <button
+            type="button"
+            onClick={() => setWithDeactivated((v) => !v)}
+            aria-pressed={withDeactivated}
+            title={withDeactivated ? "Hide deactivated accounts" : "Also list deactivated accounts"}
+            className={`mx-1.5 shrink-0 whitespace-nowrap rounded-md border px-2 py-1 text-xs font-medium transition ${withDeactivated ? "border-red-400/50 bg-red-500/15 text-red-200" : "border-white/15 text-slate-300 hover:bg-white/10"}`}
+          >
+            {withDeactivated ? "Hide deactivated" : `Show deactivated (${deactivated.length})`}
+          </button>
+        )}
+      </div>
       <div className="max-h-56 overflow-y-auto py-1">
         {shown.length === 0 ? (
           <p className="px-3 py-2 text-xs text-muted-foreground">No one matches.</p>
@@ -138,7 +159,7 @@ function PeoplePicker({ users, value, onChange, exclude }: { users: ProfileRow[]
                 <span className={`h-4 w-4 rounded border flex items-center justify-center shrink-0 ${checked ? "bg-primary border-primary" : "border-white/30"}`}>
                   {checked && <Check className="h-3 w-3 text-white" />}
                 </span>
-                <span className="flex-1 truncate">{nameOf(u)}</span>
+                <span className={`flex-1 truncate ${u.is_active ? "" : "text-slate-400"}`}>{nameOf(u)}</span>
                 {!u.is_active && <DeactivatedTag />}
                 <span className="text-[10px] text-muted-foreground uppercase shrink-0">{u.role}</span>
               </button>
@@ -176,7 +197,8 @@ export function EmailVaultPage({ mod, sub }: Props) {
   const [savingTick, setSavingTick] = useState<string | null>(null);
 
   const [editing, setEditing] = useState<EmailVaultEntry | "new" | null>(null);
-  const [form, setForm] = useState({ email: "", password: "", people: [] as string[], platforms: [] as string[] });
+  /** passwordLater: "No password yet" ticked — the email can be saved now and its password filled in later (Edit). */
+  const [form, setForm] = useState({ email: "", password: "", people: [] as string[], platforms: [] as string[], passwordLater: false });
   const [showFormPassword, setShowFormPassword] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<EmailVaultEntry | null>(null);
   const [managingAccess, setManagingAccess] = useState(false);
@@ -189,11 +211,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
 
   const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
   const activeUsers = useMemo(() => users.filter((u) => u.is_active).sort((a, b) => nameOf(a).localeCompare(nameOf(b))), [users]);
-  /** Add / Edit Email can link a deactivated account too (their old mailbox), listed after everyone active. */
-  const emailPickerUsers = useMemo(
-    () => [...activeUsers, ...users.filter((u) => !u.is_active).sort((a, b) => nameOf(a).localeCompare(nameOf(b)))],
-    [activeUsers, users],
-  );
+  const deactivatedUsers = useMemo(() => users.filter((u) => !u.is_active).sort((a, b) => nameOf(a).localeCompare(nameOf(b))), [users]);
   /** Account by login email — names an email nobody is linked to yet (most are deactivated people's old mailboxes). */
   const userByLoginEmail = useMemo(() => new Map(users.filter((u) => u.email).map((u) => [u.email.trim().toLowerCase(), u])), [users]);
   const superAdmins = useMemo(() => activeUsers.filter((u) => isEmailVaultSuperAdmin(u.role, u.extra_roles)), [activeUsers]);
@@ -328,7 +346,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
 
   const openForm = (entry: EmailVaultEntry | "new") => {
     setEditing(entry);
-    setForm(entry === "new" ? { email: "", password: "", people: [], platforms: [] } : { email: entry.email, password: "", people: entry.people, platforms: entry.platforms });
+    setForm(entry === "new" ? { email: "", password: "", people: [], platforms: [], passwordLater: false } : { email: entry.email, password: "", people: entry.people, platforms: entry.platforms, passwordLater: false });
     setShowFormPassword(false);
   };
 
@@ -336,13 +354,16 @@ export function EmailVaultPage({ mod, sub }: Props) {
     if (!editing) return;
     const email = form.email.trim();
     if (!email) { toast.error("Enter the email address."); return; }
-    if (editing === "new" && canSeePasswords && !form.password) { toast.error("Enter the password."); return; }
+    if (editing === "new" && canSeePasswords && !form.password && !form.passwordLater) {
+      toast.error('Enter the password, or tick "No password yet" to fill it in later.');
+      return;
+    }
     setBusy(true);
     try {
       if (editing === "new") {
-        const id = await addEmailVaultEntry({ email, password: canSeePasswords ? form.password : "", people: form.people });
+        const id = await addEmailVaultEntry({ email, password: canSeePasswords && !form.passwordLater ? form.password : "", people: form.people });
         if (form.platforms.length > 0) await setEmailVaultPlatforms(id, form.platforms);
-        toast.success(`${email} added.`);
+        toast.success(form.passwordLater || !canSeePasswords ? `${email} added — fill in its password later with Edit.` : `${email} added.`);
       } else {
         await updateEmailVaultEntry(editing.id, { email, people: form.people, password: canSeePasswords && form.password ? form.password : undefined });
         const was = [...editing.platforms].sort().join("|");
@@ -668,22 +689,34 @@ export function EmailVaultPage({ mod, sub }: Props) {
             {!canSeePasswords ? (
               <p className="text-xs text-muted-foreground">You can see email addresses only, so the password is left for someone with password access to set.</p>
             ) : (
-            <label className="block">
+            <div className="block">
               <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Password</span>
               <div className="mt-1 flex gap-1.5">
                 <input
                   type={showFormPassword ? "text" : "password"}
                   autoComplete="new-password"
-                  className="glass-input text-sm w-full font-mono"
+                  className="glass-input text-sm w-full font-mono disabled:opacity-50"
                   value={form.password}
+                  disabled={form.passwordLater}
                   onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-                  placeholder={editing === "new" ? "" : "Leave blank to keep the current password"}
+                  placeholder={form.passwordLater ? "Fill in later with Edit" : editing === "new" ? "" : "Leave blank to keep the current password"}
                 />
-                <button type="button" className="btn hover:bg-white/15" title={showFormPassword ? "Hide" : "Show"} onClick={() => setShowFormPassword((s) => !s)}>
+                <button type="button" className="btn hover:bg-white/15" title={showFormPassword ? "Hide" : "Show"} disabled={form.passwordLater} onClick={() => setShowFormPassword((s) => !s)}>
                   {showFormPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
-            </label>
+              {editing === "new" && (
+                <label className="mt-2 flex w-fit cursor-pointer items-center gap-2 text-sm text-slate-300">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-blue-500"
+                    checked={form.passwordLater}
+                    onChange={(e) => { const on = e.target.checked; setForm((f) => ({ ...f, passwordLater: on, password: on ? "" : f.password })); }}
+                  />
+                  No password yet — someone else will fill it in
+                </label>
+              )}
+            </div>
             )}
             <div>
               <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Platforms this email is used on</span>
@@ -716,7 +749,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
                 </div>
               )}
               <div className="mt-2">
-                <PeoplePicker users={emailPickerUsers} value={form.people} onChange={(people) => setForm((f) => ({ ...f, people }))} />
+                <PeoplePicker users={activeUsers} deactivated={deactivatedUsers} value={form.people} onChange={(people) => setForm((f) => ({ ...f, people }))} />
               </div>
             </div>
           </div>

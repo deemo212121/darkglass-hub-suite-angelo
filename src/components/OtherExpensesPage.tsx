@@ -267,7 +267,7 @@ export function OtherExpensesPage() {
                   <td className="whitespace-nowrap px-2 py-1 text-slate-400">{l.service || "—"}</td>
                   <td className="max-w-[180px] truncate px-2 py-1 text-slate-300" title={l.merchant}>{l.merchant || "—"}</td>
                   <td className="max-w-[260px] truncate px-2 py-1 text-slate-400" title={l.address}>{l.address || "—"}</td>
-                  <td className="whitespace-nowrap px-3 py-1 text-right font-mono text-slate-200">{fmtMoney(Number(l.amount) || 0)}</td>
+                  <td className="whitespace-nowrap px-3 py-1 text-right font-mono text-emerald-300">{fmtMoney(Number(l.amount) || 0)}</td>
                 </tr>
               ))}
             </tbody>
@@ -277,7 +277,7 @@ export function OtherExpensesPage() {
                   {picked ? `${picked}: ${lines.length} of ${all.length} transactions` : `Total of ${lines.length} transaction${lines.length === 1 ? "" : "s"}`}
                   {!picked && Math.abs(allSum - e.amount) >= 0.01 && <span className="ml-2 font-normal text-amber-300">(bill amount is {fmtMoney(e.amount)} — it was edited after the import)</span>}
                 </td>
-                <td className="px-3 py-1.5 text-right font-mono text-xs font-bold text-white">{fmtMoney(sum)}</td>
+                <td className="px-3 py-1.5 text-right font-mono text-xs font-bold text-emerald-400">{fmtMoney(sum)}</td>
               </tr>
             </tfoot>
           </table>
@@ -740,7 +740,7 @@ export function OtherExpensesPage() {
                     </td>
                     <td className="whitespace-nowrap px-2 py-2 text-slate-300">{e.vendor || "—"}</td>
                     <td className="whitespace-nowrap px-2 py-2 tabular-nums text-slate-400">{e.periodStart || e.periodEnd ? `${fmtDay(e.periodStart) || "…"} – ${fmtDay(e.periodEnd) || "…"}` : "—"}</td>
-                    <td className="px-2 py-2 text-right font-mono text-slate-200">{fmtMoney(e.amount)}</td>
+                    <td className="px-2 py-2 text-right font-mono text-emerald-300">{fmtMoney(e.amount)}</td>
                     <td className="max-w-[260px] truncate px-2 py-2 text-slate-400" title={e.notes}>{e.notes || "—"}</td>
                     <td className="px-2 py-2">
                       {urls.length === 0 ? <span className="text-slate-600">—</span> : (
@@ -784,6 +784,22 @@ export function OtherExpensesPage() {
               })
             )}
           </tbody>
+          {rows && filtered.length > 0 && (() => {
+            const total = Math.round(filtered.reduce((s, e) => s + e.amount, 0) * 100) / 100;
+            const txns = filtered.reduce((s, e) => s + e.lineItems.length, 0);
+            return (
+              <tfoot>
+                <tr className="border-t-2 border-white/20 bg-white/5">
+                  <td colSpan={5} className="whitespace-nowrap px-2 py-2.5 text-right text-xs font-semibold uppercase text-slate-300">
+                    Total · {filtered.length} bill{filtered.length === 1 ? "" : "s"}
+                    {txns > 0 && <span className="normal-case text-slate-400"> · {txns} txn{txns === 1 ? "" : "s"}</span>}
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-2.5 text-right font-mono text-sm font-bold text-emerald-400">{fmtMoney(total)}</td>
+                  <td colSpan={4} />
+                </tr>
+              </tfoot>
+            );
+          })()}
         </table>
       </div>
 
