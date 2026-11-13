@@ -290,6 +290,35 @@ export function normalizeRole(role: string | null | undefined): string {
   return String(role ?? "").trim().toUpperCase().replace(/\s+/g, "_");
 }
 
+/** Access levels, not jobs — there's no job title to compare a Leaders title against. */
+const ACCESS_LEVEL_ROLES = new Set(["ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"]);
+
+/** A title fits a role label when it IS the label, or the label minus its department ("Team Leader" ← "Parts Team Leader"); "Senior" / "Assistant" are rank, so "Branch Manager" doesn't fit "Senior Branch Manager". */
+const titleFitsLabel = (title: string, label: string): boolean => {
+  const t = title.trim().toLowerCase();
+  const l = label.trim().toLowerCase();
+  if (!t || !l) return false;
+  if (l === t) return true;
+  return l.endsWith(` ${t}`) && !/\b(senior|assistant)\b/.test(l.slice(0, l.length - t.length));
+};
+
+/**
+ * Whether a People Operations → Leaders title still describes someone with
+ * these roles. Changing a role in User Management never touches the Leaders
+ * roster, so a promoted person's row keeps the old job ("Branch Manager" for
+ * a Technical Assistant Director, "Team Leader" for a CSR Manager) — the
+ * Master List shows the role instead then. A title that fits one of their
+ * roles ("Manager" for a Claims Manager, "Senior Manager" for an Admin who
+ * also holds Senior Manager), names no role at all ("Pre Auth"), or sits on
+ * an Admin / Super Admin only (nothing to compare it to) still wins.
+ */
+export function leadersTitleFitsRoles(title: string, roles: readonly (string | null | undefined)[]): boolean {
+  const codes = roles.map(normalizeRole).filter(Boolean);
+  if (codes.some((c) => titleFitsLabel(title, ROLE_LABELS[c] ?? c.replace(/_/g, " ")))) return true;
+  if (!Object.values(ROLE_LABELS).some((label) => titleFitsLabel(title, label))) return true;
+  return !codes.some((c) => ROLE_LABELS[c] && !ACCESS_LEVEL_ROLES.has(c));
+}
+
 /**
  * Roles that carry another role's access with them: an Accounting Manager
  * can open and do everything Accounting (FINANCE) can, and an HR Manager

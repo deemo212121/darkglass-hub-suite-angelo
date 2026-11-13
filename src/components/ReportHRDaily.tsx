@@ -39,7 +39,7 @@ import { LOCATIONS_DATA, lookupZip } from "@/lib/zipCoverage";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { nowInTimezone, DEFAULT_ATTENDANCE_TIMEZONE } from "@/lib/attendanceGrace";
-import { normalizeRole, ROLE_LABELS, isJotformHrRole, getRoleDepartmentBreakdown } from "@/lib/roleLabels";
+import { normalizeRole, ROLE_LABELS, isJotformHrRole, getRoleDepartmentBreakdown, leadersTitleFitsRoles } from "@/lib/roleLabels";
 import { useAllRoleOptions } from "@/lib/customRoles";
 import { getCompanyUsers, getProfileEmployeeInfo, getEmployeeInfoByProfileIds, saveProfileEmployeeInfo, updateCompanyUser, getMyProfileId, getAccountCreatorsByEmail, getProfileCredentialsPreview, setTraineeAccessGranted, getUserStatusChanges, getSeparations, preloadSeparations, recordAccountStatusChange, type AccountStatusChange, type EmployeeInfo, type ProfileRow, type Separation } from "@/lib/supabase/users";
 import { CorrectionManagerSignModal, CorrectionHrSignModal } from "@/components/CorrectionSignModals";
@@ -18375,8 +18375,15 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     for (const [name, row] of leadersBestRowByName) map.set(name, row.roleTitle);
     return map;
   }, [leadersBestRowByName]);
-  const resolveMasterListPosition = (e: Employee): string =>
-    leadersTitleByName.get(e.name) || ROLE_LABELS[normalizeRole(e.position)] || e.position || "—";
+  // …unless the title names a different job than their role: the Leaders
+  // row wasn't updated when User Management changed the role (a Branch
+  // Manager promoted to Technical Assistant Director still read "Branch
+  // Manager" here) — see leadersTitleFitsRoles.
+  const resolveMasterListPosition = (e: Employee): string => {
+    const title = leadersTitleByName.get(e.name);
+    const fits = !!title && leadersTitleFitsRoles(title, [e.position, ...e.extraRoles]);
+    return (fits ? title : "") || ROLE_LABELS[normalizeRole(e.position)] || e.position || "—";
+  };
   /** The raw specific department, before the senior-tier "Senior Manager" override below — needed by hrAccountingCsrRank to know which of HR/Accounting/CSR someone is actually in even once they're a senior leader. */
   const rawSpecificDepartment = (e: Employee): string => {
     const raw = e.department?.trim();
