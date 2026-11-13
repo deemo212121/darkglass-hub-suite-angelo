@@ -105,6 +105,15 @@ async function copyText(text: string): Promise<void> {
   if (!ok) throw new Error("Your browser blocked copying — use Show and copy it by hand.");
 }
 
+/** Shown next to anyone whose account is deactivated, wherever their name appears. */
+function DeactivatedTag() {
+  return (
+    <span className="shrink-0 rounded-full border border-red-500/40 bg-red-500/10 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-red-300" title="This account is deactivated">
+      Deactivated
+    </span>
+  );
+}
+
 /** Searchable checklist of company accounts, by profile id. */
 function PeoplePicker({ users, value, onChange, exclude }: { users: ProfileRow[]; value: string[]; onChange: (next: string[]) => void; exclude?: Set<string> }) {
   const [q, setQ] = useState("");
@@ -130,6 +139,7 @@ function PeoplePicker({ users, value, onChange, exclude }: { users: ProfileRow[]
                   {checked && <Check className="h-3 w-3 text-white" />}
                 </span>
                 <span className="flex-1 truncate">{nameOf(u)}</span>
+                {!u.is_active && <DeactivatedTag />}
                 <span className="text-[10px] text-muted-foreground uppercase shrink-0">{u.role}</span>
               </button>
             );
@@ -179,6 +189,13 @@ export function EmailVaultPage({ mod, sub }: Props) {
 
   const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
   const activeUsers = useMemo(() => users.filter((u) => u.is_active).sort((a, b) => nameOf(a).localeCompare(nameOf(b))), [users]);
+  /** Add / Edit Email can link a deactivated account too (their old mailbox), listed after everyone active. */
+  const emailPickerUsers = useMemo(
+    () => [...activeUsers, ...users.filter((u) => !u.is_active).sort((a, b) => nameOf(a).localeCompare(nameOf(b)))],
+    [activeUsers, users],
+  );
+  /** Account by login email — names an email nobody is linked to yet (most are deactivated people's old mailboxes). */
+  const userByLoginEmail = useMemo(() => new Map(users.filter((u) => u.email).map((u) => [u.email.trim().toLowerCase(), u])), [users]);
   const superAdmins = useMemo(() => activeUsers.filter((u) => isEmailVaultSuperAdmin(u.role, u.extra_roles)), [activeUsers]);
 
   const refreshEvents = useCallback(() => {
@@ -212,7 +229,25 @@ export function EmailVaultPage({ mod, sub }: Props) {
 
   useEffect(() => { void load(); }, [load]);
 
-  const peopleNames = useCallback((e: EmailVaultEntry) => e.people.map((id) => nameOf(userById.get(id))).sort((a, b) => a.localeCompare(b)).join(", "), [userById]);
+  const ownersOf = useCallback(
+    (e: EmailVaultEntry): { users: ProfileRow[]; byLogin: boolean } => {
+      const linked = e.people.map((id) => userById.get(id)).filter((u): u is ProfileRow => !!u);
+      if (linked.length > 0 || e.people.length > 0) return { users: linked.sort((a, b) => nameOf(a).localeCompare(nameOf(b))), byLogin: false };
+      const owner = userByLoginEmail.get(e.email.trim().toLowerCase());
+      return { users: owner ? [owner] : [], byLogin: !!owner };
+    },
+    [userById, userByLoginEmail],
+  );
+  /** Name column text (what search, the funnel and sorting use); deactivated people are marked. */
+  const peopleNames = useCallback(
+    (e: EmailVaultEntry) => ownersOf(e).users.map((u) => (u.is_active ? nameOf(u) : `${nameOf(u)} (Deactivated)`)).join(", "),
+    [ownersOf],
+  );
+  /** 0 = someone active uses it, 1 = only deactivated people, 2 = nobody. */
+  const ownerRank = useCallback((e: EmailVaultEntry) => {
+    const owners = ownersOf(e).users;
+    return owners.length === 0 ? 2 : owners.some((u) => u.is_active) ? 0 : 1;
+  }, [ownersOf]);
   /** A row's value in a filterable column — what the funnel lists and matches. */
   const cellValue = useCallback(
     (e: EmailVaultEntry, col: string) =>
@@ -226,18 +261,16 @@ export function EmailVaultPage({ mod, sub }: Props) {
   const searched = useMemo(() => {
     const needle = search.trim().toLowerCase();
     if (!needle) return entries;
-    return entries.filter((e) => e.email.toLowerCase().includes(needle) || e.people.some((id) => nameOf(userById.get(id)).toLowerCase().includes(needle)));
-  }, [entries, search, userById]);
-  // One row per email like the sheet, by who uses it (unassigned last), then email.
+    return entries.filter((e) => e.email.toLowerCase().includes(needle) || peopleNames(e).toLowerCase().includes(needle));
+  }, [entries, search, peopleNames]);
+  // One row per email like the sheet, by who uses it — active people, then
+  // deactivated people's old mailboxes, then emails nobody is linked to.
   const filtered = useMemo(
     () =>
       searched
         .filter((e) => passesFilters(e))
-        .sort((a, b) => {
-          const an = peopleNames(a), bn = peopleNames(b);
-          return (an ? 0 : 1) - (bn ? 0 : 1) || an.localeCompare(bn) || a.email.localeCompare(b.email);
-        }),
-    [searched, passesFilters, peopleNames],
+        .sort((a, b) => ownerRank(a) - ownerRank(b) || peopleNames(a).localeCompare(peopleNames(b)) || a.email.localeCompare(b.email)),
+    [searched, passesFilters, peopleNames, ownerRank],
   );
   /** Funnel options for a column: its values among rows passing every OTHER filter (Excel's autofilter). */
   const filterOptions = (col: string) => Array.from(new Set(searched.filter((e) => passesFilters(e, col)).map((e) => cellValue(e, col)))).sort((a, b) => a.localeCompare(b));
@@ -536,13 +569,28 @@ export function EmailVaultPage({ mod, sub }: Props) {
               {filtered.map((entry, i) => {
                 const shown = revealed[entry.id];
                 const names = peopleNames(entry);
+                const owners = ownersOf(entry);
                 // The sheet's green / blue bands, tinted over a solid cell so the frozen columns cover what scrolls under them.
                 const cell = `bg-[var(--background)] ${i % 2 ? "shadow-[inset_0_0_0_9999px_rgba(59,130,246,0.08)]" : "shadow-[inset_0_0_0_9999px_rgba(16,185,129,0.08)]"}`;
                 const rowSaving = !!savingTick?.startsWith(`${entry.id}|`);
                 return (
                   <tr key={entry.id} className="border-b border-[var(--color-panel-border)]/60">
-                    <td className={`${STICKY_NAME} ${cell} px-3 py-1.5 truncate`} title={names || undefined}>
-                      {names || <span className="text-muted-foreground">—</span>}
+                    <td
+                      className={`${STICKY_NAME} ${cell} px-3 py-1.5`}
+                      title={names ? `${names}${owners.byLogin ? " — their account's login email (nobody is linked to it yet)" : ""}` : undefined}
+                    >
+                      {owners.users.length === 0 ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        <div className="flex flex-col gap-0.5">
+                          {owners.users.map((u) => (
+                            <span key={u.id} className={`flex min-w-0 items-center gap-1.5 ${u.is_active ? "" : "text-muted-foreground"}`}>
+                              <span className={`truncate ${owners.byLogin ? "italic" : ""}`}>{nameOf(u)}</span>
+                              {!u.is_active && <DeactivatedTag />}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className={`${STICKY_EMAIL} ${cell} px-3 py-1.5 truncate font-medium`} title={entry.email}>{entry.email}</td>
                     <td className={`${cell} border-l border-[var(--color-panel-border)] px-3 py-1.5`}>
@@ -659,6 +707,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
                   {form.people.map((id) => (
                     <span key={id} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-panel-border)] bg-white/5 px-2 py-0.5 text-xs">
                       {nameOf(userById.get(id))}
+                      {userById.get(id) && !userById.get(id)!.is_active && <DeactivatedTag />}
                       <button type="button" title="Remove" onClick={() => setForm((f) => ({ ...f, people: f.people.filter((p) => p !== id) }))}>
                         <X className="h-3 w-3" />
                       </button>
@@ -667,7 +716,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
                 </div>
               )}
               <div className="mt-2">
-                <PeoplePicker users={activeUsers} value={form.people} onChange={(people) => setForm((f) => ({ ...f, people }))} />
+                <PeoplePicker users={emailPickerUsers} value={form.people} onChange={(people) => setForm((f) => ({ ...f, people }))} />
               </div>
             </div>
           </div>
