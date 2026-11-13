@@ -358,28 +358,24 @@ export function TechActivityReportModal({
   // company calc — used both by the Company/State toggle UI below and by
   // the auto-refresh effect right after it.
   const appliedIsState = Math.abs(techHourlyPay - companyHourlyOtTotal) > 0.005;
+  const stateMatchRequired = stateHourlyOtTotal > companyHourlyOtTotal + 0.005;
   // The Regular $ part of the State total (regular hours at the company rate
   // + the state regular-hours match) — saved with the override (migration
   // 0400) so the dashboard's gross pay rounds Regular $ and OT $ separately,
   // exactly like Total Payment here.
   const stateRegularShare = companyRegularPayBlended + matchMin;
+  const stateSavePending = !!onSetHourlyOtMode && stateMatchRequired &&
+    (Math.abs(techHourlyPay - stateHourlyOtTotal) > 0.005 ||
+      stateRegularAmount == null || Math.abs(stateRegularAmount - stateRegularShare) > 0.0005);
   const regularBackfillTried = useRef(false);
+  const lastStateSaveAttempt = useRef("");
 
-  // payroll_hourly_ot_overrides stores a frozen DOLLAR AMOUNT, not a mode —
-  // so a previously-saved State override goes stale the moment anything
-  // that feeds stateHourlyOtTotal changes afterward (a custom line, a
-  // holiday, a mileage/manual-pay edit, a per-day state correction). Before
-  // this effect, that meant Total Payment silently kept paying out the OLD
-  // saved number until someone manually clicked Company then State again to
-  // force a fresh save — the "have to re-toggle to make the real number
-  // fire" bug. Auto-resave whenever the live State total and the saved
-  // override have actually drifted apart, so the override just tracks
-  // reality instead of needing a manual nudge. Only fires while a State
-  // override is ALREADY active — never switches someone from Company into
-  // State on its own.
+  // Automatically select State when a match is due, and keep saved State
+  // amounts current after edits. Wait for period data and pending saves.
   useEffect(() => {
     if (!onSetHourlyOtMode) return;
-    if (!appliedIsState) return;
+    if (!appliedIsState && !stateMatchRequired) return;
+    if (hourlyOtModeBusy || loadingStateComparison) return;
     // A custom line / training value / category count edit made from this
     // very modal refetches the parent's bulk data (techIncludablePay,
     // techWeightedRegularRate, and everything derived from them) on its own
@@ -398,7 +394,13 @@ export function TechActivityReportModal({
       stateRegularAmount !== undefined &&
       (stateRegularAmount == null || Math.abs(stateRegularAmount - stateRegularShare) > 0.0005) &&
       !regularBackfillTried.current;
-    if (!totalDrifted && !regularMissing) return;
+    if (!totalDrifted && !regularMissing) {
+      lastStateSaveAttempt.current = "";
+      return;
+    }
+    const signature = JSON.stringify([periodStart, periodEnd, techHourlyPay, stateHourlyOtTotal, stateRegularAmount, stateRegularShare]);
+    if (lastStateSaveAttempt.current === signature) return;
+    lastStateSaveAttempt.current = signature;
     if (regularMissing) regularBackfillTried.current = true;
     void onSetHourlyOtMode("state", stateHourlyOtTotal, stateRegularShare);
     // Keyed on the two numbers being compared, not on onSetHourlyOtMode (a
@@ -407,7 +409,7 @@ export function TechActivityReportModal({
     // on every parent render would just be wasted work, not a correctness
     // issue either way.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stateHourlyOtTotal, techHourlyPay, appliedIsState, periodDataSettling, stateRegularAmount, stateRegularShare]);
+  }, [stateHourlyOtTotal, techHourlyPay, appliedIsState, stateMatchRequired, hourlyOtModeBusy, loadingStateComparison, periodDataSettling, stateRegularAmount, stateRegularShare]);
 
   // Trainee daily $100 guarantee, recomputed HERE against each day's real
   // EFFECTIVE rate (state floor if higher than the company rate on file —
@@ -1436,15 +1438,6 @@ export function TechActivityReportModal({
               </div>
 
               {companyHourlyOtTotal > 0 && (() => {
-                // Currently applied = whichever side techHourlyPay (the
-                // real, paid figure) matches. With no override saved yet,
-                // that's always Company by construction (see
-                // AccountingDashboard.tsx), even on days State would be
-                // legally required — so also flag that case (stateIsDue)
-                // so it doesn't read as "Company is fine" when it isn't.
-                // appliedIsState itself is hoisted to component scope above
-                // (see the auto-refresh effect right after stateHourlyOtTotal).
-                const stateIsDue = !appliedIsState && stateHourlyOtTotal > companyHourlyOtTotal + 0.005;
                 return (
                   <>
                     <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="Regular + meal hours at each day's own assigned state minimum wage, vs. those same regular hours at the flat company rate — same Min-floor check as the reference payroll workbook. Excludes OT hours' flat pay, which would otherwise pad this comparison and hide a real regular-hours shortfall.">
@@ -1500,19 +1493,19 @@ export function TechActivityReportModal({
                           <div className="flex items-center rounded-full bg-slate-900 border border-white/10 p-0.5 text-[10px] shrink-0">
                             <button
                               type="button"
-                              disabled={hourlyOtModeBusy || loadingStateComparison}
+                              disabled={stateMatchRequired || hourlyOtModeBusy || loadingStateComparison || periodDataSettling}
                               title={loadingStateComparison ? "Still loading this technician's per-day state comparison — wait for it to finish before switching modes." : undefined}
                               onClick={() => onSetHourlyOtMode("company", companyHourlyOtTotal)}
-                              className={`px-2 py-0.5 rounded-full transition disabled:opacity-50 ${!appliedIsState ? "bg-slate-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
+                              className={`px-2 py-0.5 rounded-full transition disabled:opacity-50 ${!(appliedIsState || stateMatchRequired) ? "bg-slate-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
                             >
                               Company
                             </button>
                             <button
                               type="button"
-                              disabled={hourlyOtModeBusy || loadingStateComparison}
+                              disabled={stateMatchRequired || hourlyOtModeBusy || loadingStateComparison || periodDataSettling}
                               title={loadingStateComparison ? "Still loading this technician's per-day state comparison — wait for it to finish before switching modes." : undefined}
                               onClick={() => onSetHourlyOtMode("state", stateHourlyOtTotal, stateRegularShare)}
-                              className={`px-2 py-0.5 rounded-full transition disabled:opacity-50 ${appliedIsState ? "bg-emerald-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
+                              className={`px-2 py-0.5 rounded-full transition disabled:opacity-50 ${(appliedIsState || stateMatchRequired) ? "bg-emerald-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
                             >
                               State
                             </button>
@@ -1527,9 +1520,9 @@ export function TechActivityReportModal({
                         <span className="text-slate-400">State</span>
                         <span className={appliedIsState ? "text-emerald-300 font-semibold" : "text-slate-200"}>{fmt(stateHourlyOtTotal)}</span>
                       </div>
-                      {stateIsDue && (
+                      {stateMatchRequired && (
                         <p className="text-[10px] text-amber-300 mt-1 pt-1 border-t border-white/10">
-                          State pays {fmt(stateHourlyOtTotal - companyHourlyOtTotal)} more — switch to State.
+                          State match selected automatically. Selection locked.{stateSavePending ? " Saving…" : ""}
                         </p>
                       )}
                     </div>
@@ -1589,7 +1582,7 @@ export function TechActivityReportModal({
               <button
                 type="button"
                 onClick={() => onDone(reviewBreakdown)}
-                disabled={doneBusy}
+                disabled={doneBusy || hourlyOtModeBusy || loadingStateComparison || periodDataSettling || stateSavePending}
                 className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold transition disabled:opacity-50 flex items-center gap-2"
               >
                 {doneBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
