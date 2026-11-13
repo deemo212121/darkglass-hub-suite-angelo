@@ -1,10 +1,14 @@
 import { supabase } from "./client";
-import type { BranchExpense, BranchExpenseCategory, BranchExpenseFile } from "@/lib/branchExpenses";
+import type { BranchExpense, BranchExpenseCategory, BranchExpenseFile, BranchExpenseLine } from "@/lib/branchExpenses";
 
-/** Accounting → Expenses → Other Expenses (migration 0444). */
+/** Accounting → Expenses → Other Expenses (migration 0444; line_items 0447). */
 
-const SELECT =
+const BASE_SELECT =
   "id, branch, category, other_label, vendor, amount, expense_date, period_start, period_end, notes, receipts, created_by_name, created_at, updated_by_name, updated_at";
+const SELECT = `${BASE_SELECT}, line_items`;
+
+/** Before migration 0447 there is no line_items column — the page still loads, just without the transaction lists. */
+const missingLineItems = (message: string) => /line_items/i.test(message);
 
 function mapRow(r: any): BranchExpense {
   return {
@@ -19,6 +23,7 @@ function mapRow(r: any): BranchExpense {
     periodEnd: r.period_end ?? null,
     notes: r.notes ?? "",
     receipts: Array.isArray(r.receipts) ? r.receipts : [],
+    lineItems: Array.isArray(r.line_items) ? r.line_items : [],
     createdByName: r.created_by_name ?? null,
     createdAt: r.created_at,
     updatedByName: r.updated_by_name ?? null,
@@ -31,13 +36,15 @@ const friendly = (message: string) =>
 
 export async function getBranchExpenses(): Promise<BranchExpense[]> {
   const out: BranchExpense[] = [];
+  let select = SELECT;
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabase
       .from("branch_expenses")
-      .select(SELECT)
+      .select(select)
       .order("expense_date", { ascending: false })
       .order("created_at", { ascending: false })
       .range(from, from + 999);
+    if (error && select === SELECT && missingLineItems(error.message)) { select = BASE_SELECT; from -= 1000; continue; }
     if (error) throw new Error(friendly(error.message));
     out.push(...(data ?? []).map(mapRow));
     if (!data || data.length < 1000) break;
@@ -76,8 +83,10 @@ const toRow = (i: BranchExpenseInput) => ({
  * signed-in profile) — never sent from here: the app's companyId is the
  * company's code (e.g. "COMP001"), not the uuid the column holds.
  */
-export async function addBranchExpense(input: BranchExpenseInput): Promise<string> {
-  const { data, error } = await supabase.from("branch_expenses").insert(toRow(input)).select("id").single();
+export async function addBranchExpense(input: BranchExpenseInput, lineItems: BranchExpenseLine[] = []): Promise<string> {
+  const row = lineItems.length ? { ...toRow(input), line_items: lineItems } : toRow(input);
+  const { data, error } = await supabase.from("branch_expenses").insert(row).select("id").single();
+  if (error && lineItems.length && missingLineItems(error.message)) throw new Error("Run migration 0447 in Supabase first (it keeps each Car IQ transaction).");
   if (error) throw new Error(friendly(error.message));
   return (data as { id: string }).id;
 }

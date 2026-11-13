@@ -16,8 +16,16 @@ export interface CarIqTransaction {
   total: number;
   /** "YYYY-MM-DD" (local date of the purchase). */
   date: string;
+  /** "07:55" local time, or "". */
+  time: string;
   city: string;
   state: string;
+  vehicle: string;
+  /** FUEL / TOLLS … */
+  service: string;
+  merchant: string;
+  /** "1890 Kingsley Ave, Orange Park, FL 32073" */
+  address: string;
 }
 
 export interface CarIqReport {
@@ -58,12 +66,20 @@ export function parseCarIqReport(summary: unknown[][], all: Record<string, unkno
     const currency = clean(r["CURRENCY"]).toUpperCase();
     if (!isFinite(total) || r["TOTAL"] === "" || (currency && currency !== "USD")) { skipped++; continue; }
     const driver = [clean(r["DRIVER FIRST NAME"]), clean(r["DRIVER LAST NAME"])].filter(Boolean).join(" ") || clean(r["VEHICLE GROUP NAME"]) || "Unknown driver";
+    const city = clean(r["MERCHANT CITY"]);
+    const state = clean(r["MERCHANT STATE"]).toUpperCase();
+    const local = !!excelDate(r["LOCAL DATE"]);
     transactions.push({
       driver,
       total,
       date: excelDate(r["LOCAL DATE"]) || excelDate(r["PACIFIC DATE"]),
-      city: clean(r["MERCHANT CITY"]),
-      state: clean(r["MERCHANT STATE"]).toUpperCase(),
+      time: (/^(\d{1,2}:\d{2})/.exec(clean(local ? r["LOCAL TIME"] : r["PACIFIC TIME"])) ?? [])[1] ?? "",
+      city,
+      state,
+      vehicle: clean(r["VEHICLE DESCRIPTION"]) || [clean(r["VEHICLE YEAR"]), clean(r["VEHICLE MAKE"]), clean(r["VEHICLE MODEL"])].filter(Boolean).join(" "),
+      service: clean(r["SERVICE TYPE"]).toUpperCase(),
+      merchant: clean(r["MERCHANT NAME"]) || clean(r["MERCHANT BRAND"]).replace(/_/g, " "),
+      address: [titleCase(clean(r["MERCHANT ADDRESS"])), titleCase(city), [state, clean(r["MERCHANT ZIP"])].filter(Boolean).join(" ")].filter(Boolean).join(", "),
     });
   }
   return { periodStart: field("Start Date"), periodEnd: field("End Date"), transactions, skipped };
@@ -183,6 +199,8 @@ export interface CarIqMonthTotal extends CarIqBranchTotal {
   /** The report's period cut to this month — e.g. Oct 14 – Oct 31, Nov 1 – Nov 13. */
   periodStart: string;
   periodEnd: string;
+  /** Every transaction in this branch + month, oldest first — saved with the bill. */
+  transactions: CarIqTransaction[];
 }
 
 const lastDayOf = (ym: string) => {
@@ -219,10 +237,12 @@ export function totalsByBranchAndMonth(
         drivers: [],
         periodStart: report.periodStart && report.periodStart > first ? report.periodStart : first,
         periodEnd: report.periodEnd && report.periodEnd < last ? report.periodEnd : last,
+        transactions: [],
         byDriver: new Map(),
       };
       map.set(key, row);
     }
+    row.transactions.push(t);
     row.total = cents(row.total + t.total);
     row.count++;
     const d = row.byDriver.get(t.driver) ?? { total: 0, count: 0 };
@@ -231,7 +251,10 @@ export function totalsByBranchAndMonth(
     row.byDriver.set(t.driver, d);
   }
   return Array.from(map.values())
-    .map(({ byDriver, ...r }) => ({ ...r, drivers: Array.from(byDriver, ([driver, v]) => ({ driver, ...v })).sort((a, b) => b.total - a.total) }))
+    .map(({ byDriver, ...r }) => ({
+      ...r,
+      transactions: r.transactions.slice().sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`)),
+      drivers:Array.from(byDriver, ([driver, v]) => ({ driver, ...v })).sort((a, b) => b.total - a.total) }))
     .sort((a, b) => a.month.localeCompare(b.month) || a.branch.localeCompare(b.branch));
 }
 

@@ -55,7 +55,17 @@ describe("totalsByBranchAndMonth", () => {
       ["2026-10", 30, 2, "2026-10-14", "2026-10-31"],
       ["2026-11", 12, 2, "2026-11-01", "2026-11-13"],
     ]);
+    expect(out[0].transactions.map((t) => [t.date, t.total])).toEqual([["2026-10-14", 10], ["2026-10-31", 20]]);
     expect(totalsByBranchAndMonth(report, () => "")).toEqual([]);
+  });
+  it("keeps each transaction's station, address, vehicle and time", () => {
+    const row = {
+      ...tx("BRADLEY", "HOLLOWELL", 60, "ORANGE PARK", "FL"),
+      "LOCAL TIME": "07:55:20.032090", "VEHICLE DESCRIPTION": "24 SUBARU CROSSTRECK", "SERVICE TYPE": "FUEL",
+      "MERCHANT NAME": "CIRCLE K - 2726016 FL", "MERCHANT ADDRESS": "1890 KINGSLEY AVE", "MERCHANT ZIP": "32073",
+    };
+    const t = parseCarIqReport(summary, [row]).transactions[0];
+    expect(t).toMatchObject({ time: "07:55", vehicle: "24 SUBARU CROSSTRECK", service: "FUEL", merchant: "CIRCLE K - 2726016 FL", address: "1890 Kingsley Ave, Orange Park, FL 32073" });
   });
 });
 

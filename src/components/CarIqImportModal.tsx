@@ -150,7 +150,16 @@ export function CarIqImportModal({
           periodEnd: t.periodEnd,
           notes: `Car IQ fuel card ${fmtDay(t.periodStart)} – ${fmtDay(t.periodEnd)} · ${t.count} transaction${t.count === 1 ? "" : "s"} · ${who}`,
           receipts: [],
-        }));
+        }, t.transactions.map((x) => ({
+          date: x.date,
+          time: x.time,
+          driver: titleCase(x.driver),
+          vehicle: x.vehicle,
+          service: x.service,
+          merchant: x.merchant,
+          address: x.address,
+          amount: x.total,
+        }))));
         setSaving({ done: ids.length, total: totals.length });
       }
       // The report itself, attached to every bill it made.
