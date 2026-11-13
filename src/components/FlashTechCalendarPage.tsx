@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, RefreshCw, Plus, X, Trash2, CalendarDays, Ta
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { normalizeRole, isEligibleForTechnicianFormChecklist } from "@/lib/roleLabels";
+import { normalizeRole, isEligibleForTechnicianFormChecklist, isTechScopeSubject, isTechScopedViewer } from "@/lib/roleLabels";
 import { getCompanyUsers, getMyProfileId, getTechnicianContactInfoByIds, type ProfileRow } from "@/lib/supabase/users";
 import { getGmailConnectionStatus, disconnectGmail, type GmailConnectionStatus } from "@/lib/supabase/gmailConnection";
 import { getFlashTechOpenAlertEmail, setFlashTechOpenAlertEmail } from "@/lib/supabase/companySettings";
@@ -193,6 +193,9 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
   // set_flash_tech_open_alert_email's own role check.
   const canConnectFlashTechGmail = role ? ["ADMIN", "SUPERADMIN"].includes(normalizeRole(role)) : false;
   const canEditFlashTechAlertEmail = canConnectFlashTechGmail || isHrRole;
+  // Technical Assistant Director without HR: technicians' trips only, view
+  // only — none of the edit rights above (roleLabels.ts's TECH_SCOPED_PAGES).
+  const techScoped = isTechScopedViewer(role, extraRoles, "hr");
 
   // ── Connect Gmail + "trip turned Open" alert recipient — same
   // connect-flow/region idiom as ReportHRDaily.tsx's Hiring Gmail block
@@ -516,7 +519,12 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
         getCompanyUsers(),
         getSignableDocuments("flash_technician_travel"),
       ]);
-      setTrips(tripRows);
+      if (techScoped) {
+        const roleById = new Map(userRows.map((u) => [u.id, u.role]));
+        setTrips(tripRows.filter((t) => !!t.technicianProfileId && isTechScopeSubject(roleById.get(t.technicianProfileId))));
+      } else {
+        setTrips(tripRows);
+      }
       setUsers(userRows);
 
       // Group by person (formData.employeeId, same "whose form is this"

@@ -456,6 +456,38 @@ export function isAdminOrAboveHolder(role: string | null | undefined, extraRoles
  * SUPERADMIN always passes regardless of either check.
  */
 export function isModuleAllowed(role: string | null | undefined, moduleSlug: string, extraRoles?: string[] | null): boolean {
+  return moduleAllowedByRole(role, moduleSlug, extraRoles) || isTechScopedViewer(role, extraRoles, moduleSlug);
+}
+
+/**
+ * Technical Assistant Director's technician-only view of HR and Accounting:
+ * these pages, nothing else in the module, every page showing Current
+ * Technicians only and view only (no sends, edits, status changes, payroll
+ * generation or review). Applies only while no other role of theirs opens
+ * the module — someone who is also Admin / HR / Finance keeps their full
+ * view. Hardcoded rather than an Accessibility override so nothing else in
+ * those modules (HR Paperworks, Incentives, Paystubs …) can open with it.
+ * The database lets them read technicians' pay and form rows (migration
+ * 0448); the pages do the rest.
+ */
+export const TECH_SCOPED_PAGES: Record<string, ReadonlySet<string>> = {
+  hr: new Set(["training-list", "absent-list", "flash-tech", "technician-form-checklist", "clock-in-codes"]),
+  accounting: new Set(["accounting-dashboard"]),
+};
+
+export function isTechScopedViewer(role: string | null | undefined, extraRoles: string[] | null | undefined, moduleSlug: string): boolean {
+  if (!TECH_SCOPED_PAGES[moduleSlug]) return false;
+  if (!allHeldRoles(role, extraRoles).includes("TECHNICAL_ASSISTANT_DIRECTOR")) return false;
+  return !moduleAllowedByRole(role, moduleSlug, extraRoles);
+}
+
+/** The people a technician-scoped viewer sees (by primary role): technicians and their Tech / Branch / Senior Branch Managers — not the directors. */
+export function isTechScopeSubject(role: string | null | undefined): boolean {
+  const code = normalizeRole(role);
+  return TECHNICIAN_PAY_ROLES.has(code) && code !== "TECHNICAL_DIRECTOR" && code !== "TECHNICAL_ASSISTANT_DIRECTOR";
+}
+
+function moduleAllowedByRole(role: string | null | undefined, moduleSlug: string, extraRoles?: string[] | null): boolean {
   // Admin-and-up modules (AHS Server Status) — never opened up by an override.
   if (ADMIN_AND_UP_MODULES.has(moduleSlug)) return isAdminOrAboveHolder(role, extraRoles);
   if (normalizeRole(role) !== "SUPERADMIN") {

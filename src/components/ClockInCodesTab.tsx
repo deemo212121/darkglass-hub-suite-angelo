@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { KeyRound, Loader2, RefreshCw, Copy, Check, ChevronLeft, Pencil } from "lucide-react";
 import { createPortal } from "react-dom";
-import { ROLE_LABELS, ROLE_OPTIONS } from "@/lib/roleLabels";
+import { ROLE_LABELS, ROLE_OPTIONS, isTechScopeSubject, isTechScopedViewer } from "@/lib/roleLabels";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
@@ -46,6 +46,8 @@ export function ClockInCodesTab({ standalone, backModule = "hr" }: { standalone?
   // Branch leaders can see the code; only HR / Admin / SuperAdmin make a new one (migration 0346).
   const { role, extraRoles } = useAuth();
   const canRegenerate = [role, ...(extraRoles ?? [])].some((r) => ["HR", "HR_MANAGER", "ADMIN", "SUPERADMIN", "SUPERSUPERADMIN"].includes(String(r || "").toUpperCase()));
+  // Technical Assistant Director without HR: technicians' rows only (roleLabels.ts's TECH_SCOPED_PAGES).
+  const techScoped = isTechScopedViewer(role, extraRoles, "hr");
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [code, setCode] = useState("");
   const [day, setDay] = useState("");
@@ -101,7 +103,11 @@ export function ClockInCodesTab({ standalone, backModule = "hr" }: { standalone?
 
   const byId = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
   const nameOf = (id: string | null) => (id ? byId.get(id)?.display_name || byId.get(id)?.email || "?" : "—");
-  const used = events.filter((e) => e.success);
+  const scopedEvents = useMemo(
+    () => (techScoped ? events.filter((e) => isTechScopeSubject(byId.get(e.profileId)?.role)) : events),
+    [events, byId, techScoped],
+  );
+  const used = scopedEvents.filter((e) => e.success);
   // Active, non-Philippines people per role (someone with two of these roles counts under each).
   const roleCounts = useMemo(() => {
     const held = (p: ProfileRow) => [p.role, ...(p.extra_roles ?? [])].map((r) => String(r || "").toUpperCase());
@@ -114,12 +120,12 @@ export function ClockInCodesTab({ standalone, backModule = "hr" }: { standalone?
   // 5 tries (15 wrong entries) lock that person until a new code (migration 0345).
   const wrongByPerson = useMemo(() => {
     const m = new Map<string, number>();
-    for (const e of events) if (!e.success && (!codeSince || e.createdAt >= codeSince)) m.set(e.profileId, (m.get(e.profileId) ?? 0) + 1);
+    for (const e of scopedEvents) if (!e.success && (!codeSince || e.createdAt >= codeSince)) m.set(e.profileId, (m.get(e.profileId) ?? 0) + 1);
     return [...m.entries()]
       .map(([id, entries]) => ({ id, entries, tries: Math.floor(entries / ENTRIES_PER_TRY) }))
       .filter((x) => x.tries >= 1)
       .sort((a, b) => b.entries - a.entries);
-  }, [events, codeSince]);
+  }, [scopedEvents, codeSince]);
 
   const dayLabel = day ? new Date(`${day}T00:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }) : "";
 
@@ -275,7 +281,7 @@ export function ClockInCodesTab({ standalone, backModule = "hr" }: { standalone?
         </div>
       </div>
 
-      <MissedClockInMeetings profiles={profiles} />
+      <MissedClockInMeetings profiles={profiles} techScoped={techScoped} />
     </div>
   );
 }

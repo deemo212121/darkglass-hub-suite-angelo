@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import { runTour, takeQueuedTour } from "@/lib/tours/runTour";
 import { DESKTOP_GETTING_STARTED_TOUR, GETTING_STARTED_TARGET } from "@/lib/tours/desktopTours";
 import { shouldUseMobile } from "@/lib/device";
-import { isModuleAllowed, isModuleAllowedForTrainee, isModuleAllowedForFrozen } from "@/lib/roleLabels";
+import { isModuleAllowed, isModuleAllowedForTrainee, isModuleAllowedForFrozen, isTechScopedViewer } from "@/lib/roleLabels";
 import { canAccessSubmodule } from "@/lib/submoduleAccess";
 import { useModuleRoleGateOverrides } from "@/lib/moduleAccess";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -85,7 +85,7 @@ function Home() {
         <h2 className="home-section-title">Your modules</h2>
         <div data-tour="home-modules" className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
           {MODULES.filter((m) => isModuleAllowed(role, m.slug, extraRoles) && isModuleAllowedForTrainee(isTrainee, m.slug) && isModuleAllowedForFrozen(isFrozen, m.slug)).map((m) => {
-            const visibleSubmodules = m.submodules.filter((s) => !s.hiddenFromGrid && canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee, isFrozen));
+            const visibleSubmodules = m.submodules.filter((s) => (!s.hiddenFromGrid || isTechScopedViewer(role, extraRoles, m.slug)) && canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee, isFrozen));
             const Icon = moduleIcon(m.slug);
             const moduleCount = visibleSubmodules.reduce((n, s) => n + (pageCounts[`${m.slug}/${s.slug}`] ?? 0), 0);
             return (

@@ -74,6 +74,8 @@ interface Props {
    *  computed from stale, pre-edit data. See AccountingDashboard.tsx's
    *  periodDataLoading. */
   periodDataSettling?: boolean;
+  /** View only (Technical Assistant Director's Tech Payroll view): every input, rate, line and switch disabled. Pass no onSetHourlyOtMode / onDone with it so nothing saves on open either. */
+  readOnly?: boolean;
 }
 
 function fmt(amount: number) {
@@ -115,6 +117,7 @@ export function TechActivityReportModal({
   stateRegularAmount,
   hourlyOtModeBusy,
   periodDataSettling,
+  readOnly = false,
 }: Props) {
   const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay, techHourlyPayStraight, techHourlyPayOtPremium, techWeightedRegularRate, techWeeklyOt, techGuaranteedSalaryTarget, techHolidayPremium, techIncludablePay, mileageRateOverride, carIqSwitch } = row;
   const branch = employee.assigned_branch || "";
@@ -815,7 +818,10 @@ export function TechActivityReportModal({
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-slate-950 rounded-t-xl">
           <div>
             <p className="font-semibold text-white">Tech Activity Report of {employee.full_name}</p>
-            <p className="text-xs text-slate-400">{periodStart} – {periodEnd}{branch ? ` · ${branch}` : ""}</p>
+            <p className="text-xs text-slate-400">
+              {periodStart} – {periodEnd}{branch ? ` · ${branch}` : ""}
+              {readOnly && <span className="ml-2 rounded border border-white/15 bg-white/5 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-slate-300">View only</span>}
+            </p>
           </div>
           <button onClick={onClose} className="text-white/40 hover:text-white/80 transition">
             <X className="h-5 w-5" />
@@ -823,6 +829,7 @@ export function TechActivityReportModal({
         </div>
 
         <div className="overflow-y-auto flex-1 p-5">
+          <fieldset disabled={readOnly} className="m-0 min-w-0 border-0 p-0">
           <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
             {/* Payroll Detail Report */}
             <div className="overflow-x-auto rounded-lg border border-white/10">
@@ -1569,6 +1576,7 @@ export function TechActivityReportModal({
               </div>
             </div>
           </div>
+          </fieldset>
         </div>
 
         {(onPrev || onDone) && (

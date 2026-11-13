@@ -38,7 +38,7 @@ import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Pencil, Check, Loader2, Filter, CalendarDays, ListChecks, Paperclip, Flag, History, X, BarChart3, AlertTriangle, Umbrella, HeartPulse, ListTodo, FileDown, Users } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
-import { ROLE_LABELS, TECHNICIAN_PAY_ROLES, normalizeRole } from "@/lib/roleLabels";
+import { ROLE_LABELS, TECHNICIAN_PAY_ROLES, normalizeRole, isTechScopeSubject, isTechScopedViewer } from "@/lib/roleLabels";
 import { getCompanyUsers, getEmployeeInfoByProfileIds, type ProfileRow } from "@/lib/supabase/users";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { visibleEmployeeMonitoringProfileIds } from "@/lib/notifyRouting";
@@ -150,6 +150,10 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { uid, displayName, companyId, role, extraRoles } = useAuth();
+  // Technical Assistant Director without HR: every Current Technician (not
+  // just their own reports), view only, and only the Absent List / Exceeded /
+  // Pending Explanations views (roleLabels.ts's TECH_SCOPED_PAGES).
+  const techScoped = isTechScopedViewer(role, extraRoles, "hr");
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   // Time Off Calendar moved in here from HR & Recruitment Dashboard's own
   // sidebar — they're both "who's out and why" tools, so it's a toggle on
@@ -276,8 +280,13 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     [myProfile, profiles, csrComposition]
   );
   const visibleProfiles = useMemo(
-    () => (teamScopedIds === null ? profiles : profiles.filter((p) => teamScopedIds.has(p.id))),
-    [profiles, teamScopedIds]
+    () =>
+      techScoped
+        ? profiles.filter((p) => isTechScopeSubject(p.role))
+        : teamScopedIds === null
+        ? profiles
+        : profiles.filter((p) => teamScopedIds.has(p.id)),
+    [profiles, teamScopedIds, techScoped]
   );
 
   const [holidays, setHolidays] = useState<CompanyHolidayRow[]>([]);
@@ -957,7 +966,9 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         <td className="py-2 pr-3 text-slate-300 whitespace-nowrap">{p.assigned_branch || "—"}</td>
         <td className="py-2 pr-3 text-slate-300 whitespace-nowrap"><ManagerName name={p.manager_name} people={profiles} /></td>
         <td className="py-2 pr-3 min-w-[220px]">
-          {isEditing ? (
+          {techScoped ? (
+            note ? <span className="block truncate max-w-[260px] text-slate-300">{note}</span> : <span className="text-slate-600">—</span>
+          ) : isEditing ? (
             <div className="flex items-center gap-1">
               <input
                 autoFocus
@@ -999,7 +1010,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
             <select
               value={hrNote}
               onChange={(e) => void handleSaveHrStatus(p.id, rowDate, e.target.value)}
-              disabled={savingHrNoteId === key}
+              disabled={techScoped || savingHrNoteId === key}
               className={`glass-input text-xs py-1 disabled:opacity-50 ${HR_STATUS_COLOR[hrNote] || "text-slate-300"}`}
             >
               {/* Explicit dark background on every option — the dropdown
@@ -1042,7 +1053,11 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           })()}
         </td>
         <td className="py-2 pr-3">
-          {pendingItem ? (
+          {pendingItem && techScoped ? (
+            <span className="inline-block rounded px-1.5 py-0.5 text-[11px] font-semibold bg-amber-500/20 text-amber-300">
+              {pendingItem.type === "correction" ? "Time Correction" : "PTO"}
+            </span>
+          ) : pendingItem ? (
             <button
               type="button"
               onClick={() => setPendingDetailModal({ profileName: p.display_name || p.email, date: rowDate, item: pendingItem })}
@@ -1056,6 +1071,9 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           )}
         </td>
         <td className="py-2">
+          {techScoped ? (
+            <span className="text-[10px] text-slate-500">{noteByKey.get(key)?.attachmentPath ? "Attached" : "—"}</span>
+          ) : (
           <div className="flex items-center gap-1.5">
             <label
               title="Attach a photo/file (e.g. a doctor's note)"
@@ -1102,6 +1120,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
               );
             })()}
           </div>
+          )}
           {(() => {
             const note = noteByKey.get(key);
             if (!note) return null;
@@ -1141,6 +1160,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           >
             <ListChecks className="h-3.5 w-3.5" /> Absent List
           </button>
+          {!techScoped && (
           <button
             type="button"
             onClick={() => setView("calendar")}
@@ -1148,6 +1168,8 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           >
             <CalendarDays className="h-3.5 w-3.5" /> Time Off Calendar
           </button>
+          )}
+          {!techScoped && (
           <button
             type="button"
             onClick={() => setView("ptoManagement")}
@@ -1156,6 +1178,8 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
             <Umbrella className="h-3.5 w-3.5" /> PTO Management
             {tabBadge("ptoManagement")}
           </button>
+          )}
+          {!techScoped && (
           <button
             type="button"
             onClick={() => setView("exceptionReports")}
@@ -1163,6 +1187,8 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           >
             <FileDown className="h-3.5 w-3.5" /> Exception Reports
           </button>
+          )}
+          {!techScoped && (
           <button
             type="button"
             onClick={() => setView("holidays")}
@@ -1170,6 +1196,8 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           >
             <Flag className="h-3.5 w-3.5" /> Holiday Calendar
           </button>
+          )}
+          {!techScoped && (
           <button
             type="button"
             onClick={() => setView("visitExceptions")}
@@ -1177,6 +1205,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           >
             <AlertTriangle className="h-3.5 w-3.5" /> Visit Exception Report
           </button>
+          )}
           <button
             type="button"
             onClick={() => setView("exceededSickDays")}
@@ -1192,6 +1221,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           >
             <ListTodo className="h-3.5 w-3.5" /> Pending Explanations
           </button>
+          {!techScoped && (
           <button
             type="button"
             onClick={() => (needsPassword(ATTENDANCE_STATUS_GATE, passwordCheckRows) ? setAskAttendanceStatusPassword(true) : setView("attendanceStatus"))}
@@ -1199,6 +1229,7 @@ export function AbsentListPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
           >
             <Users className="h-3.5 w-3.5" /> Attendance Status
           </button>
+          )}
         </div>
 
         {view === "calendar" && (

@@ -15,7 +15,7 @@ import { getModule, getSubModule, type ModuleDef, type SubModuleDef } from "@/li
 // component because it has the full UI; the wrappers remain available as
 // fallbacks and for any spots that still reference them.
 import { canAccessUserManagement, getUserManagementRecord, canAccessAdminModule } from "@/lib/user-management";
-import { isSubmoduleAllowed, isSubmoduleAllowedForTrainee, isSubmoduleAllowedForFrozen, isCompanySuperAdminRole, isCsrRestrictedRole } from "@/lib/roleLabels";
+import { isSubmoduleAllowed, isSubmoduleAllowedForTrainee, isSubmoduleAllowedForFrozen, isCompanySuperAdminRole, isCsrRestrictedRole, isTechScopedViewer, TECH_SCOPED_PAGES } from "@/lib/roleLabels";
 import { getDashboardRoleGate, hasDashboardAccess } from "@/lib/dashboardAccess";
 import { useModuleRoleGate, useModuleRoleGateOverrides, useEmailVaultGrant } from "@/lib/moduleAccess";
 // Roles allowed into the admin module overall, and into User Management /
@@ -317,7 +317,15 @@ function SubModule() {
   // module's own tile grid — a pasted/bookmarked link to a page inside a
   // module this role is locked out of goes Home. (Admin is exempt inside
   // passesModuleLevelGate — its own gate below handles its carve-outs.)
-  if (!passesModuleLevelGate(role, extraRoles, mod.slug)) {
+  // Technical Assistant Director's technician-only HR / Accounting view
+  // (roleLabels.ts's TECH_SCOPED_PAGES): just those pages, and the module /
+  // page role gates don't apply to them.
+  const techScoped = isTechScopedViewer(role, extraRoles, mod.slug);
+  if (techScoped && !TECH_SCOPED_PAGES[mod.slug].has(sub.slug)) {
+    return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
+  }
+
+  if (!techScoped && !passesModuleLevelGate(role, extraRoles, mod.slug)) {
     return redirectOnce("/home") ? <Navigate to="/home" replace /> : null;
   }
 
@@ -479,6 +487,7 @@ function SubModule() {
   // unrestrictable) would silently lock most roles out of the company-wide
   // Team Messenger, defeating the whole point of that carve-out.
   const moduleAccessOk =
+    techScoped ||
     !moduleAllowedRoles ||
     isEmailVault ||
     (mod.slug === "admin" && ALL_ROLES_ADMIN_SUBMODULES.has(sub.slug)) ||

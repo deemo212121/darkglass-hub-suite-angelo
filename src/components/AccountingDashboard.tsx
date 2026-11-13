@@ -51,7 +51,7 @@ import { supabase } from "@/lib/supabase/client";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
-import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, hasAnyTechnicianPayRole, isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, isCarIqEligible, mileageRateForCarIq, CAR_IQ_MILEAGE_RATE_WITH, CAR_IQ_MILEAGE_RATE_WITHOUT } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, hasAnyTechnicianPayRole, isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, isCarIqEligible, mileageRateForCarIq, CAR_IQ_MILEAGE_RATE_WITH, CAR_IQ_MILEAGE_RATE_WITHOUT, isTechScopeSubject, isTechScopedViewer } from "@/lib/roleLabels";
 import { getCompanyCarIqHistory, addCarIqHistoryEntry, updateCarIqHistoryEffectiveDate, carIqEntryEffectiveOn, carIqSwitchDatesInRange, type CarIqHistoryEntry } from "@/lib/supabase/carIqHistory";
 import { getCarIqMileageRateHistory, addCarIqMileageRate, deleteCarIqMileageRate, carIqRatesOn, carIqRateChangeDatesInRange, CAR_IQ_RATE_HISTORY_START, type CarIqMileageRateEntry } from "@/lib/supabase/companySettings";
 import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, computeMealTimeCredit, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
@@ -934,6 +934,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const { uid, role, extraRoles, displayName, email, companyId } = useAuth();
+  // Technical Assistant Director without Accounting: Tech Payroll only — the
+  // Payroll tab's US technicians (roleLabels.ts's isTechScopeSubject), view
+  // only. No other tab, no Generate / Email / include-exclude / review, and a
+  // technician's name opens their Tech Activity Report read-only (the detail
+  // step before it saves the Company / State choice on Next, so it's skipped).
+  const techScoped = isTechScopedViewer(role, extraRoles, "accounting");
   const canConnectGmail = String(role || "").toUpperCase() === "ADMIN" || String(role || "").toUpperCase() === "SUPERADMIN";
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   // When each account was deactivated (User Management's Activity Log), for
@@ -964,11 +970,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       return next;
     });
   };
-  const [activeTab, setActiveTab] = usePersistedTab<AccountingDashboardTabId>(
+  const [persistedTab, setActiveTab] = usePersistedTab<AccountingDashboardTabId>(
     "ahs:accounting-dashboard-active-tab",
     ["overview", "payroll", "traineeMonitoring", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes", "branchCommission", "reviewedPeriods", "payrollHistory"],
     "overview",
   );
+  const activeTab: AccountingDashboardTabId = techScoped ? "payroll" : persistedTab;
+  const shownTabs = techScoped ? ACCOUNTING_DASHBOARD_TABS.filter((t) => t.id === "payroll") : ACCOUNTING_DASHBOARD_TABS;
   // Deep link from a bell-icon notification straight into the Payroll
   // Disputes tab (a new dispute was submitted) — same ?tab= convention
   // Employee Self-Service/PartInventory.tsx already use. Ticket Time
@@ -1137,7 +1145,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // the Tech Activity Report via the per-technician review wizard (the
   // "Next" button on the detail modal). `effectiveCurrency` kept as an
   // alias so the many currency-scoped reads below don't all have to change.
-  const effectiveCurrency: "USD" | "PHP" = selectedCurrency;
+  const effectiveCurrency: "USD" | "PHP" = techScoped ? "USD" : selectedCurrency;
   // Funnel-style column filters (Ticket List convention) — empty set = no filter.
   const [departmentFilter, setDepartmentFilter] = useState<Set<string>>(new Set());
   const [roleFilter, setRoleFilter] = useState<Set<string>>(new Set());
@@ -4061,7 +4069,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // ── Render helpers ───────────────────────────────────────────────────────────
   // effectiveCurrency is really a "which team" filter (US vs PH employees) —
   // every amount is always shown in USD regardless of which team is active.
-  const displayRows = effectiveCurrency === "USD" ? usOfficeRows : phRows;
+  const displayRows = techScoped
+    ? usOfficeRows.filter((r) => isTechScopeSubject(r.employee.role))
+    : effectiveCurrency === "USD" ? usOfficeRows : phRows;
   // checkbox, Name, Department, Role, Gross Pay, Payslip (6) + Branch (US
   // only) + Reg/Duty/OT/Meal + Rate (5). The per-technician "Reviewed" mark
   // renders as an inline badge in the Name cell, not its own column.
@@ -4682,7 +4692,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           {sidebarExpanded ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
         <div className="h-px bg-white/10 mx-1" />
-        {ACCOUNTING_DASHBOARD_TABS.map((tab) => {
+        {shownTabs.map((tab) => {
           const Icon = tab.Icon;
           const badgeCount = 0;
           return (
@@ -4709,8 +4719,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             </button>
           );
         })}
-        <div className="h-px bg-white/10 mx-1" />
-        <Link
+        {!techScoped && <div className="h-px bg-white/10 mx-1" />}
+        {!techScoped && <Link
           to="/m/$module/$submodule"
           params={{ module: "admin", submodule: "user-management" }}
           title="User Management"
@@ -4718,7 +4728,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         >
           <Users className="h-4 w-4 shrink-0" />
           {sidebarExpanded && <span>User Management</span>}
-        </Link>
+        </Link>}
       </nav>
 
       <main className="flex-1 min-w-0 max-w-[1600px] mx-auto w-full pl-16 pr-4 py-4">
@@ -4733,7 +4743,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               <h1 className="text-xl font-bold">{sub.title}</h1>
               <p className="text-sm text-slate-400">{sub.description}</p>
             </div>
-            <button
+            {!techScoped && <button
               type="button"
               onClick={() => setActiveTab("overview")}
               className={`p-2 rounded hover:bg-white/10 transition ${activeTab === "overview" ? "text-blue-300 bg-white/10" : "text-slate-400 hover:text-white"}`}
@@ -4742,13 +4752,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               aria-pressed={activeTab === "overview"}
             >
               <History className="h-4 w-4" />
-            </button>
+            </button>}
           </div>
         </div>
 
         {/* Tabs */}
         <div className="flex flex-wrap gap-x-1 gap-y-0 mb-4 border-b border-white/10">
-          {ACCOUNTING_DASHBOARD_TABS.map((tab) => {
+          {shownTabs.map((tab) => {
             const Icon = tab.Icon;
             const badgeCount = 0;
             return (
@@ -4922,19 +4932,23 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   now (next to Search) — see the "Employee table" section
                   below — so it's always right next to whichever nation's
                   rows it's about to act on. */}
-              <button
-                type="button"
-                onClick={() => setShowAuditLog(!showAuditLog)}
-                className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-white rounded font-semibold transition flex items-center gap-2"
-              >
-                <LogOut className="h-4 w-4" />
-                Audit Log ({auditLog.length})
-              </button>
-              <ActivityLogPanel module="accounting" title="Accounting Activity Log" />
+              {!techScoped && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowAuditLog(!showAuditLog)}
+                    className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-white rounded font-semibold transition flex items-center gap-2"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Audit Log ({auditLog.length})
+                  </button>
+                  <ActivityLogPanel module="accounting" title="Accounting Activity Log" />
+                </>
+              )}
               {/* Currency toggle — Office Payroll only; Tech Payroll is
                   always US (forced by the effect above), so there's no PH
                   option to toggle to there. */}
-              {activeTab === "payroll" && (
+              {activeTab === "payroll" && !techScoped && (
                 <div className="ml-auto flex flex-col items-end gap-2">
                 <div className="flex gap-2">
                   {(["USD", "PHP"] as const).map((cur) => (
@@ -4970,7 +4984,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             {/* Connect Gmail — one connection per region; payslip sends
                 automatically use whichever region the recipient employee
                 belongs to, regardless of which tab is currently active. */}
-            <div className="flex flex-wrap gap-3">
+            {!techScoped && <div className="flex flex-wrap gap-3">
               {(["US", "PH"] as const).map((region) => {
                 const status = gmailStatusByRegion[region];
                 return (
@@ -5009,12 +5023,14 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   </div>
                 );
               })}
-            </div>
+            </div>}
 
             {/* Summary cards — scoped to the active nation (US or PH), not
                 the combined US total. */}
             {(() => {
-              const displayTotal = effectiveCurrency === "USD" ? totalUSOfficePayroll : totalPHPayroll;
+              const displayTotal = techScoped
+                ? displayRows.reduce((s, r) => s + r.grossPayUSD, 0)
+                : effectiveCurrency === "USD" ? totalUSOfficePayroll : totalPHPayroll;
               return (
                 <div className="grid gap-2 grid-cols-2 lg:grid-cols-4">
                   <div className="bg-slate-900/50 border border-white/10 rounded-lg p-3">
@@ -5086,7 +5102,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             <div className="bg-slate-900/50 border border-white/10 rounded-lg overflow-x-auto">
               <div className="px-3 py-2 border-b border-white/10 flex items-center justify-between">
                 <span className="text-sm font-semibold">
-                  {effectiveCurrency === "USD" ? "Office" : "PH"} Employee Payroll — Current Period
+                  {techScoped ? "Tech Payroll — view only" : `${effectiveCurrency === "USD" ? "Office" : "PH"} Employee Payroll — Current Period`}
                 </span>
                 <span className="text-xs text-slate-400">{visibleRows.length} employees</span>
               </div>
@@ -5101,7 +5117,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     className="w-full max-w-sm bg-slate-800/50 border border-white/10 rounded-lg px-2 py-1.5 text-white text-xs focus:border-blue-500 focus:outline-none"
                   />
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                {!techScoped && <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={downloadFilteredAttendance}
@@ -5202,13 +5218,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   )}
                   {generating ? "Generating…" : `Generate Payroll (${generationEmployeeCount})`}
                 </button>
-                </div>
+                </div>}
               </div>
                 <table className="w-full text-xs min-w-[900px]">
                   <thead>
                     <tr className="border-b border-white/10 bg-white/5">
                       <th className="px-3 py-2 text-center text-xs text-slate-400 uppercase w-10">
-                        <input
+                        {!techScoped && <input
                           type="checkbox"
                           title="Include/exclude all visible employees from payroll generation"
                           checked={visibleRows.length > 0 && visibleRows.every((r) => !r.employee.payrollExcluded)}
@@ -5220,7 +5236,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             });
                           }}
                           className="h-4 w-4 accent-blue-600 cursor-pointer"
-                        />
+                        />}
                       </th>
                       <th className="px-3 py-2 text-left text-xs text-slate-400 uppercase">
                         <button
@@ -5300,7 +5316,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           <tr className="bg-white/[0.03]">
                             {/* Check / uncheck everyone in this department — same as the header checkbox, for one department. */}
                             <td className="px-3 py-1.5 text-center">
-                              <input
+                              {!techScoped && <input
                                 type="checkbox"
                                 title={`Include/exclude everyone in ${group.department}`}
                                 checked={group.rows.length > 0 && group.rows.every((r) => !r.employee.payrollExcluded)}
@@ -5318,7 +5334,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                   });
                                 }}
                                 className="h-4 w-4 accent-blue-600 cursor-pointer"
-                              />
+                              />}
                             </td>
                             <td colSpan={payrollColCount - 1} className="px-3 py-1.5 text-xs text-xs font-bold text-blue-300 uppercase tracking-wide">
                               {group.department} <span className="text-slate-500 font-normal normal-case">({group.rows.length})</span>
@@ -5330,19 +5346,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                               className={`border-b border-white/5 hover:bg-white/5 ${row.employee.payrollExcluded ? "opacity-50" : ""}`}
                             >
                               <td className="px-3 py-2 text-center">
-                                <input
+                                {!techScoped && <input
                                   type="checkbox"
                                   title="Include in payroll generation"
                                   checked={!row.employee.payrollExcluded}
                                   onChange={(e) => handleTogglePayrollExcluded(row.employee.id, !e.target.checked)}
                                   className="h-4 w-4 accent-blue-600 cursor-pointer"
-                                />
+                                />}
                               </td>
                               <td className="px-3 py-2 font-medium">
                                 <button
                                   type="button"
                                   disabled={periodDataLoading > 0}
-                                  onClick={() => { setDetailEmployee(row.employee); setWizardStep("detail"); }}
+                                  onClick={() => { setDetailEmployee(row.employee); setWizardStep(techScoped ? "activity" : "detail"); }}
                                   title={
                                     periodDataLoading > 0
                                       ? "Still loading this period's attendance/ticket data — wait a moment so the numbers shown are final, not a partial snapshot."
@@ -5377,7 +5393,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                     <div className="mt-0.5 text-[10px] leading-tight" title={`Reviewed by ${mark.reviewedByName || "—"} on ${new Date(mark.reviewedAt).toLocaleString()}`}>
                                       <span className="flex items-center gap-1 text-green-400">
                                         ✓ Reviewed {new Date(mark.reviewedAt).toLocaleDateString()}
-                                        <button
+                                        {!techScoped && <button
                                           type="button"
                                           onClick={async () => {
                                             try { await clearPayrollReviewMark(row.employee.id, genStart, genEnd); await loadReviewMarks(); }
@@ -5387,7 +5403,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                           className="text-slate-500 hover:text-red-300 leading-none"
                                         >
                                           ×
-                                        </button>
+                                        </button>}
                                       </span>
                                       <div className="text-slate-500">Period: {genStart} to {genEnd}</div>
                                       <div className="text-slate-500">By: {mark.reviewedByName || "—"}</div>
@@ -5506,7 +5522,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 })()}
                               </td>
                               <td className="px-3 py-2 text-right">
-                                <button
+                                {!techScoped && <button
                                   type="button"
                                   onClick={() => handleSendPayslip(row)}
                                   disabled={sendingPayslipId === row.employee.id || !gmailStatus?.connected}
@@ -5515,7 +5531,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                 >
                                   <Send className="h-3 w-3" />
                                   {sendingPayslipId === row.employee.id ? "Sending…" : "Send"}
-                                </button>
+                                </button>}
                               </td>
                             </tr>
                           ))}
@@ -6807,7 +6823,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
       </main>
 
-      {detailEmployee && wizardStep === "detail" && (
+      {detailEmployee && wizardStep === "detail" && !techScoped && (
         <EmployeePayrollDetailModal
           key={detailEmployee.id}
           employeeNav={(() => {
@@ -6965,10 +6981,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             onCategoryOverrideBlur={handleCategoryOverrideBlur}
             savingCategoryOverrideKey={savingCategoryOverrideKey}
             onClose={() => { setDetailEmployee(null); setWizardStep("detail"); }}
-            onPrev={() => setWizardStep("detail")}
+            onPrev={techScoped ? undefined : () => setWizardStep("detail")}
+            readOnly={techScoped}
             stateRegularAmount={hourlyOtOverrides.get(detailEmployee.id)?.regularAmount ?? null}
             onSetHourlyOtMode={
-              isTechRole(detailEmployee)
+              isTechRole(detailEmployee) && !techScoped
                 ? async (mode, total, regularAmount) => {
                     setNextBusy(true);
                     try {
@@ -6988,7 +7005,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             }
             hourlyOtModeBusy={nextBusy}
             doneBusy={reviewBusy}
-            onDone={async (breakdown) => {
+            onDone={techScoped ? undefined : async (breakdown) => {
               // Same guard as the office path above and generatePayroll()
               // itself — see that comment for why this matters.
               if (!genStart || !genEnd || genStart > genEnd) {

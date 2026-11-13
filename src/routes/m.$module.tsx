@@ -12,7 +12,7 @@ import { useAuth } from "@/lib/auth";
 import { getModule, type ModuleDef, type SubModuleDef } from "@/lib/modules";
 import { hasDashboardAccess } from "@/lib/dashboardAccess";
 import { getModuleRoleGate, MODULE_LEVEL_GATE_SLUG, useModuleRoleGateOverrides } from "@/lib/moduleAccess";
-import { isModuleAllowed, isModuleAllowedForTrainee, isModuleAllowedForFrozen } from "@/lib/roleLabels";
+import { isModuleAllowed, isModuleAllowedForTrainee, isModuleAllowedForFrozen, isTechScopedViewer } from "@/lib/roleLabels";
 import { canAccessSubmodule } from "@/lib/submoduleAccess";
 import { getCompanyUsers } from "@/lib/supabase/users";
 import {
@@ -370,7 +370,9 @@ function ModuleIndex() {
           return (leftIndex === -1 ? order.length : leftIndex) - (rightIndex === -1 ? order.length : rightIndex);
         })
       : m.submodules
-  ).filter((s: SubModuleDef) => !s.hiddenFromGrid);
+    // A technician-scoped viewer can't reach the pages that normally link to
+    // the hidden ones (People Operations), so they're tiles for them.
+  ).filter((s: SubModuleDef) => !s.hiddenFromGrid || isTechScopedViewer(role, extraRoles, m.slug));
 
   const ModuleIcon = moduleIcon(m.slug);
   return (

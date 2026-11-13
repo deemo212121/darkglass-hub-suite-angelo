@@ -42,7 +42,7 @@ import { ManagerReviewPage, SUPPORTED_TYPES as EMPLOYER_SIGN_SUPPORTED_TYPES } f
 import { getCompanyUsers, getEmploymentStatusesByProfileIds, getMyProfileId, getUserStatusChanges, setProfileFrozen, type AccountStatusChange, type EmploymentStatusInfo, type ProfileRow } from "@/lib/supabase/users";
 import { getActiveFlashTechDestinationsByProfile, type ActiveFlashTechDestination } from "@/lib/supabase/flashTechTrips";
 import { formatISODate, localISODate } from "@/lib/localDate";
-import { getRoleDepartmentBreakdown } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, isTechScopeSubject, isTechScopedViewer } from "@/lib/roleLabels";
 import { getSignableDocumentsByTypes, getExistingActiveDocuments, createSignableDocument, updateSignableDocumentPdfUrl, confirmSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import {
   SIGNABLE_DOCUMENT_REGISTRY,
@@ -206,7 +206,11 @@ export function TechnicianFormChecklistPage({
   reloadSignal?: number;
 } = {}) {
   const navigate = useNavigate();
-  const { uid, displayName } = useAuth();
+  const { uid, displayName, role, extraRoles } = useAuth();
+  // Technical Assistant Director without HR: the technician tabs, technicians
+  // only, form status only — no sending, signing, reminders, N/A, freezing,
+  // or opening the signed forms (roleLabels.ts's TECH_SCOPED_PAGES).
+  const techScoped = isTechScopedViewer(role, extraRoles, "hr");
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   // Defaults to the "New Technician" tab, not the legacy "Technician" one —
   // the old 16-form checklist is hidden by default (see
@@ -217,8 +221,10 @@ export function TechnicianFormChecklistPage({
   const [activeChecklistTab, setActiveChecklistTab] = useState<ChecklistTabKey>("newTechnician");
   const [showLegacyTechnicianTab, setShowLegacyTechnicianTab] = useState(false);
   const visibleChecklistTabs = useMemo(
-    () => (showLegacyTechnicianTab ? CHECKLIST_TABS : CHECKLIST_TABS.filter((t) => t.key !== "technician")),
-    [showLegacyTechnicianTab]
+    () =>
+      (showLegacyTechnicianTab ? CHECKLIST_TABS : CHECKLIST_TABS.filter((t) => t.key !== "technician"))
+        .filter((t) => !techScoped || t.key === "technician" || t.key === "newTechnician"),
+    [showLegacyTechnicianTab, techScoped]
   );
   // Lazy initializers so a cache hit paints the roster/active tab's forms on
   // the very first render — see the cache helpers above loadUsers/
@@ -462,7 +468,7 @@ export function TechnicianFormChecklistPage({
   useEffect(() => onTabVisible(() => void load()), [load]);
 
   const rows: TechRow[] = useMemo(() => {
-    return allUsers.filter(activeConfig.isEligible).map((u) => {
+    return allUsers.filter((u) => activeConfig.isEligible(u) && (!techScoped || isTechScopeSubject(u.role))).map((u) => {
       const { docs: docMap, exempt, doneCount, applicableTotal } = tabProgress(u.id, activeConfig, latestByKey, exemptions);
       return {
         profileId: u.id,
@@ -480,7 +486,7 @@ export function TechnicianFormChecklistPage({
         flashTrips: flashTripsByProfile.get(u.id) ?? [],
       };
     });
-  }, [allUsers, latestByKey, exemptions, activeConfig, employmentStatuses, statusChanges, flashTripsByProfile]);
+  }, [allUsers, latestByKey, exemptions, activeConfig, employmentStatuses, statusChanges, flashTripsByProfile, techScoped]);
 
   // Auto-(re)select a row to expand whenever the underlying row list changes
   // (data refresh OR switching tabs) — keeps the current selection if it's
@@ -1099,7 +1105,7 @@ export function TechnicianFormChecklistPage({
                       />
                     </div>
                   </button>
-                  <button
+                  {!techScoped && <button
                     type="button"
                     disabled={actionKey === `${r.profileId}|freeze`}
                     onClick={() => void handleToggleFreeze(r.profileId, r.name, r.frozen)}
@@ -1111,7 +1117,7 @@ export function TechnicianFormChecklistPage({
                     }`}
                   >
                     {actionKey === `${r.profileId}|freeze` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Snowflake className="h-3.5 w-3.5" />}
-                  </button>
+                  </button>}
                 </div>
 
                 {isOpen && (
@@ -1125,7 +1131,7 @@ export function TechnicianFormChecklistPage({
                       );
                       const remindAllBusy = actionKey === `${r.profileId}|remindAll`;
                       const sendAllBusy = actionKey === `${r.profileId}|sendAll`;
-                      if (outstanding.length === 0 && pending.length === 0) return null;
+                      if (techScoped || (outstanding.length === 0 && pending.length === 0)) return null;
                       return (
                         <div className="flex justify-end items-center gap-3 mb-2.5">
                           {pending.length > 0 && (
@@ -1223,7 +1229,7 @@ export function TechnicianFormChecklistPage({
                             <span className={`shrink-0 text-[10px] font-semibold uppercase tracking-wide ${statusColor}`}>
                               {statusText}
                             </span>
-                            {!na && doc?.pdfUrl && (
+                            {!techScoped && !na && doc?.pdfUrl && (
                               <button
                                 type="button"
                                 onClick={() => setViewDoc({ doc: doc!, label })}
@@ -1232,7 +1238,7 @@ export function TechnicianFormChecklistPage({
                                 view <ExternalLink className="h-3 w-3" />
                               </button>
                             )}
-                            {!na && legacySrc && (
+                            {!techScoped && !na && legacySrc && (
                               <button
                                 type="button"
                                 title={`On file from ${SIGNABLE_DOCUMENT_REGISTRY[legacySrc.doc.documentType]?.label ?? legacySrc.doc.documentType}`}
@@ -1246,7 +1252,7 @@ export function TechnicianFormChecklistPage({
                                 view <ExternalLink className="h-3 w-3" />
                               </button>
                             )}
-                            {!na && done && doc && doc.status === "confirmed" && EMPLOYER_SIGN_SUPPORTED_TYPES.has(type) && (
+                            {!techScoped && !na && done && doc && doc.status === "confirmed" && EMPLOYER_SIGN_SUPPORTED_TYPES.has(type) && (
                               <button
                                 type="button"
                                 onClick={() => setSignDoc(doc)}
@@ -1256,7 +1262,7 @@ export function TechnicianFormChecklistPage({
                                 <PenLine className="h-3 w-3" /> Re-sign
                               </button>
                             )}
-                            {!na && awaitingEmployee && (
+                            {!techScoped && !na && awaitingEmployee && (
                               <button
                                 type="button"
                                 disabled={busy}
@@ -1267,7 +1273,7 @@ export function TechnicianFormChecklistPage({
                                 {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bell className="h-3 w-3" />} Remind
                               </button>
                             )}
-                            {!na && awaitingHr && doc && onSendToEmployer && type !== "i9" && type !== "w4" && (
+                            {!techScoped && !na && awaitingHr && doc && onSendToEmployer && type !== "i9" && type !== "w4" && (
                               <button
                                 type="button"
                                 onClick={() => onSendToEmployer(doc)}
@@ -1277,7 +1283,7 @@ export function TechnicianFormChecklistPage({
                                 <Send className="h-3 w-3" /> Send to Employer
                               </button>
                             )}
-                            {!na && awaitingHr && (
+                            {!techScoped && !na && awaitingHr && (
                               type === "w4" && doc ? (
                                 <button
                                   type="button"
@@ -1342,7 +1348,7 @@ export function TechnicianFormChecklistPage({
                                 </span>
                               )
                             )}
-                            {!na && !doneViaLegacy && (reviewStatus === "not_sent" || outdated) && (
+                            {!techScoped && !na && !doneViaLegacy && (reviewStatus === "not_sent" || outdated) && (
                               <button
                                 type="button"
                                 disabled={busy}
@@ -1357,7 +1363,7 @@ export function TechnicianFormChecklistPage({
                                 {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />} {outdated ? "Send new version" : "Send"}
                               </button>
                             )}
-                            <label
+                            {!techScoped && <label
                               title="This person doesn't need this form"
                               className="inline-flex shrink-0 items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 cursor-pointer"
                             >
@@ -1369,7 +1375,7 @@ export function TechnicianFormChecklistPage({
                                 className="h-3 w-3"
                               />
                               N/A
-                            </label>
+                            </label>}
                           </li>
                           </Fragment>
                         );

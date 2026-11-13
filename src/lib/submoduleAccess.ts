@@ -11,7 +11,7 @@
  * remain the actual enforcement; this is a read-only mirror of them, not a
  * replacement.
  */
-import { isSubmoduleAllowed, isSubmoduleAllowedForTrainee, isSubmoduleAllowedForFrozen, isCompanySuperAdminRole, normalizeRole } from "./roleLabels";
+import { isSubmoduleAllowed, isSubmoduleAllowedForTrainee, isSubmoduleAllowedForFrozen, isCompanySuperAdminRole, normalizeRole, isTechScopedViewer, TECH_SCOPED_PAGES } from "./roleLabels";
 import { getDashboardRoleGate, hasDashboardAccess } from "./dashboardAccess";
 import { getModuleRoleGate, getEmailVaultGrant, MODULE_LEVEL_GATE_SLUG } from "./moduleAccess";
 import { canSeeTicketTour } from "./tours/ticketTours";
@@ -119,6 +119,8 @@ export function canAccessSubmodule(
 ): boolean {
   if (isTrainee && !isSubmoduleAllowedForTrainee(isTrainee, moduleSlug, sub.slug)) return false;
   if (isFrozen && !isSubmoduleAllowedForFrozen(isFrozen, moduleSlug, sub.slug)) return false;
+  // Technical Assistant Director's technician-only HR / Accounting pages — none of the gates below apply.
+  if (isTechScopedViewer(role, extraRoles, moduleSlug)) return TECH_SCOPED_PAGES[moduleSlug].has(sub.slug);
 
   const isAllRolesAdminSubmodule = moduleSlug === "admin" && ALL_ROLES_ADMIN_SUBMODULES.has(sub.slug);
   if (!passesModuleLevelGate(role, extraRoles, moduleSlug)) return false;

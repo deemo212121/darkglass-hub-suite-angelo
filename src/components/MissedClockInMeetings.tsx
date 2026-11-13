@@ -3,6 +3,7 @@ import { CalendarCheck2, CalendarClock, CalendarX2, Check, Loader2, Pencil } fro
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import type { ProfileRow } from "@/lib/supabase/users";
+import { isTechScopeSubject } from "@/lib/roleLabels";
 import {
   getDoneClockInMeetings,
   getFirstTimeIns,
@@ -39,7 +40,8 @@ function isoDaysAgo(n: number): string {
  * Marking one done keeps the record — the missed day still counts as 1
  * error on the Technician Performance Report.
  */
-export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) {
+/** `techScoped`: Technical Assistant Director's technician-only, view-only HR view (roleLabels.ts's TECH_SCOPED_PAGES) — technicians' rows only, no Meeting done / note edits. */
+export function MissedClockInMeetings({ profiles, techScoped = false }: { profiles: ProfileRow[]; techScoped?: boolean }) {
   const { displayName } = useAuth();
   const [meetings, setMeetings] = useState<ClockInMeeting[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,6 +72,12 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
   useEffect(() => { void load(); }, []);
 
   const byId = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
+  const inScope = (profileId: string) => !techScoped || isTechScopeSubject(byId.get(profileId)?.role);
+  const scopedMeetings = useMemo(
+    () => meetings.filter((m) => inScope(m.profileId)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [meetings, byId, techScoped],
+  );
   const fmtDate = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 
   // Technicians with more than one open meeting are listed together.
@@ -81,15 +89,15 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
   const tidyBranch = (b: string | null | undefined) => String(b ?? "").trim().replace(/\s*,\s*/g, ", ");
   const branchOfTech = (profileId: string) => tidyBranch(byId.get(profileId)?.assigned_branch) || "—";
   const reqBranches = useMemo(
-    () => Array.from(new Set(meetings.map((m) => branchOfTech(m.profileId)))).sort((a, b) => a.localeCompare(b)),
+    () => Array.from(new Set(scopedMeetings.map((m) => branchOfTech(m.profileId)))).sort((a, b) => a.localeCompare(b)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [meetings, byId],
+    [scopedMeetings, byId],
   );
   const shownMeetings = useMemo(
-    () => meetings.filter((m) =>
+    () => scopedMeetings.filter((m) =>
       (!reqFrom || m.missedDate >= reqFrom) && (!reqTo || m.missedDate <= reqTo) && (reqBranch === "all" || branchOfTech(m.profileId) === reqBranch)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [meetings, reqFrom, reqTo, reqBranch, byId],
+    [scopedMeetings, reqFrom, reqTo, reqBranch, byId],
   );
 
   const grouped = useMemo(() => {
@@ -118,7 +126,7 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
     }
   };
 
-  const forcedShown = forced.filter((f) => isMeetingTech(byId.get(f.profileId)));
+  const forcedShown = forced.filter((f) => isMeetingTech(byId.get(f.profileId)) && inScope(f.profileId));
 
   return (
     <div className="space-y-4">
@@ -164,7 +172,7 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
       <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-white/10">
         <CalendarX2 className="h-4 w-4 text-red-300" />
         <span className="text-sm font-semibold text-white">
-          Meetings required ({shownMeetings.length}{shownMeetings.length !== meetings.length ? ` of ${meetings.length}` : ""})
+          Meetings required ({shownMeetings.length}{shownMeetings.length !== scopedMeetings.length ? ` of ${scopedMeetings.length}` : ""})
         </span>
         {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
         <div className="ml-auto flex flex-wrap items-center gap-2 text-xs">
@@ -212,7 +220,7 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
           <tbody>
             {!loading && shownMeetings.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">{meetings.length === 0 ? "No meetings needed." : "No meetings match these filters."}</td>
+                <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">{scopedMeetings.length === 0 ? "No meetings needed." : "No meetings match these filters."}</td>
               </tr>
             )}
             {grouped.map(([profileId, list]) =>
@@ -237,9 +245,11 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
                     )}
                   </td>
                   <td className="px-3 py-2 text-right">
-                    <button type="button" onClick={() => { setDoneFor(m); setNote(""); setError(null); }} className="btn text-xs px-2 py-1 inline-flex items-center gap-1">
-                      <Check className="h-3.5 w-3.5" /> Meeting done
-                    </button>
+                    {!techScoped && (
+                      <button type="button" onClick={() => { setDoneFor(m); setNote(""); setError(null); }} className="btn text-xs px-2 py-1 inline-flex items-center gap-1">
+                        <Check className="h-3.5 w-3.5" /> Meeting done
+                      </button>
+                    )}
                   </td>
                 </tr>
               )),
@@ -273,7 +283,7 @@ export function MissedClockInMeetings({ profiles }: { profiles: ProfileRow[] }) 
         </div>
       )}
     </div>
-      <DoneClockInMeetings profiles={profiles} reloadKey={doneReload} />
+      <DoneClockInMeetings profiles={profiles} reloadKey={doneReload} techScoped={techScoped} />
     </div>
   );
 }
@@ -290,7 +300,7 @@ const daysAgoISO = (n: number) => {
  * filterable by the missed day's date range and the technician's branch.
  * They still count as errors on the Technician Performance Report.
  */
-function DoneClockInMeetings({ profiles, reloadKey }: { profiles: ProfileRow[]; reloadKey: number }) {
+function DoneClockInMeetings({ profiles, reloadKey, techScoped }: { profiles: ProfileRow[]; reloadKey: number; techScoped: boolean }) {
   const [from, setFrom] = useState(() => daysAgoISO(30));
   const [to, setTo] = useState(() => daysAgoISO(0));
   const [branch, setBranch] = useState("all");
@@ -333,10 +343,11 @@ function DoneClockInMeetings({ profiles, reloadKey }: { profiles: ProfileRow[]; 
   const byId = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
   const tidy = (b: string | null | undefined) => String(b ?? "").trim().replace(/\s*,\s*/g, ", ");
   const branchOf = (profileId: string) => tidy(byId.get(profileId)?.assigned_branch) || "—";
-  const branches = useMemo(() => Array.from(new Set(rows.map((r) => branchOf(r.profileId)))).sort((a, b) => a.localeCompare(b)),
+  const scopedRows = techScoped ? rows.filter((r) => isTechScopeSubject(byId.get(r.profileId)?.role)) : rows;
+  const branches = useMemo(() => Array.from(new Set(scopedRows.map((r) => branchOf(r.profileId)))).sort((a, b) => a.localeCompare(b)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, byId]);
-  const shown = branch === "all" ? rows : rows.filter((r) => branchOf(r.profileId) === branch);
+    [rows, byId, techScoped]);
+  const shown = branch === "all" ? scopedRows : scopedRows.filter((r) => branchOf(r.profileId) === branch);
 
   const fmtDay = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
   const fmtWhen = (iso: string | null) => (iso ? new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—");
@@ -422,7 +433,7 @@ function DoneClockInMeetings({ profiles, reloadKey }: { profiles: ProfileRow[]; 
                   ) : (
                     <div className="flex items-start gap-1.5">
                       <span className="flex-1 whitespace-pre-line">{m.note || "—"}</span>
-                      <button
+                      {!techScoped && <button
                         type="button"
                         onClick={() => startEdit(m)}
                         disabled={!!editingId}
@@ -431,7 +442,7 @@ function DoneClockInMeetings({ profiles, reloadKey }: { profiles: ProfileRow[]; 
                         aria-label={m.note ? "Edit note" : "Add note"}
                       >
                         <Pencil />
-                      </button>
+                      </button>}
                     </div>
                   )}
                 </td>

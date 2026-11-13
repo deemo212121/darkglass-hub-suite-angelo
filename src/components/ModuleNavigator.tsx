@@ -25,7 +25,7 @@ import { MODULES, type ModuleDef, type SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { canAccessSubmodule } from "@/lib/submoduleAccess";
 import { useModuleRoleGateOverrides } from "@/lib/moduleAccess";
-import { ROLE_OPTIONS, isModuleAllowed, isModuleAllowedForTrainee, isModuleAllowedForFrozen } from "@/lib/roleLabels";
+import { ROLE_OPTIONS, isModuleAllowed, isModuleAllowedForTrainee, isModuleAllowedForFrozen, isTechScopedViewer } from "@/lib/roleLabels";
 
 const SUPER_ROLES = new Set(["SUPERADMIN", "SUPERSUPERADMIN"]);
 
@@ -54,7 +54,7 @@ export function ModuleNavigator() {
   // page, keeps what's listed in sync with what's actually reachable.
   const visibleSubmodulesFor = (m: ModuleDef): SubModuleDef[] =>
     m.submodules.filter((s) => {
-      if (s.hiddenFromGrid) return false;
+      if (s.hiddenFromGrid && !isTechScopedViewer(role, extraRoles, m.slug)) return false;
       return canAccessSubmodule(role, extraRoles, m.slug, s, isTrainee, isFrozen);
     });
 

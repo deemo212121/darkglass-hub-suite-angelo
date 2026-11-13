@@ -64,7 +64,8 @@ import { getCompanyTraineeEntries } from "@/lib/supabase/traineeTimecards";
 import { getCompanyTimecardEntries } from "@/lib/supabase/timecards";
 import { getServerNow } from "@/lib/serverTime";
 import { todayISO } from "@/lib/localDate";
-import { anyHeldRoleIn } from "@/lib/roleLabels";
+import { anyHeldRoleIn, isTechScopeSubject, isTechScopedViewer, normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
+import { useAuth } from "@/lib/auth";
 
 /** Branch Manager picker — primary or secondary user type. */
 const BRANCH_MANAGER_PICK_ROLES = new Set(["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER"]);
@@ -310,6 +311,10 @@ interface QuitStoppedRow {
 
 export function TrainingListPage({ embedded }: { embedded?: boolean } = {}) {
   const navigate = useNavigate();
+  // Technical Assistant Director without HR: technician trainees only, view
+  // only — no edits, and nothing saved on load (roleLabels.ts's TECH_SCOPED_PAGES).
+  const { role, extraRoles } = useAuth();
+  const techScoped = isTechScopedViewer(role, extraRoles, "hr");
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [branchRoles, setBranchRoles] = useState<BranchRoles[]>([]);
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
@@ -345,7 +350,18 @@ export function TrainingListPage({ embedded }: { embedded?: boolean } = {}) {
     setError(null);
     try {
       const [candidateRows, branchRoleRows, profileRows] = await Promise.all([getCandidates(), getBranchRoles(), getCompanyUsers()]);
-      setCandidates(candidateRows);
+      // A candidate's account (found by phone / email) says what they are;
+      // without one, their Position ("Technician").
+      const profileByPerson = new Map<string, ProfileRow>();
+      for (const pr of profileRows) for (const k of personKeys(pr.phone_number, pr.email)) profileByPerson.set(k, pr);
+      const candidateIsTech = (c: Candidate) => {
+        const linked = personKeys(c.phone, c.email).map((k) => profileByPerson.get(k)).find(Boolean);
+        if (linked) return isTechScopeSubject(linked.role);
+        const position = (c.position || "").trim().toLowerCase();
+        const code = Object.keys(ROLE_LABELS).find((r) => ROLE_LABELS[r].toLowerCase() === position) ?? normalizeRole(c.position);
+        return isTechScopeSubject(code);
+      };
+      setCandidates(techScoped ? candidateRows.filter(candidateIsTech) : candidateRows);
       setBranchRoles(branchRoleRows);
 
       // Master List's "Trainee" tab (employment_type = 'trainee') is the
@@ -386,7 +402,8 @@ export function TrainingListPage({ embedded }: { embedded?: boolean } = {}) {
         const effectiveFieldStart = trainingEndByProfileId.get(p.id) || personKeys(p.phone_number, p.email).map((k) => candidateEndByPerson.get(k)).find(Boolean);
         if (effectiveFieldStart && effectiveFieldStart <= serverToday) dueProfileIds.add(p.id);
       }
-      if (dueProfileIds.size > 0) {
+      // View only shows them graduated without saving it (HR's next visit does).
+      if (dueProfileIds.size > 0 && !techScoped) {
         await Promise.all(
           Array.from(dueProfileIds).map((id) =>
             updateCompanyUser(id, { employmentType: "regular" }).catch((err) =>
@@ -394,8 +411,8 @@ export function TrainingListPage({ embedded }: { embedded?: boolean } = {}) {
             )
           )
         );
-        for (const p of profileRows) if (dueProfileIds.has(p.id)) p.employment_type = "regular";
       }
+      for (const p of profileRows) if (dueProfileIds.has(p.id)) p.employment_type = "regular";
       setProfiles(profileRows);
 
       const stillTraineeProfiles = traineeProfiles.filter((p) => !dueProfileIds.has(p.id));
@@ -414,8 +431,9 @@ export function TrainingListPage({ embedded }: { embedded?: boolean } = {}) {
         staffNote: p.staff_note ?? null,
         isActive: p.is_active,
       });
-      setMasterListTrainees(stillTraineeProfiles.map(toMasterListTraineeRow));
-      setMasterListFieldStarts(fieldStartProfiles.map(toMasterListTraineeRow));
+      const inScope = (pr: ProfileRow) => !techScoped || isTechScopeSubject(pr.role);
+      setMasterListTrainees(stillTraineeProfiles.filter(inScope).map(toMasterListTraineeRow));
+      setMasterListFieldStarts(fieldStartProfiles.filter(inScope).map(toMasterListTraineeRow));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load the training list.");
     } finally {
@@ -665,6 +683,7 @@ export function TrainingListPage({ embedded }: { embedded?: boolean } = {}) {
               profiles={profiles}
               dateFrom={dateFrom}
               dateTo={dateTo}
+              techScoped={techScoped}
             />
 
             {fieldStartSection && (
@@ -675,6 +694,7 @@ export function TrainingListPage({ embedded }: { embedded?: boolean } = {}) {
                 branchRoleByName={branchRoleByName}
                 onChanged={() => void load()}
                 profiles={profiles}
+                techScoped={techScoped}
                 dateFrom={`${fieldStartSection.monthKey}-01`}
                 dateTo={`${fieldStartSection.monthKey}-${String(daysInMonth(fieldStartSection.monthKey)).padStart(2, "0")}`}
                 headerRight={
@@ -766,6 +786,7 @@ function UnifiedBranchTable({
   dateFrom,
   dateTo,
   headerRight,
+  techScoped,
 }: {
   title: string;
   groups: UnifiedBranchGroup[];
@@ -777,6 +798,8 @@ function UnifiedBranchTable({
   dateTo: string;
   /** Optional control (e.g. Field Starts' own month picker) shown on the right of the panel header, beside the title. */
   headerRight?: ReactNode;
+  /** View only — every edit control off (TrainingListPage's techScoped). */
+  techScoped: boolean;
 }) {
   const [expandedBranch, setExpandedBranch] = useState<string | null>(null);
   const [expandedTraineeKey, setExpandedTraineeKey] = useState<string | null>(null);
@@ -977,7 +1000,7 @@ function UnifiedBranchTable({
                                   <td className="py-1.5 pr-3">
                                     <select
                                       value={leadership?.seniorBranchManager || ""}
-                                      disabled={busy || !row.branch}
+                                      disabled={busy || techScoped || !row.branch}
                                       onChange={(e) => handleEditLeadership(row, "seniorBranchManager", e.target.value)}
                                       title="Branch-wide — also updates General Information's leadership directory for this branch"
                                       className="bg-white/5 border border-white/15 rounded-md px-2 py-1 text-xs text-white w-32 disabled:opacity-40 [&>option]:bg-slate-900 [&>option]:text-white"
@@ -994,7 +1017,7 @@ function UnifiedBranchTable({
                                   <td className="py-1.5 pr-3">
                                     <select
                                       value={leadership?.branchManager || ""}
-                                      disabled={busy || !row.branch}
+                                      disabled={busy || techScoped || !row.branch}
                                       onChange={(e) => handleEditLeadership(row, "branchManager", e.target.value)}
                                       title="Branch-wide — also updates General Information's leadership directory for this branch"
                                       className="bg-white/5 border border-white/15 rounded-md px-2 py-1 text-xs text-white w-32 disabled:opacity-40 [&>option]:bg-slate-900 [&>option]:text-white"
@@ -1012,7 +1035,7 @@ function UnifiedBranchTable({
                                     <input
                                       type="date"
                                       defaultValue={row.startDate || ""}
-                                      disabled={busy}
+                                      disabled={busy || techScoped}
                                       onChange={(e) => handleEditStartDate(row, e.target.value)}
                                       title={row.masterList ? "Master List's Hire Date" : undefined}
                                       className="bg-white/5 border border-white/15 rounded-md px-2 py-1 text-xs text-white"
@@ -1021,7 +1044,7 @@ function UnifiedBranchTable({
                                   <td className="py-1.5 pr-3">
                                     <FieldStartCell
                                       value={row.fieldStartDate}
-                                      disabled={busy}
+                                      disabled={busy || techScoped}
                                       onSave={(date) => handleEditFieldDate(row, date)}
                                     />
                                   </td>
@@ -1031,7 +1054,7 @@ function UnifiedBranchTable({
                                   </td>
                                   <td className="py-1.5 pr-3">
                                     <div className="flex items-center gap-1.5">
-                                      <button
+                                      {!techScoped && <button
                                         type="button"
                                         disabled={busy}
                                         onClick={() => setQuitTarget(row)}
@@ -1039,7 +1062,7 @@ function UnifiedBranchTable({
                                         className="inline-flex items-center gap-1 text-xs text-red-300 hover:text-red-200 disabled:opacity-40"
                                       >
                                         <UserX className="h-3.5 w-3.5" /> Quit/Stopped
-                                      </button>
+                                      </button>}
                                       {busy && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
                                     </div>
                                   </td>
