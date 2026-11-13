@@ -659,7 +659,7 @@ export function ExpenseTrackingPage({
                     </td>
                     <td className="px-2 py-1.5 text-white font-medium whitespace-nowrap">{profileName(e.profileId)}</td>
                     <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{branchOf(e)}</td>
-                    <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{e.category}</td>
+                    <td className={`px-2 py-1.5 whitespace-nowrap ${e.category === "Hotel" ? "text-amber-300" : e.category === "Car Rental" ? "text-rose-300" : "text-slate-300"}`}>{e.category}</td>
                     <td className="px-2 py-1.5 whitespace-nowrap">
                       {e.reimbursementType ? (
                         <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium border ${e.reimbursementType === "Gas" ? "border-sky-400/40 bg-sky-500/10 text-sky-200" : e.reimbursementType === "Food" ? "border-amber-400/40 bg-amber-500/10 text-amber-200" : isFlashTechAllowance(e) ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200" : "border-violet-400/40 bg-violet-500/10 text-violet-200"}`} title={reimbursementTypeLabel(e)}>
@@ -685,7 +685,8 @@ export function ExpenseTrackingPage({
                         )}
                       </td>
                     </>)}
-                    <td className="px-2 py-1.5 text-right text-slate-200 font-mono">{fmtMoney(e.amount)}</td>
+                    {/* Green like Branch Bills; a $0.00 line (paid elsewhere / not yet priced) stays dim. */}
+                    <td className={`px-2 py-1.5 text-right font-mono ${e.amount ? "text-emerald-300" : "text-slate-500"}`}>{fmtMoney(e.amount)}</td>
                     <td className="px-2 py-1.5 text-slate-400 w-[260px] max-w-[260px] whitespace-normal">
                       {e.description ? (
                         <button
