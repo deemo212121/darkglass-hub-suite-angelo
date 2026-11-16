@@ -89,6 +89,32 @@ export const BRANCH_EXPENSE_LABEL: Record<BranchExpenseCategory, string> = {
   other: "Other",
 };
 
+/**
+ * Accounting's provider list, shown first in Add Expense's provider dropdown (grouped).
+ * Waste Management sits under Utility — trash pickup is billed like the other utilities.
+ * Providers typed in with "+ New provider…" and saved on a bill show under "Added".
+ */
+export const BRANCH_EXPENSE_PROVIDERS: Partial<Record<BranchExpenseCategory, { group: string; names: string[] }[]>> = {
+  internet: [{ group: "Internet", names: ["Comcast", "Optimum", "Spectrum"] }],
+  utility: [
+    {
+      group: "Utilities",
+      names: [
+        "Alabama Power", "City Water & Light", "Dominion Energy", "Duke Energy", "Enbridge Gas", "Entergy", "EPB",
+        "Georgia Power", "Huntsville Utilities", "Jackson EMC", "Jackson Energy Authority", "JEA", "KUB", "MAWSS",
+        "Middle TN Electric", "MLGW", "Spire Energy", "Spire Gulf", "Talquin Electric", "West Wilson Utility District",
+      ],
+    },
+    {
+      group: "Waste Management",
+      names: [
+        "121 Disposal", "ABC Waste", "Dedman Waste", "GFL Environmental", "Gulf Coast Containers", "Patriot Sanitation",
+        "Republic Services", "Waste Connection", "Waste Pro",
+      ],
+    },
+  ],
+};
+
 export interface BranchExpenseFile {
   url: string;
   path: string;
