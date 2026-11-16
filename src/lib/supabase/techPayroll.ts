@@ -1363,7 +1363,18 @@ export function buildTechActivityBreakdown(
     hoursWorked: number;
     overtimeHours: number;
     hourlyRate: number;
+    /** What's paid for hours — the State total when State mode is applied. */
     techHourlyPay: number;
+    /** The company-rate split of techHourlyPay (straight time incl. PTO, and the OT premium); the rest is the state match. */
+    techHourlyPayStraight?: number;
+    techHourlyPayOtPremium?: number;
+    techPaidLeavePay?: number;
+    techPaidLeaveHours?: number;
+    /** Paid on top of everything above, same as the report's Total Payment. */
+    techGuaranteedSalaryMatch?: number;
+    techGuaranteedSalaryTarget?: number;
+    techHolidayPremium?: number;
+    techTraineeMatch?: number;
   },
   techRepairRates: TechRepairRate[],
   redoCount: number,
@@ -1389,14 +1400,55 @@ export function buildTechActivityBreakdown(
     payment: completedTicketsPayment,
   });
 
-  lineItems.push({
-    label: "Hourly Pay",
-    value: `${row.hoursWorked.toFixed(1)}${row.overtimeHours > 0 ? ` + ${row.overtimeHours.toFixed(1)} OT` : ""}`,
-    rate: row.hourlyRate,
-    payment: row.techHourlyPay,
-  });
+  // Hours, split the way TechActivityReportModal shows them: company-rate
+  // hourly pay, the OT premium, the state minimum-wage match (whatever State
+  // mode adds on top of the company rate), and PTO — together exactly
+  // row.techHourlyPay. Without the split fields, one Hourly Pay line as before.
+  const fmt3 = (n: number) => n.toFixed(3);
+  const paidLeavePay = row.techPaidLeavePay ?? 0;
+  const paidLeaveHours = row.techPaidLeaveHours ?? 0;
+  if (row.techHourlyPayStraight != null && row.techHourlyPayOtPremium != null) {
+    const companyTotal = row.techHourlyPayStraight + row.techHourlyPayOtPremium;
+    const stateMatch = row.techHourlyPay - companyTotal;
+    lineItems.push({
+      label: "Hourly Pay",
+      value: `${fmt3(Math.max(row.hoursWorked - paidLeaveHours, 0))}${row.overtimeHours > 0 ? ` + ${fmt3(row.overtimeHours)} OT` : ""}`,
+      rate: row.hourlyRate,
+      payment: row.techHourlyPayStraight - paidLeavePay,
+    });
+    if (row.techHourlyPayOtPremium > 0.005) {
+      lineItems.push({ label: "OT Premium (Weighted Rate)", value: `${fmt3(row.overtimeHours)} OT`, rate: null, payment: row.techHourlyPayOtPremium });
+    }
+    if (Math.abs(stateMatch) > 0.005) {
+      lineItems.push({ label: "State Minimum Wage Match", value: "Regular + OT to the state minimum", rate: null, payment: stateMatch });
+    }
+    if (paidLeavePay > 0.005) {
+      lineItems.push({ label: "PTO Pay", value: `${fmt3(paidLeaveHours)} paid leave hours`, rate: null, payment: paidLeavePay });
+    }
+  } else {
+    lineItems.push({
+      label: "Hourly Pay",
+      value: `${row.hoursWorked.toFixed(1)}${row.overtimeHours > 0 ? ` + ${row.overtimeHours.toFixed(1)} OT` : ""}`,
+      rate: row.hourlyRate,
+      payment: row.techHourlyPay,
+    });
+  }
+  const salaryMatch = row.techGuaranteedSalaryMatch ?? 0;
+  const holidayPremium = row.techHolidayPremium ?? 0;
+  const traineeMatch = row.techTraineeMatch ?? 0;
+  if (salaryMatch > 0.005) {
+    lineItems.push({
+      label: "Guaranteed Minimum Salary Match",
+      value: row.techGuaranteedSalaryTarget ? `$${row.techGuaranteedSalaryTarget.toFixed(2)}/cutoff minimum` : "—",
+      rate: null,
+      payment: salaryMatch,
+    });
+  }
+  if (holidayPremium > 0.005) lineItems.push({ label: "Holiday Premium", value: "×0.5 on holiday hours", rate: null, payment: holidayPremium });
+  if (traineeMatch > 0.005) lineItems.push({ label: "Trainee Daily Match", value: "$100/day minimum", rate: null, payment: traineeMatch });
 
-  const manualFields: Array<["mileage" | "trainingValue", string, "Mileage" | "Training Paid", number]> = [
+  const manualFields: Array<["ldtCount" | "mileage" | "trainingValue", string, "LDT" | "Mileage" | "Training Paid", number]> = [
+    ["ldtCount", "LDT", "LDT", row.techManual.ldtPay],
     ["mileage", "Mileage", "Mileage", row.techManual.mileagePay],
     ["trainingValue", "Training Paid", "Training Paid", row.techManual.trainingPay],
   ];
@@ -1440,8 +1492,10 @@ export function buildTechActivityBreakdown(
 
   const subtotal =
     REPAIR_TYPES.reduce((s, type) => s + (row.techCategoryCounts[type] ?? 0) * rateFor(type), 0) +
-    row.techManual.mileagePay + row.techManual.trainingPay +
-    twoTechPayment + completedTicketsPayment + redoReductionPayment + customLinesTotal + carryoverTotal + row.techHourlyPay;
+    row.techManual.ldtPay + row.techManual.mileagePay + row.techManual.trainingPay +
+    twoTechPayment + completedTicketsPayment + redoReductionPayment + customLinesTotal + carryoverTotal + row.techHourlyPay +
+    // Same as the report's subtotal: the matches and holiday premium count toward OW Incentive and Total Payment.
+    salaryMatch + holidayPremium + traineeMatch;
   const owIncentivePay = (row.techManual.owIncentivePct / 100) * subtotal;
   lineItems.push({ label: "OW Incentive", value: `${row.techManual.owIncentivePct}%`, rate: null, payment: owIncentivePay, paymentDisplay: row.techManual.owIncentivePct > 0 ? undefined : "—" });
 
