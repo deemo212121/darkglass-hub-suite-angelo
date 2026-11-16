@@ -4,7 +4,7 @@ import { AccountPageShell } from "@/components/AccountPageShell";
 import { useAuth } from "@/lib/auth";
 import { Save, Lock, Eye, EyeOff, Loader2, Check } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
-import { ROLE_LABELS, normalizeRole, anyHeldRoleIn } from "@/lib/roleLabels";
+import { ROLE_LABELS, normalizeRole, anyHeldRoleIn, isSuperAdminRole } from "@/lib/roleLabels";
 import { getMyFullProfile, updateCompanyUser, clearMyMustChangePassword } from "@/lib/supabase/users";
 import { supabase } from "@/lib/supabase/client";
 import { logModuleActivity, getModuleActivityLogForTarget, type ModuleActivityLogEntry } from "@/lib/supabase/moduleActivityLog";
@@ -112,7 +112,7 @@ function ProfilePage() {
   // Master List (bulk, company-wide view of who's on which zone); the only
   // edit allowed directly on someone's own My Profile is a SUPERADMIN
   // override, not the broader SCHEDULE_EDIT_ROLES list.
-  const canEditTimezone = normalizeRole(role) === "SUPERADMIN";
+  const canEditTimezone = isSuperAdminRole(role);
   const [profileId, setProfileId] = useState<string | null>(null);
   // Compared against profile.email in save() to know whether the Firebase
   // Auth update call is needed at all — same convention as the admin-side

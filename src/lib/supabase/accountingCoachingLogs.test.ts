@@ -77,7 +77,7 @@ describe("the Coaching Log tile", () => {
     expect(can("TECHNICIAN", ["FINANCE"])).toBe(true);
   });
   it("stays shut for everyone else, CSR included", () => {
-    for (const role of ["CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER", "TECHNICIAN", "PARTS", "MANAGER", "IT"]) expect(can(role)).toBe(false);
+    for (const role of ["CSR_AGENT", "CSR_TEAM_LEADER", "CSR_MANAGER", "TECHNICIAN", "PARTS", "MANAGER", "TRIAGE_USER"]) expect(can(role)).toBe(false);
   });
   it("doesn't let Accounting into CSR's log", () => {
     expect(canAccessSubmodule("FINANCE", [], "csr", csrTile)).toBe(false);

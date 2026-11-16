@@ -65,7 +65,7 @@ import {
   DEFAULT_ATTENDANCE_TIMEZONE,
   payGraceMinutesFor,
 } from "../attendanceGrace";
-import { TECHNICIAN_PAY_ROLES } from "../roleLabels";
+import { TECHNICIAN_PAY_ROLES, withIncludedRoles } from "../roleLabels";
 import { readEnv, fetchGmailConnection, refreshAccessToken, sendGmailMessage, fetchProfileByFirebaseUid } from "./gmailBridge";
 import { verifyFirebaseToken } from "./supabaseTokenBridge";
 import { localISODate } from "@/lib/localDate";
@@ -634,7 +634,7 @@ export async function handleRunAttendanceAlertsRequest(request: Request, env: Re
     const claims = await verifyFirebaseToken(idToken, envResult.firebaseProjectId);
     const caller = await fetchProfileByFirebaseUid(envResult, claims.sub);
     if (!caller) return json({ error: "Profile not found" }, 403);
-    const isCallerSuperAdmin = [caller.role, ...caller.extraRoles].some((r) => (r || "").toUpperCase() === "SUPERADMIN");
+    const isCallerSuperAdmin = withIncludedRoles([caller.role, ...caller.extraRoles]).includes("SUPERADMIN");
     if (!isCallerSuperAdmin) return json({ error: "Only a SuperAdmin can run this" }, 403);
 
     const dryRun = payload.dryRun === true;

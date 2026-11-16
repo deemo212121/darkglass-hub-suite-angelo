@@ -2,9 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("./supabase/client", () => ({ supabase: {} }));
 
-import { isModuleAllowed, isTechScopeSubject, isTechScopedViewer, leadersTitleFitsRoles } from "@/lib/roleLabels";
+import { extraRolesWithIncluded, isCompanySuperAdminRole, isModuleAllowed, isSuperAdminHolder, isSuperAdminRole, isTechScopeSubject, isTechScopedViewer, leadersTitleFitsRoles } from "@/lib/roleLabels";
+import { hasDashboardAccess } from "@/lib/dashboardAccess";
 import { hydrateModuleRoleGates, MODULE_LEVEL_GATE_SLUG } from "@/lib/moduleAccess";
-import { canAccessSubmodule } from "@/lib/submoduleAccess";
+import { canAccessSubmodule, isEmailVaultSuperAdmin } from "@/lib/submoduleAccess";
 
 describe("Technical Assistant Director's technician-only HR / Accounting view", () => {
   const gates = {
@@ -66,5 +67,35 @@ describe("leadersTitleFitsRoles", () => {
     expect(leadersTitleFitsRoles("Pre Auth", ["CLAIMS"])).toBe(true);
     expect(leadersTitleFitsRoles("Lead Manager", ["CSR_TEAM_LEADER"])).toBe(true);
     expect(leadersTitleFitsRoles("Senior Manager", ["ADMIN"])).toBe(true);
+  });
+});
+
+describe("IT has Super Admin's access", () => {
+  it("counts as Super Admin as a primary or extra role", () => {
+    expect(isSuperAdminRole("IT")).toBe(true);
+    expect(isSuperAdminRole("HR")).toBe(false);
+    expect(isSuperAdminHolder("CSR_AGENT", ["IT"])).toBe(true);
+    expect(isCompanySuperAdminRole("IT")).toBe(true);
+    expect(isCompanySuperAdminRole("HR", ["IT"])).toBe(true);
+    expect(isEmailVaultSuperAdmin("HR", ["IT"])).toBe(true);
+  });
+
+  it("gets past every page gate like a primary Super Admin", () => {
+    expect(hasDashboardAccess(["HR"], "IT", [])).toBe(true);
+    expect(hasDashboardAccess(["SUPERADMIN"], "HR", ["IT"])).toBe(true);
+    // An extra Super Admin role doesn't skip a gate that doesn't list it — IT as an extra role neither.
+    expect(hasDashboardAccess(["HR"], "CSR_AGENT", ["IT"])).toBe(false);
+    hydrateModuleRoleGates({ [`hr:${MODULE_LEVEL_GATE_SLUG}`]: ["HR"] });
+    expect(isModuleAllowed("IT", "hr", [])).toBe(true);
+    hydrateModuleRoleGates({});
+  });
+
+  it("hands pages SUPERADMIN in the signed-in user's extra roles", () => {
+    expect(extraRolesWithIncluded("IT", [])).toEqual(["SUPERADMIN"]);
+    expect(extraRolesWithIncluded("HR", ["IT"])).toEqual(["IT", "SUPERADMIN"]);
+    const unchanged = ["IT"];
+    expect(extraRolesWithIncluded("SUPERADMIN", unchanged)).toBe(unchanged);
+    const plain = ["CSR_AGENT"];
+    expect(extraRolesWithIncluded("HR", plain)).toBe(plain);
   });
 });

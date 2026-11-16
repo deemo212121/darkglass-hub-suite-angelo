@@ -93,7 +93,7 @@ import {
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
-import { isAttendanceFullAccessRole, isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, getRoleDepartmentBreakdown, canSetCancelledStatus } from "@/lib/roleLabels";
+import { isAttendanceFullAccessRole, isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, getRoleDepartmentBreakdown, canSetCancelledStatus, isSuperAdminRole } from "@/lib/roleLabels";
 import { useOnClCancelList } from "@/lib/supabase/clCancelPeople";
 import { CANCEL_REASONS } from "@/lib/operationsBranchMetrics";
 import { buildCorrectionSubmissionPdf } from "@/lib/timecardCorrectionPdf";
@@ -1038,7 +1038,7 @@ export function MobileTechApp() {
 
   // View as Manager — Super Admin only, gated on the REAL signed-in role
   // (mobile has no desktop-style role-preview layer to spoof this through).
-  const isRealSuperAdmin = role === "SUPERADMIN" || role === "SUPERSUPERADMIN";
+  const isRealSuperAdmin = isSuperAdminRole(role) || role === "SUPERSUPERADMIN";
 
   // A self-role lead's direct reports' tickets aren't covered by the main
   // ticket-load effect above — that one only knows `ownName` at the time it

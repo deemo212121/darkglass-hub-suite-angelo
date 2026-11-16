@@ -15,6 +15,7 @@
  * one row per service (server_status_checks, migration 0385) for uptime %
  * and the 30-day history. The page calls POST /api/server-status.
  */
+import { withIncludedRoles } from "../roleLabels";
 import { verifyFirebaseToken } from "./supabaseTokenBridge";
 import { getGoogleAccessToken, uploadFileToStorage } from "./jotformBridge";
 import { handleImageProxyRequest } from "./imageProxyBridge";
@@ -430,7 +431,7 @@ export async function handleServerStatusRequest(request: Request, rawEnv?: Recor
     const claims = await verifyFirebaseToken(payload.idToken, env.firebaseProjectId);
     const meRes = await sb(env, `profiles?firebase_uid=eq.${encodeURIComponent(claims.sub)}&select=id,role,extra_roles&limit=1`);
     const me = meRes.ok ? ((await meRes.json()) as { id: string; role: string | null; extra_roles: string[] | null }[])[0] : undefined;
-    const held = me ? [me.role, ...(me.extra_roles ?? [])].map((r) => String(r ?? "").trim().toUpperCase()) : [];
+    const held = me ? withIncludedRoles([me.role, ...(me.extra_roles ?? [])]) : [];
     if (!held.some((r) => r === "ADMIN" || r === "SUPERADMIN" || r === "SUPERSUPERADMIN")) return json({ error: "Only Admin and up can view the server status." }, 403);
 
     // The page's "Upload from your browser" test file — the browser can't

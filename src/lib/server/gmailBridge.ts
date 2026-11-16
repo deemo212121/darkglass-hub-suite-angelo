@@ -38,6 +38,7 @@
  *    to a plain-text numbers summary.
  */
 
+import { withIncludedRoles } from "../roleLabels";
 import { resolveDefaultPassword } from "./defaultPasswordBridge";
 import { verifyFirebaseToken } from "./supabaseTokenBridge";
 import { peekOAuthState, readOAuthState, signOAuthState } from "./oauthState";
@@ -1050,7 +1051,7 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       // AttendanceMonitoringPage.tsx's own isSuperAdmin gate (which also
       // admits SUPERADMIN held as an extra role), so someone who can see
       // and use the Settings tab in the first place is never rejected here.
-      const isCallerSuperAdmin = [caller.role, ...caller.extraRoles].some((r) => (r || "").toUpperCase() === "SUPERADMIN");
+      const isCallerSuperAdmin = withIncludedRoles([caller.role, ...caller.extraRoles]).includes("SUPERADMIN");
       if (!isCallerSuperAdmin) {
         return json({ error: "Only a SuperAdmin can enroll managers" }, 403);
       }
@@ -1117,7 +1118,7 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       const claims = await verifyFirebaseToken(idToken, envBag.firebaseProjectId);
       const caller = await fetchProfileByFirebaseUid(envBag, claims.sub);
       if (!caller) return json({ error: "Profile not found" }, 403);
-      const isCallerSuperAdmin = [caller.role, ...caller.extraRoles].some((r) => (r || "").toUpperCase() === "SUPERADMIN");
+      const isCallerSuperAdmin = withIncludedRoles([caller.role, ...caller.extraRoles]).includes("SUPERADMIN");
       if (!isCallerSuperAdmin) return json({ error: "Only a SuperAdmin can send a test." }, 403);
 
       const manager = await fetchProfileById(envBag, managerProfileId);

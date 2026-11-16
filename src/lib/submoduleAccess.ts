@@ -11,7 +11,7 @@
  * remain the actual enforcement; this is a read-only mirror of them, not a
  * replacement.
  */
-import { isSubmoduleAllowed, isSubmoduleAllowedForTrainee, isSubmoduleAllowedForFrozen, isCompanySuperAdminRole, normalizeRole, isTechScopedViewer, TECH_SCOPED_PAGES } from "./roleLabels";
+import { isSubmoduleAllowed, isSubmoduleAllowedForTrainee, isSubmoduleAllowedForFrozen, isCompanySuperAdminRole, normalizeRole, isTechScopedViewer, TECH_SCOPED_PAGES, withIncludedRoles } from "./roleLabels";
 import { getDashboardRoleGate, hasDashboardAccess } from "./dashboardAccess";
 import { getModuleRoleGate, getEmailVaultGrant, MODULE_LEVEL_GATE_SLUG } from "./moduleAccess";
 import { canSeeTicketTour } from "./tours/ticketTours";
@@ -31,7 +31,7 @@ const DASHBOARD_FAMILY_MODULES = new Set(["dashboard", "hr", "accounting", "csr"
  */
 /** Super Admin as primary or extra role — the same test as the database's is_company_superadmin(). */
 export function isEmailVaultSuperAdmin(role: string | null | undefined, extraRoles: string[] | null | undefined): boolean {
-  return [role, ...(extraRoles ?? [])].some((r) => normalizeRole(r) === "SUPERADMIN");
+  return withIncludedRoles([role, ...(extraRoles ?? [])]).includes("SUPERADMIN");
 }
 
 /**

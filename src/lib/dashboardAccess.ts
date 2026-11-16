@@ -176,8 +176,8 @@ export function hasDashboardAccess(
   role: string | null | undefined,
   extraRoles: string[] | null | undefined
 ): boolean {
-  const primary = normalizeRole(role);
-  if (primary === "SUPERADMIN") return true;
+  // Super Admin, or a primary role carrying its access (IT).
+  if (withIncludedRoles([role]).includes("SUPERADMIN")) return true;
   // normalizeRole() so legacy space-separated role values (e.g. "CSR Manager")
   // still match the underscore-form codes in allowedRoles (e.g. "CSR_MANAGER").
   const normalizedAllowed = allowedRoles.map((r) => normalizeRole(r));

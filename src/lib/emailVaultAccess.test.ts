@@ -16,17 +16,20 @@ describe("Email Vault access", () => {
     expect(open("SUPERADMIN")).toBe(true);
     expect(open("TECHNICIAN", ["SUPERADMIN"])).toBe(true);
     expect(open("ADMIN")).toBe(false);
-    expect(open("IT")).toBe(false);
+    expect(open("HR")).toBe(false);
+    // IT has Super Admin's access (migration 0450)
+    expect(open("IT")).toBe(true);
+    expect(open("HR", ["IT"])).toBe(true);
     // the platform-only role isn't a company Super Admin (same as is_company_superadmin())
     expect(open("SUPERSUPERADMIN")).toBe(false);
   });
   it("opens for anyone a Super Admin added, and only once that's confirmed", () => {
-    expect(open("IT")).toBe(false);
+    expect(open("HR")).toBe(false);
     hydrateEmailVaultGrant(true);
-    expect(open("IT")).toBe(true);
+    expect(open("HR")).toBe(true);
     expect(open("ADMIN")).toBe(true);
     hydrateEmailVaultGrant(false);
-    expect(open("IT")).toBe(false);
+    expect(open("HR")).toBe(false);
   });
   it("ignores role overrides from Accessibility Management", () => {
     hydrateModuleRoleGates({ "admin:email-vault": ["ADMIN"] });
@@ -35,7 +38,7 @@ describe("Email Vault access", () => {
   });
   it("still keeps trainees out", () => {
     hydrateEmailVaultGrant(true);
-    expect(open("IT", [], true)).toBe(false);
+    expect(open("HR", [], true)).toBe(false);
   });
   it("lets a granted CSR agent into the Admin module", () => {
     expect(isModuleAllowed("CSR_AGENT", "admin")).toBe(false);

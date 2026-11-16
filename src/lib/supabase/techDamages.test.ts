@@ -138,6 +138,6 @@ describe("the Tech Damages tile", () => {
     for (const role of ["FINANCE", "ACCOUNTING_MANAGER", "ADMIN", "SUPERADMIN", "HR"]) expect(can(role)).toBe(true);
   });
   it("stays shut for technicians and everyone else", () => {
-    for (const role of ["TECHNICIAN", "BRANCH_MANAGER", "CSR_AGENT", "PARTS", "IT"]) expect(can(role)).toBe(false);
+    for (const role of ["TECHNICIAN", "BRANCH_MANAGER", "CSR_AGENT", "PARTS", "TRIAGE_USER"]) expect(can(role)).toBe(false);
   });
 });
