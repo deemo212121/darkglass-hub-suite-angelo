@@ -34,7 +34,7 @@ export function ExpensesModulePage({ mod, sub }: { mod: ModuleDef; sub: SubModul
 
   return (
     <main className="flex-1 bg-slate-950 py-6">
-      <div className="max-w-[1600px] mx-auto px-6">
+      <div className="w-full px-3 sm:px-5">
         <div className="mb-4 flex flex-wrap items-center gap-3 text-white">
           <button onClick={goBack} className="btn">
             <ChevronLeft className="h-4 w-4" />

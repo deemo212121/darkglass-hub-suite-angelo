@@ -107,6 +107,8 @@ export interface BranchExpenseLine {
   merchant: string;
   address: string;
   amount: number;
+  /** The Expense Records id, on lines pulled by "Auto-fill from AHS" — so the same record is never pulled into two bills. */
+  sourceId?: string;
 }
 
 export interface BranchExpense {
@@ -116,6 +118,8 @@ export interface BranchExpense {
   /** Only for the old "other" — what it was. */
   otherLabel: string;
   vendor: string;
+  /** The account it was paid on — provider account # / card or bank account (migration 0452). */
+  accountNumber: string;
   amount: number;
   /** Bill date, "YYYY-MM-DD". */
   expenseDate: string;

@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, Download, DollarSign, Clock, CheckCircle, Wallet, Pencil, Trash2, XCircle, Paperclip, Loader2, Receipt, TrendingUp, Building2, Plane, BedDouble, Car } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
-import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
+import { getCompanyUsers, getHireDatesByProfileIds, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
 import { deleteExpenseReceiptFile } from "@/lib/firebase/storage";
 import { reimbursementTypeLabel,
   getCompanyExpenses,
@@ -17,6 +18,7 @@ import { reimbursementTypeLabel,
 } from "@/lib/supabase/expenses";
 import { localISODate, todayISO } from "@/lib/localDate";
 import { ExpenseFormModal } from "@/components/ExpenseFormModal";
+import { DateModeBar } from "@/components/DateModeBar";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { ReceiptLightbox, isPdfReceipt } from "@/components/ReceiptLightbox";
 import { getFlashTechTripReceipts } from "@/lib/supabase/flashTechTrips";
@@ -171,6 +173,8 @@ export function ExpenseTrackingPage({
       setProfiles(profileRows);
       setExpenses(expenseRows);
       setTripReceipts(tripReceiptMap);
+      // Start dates for the name hover card — only the Master List Hire Date, for the people on these records.
+      getHireDatesByProfileIds(Array.from(new Set(expenseRows.map((x) => x.profileId)))).then(setHireDates).catch(() => {});
     } catch (error) {
       console.error("Failed to load expenses:", error);
     } finally {
@@ -181,6 +185,9 @@ export function ExpenseTrackingPage({
   useEffect(() => { load(); }, [load]);
 
   const profileById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
+  const [hireDates, setHireDates] = useState<Map<string, string>>(() => new Map());
+  /** The employee hover card: whose, and where on screen (fixed, portaled — the page's panels trap fixed elements). */
+  const [hoverCard, setHoverCard] = useState<{ profileId: string; x: number; y: number } | null>(null);
   const profileName = (id: string) => profileById.get(id)?.display_name || profileById.get(id)?.email || "—";
 
   // Every total/list below reads from this instead of raw `expenses` — the
@@ -207,6 +214,8 @@ export function ExpenseTrackingPage({
   }, [expenses, flashTechOnly, selfFiledOnly, categoryOnly, country, profileById, flashTechView]);
 
   const branchOf = (e: ExpenseRow) => profileById.get(e.profileId)?.assigned_branch || "No branch";
+  /** Where the trip started (Flash Tech origin), else the employee's branch. */
+  const originBranchOf = (e: ExpenseRow) => e.fromLocation?.trim() || branchOf(e);
   const branchOptions = useMemo(() => Array.from(new Set(scopedExpenses.map(branchOf))).sort((a, b) => a.localeCompare(b)), [scopedExpenses, profileById]);
   // The date range and branch apply to the summary cards, the totals and the list alike.
   const rangeExpenses = useMemo(
@@ -236,7 +245,9 @@ export function ExpenseTrackingPage({
   const ALL_COLUMNS: { key: string; label: string; value: (e: ExpenseRow) => string }[] = [
     { key: "created", label: "Date Created", value: (e) => createdDay(e) || "—" },
     { key: "employee", label: "Employee", value: (e) => profileName(e.profileId) },
-    { key: "branch", label: "Branch", value: (e) => branchOf(e) },
+    // Flash Tech trips: where the tech came from and went to. Anything else: the employee's own branch, no destination.
+    { key: "branch", label: "Original Branch", value: (e) => originBranchOf(e) },
+    { key: "destination", label: "Destination Branch", value: (e) => e.toLocation?.trim() || "—" },
     { key: "category", label: "Category", value: (e) => e.category || "" },
     // Gas / Food / Other on a Reimbursement Form (migration 0401). Every "Other — …" is one filter choice, "Other".
     { key: "type", label: "Type", value: (e) => e.reimbursementType || "—" },
@@ -252,11 +263,13 @@ export function ExpenseTrackingPage({
   ];
   // The two date columns only when the view has Car Rentals or Hotels in it.
   const showRental = hasRentalRows || hasHotelRows;
+  // Destination Branch only on lists that have trips in them (Flash Tech, Hotel, Car Rental).
+  const showDestination = scopedExpenses.some((e) => e.toLocation?.trim());
   // A list with Car Rentals in it shows Pick-up Date / Return Date instead of Date (a Car Rental's Date is its
   // pick-up date; the other rows' Date shows under Pick-up Date). Lists without Car Rentals keep the Date.
   const hideDate = showRental || categoryOnly === "Car Rental" || categoryOnly === "Hotel" || (!!flashTechOnly && (flashTechView === "carRental" || flashTechView === "hotel"));
   const COLUMNS = ALL_COLUMNS.filter(
-    (c) => (showStatus || (c.key !== "status" && c.key !== "reviewer")) && (showRental || (c.key !== "pickup" && c.key !== "return")) && !(hideDate && c.key === "date")
+    (c) => (showDestination || c.key !== "destination") && (showStatus || (c.key !== "status" && c.key !== "reviewer")) && (showRental || (c.key !== "pickup" && c.key !== "return")) && !(hideDate && c.key === "date")
   );
   const matchesSearch = (e: ExpenseRow) =>
     !search || `${profileName(e.profileId)} ${e.createdBy ? profileName(e.createdBy) : ""} ${e.description}`.toLowerCase().includes(search.toLowerCase());
@@ -402,9 +415,34 @@ export function ExpenseTrackingPage({
     document.body.removeChild(el);
   };
 
+  const hoverPerson = hoverCard ? profileById.get(hoverCard.profileId) : undefined;
+  const fmtStart = (iso: string | undefined) => {
+    if (!iso) return "—";
+    const [y, m, d] = iso.split("-").map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  };
+
   return (
     <div className={embedded ? "" : "min-h-screen flex flex-col"}>
-      <main className={embedded ? "" : "flex-1 max-w-[1400px] mx-auto w-full px-6 py-8"}>
+      {hoverCard && typeof document !== "undefined" && createPortal(
+        <div
+          role="tooltip"
+          className="pointer-events-none fixed z-[100] w-60 rounded-lg border border-white/15 bg-slate-900/95 p-3 text-xs shadow-xl backdrop-blur"
+          style={{ left: Math.min(hoverCard.x, window.innerWidth - 256), top: Math.min(hoverCard.y, window.innerHeight - 120) }}
+        >
+          <div className="mb-1.5 font-semibold text-white">{profileName(hoverCard.profileId)}</div>
+          <dl className="grid grid-cols-[5.5rem_1fr] gap-y-1">
+            <dt className="text-slate-500">Branch</dt>
+            <dd className="text-slate-200">{hoverPerson?.assigned_branch || "—"}</dd>
+            <dt className="text-slate-500">Tier</dt>
+            <dd className="text-slate-200">{hoverPerson?.tier_level || "—"}</dd>
+            <dt className="text-slate-500">Start date</dt>
+            <dd className="tabular-nums text-slate-200">{fmtStart(hireDates.get(hoverCard.profileId))}</dd>
+          </dl>
+        </div>,
+        document.body,
+      )}
+      <main className={embedded ? "" : "flex-1 w-full px-3 sm:px-5 py-8"}>
         {!embedded && (
           <div className="mb-8">
             <div className="flex items-center gap-3 mb-6">
@@ -425,33 +463,8 @@ export function ExpenseTrackingPage({
         )}
 
         <div className="space-y-6">
-          {/* Date range — drives the summary cards, the totals and the list below. */}
-          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-slate-900/50 px-4 py-3">
-            <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Date</span>
-            <input
-              type="date"
-              value={dateFrom}
-              max={dateTo || undefined}
-              onChange={(e) => setDateFrom(e.target.value)}
-              aria-label="From date"
-              className="rounded-lg border border-white/10 bg-slate-800/50 px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none [color-scheme:dark]"
-            />
-            <span className="text-xs text-slate-500">to</span>
-            <input
-              type="date"
-              value={dateTo}
-              min={dateFrom || undefined}
-              onChange={(e) => setDateTo(e.target.value)}
-              aria-label="To date"
-              className="rounded-lg border border-white/10 bg-slate-800/50 px-2 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none [color-scheme:dark]"
-            />
-            <div className="flex gap-1">
-              <button type="button" onClick={() => setRangePreset("thisMonth")} className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-slate-700">This month</button>
-              <button type="button" onClick={() => setRangePreset("lastMonth")} className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-slate-700">Last month</button>
-              <button type="button" onClick={() => setRangePreset("all")} className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-slate-700">All dates</button>
-            </div>
-            <span className="ml-auto text-xs text-slate-400">Showing: <span className="font-semibold text-white">{rangeLabel}</span></span>
-          </div>
+          {/* Date range — Pay period | Monthly | Date picker; drives the summary cards, the totals and the list below. */}
+          <DateModeBar from={dateFrom} to={dateTo} onChange={(f, t) => { setDateFrom(f); setDateTo(t); }} />
 
           {/* Flash Tech: trip lines vs the Flash Tech / Allowance requests employees send — with counts for the date range. */}
           {flashTechOnly && (
@@ -657,8 +670,21 @@ export function ExpenseTrackingPage({
                         <span className="text-slate-600 text-xs">—</span>
                       )}
                     </td>
-                    <td className="px-2 py-1.5 text-white font-medium whitespace-nowrap">{profileName(e.profileId)}</td>
-                    <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{branchOf(e)}</td>
+                    <td className="px-2 py-1.5 text-white font-medium whitespace-nowrap">
+                      <span
+                        className="cursor-help underline decoration-dotted decoration-slate-500 underline-offset-2"
+                        onMouseEnter={(ev) => { const r = ev.currentTarget.getBoundingClientRect(); setHoverCard({ profileId: e.profileId, x: r.left, y: r.bottom + 6 }); }}
+                        onMouseLeave={() => setHoverCard(null)}
+                      >
+                        {profileName(e.profileId)}
+                      </span>
+                    </td>
+                    <td className="px-2 py-1.5 text-slate-300 whitespace-nowrap">{originBranchOf(e)}</td>
+                    {showDestination && (
+                      <td className="px-2 py-1.5 whitespace-nowrap">
+                        {e.toLocation?.trim() ? <span className="font-medium text-sky-300">{e.toLocation.trim()}</span> : <span className="text-slate-600 text-xs">—</span>}
+                      </td>
+                    )}
                     <td className={`px-2 py-1.5 whitespace-nowrap ${e.category === "Hotel" ? "text-amber-300" : e.category === "Car Rental" ? "text-rose-300" : "text-slate-300"}`}>{e.category}</td>
                     <td className="px-2 py-1.5 whitespace-nowrap">
                       {e.reimbursementType ? (
