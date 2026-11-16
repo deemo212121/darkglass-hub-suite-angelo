@@ -38,6 +38,8 @@ const CLAIMED_STATUSES = new Set(["cl-claimed", "cl-data-closed", "cl-data close
 const CLOSED_STATUSES = new Set(["cl-data-closed", "cl-data closed"]);
 /** Statuses the bulk "Change" can set (the claim-stage ones). */
 const CHANGE_TO_STATUSES = ["CL-Claimed", "CL-Data-Closed", "CL-Ready to Complete", "CL-Need Cancel"];
+/** What Accounting can move a short-paid ticket to, from its AHS Status cell. */
+const SHORT_PAID_MOVE_TO = ["CL-Data-Closed", "CL-Need Cancel"];
 const PAGE_SIZE_OPTIONS = [50, 100, 200] as const;
 const NOT_CHECKED = "Not checked yet";
 
@@ -408,19 +410,19 @@ export function ClaimList({ mod, sub }: Props) {
     if (res.closed) setTickets((prev) => prev.map((t) => (t.ticketNo === r.ticket.ticketNo ? { ...t, status: "CL-Data-Closed" } : t)));
   };
 
-  // A short-paid claim stays CL-Claimed until Accounting closes it here (shortPaidDataClose.ts).
+  // A short-paid claim stays CL-Claimed until Accounting data-closes it or flags it CL-Need Cancel here (shortPaidDataClose.ts).
   const canCloseShortPaid = canDataCloseShortPaid(auth.role, auth.extraRoles);
   const [closingTid, setClosingTid] = useState<string | null>(null);
-  const dataCloseShortPaid = async (r: ClaimRow) => {
-    if (!window.confirm(`${r.ticket.ticketNo}: ServicePower paid ${money(r.paid?.total ?? 0)} of ${money(r.req?.total ?? 0)} requested.\n\nMove it to CL-Data-Closed anyway?`)) return;
+  const setShortPaidStatus = async (r: ClaimRow, next: string) => {
+    if (!next || !window.confirm(`${r.ticket.ticketNo}: ServicePower paid ${money(r.paid?.total ?? 0)} of ${money(r.req?.total ?? 0)} requested.\n\nMove it to ${next}?`)) return;
     setClosingTid(r.tid);
     setMessage(null);
     try {
-      await updateTicketStatus(r.ticket.ticketNo, "CL-Data-Closed");
-      setTickets((prev) => prev.map((t) => (t.ticketNo === r.ticket.ticketNo ? { ...t, status: "CL-Data-Closed" } : t)));
-      setMessage({ type: "success", text: `${r.ticket.ticketNo} moved to CL-Data-Closed.` });
+      await updateTicketStatus(r.ticket.ticketNo, next);
+      setTickets((prev) => prev.map((t) => (t.ticketNo === r.ticket.ticketNo ? { ...t, status: next } : t)));
+      setMessage({ type: "success", text: `${r.ticket.ticketNo} moved to ${next}.` });
     } catch (err) {
-      setMessage({ type: "error", text: `${r.ticket.ticketNo}: couldn't move it to CL-Data-Closed — ${err instanceof Error ? err.message : String(err)}` });
+      setMessage({ type: "error", text: `${r.ticket.ticketNo}: couldn't move it to ${next} — ${err instanceof Error ? err.message : String(err)}` });
     } finally {
       setClosingTid(null);
     }
@@ -799,14 +801,20 @@ export function ClaimList({ mod, sub }: Props) {
                   <td className="px-2 py-1.5 whitespace-nowrap text-muted-foreground">
                     {r.status}
                     {r.shortPaid && !CLOSED_STATUSES.has(r.status.toLowerCase()) && (canCloseShortPaid ? (
-                      <button
-                        onClick={() => void dataCloseShortPaid(r)}
-                        disabled={!!closingTid}
-                        title="Short-paid: move this ticket to CL-Data-Closed (Accounting)"
-                        className="ml-2 inline-flex items-center gap-1 rounded border border-red-500/40 bg-red-500/10 px-1.5 py-0.5 text-[11px] font-medium text-red-200 hover:bg-red-500/20 disabled:opacity-40"
-                      >
-                        {closingTid === r.tid && <Loader2 className="h-3 w-3 animate-spin"/>}Data-Close
-                      </button>
+                      <span className="ml-2 inline-flex items-center gap-1">
+                        {closingTid === r.tid && <Loader2 className="h-3 w-3 animate-spin"/>}
+                        <select
+                          value=""
+                          onChange={(e) => void setShortPaidStatus(r, e.target.value)}
+                          disabled={!!closingTid}
+                          aria-label={`Short-paid ${r.ticket.ticketNo}: change AHS status`}
+                          title="Short-paid: Accounting decides — data-close it or flag it for cancel"
+                          className="rounded border border-red-500/40 bg-red-500/10 px-1 py-0.5 text-[11px] font-medium text-red-200 [color-scheme:dark] focus:outline-none disabled:opacity-40"
+                        >
+                          <option value="" className="bg-slate-900 text-slate-400">Move to…</option>
+                          {SHORT_PAID_MOVE_TO.filter((s) => s !== r.status).map((s) => <option key={s} value={s} className="bg-slate-900 text-slate-100">{s}</option>)}
+                        </select>
+                      </span>
                     ) : (
                       <span className="ml-2 text-[11px] text-slate-500" title="Short-paid: only Accounting can move it to CL-Data-Closed">Accounting closes</span>
                     ))}
