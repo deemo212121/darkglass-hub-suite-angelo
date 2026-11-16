@@ -419,6 +419,17 @@ const accountingMod: ModuleDef = {
       fields: [],
       seed: () => ({}),
     },
+    // Accounting's daily mileage sheet (DailyMileagePage, migration 0450): the
+    // miles each technician drove per day of a pay period, priced at their
+    // Car IQ rate, with the >200 / >300 / >400 mile days counted.
+    {
+      slug: "daily-mileage",
+      title: "Daily Mileage",
+      description: "The miles each technician drove, day by day for a pay period — priced at their Car IQ rate, with the days over 200 / 300 / 400 miles.",
+      custom: "daily-mileage" as any,
+      fields: [],
+      seed: () => ({}),
+    },
     // Same shortcut-copy pattern as HR's own Candidate Reviews tile.
     {
       slug: "candidate-reviews",
