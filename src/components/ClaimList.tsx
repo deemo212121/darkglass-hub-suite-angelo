@@ -160,6 +160,9 @@ const claimToFor = (t: Ticket) =>
 const hasFees = (d: TicketClaimDetails | undefined) =>
   !!d && d.laborFee + d.otherFee + d.shippingFee + d.extraMileFee > 0; // mileageFee is miles, not money
 
+/** ServicePower paid a different total than was requested (short- or over-paid); a claim missing either side can't be compared. */
+const paidDiffersFromRequested = (r: ClaimRow) => !!r.req && !!r.paid && Math.abs(r.paid.total - r.req.total) >= 0.005;
+
 function spStatusChip(code: string, shortPaid: boolean): string {
   if (shortPaid) return "bg-red-500/20 text-red-300 border border-red-500/30";
   if (code === "P") return "bg-green-500/20 text-green-300 border border-green-500/30";
@@ -245,6 +248,7 @@ export function ClaimList({ mod, sub }: Props) {
   const [dayRange, setDayRange] = useState("90 days");
   const [includeUnclaimed, setIncludeUnclaimed] = useState(false);
   const [includeClosed, setIncludeClosed] = useState(true);
+  const [mismatchOnly, setMismatchOnly] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [openedTicketNos, setOpenedTicketNos] = useState<Set<string>>(() => loadOpenedTickets());
@@ -336,6 +340,7 @@ export function ClaimList({ mod, sub }: Props) {
       if (tq && !r.ticket.ticketNo.toLowerCase().includes(tq)) return false;
       if (cq && !r.claimNo.toLowerCase().includes(cq)) return false;
       if (claimStatus && r.spStatus !== claimStatus) return false;
+      if (mismatchOnly && !paidDiffersFromRequested(r)) return false;
       // A ticket with no date of that kind isn't dropped by the date range
       // (a claim with no payment yet still shows under "Payment Date").
       const day = dateOf(r);
@@ -347,7 +352,7 @@ export function ClaimList({ mod, sub }: Props) {
       }
       return true;
     });
-  }, [rows, includeUnclaimed, includeClosed, location, accounts, ticketNo, claimNo, claimStatus, dateType, startDate, endDate, search]);
+  }, [rows, includeUnclaimed, includeClosed, mismatchOnly, location, accounts, ticketNo, claimNo, claimStatus, dateType, startDate, endDate, search]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const colFiltered = useMemo(() => baseFiltered.filter((r) => matchesCols(r)), [baseFiltered, colFilters]);
   const filtered = useMemo(
@@ -386,7 +391,7 @@ export function ClaimList({ mod, sub }: Props) {
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
   const pagedRows = useMemo(() => filtered.slice((safePage - 1) * pageSize, safePage * pageSize), [filtered, safePage, pageSize]);
-  useEffect(() => { setCurrentPage(1); }, [includeUnclaimed, includeClosed, location, accounts, ticketNo, claimNo, claimStatus, dateType, startDate, endDate, search, colFilters, claimToPicked]);
+  useEffect(() => { setCurrentPage(1); }, [includeUnclaimed, includeClosed, mismatchOnly, location, accounts, ticketNo, claimNo, claimStatus, dateType, startDate, endDate, search, colFilters, claimToPicked]);
 
   const toggleRow = (tid: string) => setSelectedRows((prev) => { const n = new Set(prev); n.has(tid) ? n.delete(tid) : n.add(tid); return n; });
   const allChecked = filtered.length > 0 && filtered.every((r) => selectedRows.has(r.tid));
@@ -600,6 +605,7 @@ export function ClaimList({ mod, sub }: Props) {
               <div className="flex items-center gap-4">
                 <label className="flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" checked={includeClosed} onChange={e=>setIncludeClosed(e.target.checked)} className="accent-blue-500"/>Include closed (CL-Data-Closed)</label>
                 <label className="flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" checked={includeUnclaimed} onChange={e=>setIncludeUnclaimed(e.target.checked)} className="accent-blue-500"/>Include un-claimed tickets</label>
+                <label className="flex items-center gap-1.5 text-sm cursor-pointer" title="Only claims ServicePower paid a different amount than was requested (short-paid or over-paid)"><input type="checkbox" checked={mismatchOnly} onChange={e=>setMismatchOnly(e.target.checked)} className="accent-blue-500"/>Paid ≠ Requested</label>
               </div>
             </div>
           </div>
