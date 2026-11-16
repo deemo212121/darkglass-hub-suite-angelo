@@ -5,10 +5,10 @@ import type { BranchExpense, BranchExpenseCategory, BranchExpenseFile, BranchExp
 
 const BASE_SELECT =
   "id, branch, category, other_label, vendor, amount, expense_date, period_start, period_end, notes, receipts, created_by_name, created_at, updated_by_name, updated_at";
-const SELECT = `${BASE_SELECT}, line_items`;
+const SELECT = `${BASE_SELECT}, line_items, account_number`;
 
-/** Before migration 0447 there is no line_items column — the page still loads, just without the transaction lists. */
-const missingLineItems = (message: string) => /line_items/i.test(message);
+/** Before migration 0447 / 0450 there is no line_items / account_number column — the page still loads without them. */
+const missingLineItems = (message: string) => /line_items|account_number/i.test(message);
 
 function mapRow(r: any): BranchExpense {
   return {
@@ -17,6 +17,7 @@ function mapRow(r: any): BranchExpense {
     category: r.category,
     otherLabel: r.other_label ?? "",
     vendor: r.vendor ?? "",
+    accountNumber: r.account_number ?? "",
     amount: Number(r.amount) || 0,
     expenseDate: r.expense_date,
     periodStart: r.period_start ?? null,
@@ -57,6 +58,8 @@ export interface BranchExpenseInput {
   category: BranchExpenseCategory;
   otherLabel: string;
   vendor: string;
+  /** Only sent when filled in, so saving still works before migration 0450. */
+  accountNumber?: string;
   amount: number;
   expenseDate: string;
   periodStart: string | null;
@@ -76,6 +79,7 @@ const toRow = (i: BranchExpenseInput) => ({
   period_end: i.periodEnd || null,
   notes: i.notes.trim(),
   receipts: i.receipts,
+  ...(i.accountNumber?.trim() ? { account_number: i.accountNumber.trim() } : {}),
 });
 
 /**
@@ -86,18 +90,32 @@ const toRow = (i: BranchExpenseInput) => ({
 export async function addBranchExpense(input: BranchExpenseInput, lineItems: BranchExpenseLine[] = []): Promise<string> {
   const row = lineItems.length ? { ...toRow(input), line_items: lineItems } : toRow(input);
   const { data, error } = await supabase.from("branch_expenses").insert(row).select("id").single();
+  if (error && /account_number/i.test(error.message)) throw new Error("Run migration 0450 in Supabase first (it adds Account #).");
   if (error && lineItems.length && missingLineItems(error.message)) throw new Error("Run migration 0447 in Supabase first (it keeps each Car IQ transaction).");
   if (error) throw new Error(friendly(error.message));
   return (data as { id: string }).id;
 }
 
 export async function updateBranchExpense(id: string, input: BranchExpenseInput): Promise<void> {
-  const { error } = await supabase.from("branch_expenses").update(toRow(input)).eq("id", id);
+  // Clearing an account # has to reach the database too (toRow leaves a blank one out).
+  const row = input.accountNumber !== undefined ? { ...toRow(input), account_number: input.accountNumber.trim() } : toRow(input);
+  const { error } = await supabase.from("branch_expenses").update(row).eq("id", id);
+  if (error && /account_number/i.test(error.message)) throw new Error("Run migration 0450 in Supabase first (it adds Account #).");
   if (error) throw new Error(friendly(error.message));
 }
 
 export async function setBranchExpenseReceipts(id: string, receipts: BranchExpenseFile[]): Promise<void> {
   const { error } = await supabase.from("branch_expenses").update({ receipts }).eq("id", id);
+  if (error) throw new Error(friendly(error.message));
+}
+
+/** Sync Expense Records: new records added to a bill it made before — its amount, lines and note move with them. */
+export async function appendBranchExpenseLines(id: string, amount: number, lineItems: BranchExpenseLine[], notes: string): Promise<void> {
+  const { error } = await supabase
+    .from("branch_expenses")
+    .update({ amount: Math.round(amount * 100) / 100, line_items: lineItems, notes })
+    .eq("id", id);
+  if (error && missingLineItems(error.message)) throw new Error("Run migration 0447 in Supabase first.");
   if (error) throw new Error(friendly(error.message));
 }
 
