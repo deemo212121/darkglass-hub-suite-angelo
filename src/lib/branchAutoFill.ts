@@ -21,6 +21,7 @@
  */
 
 import type { BranchExpenseCategory, BranchExpenseLine } from "./branchExpenses";
+import { BRANCH_ABBREV } from "./branchDisplay";
 
 export type AutoFillCategory = Extract<BranchExpenseCategory, "travel_lodging" | "food" | "rental_car" | "gas" | "equipment_supplies">;
 export const AUTO_FILL_CATEGORIES: AutoFillCategory[] = ["travel_lodging", "food", "rental_car", "gas", "equipment_supplies"];
@@ -45,6 +46,134 @@ export interface AutoFillRecord {
   toLocation: string | null;
   pickupDate: string | null;
   returnDate: string | null;
+  /** The Flash Tech trip it came from, if any — so a record that can't be placed links to the trip to fix. */
+  flashTechTripId?: string | null;
+  /** The Expenses tab that lists it — where "Edit" jumps to. */
+  recordTab?: "flashTech" | "employeeRequests";
+  /** The employee — to find their Flash Tech trips. */
+  profileId?: string;
+  /** Set by the sync when the branch came from a Flash Tech trip the dates fall in ("Trip Columbus → Savannah, Nov 8 – Nov 14"). */
+  tripNote?: string;
+}
+
+/** A Flash Tech trip, as the sync needs it. */
+export interface TripWindow {
+  profileId: string;
+  origin: string;
+  destination: string;
+  /** "YYYY-MM-DD" */
+  start: string;
+  end: string;
+}
+
+/** "11/8", "11/14/26", "2026-11-08" → "YYYY-MM-DD" (year from `ref` when not typed; a date far after `ref` is last year's). */
+export function looseDate(text: string | null | undefined, ref: string): string | null {
+  const t = (text ?? "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  const m = /^(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?$/.exec(t);
+  if (!m) return null;
+  const mo = Number(m[1]);
+  const d = Number(m[2]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  let y = m[3] ? Number(m[3].length === 2 ? `20${m[3]}` : m[3]) : Number(ref.slice(0, 4));
+  const iso = (yy: number) => `${yy}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  if (!m[3] && iso(y) > ref && Number(iso(y).slice(5, 7)) - Number(ref.slice(5, 7)) > 6) y -= 1;
+  return iso(y);
+}
+
+const DAY = 86400000;
+const dayNum = (ymd: string) => Date.UTC(Number(ymd.slice(0, 4)), Number(ymd.slice(5, 7)) - 1, Number(ymd.slice(8, 10))) / DAY;
+const short = (ymd: string) => new Date(dayNum(ymd) * DAY).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+
+/** The days a record covers: the dates typed in From / To (employees put "11/8" → "11/14" there), else its own date. */
+export function recordDays(r: Pick<AutoFillRecord, "expenseDate" | "fromLocation" | "toLocation">): { start: string; end: string } {
+  const a = looseDate(r.fromLocation, r.expenseDate);
+  const b = looseDate(r.toLocation, r.expenseDate);
+  if (a && b) return a <= b ? { start: a, end: b } : { start: b, end: a };
+  const one = a ?? b ?? r.expenseDate;
+  return { start: one, end: one };
+}
+
+/**
+ * The Flash Tech trip a reimbursement belongs to: the employee's trip whose dates
+ * overlap the record's days the most (and whose destination is a branch). null when
+ * none overlaps, or two different destinations overlap equally (can't tell).
+ */
+export function tripFor(
+  r: Pick<AutoFillRecord, "profileId" | "expenseDate" | "fromLocation" | "toLocation">,
+  trips: TripWindow[],
+  knownBranches: string[],
+): { branch: string; trip: TripWindow } | null {
+  if (!r.profileId) return null;
+  const days = recordDays(r);
+  let best: { branch: string; trip: TripWindow; overlap: number } | null = null;
+  let tie = false;
+  for (const t of trips) {
+    if (t.profileId !== r.profileId || !t.start) continue;
+    const overlap = Math.min(dayNum(days.end), dayNum(t.end || t.start)) - Math.max(dayNum(days.start), dayNum(t.start)) + 1;
+    if (overlap < 1) continue;
+    const branch = matchBranch(t.destination, knownBranches);
+    if (!branch) continue;
+    if (!best || overlap > best.overlap) { best = { branch, trip: t, overlap }; tie = false; }
+    else if (overlap === best.overlap && branch !== best.branch) tie = true;
+  }
+  return best && !tie ? { branch: best.branch, trip: best.trip } : null;
+}
+
+const isDateText = (s: string | null | undefined) => !!s && /^\d{1,2}[/-]\d{1,2}([/-]\d{2,4})?$/.test(s.trim());
+
+/** "Jackson, MS" / "Jackson,MS" / "jackson ms" → "jacksonms" — spacing, commas and case never matter. */
+export const branchKey = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+function editDistance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cur = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = cur;
+    }
+  }
+  return row[b.length];
+}
+
+/**
+ * The branch a typed name means: same letters ignoring spacing / commas / case
+ * ("Jackson, MS" = "Jackson,MS"), else one clear near-miss typo ("Talahasse" →
+ * Tallahassee, "Hunstville" → Huntsville — up to 2 letters off, names of 6+
+ * letters, and only when no other branch is as close). null when it isn't one.
+ */
+export function matchBranch(name: string | null | undefined, knownBranches: string[]): string | null {
+  const key = branchKey(name ?? "");
+  if (!key) return null;
+  const exact = knownBranches.find((b) => branchKey(b) === key);
+  if (exact) return exact;
+  // The company's branch codes (Parts pages' table): "SV" = Savannah, "WM" = Wilmington, "JS" = Jackson, MS…
+  const coded = Object.entries(BRANCH_ABBREV).find(([, code]) => code.toLowerCase() === key);
+  if (coded) return knownBranches.find((b) => branchKey(b) === branchKey(coded[0])) ?? null;
+  if (key.length < 6) return null;
+  let best: string | null = null;
+  let bestD = 3;
+  let tie = false;
+  for (const b of knownBranches) {
+    const d = editDistance(key, branchKey(b));
+    if (d < bestD) { best = b; bestD = d; tie = false; }
+    else if (d === bestD) tie = true;
+  }
+  return best && !tie ? best : null;
+}
+
+/** Why a record can't be placed — shown next to it in What's new → Can't place. */
+export function strayReason(r: Pick<AutoFillRecord, "branch" | "destination">): { field: "destination" | "branch"; text: string } {
+  const dest = r.destination?.trim();
+  if (dest) {
+    if (/^\d{1,2}[/-]\d{1,2}([/-]\d{2,4})?$/.test(dest)) return { field: "destination", text: `Destination is a date ("${dest}"), not a branch` };
+    return { field: "destination", text: `Destination "${dest}" isn't one of our branches` };
+  }
+  if (!r.branch?.trim()) return { field: "branch", text: "No destination, and the employee has no branch" };
+  return { field: "branch", text: `Employee's branch "${r.branch}" isn't one of our branches` };
 }
 
 /** The branch a record's money goes to: the trip's destination, else the employee's branch. */
@@ -70,7 +199,7 @@ export interface AutoFillLine {
 }
 
 const cents = (n: number) => Math.round(n * 100) / 100;
-const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+const same = (a: string, b: string) => branchKey(a) === branchKey(b);
 
 /** The four lines for one branch and month ("2026-11"); `usedIds` = records already in a saved bill. */
 export function buildAutoFill(
@@ -107,7 +236,7 @@ const typeText = (r: AutoFillRecord) =>
 
 /** A pulled record as one line of the bill — shown when the branch is opened in Branch Bills. */
 export function toBillLine(r: AutoFillRecord): BranchExpenseLine {
-  const where = r.fromLocation || r.toLocation ? [r.fromLocation, r.toLocation].filter(Boolean).join(" → ") : "";
+  const where = r.tripNote || (r.fromLocation || r.toLocation ? [r.fromLocation, r.toLocation].filter(Boolean).join(" → ") : "");
   const dates = r.pickupDate || r.returnDate ? `${r.pickupDate ?? "…"} – ${r.returnDate ?? "…"}` : "";
   return {
     date: r.expenseDate,
@@ -155,15 +284,28 @@ type SyncBill = { id: string; branch: string; category: string; expenseDate: str
  * only picks up what's new. A branch × month × line that someone typed in by
  * hand is left alone (and listed) instead of being counted twice.
  */
-export function planExpenseRecordSync(records: AutoFillRecord[], bills: SyncBill[], knownBranches: string[]): SyncPlan {
+export function planExpenseRecordSync(records: AutoFillRecord[], bills: SyncBill[], knownBranches: string[], trips: TripWindow[] = []): SyncPlan {
   const used = usedRecordIds(bills);
-  const canonical = new Map(knownBranches.map((b) => [b.trim().toLowerCase(), b]));
   const groups = new Map<string, SyncGroup>();
   const stray: AutoFillRecord[] = [];
-  for (const r of records) {
+  for (let r of records) {
     const category = autoFillCategoryOf(r);
     if (!category || r.status === "Rejected" || !(r.amount > 0) || used.has(r.id) || !r.expenseDate) continue;
-    const branch = canonical.get(chargedBranchOf(r).trim().toLowerCase());
+    // Which branch pays:
+    //  1. a destination typed that is a branch (or a branch code / near-miss) → that branch;
+    //  2. otherwise, a Flash Tech trip of the employee's that the record's days fall in → the trip's destination
+    //     (Food / Gas sent with "11/8" → "11/14" in From / To while on a trip);
+    //  3. otherwise, when nothing real was typed (empty or a date) → the employee's own branch.
+    let branch = r.flashTechTripId ? matchBranch(chargedBranchOf(r), knownBranches) : matchBranch(r.destination, knownBranches);
+    if (!branch && !r.flashTechTripId) {
+      const hit = tripFor(r, trips, knownBranches);
+      if (hit) {
+        branch = hit.branch;
+        r = { ...r, tripNote: `Flash Tech trip ${hit.trip.origin || "?"} → ${hit.trip.destination}, ${short(hit.trip.start)} – ${short(hit.trip.end || hit.trip.start)}` };
+      } else if (!r.destination?.trim() || isDateText(r.destination)) {
+        branch = matchBranch(r.branch, knownBranches);
+      }
+    }
     if (!branch) { stray.push(r); continue; }
     const month = r.expenseDate.slice(0, 7);
     const key = `${branch}|${month}|${category}`;
@@ -176,7 +318,7 @@ export function planExpenseRecordSync(records: AutoFillRecord[], bills: SyncBill
   const plan: SyncPlan = { create: [], append: [], manual: [], stray };
   for (const g of groups.values()) {
     g.records.sort((a, b) => a.expenseDate.localeCompare(b.expenseDate) || a.person.localeCompare(b.person));
-    const same = bills.filter((b) => b.category === g.category && b.expenseDate.slice(0, 7) === g.month && b.branch.trim().toLowerCase() === g.branch.toLowerCase());
+    const same = bills.filter((b) => b.category === g.category && b.expenseDate.slice(0, 7) === g.month && branchKey(b.branch) === branchKey(g.branch));
     const synced = same.find((b) => b.vendor === EXPENSE_RECORDS_VENDOR);
     if (synced) plan.append.push({ ...g, billId: synced.id, billAmount: synced.amount });
     else if (same.length) plan.manual.push({ ...g, billAmounts: same.map((b) => b.amount) });

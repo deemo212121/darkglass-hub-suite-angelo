@@ -24,13 +24,16 @@ type ExpensesTab = "flashTech" | "employeeRequests" | "otherExpenses";
 const TABS: { key: ExpensesTab; label: string; icon: typeof Plane }[] = [
   { key: "flashTech", label: "Flash Tech", icon: Plane },
   { key: "employeeRequests", label: "Employee Requests", icon: Receipt },
-  { key: "otherExpenses", label: "Other Expenses", icon: Building2 },
+  { key: "otherExpenses", label: "Overall Expenses", icon: Building2 },
 ];
 
 export function ExpensesModulePage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
   const [tab, setTab] = useState<ExpensesTab>("flashTech");
+  /** Overall Expenses → Needs fixing → Edit: the record to find, highlight and open on its tab. */
+  const [focusRecordId, setFocusRecordId] = useState<string | null>(null);
+  const openRecord = (id: string, to: "flashTech" | "employeeRequests") => { setTab(to); setFocusRecordId(id); };
 
   return (
     <main className="flex-1 bg-slate-950 py-6">
@@ -59,9 +62,9 @@ export function ExpensesModulePage({ mod, sub }: { mod: ModuleDef; sub: SubModul
           ))}
         </div>
 
-        {tab === "flashTech" && <ExpenseTrackingPage mod={mod} sub={sub} embedded flashTechOnly />}
-        {tab === "employeeRequests" && <ExpenseTrackingPage mod={mod} sub={sub} embedded selfFiledOnly />}
-        {tab === "otherExpenses" && <OtherExpensesPage />}
+        {tab === "flashTech" && <ExpenseTrackingPage mod={mod} sub={sub} embedded flashTechOnly focusRecordId={focusRecordId} onFocusDone={() => setFocusRecordId(null)} />}
+        {tab === "employeeRequests" && <ExpenseTrackingPage mod={mod} sub={sub} embedded selfFiledOnly focusRecordId={focusRecordId} onFocusDone={() => setFocusRecordId(null)} />}
+        {tab === "otherExpenses" && <OtherExpensesPage onEditRecord={openRecord} />}
       </div>
     </main>
   );

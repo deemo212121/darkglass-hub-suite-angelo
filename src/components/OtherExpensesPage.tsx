@@ -9,7 +9,7 @@
  */
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, RefreshCw, Download, FileSpreadsheet, Loader2, Paperclip, Pencil, Receipt, Trash2, TrendingUp, Users, Wallet, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, RefreshCw, AlertTriangle, Download, FileSpreadsheet, Loader2, Paperclip, Pencil, Receipt, Trash2, TrendingUp, Users, Wallet, X } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole } from "@/lib/roleLabels";
 import { addDaysISO, localISODate, todayISO } from "@/lib/localDate";
@@ -18,7 +18,8 @@ import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import { deleteExpenseReceiptFile, uploadExpenseReceipt } from "@/lib/firebase/storage";
 import { ReceiptLightbox, isPdfReceipt } from "@/components/ReceiptLightbox";
 import { CarIqImportModal } from "@/components/CarIqImportModal";
-import { ExpenseRecordsSyncModal } from "@/components/ExpenseRecordsSyncModal";
+import { ExpenseRecordsSyncModal, newSyncedBills } from "@/components/ExpenseRecordsSyncModal";
+import { autoSyncExpenseRecords, type AutoSyncResult } from "@/lib/supabase/expenseRecordSync";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { DateModeBar } from "@/components/DateModeBar";
 import { getCompanyExpenses } from "@/lib/supabase/expenses";
@@ -155,7 +156,10 @@ function downloadCsv(name: string, header: string[], rows: (string | number)[][]
   document.body.removeChild(el);
 }
 
-export function OtherExpensesPage() {
+export function OtherExpensesPage({ onEditRecord }: {
+  /** Needs fixing → Edit: open the record in Expense Records (Expenses module switches tab). */
+  onEditRecord?: (id: string, tab: "flashTech" | "employeeRequests") => void;
+} = {}) {
   const { companyId, role, extraRoles } = useAuth();
   const canEdit = [role, ...(extraRoles ?? [])].some((r) => r && EDIT_ROLES.has(normalizeRole(r)));
   // "Delete all" — Super Admin only.
@@ -175,7 +179,17 @@ export function OtherExpensesPage() {
   const [branchSort, setBranchSort] = useState<"amount" | "name">("amount");
   const [form, setForm] = useState<{ editing: BranchExpense | null } | null>(null);
   const [importing, setImporting] = useState(false);
-  const [syncing, setSyncing] = useState(false);
+  /** "What's new" (the automatic Expense Records sync). */
+  /** Which sync window is open: Synced (bills) or Needs fixing (can't place / typed by hand). */
+  const [syncView, setSyncView] = useState<"synced" | "fix" | null>(null);
+  const [autoSyncing, setAutoSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<AutoSyncResult | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  /** This viewer's last look at What's new (this browser) — default: the last 7 days count as new. */
+  const [seenAt, setSeenAt] = useState<string>(() => {
+    try { const v = localStorage.getItem(WHATS_NEW_SEEN_KEY); if (v) return v; } catch { /* no storage */ }
+    return new Date(Date.now() - 7 * 86400000).toISOString();
+  });
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deletingAll, setDeletingAll] = useState(false);
   /** Branch Bills funnel filters: column key → picked values. */
@@ -310,6 +324,32 @@ export function OtherExpensesPage() {
       .catch((e) => { setError(e instanceof Error ? e.message : String(e)); setRows([]); });
   }, []);
   useEffect(() => { if (canEdit) load(); }, [canEdit, load]);
+
+  // Expense Records → Branch Bills on its own when the page opens (no more clicking Sync). Only new records are added.
+  const runSync = useCallback(() => {
+    setAutoSyncing(true);
+    setSyncError(null);
+    autoSyncExpenseRecords(KNOWN_BRANCHES)
+      .then((r) => { setSyncResult(r); if (r.saved) load(); })
+      .catch((e) => setSyncError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setAutoSyncing(false));
+  }, [load]);
+  const autoSynced = useRef(false);
+  useEffect(() => {
+    if (!canEdit || autoSynced.current) return;
+    autoSynced.current = true;
+    runSync();
+  }, [canEdit, runSync]);
+  const whatsNewCount = useMemo(() => newSyncedBills(rows ?? [], seenAt).length, [rows, seenAt]);
+  const needsFixing = syncResult ? syncResult.stray.length + syncResult.manual.length : 0;
+  const closeWhatsNew = () => {
+    const wasSynced = syncView === "synced";
+    setSyncView(null);
+    if (!wasSynced) return; // only looking at Synced clears its "new" count
+    const now = new Date().toISOString();
+    setSeenAt(now);
+    try { localStorage.setItem(WHATS_NEW_SEEN_KEY, now); } catch { /* no storage */ }
+  };
 
   // Date range → everything below; category + branch + search → cards, report and list.
   const inRange = useMemo(
@@ -632,10 +672,31 @@ export function OtherExpensesPage() {
           <button type="button" onClick={exportBills} className="inline-flex items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-700">
             <Download className="h-4 w-4" /> Export CSV
           </button>
-          {/* Everything already in Expense Records → saved bills (back job included), one click */}
-          <button type="button" onClick={() => setSyncing(true)} disabled={!rows} title="Save Hotel, Food, Car Rental, Gas and Supplies records from Expense Records into Branch Bills" className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50">
-            <RefreshCw className="h-4 w-4" /> Sync Expense Records
+          {/* Expense Records sync on their own when the page opens — this shows what came in */}
+          <button
+            type="button"
+            onClick={() => setSyncView("synced")}
+            disabled={!rows}
+            title="Expense Records (Hotel, Food, Car Rental, Gas, Supplies) sync into Branch Bills automatically — see what was added"
+            className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
+          >
+            {autoSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {autoSyncing ? "Syncing…" : "Synced"}
+            {!autoSyncing && whatsNewCount > 0 && <span className="rounded-full bg-white px-1.5 text-[11px] font-bold leading-5 text-emerald-800" title="New since you last looked">{whatsNewCount} new</span>}
           </button>
+          {/* Only when something's up: records the sync couldn't place, lines typed by hand, or a failed sync */}
+          {!autoSyncing && (syncError || needsFixing > 0) && (
+            <button
+              type="button"
+              onClick={() => setSyncView("fix")}
+              disabled={!rows}
+              title={syncError ? "Sync failed" : `${syncResult!.stray.length} can't be placed · ${syncResult!.manual.length} typed by hand`}
+              className="inline-flex items-center gap-2 rounded-lg border border-red-500/50 bg-red-500/15 px-3 py-2 text-sm font-semibold text-red-200 hover:bg-red-500/25 disabled:opacity-50"
+            >
+              <AlertTriangle className="h-4 w-4 text-red-400" /> Needs fixing
+              <span className="rounded-full bg-red-500 px-1.5 text-[11px] font-bold leading-5 text-white">{syncError ? "!" : needsFixing}</span>
+            </button>
+          )}
           {/* Car IQ's transaction report → CarIQ Transactions per branch */}
           <button type="button" onClick={() => setImporting(true)} className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600">
             <FileSpreadsheet className="h-4 w-4" /> Import Car IQ
@@ -782,12 +843,17 @@ export function OtherExpensesPage() {
       </div>
 
       {preview && <ReceiptLightbox url={preview.url} urls={preview.urls} onClose={() => setPreview(null)} />}
-      {syncing && rows && (
+      {syncView && rows && (
         <ExpenseRecordsSyncModal
-          existing={rows}
-          knownBranches={KNOWN_BRANCHES}
-          onClose={() => setSyncing(false)}
-          onSaved={() => { setSyncing(false); load(); }}
+          view={syncView}
+          rows={rows}
+          since={seenAt}
+          result={syncResult}
+          syncing={autoSyncing}
+          syncError={syncError}
+          onSyncNow={runSync}
+          onClose={closeWhatsNew}
+          onEditRecord={onEditRecord ? (id, tab) => { closeWhatsNew(); onEditRecord(id, tab); } : undefined}
         />
       )}
       {importing && (
@@ -825,6 +891,8 @@ export function OtherExpensesPage() {
     </div>
   );
 }
+
+const WHATS_NEW_SEEN_KEY = "ahs.overallExpenses.whatsNewSeenAt";
 
 /** Lines that can hold several bills a month, each with its own provider / vendor (one shared list, from past bills). */
 const PROVIDER_CATS = new Set<BranchExpenseCategory>(["internet", "utility", "equipment_supplies", "field_equipment", "operation"]);

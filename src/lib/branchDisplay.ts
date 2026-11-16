@@ -5,7 +5,7 @@
  * exact same per-branch color, instead of each page keeping its own copy
  * that can silently drift out of sync with the others.
  */
-import { LOCATIONS } from "@/lib/locations";
+import { LOCATIONS } from "./locations";
 
 // Short display codes for the per-branch summary badges — the company's
 // own official abbreviation table, not an invented shorthand.

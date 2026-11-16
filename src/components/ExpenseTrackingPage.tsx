@@ -90,6 +90,8 @@ export function ExpenseTrackingPage({
   flashTechOnly,
   selfFiledOnly,
   categoryOnly,
+  focusRecordId,
+  onFocusDone,
 }: {
   mod: ModuleDef;
   sub: SubModuleDef;
@@ -108,6 +110,9 @@ export function ExpenseTrackingPage({
   selfFiledOnly?: boolean;
   /** Scopes the page to one category — the Expenses module's Hotel / Car Rental tabs. Add Expense starts on that category. */
   categoryOnly?: ExpenseCategory;
+  /** Overall Expenses → Needs fixing → Edit: this record is shown (filters cleared), scrolled to, highlighted and opened for editing. */
+  focusRecordId?: string | null;
+  onFocusDone?: () => void;
 }) {
   const navigate = useNavigate();
   const goBack = useSmartBack(() => navigate({ to: "/m/$module", params: { module: mod.slug } }));
@@ -148,7 +153,23 @@ export function ExpenseTrackingPage({
     });
 
   // null = closed; { editing: null } = Add; { editing: row } = Edit.
-  const [formState, setFormState] = useState<{ editing: ExpenseRow | null } | null>(null);
+  const [formState, setFormState] = useState<{ editing: ExpenseRow | null; fixDestination?: boolean } | null>(null);
+  /** The row jumped to from Overall Expenses — glows for a few seconds. */
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!focusRecordId || loading) return;
+    const row = expenses.find((e) => e.id === focusRecordId);
+    onFocusDone?.();
+    if (!row) return;
+    // Nothing may hide it.
+    setSearch(""); setDateFrom(""); setDateTo(""); setColFilters({}); setBranch(""); setCountry("all"); setFlashTechView("all");
+    setHighlightId(row.id);
+    setFormState({ editing: row, fixDestination: true });
+    window.setTimeout(() => document.getElementById(`expense-row-${row.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 150);
+    const t = window.setTimeout(() => setHighlightId(null), 8000);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRecordId, loading, expenses]);
   const [statusChangingId, setStatusChangingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   // Receipt clicked in the table's dedicated Receipt column — shown in a
@@ -674,7 +695,7 @@ export function ExpenseTrackingPage({
                 ) : filtered.length === 0 ? (
                   <tr><td colSpan={COLUMNS.length + 1} className="px-3 py-8 text-center text-slate-400">{selfFiledOnly && scopedExpenses.length === 0 ? "No employee has sent an expense request yet." : "No expense records match this filter."}</td></tr>
                 ) : filtered.map((e) => (
-                  <tr key={e.id} className="border-b border-white/5 hover:bg-white/5 transition">
+                  <tr key={e.id} id={`expense-row-${e.id}`} className={`border-b border-white/5 transition ${highlightId === e.id ? "bg-amber-500/20 outline outline-2 -outline-offset-2 outline-amber-400" : "hover:bg-white/5"}`}>
                     <td className="px-2 py-1.5 whitespace-nowrap tabular-nums">
                       {createdDay(e) ? (
                         <>
@@ -885,6 +906,7 @@ export function ExpenseTrackingPage({
       {formState && (
         <ExpenseFormModal
           editing={formState.editing}
+          highlightDestination={formState.fixDestination}
           profiles={profiles}
           createdBy={myProfileId}
           companyId={companyId}

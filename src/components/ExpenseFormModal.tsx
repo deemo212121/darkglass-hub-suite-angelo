@@ -5,6 +5,10 @@ import type { ProfileRow } from "@/lib/supabase/users";
 import { uploadExpenseReceipt, deleteExpenseReceiptFile } from "@/lib/firebase/storage";
 import { createExpense, updateExpense, REIMBURSEMENT_TYPES, reimbursementTypeName, MAX_EXPENSE_RECEIPTS, type ExpenseRow, type ExpenseCategory, type ExpenseReceipt, type ReimbursementType } from "@/lib/supabase/expenses";
 import { todayISO } from "@/lib/localDate";
+import { LOCATIONS_DATA } from "@/lib/zipCoverage";
+
+/** Original / Destination Branch choices — our branches only, so Overall Expenses always finds the branch. */
+const BRANCHES = Array.from(new Set(LOCATIONS_DATA.map((l) => l.location).filter(Boolean))).sort((a, b) => a.localeCompare(b));
 
 /** What Accounting picks from on Add Expense. */
 export const ACCOUNTING_EXPENSE_CATEGORIES: ExpenseCategory[] = ["Hotel", "Car Rental", "Office Supply"];
@@ -29,6 +33,7 @@ export function ExpenseFormModal({
   onClose,
   onSaved,
   defaultCategory,
+  highlightDestination,
 }: {
   editing: ExpenseRow | null;
   profiles?: ProfileRow[];
@@ -41,6 +46,8 @@ export function ExpenseFormModal({
   onSaved: () => Promise<void> | void;
   /** A new expense starts on this category (e.g. the Expenses module's Hotel / Car Rental tab). */
   defaultCategory?: ExpenseCategory;
+  /** Opened from Overall Expenses → Needs fixing: the "To" box is the one to fix — highlighted and focused. */
+  highlightDestination?: boolean;
 }) {
   const [form, setForm] = useState(() => ({
     profileId: editing?.profileId ?? fixedProfileId ?? "",
@@ -268,15 +275,33 @@ export function ExpenseFormModal({
             <label className="block text-xs text-slate-400 uppercase mb-1">OR/Transaction Number</label>
             <input type="text" value={form.orNumber} onChange={(e) => setForm({ ...form, orNumber: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
           </div>
+          {/* Branch dropdowns (were free-text From / To) — no typos or dates, so the money always lands on a real branch.
+              An old value that isn't a branch still shows, marked, until it's changed. */}
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs text-slate-400 uppercase mb-1">From</label>
-              <input type="text" value={form.fromLocation} onChange={(e) => setForm({ ...form, fromLocation: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 uppercase mb-1">To</label>
-              <input type="text" value={form.toLocation} onChange={(e) => setForm({ ...form, toLocation: e.target.value })} className="w-full bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm focus:border-blue-500 focus:outline-none" />
-            </div>
+            {([
+              ["fromLocation", "Original Branch", false],
+              ["toLocation", "Destination Branch", !!highlightDestination],
+            ] as const).map(([key, label, fix]) => {
+              const value = form[key];
+              const notABranch = !!value && !BRANCHES.includes(value);
+              return (
+                <div key={key}>
+                  <label className={`block text-xs uppercase mb-1 ${fix ? "font-semibold text-amber-300" : "text-slate-400"}`}>
+                    {label}{fix && <span className="normal-case"> — pick the branch</span>}
+                  </label>
+                  <select
+                    value={value}
+                    autoFocus={fix}
+                    onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+                    className={`w-full bg-slate-800 border rounded-lg p-2 text-sm [color-scheme:dark] focus:border-blue-500 focus:outline-none ${fix || notABranch ? "border-amber-400 ring-2 ring-amber-400/60" : "border-white/10"} ${value ? "text-white" : "text-slate-500"}`}
+                  >
+                    <option value="">— None —</option>
+                    {notABranch && <option value={value}>{value} (not a branch — pick one)</option>}
+                    {BRANCHES.map((b) => <option key={b} value={b}>{b}</option>)}
+                  </select>
+                </div>
+              );
+            })}
           </div>
           {hasStayDates && (
             <div className="grid grid-cols-2 gap-3">
