@@ -74,6 +74,10 @@ import {
   type DmInboxEntry,
 } from "@/lib/supabase/messaging";
 import { getTicketBilling, saveTicketBilling, type TicketBilling } from "@/lib/supabase/billing";
+import { buildMyPayslipData, downloadPayslipPdf } from "@/lib/myPayslipDocument";
+import { PayslipViewerSheet } from "@/components/PayslipViewerSheet";
+import type { EmployeePayslipData } from "@/lib/payslipTemplate";
+import { getEmployeeFileUrl, getMyEmployeeFiles, type EmployeeFileRow } from "@/lib/supabase/employeeFiles";
 import { getMyPayslips, payslipStatusLabel, payslipAdjustmentTextLines, type MyPayslipRow } from "@/lib/supabase/payslips";
 import { getMyProfileSchedule, getMonthEntries, getEntryForDate, getCompanyTimecardEntries, saveEntry as saveTimecardEntry, savePunch, clearPunch, canEditPunch, resolveScheduledShiftHours, type UITimeEntry, type CompanyTimecardEntry, type PunchField } from "@/lib/supabase/timecards";
 import {
@@ -1685,7 +1689,7 @@ export function MobileTechApp() {
         )}
 
         {effectiveView === "payroll" && (
-          <MobilePayrollView userName={headerName} profileId={profileId} uid={uid} role={role} />
+          <MobilePayrollView userName={headerName} profileId={profileId} uid={uid} role={role} extraRoles={extraRoles} />
         )}
 
         {effectiveView === "branchreport" && (
@@ -6769,13 +6773,21 @@ function MobilePayrollView({
   profileId,
   uid,
   role,
+  extraRoles,
 }: {
   userName: string;
   profileId: string | null;
   uid: string | null;
   role: string | null;
+  extraRoles?: string[] | null;
 }) {
   const [payslips, setPayslips] = useState<MyPayslipRow[]>([]);
+  /** The run whose payslip PDF is being built. */
+  const [stubBusy, setStubBusy] = useState<string | null>(null);
+  /** The pay period open in the payslip viewer. */
+  const [viewing, setViewing] = useState<MobilePayRowInline | null>(null);
+  /** Built payslips by run (an Error when it couldn't be built), so View and Download build once. */
+  const [docByRun, setDocByRun] = useState<Record<string, EmployeePayslipData | Error>>({});
   const [loading, setLoading] = useState(true);
   // Technicians are paid per completed repair ticket (Tech Payroll on the
   // Accounting Dashboard) instead of hourly — same piece-rate categories
@@ -6783,7 +6795,6 @@ function MobilePayrollView({
   // which doesn't mean anything for piece-rate pay.
   const isTech = normalizeRole(role || "") === "TECHNICIAN";
   const [assignedBranch, setAssignedBranch] = useState("");
-  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [breakdownByRun, setBreakdownByRun] = useState<
     Record<string, TechPayrollBreakdown | "loading" | "error">
   >({});
@@ -6817,12 +6828,30 @@ function MobilePayrollView({
     return () => { cancelled = true; };
   }, [isTech, uid]);
 
-  const toggleBreakdown = async (row: MobilePayRowInline) => {
-    if (expandedRunId === row.id) {
-      setExpandedRunId(null);
-      return;
+  /** The same payslip Employee Self Service shows (lib/myPayslipDocument.ts), built once per run. */
+  const payslipFor = async (row: MobilePayRowInline): Promise<EmployeePayslipData> => {
+    const have = docByRun[row.id];
+    if (have && !(have instanceof Error)) return have;
+    if (!profileId) throw new Error("Your profile isn't loaded yet.");
+    try {
+      const data = await buildMyPayslipData({ profileId, uid, role, extraRoles, displayName: userName, payslip: row.payslip });
+      setDocByRun((prev) => ({ ...prev, [row.id]: data }));
+      return data;
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      setDocByRun((prev) => ({ ...prev, [row.id]: err }));
+      throw err;
     }
-    setExpandedRunId(row.id);
+  };
+
+  const openPayslip = (row: MobilePayRowInline) => {
+    setViewing(row);
+    if (docByRun[row.id] instanceof Error) setDocByRun((prev) => { const next = { ...prev }; delete next[row.id]; return next; });
+    void payslipFor(row).catch(() => {});
+    if (isTech) void loadBreakdown(row);
+  };
+
+  const loadBreakdown = async (row: MobilePayRowInline) => {
     if (breakdownByRun[row.id] || !profileId) return;
     setBreakdownByRun((prev) => ({ ...prev, [row.id]: "loading" }));
     try {
@@ -6884,6 +6913,9 @@ function MobilePayrollView({
         </div>
       </div>
 
+      <MobilePublishedPaystubs profileId={profileId} />
+
+      {rows.length > 0 && <div className="mtech-payroll-section-title">Pay periods</div>}
       {loading && <div className="mtech-muted">Loading payroll…</div>}
       {!loading && rows.length === 0 && (
         <div className="mtech-muted">No payroll runs yet.</div>
@@ -6901,41 +6933,30 @@ function MobilePayrollView({
             <div className="mtech-payroll-row-body">
               <div className="mtech-payroll-row-amount">${row.amount.toFixed(2)}</div>
               <div className="mtech-payroll-row-actions">
-                <button
-                  type="button"
-                  className="mtech-payroll-action"
-                  onClick={() => {
-                    if (isTech) { void toggleBreakdown(row); return; }
-                    const p = row.payslip;
-                    alert(
-                      `Pay period ${row.periodLabel}\nStatus: ${row.status}\n\n` +
-                        `Hours: ${p.hoursWorked.toFixed(2)} (+ ${p.overtimeHours.toFixed(2)} OT)\n` +
-                        `Regular Pay: $${p.regularPay.toFixed(2)}\nOvertime Pay: $${p.overtimePay.toFixed(2)}\n` +
-                        `Gross Pay: $${p.grossPay.toFixed(2)}\n` +
-                        payslipAdjustmentTextLines(p).map((l) => `${l}\n`).join("") +
-                        `Net Pay: $${p.netPay.toFixed(2)}`,
-                    );
-                  }}
-                >
-                  {isTech && expandedRunId === row.id ? "Hide" : "View"}
+                <button type="button" className="mtech-payroll-action" onClick={() => openPayslip(row)}>
+                  View
                 </button>
                 <button
                   type="button"
                   className="mtech-payroll-action mtech-payroll-action-secondary"
-                  disabled={row.status !== "Paid"}
-                  onClick={() =>
-                    alert(
-                      `Pay stub for ${row.periodLabel} will be available once your finance team publishes it.`,
-                    )
-                  }
+                  disabled={!profileId || stubBusy !== null}
+                  onClick={async () => {
+                    // The same payslip Employee Self Service shows, as a PDF (lib/myPayslipDocument.ts).
+                    if (!profileId || stubBusy) return;
+                    setStubBusy(row.id);
+                    try {
+                      await downloadPayslipPdf(await payslipFor(row));
+                    } catch (e) {
+                      alert(`Couldn't build the pay stub: ${e instanceof Error ? e.message : "Unknown error"}`);
+                    } finally {
+                      setStubBusy(null);
+                    }
+                  }}
                 >
-                  Stub
+                  {stubBusy === row.id ? "Preparing…" : "Download"}
                 </button>
               </div>
             </div>
-            {isTech && expandedRunId === row.id && (
-              <TechPayrollBreakdownPanel entry={breakdownByRun[row.id]} netPay={row.amount} payslip={row.payslip} />
-            )}
           </div>
         ))}
       </div>
@@ -6943,7 +6964,99 @@ function MobilePayrollView({
       <p className="mtech-payroll-note">
         Payroll is issued per pay period. If an amount looks wrong, reach out to your branch manager or HR.
       </p>
+
+      {viewing && (
+        <PayslipViewerSheet
+          title={viewing.periodLabel}
+          status={viewing.status}
+          data={docByRun[viewing.id] ?? null}
+          // Technicians: their piece-rate breakdown (Tech Payroll) above the payslip, as View used to show.
+          extra={isTech ? <TechPayrollBreakdownPanel entry={breakdownByRun[viewing.id]} netPay={viewing.amount} payslip={viewing.payslip} /> : undefined}
+          onClose={() => setViewing(null)}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * The paystubs Accounting published to this employee (Accounting → Paystubs,
+ * migration 0418) — the mobile copy of Self Service → My Files. RLS returns
+ * only the caller's own published files; each opens through a short-lived
+ * signed link. View and Download navigate in the same tab: a window opened
+ * after an await is blocked as a pop-up on phones.
+ */
+function MobilePublishedPaystubs({ profileId }: { profileId: string | null }) {
+  const [files, setFiles] = useState<EmployeeFileRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [opening, setOpening] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!profileId) return;
+    let cancelled = false;
+    getMyEmployeeFiles(profileId)
+      .then((rows) => { if (!cancelled) setFiles(rows); })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Couldn't load your paystubs.");
+        setFiles([]);
+      });
+    return () => { cancelled = true; };
+  }, [profileId]);
+
+  const fmt = (iso: string | null) => {
+    if (!iso) return "—";
+    const [y, m, d] = iso.split("-");
+    return `${m}/${d}/${y}`;
+  };
+
+  const open = async (f: EmployeeFileRow, download: boolean) => {
+    setOpening(f.id);
+    setError(null);
+    try {
+      const url = await getEmployeeFileUrl(f.storagePath, download ? `${f.title}${f.payDate ? ` ${f.payDate}` : ""}.pdf` : undefined);
+      window.location.href = url;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't open the paystub.");
+    } finally {
+      setOpening(null);
+    }
+  };
+
+  return (
+    <>
+      <div className="mtech-payroll-section-title">Paystubs from Accounting</div>
+      {error && <div className="mtech-muted mtech-payroll-error">{error}</div>}
+      {files === null ? (
+        <div className="mtech-muted">Loading paystubs…</div>
+      ) : files.length === 0 ? (
+        <div className="mtech-muted">No paystubs yet. They show here once Accounting sends them.</div>
+      ) : (
+        <div className="mtech-payroll-list">
+          {files.map((f) => (
+            <div key={f.id} className="mtech-payroll-row">
+              <div className="mtech-payroll-row-head">
+                <div className="mtech-payroll-row-date">Pay date {fmt(f.payDate)}</div>
+                <div className="mtech-payroll-status mtech-payroll-status-paid">{f.replacesId ? "Corrected" : "Paystub"}</div>
+              </div>
+              <div className="mtech-payroll-row-body">
+                <div className="mtech-payroll-sub" style={{ marginTop: 0 }}>
+                  {f.periodStart ? `Period ${fmt(f.periodStart)} – ${fmt(f.periodEnd)}` : f.title}
+                </div>
+                <div className="mtech-payroll-row-actions">
+                  <button type="button" className="mtech-payroll-action" disabled={opening === f.id} onClick={() => void open(f, false)}>
+                    {opening === f.id ? "Opening…" : "View"}
+                  </button>
+                  <button type="button" className="mtech-payroll-action mtech-payroll-action-secondary" disabled={opening === f.id} onClick={() => void open(f, true)}>
+                    Download
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 

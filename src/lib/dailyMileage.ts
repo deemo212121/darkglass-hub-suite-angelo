@@ -63,6 +63,59 @@ export function parseMiles(raw: string): number | null {
   return isFinite(n) && n >= 0 ? round1(n) : NaN;
 }
 
+// ── Trips: the workbook's review fields ──────────────────────────────────
+
+export type MileageStatus = "pending" | "approved" | "rejected" | "needs_review";
+
+export const MILEAGE_STATUSES: { value: MileageStatus; label: string }[] = [
+  { value: "pending", label: "Pending" },
+  { value: "needs_review", label: "Needs review" },
+  { value: "approved", label: "Approved" },
+  { value: "rejected", label: "Rejected" },
+];
+export const statusLabel = (s: MileageStatus) => MILEAGE_STATUSES.find((x) => x.value === s)?.label ?? s;
+
+/** The workbook's Lists tab: vehicle types and exclusion reasons (free text is allowed too). */
+export const VEHICLE_TYPES = ["Personal vehicle", "Rental", "Company car", "Other"];
+export const EXCLUSION_REASONS = ["Missing photos", "Duplicate trip", "Unapproved miles", "Personal mileage", "Missing documentation", "Other"];
+
+/** The fields the arithmetic needs from a trip. */
+export interface TripLike {
+  miles: number;
+  excludedMiles: number;
+  exclusionReason: string;
+  status: MileageStatus;
+}
+
+/** Total − excluded, never below 0. A rejected trip pays nothing. */
+export const eligibleMiles = (t: TripLike) => (t.status === "rejected" ? 0 : round1(Math.max(0, t.miles - (t.excludedMiles || 0))));
+
+/**
+ * The workbook's Entry Check, minus what AHS fills in itself (branch, Car IQ,
+ * approver, pay period): "" when the trip is fine, else what to fix.
+ */
+export function entryCheck(t: TripLike): string {
+  if (!(t.miles > 0)) return "No miles";
+  if (t.excludedMiles < 0 || t.excludedMiles > t.miles) return "Check miles";
+  if (t.excludedMiles > 0 && !t.exclusionReason.trim()) return "Add reason";
+  return "";
+}
+
+/** A day's trips added up: total, excluded and eligible miles, and the day's status at a glance. */
+export function dayTotals(trips: TripLike[]): { miles: number; excluded: number; eligible: number; status: MileageStatus | "mixed" | null; problems: number } {
+  let miles = 0, excluded = 0, eligible = 0, problems = 0;
+  const statuses = new Set<MileageStatus>();
+  for (const t of trips) {
+    miles += t.miles;
+    excluded += t.status === "rejected" ? t.miles : t.excludedMiles || 0;
+    eligible += eligibleMiles(t);
+    statuses.add(t.status);
+    if (entryCheck(t)) problems++;
+  }
+  const status = statuses.size === 0 ? null : statuses.size === 1 ? [...statuses][0] : "mixed";
+  return { miles: round1(miles), excluded: round1(excluded), eligible: round1(eligible), status, problems };
+}
+
 /** A block copied from a spreadsheet: rows split by line breaks, cells by tabs. */
 export function parsePastedBlock(text: string): string[][] {
   const lines = text.replace(/\r\n?/g, "\n").replace(/\n$/, "").split("\n");

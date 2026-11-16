@@ -26,6 +26,7 @@ import {
   Download,
   Mail,
   Send,
+  Eye,
   MapPin,
   Trash2,
   Plus,
@@ -120,6 +121,7 @@ import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type Gmail
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { listTicketPhotos, hasTicketPhotos, type TicketPhoto } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, blobToBase64 } from "@/lib/pdfCapture";
+import { PayslipPreviewModal } from "@/components/PayslipPreviewModal";
 import { renderPayslipBodyHtml, renderTechActivitySummaryPageHtml, PAYSLIP_STYLES, formatClockTime, offDaysInRange, ptoDaysInRange, type PayslipDailyRow, type EmployeePayslipData } from "@/lib/payslipTemplate";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { NewPromotionsButton } from "@/components/NewPromotionsButton";
@@ -3820,7 +3822,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // captureHtmlToPdfBlob needs a real browser DOM/canvas, which the Gmail
   // server bridge's runtime doesn't have, so the PDF is built here and
   // handed to the server as base64 to attach as-is.
-  const buildPayslipPdfBase64 = async (row: EmployeePayrollRow): Promise<string> => {
+  const buildPayslipPages = async (row: EmployeePayrollRow): Promise<string[]> => {
     // Attendance is shown for both hourly and fixed-salary employees.
     // The shared template labels fixed daily rows without hourly earnings.
     const dailyRows: PayslipDailyRow[] = await (async () => {
@@ -3957,8 +3959,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         row.techCarryover
       );
       payslipData.hasTechActivityPage = true;
-      const pdfBlob = await captureHtmlPagesToPdfBlob(
-        [
+      return [
           renderPayslipBodyHtml(payslipData),
           renderTechActivitySummaryPageHtml(
             row.employee.full_name,
@@ -3972,13 +3973,35 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               .map((l) => ({ label: l.label, amount: taxLineAmount(l, breakdown.totalPayment) }))
               .filter((t) => t.amount !== 0)
           ),
-        ],
-        PAYSLIP_STYLES
-      );
-      return blobToBase64(pdfBlob);
+      ];
     }
-    const pdfBlob = await captureHtmlToPdfBlob(renderPayslipBodyHtml(payslipData), PAYSLIP_STYLES);
+    return [renderPayslipBodyHtml(payslipData)];
+  };
+
+  /** The PDF Send emails — built from the same pages Preview shows. */
+  const buildPayslipPdfBase64 = async (row: EmployeePayrollRow): Promise<string> => {
+    const pages = await buildPayslipPages(row);
+    const pdfBlob = pages.length > 1 ? await captureHtmlPagesToPdfBlob(pages, PAYSLIP_STYLES) : await captureHtmlToPdfBlob(pages[0], PAYSLIP_STYLES);
     return blobToBase64(pdfBlob);
+  };
+
+  // ── Payslip preview (before Send) ──
+  // Which row is open, and each row's built pages for this period (an Error
+  // when it couldn't be built), so stepping back and forth doesn't rebuild.
+  const [previewRowKey, setPreviewRowKey] = useState<string | null>(null);
+  const [previewPages, setPreviewPages] = useState<Record<string, string[] | Error>>({});
+  const payslipRowKey = (row: EmployeePayrollRow) => `${row.employee.id}|${row.isTechPortion ? "tech" : "office"}|${genStart}|${genEnd}`;
+  const previewBuilding = useRef<Set<string>>(new Set());
+  const loadPreviewPages = (row: EmployeePayrollRow) => {
+    const k = payslipRowKey(row);
+    if (Array.isArray(previewPages[k]) || previewBuilding.current.has(k)) return;
+    previewBuilding.current.add(k);
+    // A failed build is tried again when it's opened again.
+    setPreviewPages((prev) => { if (!(prev[k] instanceof Error)) return prev; const next = { ...prev }; delete next[k]; return next; });
+    buildPayslipPages(row)
+      .then((pages) => setPreviewPages((p) => ({ ...p, [k]: pages })))
+      .catch((e) => setPreviewPages((p) => ({ ...p, [k]: e instanceof Error ? e : new Error(String(e)) })))
+      .finally(() => previewBuilding.current.delete(k));
   };
 
   // Purely an optional convenience — emails a copy of the payslip PDF to
@@ -4315,6 +4338,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
   // Grouped by department, both the department groups and each group's
   // employees sorted alphabetically, for the table's department-separated view.
+  const openPayslipPreview = (row: EmployeePayrollRow) => {
+    setPreviewRowKey(payslipRowKey(row));
+    loadPreviewPages(row);
+  };
+
   const visibleRowsByDepartment = (() => {
     const groups = new Map<string, EmployeePayrollRow[]>();
     for (const row of visibleRows) {
@@ -4329,6 +4357,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         rows: [...rows].sort((a, b) => a.employee.full_name.localeCompare(b.employee.full_name)),
       }));
   })();
+  // Preview steps through the people in the order the table shows them.
+  const previewOrder = visibleRowsByDepartment.flatMap((g) => g.rows);
+  const previewIndex = previewRowKey ? previewOrder.findIndex((r) => payslipRowKey(r) === previewRowKey) : -1;
+  const previewRow = previewIndex >= 0 ? previewOrder[previewIndex] : null;
+  const stepPreview = (delta: number) => {
+    const next = previewOrder[previewIndex + delta];
+    if (!next) return;
+    openPayslipPreview(next);
+    // Build the one after too, so the next step is instant.
+    const after = previewOrder[previewIndex + delta * 2];
+    if (after) loadPreviewPages(after);
+  };
+
 
   // ── Mileage tab ──────────────────────────────────────────────────────────
   // Anyone with TECHNICIAN or TECHNICIAN_MANAGER as their primary role OR as
@@ -5633,7 +5674,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                   );
                                 })()}
                               </td>
-                              <td className="px-3 py-2 text-right">
+                              <td className="px-3 py-2 text-right whitespace-nowrap">
+                                {!techScoped && <button
+                                  type="button"
+                                  onClick={() => openPayslipPreview(row)}
+                                  disabled={!genStart || !genEnd}
+                                  title="See the payslip exactly as it would be emailed"
+                                  className="mr-1.5 inline-flex items-center gap-1 px-2.5 py-1.5 bg-indigo-600/80 hover:bg-indigo-500 disabled:opacity-40 text-white rounded text-xs font-medium transition"
+                                >
+                                  <Eye className="h-3 w-3" />
+                                  Preview
+                                </button>}
                                 {!techScoped && <button
                                   type="button"
                                   onClick={() => handleSendPayslip(row)}
@@ -5666,6 +5717,22 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     </tfoot>
                   )}
                 </table>
+                {previewRow && (
+                  <PayslipPreviewModal
+                    name={previewRow.employee.full_name}
+                    subtitle={[(previewRow.isTechPortion ? "Technician" : previewRow.employee.department || ""), previewRow.employee.assigned_branch, `${genStart} to ${genEnd}`].filter(Boolean).join(" · ")}
+                    pages={previewPages[payslipRowKey(previewRow)] ?? null}
+                    index={previewIndex}
+                    total={previewOrder.length}
+                    onPrev={() => stepPreview(-1)}
+                    onNext={() => stepPreview(1)}
+                    onClose={() => setPreviewRowKey(null)}
+                    onSend={() => void handleSendPayslip(previewRow)}
+                    sending={sendingPayslipId === previewRow.employee.id}
+                    fileName={`Payslip_${previewRow.employee.full_name.replace(/[^\w.-]+/g, "_")}_${genStart}_to_${genEnd}.pdf`}
+                    sendDisabledReason={!gmailStatus?.connected ? "Connect Gmail above to send." : previewRow.grossPayUSD <= 0 ? "Nothing to send — gross pay is $0.00." : null}
+                  />
+                )}
             </div>
           </div>
         )}

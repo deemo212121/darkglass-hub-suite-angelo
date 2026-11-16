@@ -15229,3 +15229,14 @@ button.home-attn:focus-visible { outline: 2px solid var(--tone); outline-offset:
 .paper-sheet .sig-controls .bg-blue-500\/10.text-white { color: #111827 !important; }
 .paper-sheet .sig-controls .hover\:text-white:hover { color: #111827 !important; }
 .paper-sheet .sig-controls .text-red-300 { color: #b91c1c !important; }
+
+/* Mobile Payroll tab section labels ("Paystubs from Accounting", "Pay periods") */
+.mtech-payroll-section-title {
+  margin: 0.4rem 0.1rem -0.2rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.6);
+}
+.mtech-payroll-error { color: #fca5a5; }

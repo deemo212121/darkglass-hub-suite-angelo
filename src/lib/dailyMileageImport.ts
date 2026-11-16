@@ -5,22 +5,37 @@
  *   by technician — one row per technician, the days across the top
  *                   (the same shape as the page's grid)
  *   by day        — one row per day, the technicians across the top
- *   list          — one row per entry: a technician, a date and miles column
+ *   list          — one row per trip: a technician, a date and miles column,
+ *                   plus whatever review columns it has (Finance's "Mileage
+ *                   Record Keeping" workbook: excluded miles + reason,
+ *                   vehicle, branch, ticket #, map links, notes, approval)
  *
  * Dates can be real Excel dates, "2026-11-03", "11/3/2026", "11/3", "Nov 3",
  * "3-Nov", "Mon 11/3", or bare day numbers 1–31 (read in the month on
- * screen). Two entries for the same technician and day are added together,
- * e.g. a list with one line per trip. Pure — the page reads the file with
- * the xlsx library and hands the rows in here.
+ * screen). In a list each row stays its own trip; in the two grid shapes the
+ * same name and day twice are added together. Pure — the page reads the file
+ * with the xlsx library and hands the rows in here.
  */
 import { aliasTechName, nameMatchKey, namesOverlap } from "@/lib/techNameMatch";
+import type { MileageStatus } from "@/lib/dailyMileage";
 
 export type MileageSheetLayout = "by-technician" | "by-day" | "list";
 
 export interface ImportedMiles {
   name: string;
   date: string;
+  /** Total miles. */
   miles: number;
+  /** The review columns, when the sheet has them (list layout only). */
+  excludedMiles?: number;
+  exclusionReason?: string;
+  vehicle?: string;
+  branch?: string;
+  ticketRefs?: string;
+  totalMapUrl?: string;
+  eligibleMapUrl?: string;
+  notes?: string;
+  status?: MileageStatus;
 }
 
 export interface MileageSheetParse {
@@ -104,24 +119,47 @@ export function parseMileageSheet(grid: unknown[][], ym: string): MileageSheetPa
   const rows = grid.filter((r) => Array.isArray(r) && r.some((c) => text(c) !== ""));
   const top = rows.slice(0, 15);
 
-  // List: a header row with a name, a date and a miles column.
+  // List: a header row with a name, a date and a miles column (one row per trip).
   for (let h = 0; h < top.length; h++) {
     const hdr = top[h].map(text);
     const nameCol = hdr.findIndex((c) => NAME_HEADER.test(c));
     const dateCol = hdr.findIndex((c, i) => i !== nameCol && DATE_HEADER.test(c) && !TOTAL_HEADER.test(c));
-    const milesCol = hdr.findIndex((c, i) => i !== nameCol && i !== dateCol && MILES_HEADER.test(c) && !/rate|pay|amount/i.test(c));
-    if (nameCol < 0 || dateCol < 0 || milesCol < 0) continue;
+    const cols = listColumns(hdr, nameCol, dateCol);
+    if (nameCol < 0 || dateCol < 0 || (cols.total < 0 && cols.counted < 0)) continue;
     const entries: ImportedMiles[] = [];
     let skipped = 0;
+    const ok = (n: number | null): n is number => n !== null && !Number.isNaN(n);
     for (const r of rows.slice(h + 1)) {
       const name = text(r[nameCol]);
       const date = readDate(r[dateCol], ym);
-      const miles = readMilesCell(r[milesCol]);
-      if (miles === null && !name) continue;
-      if (!name || !date || miles === null || Number.isNaN(miles)) { skipped++; continue; }
-      entries.push({ name, date, miles });
+      const total = cols.total >= 0 ? readMilesCell(r[cols.total]) : null;
+      const counted = cols.counted >= 0 ? readMilesCell(r[cols.counted]) : null;
+      if (!ok(total) && !ok(counted)) {
+        // A blank row (or one with only a name) isn't an entry; anything else that can't be read is counted.
+        if ((total !== null || counted !== null) || (name && date)) skipped++;
+        continue;
+      }
+      if (!name || !date) { skipped++; continue; }
+      // Total and excluded as written; else total and counted (the older tabs:
+      // "Counted Miles" + "Total Miles including excluded"); else counted alone.
+      const miles = ok(total) ? total : (counted as number);
+      let excluded = 0;
+      if (ok(total) && cols.excluded >= 0) { const x = readMilesCell(r[cols.excluded]); excluded = ok(x) ? x : 0; }
+      else if (ok(total) && ok(counted)) excluded = Math.max(0, Math.round((total - counted) * 10) / 10);
+      const cell = (i: number) => (i >= 0 ? text(r[i]) : "");
+      const e: ImportedMiles = { name, date, miles };
+      if (cols.excluded >= 0 || cols.counted >= 0) e.excludedMiles = Math.min(excluded, miles);
+      if (cols.reason >= 0) e.exclusionReason = cell(cols.reason);
+      if (cols.vehicle >= 0) e.vehicle = cell(cols.vehicle);
+      if (cols.branch >= 0) e.branch = cell(cols.branch);
+      if (cols.tickets >= 0) e.ticketRefs = cell(cols.tickets);
+      if (cols.totalMap >= 0) e.totalMapUrl = cell(cols.totalMap);
+      if (cols.eligibleMap >= 0) e.eligibleMapUrl = cell(cols.eligibleMap);
+      if (cols.notes >= 0) e.notes = cell(cols.notes);
+      if (cols.status >= 0) { const st = readStatus(r[cols.status]); if (st) e.status = st; }
+      entries.push(e);
     }
-    if (entries.length) return { layout: "list", entries: combine(entries), skipped };
+    if (entries.length) return { layout: "list", entries, skipped };
   }
 
   // By technician: a header row with dates across it; names down a text column.
@@ -171,6 +209,41 @@ export function parseMileageSheet(grid: unknown[][], ym: string): MileageSheetPa
     }
     if (entries.length) return { layout: "by-day", entries: combine(entries), skipped };
   }
+  return null;
+}
+
+/** Where each column of a list is, by its header (-1 = not in the sheet). */
+function listColumns(hdr: string[], nameCol: number, dateCol: number) {
+  const free = (i: number) => i !== nameCol && i !== dateCol;
+  const isMap = (c: string) => /\bmaps?\b|link|url/i.test(c);
+  const milesLike = (c: string) => MILES_HEADER.test(c) && !isMap(c) && !/rate|pay|amount|comp/i.test(c);
+  const find = (test: (c: string) => boolean) => hdr.findIndex((c, i) => free(i) && test(c));
+  const total = find((c) => milesLike(c) && /total/i.test(c));
+  const counted = find((c) => milesLike(c) && /counted|eligible/i.test(c));
+  return {
+    // No "total" column: the first plain miles column is the total.
+    total: total >= 0 ? total : counted >= 0 ? -1 : find((c) => milesLike(c)),
+    counted,
+    excluded: find((c) => /exclu/i.test(c) && !/reason|includ|total/i.test(c)),
+    reason: find((c) => /reason/i.test(c)),
+    vehicle: find((c) => /vehicle/i.test(c)),
+    branch: find((c) => /\bbranch\b|location/i.test(c) && !/filter/i.test(c)),
+    tickets: find((c) => /ticket/i.test(c)),
+    totalMap: find((c) => isMap(c) && !/eligible|counted/i.test(c)),
+    eligibleMap: find((c) => isMap(c) && /eligible|counted/i.test(c)),
+    notes: find((c) => /^notes?$|comment/i.test(c)),
+    status: find((c) => /approval status|^status$/i.test(c)),
+  };
+}
+
+/** "Approved", "Rejected", "Needs Review", "Pending" → a status; anything else → none. */
+function readStatus(v: unknown): MileageStatus | null {
+  const s = text(v).toLowerCase();
+  if (!s) return null;
+  if (s.startsWith("approv")) return "approved";
+  if (s.startsWith("reject") || s === "denied") return "rejected";
+  if (s.includes("review")) return "needs_review";
+  if (s.startsWith("pend")) return "pending";
   return null;
 }
 
