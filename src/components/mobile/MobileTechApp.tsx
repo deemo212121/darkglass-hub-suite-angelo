@@ -95,6 +95,7 @@ import { visibleAttendanceProfileIds } from "@/lib/notifyRouting";
 import { getCsrTeamComposition, type CsrTeamComposition } from "@/lib/supabase/csrTeams";
 import { isAttendanceFullAccessRole, isAttendanceManagerTierRole, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, getRoleDepartmentBreakdown, canSetCancelledStatus, isSuperAdminRole } from "@/lib/roleLabels";
 import { useOnClCancelList } from "@/lib/supabase/clCancelPeople";
+import { isDataClosedStatus, SHORT_PAID_DATA_CLOSE_MESSAGE, shortPaidDataCloseBlocked } from "@/lib/shortPaidDataClose";
 import { CANCEL_REASONS } from "@/lib/operationsBranchMetrics";
 import { buildCorrectionSubmissionPdf } from "@/lib/timecardCorrectionPdf";
 import { buildPtoSubmissionPdf } from "@/lib/ptoExceptionReportPdf";
@@ -3805,6 +3806,15 @@ function RepairTab({ ticket, authorName }: { ticket: Ticket; authorName: string 
     if (cancelling && !editCancelReason) {
       alert("A cancellation reason is required when Repair Status is CL-Cancelled.");
       return;
+    }
+    // A short-paid claim stays CL-Claimed unless Accounting closes it (shortPaidDataClose.ts).
+    // Offline, the check can't run — the tech's save isn't held up for it.
+    if (isDataClosedStatus(editDraft.repairStatus) && !isDataClosedStatus(visits.find((row) => row.id === visitId)?.repairStatus)) {
+      const blocked = await shortPaidDataCloseBlocked(editDraft.repairStatus, [ticket.ticketNo], authRole, authExtraRoles).catch(() => new Set<string>());
+      if (blocked.size) {
+        alert(SHORT_PAID_DATA_CLOSE_MESSAGE);
+        return;
+      }
     }
     const repairStatusMissing = !editDraft.repairStatus.trim();
     const diagnosisMissing = !editDraft.diagnosis.trim();

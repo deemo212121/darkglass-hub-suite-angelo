@@ -18,6 +18,7 @@ import type { Ticket } from "@/lib/ticketData";
 import { isClaimablePart } from "@/lib/servicePowerClaimPayload";
 import { isShortPaid } from "@/lib/spClaimLookup";
 import { syncServicePowerClaimStatus } from "@/lib/servicePowerClaimStatus";
+import { shortPaidDataCloseBlocked } from "@/lib/shortPaidDataClose";
 import { claimToColor, OTHER_CLAIM_TO, type ClaimToColor } from "@/lib/claimToColors";
 import { PreClaimModal } from "@/components/PreClaimModal";
 
@@ -448,11 +449,28 @@ export function ClaimList({ mod, sub }: Props) {
       setMessage({ type: "error", text: picked.length === 0 ? "Tick the tickets to change first." : "Pick the status to change them to." });
       return;
     }
-    if (!window.confirm(`Change ${picked.length} ticket${picked.length === 1 ? "" : "s"} to ${changeToStatus}?`)) return;
+    // A short-paid claim stays CL-Claimed unless Accounting closes it (shortPaidDataClose.ts).
+    let shortPaid: Set<string>;
+    try {
+      const notYetClosed = picked.filter((r) => !CLOSED_STATUSES.has(r.status.toLowerCase())).map((r) => r.ticket.ticketNo);
+      shortPaid = await shortPaidDataCloseBlocked(changeToStatus, notYetClosed, auth.role, auth.extraRoles);
+    } catch (err) {
+      setMessage({ type: "error", text: `Couldn't check for short-paid claims: ${err instanceof Error ? err.message : String(err)}` });
+      return;
+    }
+    const allowed = picked.filter((r) => !shortPaid.has(r.ticket.ticketNo));
+    const skippedNote = shortPaid.size
+      ? `${shortPaid.size} short-paid (${Array.from(shortPaid).join(", ")}) — only Accounting can move a short-paid claim to ${changeToStatus}.`
+      : "";
+    if (allowed.length === 0) {
+      setMessage({ type: "error", text: skippedNote });
+      return;
+    }
+    if (!window.confirm(`Change ${allowed.length} ticket${allowed.length === 1 ? "" : "s"} to ${changeToStatus}?${skippedNote ? `\n\nSkipping ${skippedNote}` : ""}`)) return;
     setChanging(true);
     let done = 0;
     const failedNos: string[] = [];
-    for (const r of picked) {
+    for (const r of allowed) {
       try {
         await updateTicketStatus(r.ticket.ticketNo, changeToStatus);
         done++;
@@ -460,11 +478,14 @@ export function ClaimList({ mod, sub }: Props) {
         failedNos.push(r.ticket.ticketNo);
       }
     }
-    const changed = new Set(picked.map((r) => r.ticket.ticketNo).filter((no) => !failedNos.includes(no)));
+    const changed = new Set(allowed.map((r) => r.ticket.ticketNo).filter((no) => !failedNos.includes(no)));
     setTickets((prev) => prev.map((t) => (changed.has(t.ticketNo) ? { ...t, status: changeToStatus } : t)));
     setSelectedRows(new Set());
     setChanging(false);
-    setMessage({ type: failedNos.length ? "error" : "success", text: `${done} changed to ${changeToStatus}${failedNos.length ? `; couldn't change ${failedNos.join(", ")}` : ""}.` });
+    setMessage({
+      type: failedNos.length || shortPaid.size ? "error" : "success",
+      text: `${done} changed to ${changeToStatus}${failedNos.length ? `; couldn't change ${failedNos.join(", ")}` : ""}.${skippedNote ? ` Skipped ${skippedNote}` : ""}`,
+    });
   };
 
   const saveClaimNote = async (r: ClaimRow, value: string) => {

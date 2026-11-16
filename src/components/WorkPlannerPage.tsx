@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { canSetCancelledStatus as canSetCancelled } from "@/lib/roleLabels";
+import { SHORT_PAID_DATA_CLOSE_MESSAGE, shortPaidDataCloseBlocked } from "@/lib/shortPaidDataClose";
 import { useOnClCancelList } from "@/lib/supabase/clCancelPeople";
 import { createPortal } from "react-dom";
 import { CalendarDays, ChevronLeft, ChevronRight, ChevronDown, MapPin, X } from "lucide-react";
@@ -1355,6 +1356,16 @@ export function WorkPlannerPage({ mod, sub }: Props) {
     if (!selectedTicket || newStatus === selectedTicket.status) return;
     const ticketNo = selectedTicket.ticketNo;
     const previousStatus = selectedTicket.status;
+    // A short-paid claim stays CL-Claimed unless Accounting closes it (shortPaidDataClose.ts).
+    try {
+      if ((await shortPaidDataCloseBlocked(newStatus, [ticketNo], role, extraRoles)).size) {
+        alert(SHORT_PAID_DATA_CLOSE_MESSAGE);
+        return;
+      }
+    } catch (err) {
+      alert(`Couldn't check whether ServicePower short-paid this claim: ${err instanceof Error ? err.message : "Unknown error"}`);
+      return;
+    }
     setUpdatingTicketField("status");
     setPlannerTickets((current) => current.map((t) => (t.ticketNo === ticketNo ? { ...t, status: newStatus } : t)));
     setSelectedTicket((current) => (current && current.ticketNo === ticketNo ? { ...current, status: newStatus } : current));

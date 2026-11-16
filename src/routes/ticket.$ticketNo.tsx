@@ -77,6 +77,7 @@ import { parseServicePerformed, composeServicePerformed, emptyServicePerformed }
 import { usePersistedTab } from "@/lib/usePersistedTab";
 import { canManageMisdiagnosed, canSetCancelledStatus } from "@/lib/roleLabels";
 import { useOnClCancelList } from "@/lib/supabase/clCancelPeople";
+import { isDataClosedStatus, SHORT_PAID_DATA_CLOSE_MESSAGE, shortPaidDataCloseBlocked } from "@/lib/shortPaidDataClose";
 import { todayISO } from "@/lib/localDate";
 
 // Product category options for the ticket Product Information dropdown.
@@ -3080,6 +3081,21 @@ function TicketDetailsPage() {
           el.scrollIntoView({ behavior: "smooth", block: "center" });
           setTimeout(() => el.focus(), 80);
         }
+        return;
+      }
+    }
+    // A short-paid claim stays CL-Claimed unless Accounting closes it (shortPaidDataClose.ts).
+    if (isDataClosedStatus(newVisitRepairStatus) && !isDataClosedStatus(ticket?.status)) {
+      const blocked = await shortPaidDataCloseBlocked(newVisitRepairStatus, [ticketNo], currentUserRole, currentUserExtraRoles).catch((e) => {
+        console.warn("short-paid check failed:", e);
+        return null;
+      });
+      if (!blocked) {
+        alert("Couldn't check whether ServicePower short-paid this claim. Please try again.");
+        return;
+      }
+      if (blocked.size) {
+        alert(SHORT_PAID_DATA_CLOSE_MESSAGE);
         return;
       }
     }
