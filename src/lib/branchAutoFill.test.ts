@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EXPENSE_RECORDS_VENDOR, autoFillCategoryOf, autoFillNote, buildAutoFill, planExpenseRecordSync, toBillLine, usedRecordIds, type AutoFillRecord } from "./branchAutoFill";
+import { EXPENSE_RECORDS_VENDOR, looseDate, matchBranch, strayReason, autoFillCategoryOf, autoFillNote, buildAutoFill, planExpenseRecordSync, toBillLine, usedRecordIds, type AutoFillRecord } from "./branchAutoFill";
 
 describe("planExpenseRecordSync", () => {
   const branches = ["Jackson, MS", "Memphis", "Raleigh"];
@@ -37,6 +37,68 @@ const rec = (over: Partial<AutoFillRecord>): AutoFillRecord => ({
   id: "x", category: "Hotel", reimbursementType: null, status: "Approved", expenseDate: "2026-11-10", amount: 100,
   branch: "Jackson, MS", person: "Anthony Cavett", description: "", fromLocation: null, toLocation: null, pickupDate: null, returnDate: null,
   ...over,
+});
+
+describe("matchBranch", () => {
+  const known = ["Huntsville", "Jackson,MS", "Jackson,TN", "Jacksonville", "Tallahassee", "Mobile"];
+  it("ignores spacing, commas and case", () => {
+    expect(matchBranch("Jackson, MS", known)).toBe("Jackson,MS");
+    expect(matchBranch("Jackson Ms", known)).toBe("Jackson,MS");
+    expect(matchBranch("jackson, tn", known)).toBe("Jackson,TN");
+  });
+  it("knows the branch codes", () => {
+    const all = [...known, "Savannah", "Wilmington", "Asheville"];
+    expect(matchBranch("SV", all)).toBe("Savannah");
+    expect(matchBranch("wm", all)).toBe("Wilmington");
+    expect(matchBranch("AV", all)).toBe("Asheville");
+    expect(matchBranch("JS", all)).toBe("Jackson,MS");
+    expect(matchBranch("SV", known)).toBeNull();
+  });
+  it("fixes one clear typo", () => {
+    expect(matchBranch("Talahasse", known)).toBe("Tallahassee");
+    expect(matchBranch("Hunstville", known)).toBe("Huntsville");
+  });
+  it("won't guess when it isn't clear", () => {
+    expect(matchBranch("Jackson", known)).toBeNull();
+    expect(matchBranch("10/16", known)).toBeNull();
+    expect(matchBranch("Mobil", known)).toBeNull();
+    expect(matchBranch("", known)).toBeNull();
+  });
+  it("says what's wrong", () => {
+    expect(strayReason({ branch: "Mobile", destination: "10/16" }).text).toMatch(/date/);
+    expect(strayReason({ branch: "Nowhere", destination: null }).field).toBe("branch");
+  });
+});
+
+describe("Flash Tech trip matching", () => {
+  const known = ["Columbus", "Savannah", "Raleigh"];
+  const trips = [
+    { profileId: "matt", origin: "Columbus", destination: "Savannah", start: "2026-11-08", end: "2026-11-14" },
+    { profileId: "matt", origin: "Columbus", destination: "Raleigh", start: "2026-11-15", end: "2026-11-21" },
+  ];
+  const food = (over: Partial<AutoFillRecord>) => rec({ id: "f", category: "Reimbursement Form", reimbursementType: "Food", branch: "Columbus", profileId: "matt", ...over });
+  it("reads typed dates", () => {
+    expect(looseDate("11/8", "2026-11-14")).toBe("2026-11-08");
+    expect(looseDate("11/14/26", "2026-11-16")).toBe("2026-11-14");
+    expect(looseDate("12/30", "2027-01-03")).toBe("2026-12-30");
+    expect(looseDate("Raleigh", "2026-11-14")).toBeNull();
+  });
+  it("charges Food sent during a trip to the trip's destination", () => {
+    const plan = planExpenseRecordSync([
+      food({ id: "a", expenseDate: "2026-11-14", fromLocation: "11/8", toLocation: "11/14", destination: "11/14" }),
+      food({ id: "b", expenseDate: "2026-11-16", fromLocation: "11/15", toLocation: "11/21", destination: "11/21" }),
+      food({ id: "c", expenseDate: "2026-11-30", fromLocation: "11/29", toLocation: "11/30", destination: "11/30" }),
+      food({ id: "d", expenseDate: "2026-11-10" }),
+    ], [], known, trips);
+    const where = Object.fromEntries(plan.create.flatMap((g) => g.records.map((x) => [x.id, g.branch])));
+    expect(where).toEqual({ a: "Savannah", b: "Raleigh", c: "Columbus", d: "Savannah" });
+    expect(plan.create.find((g) => g.branch === "Savannah")!.records[0].tripNote).toMatch(/Columbus → Savannah/);
+    expect(plan.stray).toEqual([]);
+  });
+  it("a typed branch wins over a trip", () => {
+    const plan = planExpenseRecordSync([food({ id: "e", expenseDate: "2026-11-10", destination: "Raleigh" })], [], known, trips);
+    expect(plan.create[0].branch).toBe("Raleigh");
+  });
 });
 
 describe("autoFillCategoryOf", () => {

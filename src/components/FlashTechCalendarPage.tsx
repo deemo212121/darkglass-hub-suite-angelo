@@ -689,6 +689,22 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
     return [...trips].filter((t) => t.endDate < today).sort((a, b) => b.endDate.localeCompare(a.endDate));
   }, [trips]);
 
+  // ?trip=<id> (from Overall Expenses → What's new, "Fix on Flash Tech Calendar") opens that trip once trips load.
+  const tripLinkHandled = useRef(false);
+  useEffect(() => {
+    if (tripLinkHandled.current || !trips.length) return;
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("trip");
+    if (!id) { tripLinkHandled.current = true; return; }
+    const trip = trips.find((t) => t.id === id);
+    if (!trip) return;
+    tripLinkHandled.current = true;
+    openEditModal(trip);
+    params.delete("trip");
+    window.history.replaceState(null, "", `${window.location.pathname}${params.toString() ? `?${params}` : ""}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trips]);
+
   const openCreateModal = () => {
     setEditingTripId(null);
     setForm(emptyForm());
