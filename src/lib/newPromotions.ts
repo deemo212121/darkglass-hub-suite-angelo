@@ -35,6 +35,8 @@ export interface NewWageItem {
   id: string;
   kind: NewWageKind;
   status: NewWageStatus;
+  /** The employee's profile id (from the form) — for the Branch / Role / Department filters. */
+  employeeId: string;
   employeeName: string;
   oldPosition: string;
   newPosition: string;
@@ -79,6 +81,7 @@ export function toNewWageItem(doc: NewWageDoc, adjusted: NewWageAdjustment | nul
     const basis = f.wageBasis ? WAGE_BASIS_LABEL[f.wageBasis] ?? "" : "";
     return {
       ...base,
+      employeeId: s(f.employeeId),
       employeeName: s(f.employeeName),
       oldPosition: s(f.currentPosition),
       newPosition: s(f.newPositionTitle),
@@ -90,6 +93,7 @@ export function toNewWageItem(doc: NewWageDoc, adjusted: NewWageAdjustment | nul
   const increase = money(s(f.salaryIncrease).replace(/^\+/, ""));
   return {
     ...base,
+    employeeId: s(f.employeeId),
     employeeName: s(f.employeeName),
     oldPosition: "",
     newPosition: s(f.newPosition),
