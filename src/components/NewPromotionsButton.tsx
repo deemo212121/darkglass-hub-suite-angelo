@@ -23,6 +23,8 @@ import {
 } from "@/lib/newPromotions";
 import { getNewPromotionsAndWages, setWageAdjusted } from "@/lib/supabase/newPromotions";
 import { InlinePdfLink } from "@/components/InlinePdfViewer";
+import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
+import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 
 type Filter = "all" | "to_adjust" | "pending" | "adjusted";
 
@@ -47,6 +49,19 @@ const fmtDay = (iso: string | null) => {
   return isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 };
 
+/** "2026-11" from an effective date ("2026-11-12" or "Nov 12, 2026"); the date it was sent if there's none. */
+const monthOf = (i: Pick<NewWageItem, "effectiveDate" | "createdAt">) => {
+  const iso = /^(\d{4})-(\d{2})/.exec(i.effectiveDate);
+  if (iso) return `${iso[1]}-${iso[2]}`;
+  const d = new Date(i.effectiveDate || i.createdAt);
+  return isNaN(d.getTime()) ? "" : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+};
+const monthName = (ym: string) => {
+  const [y, m] = ym.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+};
+const roleName = (role: string) => ROLE_LABELS[normalizeRole(role)] ?? role.toLowerCase().replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
 const STATUS_PILL: Record<NewWageItem["status"], string> = {
   pending_signature: "bg-amber-500/15 text-amber-300 border-amber-500/30",
   signed: "bg-blue-500/15 text-blue-300 border-blue-500/30",
@@ -65,6 +80,36 @@ export function NewPromotionsButton() {
   const [newOnOpen, setNewOnOpen] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("to_adjust");
+  // Branch / Role / Department (from the employee's profile) and Month (effective date). "" = all.
+  const [people, setPeople] = useState<ProfileRow[] | null>(null);
+  const [branchF, setBranchF] = useState("");
+  const [roleF, setRoleF] = useState("");
+  const [deptF, setDeptF] = useState("");
+  const [monthF, setMonthF] = useState("");
+  useEffect(() => {
+    if (open && !people) getCompanyUsers().then(setPeople).catch(() => setPeople([]));
+  }, [open, people]);
+  const personOf = useMemo(() => {
+    const byId = new Map((people ?? []).map((p) => [p.id, p]));
+    const byName = new Map((people ?? []).map((p) => [(p.display_name || "").trim().toLowerCase(), p]));
+    return (i: NewWageItem) => byId.get(i.employeeId) ?? byName.get(i.employeeName.trim().toLowerCase());
+  }, [people]);
+  const facet = (i: NewWageItem) => {
+    const p = personOf(i);
+    return { branch: p?.assigned_branch || "", role: p?.role ? roleName(p.role) : "", dept: p?.department || "", month: monthOf(i) };
+  };
+  const matchesFacets = (i: NewWageItem, skip?: "branch" | "role" | "dept" | "month") => {
+    const f = facet(i);
+    return (skip === "branch" || !branchF || f.branch === branchF)
+      && (skip === "role" || !roleF || f.role === roleF)
+      && (skip === "dept" || !deptF || f.dept === deptF)
+      && (skip === "month" || !monthF || f.month === monthF);
+  };
+  /** Each dropdown's choices, after the other filters. */
+  const options = (key: "branch" | "role" | "dept" | "month") =>
+    Array.from(new Set((items ?? []).filter((i) => matchesFacets(i, key)).map((i) => facet(i)[key]).filter(Boolean)))
+      .sort((a, b) => (key === "month" ? b.localeCompare(a) : a.localeCompare(b)));
+  const anyFacet = !!(branchF || roleF || deptF || monthF);
 
   const load = useCallback(() => {
     setError(null);
@@ -116,14 +161,16 @@ export function NewPromotionsButton() {
 
   const counts = useMemo(() => {
     const c: Record<Filter, number> = { all: 0, to_adjust: 0, pending: 0, adjusted: 0 };
-    for (const i of items ?? []) for (const f of FILTERS) if (matches(i, f.key)) c[f.key]++;
+    for (const i of items ?? []) if (matchesFacets(i)) for (const f of FILTERS) if (matches(i, f.key)) c[f.key]++;
     return c;
-  }, [items]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, people, branchF, roleF, deptF, monthF]);
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return (items ?? []).filter((i) => matches(i, filter) && (!q || `${i.employeeName} ${i.oldPosition} ${i.newPosition}`.toLowerCase().includes(q)));
-  }, [items, query, filter]);
+    return (items ?? []).filter((i) => matches(i, filter) && matchesFacets(i) && (!q || `${i.employeeName} ${i.oldPosition} ${i.newPosition}`.toLowerCase().includes(q)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, query, filter, people, branchF, roleF, deptF, monthF]);
 
   const modal = open && (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-6" onClick={() => setOpen(false)}>
@@ -171,6 +218,34 @@ export function NewPromotionsButton() {
           {newOnOpen.size > 0 && <span className="text-xs font-semibold text-red-300">{newOnOpen.size} new</span>}
         </div>
 
+        {/* Branch · Role · Department · Month — the tab counts above follow them too. */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-white/10 px-5 py-2">
+          {([
+            ["branch", "All branches", branchF, setBranchF, (v: string) => v],
+            ["role", "All roles", roleF, setRoleF, (v: string) => v],
+            ["dept", "All departments", deptF, setDeptF, (v: string) => v],
+            ["month", "All months", monthF, setMonthF, monthName],
+          ] as const).map(([key, all, value, set, label]) => (
+            <select
+              key={key}
+              value={value}
+              onChange={(e) => set(e.target.value)}
+              aria-label={all.replace("All ", "")}
+              className={`rounded-md border bg-slate-800 px-2 py-1.5 text-xs [color-scheme:dark] focus:border-blue-500 focus:outline-none ${value ? "border-blue-500/60 text-white" : "border-white/10 text-slate-300"}`}
+            >
+              <option value="">{all}</option>
+              {value && !options(key).includes(value) && <option value={value}>{label(value)}</option>}
+              {options(key).map((o) => <option key={o} value={o}>{label(o)}</option>)}
+            </select>
+          ))}
+          {!people && <span className="text-[11px] text-slate-500"><Loader2 className="inline h-3 w-3 animate-spin" /> Loading branches…</span>}
+          {anyFacet && (
+            <button type="button" onClick={() => { setBranchF(""); setRoleF(""); setDeptF(""); setMonthF(""); }} className="text-xs font-semibold text-blue-300 hover:underline">
+              Clear filters
+            </button>
+          )}
+        </div>
+
         {actionError && <p className="mx-5 mt-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{actionError}</p>}
 
         <div className="flex-1 overflow-auto">
@@ -179,7 +254,7 @@ export function NewPromotionsButton() {
           ) : !items ? (
             <p className="flex items-center gap-2 p-5 text-sm text-slate-300"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</p>
           ) : shown.length === 0 ? (
-            <p className="p-8 text-center text-sm text-slate-500">{query ? "Nothing matches that search." : "Nothing here."}</p>
+            <p className="p-8 text-center text-sm text-slate-500">{query || anyFacet ? "Nothing matches these filters." : "Nothing here."}</p>
           ) : (
             <table className="w-full text-sm">
               <thead className="sticky top-0 z-10 bg-slate-900">

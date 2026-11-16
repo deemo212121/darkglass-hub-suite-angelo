@@ -39,6 +39,7 @@ import { EmptyState } from "@/components/ui-kit/EmptyState";
 import { TableSkeleton } from "@/components/ui-kit/TableSkeleton";
 
 import { MAX_CORRECTIONS_PER_MONTH } from "@/lib/attention";
+import { correctionLimitGroupOf } from "@/lib/correctionLimitGroups";
 import { getSignableDocuments, type SignableDocument } from "@/lib/supabase/signableDocuments";
 import { collectTimeCardWarnings, type TimeCardWarning } from "@/lib/timeCardWarnings";
 
@@ -87,14 +88,8 @@ const GROUPS: { key: GroupKey; label: string; region: Region }[] = [
 
 const PARTS_ROLES = new Set(["PARTS", "PARTS_TEAM_LEADER", "PARTS_MANAGER", "PARTS_ORDER"]);
 
-function groupOf(p: ProfileRow): GroupKey | null {
-  if (p.assigned_branch === PH_BRANCH) return "PH";
-  const role = normalizeRole(p.role);
-  if (BM_AND_UP_ROLES.has(role)) return role as GroupKey;
-  if (TECHNICIAN_PAY_ROLES.has(role)) return "TECHNICIAN";
-  if (PARTS_ROLES.has(role)) return role as GroupKey;
-  return null;
-}
+/** Same rule as the red badge (lib/correctionLimitGroups.ts), so the badge only counts people this list shows. */
+const groupOf = (p: ProfileRow): GroupKey | null => correctionLimitGroupOf(p) as GroupKey | null;
 
 const regionOf = (g: GroupKey): Region => GROUPS.find((x) => x.key === g)!.region;
 

@@ -31,6 +31,7 @@ import { canAccessSubmodule } from "@/lib/submoduleAccess";
 import { isAttendanceFullAccessRole, isAttendanceManagerTierRole, normalizeRole } from "@/lib/roleLabels";
 import { getTraineeDaysAwaitingApproval } from "@/lib/supabase/traineeTimecards";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
+import { isOnCorrectionLimitList } from "@/lib/correctionLimitGroups";
 import { getProfileIdByFirebaseUid } from "@/lib/supabase/timecards";
 import { registerApprovalDirectory } from "@/lib/approvalDirectory";
 import { getCompanyPtoRequests, canReviewPtoStage } from "@/lib/supabase/pto";
@@ -225,9 +226,14 @@ async function compute(who: Who): Promise<Attention> {
   if (canSeeLimit && absentPage) {
     const month = localISO().slice(0, 7);
     const exempt = new Set(exemptions.filter((e) => !e.removedAt).map((e) => e.correctionId));
+    // Only people Exceeded → Time Corrections actually lists (active, in its groups) — so the badge
+    // never says "1" over a list with nobody over the limit (a deactivated person, a CSR…).
+    const people = isTeamManager ? profiles : await getCompanyUsers().catch(() => [] as ProfileRow[]);
+    const listed = new Set(people.filter(isOnCorrectionLimitList).map((p) => p.id));
     const perPerson = new Map<string, number>();
     for (const c of corrections) {
       if (!c.workDate.startsWith(month) || c.status === "rejected" || exempt.has(c.id)) continue;
+      if (people.length && !listed.has(c.profileId)) continue;
       perPerson.set(c.profileId, (perPerson.get(c.profileId) ?? 0) + 1);
     }
     // Someone already sent a time-card warning for this month no longer counts (Exceeded → Time Corrections' Warning Form column).
