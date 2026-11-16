@@ -8,6 +8,7 @@
  * and Super Admin add, edit and delete.
  */
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, RefreshCw, Download, FileSpreadsheet, Loader2, Paperclip, Pencil, Receipt, Trash2, TrendingUp, Users, Wallet, X } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { normalizeRole } from "@/lib/roleLabels";
@@ -30,6 +31,7 @@ import {
   ALL_BRANCH_EXPENSE_CATEGORIES,
   BRANCH_EXPENSE_CATEGORIES,
   BRANCH_EXPENSE_LABEL,
+  BRANCH_EXPENSE_PROVIDERS,
   LEGACY_BRANCH_EXPENSE_CATEGORIES,
   PAYROLL_CATEGORIES,
   branchExpenseCategoryText,
@@ -834,6 +836,139 @@ const OPERATION_TYPES = ["Job posting", "Ads", "Shipping", "Other"];
 /** Vendors the app fills in itself — not offered as providers. */
 const SYSTEM_VENDORS = new Set(["AHS Expense Records", "Car IQ"]);
 
+/**
+ * Type-to-search provider box: filters the grouped list as you type (↑ ↓ Enter, Esc);
+ * the last choice adds what was typed as a new provider. The list is portaled to
+ * <body>, so the form's scrolling panel never clips it.
+ */
+function ProviderCombo({
+  value,
+  onChange,
+  groups,
+  word,
+  ariaLabel,
+  className,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  groups: { group: string; names: string[] }[];
+  word: string;
+  ariaLabel: string;
+  className: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const q = query.trim().toLowerCase();
+  const shown = groups
+    .map((g) => ({ group: g.group, names: g.names.filter((n) => !q || n.toLowerCase().includes(q)) }))
+    .filter((g) => g.names.length);
+  const flat = shown.flatMap((g) => g.names);
+  const typed = query.trim();
+  const exact = groups.some((g) => g.names.some((n) => n.toLowerCase() === typed.toLowerCase()));
+  const choices = typed && !exact ? [...flat, `__new:${typed}`] : flat;
+
+  const place = () => { if (inputRef.current) setRect(inputRef.current.getBoundingClientRect()); };
+  useEffect(() => {
+    if (!open) return;
+    place();
+    const close = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (!inputRef.current?.contains(t) && !listRef.current?.contains(t)) setOpen(false);
+    };
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    document.addEventListener("mousedown", close);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+      document.removeEventListener("mousedown", close);
+    };
+  }, [open]);
+  useEffect(() => { listRef.current?.querySelector(`[data-i="${active}"]`)?.scrollIntoView({ block: "nearest" }); }, [active]);
+
+  const pick = (choice: string) => {
+    onChange(choice.startsWith("__new:") ? choice.slice(6) : choice);
+    setOpen(false);
+    setQuery("");
+    inputRef.current?.blur();
+  };
+
+  let i = -1;
+  return (
+    <>
+      <input
+        ref={inputRef}
+        value={open ? query : value}
+        placeholder={open && value ? value : word === "provider" ? "Provider…" : "Vendor…"}
+        onFocus={() => { setOpen(true); setQuery(""); setActive(0); }}
+        onChange={(e) => { setQuery(e.target.value); setActive(0); setOpen(true); }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown") { e.preventDefault(); setActive((a) => Math.min(a + 1, choices.length - 1)); }
+          else if (e.key === "ArrowUp") { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
+          else if (e.key === "Enter") { e.preventDefault(); if (choices[active]) pick(choices[active]); }
+          else if (e.key === "Escape" || e.key === "Tab") setOpen(false);
+        }}
+        aria-label={ariaLabel}
+        role="combobox"
+        aria-expanded={open}
+        autoComplete="off"
+        title={value}
+        className={`${className} ${value || open ? "" : "placeholder-slate-500"}`}
+      />
+      {open && rect && createPortal(
+        <div
+          ref={listRef}
+          role="listbox"
+          style={{ position: "fixed", left: rect.left, top: rect.bottom + 4, width: Math.max(rect.width, 224), zIndex: 9999 }}
+          className="max-h-72 overflow-y-auto rounded-lg border border-white/10 bg-slate-900 py-1 text-sm shadow-xl"
+        >
+          {shown.map((g) => (
+            <div key={g.group || "list"}>
+              {g.group && <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{g.group}</div>}
+              {g.names.map((n) => {
+                i++;
+                const idx = i;
+                return (
+                  <button
+                    key={n}
+                    type="button"
+                    data-i={idx}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onMouseEnter={() => setActive(idx)}
+                    onClick={() => pick(n)}
+                    className={`block w-full px-3 py-1.5 text-left ${idx === active ? "bg-blue-600/30 text-white" : "text-slate-200"} ${n === value ? "font-semibold text-sky-300" : ""}`}
+                  >
+                    {n}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+          {typed && !exact && (
+            <button
+              type="button"
+              data-i={flat.length}
+              onMouseDown={(e) => e.preventDefault()}
+              onMouseEnter={() => setActive(flat.length)}
+              onClick={() => pick(`__new:${typed}`)}
+              className={`block w-full border-t border-white/10 px-3 py-1.5 text-left text-sky-300 ${active === flat.length ? "bg-blue-600/30" : ""}`}
+            >
+              + Add new {word} “{typed}”
+            </button>
+          )}
+          {!choices.length && <div className="px-3 py-2 text-xs text-slate-500">Type a name to add a new {word}.</div>}
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
 /** Pay periods that touch a month ("2026-11"), oldest first. */
 function payPeriodsInMonth(ym: string): { start: string; end: string }[] {
   const b = monthBounds(ym);
@@ -1147,32 +1282,32 @@ function BranchSheetForm({
   const label = "mb-1 block text-xs uppercase text-slate-400";
   const cell = "rounded-md border border-white/10 bg-slate-800/50 py-1.5 text-sm text-white placeholder-slate-600 focus:border-blue-500 focus:outline-none";
 
-  /** The shared provider / vendor list for a line: every one used before, plus any typed in this form. */
+  /** Providers added beyond Accounting's list (BRANCH_EXPENSE_PROVIDERS): every one saved on a bill before, plus any typed in this form. */
   const vendorOptions = (c: BranchExpenseCategory) => {
+    const builtIn = new Set((BRANCH_EXPENSE_PROVIDERS[c] ?? []).flatMap((g) => g.names.map((n) => n.toLowerCase())));
     const set = new Set<string>();
     for (const b of existing) if (b.category === c && b.vendor.trim() && !SYSTEM_VENDORS.has(b.vendor.trim())) set.add(b.vendor.trim());
     if (lineVendor[c]?.trim()) set.add(lineVendor[c]!.trim());
     for (const r of rowsOf(c)) if (r.vendor.trim()) set.add(r.vendor.trim());
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
+    return Array.from(set).filter((v) => !builtIn.has(v.toLowerCase())).sort((a, b) => a.localeCompare(b));
   };
   const picker = "rounded-md border border-white/10 bg-slate-800/50 py-1.5 pl-2 pr-6 text-sm text-white [color-scheme:dark] focus:border-blue-500 focus:outline-none";
   // Render calls (not components), so typing never loses focus.
-  const vendorPick = (c: BranchExpenseCategory, value: string, set: (v: string) => void) => (
-    <select
-      value={value}
-      onChange={(e) => {
-        if (e.target.value !== "__new") { set(e.target.value); return; }
-        const typed = prompt(`New ${providerWord(c)} for ${BRANCH_EXPENSE_LABEL[c]}:`)?.trim();
-        if (typed) set(typed);
-      }}
-      aria-label={`${BRANCH_EXPENSE_LABEL[c]} ${providerWord(c)}`}
-      className={`${picker} w-40 shrink-0 ${value ? "" : "text-slate-500"}`}
-    >
-      <option value="" className="bg-slate-800 text-slate-400">{providerWord(c) === "provider" ? "Provider…" : "Vendor…"}</option>
-      {vendorOptions(c).map((v) => <option key={v} value={v} className="bg-slate-800 text-white">{v}</option>)}
-      <option value="__new" className="bg-slate-800 text-sky-300">+ New {providerWord(c)}…</option>
-    </select>
-  );
+  const vendorPick = (c: BranchExpenseCategory, value: string, set: (v: string) => void) => {
+    const added = vendorOptions(c);
+    const groups = [...(BRANCH_EXPENSE_PROVIDERS[c] ?? [])];
+    if (added.length) groups.push({ group: groups.length ? "Added" : "", names: added });
+    return (
+      <ProviderCombo
+        value={value}
+        onChange={set}
+        groups={groups}
+        word={providerWord(c)}
+        ariaLabel={`${BRANCH_EXPENSE_LABEL[c]} ${providerWord(c)}`}
+        className={`${picker} w-44 shrink-0`}
+      />
+    );
+  };
   const kindPick = (value: string, set: (v: string) => void) => (
     <select value={value} onChange={(e) => set(e.target.value)} aria-label="Operation type" className={`${picker} w-32 shrink-0 ${value ? "" : "text-slate-500"}`}>
       <option value="" className="bg-slate-800 text-slate-400">Type…</option>
