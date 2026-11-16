@@ -118,7 +118,7 @@ export interface BranchExpense {
   /** Only for the old "other" — what it was. */
   otherLabel: string;
   vendor: string;
-  /** The account it was paid on — provider account # / card or bank account (migration 0450). */
+  /** The account it was paid on — provider account # / card or bank account (migration 0451). */
   accountNumber: string;
   amount: number;
   /** Bill date, "YYYY-MM-DD". */
