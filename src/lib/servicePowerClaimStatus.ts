@@ -45,7 +45,11 @@ export async function syncServicePowerClaimStatus(
   const call = (res.calls ?? []).find((c: any) => String(c?.callNumber ?? "").trim() === ticket.ticketNo) ?? res.calls?.[0];
   const center = String(call?.serviceCenter ?? "").trim();
   if (!call || !center) {
-    return { found: false, closed: false, shortPaid: false, message: res.error ? `ServicePower: ${res.error}` : "This call isn't on ServicePower." };
+    // res.error is a string (request failed) or ServicePower's { code, description } / SOAP fault { message };
+    // SP000 "NO RECOREDS FOUND" just means no such call (e.g. an Electrolux-portal ticket).
+    const err = res.error;
+    const errText = typeof err === "string" ? err : err?.code === "SP000" ? "" : err?.description || err?.message || (err ? JSON.stringify(err) : "");
+    return { found: false, closed: false, shortPaid: false, message: errText ? `ServicePower: ${errText}` : "This call isn't on ServicePower." };
   }
 
   const names = spClaimLookupNames(call.mfgId, ticket.ticketNo, ticket.manufacturer, call.product?.brandDesc);
