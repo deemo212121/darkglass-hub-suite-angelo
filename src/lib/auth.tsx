@@ -109,7 +109,7 @@ type AuthState = {
    *  actually gain access, only to see what a role's UI looks like. */
   viewAsRole: string | null;
   /** Sets/clears the "view as" preview. No-op (and clears any stale stored
-   *  value) unless `realRole` is SUPERADMIN/SUPERSUPERADMIN. */
+   *  value) unless `realRole` is SUPERADMIN/SUPERSUPERADMIN/IT. */
   setViewAsRole: (roleCode: string | null) => void;
   /** Trainee vs Regular (Master List's Employment Status column, migration
    *  0152) — true means this account only sees Employee Self-Service

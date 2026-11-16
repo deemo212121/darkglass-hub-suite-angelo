@@ -37,7 +37,8 @@ import { getServerNow, zonedDateKey, type ScheduleTimezone } from "@/lib/serverT
 import { technicianTimeZone } from "@/lib/attendanceGrace";
 import { formatTimeInZone } from "@/lib/localDate";
 
-const FULL_ACCESS_ROLES = new Set(["SUPERADMIN", "TECHNICAL_DIRECTOR", "TECHNICAL_ASSISTANT_DIRECTOR"]);
+// IT has Super Admin's access (roleLabels.ts's ROLE_INCLUDES), "View As" included.
+const FULL_ACCESS_ROLES = new Set(["SUPERADMIN", "IT", "TECHNICAL_DIRECTOR", "TECHNICAL_ASSISTANT_DIRECTOR"]);
 const MANAGER_TIER_ROLES = new Set(["SENIOR_BRANCH_MANAGER", "BRANCH_MANAGER"]);
 
 function heldRoles(p: Pick<ProfileRow, "role" | "extra_roles">): string[] {
