@@ -271,8 +271,23 @@ export function ExpenseTrackingPage({
   const COLUMNS = ALL_COLUMNS.filter(
     (c) => (showDestination || c.key !== "destination") && (showStatus || (c.key !== "status" && c.key !== "reviewer")) && (showRental || (c.key !== "pickup" && c.key !== "return")) && !(hideDate && c.key === "date")
   );
-  const matchesSearch = (e: ExpenseRow) =>
-    !search || `${profileName(e.profileId)} ${e.createdBy ? profileName(e.createdBy) : ""} ${e.description}`.toLowerCase().includes(search.toLowerCase());
+  /** Everything the row shows (every column, every tab's), plus the bits behind it — one search box for all of it. */
+  const searchText = (e: ExpenseRow) => {
+    const person = profileById.get(e.profileId);
+    return [
+      ...ALL_COLUMNS.map((c) => c.value(e)),
+      e.amount.toFixed(2), String(e.amount),
+      reimbursementTypeLabel(e), e.orNumber, e.fromLocation, e.toLocation, e.pickupDate, e.returnDate, e.reviewNote,
+      e.expenseDate, person?.email, person?.tier_level, person?.assigned_branch,
+    ].filter(Boolean).join(" ").toLowerCase();
+  };
+  // Every word typed has to match somewhere ("memphis hotel pending").
+  const searchWords = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const matchesSearch = (e: ExpenseRow) => {
+    if (!searchWords.length) return true;
+    const text = searchText(e);
+    return searchWords.every((w) => text.includes(w));
+  };
   const matchesColumns = (e: ExpenseRow, skipKey?: string) =>
     COLUMNS.every((c) => c.key === skipKey || !colFilters[c.key]?.size || colFilters[c.key].has(c.value(e)));
 
@@ -584,7 +599,7 @@ export function ExpenseTrackingPage({
             <div className="flex flex-wrap items-center gap-2">
               <input
                 type="text"
-                placeholder="Search employee, sender or description..."
+                placeholder="Search anything — employee, branch, category, type, amount, dates, description, OR #, status, who sent / approved…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="min-w-[260px] flex-1 bg-slate-800/50 border border-white/10 rounded-lg p-2 text-white text-sm placeholder-slate-500 focus:border-blue-500 focus:outline-none"
