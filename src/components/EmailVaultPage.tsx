@@ -24,7 +24,7 @@ import { PasswordChecksPanel } from "@/components/PasswordChecksPanel";
 import { TableSkeleton } from "@/components/ui-kit/TableSkeleton";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { isEmailVaultSuperAdmin } from "@/lib/submoduleAccess";
-import { normalizeRole } from "@/lib/roleLabels";
+import { normalizeRole, withIncludedRoles } from "@/lib/roleLabels";
 import { hydrateEmailVaultGrant } from "@/lib/moduleAccess";
 import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
 import {
@@ -213,7 +213,9 @@ export function EmailVaultPage({ mod, sub }: Props) {
   const [noPasswordIds, setNoPasswordIds] = useState<Set<string>>(new Set());
   const refreshNoPassword = useCallback(() => { void getEmailVaultNoPasswordIds().then(setNoPasswordIds); }, []);
   /** Manage Access / Password Checks: Super Admins change them; Email and password people can look (view only). */
-  const canViewSettings = isSuperAdmin || canSeePasswords;
+  /** Password Checks: Super Admin and Admin can change them and Show a set password (migration 0460). */
+  const canEditPasswordChecks = isSuperAdmin || withIncludedRoles([role, ...(extraRoles ?? [])]).includes("ADMIN");
+  const canViewSettings = isSuperAdmin || canSeePasswords || canEditPasswordChecks;
   const [busy, setBusy] = useState(false);
 
   const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
@@ -506,7 +508,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
             </button>
             <h2 className="text-xl font-semibold flex items-center gap-2"><KeyRound className="h-5 w-5 text-amber-300" /> Password Checks</h2>
           </div>
-          <PasswordChecksPanel readOnly={!isSuperAdmin} />
+          <PasswordChecksPanel readOnly={!canEditPasswordChecks} />
         </section>
       ) : (
       <>

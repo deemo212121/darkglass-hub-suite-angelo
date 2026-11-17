@@ -224,14 +224,14 @@ export function PasswordChecksPanel({ readOnly = false }: { readOnly?: boolean }
     <div className="grid gap-4">
       {readOnly && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-200 flex items-center gap-2">
-          <Eye className="h-4 w-4 shrink-0" /> View only — only a Super Admin can change these.
+          <Eye className="h-4 w-4 shrink-0" /> View only — only a Super Admin or Admin can change these.
         </div>
       )}
       <div className="rounded-lg border border-[var(--color-panel-border)] px-4 py-3 text-sm text-muted-foreground flex items-start gap-2">
         <KeyRound className="h-4 w-4 mt-0.5 shrink-0 text-blue-400" />
         <div>
           Each one asks either for <b className="text-foreground">their own login password</b> (the one they sign in with) or for{" "}
-          <b className="text-foreground">a set password</b> you choose with Edit password. Only Super Admins can see a set password (Show password), and every Show is recorded below.
+          <b className="text-foreground">a set password</b> you choose with Edit password. Only Super Admins and Admins can see a set password (Show password), and every Show is recorded below.
           Super Admins are asked too. <b className="text-foreground">Once per session</b> asks once, then not again until that browser tab is closed.
           Changes apply right away.
         </div>
