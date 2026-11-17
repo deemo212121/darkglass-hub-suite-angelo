@@ -18,7 +18,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Plus, Pencil, Trash2, Save, X, Upload, Download, ChevronDown, ArrowRightLeft, Lock } from "lucide-react";
+import { Plus, Pencil, Trash2, Save, X, Upload, Download, ChevronDown, ArrowRightLeft, Lock, History } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { isAdminOrAboveHolder, normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
 import { logModuleActivity } from "@/lib/supabase/moduleActivityLog";
@@ -31,6 +31,8 @@ import {
   bulkUpsertTruckStock,
   decrementTruckStock,
   getTruckStockUsed,
+  getTruckStockHistory,
+  type TruckStockHistoryEntry,
   bulkUpsertTruckStockUsed,
   deleteTruckStockUsedRow,
   ticketNosInApp,
@@ -153,6 +155,8 @@ export function TruckStockPanel() {
   const importUnlockedAt = useRef(0);
   const IMPORT_UNLOCK_MS = 2 * 60_000;
   const [usagePartNo, setUsagePartNo] = useState<string | null>(null);
+  // Who changed this row's status / description / brand / qty … and when (migration 0464).
+  const [historyRow, setHistoryRow] = useState<TruckStockRow | null>(null);
   const [showTransferForm, setShowTransferForm] = useState(false);
 
   useEffect(() => {
@@ -691,6 +695,7 @@ export function TruckStockPanel() {
               onEdit={(r) => setDraft({ ...r })}
               onDelete={handleDelete}
               onShowUsage={setUsagePartNo}
+              onShowHistory={setHistoryRow}
               onSaveEdit={handleSave}
               onCancelEdit={() => setDraft(null)}
               branchOptions={branchOptions}
@@ -722,6 +727,7 @@ export function TruckStockPanel() {
         )}
 
         {usagePartNo ? <PartUsageModal partNo={usagePartNo} onClose={() => setUsagePartNo(null)} /> : null}
+        {historyRow ? <StockHistoryModal row={historyRow} onClose={() => setHistoryRow(null)} /> : null}
 
         {showTransferForm ? (
           <TransferRequestModal
@@ -773,6 +779,7 @@ function BranchSection({
   onSaveEdit,
   onCancelEdit,
   onShowUsage,
+  onShowHistory,
   branchOptions,
   busy,
 }: {
@@ -786,6 +793,7 @@ function BranchSection({
   onSaveEdit: () => void;
   onCancelEdit: () => void;
   onShowUsage: (partNo: string) => void;
+  onShowHistory: (row: TruckStockRow) => void;
   branchOptions: string[];
   busy: boolean;
 }) {
@@ -943,6 +951,14 @@ function BranchSection({
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex items-center justify-end gap-1">
+                      <button
+                        type="button"
+                        onClick={() => onShowHistory(row)}
+                        className="rounded p-1 text-slate-300 hover:bg-white/10 hover:text-white"
+                        title="History — who changed this row, and when"
+                      >
+                        <History className="h-3.5 w-3.5" />
+                      </button>
                       <button
                         type="button"
                         onClick={() => onEdit(row)}
@@ -1508,5 +1524,94 @@ function BrandSelect({ value, onChange, className }: { value: string; onChange: 
         <option key={b} value={b}>{b}</option>
       ))}
     </select>
+  );
+}
+
+const HISTORY_FIELD_LABEL: Record<string, string> = {
+  status: "Status",
+  description: "Description",
+  manufacturer: "Brand",
+  quantity: "Qty",
+  storage_location: "Stored At",
+  notes: "Notes",
+  branch: "Branch",
+  part_no: "Part No",
+};
+
+/** A row's history (migration 0464): who added / changed / deleted it, when, and each field's old → new value. */
+function StockHistoryModal({ row, onClose }: { row: TruckStockRow; onClose: () => void }) {
+  const [entries, setEntries] = useState<TruckStockHistoryEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    getTruckStockHistory(row.id)
+      .then((e) => { if (alive) setEntries(e); })
+      .catch((err) => { if (alive) setError(err instanceof Error ? err.message : String(err)); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [row.id]);
+
+  const show = (field: string | null, v: string | null) => {
+    if (v == null || v === "") return "—";
+    return field === "status" ? truckStockStatusOption(toTruckStockStatus(v)).label : v;
+  };
+  const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="w-full max-w-3xl rounded-xl border border-white/10 bg-slate-950 text-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <header className="flex items-center justify-between gap-4 rounded-t-xl bg-white/5 px-5 py-3 border-b border-white/10">
+          <div>
+            <h2 className="text-base font-semibold"><span className="font-mono">{row.partNo}</span> · {row.branch}</h2>
+            <p className="text-xs text-slate-400">Who changed this row, and when — status, description, brand, qty, stored at, notes</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded p-1 text-slate-300 hover:bg-white/10 hover:text-white" aria-label="Close">
+            <X className="h-4 w-4" />
+          </button>
+        </header>
+        <div className="max-h-[65vh] overflow-y-auto">
+          {loading ? (
+            <div className="px-5 py-8 text-center text-sm text-slate-400">Loading history…</div>
+          ) : error ? (
+            <div className="px-5 py-4 text-sm text-rose-300">{error}</div>
+          ) : entries.length === 0 ? (
+            <div className="px-5 py-8 text-center text-sm text-slate-400">No changes recorded yet — changes are recorded from when history was turned on.</div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-slate-900 text-xs uppercase tracking-wide text-slate-400">
+                <tr>
+                  <th className="px-4 py-2 text-left">When</th>
+                  <th className="px-4 py-2 text-left">Who</th>
+                  <th className="px-4 py-2 text-left">What</th>
+                  <th className="px-4 py-2 text-left">Before</th>
+                  <th className="px-4 py-2 text-left">After</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map((e) => (
+                  <tr key={e.id} className="border-t border-white/5 align-top">
+                    <td className="whitespace-nowrap px-4 py-2 text-slate-300">{when(e.at)}</td>
+                    <td className="whitespace-nowrap px-4 py-2">{e.byName || <span className="text-slate-500">System</span>}</td>
+                    <td className="px-4 py-2">
+                      {e.action === "added" ? (
+                        <span className="text-emerald-300">Added</span>
+                      ) : e.action === "deleted" ? (
+                        <span className="text-rose-300">Deleted</span>
+                      ) : (
+                        HISTORY_FIELD_LABEL[e.field ?? ""] ?? e.field
+                      )}
+                    </td>
+                    <td className="px-4 py-2 text-slate-400">{e.action === "added" ? "—" : e.action === "deleted" ? `Qty ${show(e.field, e.before)}` : show(e.field, e.before)}</td>
+                    <td className="px-4 py-2">{e.action === "deleted" ? "—" : e.action === "added" ? `Qty ${show(e.field, e.after)}` : show(e.field, e.after)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

@@ -63,6 +63,42 @@ function toDb(row: TruckStockRow): Record<string, unknown> {
   };
 }
 
+/** One line of a stock row's history (migration 0464 — written by the database on every add / change / delete). */
+export type TruckStockHistoryEntry = {
+  id: string;
+  action: "added" | "changed" | "deleted";
+  /** status · description · manufacturer · quantity · storage_location · notes · branch · part_no */
+  field: string | null;
+  before: string | null;
+  after: string | null;
+  /** Who did it — null when nobody was signed in (shown as "System"). */
+  byName: string | null;
+  at: string;
+};
+
+/** A stock row's history, newest first. Throws "Run migration 0464…" until that's run. */
+export async function getTruckStockHistory(truckStockId: string): Promise<TruckStockHistoryEntry[]> {
+  const { data, error } = await supabase
+    .from("truck_stock_history")
+    .select("id, action, field, before_value, after_value, changed_by_name, changed_at")
+    .eq("truck_stock_id", truckStockId)
+    .order("changed_at", { ascending: false })
+    .limit(500);
+  if (error) {
+    if (/truck_stock_history|schema cache|does not exist/i.test(error.message)) throw new Error("Run migration 0464_truck_stock_history.sql in Supabase to start recording changes.");
+    throw new Error(error.message);
+  }
+  return (data ?? []).map((r: any) => ({
+    id: r.id,
+    action: r.action,
+    field: r.field ?? null,
+    before: r.before_value ?? null,
+    after: r.after_value ?? null,
+    byName: r.changed_by_name ?? null,
+    at: r.changed_at,
+  }));
+}
+
 /** All truck stock rows for the caller's company, ordered by branch then part. */
 export async function getTruckStock(): Promise<TruckStockRow[]> {
   // Supabase caps a single SELECT at 1000 rows by default. The inventory
