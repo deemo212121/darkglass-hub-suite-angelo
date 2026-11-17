@@ -76,9 +76,53 @@ function agingFrom(dateStr: string): number {
 // chunks of 1000 instead.
 const PAGE_SIZE = 1000;
 
+const TICKET_COLUMNS = "id, ticket_no, location, technician, warranty, claim_company, aging";
+/** Up to this many different tickets are fetched by id (in batches); more than that, the whole table is read as before. */
+const TICKETS_BY_ID_LIMIT = 3000;
+const TICKETS_BY_ID_BATCH = 200;
+
+/** Every ticket in the company (the old way) — used when the parts point at a great many tickets. */
+async function allTicketsForParts(): Promise<any[]> {
+  const all: any[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("tickets")
+      .select(TICKET_COLUMNS)
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error("getPartsInventoryRows tickets error:", error.message);
+      throw new Error(error.message);
+    }
+    all.push(...(data ?? []));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
+/**
+ * Only the tickets these parts belong to (was: every ticket in the company, just to label
+ * the parts). Same result — a part whose ticket can't be read still shows blank, as before.
+ */
+async function ticketsForParts(parts: any[]): Promise<any[]> {
+  const ids = Array.from(new Set(parts.map((p) => p.ticket_id).filter(Boolean))) as string[];
+  if (!ids.length) return [];
+  if (ids.length > TICKETS_BY_ID_LIMIT) return allTicketsForParts();
+  const batches: string[][] = [];
+  for (let i = 0; i < ids.length; i += TICKETS_BY_ID_BATCH) batches.push(ids.slice(i, i + TICKETS_BY_ID_BATCH));
+  const results = await Promise.all(batches.map(async (batch) => {
+    const { data, error } = await supabase.from("tickets").select(TICKET_COLUMNS).in("id", batch);
+    if (error) {
+      console.error("getPartsInventoryRows tickets error:", error.message);
+      throw new Error(error.message);
+    }
+    return data ?? [];
+  }));
+  return results.flat();
+}
+
 /** Get every part-order line item across all of the company's tickets. */
 export async function getPartsInventoryRows(): Promise<PartInventoryRow[]> {
-  const [partsAll, ticketsAll] = await Promise.all([
+  const [partsAll] = await Promise.all([
     (async () => {
       const all: any[] = [];
       for (let from = 0; ; from += PAGE_SIZE) {
@@ -96,23 +140,8 @@ export async function getPartsInventoryRows(): Promise<PartInventoryRow[]> {
       }
       return all;
     })(),
-    (async () => {
-      const all: any[] = [];
-      for (let from = 0; ; from += PAGE_SIZE) {
-        const { data, error } = await supabase
-          .from("tickets")
-          .select("id, ticket_no, location, technician, warranty, claim_company, aging")
-          .range(from, from + PAGE_SIZE - 1);
-        if (error) {
-          console.error("getPartsInventoryRows tickets error:", error.message);
-          throw new Error(error.message);
-        }
-        all.push(...(data ?? []));
-        if (!data || data.length < PAGE_SIZE) break;
-      }
-      return all;
-    })(),
   ]);
+  const ticketsAll = await ticketsForParts(partsAll);
 
   const ticketById = new Map<string, { ticketNo: string; location: string; technician: string; warranty: string; claimCompany: string }>();
   for (const t of ticketsAll) {

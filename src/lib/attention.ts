@@ -38,7 +38,7 @@ import { getCompanyPtoRequests, canReviewPtoStage } from "@/lib/supabase/pto";
 import { getCompanyTimecardCorrections, canReviewCorrectionStage } from "@/lib/supabase/timecardCorrections";
 import { getCompanyEmployeeRequests, canReviewTicketDispute } from "@/lib/supabase/employeeRequests";
 import { getCorrectionExemptions } from "@/lib/supabase/correctionExemptions";
-import { getSignableDocuments } from "@/lib/supabase/signableDocuments";
+import { getSignableDocumentsLight } from "@/lib/supabase/signableDocuments";
 import { collectTimeCardWarnings } from "@/lib/timeCardWarnings";
 import { getMyNotifications } from "@/lib/supabase/notifications";
 import { getUnreadCounts } from "@/lib/supabase/messaging";
@@ -87,6 +87,23 @@ const WAGE_ADJUST_ROLES = new Set(["FINANCE", "ACCOUNTING_MANAGER", "ADMIN", "SU
 const CACHE_MS = 60_000;
 
 let cache: { key: string; at: number; data: Attention } | null = null;
+
+// The last counts, kept for this browser tab — Home and the badges show them at once on a reload
+// while fresh counts load in the background (instead of "Checking what needs you today…").
+const STORED_KEY = "ahs:attention:v1";
+function readStored(key: string): Attention | null {
+  try {
+    const raw = sessionStorage.getItem(STORED_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { key: string; data: Attention };
+    return parsed.key === key ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+function writeStored(key: string, data: Attention): void {
+  try { sessionStorage.setItem(STORED_KEY, JSON.stringify({ key, data })); } catch { /* storage off — fine */ }
+}
 let inflight: { key: string; promise: Promise<Attention> } | null = null;
 const listeners = new Set<(a: Attention) => void>();
 
@@ -143,14 +160,30 @@ async function compute(who: Who): Promise<Attention> {
   const wantsCorrections = isTeamManager || canSeeLimit || (isCompanyWide && !!approvalsPage);
 
   const myId = await getProfileIdByFirebaseUid(uid).catch(() => null);
-  const [profiles, pto, corrections, requests, exemptions, notifications, unread] = await Promise.all([
-    isTeamManager ? getCompanyUsers().catch(() => [] as ProfileRow[]) : Promise.resolve([] as ProfileRow[]),
-    wantsPto ? getCompanyPtoRequests().catch(() => []) : Promise.resolve([]),
-    wantsCorrections ? getCompanyTimecardCorrections().catch(() => []) : Promise.resolve([]),
-    isTeamManager ? getCompanyEmployeeRequests().catch(() => []) : Promise.resolve([]),
-    canSeeLimit ? getCorrectionExemptions().catch(() => []) : Promise.resolve([]),
-    myId ? getMyNotifications(myId, 50).catch(() => []) : Promise.resolve([]),
-    myId ? getUnreadCounts(myId).catch(() => ({ total: 0 })) : Promise.resolve({ total: 0 }),
+  const month = localISO().slice(0, 7);
+  const limitApplies = canSeeLimit && !!absentPage;
+  const traineeScope = isAttendanceFullAccessRole(role, extra) ? "everyone" : isTeamManager ? "chain" : "own";
+  const checklistPage = heldRoles.some((r) => FORMS_DONE_ROLES.has(r)) ? firstPage([["hr", "technician-form-checklist"]]) : null;
+  const wagePage = heldRoles.some((r) => WAGE_ADJUST_ROLES.has(r)) ? firstPage([["accounting", "accounting-dashboard"]]) : null;
+  const none = <T,>(v: T) => Promise.resolve(v);
+
+  // Everything at once — it used to be one request after another (up to ~9 in a row) —
+  // and only what the counts need: PENDING PTO, corrections that are pending or from this month.
+  const [profiles, pto, corrections, requests, exemptions, notifications, unread, traineeDays, warningForms, coachingWaiting, accountingCoachingWaiting, finishedAll, toAdjust] = await Promise.all([
+    isTeamManager || limitApplies ? getCompanyUsers().catch(() => [] as ProfileRow[]) : none([] as ProfileRow[]),
+    wantsPto ? getCompanyPtoRequests({ pendingOnly: true }).catch(() => []) : none([]),
+    wantsCorrections ? getCompanyTimecardCorrections({ pendingOrSince: `${month}-01` }).catch(() => []) : none([]),
+    isTeamManager ? getCompanyEmployeeRequests().catch(() => []) : none([]),
+    canSeeLimit ? getCorrectionExemptions().catch(() => []) : none([]),
+    myId ? getMyNotifications(myId, 50).catch(() => []) : none([]),
+    myId ? getUnreadCounts(myId).catch(() => ({ total: 0 })) : none({ total: 0 }),
+    myId && approvalsPage ? getTraineeDaysAwaitingApproval(myId, traineeScope).catch(() => 0) : none(0),
+    limitApplies ? getSignableDocumentsLight("warning_form").catch(() => []) : none([]),
+    myId && heldRoles.some((r) => COACHING_ROLES.has(r)) ? getCoachingWaitingCount(myId).catch(() => 0) : none(0),
+    myId && heldRoles.some((r) => ACCOUNTING_COACHING_ROLES.has(r)) ? getAccountingCoachingWaitingCount(myId).catch(() => 0) : none(0),
+    // Loaded on demand, like modules.ts above — it pulls in the form registries.
+    checklistPage ? import("@/lib/staffFormChecklist").then((m) => m.getStaffWhoFinishedAllForms()).catch(() => []) : none([]),
+    wagePage ? import("@/lib/supabase/newPromotions").then((m) => m.countWagesToAdjust()).catch(() => 0) : none(0),
   ]);
   if (isTeamManager) await registerApprovalDirectory(profiles).catch(() => undefined);
 
@@ -205,40 +238,34 @@ async function compute(who: Who): Promise<Attention> {
   }
 
   // Trainee days that need this viewer's approval (Attendance Monitoring → Trainee Attendance).
-  if (myId && approvalsPage) {
-    const scope = isAttendanceFullAccessRole(role, extra) ? "everyone" : isTeamManager ? "chain" : "own";
-    const traineeDays = await getTraineeDaysAwaitingApproval(myId, scope).catch(() => 0);
-    if (traineeDays > 0) {
-      bump(approvalsPage, traineeDays);
-      tab("trainee-attendance", traineeDays);
-      items.push({
-        kind: "trainee",
-        count: traineeDays,
-        label: traineeDays === 1 ? "Trainee day needs your approval" : "Trainee days need your approval",
-        tone: "warn",
-        title: "Attendance Monitoring → Trainee Attendance",
-        to: approvalsPage,
-        search: { tab: "trainee-attendance" },
-      });
-    }
+  if (approvalsPage && traineeDays > 0) {
+    bump(approvalsPage, traineeDays);
+    tab("trainee-attendance", traineeDays);
+    items.push({
+      kind: "trainee",
+      count: traineeDays,
+      label: traineeDays === 1 ? "Trainee day needs your approval" : "Trainee days need your approval",
+      tone: "warn",
+      title: "Attendance Monitoring → Trainee Attendance",
+      to: approvalsPage,
+      search: { tab: "trainee-attendance" },
+    });
   }
 
-  if (canSeeLimit && absentPage) {
-    const month = localISO().slice(0, 7);
+  if (limitApplies && absentPage) {
     const exempt = new Set(exemptions.filter((e) => !e.removedAt).map((e) => e.correctionId));
     // Only people Exceeded → Time Corrections actually lists (active, in its groups) — so the badge
     // never says "1" over a list with nobody over the limit (a deactivated person, a CSR…).
-    const people = isTeamManager ? profiles : await getCompanyUsers().catch(() => [] as ProfileRow[]);
-    const listed = new Set(people.filter(isOnCorrectionLimitList).map((p) => p.id));
+    const listed = new Set(profiles.filter(isOnCorrectionLimitList).map((p) => p.id));
     const perPerson = new Map<string, number>();
     for (const c of corrections) {
       if (!c.workDate.startsWith(month) || c.status === "rejected" || exempt.has(c.id)) continue;
-      if (people.length && !listed.has(c.profileId)) continue;
+      if (profiles.length && !listed.has(c.profileId)) continue;
       perPerson.set(c.profileId, (perPerson.get(c.profileId) ?? 0) + 1);
     }
     // Someone already sent a time-card warning for this month no longer counts (Exceeded → Time Corrections' Warning Form column).
     const warned = new Set(
-      collectTimeCardWarnings(await getSignableDocuments("warning_form").catch(() => []))
+      collectTimeCardWarnings(warningForms)
         .filter((w) => w.day.startsWith(month))
         .map((w) => w.employeeId)
     );
@@ -259,7 +286,6 @@ async function compute(who: Who): Promise<Attention> {
   }
 
   // Coaching logs to fill in / sign (the person coached) or to sign (the coach).
-  const coachingWaiting = myId && heldRoles.some((r) => COACHING_ROLES.has(r)) ? await getCoachingWaitingCount(myId).catch(() => 0) : 0;
   if (coachingWaiting > 0) {
     const coachingPage: [string, string] = ["csr", "coaching-log"];
     bump(coachingPage, coachingWaiting);
@@ -272,7 +298,6 @@ async function compute(who: Who): Promise<Attention> {
       to: coachingPage,
     });
   }
-  const accountingCoachingWaiting = myId && heldRoles.some((r) => ACCOUNTING_COACHING_ROLES.has(r)) ? await getAccountingCoachingWaitingCount(myId).catch(() => 0) : 0;
   if (accountingCoachingWaiting > 0) {
     const accountingCoachingPage: [string, string] = ["accounting", "accounting-coaching-log"];
     bump(accountingCoachingPage, accountingCoachingWaiting);
@@ -287,12 +312,10 @@ async function compute(who: Who): Promise<Attention> {
   }
 
   // Staff Form Checklist: people who finished every form since this viewer last opened it.
-  const checklistPage = heldRoles.some((r) => FORMS_DONE_ROLES.has(r)) ? firstPage([["hr", "technician-form-checklist"]]) : null;
   if (checklistPage) {
-    // Loaded on demand, like modules.ts above — it pulls in the form registries.
-    const { getStaffWhoFinishedAllForms, staffFormChecklistSeenAt, staffFormNoticePreviewOn } = await import("@/lib/staffFormChecklist");
+    const { staffFormChecklistSeenAt, staffFormNoticePreviewOn } = await import("@/lib/staffFormChecklist");
     const seenAt = staffFormChecklistSeenAt(uid);
-    let finished = (await getStaffWhoFinishedAllForms().catch(() => [])).filter((f) => f.finishedAt > seenAt);
+    let finished = finishedAll.filter((f) => f.finishedAt > seenAt);
     // Local preview with nobody finished yet: one example so the card can be seen.
     if (finished.length === 0 && staffFormNoticePreviewOn()) finished = [{ profileId: "example", name: "Example User (preview)", finishedAt: new Date().toISOString() }];
     if (finished.length > 0) {
@@ -310,22 +333,17 @@ async function compute(who: Who): Promise<Attention> {
   }
 
   // Completed promotions / wage increases whose new rate Accounting hasn't marked Adjusted yet.
-  const wagePage = heldRoles.some((r) => WAGE_ADJUST_ROLES.has(r)) ? firstPage([["accounting", "accounting-dashboard"]]) : null;
-  if (wagePage) {
-    const { countWagesToAdjust } = await import("@/lib/supabase/newPromotions");
-    const toAdjust = await countWagesToAdjust().catch(() => 0);
-    if (toAdjust > 0) {
-      bump(wagePage, toAdjust);
-      items.push({
-        kind: "wage-adjust",
-        count: toAdjust,
-        label: toAdjust === 1 ? "New promotion need to adjust rate" : "New promotions need to adjust rate",
-        tone: "alert",
-        title: "Accounting Dashboard → New Promotion / New wage",
-        to: wagePage,
-        search: { tab: "payroll", open: "newWages" },
-      });
-    }
+  if (wagePage && toAdjust > 0) {
+    bump(wagePage, toAdjust);
+    items.push({
+      kind: "wage-adjust",
+      count: toAdjust,
+      label: toAdjust === 1 ? "New promotion need to adjust rate" : "New promotions need to adjust rate",
+      tone: "alert",
+      title: "Accounting Dashboard → New Promotion / New wage",
+      to: wagePage,
+      search: { tab: "payroll", open: "newWages" },
+    });
   }
 
   const unreadNotifications = notifications.filter((n) => !n.isRead).length;
@@ -342,7 +360,7 @@ export function useAttention(): Attention | null {
   const { uid, role, extraRoles, displayName, isTrainee, isFrozen } = useAuth();
   const extra = extraRoles ?? [];
   const key = [uid, role, extra.join(","), displayName, isTrainee, isFrozen].join("|");
-  const [data, setData] = useState<Attention | null>(() => (cache && cache.key === key ? cache.data : null));
+  const [data, setData] = useState<Attention | null>(() => (cache && cache.key === key ? cache.data : readStored(key)));
 
   useEffect(() => {
     if (!uid) return;
@@ -355,6 +373,7 @@ export function useAttention(): Attention | null {
       if (!inflight || inflight.key !== key) {
         const promise = compute({ uid, role, extraRoles: extra, displayName, isTrainee, isFrozen }).then((d) => {
           cache = { key, at: Date.now(), data: d };
+          writeStored(key, d);
           if (inflight?.promise === promise) inflight = null;
           listeners.forEach((l) => l(d));
           return d;
@@ -378,6 +397,7 @@ export function useAttention(): Attention | null {
 /** Drop the cached counts so the next page that shows them refetches (e.g. after opening Staff Form Checklist). */
 export function clearAttentionCache(): void {
   cache = null;
+  try { sessionStorage.removeItem(STORED_KEY); } catch { /* fine */ }
 }
 
 /** Red count badge text — "99+" past 99. */

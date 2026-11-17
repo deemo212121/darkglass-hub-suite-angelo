@@ -189,16 +189,15 @@ function mapRow(row: any): TimecardCorrectionRow {
 const PAGE_SIZE = 1000;
 
 /** All timecard corrections for the caller's company (RLS-scoped), newest first. */
-export async function getCompanyTimecardCorrections(): Promise<TimecardCorrectionRow[]> {
+export async function getCompanyTimecardCorrections(opts: { pendingOrSince?: string } = {}): Promise<TimecardCorrectionRow[]> {
   const all: TimecardCorrectionRow[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await selectWithNoteFallback((cols) =>
-      supabase
-        .from("timecard_corrections")
-        .select(cols)
-        .order("created_at", { ascending: false })
-        .range(from, from + PAGE_SIZE - 1)
-    );
+    const { data, error } = await selectWithNoteFallback((cols) => {
+      let q = supabase.from("timecard_corrections").select(cols);
+      // Home / badges: only pending ones and this month's (the correction limit) — not the whole history.
+      if (opts.pendingOrSince) q = q.or(`status.eq.pending,work_date.gte.${opts.pendingOrSince}`);
+      return q.order("created_at", { ascending: false }).range(from, from + PAGE_SIZE - 1);
+    });
     if (error) {
       console.error("getCompanyTimecardCorrections error:", error.message);
       return [];
