@@ -39,7 +39,7 @@ import {
   type TruckStockStatus,
   type TruckStockUsedRow,
 } from "@/lib/supabase/truckStock";
-import { TRUCK_STOCK_DESCRIPTIONS, TRUCK_STOCK_STATUSES, truckStockDescriptionOption, truckStockStatusOption, type TruckStockOption } from "@/lib/truckStockOptions";
+import { TRUCK_STOCK_BRANDS, TRUCK_STOCK_DESCRIPTIONS, TRUCK_STOCK_STATUSES, truckStockBrandValue, truckStockDescriptionOption, truckStockStatusOption, type TruckStockOption } from "@/lib/truckStockOptions";
 import { createTruckStockTransferRequest } from "@/lib/supabase/truckStockTransfers";
 import { notifyPartsManagerOfTransferRequest } from "@/lib/truckStockNotify";
 import { getLocations, type LocationRow } from "@/lib/supabase/locationManagement";
@@ -836,7 +836,7 @@ function BranchSection({
                       <DescriptionSelect value={d.description} onChange={(v) => setField("description", v)} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input value={d.manufacturer} onChange={(e) => setField("manufacturer", e.target.value)} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Brand" />
+                      <BrandSelect value={d.manufacturer} onChange={(v) => setField("manufacturer", v)} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="px-2 py-1.5">
                       <input type="number" min={0} title="Quantity" value={d.quantity} onChange={(e) => setField("quantity", Number(e.target.value) || 0)} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-right text-white focus:outline-none focus:border-blue-500" />
@@ -1140,10 +1140,9 @@ function DraftEditor({
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-slate-300">Brand</span>
-          <input
+          <BrandSelect
             value={draft.manufacturer}
-            onChange={(e) => setDraft({ ...draft, manufacturer: e.target.value })}
-            placeholder="GE, Whirlpool, …"
+            onChange={(v) => setDraft({ ...draft, manufacturer: v })}
             className="rounded border border-white/15 bg-slate-950 px-2 py-1.5 text-white focus:outline-none focus:border-blue-500"
           />
         </label>
@@ -1492,6 +1491,21 @@ function DescriptionSelect({ value, onChange, className }: { value: string; onCh
       {value && !listed && <option value={value}>{value} (current)</option>}
       {TRUCK_STOCK_DESCRIPTIONS.map((d) => (
         <option key={d.value} value={d.value} style={d.option}>{d.label}</option>
+      ))}
+    </select>
+  );
+}
+
+/** Brand dropdown — the appliance brands on our tickets; a row's older brand that isn't listed stays as its current value. */
+function BrandSelect({ value, onChange, className }: { value: string; onChange: (v: string) => void; className: string }) {
+  const listed = truckStockBrandValue(value);
+  const selected = listed ?? value;
+  return (
+    <select title="Brand" value={selected} onChange={(e) => onChange(e.target.value)} className={className}>
+      <option value="">—</option>
+      {value && !listed && <option value={value}>{value} (current)</option>}
+      {TRUCK_STOCK_BRANDS.map((b) => (
+        <option key={b} value={b}>{b}</option>
       ))}
     </select>
   );

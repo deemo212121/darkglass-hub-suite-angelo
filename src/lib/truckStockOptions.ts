@@ -60,6 +60,27 @@ export const TRUCK_STOCK_DESCRIPTIONS: TruckStockOption[] = [
   { value: "USED", label: "USED", ...RED },
 ];
 
+/**
+ * Brand dropdown — the appliance brands on our tickets (tickets.manufacturer,
+ * 2026-11-17), each once: "GENERAL ELECTRIC" / "GE" → GE, "LG ELECTRONICS" → LG,
+ * "THERMADORE" → Thermador, Frigidaire typos → Frigidaire … Warranty companies
+ * (Assurant, Square Trade, AIG, Centricity) and notes ("Verify to the customer")
+ * left out. A row's older brand that isn't listed is kept as its current value.
+ */
+export const TRUCK_STOCK_BRANDS: string[] = [
+  "Amana", "Avanti", "Beko", "Bertazzoni", "Bosch", "Cafe", "Cosmo", "Criterion", "Crosley", "Dacor", "Danby",
+  "Electrolux", "Element", "Forno", "Frigidaire", "Galanz", "GE", "Haier", "Hisense", "Hotpoint", "IKEA", "Insignia",
+  "JennAir", "Kenmore", "KitchenAid", "LG", "Maytag", "Midea", "Miele", "Monogram", "Mora", "NXR", "Profile", "RCA",
+  "Samsung", "Scotsman", "Sharp", "Sony", "Speed Queen", "Sub-Zero", "TCL", "Thermador", "Thor", "Toshiba", "U-Line",
+  "Vesta", "Viking", "Vissani", "Whirlpool", "Wolf", "Zephyr", "ZLINE",
+];
+
+/** The listed brand this text is (any case / spacing / hyphen), or undefined for other text. */
+export function truckStockBrandValue(brand: string | null | undefined): string | undefined {
+  const key = String(brand ?? "").toLowerCase().replace(/[\s-]+/g, "");
+  return key ? TRUCK_STOCK_BRANDS.find((b) => b.toLowerCase().replace(/[\s-]+/g, "") === key) : undefined;
+}
+
 /** The listed description this text is (any case / spacing), or undefined for other text. */
 export function truckStockDescriptionOption(description: string | null | undefined): TruckStockOption | undefined {
   const key = String(description ?? "").trim().toLowerCase().replace(/\s+/g, " ");
