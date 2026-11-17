@@ -292,22 +292,7 @@ export function ModuleAccessEditor({
             <option key={r.value} value={r.value}>{r.label}</option>
           ))}
         </select>
-        <button
-          type="button"
-          onClick={() => { setAddRoleOpen(true); setAddRoleError(null); }}
-          className="btn text-sm py-2 px-3 inline-flex items-center gap-1.5"
-          title="Create a new role"
-        >
-          <Plus className="h-4 w-4" /> Add Role
-        </button>
-        <button
-          type="button"
-          onClick={() => { setManageRolesOpen(true); setRoleActionError(null); setEditingCode(null); setConfirmDeleteCode(null); }}
-          className="btn text-sm py-2 px-3 inline-flex items-center gap-1.5"
-          title="Rename or delete custom roles"
-        >
-          <Settings className="h-4 w-4" /> Manage Roles
-        </button>
+        {/* Add Role / Manage Roles removed — roles are now set in the code (src/lib/roleLabels.ts), not made from here. */}
         <input
           type="text"
           value={filter}
