@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { AccountPageShell } from "@/components/AccountPageShell";
+import { MyAcceptedTerms } from "@/components/MyAcceptedTerms";
 import { useAuth } from "@/lib/auth";
 import { Save, Lock, Eye, EyeOff, Loader2, Check } from "lucide-react";
 import { LOCATIONS } from "@/lib/locations";
@@ -667,6 +668,9 @@ function ProfilePage() {
         </div>
       </section>
       )}
+
+      {/* The Terms & Conditions this person accepted (migration 0455) */}
+      <MyAcceptedTerms profileId={profileId} />
 
       {/* Change Password - At Bottom */}
       <section className="panel mt-6">

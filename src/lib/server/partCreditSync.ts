@@ -8,6 +8,15 @@
  * part number (our invoice_no carries suffixes Marcone's doesn't, so only
  * its leading digits are compared — see marconeInvoiceKey).
  *
+ * Marcone also: POST /orders/orderstatus, one order at a time (paced — up to
+ * MARCONE_ORDERS_PER_RUN an hour, each order rechecked every 12 hours, for
+ * parts added in the last 180 days). Each line says how many were returned,
+ * and Marcone only counts a return there once it's credited (a Submitted RA
+ * still shows 0). It also covers credits with no RA at all — a claim's parts
+ * credited back to our account (1008819560-10). The credited qty × the
+ * price Marcone billed is saved as credit_qty / credit_amount (migration
+ * 0454) — also filled in for parts an RA already marked credited.
+ *
  * Encompass: OFF for now (ENCOMPASS_CREDITS_ENABLED). Its only lookup is
  * orderStatus, one reference at a time, and on 10/23 it rejected every RA #
  * on our parts ("-208 invalid referenceNumber" — AHS's Encompass RA #s are
@@ -37,6 +46,12 @@ export interface CreditPartRow {
   return_reject_reason: string | null;
   return_status: string | null;
   credit_checked_at: string | null;
+  order_no?: string | null;
+  quantity?: number | null;
+  part_price?: number | null;
+  created_at?: string | null;
+  credit_source?: string | null;
+  credit_qty?: number | null;
 }
 
 export interface MarconeRaItem {
@@ -44,6 +59,15 @@ export interface MarconeRaItem {
   partNumber?: string | null;
   creditMemo?: string | null;
   rejectReason?: string | null;
+  returned?: number | null;
+}
+
+/** One line of a Marcone /orders/orderstatus answer. */
+export interface MarconeOrderItem {
+  partNumber?: string | null;
+  billedPrice?: number | null;
+  price?: number | null;
+  returned?: number | null;
 }
 
 export interface PartCreditUpdate {
@@ -54,6 +78,9 @@ export interface PartCreditUpdate {
 
 const ENCOMPASS_CREDITS_ENABLED = false;
 const MARCONE_LOOKBACK_DAYS = 120;
+const MARCONE_ORDER_LOOKBACK_DAYS = 180;
+const MARCONE_ORDER_RECHECK_MS = 12 * 60 * 60 * 1000;
+const MARCONE_ORDERS_PER_RUN = 40;
 const ENCOMPASS_RECHECK_MS = 6 * 60 * 60 * 1000;
 const ENCOMPASS_MAX_PER_RUN = 40;
 
@@ -61,6 +88,8 @@ const normPart = (s: unknown) => String(s ?? "").trim().toUpperCase().replace(/[
 const isMarcone = (dist: string | null) => /marcone/i.test(dist ?? "");
 const isEncompass = (dist: string | null) => /encompass/i.test(dist ?? "");
 const has = (s: unknown) => String(s ?? "").trim() !== "";
+const num = (v: unknown) => Number(v) || 0;
+const cents = (n: number) => Math.round(n * 100) / 100;
 
 /** Marcone's invoice number inside ours: "74445360-1" / "75268496-1007618260-10" → "74445360" / "75268496". */
 export function marconeInvoiceKey(invoiceNo: string | null | undefined): string {
@@ -86,10 +115,15 @@ export function marconeCreditUpdates(parts: CreditPartRow[], items: MarconeRaIte
     const credited = hits.find((i) => has(i.creditMemo));
     if (credited) {
       const memo = String(credited.creditMemo).trim();
+      // An RA item's own price is 0 — the credit is what we paid for the part.
+      const qty = Math.min(num(credited.returned) || 1, num(p.quantity) || 1);
       updates.push({
         id: p.id,
         label: `${p.part_no} (invoice ${p.invoice_no}) credited — Marcone memo ${memo}`,
-        patch: { credited_at: nowIso, credit_source: "Marcone", return_reject_reason: null, ...(has(p.credit_no) ? {} : { credit_no: memo }) },
+        patch: {
+          credited_at: nowIso, credit_source: "Marcone", return_reject_reason: null, credit_qty: qty, credit_amount: cents(qty * num(p.part_price)),
+          ...(has(p.credit_no) ? {} : { credit_no: memo }),
+        },
       });
       continue;
     }
@@ -99,6 +133,53 @@ export function marconeCreditUpdates(parts: CreditPartRow[], items: MarconeRaIte
       if (reason !== (p.return_reject_reason ?? "")) {
         updates.push({ id: p.id, label: `${p.part_no} (invoice ${p.invoice_no}) return rejected — ${reason}`, patch: { return_reject_reason: reason } });
       }
+    }
+  }
+  return updates;
+}
+
+/**
+ * The Marcone order a part belongs to: its invoice # (or order #) leading
+ * digits. Marcone's are 8 digits; a 12-digit FedEx tracking # typed into
+ * Invoice No isn't one (Marcone answers 400).
+ */
+const orderDigits = (s: string | null | undefined) => {
+  const k = marconeInvoiceKey(s);
+  return k.length <= 9 ? k : "";
+};
+export const marconeOrderKey = (p: CreditPartRow) => orderDigits(p.invoice_no) || orderDigits(p.order_no);
+
+/**
+ * What one Marcone order's status changes on its parts: each line's returned
+ * count is shared out over our rows of that part number (up to each row's
+ * quantity), at the price Marcone billed. A part already credited (by an RA)
+ * only gets its qty / amount filled in.
+ */
+export function marconeOrderCreditUpdates(parts: CreditPartRow[], items: MarconeOrderItem[], nowIso: string): PartCreditUpdate[] {
+  const pool = items.map((i) => ({ part: normPart(i.partNumber), left: Math.max(0, num(i.returned)), price: num(i.billedPrice ?? i.price) }));
+  const updates: PartCreditUpdate[] = [];
+  for (const p of [...parts].sort((a, b) => a.id.localeCompare(b.id))) {
+    let want = num(p.quantity) || 1;
+    let qty = 0;
+    let amount = 0;
+    for (const line of pool) {
+      if (want <= 0) break;
+      if (line.part !== normPart(p.part_no) || line.left <= 0) continue;
+      const take = Math.min(want, line.left);
+      line.left -= take;
+      want -= take;
+      qty += take;
+      amount += take * line.price;
+    }
+    const label = `${p.part_no} (order ${marconeOrderKey(p)})`;
+    if (qty === 0) updates.push({ id: p.id, label: `${label} not returned yet`, patch: { credit_checked_at: nowIso } });
+    else if (p.credited_at) updates.push({ id: p.id, label: `${label} credit amount`, patch: { credit_checked_at: nowIso, credit_qty: qty, credit_amount: cents(amount) } });
+    else {
+      updates.push({
+        id: p.id,
+        label: `${label} credited — Marcone, ${qty} returned ($${cents(amount).toFixed(2)})`,
+        patch: { credited_at: nowIso, credit_source: "Marcone", credit_checked_at: nowIso, credit_qty: qty, credit_amount: cents(amount), return_reject_reason: null },
+      });
     }
   }
   return updates;
@@ -139,13 +220,14 @@ export interface PartCreditSyncSummary {
   credited: string[];
   rejected: string[];
   encompassChecked: number;
+  marconeOrdersChecked: number;
   errors: string[];
 }
 
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 
 export async function runPartCreditSync(env: Record<string, string | undefined>): Promise<PartCreditSyncSummary> {
-  const summary: PartCreditSyncSummary = { candidates: 0, marconeItems: 0, credited: [], rejected: [], encompassChecked: 0, errors: [] };
+  const summary: PartCreditSyncSummary = { candidates: 0, marconeItems: 0, credited: [], rejected: [], encompassChecked: 0, marconeOrdersChecked: 0, errors: [] };
   const g = globalThis as any;
   const supabaseUrl = (g.__SUPABASE_URL__ || undefined) ?? env.VITE_SUPABASE_URL;
   const serviceKey = (g.__SUPABASE_SERVICE_KEY__ || undefined) ?? env.SUPABASE_SERVICE_KEY;
@@ -155,11 +237,11 @@ export async function runPartCreditSync(env: Record<string, string | undefined>)
   }
   const headers = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" };
 
-  // Every not-yet-credited Marcone / Encompass part (all companies — the API accounts are the company's own).
+  // Every Marcone / Encompass part not yet credited, or credited without its amount (all companies — the API accounts are the company's own).
   const parts: CreditPartRow[] = [];
-  const cols = "id,part_no,part_dist,invoice_no,ra_no,credit_no,credited_at,return_reject_reason,return_status,credit_checked_at";
+  const cols = "id,part_no,part_dist,invoice_no,ra_no,credit_no,credited_at,return_reject_reason,return_status,credit_checked_at,order_no,quantity,part_price,created_at,credit_source,credit_qty";
   for (let from = 0; ; from += 1000) {
-    const res = await fetch(`${supabaseUrl}/rest/v1/parts?select=${cols}&credited_at=is.null&or=(part_dist.ilike.*marcone*,part_dist.ilike.*encompass*)&order=id`, {
+    const res = await fetch(`${supabaseUrl}/rest/v1/parts?select=${cols}&and=(or(credited_at.is.null,credit_qty.is.null),or(part_dist.ilike.*marcone*,part_dist.ilike.*encompass*))&order=id`, {
       headers: { ...headers, Range: `${from}-${from + 999}` },
     });
     if (!res.ok) {
@@ -194,11 +276,47 @@ export async function runPartCreditSync(env: Record<string, string | undefined>)
     }
   }
 
+  // ── Marcone order status (one order at a time, paced) ──
+  const raCredited = new Set(updates.filter((u) => "credited_at" in u.patch).map((u) => u.id));
+  const orderSince = Date.now() - MARCONE_ORDER_LOOKBACK_DAYS * 86400000;
+  const byOrder = new Map<string, CreditPartRow[]>();
+  for (const p of parts) {
+    if (!isMarcone(p.part_dist) || raCredited.has(p.id) || !has(p.part_no) || !marconeOrderKey(p)) continue;
+    if (p.credited_at && p.credit_qty != null) continue;
+    if (!p.created_at || new Date(p.created_at).getTime() < orderSince) continue;
+    if (p.credit_checked_at && Date.now() - new Date(p.credit_checked_at).getTime() < MARCONE_ORDER_RECHECK_MS) continue;
+    const key = marconeOrderKey(p);
+    const list = byOrder.get(key);
+    if (list) list.push(p);
+    else byOrder.set(key, [p]);
+  }
+  // Never-checked orders first, then the longest since checked.
+  const lastChecked = (list: CreditPartRow[]) => Math.min(...list.map((p) => (p.credit_checked_at ? new Date(p.credit_checked_at).getTime() : 0)));
+  const dueOrders = Array.from(byOrder.entries()).sort((a, b) => lastChecked(a[1]) - lastChecked(b[1])).slice(0, MARCONE_ORDERS_PER_RUN);
+  if (dueOrders.length) {
+    const custNo = Number((import.meta as any).env?.VITE_MARCONE_ACCOUNT_NUMBER || env.VITE_MARCONE_ACCOUNT_NUMBER || env.VITE_MARCONE_CUST_NO || 0) || undefined;
+    for (const [orderNumber, orderParts] of dueOrders) {
+      const result = await marconeServerRequest(env, { method: "POST", path: "/orders/orderstatus", body: { custNo, orderNumber, orderNumbers: [orderNumber] } });
+      if (!result.success) {
+        summary.errors.push(`Marcone order ${orderNumber}: ${result.error || `HTTP ${result.status}`}`);
+        if (result.status === 401 || result.status === 403 || result.status === 429) break;
+        // Marcone doesn't know that number — note the check so it waits its turn instead of leading every run.
+        if (result.status === 400 || result.status === 404) {
+          for (const p of orderParts) updates.push({ id: p.id, label: `${p.part_no} (order ${orderNumber}) not found on Marcone`, patch: { credit_checked_at: nowIso } });
+        }
+        continue;
+      }
+      summary.marconeOrdersChecked++;
+      const orders = ((result.data as { orderResults?: { orderItems?: MarconeOrderItem[] }[] })?.orderResults ?? []);
+      updates.push(...marconeOrderCreditUpdates(orderParts, orders.flatMap((o) => o.orderItems ?? []), nowIso));
+    }
+  }
+
   // ── Encompass (one RA at a time, paced) ──
   const due = !ENCOMPASS_CREDITS_ENABLED
     ? []
     : parts
-        .filter((p) => isEncompass(p.part_dist) && has(p.ra_no) && has(p.part_no) && (!p.credit_checked_at || Date.now() - new Date(p.credit_checked_at).getTime() > ENCOMPASS_RECHECK_MS))
+        .filter((p) => isEncompass(p.part_dist) && !p.credited_at && has(p.ra_no) && has(p.part_no) && (!p.credit_checked_at || Date.now() - new Date(p.credit_checked_at).getTime() > ENCOMPASS_RECHECK_MS))
         .slice(0, ENCOMPASS_MAX_PER_RUN);
   for (const p of due) {
     const result = await encompassServerRequest(env, { path: "/restfulservice/orderStatus", data: { referenceNumber: String(p.ra_no).trim() } });

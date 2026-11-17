@@ -29,6 +29,7 @@ import { handleServerStatusRequest } from "./lib/server/serverStatus";
 import { handleStorageUploadRequest } from "./lib/server/storageUploadBridge";
 import { handleEmployeeFilesRequest } from "./lib/server/employeeFilesBridge";
 import { handleTraineeDecisionRequest } from "./lib/server/traineeDecisions";
+import { handleTermsAcceptRequest } from "./lib/server/termsAccept";
 
 const CANONICAL_ORIGIN = "https://adminhubsolution.com";
 
@@ -248,6 +249,10 @@ export default {
     if (url.pathname === "/api/trainee-decision") {
       const merged = await resolveServerEnv(env);
       return await handleTraineeDecisionRequest(request, merged);
+    }
+    if (url.pathname === "/api/terms-accept") {
+      const merged = await resolveServerEnv(env);
+      return await handleTermsAcceptRequest(request, merged);
     }
 
     try {

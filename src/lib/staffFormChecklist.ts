@@ -8,7 +8,7 @@ import { brandOf, type FormBrand } from "@/lib/formBrand";
 import type { ProfileRow } from "@/lib/supabase/users";
 import { getCompanyUsers } from "@/lib/supabase/users";
 import { isEligibleForTechnicianFormChecklist, isBmAndUpRole } from "@/lib/roleLabels";
-import { getSignableDocumentsByTypes, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
+import { getChecklistDocumentsByTypes, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import {
   SIGNABLE_DOCUMENT_REGISTRY,
   TECHNICIAN_FORM_TYPES,
@@ -307,7 +307,7 @@ export async function getStaffWhoFinishedAllForms(): Promise<FinishedAllForms[]>
   if (finishedCache && Date.now() - finishedCache.at < FINISHED_CACHE_MS) return finishedCache.data;
   const tabs = CHECKLIST_TABS.filter((t) => t.key !== "technician");
   const types = Array.from(new Set(tabs.flatMap((t) => t.formTypes)));
-  const [users, docs, exemptions] = await Promise.all([getCompanyUsers() as Promise<ProfileRow[]>, getSignableDocumentsByTypes(types), getTechnicianFormExemptions(types)]);
+  const [users, docs, exemptions] = await Promise.all([getCompanyUsers() as Promise<ProfileRow[]>, getChecklistDocumentsByTypes(types), getTechnicianFormExemptions(types)]);
   const latestByTab = new Map(tabs.map((t) => [t.key, latestDocsForTab(docs, t)]));
   const out: FinishedAllForms[] = [];
   for (const u of users) {

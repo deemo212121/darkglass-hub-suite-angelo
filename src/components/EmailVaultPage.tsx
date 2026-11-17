@@ -24,6 +24,7 @@ import { PasswordChecksPanel } from "@/components/PasswordChecksPanel";
 import { TableSkeleton } from "@/components/ui-kit/TableSkeleton";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { isEmailVaultSuperAdmin } from "@/lib/submoduleAccess";
+import { normalizeRole, withIncludedRoles } from "@/lib/roleLabels";
 import { hydrateEmailVaultGrant } from "@/lib/moduleAccess";
 import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
 import {
@@ -38,6 +39,7 @@ import {
   removeEmailVaultAccess,
   setEmailVaultPasswordAccess,
   getMyEmailVaultPasswordAccess,
+  getEmailVaultNoPasswordIds,
   getEmailVaultEvents,
   type EmailVaultEntry,
   type EmailVaultAccessRow,
@@ -207,6 +209,13 @@ export function EmailVaultPage({ mod, sub }: Props) {
   const [grantWithPassword, setGrantWithPassword] = useState(false);
   /** Can I show / copy / set passwords? (Email and password, or Super Admin.) */
   const [canSeePasswords, setCanSeePasswords] = useState(false);
+  /** Emails with no password saved yet — shown as "(none)" + Set password right away (migration 0459). */
+  const [noPasswordIds, setNoPasswordIds] = useState<Set<string>>(new Set());
+  const refreshNoPassword = useCallback(() => { void getEmailVaultNoPasswordIds().then(setNoPasswordIds); }, []);
+  /** Manage Access / Password Checks: Super Admins change them; Email and password people can look (view only). */
+  /** Password Checks: Super Admin and Admin can change them and Show a set password (migration 0460). */
+  const canEditPasswordChecks = isSuperAdmin || withIncludedRoles([role, ...(extraRoles ?? [])]).includes("ADMIN");
+  const canViewSettings = isSuperAdmin || canSeePasswords || canEditPasswordChecks;
   const [busy, setBusy] = useState(false);
 
   const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
@@ -215,6 +224,12 @@ export function EmailVaultPage({ mod, sub }: Props) {
   /** Account by login email — names an email nobody is linked to yet (most are deactivated people's old mailboxes). */
   const userByLoginEmail = useMemo(() => new Map(users.filter((u) => u.email).map((u) => [u.email.trim().toLowerCase(), u])), [users]);
   const superAdmins = useMemo(() => activeUsers.filter((u) => isEmailVaultSuperAdmin(u.role, u.extra_roles)), [activeUsers]);
+  // Manage Access lists only the people who hold Super Admin itself — IT keeps Super Admin's access
+  // here (superAdmins above, so they're never offered under Add people) but isn't listed.
+  const listedSuperAdmins = useMemo(
+    () => superAdmins.filter((u) => [u.role, ...(u.extra_roles ?? [])].some((r) => normalizeRole(r) === "SUPERADMIN")),
+    [superAdmins],
+  );
 
   const refreshEvents = useCallback(() => {
     void getEmailVaultEvents().then(setEvents, (e) => console.error("Email Vault history:", e));
@@ -233,6 +248,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
         getMyEmailVaultPasswordAccess().catch(() => false),
       ]);
       setCanSeePasswords(seePasswords);
+      if (seePasswords) refreshNoPassword();
       setEntries(rows);
       setAccess(acc);
       setEvents(ev);
@@ -243,7 +259,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [uid]);
+  }, [uid, refreshNoPassword]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -373,6 +389,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
       }
       setEditing(null);
       setEntries(await getEmailVaultEntries());
+      if (canSeePasswords) refreshNoPassword();
       refreshEvents();
     } catch (e: any) {
       toast.error(e?.message || "Couldn't save.");
@@ -463,12 +480,12 @@ export function EmailVaultPage({ mod, sub }: Props) {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {isSuperAdmin && (
+            {canViewSettings && (
               <button type="button" onClick={() => setManagingAccess(true)} className="btn hover:bg-white/15">
                 <Users className="h-4 w-4" /> Manage Access
               </button>
             )}
-            {isSuperAdmin && (
+            {canViewSettings && (
               <button type="button" onClick={() => setShowPasswordChecks((v) => !v)} aria-pressed={showPasswordChecks} className={`btn hover:bg-white/15 ${showPasswordChecks ? "!border-amber-400/60 !bg-amber-500/15 text-amber-200" : ""}`}>
                 <KeyRound className="h-4 w-4" /> Password Checks
               </button>
@@ -483,7 +500,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
       {error && <div className="panel mb-4 border-red-500/30 bg-red-500/5 text-sm text-red-300 px-4 py-3">{error}</div>}
 
       {/* Super Admin: Password Checks — which pages and buttons ask for a password (migration 0441). Its own view of this page. */}
-      {showPasswordChecks && isSuperAdmin ? (
+      {showPasswordChecks && canViewSettings ? (
         <section>
           <div className="flex flex-wrap items-center gap-3 mb-3">
             <button type="button" className="btn text-sm" onClick={() => setShowPasswordChecks(false)}>
@@ -491,7 +508,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
             </button>
             <h2 className="text-xl font-semibold flex items-center gap-2"><KeyRound className="h-5 w-5 text-amber-300" /> Password Checks</h2>
           </div>
-          <PasswordChecksPanel />
+          <PasswordChecksPanel readOnly={!canEditPasswordChecks} />
         </section>
       ) : (
       <>
@@ -616,6 +633,15 @@ export function EmailVaultPage({ mod, sub }: Props) {
                     <td className={`${STICKY_EMAIL} ${cell} px-3 py-1.5 truncate font-medium`} title={entry.email}>{entry.email}</td>
                     <td className={`${cell} border-l border-[var(--color-panel-border)] px-3 py-1.5`}>
                       <div className="flex items-center gap-1">
+                        {canSeePasswords && noPasswordIds.has(entry.id) && shown === undefined ? (
+                          <>
+                            <span className="font-mono text-xs min-w-[7rem] text-amber-300" title="No password saved for this email yet">(none)</span>
+                            <button type="button" className="btn btn-sm hover:bg-white/15 text-amber-200" title="Set the password for this email" onClick={() => openForm(entry)}>
+                              <KeyRound className="h-3.5 w-3.5" /> Set password
+                            </button>
+                          </>
+                        ) : (
+                        <>
                         <span className="font-mono text-xs min-w-[7rem] break-all" title={canSeePasswords ? undefined : "You can see email addresses only — a Super Admin can give you password access."}>{shown !== undefined ? shown || "(none)" : "••••••••"}</span>
                         {canSeePasswords && (
                           <>
@@ -626,6 +652,8 @@ export function EmailVaultPage({ mod, sub }: Props) {
                               <Copy className="h-3.5 w-3.5" />
                             </button>
                           </>
+                        )}
+                        </>
                         )}
                       </div>
                     </td>
@@ -773,10 +801,12 @@ export function EmailVaultPage({ mod, sub }: Props) {
         />
       )}
 
-      {managingAccess && isSuperAdmin && (
+      {managingAccess && canViewSettings && (
         <AppModal
           title="Who can open Password and Email Management"
-          description="Super Admins always can, and see passwords. Add anyone else as Email only or Email and password — they'll see Password and Email Management under Admin the next time they open the app."
+          description={isSuperAdmin
+            ? "Super Admins always can, and see passwords. Add anyone else as Email only or Email and password — they'll see Password and Email Management under Admin the next time they open the app."
+            : "View only — only a Super Admin can add, change or remove people here."}
           icon={<Users className="h-4 w-4" />}
           size="lg"
           busy={busy}
@@ -787,7 +817,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Always — Super Admin</p>
               <div className="flex flex-wrap gap-1">
-                {superAdmins.map((u) => (
+                {listedSuperAdmins.map((u) => (
                   <span key={u.id} className="rounded-full border border-[var(--color-panel-border)] bg-white/5 px-2 py-0.5 text-xs">{nameOf(u)}</span>
                 ))}
               </div>
@@ -817,14 +847,16 @@ export function EmailVaultPage({ mod, sub }: Props) {
                               Added {fmtDateTime(a.grantedAt)}{a.grantedBy ? ` by ${nameOf(userById.get(a.grantedBy))}` : ""}
                             </span>
                           </span>
-                          {a.canSeePassword !== null && (
+                          {isSuperAdmin && a.canSeePassword !== null && (
                             <button type="button" className="btn btn-sm hover:bg-white/15" title={group.moveTitle} onClick={() => void changeLevel(a.profileId, !group.level)} disabled={busy}>
                               {group.level ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />} {group.move}
                             </button>
                           )}
-                          <button type="button" className="btn btn-sm hover:bg-white/15 text-red-300" onClick={() => void removeAccess(a.profileId)} disabled={busy}>
-                            <X className="h-3.5 w-3.5" /> Remove
-                          </button>
+                          {isSuperAdmin && (
+                            <button type="button" className="btn btn-sm hover:bg-white/15 text-red-300" onClick={() => void removeAccess(a.profileId)} disabled={busy}>
+                              <X className="h-3.5 w-3.5" /> Remove
+                            </button>
+                          )}
                         </li>
                       ))}
                     </ul>
@@ -832,6 +864,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
                 </div>
               );
             })}
+            {isSuperAdmin && (
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Add people</p>
               <PeoplePicker users={activeUsers} value={grantPick} onChange={setGrantPick} exclude={notGrantable} />
@@ -849,6 +882,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
                 </button>
               </div>
             </div>
+            )}
           </div>
         </AppModal>
       )}

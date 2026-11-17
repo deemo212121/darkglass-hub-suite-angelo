@@ -30,7 +30,7 @@ import {
 } from "@/lib/supabase/flashTechTrips";
 import { AttachmentPreviewModal } from "@/components/AttachmentPreviewModal";
 import { REGIONS, REGION_LOCATIONS } from "@/lib/locations";
-import { getSignableDocuments } from "@/lib/supabase/signableDocuments";
+import { getSignableDocumentsLight } from "@/lib/supabase/signableDocuments";
 import { getDocumentReviewStatus, pickAuthoritativeDocument, type DocumentReviewStatus } from "@/lib/signableDocumentRegistry";
 const WEEKDAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const CHIP_COLORS = ["bg-blue-500/80", "bg-purple-500/80", "bg-emerald-500/80", "bg-amber-500/80", "bg-pink-500/80", "bg-cyan-500/80"];
@@ -517,7 +517,7 @@ export function FlashTechCalendarPage({ mod, sub, embedded }: Props) {
       const [tripRows, userRows, flashFormDocs] = await Promise.all([
         getCompanyFlashTechTrips(),
         getCompanyUsers(),
-        getSignableDocuments("flash_technician_travel"),
+        getSignableDocumentsLight("flash_technician_travel"),
       ]);
       if (techScoped) {
         const roleById = new Map(userRows.map((u) => [u.id, u.role]));

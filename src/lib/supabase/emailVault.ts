@@ -118,6 +118,16 @@ export async function revealEmailVaultPassword(id: string, copy = false): Promis
   return (data as string) ?? "";
 }
 
+/**
+ * Emails with no password saved yet (ids only — never a password), for people who can see passwords.
+ * Needs migration 0459; before it (or on any error) returns an empty set and the page works as before.
+ */
+export async function getEmailVaultNoPasswordIds(): Promise<Set<string>> {
+  const { data, error } = await supabase.rpc("email_vault_no_password_ids");
+  if (error) return new Set();
+  return new Set(((data as any[]) ?? []).map((r) => (typeof r === "string" ? r : r?.email_vault_no_password_ids ?? r?.id)).filter(Boolean));
+}
+
 /** Whether the signed-in person may open the Email Vault (Super Admin, or added by one). */
 export async function getMyEmailVaultAccess(): Promise<boolean> {
   const { data, error } = await supabase.rpc("email_vault_can_access");

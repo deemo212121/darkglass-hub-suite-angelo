@@ -47,7 +47,8 @@ interface Current {
   passwordType: PasswordCheckType;
 }
 
-export function PasswordChecksPanel() {
+/** readOnly: people with Email and password access can look; only Super Admins change (the database enforces that too). */
+export function PasswordChecksPanel({ readOnly = false }: { readOnly?: boolean } = {}) {
   const { rows, status } = usePasswordChecks();
   const [events, setEvents] = useState<PasswordCheckEvent[]>([]);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -79,7 +80,8 @@ export function PasswordChecksPanel() {
       (ev) => { setEvents(ev); setSetupError(null); },
       (e) => setSetupError(/password_check|does not exist|schema cache/i.test(String(e?.message)) ? "Password Checks isn't set up in the database yet — run migration 0441_password_checks.sql in Supabase, then reload." : String(e?.message || e)),
     );
-  useEffect(() => { void loadEvents(); }, []);
+  // Recent changes are Super Admin only (database), so view-only people don't load them.
+  useEffect(() => { if (!readOnly) void loadEvents(); }, [readOnly]);
 
   // Every page in the app, grouped by module, for "Add a page".
   const pageOptions = useMemo(
@@ -142,7 +144,13 @@ export function PasswordChecksPanel() {
     void save(key, label, { ...current, passwordType: type }, existing);
   };
 
-  const controls = (key: string, label: string, existing: PasswordCheckSetting | undefined, current: Current) => (
+  const controls = (key: string, label: string, existing: PasswordCheckSetting | undefined, current: Current) => readOnly ? (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      <span className={`rounded-full border px-2 py-0.5 font-semibold ${current.enabled ? "border-emerald-400/50 bg-emerald-500/15 text-emerald-300" : "border-[var(--color-panel-border)] text-muted-foreground"}`}>{current.enabled ? "On" : "Off"}</span>
+      {current.enabled && <span className="rounded-full border border-[var(--color-panel-border)] px-2 py-0.5 text-muted-foreground">{FREQUENCY_LABEL[current.frequency]}</span>}
+      {current.enabled && <span className="rounded-full border border-[var(--color-panel-border)] px-2 py-0.5 text-muted-foreground">{TYPE_LABEL[current.passwordType]}</span>}
+    </div>
+  ) : (
     <div className="flex flex-wrap items-center gap-2">
       <button
         type="button"
@@ -214,11 +222,16 @@ export function PasswordChecksPanel() {
 
   return (
     <div className="grid gap-4">
+      {readOnly && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-200 flex items-center gap-2">
+          <Eye className="h-4 w-4 shrink-0" /> View only — only a Super Admin or Admin can change these.
+        </div>
+      )}
       <div className="rounded-lg border border-[var(--color-panel-border)] px-4 py-3 text-sm text-muted-foreground flex items-start gap-2">
         <KeyRound className="h-4 w-4 mt-0.5 shrink-0 text-blue-400" />
         <div>
           Each one asks either for <b className="text-foreground">their own login password</b> (the one they sign in with) or for{" "}
-          <b className="text-foreground">a set password</b> you choose with Edit password. Only Super Admins can see a set password (Show password), and every Show is recorded below.
+          <b className="text-foreground">a set password</b> you choose with Edit password. Only Super Admins and Admins can see a set password (Show password), and every Show is recorded below.
           Super Admins are asked too. <b className="text-foreground">Once per session</b> asks once, then not again until that browser tab is closed.
           Changes apply right away.
         </div>
@@ -247,7 +260,7 @@ export function PasswordChecksPanel() {
 
       <section className="rounded-lg border border-[var(--color-panel-border)]">
         <h2 className="px-4 pt-3 pb-2 text-sm font-semibold">Pages that ask for a password ({pageChecks.length})</h2>
-        <div className="px-4 pb-3 flex flex-wrap items-center gap-2">
+        {!readOnly && <div className="px-4 pb-3 flex flex-wrap items-center gap-2">
           <select aria-label="Page to add" className="glass-input !w-auto text-sm min-w-[16rem] max-w-full" value={pick} onChange={(e) => setPick(e.target.value)}>
             <option value="">Pick a page…</option>
             {pageOptions.map((g) => (
@@ -271,7 +284,7 @@ export function PasswordChecksPanel() {
           <button type="button" className="btn btn-primary text-sm" disabled={!pick || busyKey === pick || status !== "ready"} onClick={() => void addPage()}>
             <Plus className="h-4 w-4" /> Add page
           </button>
-        </div>
+        </div>}
         {pageChecks.length === 0 ? (
           <div className="px-4 py-4 border-t border-[var(--color-panel-border)] text-sm text-muted-foreground">No pages yet — pick one above to make it ask for a password before it opens.</div>
         ) : (
@@ -284,9 +297,9 @@ export function PasswordChecksPanel() {
                 </div>
                 <div className="flex items-center gap-2">
                   {controls(r.key, r.label, r, currentOf(r, "every_time"))}
-                  <button type="button" aria-label={`Remove ${r.label}`} title="Remove" className="p-1.5 rounded text-muted-foreground hover:text-red-300 hover:bg-red-500/10 disabled:opacity-50" disabled={busyKey === r.key} onClick={() => void remove(r)}>
+                  {!readOnly && <button type="button" aria-label={`Remove ${r.label}`} title="Remove" className="p-1.5 rounded text-muted-foreground hover:text-red-300 hover:bg-red-500/10 disabled:opacity-50" disabled={busyKey === r.key} onClick={() => void remove(r)}>
                     <Trash2 className="h-4 w-4" />
-                  </button>
+                  </button>}
                 </div>
               </li>
             ))}
@@ -294,7 +307,7 @@ export function PasswordChecksPanel() {
         )}
       </section>
 
-      <section className="rounded-lg border border-[var(--color-panel-border)]">
+      {!readOnly && <section className="rounded-lg border border-[var(--color-panel-border)]">
         <h2 className="px-4 pt-3 pb-2 text-sm font-semibold flex items-center gap-1.5"><History className="h-4 w-4" /> Recent changes</h2>
         {events.length === 0 ? (
           <div className="px-4 py-3 border-t border-[var(--color-panel-border)] text-sm text-muted-foreground">No changes yet.</div>
@@ -311,7 +324,7 @@ export function PasswordChecksPanel() {
             ))}
           </ul>
         )}
-      </section>
+      </section>}
 
       {editingPassword && (
         <EditPasswordModal

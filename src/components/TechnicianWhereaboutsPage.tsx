@@ -15,7 +15,7 @@ import { Check, ChevronLeft, ClipboardList, Loader2, MapPin, RefreshCw, Search, 
 import { BrandedLoader } from "@/components/BrandedLoader";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { getTechnicianWhereabouts, distinctBranches, LIVE_FRESH_MS, type TechnicianWhereabouts } from "@/lib/supabase/technicianWhereabouts";
-import { getSignableDocuments } from "@/lib/supabase/signableDocuments";
+import { getSignableDocumentsLight } from "@/lib/supabase/signableDocuments";
 import { TechnicianDayRouteModal } from "@/components/TechnicianDayRouteModal";
 import { getCompanyMapProvider } from "@/lib/supabase/companySettings";
 import { isTabVisible, onTabVisible } from "@/lib/pageVisibility";
@@ -173,7 +173,7 @@ export function TechnicianWhereaboutsPage({ mod, sub }: { mod: ModuleDef; sub: S
     setShowPermissionList(true);
     if (confirmedConsentProfileIds) return;
     try {
-      const docs = await getSignableDocuments("location_consent");
+      const docs = await getSignableDocumentsLight("location_consent");
       setConfirmedConsentProfileIds(
         new Set(
           docs

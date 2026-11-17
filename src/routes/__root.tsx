@@ -21,6 +21,7 @@ import { TraineeAttendanceReviewModal } from "@/components/TraineeAttendanceRevi
 import { TraineeDecisionPrompt } from "@/components/TraineeDecisionPrompt";
 import { PasswordChangeReminder } from "@/components/PasswordChangeReminder";
 import { FrozenAccountModal } from "@/components/FrozenAccountModal";
+import { TermsGate } from "@/components/TermsGate";
 import { LateTicketCompletionModal } from "@/components/LateTicketCompletionModal";
 import { TicketSearchFab } from "@/components/TicketSearchFab";
 import { FloatingMessenger } from "@/components/FloatingMessenger";
@@ -183,6 +184,8 @@ function RootComponent() {
             <SessionKickedOutBanner />
             {!hideChrome && <ViewAsRoleBanner />}
             <MustChangePasswordGate hideChrome={hideChrome} />
+            {/* Terms & Conditions to accept (Admin → Terms & Conditions, migration 0455) — mobile too. Not on sign-in / apply / external signing pages. */}
+            {(!hideChrome || isMobilePage) && <TermsGate device={isMobilePage ? "mobile" : "web"} />}
             {!hideChrome && <AnnouncementBanner />}
             {!hideChrome && <TraineeAttendanceReviewModal />}
             {/* Hire / keep training / let go — mobile too, where managers often are. */}

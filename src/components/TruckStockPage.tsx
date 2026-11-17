@@ -41,6 +41,7 @@ import {
 import { createTruckStockTransferRequest } from "@/lib/supabase/truckStockTransfers";
 import { notifyPartsManagerOfTransferRequest } from "@/lib/truckStockNotify";
 import { getLocations, type LocationRow } from "@/lib/supabase/locationManagement";
+import { normBranch } from "@/lib/approvalDirectory";
 import { getPartTransactionsByPartNo, type PartUsageRow } from "@/lib/supabase/tickets";
 import { exportToCSV } from "@/lib/csvExport";
 import {
@@ -192,13 +193,19 @@ export function TruckStockPanel() {
 
   // Branches = union of saved Location records + any branches already
   // present on a truck_stock row (handles rows entered before a Location
-  // record exists). Sorted alphabetically.
+  // record exists). Sorted alphabetically. One entry per branch however it's
+  // spaced — Location Management says "Jackson,MS", the imported stock rows
+  // "Jackson, MS" (normBranch) — shown the way the stock rows spell it, so
+  // picking it finds them and a new row saves alongside them.
   const branchOptions = useMemo(() => {
-    const set = new Set<string>();
-    locations.forEach((l) => l.location && set.add(l.location));
-    rows.forEach((r) => r.branch && set.add(r.branch));
-    usedRows?.forEach((r) => r.branch && set.add(r.branch));
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
+    const byKey = new Map<string, string>();
+    const add = (b: string | null | undefined) => {
+      if (b && !byKey.has(normBranch(b))) byKey.set(normBranch(b), b);
+    };
+    rows.forEach((r) => add(r.branch));
+    usedRows?.forEach((r) => add(r.branch));
+    locations.forEach((l) => add(l.location));
+    return Array.from(byKey.values()).sort((a, b) => a.localeCompare(b));
   }, [locations, rows, usedRows]);
 
   // Aggregate quantity per part across all branches — drives the
@@ -218,7 +225,7 @@ export function TruckStockPanel() {
   const filteredRows = useMemo(() => {
     const s = search.trim().toLowerCase();
     return rows.filter((r) => {
-      if (branchFilter && r.branch !== branchFilter) return false;
+      if (branchFilter && normBranch(r.branch) !== normBranch(branchFilter)) return false;
       if (statusFilter && r.status !== statusFilter) return false;
       if (!s) return true;
       return (
@@ -233,7 +240,7 @@ export function TruckStockPanel() {
   const filteredUsed = useMemo(() => {
     const s = search.trim().toLowerCase();
     return (usedRows ?? []).filter((r) => {
-      if (branchFilter && r.branch !== branchFilter) return false;
+      if (branchFilter && normBranch(r.branch) !== normBranch(branchFilter)) return false;
       if (!s) return true;
       return [r.partNo, r.ticketNo, r.description, r.tech, r.storageLocation, r.notes].some((v) => v.toLowerCase().includes(s));
     });
