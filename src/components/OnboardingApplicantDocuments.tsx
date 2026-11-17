@@ -25,7 +25,7 @@ import {
 import { uploadOnboardingDocument, deleteOnboardingDocumentFile } from "@/lib/firebase/storage";
 import { logActivity } from "@/lib/supabase/hrActivityLog";
 import { getJotformSubmissions, type JotformSubmission } from "@/lib/supabase/jotformSubmissions";
-import { getSignableDocuments, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
+import { getSignableDocumentsLight, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 
 /** A file submission normalized from either a Jotform submission or a signed W-4/W-8BEN/W-9/I-9 (hr_signable_documents), so both render/drag/file the same way in the Files Submissions panel. */
 interface FileSubmissionCandidate {
@@ -258,7 +258,7 @@ export function OnboardingApplicantDocuments({ companyId, profileId, profileName
   const [filingSubmissionId, setFilingSubmissionId] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([getJotformSubmissions(), ...SIGNABLE_TAX_FORM_TYPES.map((t) => getSignableDocuments(t))])
+    Promise.all([getJotformSubmissions(), ...SIGNABLE_TAX_FORM_TYPES.map((t) => getSignableDocumentsLight(t))])
       .then(([subs, ...docsByType]) => {
         setJotformSubs(subs.filter((s) => s.documentUrl));
         setSignableDocs(docsByType.flat().filter((d) => d.pdfUrl));

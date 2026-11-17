@@ -2,7 +2,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useAuth, usePresenceHeartbeat } from "@/lib/auth";
 import logo from "@/assets/Admin Hub Solutions Logo no Text.png";
-import { Clock, LogOut, Settings as SettingsIcon, Shield, User, Sun, Moon, LifeBuoy, Smartphone, ChevronDown } from "lucide-react";
+import { Clock, LogOut, Settings as SettingsIcon, Shield, User, Sun, Moon, Gauge, LifeBuoy, Smartphone, ChevronDown } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -145,7 +145,7 @@ export function AppHeader() {
   // ("COMP001") when one's set for this company; falls back to companyId
   // for the companies that don't have an alias configured yet.
   const companyDisplay = companyLoginAlias || companyId;
-  const { theme, toggleTheme } = useTheme();
+  const { theme, toggleTheme, lowDevice, toggleLowDevice } = useTheme();
   const navigate = useNavigate();
   const [photoDataUrl, setPhotoDataUrl] = useState("");
   // The signed-in user's own Required Schedule timezone (profile.tsx) —
@@ -213,6 +213,18 @@ export function AppHeader() {
                 aria-label="Toggle theme"
               >
                 {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </button>
+            )}
+            {ready && email && (
+              <button
+                type="button"
+                onClick={toggleLowDevice}
+                aria-pressed={lowDevice}
+                className={`grid h-9 w-9 shrink-0 place-items-center rounded-full border transition-colors ${lowDevice ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300" : "border-[var(--color-panel-border)] bg-[var(--color-panel)] text-muted-foreground hover:bg-[var(--color-secondary)] hover:text-foreground"}`}
+                title={lowDevice ? "Low device: ON — lighter display for slower computers and phones (click to turn off)" : "Low device: OFF — click for a lighter display on slower computers and phones"}
+                aria-label="Low device mode"
+              >
+                <Gauge className="h-4 w-4" />
               </button>
             )}
             {ready && email && <AnnouncementsMenu />}

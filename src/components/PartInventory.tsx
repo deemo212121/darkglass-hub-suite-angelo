@@ -1,4 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from "react";
+
+/** "All" view draws this many rows at a time, more as you scroll. */
+const ALL_VIEW_STEP = 300;
 import { createPortal } from "react-dom";
 import { Link, useSearch, useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -185,11 +188,25 @@ export function PartInventory({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
 
   const totalPages = pageSize === "all" ? 1 : Math.max(1, Math.ceil(filteredRows.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
+  // "All": every row is still there, drawn 300 at a time as you scroll (nothing hidden or capped) —
+  // drawing thousands of rows at once froze slower computers.
+  const [allShown, setAllShown] = useState(ALL_VIEW_STEP);
+  useEffect(() => { setAllShown(ALL_VIEW_STEP); }, [location, partDist, status, search, pageSize]);
   const pagedRows = useMemo(() => {
-    if (pageSize === "all") return filteredRows;
+    if (pageSize === "all") return filteredRows.slice(0, allShown);
     const start = (safePage - 1) * pageSize;
     return filteredRows.slice(start, start + pageSize);
-  }, [filteredRows, safePage, pageSize]);
+  }, [filteredRows, safePage, pageSize, allShown]);
+  const moreAllRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = moreAllRef.current;
+    if (pageSize !== "all" || !el || allShown >= filteredRows.length) return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) setAllShown((n) => n + ALL_VIEW_STEP);
+    }, { rootMargin: "800px 0px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [pageSize, allShown, filteredRows.length]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -357,6 +374,13 @@ export function PartInventory({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
             </tbody>
           </table>
         </div>
+        {pageSize === "all" && !loading && allShown < filteredRows.length && (
+          <div ref={moreAllRef} className="flex justify-center py-3">
+            <button type="button" onClick={() => setAllShown((n) => n + ALL_VIEW_STEP)} className="btn text-xs">
+              Showing {allShown.toLocaleString()} of {filteredRows.length.toLocaleString()} — scroll or click for more
+            </button>
+          </div>
+        )}
 
         {pageSize !== "all" && totalPages > 1 && (
           <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground mt-4">

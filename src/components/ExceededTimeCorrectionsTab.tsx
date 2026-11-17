@@ -40,7 +40,7 @@ import { TableSkeleton } from "@/components/ui-kit/TableSkeleton";
 
 import { MAX_CORRECTIONS_PER_MONTH } from "@/lib/attention";
 import { correctionLimitGroupOf } from "@/lib/correctionLimitGroups";
-import { getSignableDocuments, type SignableDocument } from "@/lib/supabase/signableDocuments";
+import { getSignableDocumentsLight, type SignableDocument } from "@/lib/supabase/signableDocuments";
 import { collectTimeCardWarnings, type TimeCardWarning } from "@/lib/timeCardWarnings";
 
 /** Where a sent Warning Form stands, for the Warning column. */
@@ -376,7 +376,7 @@ export function ExceededTimeCorrectionsTab({
   // Warning Forms marked "Time Card Warning" (HR → Warning Form) — the Warning column.
   const [warningForms, setWarningForms] = useState<SignableDocument[] | null>(null);
   useEffect(() => {
-    getSignableDocuments("warning_form")
+    getSignableDocumentsLight("warning_form")
       .then(setWarningForms)
       .catch(() => setWarningForms([]));
   }, []);

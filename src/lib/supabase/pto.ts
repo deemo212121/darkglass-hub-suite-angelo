@@ -417,17 +417,16 @@ function mapRow(row: any): PtoRequestRow {
 const PAGE_SIZE = 1000;
 
 /** All PTO requests for the caller's company (RLS-scoped), newest first. */
-export async function getCompanyPtoRequests(): Promise<PtoRequestRow[]> {
+export async function getCompanyPtoRequests(opts: { pendingOnly?: boolean } = {}): Promise<PtoRequestRow[]> {
   const all: PtoRequestRow[] = [];
   let select = SELECT_COLUMNS_WITH_NOTES;
   for (let from = 0; ; from += PAGE_SIZE) {
-    const runQuery = (cols: string) =>
-      supabase
-        .from("pto_requests")
-        .select(cols)
-        .not("profile_id", "is", null)
-        .order("created_at", { ascending: false })
-        .range(from, from + PAGE_SIZE - 1);
+    const runQuery = (cols: string) => {
+      let q = supabase.from("pto_requests").select(cols).not("profile_id", "is", null);
+      // Home / badges only count what's waiting — no need for the whole history.
+      if (opts.pendingOnly) q = q.eq("status", "pending");
+      return q.order("created_at", { ascending: false }).range(from, from + PAGE_SIZE - 1);
+    };
     let { data, error } = await runQuery(select);
     if (isMissingColumnError(error) && select === SELECT_COLUMNS_WITH_NOTES) {
       select = SELECT_COLUMNS;

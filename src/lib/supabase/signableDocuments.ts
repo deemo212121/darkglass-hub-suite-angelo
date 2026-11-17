@@ -232,6 +232,38 @@ export async function getSignableDocuments(documentType: SignableDocumentType = 
   return all;
 }
 
+/** Set once the light view (migration 0455) turns out to be missing — later calls go straight to the table. */
+let lightViewMissing = false;
+
+/**
+ * Same as getSignableDocuments, without the signature IMAGES — every form answer, status,
+ * date, PDF link and who signed are still there; only the "...DataUrl" images inside the
+ * answers and each signature's image url are left out (view hr_signable_documents_light,
+ * migration 0455). For pages that only LIST forms. Never use it for anything that signs,
+ * edits or rebuilds a form's PDF — those need getSignableDocument(id).
+ * Falls back to the full table if the view isn't there yet, so nothing breaks.
+ */
+export async function getSignableDocumentsLight(documentType: SignableDocumentType): Promise<SignableDocument[]> {
+  if (lightViewMissing) return getSignableDocuments(documentType);
+  const all: SignableDocument[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("hr_signable_documents_light")
+      .select(SELECT)
+      .eq("document_type", documentType)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      // Migration 0455 not run (or the view can't do something the table can) — use the table, as before.
+      lightViewMissing = true;
+      return getSignableDocuments(documentType);
+    }
+    all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
 /** Just who each document of a type was for and when — no form data or
  * signatures (those make the full rows megabytes). For counts/reports. */
 export async function getSignableDocumentRecipients(documentType: SignableDocumentType): Promise<{ recipientId: string | null; createdAt: string }[]> {
@@ -270,6 +302,45 @@ export async function getSignableDocumentsByTypes(documentTypes: SignableDocumen
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw new Error(error.message);
     all.push(...(data ?? []).map(mapRow));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
+/**
+ * The only form answers the Staff Form Checklist reads (see staffFormChecklist.ts):
+ * whose it is, its wording version, brand / country (which tab it counts on) and the
+ * old Master Agreements' ID photo paths (findLegacyIdSource).
+ */
+const CHECKLIST_FORM_KEYS = ["employeeId", "templateVersion", "brand", "country", "ssnCardPhotoPath", "licensePhotoPath", "governmentIdPhotoPath"] as const;
+
+const CHECKLIST_SELECT =
+  "id, company_id, document_type, status, recipient_id, recipient_slot, pdf_url, created_by, created_at, signed_at, confirmed_at, cancelled_at, " +
+  CHECKLIST_FORM_KEYS.map((k) => `fd_${k}:form_data->${k}`).join(", ");
+
+/**
+ * Same documents as getSignableDocumentsByTypes, but LIGHT — for lists that only show
+ * each form's status (Staff Form Checklist, Home's "finished all forms"). Leaves out the
+ * signature images and every form answer except CHECKLIST_FORM_KEYS, which made the full
+ * download several MB. `signatures` comes back empty and `formData` holds only those keys:
+ * open one document in full with getSignableDocument(id) (e.g. the W-4 employer step).
+ */
+export async function getChecklistDocumentsByTypes(documentTypes: SignableDocumentType[]): Promise<SignableDocument[]> {
+  if (documentTypes.length === 0) return [];
+  const all: SignableDocument[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("hr_signable_documents")
+      .select(CHECKLIST_SELECT)
+      .in("document_type", documentTypes)
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    for (const r of (data ?? []) as any[]) {
+      const formData: Record<string, any> = {};
+      for (const k of CHECKLIST_FORM_KEYS) if (r[`fd_${k}`] != null) formData[k] = r[`fd_${k}`];
+      all.push(mapRow({ ...r, form_data: formData, signatures: {}, recipient_name: null, agent_note_id: null, creator: null }));
+    }
     if (!data || data.length < PAGE_SIZE) break;
   }
   return all;

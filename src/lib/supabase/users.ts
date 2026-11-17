@@ -506,7 +506,9 @@ const PAGE_SIZE = 1000;
 // instead of firing N — turns most of those calls into free cache hits.
 // invalidateCompanyUsersCache() is called by every mutation below so an
 // admin's own edit is never hidden behind a stale cache.
-const COMPANY_USERS_CACHE_TTL_MS = 30_000;
+// 5 minutes (was 30 s) — ~80 pages load the staff list. Adding / editing / (de)activating someone
+// clears it at once (invalidateCompanyUsersCache), so changes made here still show right away.
+const COMPANY_USERS_CACHE_TTL_MS = 5 * 60_000;
 let companyUsersCache: { data: ProfileRow[]; expiresAt: number } | null = null;
 let companyUsersInFlight: Promise<ProfileRow[]> | null = null;
 

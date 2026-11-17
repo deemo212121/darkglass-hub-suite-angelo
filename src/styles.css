@@ -15240,3 +15240,21 @@ button.home-attn:focus-visible { outline: 2px solid var(--tone); outline-offset:
   color: rgba(255, 255, 255, 0.6);
 }
 .mtech-payroll-error { color: #fca5a5; }
+
+/* ─── "Low device" (top bar toggle — lib/theme.tsx) ────────────────────────
+   Off by default. When on: no frosted-glass blur anywhere (panels, cards,
+   popups' backdrops) — the blur is redrawn on every scroll and is the
+   heaviest visual effect on slower PCs and phones. Panels get a solid
+   background instead so they still stand apart. Nothing else changes. */
+:root[data-low-device="on"] .panel,
+:root[data-low-device="on"] .module-card,
+:root[data-low-device="on"] .glass-panel,
+:root[data-low-device="on"] [class*="backdrop-blur"] {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+:root[data-low-device="on"]:not([data-theme="light"]) .panel,
+:root[data-low-device="on"]:not([data-theme="light"]) .module-card,
+:root[data-low-device="on"]:not([data-theme="light"]) .glass-panel {
+  background: rgb(17 24 39 / 0.92) !important;
+}

@@ -1,7 +1,7 @@
 /**
  * HR module -> Staff Form Checklist. Per-person live status of every
  * signable form for 5 tiers, each its own tab — pulled straight from
- * hr_signable_documents via getSignableDocumentsByTypes, scoped to
+ * hr_signable_documents via getChecklistDocumentsByTypes (light: status only), scoped to
  * whichever tab is active, not a separately-tracked checklist. Unlike
  * HrOnboardingChecklistPage (a manually-ticked punch list), nothing here is
  * editable: a form only shows complete once it's actually been signed.
@@ -33,7 +33,7 @@
  * "technician-form-checklist"; the route already renders <AppHeader />
  * and gates access to ADMIN / HR (DASHBOARD_ROLE_GATES).
  */
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronLeft, ClipboardCheck, Loader2, ChevronDown, ExternalLink, RefreshCw, Send, Bell, Snowflake, Search, X, PenLine, Filter } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -43,7 +43,7 @@ import { getCompanyUsers, getEmploymentStatusesByProfileIds, getMyProfileId, get
 import { getActiveFlashTechDestinationsByProfile, type ActiveFlashTechDestination } from "@/lib/supabase/flashTechTrips";
 import { formatISODate, localISODate } from "@/lib/localDate";
 import { getRoleDepartmentBreakdown, isTechScopeSubject, isTechScopedViewer } from "@/lib/roleLabels";
-import { getSignableDocumentsByTypes, getExistingActiveDocuments, createSignableDocument, updateSignableDocumentPdfUrl, confirmSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
+import { getChecklistDocumentsByTypes, getSignableDocument, getExistingActiveDocuments, createSignableDocument, updateSignableDocumentPdfUrl, confirmSignableDocument, type SignableDocument, type SignableDocumentType } from "@/lib/supabase/signableDocuments";
 import {
   SIGNABLE_DOCUMENT_REGISTRY,
   getDocumentReviewStatus,
@@ -138,6 +138,8 @@ function leftBadgeFor(
 // the normal load. Docs are cached per tab (a separate key per
 // ChecklistTabKey) since each tab pulls a different set of document types.
 const CHECKLIST_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
+/** People drawn at a time in the list (more load as you scroll). */
+const ROWS_PER_PAGE = 60;
 const CHECKLIST_CACHE_MAX_BYTES = 4 * 1024 * 1024;
 const USERS_CACHE_KEY = "ahs:staffchecklist:users-cache:v1";
 
@@ -241,6 +243,7 @@ export function TechnicianFormChecklistPage({
   const [accountFilter, setAccountFilter] = useState<"" | "active" | "deactivated">("active");
   const [branchFilter, setBranchFilter] = useState("");
   const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search);
   // A "View in Staff Checklist" link from a chat message (see MessageBody.tsx)
   // arrives as #name=<employee> — same URL-hash deep-link convention
   // TeamMessenger.tsx already uses for #channel=/#dm=. Read once on mount so
@@ -316,7 +319,15 @@ export function TechnicianFormChecklistPage({
   const [w4EmployerSaving, setW4EmployerSaving] = useState(false);
   const [w4EmployerError, setW4EmployerError] = useState<string | null>(null);
 
-  const handleOpenW4EmployerDialog = (doc: SignableDocument) => {
+  const handleOpenW4EmployerDialog = async (lite: SignableDocument) => {
+    // The list only has each form's status — load this one W-4 in full (answers + signature) for the employer step.
+    let doc: SignableDocument | null = null;
+    try {
+      doc = await getSignableDocument(lite.id);
+    } catch (err) {
+      console.error("Staff form checklist: failed to open W-4:", err);
+    }
+    if (!doc) { alert("Couldn't open this W-4 — please try again."); return; }
     setW4EmployerDialog(doc);
     setW4EmployerNameAddress("");
     setW4EmployerFirstDate("");
@@ -414,7 +425,8 @@ export function TechnicianFormChecklistPage({
     }
     try {
       const [docs, exemptionRows] = await Promise.all([
-        getSignableDocumentsByTypes(activeConfig.formTypes),
+        // Light: each form's status only (no signature images / answers) — a full document is fetched when it's opened.
+        getChecklistDocumentsByTypes(activeConfig.formTypes),
         getTechnicianFormExemptions(activeConfig.formTypes),
       ]);
 
@@ -465,7 +477,13 @@ export function TechnicianFormChecklistPage({
   // MessagesMenu.tsx already use for the same "long-open tab" staleness —
   // means coming back to this tab always shows current status without
   // needing to remember to click Refresh.
-  useEffect(() => onTabVisible(() => void load()), [load]);
+  const lastDocsLoadAt = useRef(0);
+  useEffect(() => { lastDocsLoadAt.current = Date.now(); }, [latestByKey]);
+  useEffect(() => onTabVisible(() => {
+    if (Date.now() - lastDocsLoadAt.current < 60_000) return;
+    lastDocsLoadAt.current = Date.now();
+    void loadDocsForActiveTab();
+  }), [loadDocsForActiveTab]);
 
   const rows: TechRow[] = useMemo(() => {
     return allUsers.filter((u) => activeConfig.isEligible(u) && (!techScoped || isTechScopeSubject(u.role))).map((u) => {
@@ -571,7 +589,7 @@ export function TechnicianFormChecklistPage({
       const targets: DocumentReviewStatus[] = statusFilter === "not_signed" ? ["not_sent", "awaiting_employee", "outdated"] : [statusFilter];
       result = result.filter((r) => targets.some((t) => rowHasStatus(r, checkTypes, t)));
     }
-    const q = search.trim().toLowerCase();
+    const q = deferredSearch.trim().toLowerCase();
     if (q) result = result.filter((r) => r.name.toLowerCase().includes(q));
     const missing = (r: TechRow) => r.applicableTotal - r.doneCount;
     result = [...result].sort((a, b) => {
@@ -588,7 +606,28 @@ export function TechnicianFormChecklistPage({
       }
     });
     return result;
-  }, [accountRows, hideComplete, branchFilter, statusFilter, formTypeFilter, activeConfig, sortMode, search]);
+  }, [accountRows, hideComplete, branchFilter, statusFilter, formTypeFilter, activeConfig, sortMode, deferredSearch]);
+
+  // Draw the list in pages — 60 people first, more as you scroll near the bottom — so a
+  // click (open a person, tick a box) doesn't redraw all ~400 rows at once.
+  const [shownCount, setShownCount] = useState(ROWS_PER_PAGE);
+  useEffect(() => { setShownCount(ROWS_PER_PAGE); }, [activeChecklistTab, hideComplete, branchFilter, statusFilter, formTypeFilter, sortMode, deferredSearch, accountFilter]);
+  const shownRows = useMemo(() => {
+    const first = visibleRows.slice(0, shownCount);
+    // The open person always stays drawn, even if they're further down.
+    const open = expanded && !first.some((r) => r.profileId === expanded) ? visibleRows.find((r) => r.profileId === expanded) : undefined;
+    return open ? [...first, open] : first;
+  }, [visibleRows, shownCount, expanded]);
+  const moreRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = moreRef.current;
+    if (!el || shownCount >= visibleRows.length) return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) setShownCount((n) => n + ROWS_PER_PAGE);
+    }, { rootMargin: "600px 0px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [shownCount, visibleRows.length]);
 
   // "Not sent" — creates the document (same formData/recipientSlot shape
   // every individual Send handler in ReportHRDaily.tsx uses: just the
@@ -1069,7 +1108,7 @@ export function TechnicianFormChecklistPage({
         </div>
       ) : (
         <div className="space-y-2.5">
-          {visibleRows.map((r) => {
+          {shownRows.map((r) => {
             const isOpen = expanded === r.profileId;
             const total = r.applicableTotal;
             return (
@@ -1287,7 +1326,7 @@ export function TechnicianFormChecklistPage({
                               type === "w4" && doc ? (
                                 <button
                                   type="button"
-                                  onClick={() => handleOpenW4EmployerDialog(doc)}
+                                  onClick={() => void handleOpenW4EmployerDialog(doc)}
                                   title='Fill in the "Employers Only" box — no signature, just employer name/address, first date of employment, and EIN'
                                   className="inline-flex shrink-0 items-center gap-1 text-xs text-sky-300 hover:text-sky-200"
                                 >
@@ -1386,6 +1425,13 @@ export function TechnicianFormChecklistPage({
               </div>
             );
           })}
+          {shownCount < visibleRows.length && (
+            <div ref={moreRef} className="flex justify-center py-3">
+              <button type="button" onClick={() => setShownCount((n) => n + ROWS_PER_PAGE)} className="btn text-xs">
+                Show more ({visibleRows.length - Math.min(shownCount, visibleRows.length)} left)
+              </button>
+            </div>
+          )}
         </div>
       )}
     </main>
