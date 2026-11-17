@@ -2085,6 +2085,9 @@ export interface UIPartRow {
   creditSource?: string;
   returnRejectReason?: string;
   returnStatus?: string;
+  /** How many the distributor credited, and for how much (migration 0454). */
+  creditQty?: number | null;
+  creditAmount?: number | null;
 }
 
 const numOrNull = (v: unknown) => {
@@ -2139,6 +2142,8 @@ function rowToPart(row: any): UIPartRow {
     creditSource: row.credit_source ?? "",
     returnRejectReason: row.return_reject_reason ?? "",
     returnStatus: row.return_status ?? "",
+    creditQty: numOrNull(row.credit_qty),
+    creditAmount: numOrNull(row.credit_amount),
   };
 }
 

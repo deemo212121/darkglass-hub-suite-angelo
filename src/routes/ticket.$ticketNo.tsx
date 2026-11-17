@@ -325,9 +325,12 @@ interface PartTransactionRow {
   creditedAt?: string;
   creditSource?: string;
   returnRejectReason?: string;
+  /** How many were credited and for how much (migration 0454). */
+  creditQty?: number | null;
+  creditAmount?: number | null;
 }
 
-type PartTransactionDraft = Omit<PartTransactionRow, "id" | "createdBy" | "lastModifiedBy" | "creditedAt" | "creditSource" | "returnRejectReason">;
+type PartTransactionDraft = Omit<PartTransactionRow, "id" | "createdBy" | "lastModifiedBy" | "creditedAt" | "creditSource" | "returnRejectReason" | "creditQty" | "creditAmount">;
 
 interface AuditLogEntry {
   id: string;
@@ -799,7 +802,7 @@ function createAuditEntry(params: Omit<AuditLogEntry, "id" | "timestamp">): Audi
   };
 }
 
-const PART_FIELD_LABELS: Record<keyof Omit<PartTransactionRow, "id" | "createdBy" | "lastModifiedBy" | "creditedAt" | "creditSource" | "returnRejectReason">, string> = {
+const PART_FIELD_LABELS: Record<keyof Omit<PartTransactionRow, "id" | "createdBy" | "lastModifiedBy" | "creditedAt" | "creditSource" | "returnRejectReason" | "creditQty" | "creditAmount">, string> = {
   partNo: "Part No",
   partDist: "Part Dist.",
   distBrand: "Brand",
@@ -8076,7 +8079,13 @@ function TicketDetailsPage() {
                                 >
                                   Credited{row.creditSource ? ` · ${row.creditSource}` : ""}
                                 </span>
-                              ) : row.returnRejectReason ? (
+                              ) : null}
+                              {row.creditedAt && row.creditAmount != null ? (
+                                <div className="mt-0.5 whitespace-nowrap text-[10px] font-semibold text-red-300">
+                                  Returned {row.creditQty ?? 1} · Credit −${row.creditAmount.toFixed(2)}
+                                </div>
+                              ) : null}
+                              {!row.creditedAt && row.returnRejectReason ? (
                                 <span className="mt-1 inline-flex items-center rounded-full border border-red-400/40 bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-300" title={`Return rejected: ${row.returnRejectReason}`}>
                                   Return rejected
                                 </span>
@@ -8171,8 +8180,9 @@ function TicketDetailsPage() {
                       acc.shipCost += parseFloat(r.shipCost) || 0;
                       // Markup is a percent of the part price, not dollars — to the cent, so it adds up with each row's Total (Markup).
                       acc.markup += Math.round(price * (parseFloat(r.markup) || 0)) / 100;
+                      if (r.creditedAt && r.creditAmount != null) acc.credited += r.creditAmount;
                       return acc;
-                    }, { qty: 0, partPrice: 0, coreValue: 0, shipCost: 0, markup: 0 });
+                    }, { qty: 0, partPrice: 0, coreValue: 0, shipCost: 0, markup: 0, credited: 0 });
                     const grand = totals.partPrice + totals.coreValue + totals.shipCost + totals.markup;
                     const money = (n: number) => `$${n.toFixed(2)}`;
                     return (
@@ -8185,6 +8195,11 @@ function TicketDetailsPage() {
                           <td className="px-2 py-1.5">{money(totals.shipCost)}</td>
                           <td className="px-2 py-1.5">{money(totals.markup)}</td>
                           <td className="px-2 py-1.5 text-right" colSpan={20}>
+                            {totals.credited > 0 && (
+                              <span className="mr-4 text-red-700" title="What the distributor credited back on these parts">
+                                Credited back: −{money(totals.credited)}
+                              </span>
+                            )}
                             <span className="mr-2 text-slate-700">Grand Total:</span>
                             <span className="text-slate-900">{money(grand)}</span>
                           </td>
