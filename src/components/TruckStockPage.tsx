@@ -34,10 +34,12 @@ import {
   bulkUpsertTruckStockUsed,
   deleteTruckStockUsedRow,
   ticketNosInApp,
+  toTruckStockStatus,
   type TruckStockRow,
   type TruckStockStatus,
   type TruckStockUsedRow,
 } from "@/lib/supabase/truckStock";
+import { TRUCK_STOCK_DESCRIPTIONS, TRUCK_STOCK_STATUSES, truckStockDescriptionOption, truckStockStatusOption, type TruckStockOption } from "@/lib/truckStockOptions";
 import { createTruckStockTransferRequest } from "@/lib/supabase/truckStockTransfers";
 import { notifyPartsManagerOfTransferRequest } from "@/lib/truckStockNotify";
 import { getLocations, type LocationRow } from "@/lib/supabase/locationManagement";
@@ -78,7 +80,7 @@ function exportData(rows: TruckStockRow[]): (string | number)[][] {
     r.description,
     r.manufacturer,
     r.quantity,
-    r.status === "in_use" ? "In Use" : "In Stock",
+    truckStockStatusOption(r.status).label,
     r.notes,
     r.createdAt ? formatDateAdded(r.createdAt) : "",
   ]);
@@ -592,12 +594,13 @@ export function TruckStockPanel() {
             title="Filter by status"
             hidden={view === "used"}
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value === "in_use" ? "in_use" : e.target.value === "in_stock" ? "in_stock" : "")}
+            onChange={(e) => setStatusFilter(e.target.value ? toTruckStockStatus(e.target.value) : "")}
             className="rounded border border-white/15 bg-slate-950 px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
           >
             <option value="">All statuses</option>
-            <option value="in_stock">In Stock</option>
-            <option value="in_use">In Use</option>
+            {TRUCK_STOCK_STATUSES.map((s) => (
+              <option key={s.value} value={s.value}>{s.label}</option>
+            ))}
           </select>
           <div className="text-xs text-slate-400">
             {view === "used"
@@ -830,7 +833,7 @@ function BranchSection({
                       <input value={d.storageLocation} onChange={(e) => setField("storageLocation", e.target.value)} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Shelf A-1, TS-3, …" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input value={d.description} onChange={(e) => setField("description", e.target.value)} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Description" />
+                      <DescriptionSelect value={d.description} onChange={(v) => setField("description", v)} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="px-2 py-1.5">
                       <input value={d.manufacturer} onChange={(e) => setField("manufacturer", e.target.value)} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Brand" />
@@ -839,10 +842,7 @@ function BranchSection({
                       <input type="number" min={0} title="Quantity" value={d.quantity} onChange={(e) => setField("quantity", Number(e.target.value) || 0)} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-right text-white focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <select title="Status" value={d.status} onChange={(e) => setField("status", e.target.value === "in_use" ? "in_use" : "in_stock")} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500">
-                        <option value="in_stock">In Stock</option>
-                        <option value="in_use">In Use</option>
-                      </select>
+                      <StatusSelect value={d.status} onChange={(v) => setField("status", v)} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" />
                     </td>
                     <td className="px-3 py-2">
                       {elsewhere.length === 0 ? (
@@ -903,19 +903,17 @@ function BranchSection({
                       <span className="text-slate-500">—</span>
                     )}
                   </td>
-                  <td className="px-3 py-2">{row.description || "—"}</td>
+                  <td className="px-3 py-2">
+                    {truckStockDescriptionOption(row.description) ? (
+                      <OptionChip option={truckStockDescriptionOption(row.description)!} />
+                    ) : (
+                      row.description || "—"
+                    )}
+                  </td>
                   <td className="px-3 py-2">{row.manufacturer || "—"}</td>
                   <td className="px-3 py-2 text-right font-semibold">{row.quantity}</td>
                   <td className="px-3 py-2">
-                    {row.status === "in_use" ? (
-                      <span className="inline-flex items-center rounded-full border border-amber-400/30 bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-200">
-                        In Use
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center rounded-full border border-emerald-400/30 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-200">
-                        In Stock
-                      </span>
-                    )}
+                    <OptionChip option={truckStockStatusOption(row.status)} />
                   </td>
                   <td className="px-3 py-2">
                     {elsewhere.length === 0 ? (
@@ -1125,14 +1123,11 @@ function DraftEditor({
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-slate-300">Status</span>
-          <select
+          <StatusSelect
             value={draft.status}
-            onChange={(e) => setDraft({ ...draft, status: e.target.value === "in_use" ? "in_use" : "in_stock" })}
+            onChange={(v) => setDraft({ ...draft, status: v })}
             className="rounded border border-white/15 bg-slate-950 px-2 py-1.5 text-white focus:outline-none focus:border-blue-500"
-          >
-            <option value="in_stock">In Stock</option>
-            <option value="in_use">In Use</option>
-          </select>
+          />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-slate-300">Stored At</span>
@@ -1154,10 +1149,9 @@ function DraftEditor({
         </label>
         <label className="md:col-span-3 flex flex-col gap-1">
           <span className="text-slate-300">Description</span>
-          <input
+          <DescriptionSelect
             value={draft.description}
-            onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-            placeholder="DOOR LOCK, DRAIN PUMP, …"
+            onChange={(v) => setDraft({ ...draft, description: v })}
             className="rounded border border-white/15 bg-slate-950 px-2 py-1.5 text-white focus:outline-none focus:border-blue-500"
           />
         </label>
@@ -1459,5 +1453,46 @@ function PartUsageModal({ partNo, onClose }: { partNo: string; onClose: () => vo
         </div>
       </div>
     </div>
+  );
+}
+
+/** A Status / Description value as the workbook's coloured chip. */
+function OptionChip({ option }: { option: TruckStockOption }) {
+  return (
+    <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-semibold ${option.chip}`}>
+      {option.label}
+    </span>
+  );
+}
+
+/** Status dropdown — the workbook's list; a row still saying In Use keeps it until changed. */
+function StatusSelect({ value, onChange, className }: { value: TruckStockStatus; onChange: (v: TruckStockStatus) => void; className: string }) {
+  const current = truckStockStatusOption(value);
+  return (
+    <select title="Status" value={value} onChange={(e) => onChange(toTruckStockStatus(e.target.value))} className={className} style={current.option}>
+      {!TRUCK_STOCK_STATUSES.some((s) => s.value === value) && <option value={value} style={current.option}>{current.label}</option>}
+      {TRUCK_STOCK_STATUSES.map((s) => (
+        <option key={s.value} value={s.value} style={s.option}>{s.label}</option>
+      ))}
+    </select>
+  );
+}
+
+/**
+ * Description dropdown — the workbook's list. A row's older text that isn't on
+ * it (a part name, "Below $20" …) stays selected as its current value, so
+ * editing the row never wipes it.
+ */
+function DescriptionSelect({ value, onChange, className }: { value: string; onChange: (v: string) => void; className: string }) {
+  const listed = truckStockDescriptionOption(value);
+  const selected = listed ? listed.value : value;
+  return (
+    <select title="Description" value={selected} onChange={(e) => onChange(e.target.value)} className={className} style={listed?.option}>
+      <option value="">—</option>
+      {value && !listed && <option value={value}>{value} (current)</option>}
+      {TRUCK_STOCK_DESCRIPTIONS.map((d) => (
+        <option key={d.value} value={d.value} style={d.option}>{d.label}</option>
+      ))}
+    </select>
   );
 }

@@ -9,7 +9,16 @@
 
 import { supabase } from "./client";
 
-export type TruckStockStatus = "in_stock" | "in_use";
+/** The workbook's Status list (truckStockOptions.ts, migration 0461); in_use is from before it — kept, not offered. */
+export type TruckStockStatus = "in_stock" | "in_use" | "sold" | "ebay" | "b2b" | "return" | "ticket" | "used";
+
+const STATUS_CODES: readonly TruckStockStatus[] = ["in_stock", "in_use", "sold", "ebay", "b2b", "return", "ticket", "used"];
+
+/** A saved code or the workbook's own wording ("IN STOCK", "In Use", "Ebay", "B2B" …) → its code; anything else is in stock. */
+export function toTruckStockStatus(value: unknown): TruckStockStatus {
+  const v = String(value ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return (STATUS_CODES as readonly string[]).includes(v) ? (v as TruckStockStatus) : "in_stock";
+}
 
 export type TruckStockRow = {
   id: string;
@@ -35,7 +44,7 @@ function fromDb(r: any): TruckStockRow {
     quantity: Number(r.quantity ?? 0),
     storageLocation: r.storage_location ?? "",
     notes: r.notes ?? "",
-    status: r.status === "in_use" ? "in_use" : "in_stock",
+    status: toTruckStockStatus(r.status),
     createdAt: r.created_at ?? undefined,
     updatedAt: r.updated_at ?? undefined,
   };
@@ -50,7 +59,7 @@ function toDb(row: TruckStockRow): Record<string, unknown> {
     quantity: Number.isFinite(row.quantity) ? Math.max(0, Math.trunc(row.quantity)) : 0,
     storage_location: row.storageLocation?.trim() || null,
     notes: row.notes?.trim() || null,
-    status: row.status === "in_use" ? "in_use" : "in_stock",
+    status: toTruckStockStatus(row.status),
   };
 }
 
@@ -205,7 +214,7 @@ export async function bulkUpsertTruckStock(
       quantity: Number.isFinite(r.quantity) ? Math.max(0, Math.trunc(r.quantity)) : 0,
       storage_location: r.storageLocation?.trim() || null,
       notes: r.notes?.trim() || null,
-      status: r.status === "in_use" ? "in_use" : "in_stock",
+      status: toTruckStockStatus(r.status),
     }));
     const { error, count } = await supabase
       .from("truck_stock")

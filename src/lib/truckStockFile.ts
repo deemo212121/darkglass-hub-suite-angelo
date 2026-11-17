@@ -21,7 +21,7 @@
 import { parseCsv } from "@/lib/csvParse";
 import { todayISO } from "@/lib/localDate";
 import { TRUCK_STOCK_BRANCH_CODE_MAP, resolveTruckStockBranch } from "@/lib/truckStockBranchMap";
-import type { TruckStockRow, TruckStockStatus, TruckStockUsedRow } from "@/lib/supabase/truckStock";
+import { toTruckStockStatus, type TruckStockRow, type TruckStockStatus, type TruckStockUsedRow } from "@/lib/supabase/truckStock";
 
 /** One sheet of the file: a CSV, or one tab of an .xlsx. */
 export type ImportTable = { name: string; rows: string[][] };
@@ -621,7 +621,8 @@ function readList(t: ImportTable, hr: number, branch: string, out: PartCollector
       ...base,
       quantity: qty,
       notes: cell(col.notes) ? [cell(col.notes)] : [],
-      status: col.status === undefined ? null : /in use/i.test(status) ? "in_use" : "in_stock",
+      // The workbook / Export wording (IN STOCK, EBAY, TICKET, In Use …) — SOLD / B2B / RETURN / USED were set aside above (GONE).
+      status: col.status === undefined ? null : toTruckStockStatus(status),
       counted: true,
     });
   }
