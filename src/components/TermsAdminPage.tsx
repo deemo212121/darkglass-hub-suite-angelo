@@ -19,7 +19,7 @@ import { useNavigate } from "@tanstack/react-router";
 import DOMPurify from "dompurify";
 import { toast } from "sonner";
 import {
-  CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Clock, Download, Eye, FileInput, FileText, Loader2, Pause, Play, Plus, Rocket, Save, Search, Trash2, Users, X,
+  AlertTriangle, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Clock, Download, Eye, FileInput, FileText, Loader2, Pause, Play, Plus, Rocket, Save, Search, Trash2, Users, X,
 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
@@ -616,6 +616,7 @@ function PublishDialog({
 
 function AcceptedTab({ doc, versions, acceptances, people }: { doc: TermsDocument; versions: TermsVersion[]; acceptances: TermsAcceptance[]; people: ProfileRow[] }) {
   const [status, setStatus] = useState<"all" | "done" | "waiting">("all");
+  const [ipDiffOnly, setIpDiffOnly] = useState(false);
   const [q, setQ] = useState("");
   const [branch, setBranch] = useState("");
   const [dept, setDept] = useState("");
@@ -643,17 +644,23 @@ function AcceptedTab({ doc, versions, acceptances, people }: { doc: TermsDocumen
   const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const shown = rows.filter((r) =>
     (status === "all" || (status === "done") === r.done)
+    && (!ipDiffOnly || r.last?.ipMatches === false)
     && (!branch || r.p.assigned_branch === branch)
     && (!dept || r.p.department === dept)
     && words.every((w) => `${r.p.display_name} ${r.p.email} ${r.p.role ? roleName(r.p.role) : ""}`.toLowerCase().includes(w)));
   const done = rows.filter((r) => r.done).length;
+  const ipDiff = rows.filter((r) => r.last?.ipMatches === false).length;
+  /** "Memphis, Tennessee, US" — where the IP was when they accepted. */
+  const ipPlace = (a: TermsAcceptance) => [a.ipCity, a.ipRegion, a.ipCountry].filter(Boolean).join(", ");
 
   const exportCsv = () => {
     const esc = (s: unknown) => `"${String(s ?? "").replace(/"/g, '""')}"`;
-    const lines = [["Name", "Email", "Role", "Department", "Branch", "Status", "Version accepted", "Accepted at", "Device"].map(esc).join(",")];
+    const lines = [["Name", "Email", "Role", "Department", "Branch", "Status", "Version accepted", "Accepted at", "Device", "IP", "IP location", "Browser", "Usual sign-in IP", "Same as usual"].map(esc).join(",")];
     for (const r of shown) {
+      const a = r.last;
       lines.push([r.p.display_name, r.p.email, r.p.role ? roleName(r.p.role) : "", r.p.department, r.p.assigned_branch, r.done ? "Accepted" : "Not yet",
-        r.lastVersion ? `v${r.lastVersion}` : "", r.last ? fmtDateTime(r.last.acceptedAt) : "", r.last?.device ?? ""].map(esc).join(","));
+        r.lastVersion ? `v${r.lastVersion}` : "", a ? fmtDateTime(a.acceptedAt) : "", a?.device ?? "",
+        a?.ip ?? "", a ? ipPlace(a) : "", a?.browser ?? "", a?.usualIp ?? "", a?.ipMatches == null ? "" : a.ipMatches ? "Yes" : "No"].map(esc).join(","));
     }
     const blob = new Blob([lines.join("\n")], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -677,6 +684,16 @@ function AcceptedTab({ doc, versions, acceptances, people }: { doc: TermsDocumen
             <button key={k} type="button" onClick={() => setStatus(k)} className={`rounded-md px-2.5 py-1 font-semibold ${status === k ? "bg-sky-600 text-white" : "text-slate-300 hover:text-white"}`}>{label}</button>
           ))}
         </div>
+        {ipDiff > 0 && (
+          <button
+            type="button"
+            onClick={() => setIpDiffOnly((v) => !v)}
+            title="Accepted from an IP that isn't the one they usually sign in from (last 90 days)"
+            className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-semibold ${ipDiffOnly ? "border-amber-400/60 bg-amber-500/25 text-amber-100" : "border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20"}`}
+          >
+            <AlertTriangle className="h-3.5 w-3.5" /> Different IP ({ipDiff})
+          </button>
+        )}
         <select value={branch} onChange={(e) => setBranch(e.target.value)} className={select} aria-label="Branch">
           <option value="">All branches</option>
           {branches.map((b) => <option key={b} value={b}>{b}</option>)}
@@ -701,6 +718,7 @@ function AcceptedTab({ doc, versions, acceptances, people }: { doc: TermsDocumen
               <th className="px-3 py-2">Branch</th>
               <th className="px-3 py-2">Status</th>
               <th className="px-3 py-2">Accepted</th>
+              <th className="px-3 py-2" title="The IP they accepted from, compared with the one they usually sign in from (last 90 days)">Signed from</th>
             </tr>
           </thead>
           <tbody>
@@ -718,9 +736,27 @@ function AcceptedTab({ doc, versions, acceptances, people }: { doc: TermsDocumen
                   )}
                 </td>
                 <td className="whitespace-nowrap px-3 py-2 text-slate-400">{r.last ? `v${r.lastVersion} · ${fmtDateTime(r.last.acceptedAt)} · ${r.last.device}` : "—"}</td>
+                <td className="whitespace-nowrap px-3 py-2">
+                  {r.last?.ip ? (
+                    <div title={[r.last.browser, r.last.usualIp ? `Usual sign-in IP: ${r.last.usualIp}` : "No sign-in history to compare"].filter(Boolean).join(" · ")}>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono text-slate-200">{r.last.ip}</span>
+                        {r.last.ipMatches === true && <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">Usual IP</span>}
+                        {r.last.ipMatches === false && (
+                          <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
+                            <AlertTriangle className="h-3 w-3" /> Usually {r.last.usualIp}
+                          </span>
+                        )}
+                      </div>
+                      {ipPlace(r.last) && <div className="text-[10px] text-slate-500">{ipPlace(r.last)}</div>}
+                    </div>
+                  ) : (
+                    <span className="text-slate-500" title={r.last ? "Accepted before IPs were recorded, or without the server" : undefined}>—</span>
+                  )}
+                </td>
               </tr>
             ))}
-            {!shown.length && <tr><td colSpan={6} className="px-3 py-8 text-center text-slate-500">Nobody matches these filters.</td></tr>}
+            {!shown.length && <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-500">Nobody matches these filters.</td></tr>}
           </tbody>
         </table>
       </div>

@@ -141,6 +141,7 @@ function TermsWindow({
               <dt className="font-semibold text-slate-100">Company Email</dt><dd className="truncate">{who.email || "—"}</dd>
               <dt className="font-semibold text-slate-100">Account / User ID</dt><dd className="truncate font-mono text-[12px]">{who.id || "—"}</dd>
               <dt className="font-semibold text-slate-100">Acceptance Date and Time</dt><dd>Recorded when you press I agree</dd>
+              <dt className="font-semibold text-slate-100">IP Address and Approximate Location</dt><dd>Recorded when you press I agree</dd>
               <dt className="font-semibold text-slate-100">Agreement Version</dt><dd>Version {terms.version}</dd>
             </dl>
           </div>

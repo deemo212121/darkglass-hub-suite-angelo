@@ -50,6 +50,16 @@ export interface TermsAcceptance {
   displayName: string | null;
   device: string;
   acceptedAt: string;
+  /** Where it was accepted from (migration 0456) — empty on older acceptances. */
+  email?: string | null;
+  ip?: string | null;
+  ipCity?: string | null;
+  ipRegion?: string | null;
+  ipCountry?: string | null;
+  browser?: string | null;
+  /** The person's most-used sign-in IP (last 90 days) when they accepted; ipMatches = ip is that one. */
+  usualIp?: string | null;
+  ipMatches?: boolean | null;
 }
 
 /** The terms someone still has to accept (from terms_pending_for_me()). */

@@ -167,7 +167,7 @@ async function mintSupabaseToken(opts: {
 }
 
 /** Real client IP as seen by Cloudflare — falls back to X-Forwarded-For for local/dev, where neither header may be present. */
-function clientIpFrom(request: Request): string | null {
+export function clientIpFrom(request: Request): string | null {
   const cf = request.headers.get("cf-connecting-ip");
   if (cf) return cf;
   const forwarded = request.headers.get("x-forwarded-for");
@@ -181,7 +181,7 @@ function clientIpFrom(request: Request): string | null {
  * plain Node `Request` objects, e.g. the Vite dev middleware), so this is
  * one more piece of the login flow that can't be exercised locally.
  */
-function geoFromRequest(request: Request): {
+export function geoFromRequest(request: Request): {
   country: string | null;
   region: string | null;
   city: string | null;
@@ -201,7 +201,7 @@ function geoFromRequest(request: Request): {
 }
 
 /** Parsed from the User-Agent header — good-enough browser/device labels without pulling in a UA-parsing library for one admin page. */
-function parseUserAgent(ua: string | null): { browser: string; device: string } {
+export function parseUserAgent(ua: string | null): { browser: string; device: string } {
   if (!ua) return { browser: "Unknown", device: "Unknown" };
   let browser = "Unknown";
   if (/Edg\//.test(ua)) browser = "Edge";

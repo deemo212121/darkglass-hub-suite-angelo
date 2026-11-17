@@ -1,4 +1,5 @@
 import { supabase } from "./client";
+import { auth as firebaseAuth } from "@/lib/firebase/config";
 import {
   toAudience,
   type PendingTerms,
@@ -45,6 +46,14 @@ const mapAcceptance = (r: any): TermsAcceptance => ({
   displayName: r.display_name ?? null,
   device: r.device ?? "web",
   acceptedAt: r.accepted_at,
+  email: r.email ?? null,
+  ip: r.ip ?? null,
+  ipCity: r.ip_city ?? null,
+  ipRegion: r.ip_region ?? null,
+  ipCountry: r.ip_country ?? null,
+  browser: r.browser ?? null,
+  usualIp: r.usual_ip ?? null,
+  ipMatches: r.ip_matches ?? null,
 });
 
 // ---- Admin page ----------------------------------------------------------
@@ -131,7 +140,28 @@ export async function getMyPendingTerms(): Promise<PendingTerms[] | null> {
   }));
 }
 
+/**
+ * Through /api/terms-accept, which also records where it was accepted from
+ * (migration 0456 — IP, compared with the person's usual sign-in IP). If the
+ * server can't be reached (or on the local dev server, which doesn't run it),
+ * straight to terms_accept() instead — without the IP — so nobody is stuck
+ * behind the window.
+ */
 export async function acceptTerms(versionId: string, device: "web" | "mobile"): Promise<void> {
+  const idToken = await firebaseAuth?.currentUser?.getIdToken(false).catch(() => null);
+  if (idToken) {
+    const res = await fetch("/api/terms-accept", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken, versionId, device }),
+    }).catch(() => null);
+    if (res?.ok) return;
+    if (res && (res.status === 401 || res.status === 403)) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(data.error || "Sign in again to accept.");
+    }
+    console.warn("/api/terms-accept:", res ? res.status : "unreachable", "— accepting without the IP");
+  }
   const { error } = await supabase.rpc("terms_accept", { p_version_id: versionId, p_device: device });
   if (error) throw new Error(friendly(error.message));
 }
