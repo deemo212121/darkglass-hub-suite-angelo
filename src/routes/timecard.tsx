@@ -27,6 +27,9 @@ import {
 import { getMyProfileId, getCompanyUsers } from "@/lib/supabase/users";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { getServerNow, zonedDateKey, zonedTimeString, type ScheduleTimezone } from "@/lib/serverTime";
+import { buildMyPayslipData, downloadPayslipPdf } from "@/lib/myPayslipDocument";
+import { PayslipViewerSheet } from "@/components/PayslipViewerSheet";
+import type { EmployeePayslipData } from "@/lib/payslipTemplate";
 import { getMyPayslips, payslipStatusLabel, payslipAdjustmentTextLines, type MyPayslipRow } from "@/lib/supabase/payslips";
 import { getCompanyPtoRequests, type PtoRequestRow } from "@/lib/supabase/pto";
 
@@ -1008,10 +1011,38 @@ interface MobilePayRow {
 
 function MobilePayrollPage() {
   const navigate = useNavigate();
-  const { uid, email, displayName } = useAuth();
+  const { uid, email, displayName, role, extraRoles } = useAuth();
 
   const [payslips, setPayslips] = useState<MyPayslipRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [myProfileId, setMyProfileId] = useState<string | null>(null);
+  /** The run whose payslip PDF is being built. */
+  const [stubBusy, setStubBusy] = useState<string | null>(null);
+  /** The pay period open in the payslip viewer. */
+  const [viewing, setViewing] = useState<MobilePayRow | null>(null);
+  /** Built payslips by run (an Error when it couldn't be built), so View and Download build once. */
+  const [docByRun, setDocByRun] = useState<Record<string, EmployeePayslipData | Error>>({});
+
+  /** The same payslip Employee Self Service shows (lib/myPayslipDocument.ts), built once per run. */
+  const payslipFor = async (row: MobilePayRow): Promise<EmployeePayslipData> => {
+    const have = docByRun[row.id];
+    if (have && !(have instanceof Error)) return have;
+    if (!myProfileId) throw new Error("Your profile isn't loaded yet.");
+    try {
+      const data = await buildMyPayslipData({ profileId: myProfileId, uid, role, extraRoles, displayName: displayName || email || "", payslip: row.payslip });
+      setDocByRun((prev) => ({ ...prev, [row.id]: data }));
+      return data;
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      setDocByRun((prev) => ({ ...prev, [row.id]: err }));
+      throw err;
+    }
+  };
+  const openPayslip = (row: MobilePayRow) => {
+    setViewing(row);
+    if (docByRun[row.id] instanceof Error) setDocByRun((prev) => { const next = { ...prev }; delete next[row.id]; return next; });
+    void payslipFor(row).catch(() => {});
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -1020,6 +1051,7 @@ function MobilePayrollPage() {
       setLoading(true);
       try {
         const profileId = await getMyProfileId(uid);
+        if (!cancelled) setMyProfileId(profileId ?? null);
         const rows = profileId ? await getMyPayslips(profileId) : [];
         if (!cancelled) setPayslips(rows);
       } catch (e) {
@@ -1154,18 +1186,9 @@ function MobilePayrollPage() {
                         <button
                           type="button"
                           className="inline-flex items-center gap-1.5 rounded-md border border-blue-400/40 bg-blue-500/15 px-2.5 py-1 text-xs font-semibold text-blue-200 hover:bg-blue-500/25 transition"
-                          title="View payroll details"
-                          onClick={() => {
-                            const p = row.payslip;
-                            alert(
-                              `Pay period ${row.periodLabel}\nStatus: ${row.status}\n\n` +
-                                `Hours: ${p.hoursWorked.toFixed(2)} (+ ${p.overtimeHours.toFixed(2)} OT)\n` +
-                                `Regular Pay: $${p.regularPay.toFixed(2)}\nOvertime Pay: $${p.overtimePay.toFixed(2)}\n` +
-                                `Gross Pay: $${p.grossPay.toFixed(2)}\n` +
-                        payslipAdjustmentTextLines(p).map((l) => `${l}\n`).join("") +
-                        `Net Pay: $${p.netPay.toFixed(2)}`,
-                            );
-                          }}
+                          title="View payslip"
+                          disabled={!myProfileId}
+                          onClick={() => openPayslip(row)}
                         >
                           <FileText className="h-3 w-3" />
                           View
@@ -1173,16 +1196,23 @@ function MobilePayrollPage() {
                         <button
                           type="button"
                           className="inline-flex items-center gap-1.5 rounded-md border border-emerald-400/40 bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/25 transition disabled:opacity-40 disabled:cursor-not-allowed"
-                          title={row.status === "Paid" ? "Download pay stub" : "Available after payment"}
-                          disabled={row.status !== "Paid"}
-                          onClick={() =>
-                            alert(
-                              `Pay stub for ${row.periodLabel} will be available once your finance team publishes it.`,
-                            )
-                          }
+                          title="Download pay stub (PDF)"
+                          disabled={!myProfileId || stubBusy !== null}
+                          onClick={async () => {
+                            // The same payslip Employee Self Service shows, as a PDF (lib/myPayslipDocument.ts).
+                            if (!myProfileId || stubBusy) return;
+                            setStubBusy(row.id);
+                            try {
+                              await downloadPayslipPdf(await payslipFor(row));
+                            } catch (e) {
+                              alert(`Couldn't build the pay stub: ${e instanceof Error ? e.message : "Unknown error"}`);
+                            } finally {
+                              setStubBusy(null);
+                            }
+                          }}
                         >
                           <Download className="h-3 w-3" />
-                          Stub
+                          {stubBusy === row.id ? "Preparing…" : "Download"}
                         </button>
                       </div>
                     </td>
@@ -1196,6 +1226,9 @@ function MobilePayrollPage() {
         <p className="mt-4 text-xs text-slate-500">
           Payroll is issued per pay period. If an amount looks wrong, reach out to your branch manager or HR.
         </p>
+        {viewing && (
+          <PayslipViewerSheet title={viewing.periodLabel} status={viewing.status} data={docByRun[viewing.id] ?? null} onClose={() => setViewing(null)} />
+        )}
       </main>
       <Footer />
     </div>

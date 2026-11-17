@@ -2,7 +2,7 @@
 -- (the provider's account number / the card or bank account used), typed per
 -- line in Add branch expenses and shown in Branch Bills.
 --
--- Run after 0450 (0450_it_has_super_admin_access).
+-- Run after 0451.
 
 alter table public.branch_expenses
   add column if not exists account_number text not null default '';

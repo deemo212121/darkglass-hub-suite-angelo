@@ -330,7 +330,30 @@ export function leadersTitleFitsRoles(title: string, roles: readonly (string | n
 export const ROLE_INCLUDES: Record<string, string[]> = {
   ACCOUNTING_MANAGER: ["FINANCE"],
   HR_MANAGER: ["HR"],
+  // IT has Super Admin's access everywhere (is_company_superadmin() and the
+  // rest, migration 0450). The signed-in user's extraRoles carries
+  // SUPERADMIN for them too (auth.tsx), for checks that look for it by name.
+  IT: ["SUPERADMIN"],
 };
+
+/** A primary role that is Super Admin or carries its access (IT) — for checks that only look at the primary role. */
+export function isSuperAdminRole(role: string | null | undefined): boolean {
+  return withIncludedRoles([role]).includes("SUPERADMIN");
+}
+
+/** IT / Super Admin — the roles only an IT or Super Admin may give or take away (migration 0450's guard). */
+export const SUPER_ADMIN_LEVEL_ROLES: ReadonlySet<string> = new Set(["SUPERADMIN", "IT"]);
+
+/**
+ * The signed-in user's extra roles as every page sees them: SUPERADMIN added
+ * when they hold IT, so a check for "SUPERADMIN" by name treats IT the same.
+ * Returns `extraRoles` itself when nothing changes (pages key effects on it).
+ */
+export function extraRolesWithIncluded(role: string | null | undefined, extraRoles: string[]): string[] {
+  const held = [role, ...extraRoles].map((r) => normalizeRole(r));
+  if (held.includes("SUPERADMIN") || !held.some((r) => (ROLE_INCLUDES[r] ?? []).includes("SUPERADMIN"))) return extraRoles;
+  return [...extraRoles, "SUPERADMIN"];
+}
 
 /** These role codes plus every role they include (ROLE_INCLUDES), normalized, deduped. */
 export function withIncludedRoles(roles: readonly (string | null | undefined)[]): string[] {
@@ -490,7 +513,7 @@ export function isTechScopeSubject(role: string | null | undefined): boolean {
 function moduleAllowedByRole(role: string | null | undefined, moduleSlug: string, extraRoles?: string[] | null): boolean {
   // Admin-and-up modules (AHS Server Status) — never opened up by an override.
   if (ADMIN_AND_UP_MODULES.has(moduleSlug)) return isAdminOrAboveHolder(role, extraRoles);
-  if (normalizeRole(role) !== "SUPERADMIN") {
+  if (!isSuperAdminRole(role)) {
     const moduleLevelOverride = getModuleRoleGate(moduleSlug, MODULE_LEVEL_GATE_SLUG);
     if (moduleLevelOverride) {
       const normalizedOverride = moduleLevelOverride.map((r) => normalizeRole(r));
@@ -625,9 +648,8 @@ export function isCompanySuperAdminRole(
   role: string | null | undefined,
   extraRoles?: string[] | null
 ): boolean {
-  const primary = normalizeRole(role);
-  if (primary === "SUPERADMIN" || primary === "SUPERSUPERADMIN") return true;
-  return (extraRoles ?? []).some((r) => normalizeRole(r) === "SUPERADMIN");
+  if (isSuperAdminRole(role) || normalizeRole(role) === "SUPERSUPERADMIN") return true;
+  return withIncludedRoles(extraRoles ?? []).includes("SUPERADMIN");
 }
 
 const CHANNEL_MANAGER_ROLES = new Set(["ADMIN"]);

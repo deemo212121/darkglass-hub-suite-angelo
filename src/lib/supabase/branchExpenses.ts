@@ -7,7 +7,7 @@ const BASE_SELECT =
   "id, branch, category, other_label, vendor, amount, expense_date, period_start, period_end, notes, receipts, created_by_name, created_at, updated_by_name, updated_at";
 const SELECT = `${BASE_SELECT}, line_items, account_number`;
 
-/** Before migration 0447 / 0451 there is no line_items / account_number column — the page still loads without them. */
+/** Before migration 0447 / 0452 there is no line_items / account_number column — the page still loads without them. */
 const missingLineItems = (message: string) => /line_items|account_number/i.test(message);
 
 function mapRow(r: any): BranchExpense {
@@ -58,7 +58,7 @@ export interface BranchExpenseInput {
   category: BranchExpenseCategory;
   otherLabel: string;
   vendor: string;
-  /** Only sent when filled in, so saving still works before migration 0451. */
+  /** Only sent when filled in, so saving still works before migration 0452. */
   accountNumber?: string;
   amount: number;
   expenseDate: string;
@@ -90,7 +90,7 @@ const toRow = (i: BranchExpenseInput) => ({
 export async function addBranchExpense(input: BranchExpenseInput, lineItems: BranchExpenseLine[] = []): Promise<string> {
   const row = lineItems.length ? { ...toRow(input), line_items: lineItems } : toRow(input);
   const { data, error } = await supabase.from("branch_expenses").insert(row).select("id").single();
-  if (error && /account_number/i.test(error.message)) throw new Error("Run migration 0451 in Supabase first (it adds Account #).");
+  if (error && /account_number/i.test(error.message)) throw new Error("Run migration 0452 in Supabase first (it adds Account #).");
   if (error && lineItems.length && missingLineItems(error.message)) throw new Error("Run migration 0447 in Supabase first (it keeps each Car IQ transaction).");
   if (error) throw new Error(friendly(error.message));
   return (data as { id: string }).id;
@@ -100,7 +100,7 @@ export async function updateBranchExpense(id: string, input: BranchExpenseInput)
   // Clearing an account # has to reach the database too (toRow leaves a blank one out).
   const row = input.accountNumber !== undefined ? { ...toRow(input), account_number: input.accountNumber.trim() } : toRow(input);
   const { error } = await supabase.from("branch_expenses").update(row).eq("id", id);
-  if (error && /account_number/i.test(error.message)) throw new Error("Run migration 0451 in Supabase first (it adds Account #).");
+  if (error && /account_number/i.test(error.message)) throw new Error("Run migration 0452 in Supabase first (it adds Account #).");
   if (error) throw new Error(friendly(error.message));
 }
 

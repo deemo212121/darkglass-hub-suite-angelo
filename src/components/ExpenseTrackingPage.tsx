@@ -303,7 +303,7 @@ export function ExpenseTrackingPage({
     ].filter(Boolean).join(" ").toLowerCase();
   };
   // Every word typed has to match somewhere ("memphis hotel pending").
-  const searchWords = search.trim().toLowerCase().split(/s+/).filter(Boolean);
+  const searchWords = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const matchesSearch = (e: ExpenseRow) => {
     if (!searchWords.length) return true;
     const text = searchText(e);

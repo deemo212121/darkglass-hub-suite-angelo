@@ -75,6 +75,7 @@ import { getCompanyUsers, getProfileEmployeeInfo, type ProfileRow } from "@/lib/
 import { createNotification } from "@/lib/supabase/notifications";
 import { resolveTeamLeadOrManager } from "@/lib/notifyRouting";
 import { getMyPayslips, type MyPayslipRow } from "@/lib/supabase/payslips";
+import { assemblePayslipData, downloadPayslipPdf, loadPayslipDailyRows } from "@/lib/myPayslipDocument";
 import { getMyPayrollNotes, acknowledgePayrollNote, type PayrollNote } from "@/lib/supabase/payrollNotes";
 import { MyPayDetails } from "@/components/MyPayDetails";
 import { getProfileExpenses, deleteExpense, reimbursementTypeLabel, type ExpenseRow } from "@/lib/supabase/expenses";
@@ -1256,12 +1257,8 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     mealMinutes: number | null;
   } | null>(null);
 
-  // Build the day-by-day duty breakdown shown on the payslip: fetch real
-  // attendance for the selected payslip's exact pay period and apply the
-  // hourly rate effective on each date. The run's stored rate is only a
-  // fallback when no salary-history entry covers that date.
-  // Fixed salary still shows attendance; daily amounts are labeled separately
-  // by the shared template and never replace the saved salary total.
+  // The day-by-day duty breakdown shown on the payslip (lib/myPayslipDocument.ts —
+  // the same builder the mobile app's Stub button uses).
   useEffect(() => {
     if (!payslipModalOpen || !selectedPayslip || !myProfileId) {
       setPayslipDailyRows([]);
@@ -1271,60 +1268,10 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     (async () => {
       setPayslipDailyLoading(true);
       try {
-        const [schedule, salaryHistory] = await Promise.all([
-          uid ? getMyProfileSchedule(uid) : Promise.resolve(null),
-          getSalaryHistory(myProfileId),
-        ]);
-        const rateHistory = payRateHistory(salaryHistory, hasAnyTechnicianPayRole(role, extraRoles));
-        if (!cancelled) setMyScheduleInfo(schedule);
-        const holidays = await getCompanyHolidaysInRange(selectedPayslip.periodStart, selectedPayslip.periodEnd).catch(() => []);
-        const pendingCorrections = await getPendingCorrectionsInRange(selectedPayslip.periodStart, selectedPayslip.periodEnd).catch(() => []);
-        const rows = await getAttendanceForRange(
-          myProfileId,
-          selectedPayslip.periodStart,
-          selectedPayslip.periodEnd,
-          {
-            requiredCheckIn: schedule?.requiredCheckIn,
-            requiredCheckOut: schedule?.requiredCheckOut,
-            workingHours: schedule?.workingHours,
-            mealMinutes: schedule?.mealMinutes,
-            daysOff: schedule?.offDays,
-            holidayDates: holidays.map((h) => h.date),
-            pendingCorrectionDates: pendingCorrections.filter((c) => c.profileId === myProfileId).map((c) => c.workDate),
-          }
-        );
+        const { rows, schedule } = await loadPayslipDailyRows({ profileId: myProfileId, uid, role, extraRoles, payslip: selectedPayslip });
         if (cancelled) return;
-        // Regular vs OT split per Sunday–Saturday WEEK at 40 hours — the same
-        // rule the payslip's gross uses (everyone, PH included, OT at 1.5×,
-        // since 2026-10-22). This used to split each DAY at 8 hours, so the
-        // day rows showed OT the gross didn't have (four 10-hour days: 8 OT
-        // hours in the rows, none in the gross).
-        const split = splitRegularOvertimeWeekly(
-          rows.map((r) => ({ date: r.date, rawHours: r.hoursWorked })),
-          {},
-          8,
-          CSR_WEEKLY_OVERTIME_THRESHOLD
-        );
-        const daily: PayslipDailyRow[] = rows
-          .filter((r) => r.hoursWorked > 0)
-          .map((r) => {
-            const { regular, overtime } = split.get(r.date) ?? { regular: r.hoursWorked, overtime: 0 };
-            const effective = entryEffectiveOn(rateHistory, r.date);
-            const rate = effective
-              ? effective.compensationType === "hourly" ? effective.hourlyRate : 0
-              : selectedPayslip.hourlyRate;
-            return {
-              date: r.date,
-              clockIn: r.clockIn,
-              clockOut: r.clockOut,
-              mealStart: r.mealStart,
-              mealEnd: r.mealEnd,
-              hours: r.hoursWorked,
-              rate,
-              amount: regular * rate + overtime * rate * 1.5,
-            };
-          });
-        setPayslipDailyRows(daily);
+        setMyScheduleInfo(schedule);
+        setPayslipDailyRows(rows);
       } catch (err) {
         console.error("Failed to load payslip daily breakdown:", err);
         if (!cancelled) setPayslipDailyRows([]);
@@ -1335,68 +1282,33 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     return () => { cancelled = true; };
   }, [payslipModalOpen, selectedPayslip, myProfileId, uid, role, extraRoles]);
 
-  const payslipData: EmployeePayslipData | null = selectedPayslip ? (() => {
-    const counts = payslipDailyRows.length;
-    const totalHours = payslipDailyRows.reduce((s, r) => s + r.hours, 0);
-    const average = counts > 0 ? totalHours / counts : 0;
-    const myOffDays = companyProfiles.find((p) => p.id === myProfileId)?.off_days ?? [];
-    const offDays = offDaysInRange(myOffDays, selectedPayslip.periodStart, selectedPayslip.periodEnd);
-    const ptoUsed = ptoDaysInRange(myPtoRequests, selectedPayslip.periodStart, selectedPayslip.periodEnd, false);
-    const sickLeave = ptoDaysInRange(myPtoRequests, selectedPayslip.periodStart, selectedPayslip.periodEnd, true);
-    const workingHoursLabel =
-      myScheduleInfo?.requiredCheckIn && myScheduleInfo?.requiredCheckOut
-        ? `${formatClockTime(myScheduleInfo.requiredCheckIn)} - ${formatClockTime(myScheduleInfo.requiredCheckOut)}`
-        : "—";
-    const breakLabel = myScheduleInfo?.mealMinutes ? `${myScheduleInfo.mealMinutes} mins Break` : "—";
-    // Same US/PH split as AccountingDashboard.tsx's payrollRows: anyone not
-    // assigned to the Philippines branch is treated as US.
-    const isUS = (companyProfiles.find((p) => p.id === myProfileId)?.assigned_branch ?? "") !== "Philippines";
-    return {
-      name: displayName || "Employee",
-      department: ROLE_LABELS[role || ""] || role || "",
-      period: `${selectedPayslip.periodStart} to ${selectedPayslip.periodEnd}`,
-      generatedDate: selectedPayslip.generatedAt ? new Date(selectedPayslip.generatedAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "",
-      dailyRows: payslipDailyRows,
-      grossPay: selectedPayslip.grossPay,
-      netPay: selectedPayslip.netPay,
-      email: email || "—",
-      hireDate: myHireDate || "—",
-      workingHoursLabel,
-      breakLabel,
-      hourlyRate: selectedPayslip.hourlyRate,
-      compensationType: selectedPayslip.compensationType,
-      annualSalary: selectedPayslip.annualSalary,
-      counts,
-      totalHours,
-      average,
-      offDays,
-      ptoUsed,
-      sickLeave,
-      totalDays: offDays + ptoUsed,
-      extraPay: selectedPayslip.extraPay,
-      // Payroll's note for this period (migration 0399) first, then the run line's own note.
-      notes: [noteForPeriod(selectedPayslip.periodStart, selectedPayslip.periodEnd)?.body, selectedPayslip.notes]
-        .filter(Boolean)
-        .map((t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"))
-        .join("\n\n"),
-      adjustments: selectedPayslip.adjustments,
-      isUS,
-    };
-  })() : null;
+  const payslipData: EmployeePayslipData | null = selectedPayslip
+    ? assemblePayslipData({
+        payslip: selectedPayslip,
+        dailyRows: payslipDailyRows,
+        schedule: myScheduleInfo,
+        displayName: displayName || "",
+        email: email || "",
+        role,
+        hireDate: myHireDate,
+        offDays: companyProfiles.find((p) => p.id === myProfileId)?.off_days ?? [],
+        assignedBranch: companyProfiles.find((p) => p.id === myProfileId)?.assigned_branch ?? "",
+        ptoRequests: myPtoRequests,
+        periodNote: noteForPeriod(selectedPayslip.periodStart, selectedPayslip.periodEnd)?.body,
+      })
+    : null;
 
-  const handleDownloadPayslip = () => {
-    if (!iframeRef.current) return;
-    const payslipHtml = iframeRef.current.contentWindow?.document.documentElement.innerHTML;
-    if (!payslipHtml) return;
-
-    const element = document.createElement("a");
-    const file = new Blob([payslipHtml], { type: "text/html" });
-    element.href = URL.createObjectURL(file);
-    element.download = `Payslip-${payslipData?.name || "employee"}-${Date.now()}.html`;
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
-    URL.revokeObjectURL(element.href);
+  const [payslipDownloading, setPayslipDownloading] = useState(false);
+  const handleDownloadPayslip = async () => {
+    if (!payslipData || payslipDownloading) return;
+    setPayslipDownloading(true);
+    try {
+      await downloadPayslipPdf(payslipData);
+    } catch (err) {
+      alert(`Couldn't build the payslip PDF: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setPayslipDownloading(false);
+    }
   };
 
   return (
@@ -2730,11 +2642,12 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
                 Close
               </button>
               <button
-                onClick={handleDownloadPayslip}
-                className="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-semibold transition flex items-center justify-center gap-2"
+                onClick={() => void handleDownloadPayslip()}
+                disabled={payslipDownloading || payslipDailyLoading}
+                className="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded text-sm font-semibold transition flex items-center justify-center gap-2"
               >
                 <Download className="h-4 w-4" />
-                Download
+                {payslipDownloading ? "Preparing PDF…" : "Download PDF"}
               </button>
               <button
                 onClick={() => {

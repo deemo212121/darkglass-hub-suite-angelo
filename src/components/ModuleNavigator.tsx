@@ -27,7 +27,8 @@ import { canAccessSubmodule } from "@/lib/submoduleAccess";
 import { useModuleRoleGateOverrides } from "@/lib/moduleAccess";
 import { ROLE_OPTIONS, isModuleAllowed, isModuleAllowedForTrainee, isModuleAllowedForFrozen, isTechScopedViewer } from "@/lib/roleLabels";
 
-const SUPER_ROLES = new Set(["SUPERADMIN", "SUPERSUPERADMIN"]);
+// Same set auth.tsx lets hold a preview — IT has Super Admin's access, "View as" included.
+const SUPER_ROLES = new Set(["SUPERADMIN", "SUPERSUPERADMIN", "IT"]);
 
 export function ModuleNavigator() {
   const { ready, email, role, extraRoles, isTrainee, isFrozen, realRole, viewAsRole, setViewAsRole } = useAuth();
@@ -113,7 +114,7 @@ export function ModuleNavigator() {
           className={`hidden md:flex h-9 items-center gap-2 rounded-full border px-3.5 ${
             viewAsRole ? "border-violet-400/50 bg-violet-950/85" : "border-[var(--color-panel-border)] bg-[var(--color-panel)]"
           }`}
-          title="Preview module/nav access as another role — Super Admin only"
+          title="Preview module/nav access as another role — Super Admin / IT only"
         >
           <Eye className={`h-4 w-4 shrink-0 ${viewAsRole ? "text-violet-300" : "text-muted-foreground"}`} />
           <select

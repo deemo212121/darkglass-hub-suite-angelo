@@ -11,7 +11,7 @@ import { LOCATIONS } from "@/lib/locations";
 import { WORK_PLAN_DAYS, SLOT_OPTIONS, accessibleLocations, type WorkPlan } from "@/lib/workPlan";
 import { getUserByUsername, getCompanyUsers, type UserAccount } from "@/lib/firebase/users";
 import { getProfileByUsername, getProfileEmployeeInfo, saveProfileEmployeeInfo } from "@/lib/supabase/users";
-import { normalizeRole } from "@/lib/roleLabels";
+import { normalizeRole, isSuperAdminHolder, SUPER_ADMIN_LEVEL_ROLES } from "@/lib/roleLabels";
 import { useAllRoleOptions } from "@/lib/customRoles";
 import { useAuth } from "@/lib/auth";
 import { usePersistedTab } from "@/lib/usePersistedTab";
@@ -491,7 +491,10 @@ function UserDetailsPage() {
   const redirectOnce = useRedirectGuard();
   // Built-in roles plus any company-created custom roles (Accessibility
   // Management's "Add Role" — see src/lib/customRoles.ts).
-  const roleOptions = useAllRoleOptions();
+  const allRoleOptions = useAllRoleOptions();
+  // Only an IT / Super Admin can give or take away IT or Super Admin (the
+  // database refuses anyone else, migration 0450) — not offered to others.
+  const canGrantSuperAdminLevel = isSuperAdminHolder(viewerRole, viewerExtraRoles);
   const hasAccountAccess = canEditAccountDetails(viewerRole, viewerExtraRoles);
   // Only Admin/SuperAdmin may edit a user's email — it's the actual Firebase
   // Auth login credential (landing.tsx's username-login path resolves a
@@ -921,7 +924,8 @@ function UserDetailsPage() {
                         <span className={labelCls}>User Type <span className="normal-case text-[10px] text-slate-500">(tick all that apply — first ticked is primary)</span></span>
                         <RoleMultiSelect
                           values={form.roles}
-                          options={roleOptions}
+                          // A role they already hold stays listed so it shows; only IT / Super Admin can untick it.
+                          options={canGrantSuperAdminLevel ? allRoleOptions : allRoleOptions.filter((o) => !SUPER_ADMIN_LEVEL_ROLES.has(o.value) || form.roles.includes(o.value))}
                           onChange={(next) => {
                             // Keep `role` mirrored as the primary so anywhere
                             // we still read form.role gets the right value.

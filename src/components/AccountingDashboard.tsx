@@ -26,6 +26,7 @@ import {
   Download,
   Mail,
   Send,
+  Eye,
   MapPin,
   Trash2,
   Plus,
@@ -43,6 +44,7 @@ import {
   ExternalLink,
   History,
   Search,
+  Building2,
   Car,
 } from "lucide-react";
 import * as XLSX from "xlsx";
@@ -51,7 +53,7 @@ import { supabase } from "@/lib/supabase/client";
 import { EmployeePayrollDetailModal } from "@/components/EmployeePayrollDetailModal";
 import { getRepairStatuses, type RepairStatus } from "@/lib/supabase/repairStatuses";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
-import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, hasAnyTechnicianPayRole, isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, isCarIqEligible, mileageRateForCarIq, CAR_IQ_MILEAGE_RATE_WITH, CAR_IQ_MILEAGE_RATE_WITHOUT, isTechScopeSubject, isTechScopedViewer } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, normalizeRole, ROLE_LABELS, TECHNICIAN_PAY_ROLES, hasAnyTechnicianPayRole, isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, isCarIqEligible, mileageRateForCarIq, CAR_IQ_MILEAGE_RATE_WITH, CAR_IQ_MILEAGE_RATE_WITHOUT, isTechScopeSubject, isTechScopedViewer, isSuperAdminRole } from "@/lib/roleLabels";
 import { getCompanyCarIqHistory, addCarIqHistoryEntry, updateCarIqHistoryEffectiveDate, carIqEntryEffectiveOn, carIqSwitchDatesInRange, type CarIqHistoryEntry } from "@/lib/supabase/carIqHistory";
 import { getCarIqMileageRateHistory, addCarIqMileageRate, deleteCarIqMileageRate, carIqRatesOn, carIqRateChangeDatesInRange, CAR_IQ_RATE_HISTORY_START, type CarIqMileageRateEntry } from "@/lib/supabase/companySettings";
 import { calcWorkedHours, getMyProfileSchedule, resolveScheduledNetHours, computeMealTimeCredit, computeScheduledDutyHours, getAttendanceForRange, startOfWeekSunday, splitRegularOvertimeWeekly, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
@@ -108,7 +110,8 @@ import { getCompanyEmployeeRequests, updateEmployeeRequestStatus, linkPayrollDis
 import { setTicketOnsiteCheckIn } from "@/lib/supabase/tickets";
 import { TIME_ZONES, type ScheduleTimezone } from "@/lib/serverTime";
 import { perCutoffSalary, getSalaryHistory, mixedPeriodFixedPay, type MixedPeriodFixedPay } from "@/lib/supabase/salary";
-import { stateMinWageOn } from "@/lib/stateMinWage";
+import { STATE_MIN_WAGE_2026, stateMinWageOn } from "@/lib/stateMinWage";
+import { getBranchRates, upsertBranchRate, type BranchRate } from "@/lib/supabase/branchRates";
 import { getPayrollReviewMarks, markPayrollReviewed, clearPayrollReviewMark, type PayrollReviewMark } from "@/lib/supabase/payrollReviewMarks";
 import { cents, centsSummaryTotal, groupCustomPayLines } from "@/lib/payRounding";
 import { getPayrollAdjustmentsForPeriod, payrollAdjustmentsEligible, resolveAdjustmentLines, sumPayrollAdjustments, type PayrollAdjustment } from "@/lib/supabase/payrollAdjustments";
@@ -118,6 +121,7 @@ import { getGmailConnectionStatus, disconnectGmail, sendPayslipEmail, type Gmail
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { listTicketPhotos, hasTicketPhotos, type TicketPhoto } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, blobToBase64 } from "@/lib/pdfCapture";
+import { PayslipPreviewModal } from "@/components/PayslipPreviewModal";
 import { renderPayslipBodyHtml, renderTechActivitySummaryPageHtml, PAYSLIP_STYLES, formatClockTime, offDaysInRange, ptoDaysInRange, type PayslipDailyRow, type EmployeePayslipData } from "@/lib/payslipTemplate";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { NewPromotionsButton } from "@/components/NewPromotionsButton";
@@ -910,7 +914,7 @@ function parseGmailRegionParam(value: string | null): GmailRegion {
   return value === "PH" ? "PH" : "US";
 }
 
-type AccountingDashboardTabId = "traineeMonitoring" | "overview" | "payroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech" | "ticketAttendance" | "ticketTimeDisputes" | "carIq" | "branchCommission" | "reviewedPeriods" | "payrollHistory";
+type AccountingDashboardTabId = "traineeMonitoring" | "overview" | "payroll" | "mileage" | "payrollDisputes" | "reports" | "flashTech" | "ticketAttendance" | "ticketTimeDisputes" | "carIq" | "branchCommission" | "reviewedPeriods" | "payrollHistory" | "branchRates";
 // Shared by the top tab row and the floating left quick-nav so the two
 // never drift out of sync.
 const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; Icon: typeof History }[] = [
@@ -921,6 +925,7 @@ const ACCOUNTING_DASHBOARD_TABS: { id: AccountingDashboardTabId; label: string; 
   { id: "payrollDisputes", label: "Payroll Disputes", Icon: AlertCircle },
   { id: "reports", label: "Reports", Icon: FileText },
   { id: "ticketAttendance", label: "Ticket Attendance", Icon: FileText },
+  { id: "branchRates", label: "Branch Rates", Icon: Building2 },
   { id: "carIq", label: "Car IQ", Icon: Car },
   { id: "branchCommission", label: "Branch Commission", Icon: TrendingUp },
   { id: "ticketTimeDisputes", label: "Ticket Time Disputes", Icon: Clock },
@@ -940,7 +945,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // technician's name opens their Tech Activity Report read-only (the detail
   // step before it saves the Company / State choice on Next, so it's skipped).
   const techScoped = isTechScopedViewer(role, extraRoles, "accounting");
-  const canConnectGmail = String(role || "").toUpperCase() === "ADMIN" || String(role || "").toUpperCase() === "SUPERADMIN";
+  const canConnectGmail = String(role || "").toUpperCase() === "ADMIN" || isSuperAdminRole(role);
   const [myProfileId, setMyProfileId] = useState<string | null>(null);
   // When each account was deactivated (User Management's Activity Log), for
   // the payroll table's Deactivated badge.
@@ -972,7 +977,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   };
   const [persistedTab, setActiveTab] = usePersistedTab<AccountingDashboardTabId>(
     "ahs:accounting-dashboard-active-tab",
-    ["overview", "payroll", "traineeMonitoring", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes", "branchCommission", "reviewedPeriods", "payrollHistory"],
+    ["overview", "payroll", "traineeMonitoring", "mileage", "payrollDisputes", "flashTech", "reports", "ticketAttendance", "ticketTimeDisputes", "branchCommission", "reviewedPeriods", "payrollHistory", "branchRates"],
     "overview",
   );
   const activeTab: AccountingDashboardTabId = techScoped ? "payroll" : persistedTab;
@@ -1031,6 +1036,112 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [activityLogActionFilter, setActivityLogActionFilter] = useState("");
   const [activityLogFrom, setActivityLogFrom] = useState("");
   const [activityLogTo, setActivityLogTo] = useState("");
+
+  // Branch Rates tab — one reference $ rate per row (migration 0245),
+  // seeded from the full STATE_MIN_WAGE_2026 reference table rather than
+  // only states with a saved row yet, so every state shows up even before
+  // Finance has touched it. Lazy-loaded only once the tab is opened.
+  const [branchRatesByName, setBranchRatesByName] = useState<Map<string, BranchRate>>(new Map());
+  const [branchRatesLoading, setBranchRatesLoading] = useState(false);
+  const [branchRatesLoaded, setBranchRatesLoaded] = useState(false);
+  const [branchRateSaving, setBranchRateSaving] = useState<string | null>(null);
+  const [branchRateSearch, setBranchRateSearch] = useState("");
+  useEffect(() => {
+    if (activeTab !== "branchRates" || branchRatesLoaded) return;
+    setBranchRatesLoading(true);
+    getBranchRates()
+      .then((rows) => {
+        setBranchRatesByName(new Map(rows.map((r) => [r.branch, r])));
+        setBranchRatesLoaded(true);
+      })
+      .catch((err) => console.error("Failed to load branch rates:", err))
+      .finally(() => setBranchRatesLoading(false));
+  }, [activeTab, branchRatesLoaded]);
+  const handleBranchRateBlur = async (branch: string, value: string) => {
+    const rate = Number(value.replace(/[^\d.]/g, "")) || 0;
+    if ((branchRatesByName.get(branch)?.rate ?? 0) === rate) return;
+    setBranchRateSaving(branch);
+    try {
+      await upsertBranchRate(branch, rate);
+      setBranchRatesByName((prev) => {
+        const next = new Map(prev);
+        const existing = next.get(branch);
+        next.set(branch, { id: existing?.id ?? branch, branch, rate, updatedAt: new Date().toISOString() });
+        return next;
+      });
+      void logModuleActivity({
+        module: "accounting",
+        actorName: displayName || email || "Admin",
+        action: "branch_rate_saved",
+        targetType: "branch",
+        targetLabel: branch,
+        details: { rate },
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : `Failed to save the rate for ${branch}.`);
+    } finally {
+      setBranchRateSaving(null);
+    }
+  };
+  // Rows are US states (from the state-minimum-wage reference table), not
+  // company branches — despite the tab/table still being called "Branch
+  // Rates" (the `branch_rates` table itself is just a generic label+$rate
+  // store, so a state name works as the "branch" value with no schema
+  // change needed).
+  const branchRateStateNames = STATE_MIN_WAGE_2026.map((s) => s.state);
+  const branchRateFilteredLocations = branchRateSearch.trim()
+    ? branchRateStateNames.filter((s) => s.toLowerCase().includes(branchRateSearch.trim().toLowerCase()))
+    : branchRateStateNames;
+  // "Prefill from State Minimum Wage" state — the derived count and the
+  // handler itself live further down (see suggestedBranchRateByName's own
+  // comment), since they depend on data derived later in this component.
+  const [branchRatePrefilling, setBranchRatePrefilling] = useState(false);
+
+
+  // Suggested rate for Branch Rates' "Prefill from State Minimum Wage"
+  // button — straight from the STATE_MIN_WAGE_2026 reference table. States
+  // whose minimum wage is set by county rather than statewide (rate: null —
+  // New York, Oregon) have no suggestion; Finance enters the correct
+  // county-specific number by hand for those.
+  const suggestedBranchRateByName = new Map<string, number>();
+  for (const { state } of STATE_MIN_WAGE_2026) {
+    const rate = stateMinWageOn(state); // today's rate (Florida: $15 from 2026-09-30)
+    if (rate != null) suggestedBranchRateByName.set(state, rate);
+  }
+  // "Prefill from State Minimum Wage" — fills every state that (a) doesn't
+  // already have a saved rate (never overwrites a value Finance already set,
+  // even $0) and (b) has a numeric rate in the reference table above.
+  // States failing either check are left alone — "skip those data not
+  // available" — rather than guessed at.
+  const branchRatePrefillCount = branchRateStateNames.filter((s) => !branchRatesByName.has(s) && suggestedBranchRateByName.has(s)).length;
+  const handlePrefillBranchRates = async () => {
+    const toFill = branchRateStateNames.filter((s) => !branchRatesByName.has(s) && suggestedBranchRateByName.has(s));
+    if (toFill.length === 0) return;
+    setBranchRatePrefilling(true);
+    try {
+      for (const state of toFill) {
+        const rate = suggestedBranchRateByName.get(state)!;
+        await upsertBranchRate(state, rate);
+        setBranchRatesByName((prev) => {
+          const next = new Map(prev);
+          next.set(state, { id: state, branch: state, rate, updatedAt: new Date().toISOString() });
+          return next;
+        });
+      }
+      void logModuleActivity({
+        module: "accounting",
+        actorName: displayName || email || "Admin",
+        action: "branch_rate_saved",
+        targetType: "branch",
+        targetLabel: `${toFill.length} state${toFill.length === 1 ? "" : "s"} (prefilled from state minimum wage)`,
+        details: { states: toFill },
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to prefill state minimum wage rates.");
+    } finally {
+      setBranchRatePrefilling(false);
+    }
+  };
 
   const pendingPayrollDisputes = payrollDisputes.filter((r) => r.status === "pending");
   // Approved disputes stay visible (not just pending ones) so an accidental
@@ -1398,8 +1509,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [carIqRoleFilter, setCarIqRoleFilter] = useState<Set<string>>(new Set());
   const [carIqBranchFilter, setCarIqBranchFilter] = useState<Set<string>>(new Set());
   const [carIqStatusFilter, setCarIqStatusFilter] = useState<"" | "has" | "no">("");
+  // PH staff are left out like the payroll tech row leaves them out
+  // (getsTechPortion): no PH field technicians, so a technician-tier extra
+  // role there is an access grant (Alyssa Diones: Parts Manager + Branch Manager).
   const carIqEligibleEmployees = employees
-    .filter((emp) => emp.isActive && isCarIqEligible(emp.role, emp.extraRoles))
+    .filter((emp) => emp.isActive && emp.country !== "PH" && isCarIqEligible(emp.role, emp.extraRoles))
     .sort((a, b) => a.full_name.localeCompare(b.full_name));
   const carIqRoleOptions = Array.from(
     new Set(carIqEligibleEmployees.map((emp) => getRoleDepartmentBreakdown(emp.role).roleLabel))
@@ -3708,7 +3822,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // captureHtmlToPdfBlob needs a real browser DOM/canvas, which the Gmail
   // server bridge's runtime doesn't have, so the PDF is built here and
   // handed to the server as base64 to attach as-is.
-  const buildPayslipPdfBase64 = async (row: EmployeePayrollRow): Promise<string> => {
+  const buildPayslipPages = async (row: EmployeePayrollRow): Promise<string[]> => {
     // Attendance is shown for both hourly and fixed-salary employees.
     // The shared template labels fixed daily rows without hourly earnings.
     const dailyRows: PayslipDailyRow[] = await (async () => {
@@ -3845,8 +3959,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         row.techCarryover
       );
       payslipData.hasTechActivityPage = true;
-      const pdfBlob = await captureHtmlPagesToPdfBlob(
-        [
+      return [
           renderPayslipBodyHtml(payslipData),
           renderTechActivitySummaryPageHtml(
             row.employee.full_name,
@@ -3860,13 +3973,35 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               .map((l) => ({ label: l.label, amount: taxLineAmount(l, breakdown.totalPayment) }))
               .filter((t) => t.amount !== 0)
           ),
-        ],
-        PAYSLIP_STYLES
-      );
-      return blobToBase64(pdfBlob);
+      ];
     }
-    const pdfBlob = await captureHtmlToPdfBlob(renderPayslipBodyHtml(payslipData), PAYSLIP_STYLES);
+    return [renderPayslipBodyHtml(payslipData)];
+  };
+
+  /** The PDF Send emails — built from the same pages Preview shows. */
+  const buildPayslipPdfBase64 = async (row: EmployeePayrollRow): Promise<string> => {
+    const pages = await buildPayslipPages(row);
+    const pdfBlob = pages.length > 1 ? await captureHtmlPagesToPdfBlob(pages, PAYSLIP_STYLES) : await captureHtmlToPdfBlob(pages[0], PAYSLIP_STYLES);
     return blobToBase64(pdfBlob);
+  };
+
+  // ── Payslip preview (before Send) ──
+  // Which row is open, and each row's built pages for this period (an Error
+  // when it couldn't be built), so stepping back and forth doesn't rebuild.
+  const [previewRowKey, setPreviewRowKey] = useState<string | null>(null);
+  const [previewPages, setPreviewPages] = useState<Record<string, string[] | Error>>({});
+  const payslipRowKey = (row: EmployeePayrollRow) => `${row.employee.id}|${row.isTechPortion ? "tech" : "office"}|${genStart}|${genEnd}`;
+  const previewBuilding = useRef<Set<string>>(new Set());
+  const loadPreviewPages = (row: EmployeePayrollRow) => {
+    const k = payslipRowKey(row);
+    if (Array.isArray(previewPages[k]) || previewBuilding.current.has(k)) return;
+    previewBuilding.current.add(k);
+    // A failed build is tried again when it's opened again.
+    setPreviewPages((prev) => { if (!(prev[k] instanceof Error)) return prev; const next = { ...prev }; delete next[k]; return next; });
+    buildPayslipPages(row)
+      .then((pages) => setPreviewPages((p) => ({ ...p, [k]: pages })))
+      .catch((e) => setPreviewPages((p) => ({ ...p, [k]: e instanceof Error ? e : new Error(String(e)) })))
+      .finally(() => previewBuilding.current.delete(k));
   };
 
   // Purely an optional convenience — emails a copy of the payslip PDF to
@@ -4203,6 +4338,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
 
   // Grouped by department, both the department groups and each group's
   // employees sorted alphabetically, for the table's department-separated view.
+  const openPayslipPreview = (row: EmployeePayrollRow) => {
+    setPreviewRowKey(payslipRowKey(row));
+    loadPreviewPages(row);
+  };
+
   const visibleRowsByDepartment = (() => {
     const groups = new Map<string, EmployeePayrollRow[]>();
     for (const row of visibleRows) {
@@ -4217,6 +4357,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         rows: [...rows].sort((a, b) => a.employee.full_name.localeCompare(b.employee.full_name)),
       }));
   })();
+  // Preview steps through the people in the order the table shows them.
+  const previewOrder = visibleRowsByDepartment.flatMap((g) => g.rows);
+  const previewIndex = previewRowKey ? previewOrder.findIndex((r) => payslipRowKey(r) === previewRowKey) : -1;
+  const previewRow = previewIndex >= 0 ? previewOrder[previewIndex] : null;
+  const stepPreview = (delta: number) => {
+    const next = previewOrder[previewIndex + delta];
+    if (!next) return;
+    openPayslipPreview(next);
+    // Build the one after too, so the next step is instant.
+    const after = previewOrder[previewIndex + delta * 2];
+    if (after) loadPreviewPages(after);
+  };
+
 
   // ── Mileage tab ──────────────────────────────────────────────────────────
   // Anyone with TECHNICIAN or TECHNICIAN_MANAGER as their primary role OR as
@@ -5521,7 +5674,17 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                   );
                                 })()}
                               </td>
-                              <td className="px-3 py-2 text-right">
+                              <td className="px-3 py-2 text-right whitespace-nowrap">
+                                {!techScoped && <button
+                                  type="button"
+                                  onClick={() => openPayslipPreview(row)}
+                                  disabled={!genStart || !genEnd}
+                                  title="See the payslip exactly as it would be emailed"
+                                  className="mr-1.5 inline-flex items-center gap-1 px-2.5 py-1.5 bg-indigo-600/80 hover:bg-indigo-500 disabled:opacity-40 text-white rounded text-xs font-medium transition"
+                                >
+                                  <Eye className="h-3 w-3" />
+                                  Preview
+                                </button>}
                                 {!techScoped && <button
                                   type="button"
                                   onClick={() => handleSendPayslip(row)}
@@ -5554,6 +5717,22 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     </tfoot>
                   )}
                 </table>
+                {previewRow && (
+                  <PayslipPreviewModal
+                    name={previewRow.employee.full_name}
+                    subtitle={[(previewRow.isTechPortion ? "Technician" : previewRow.employee.department || ""), previewRow.employee.assigned_branch, `${genStart} to ${genEnd}`].filter(Boolean).join(" · ")}
+                    pages={previewPages[payslipRowKey(previewRow)] ?? null}
+                    index={previewIndex}
+                    total={previewOrder.length}
+                    onPrev={() => stepPreview(-1)}
+                    onNext={() => stepPreview(1)}
+                    onClose={() => setPreviewRowKey(null)}
+                    onSend={() => void handleSendPayslip(previewRow)}
+                    sending={sendingPayslipId === previewRow.employee.id}
+                    fileName={`Payslip_${previewRow.employee.full_name.replace(/[^\w.-]+/g, "_")}_${genStart}_to_${genEnd}.pdf`}
+                    sendDisabledReason={!gmailStatus?.connected ? "Connect Gmail above to send." : previewRow.grossPayUSD <= 0 ? "Nothing to send — gross pay is $0.00." : null}
+                  />
+                )}
             </div>
           </div>
         )}
@@ -6565,6 +6744,117 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             </div>
           </div>
         )}
+
+        {/* ── Branch Rates Tab ─────────────────────────────────────────────── */}
+        {activeTab === "branchRates" && (
+          <div className="panel p-0 overflow-hidden">
+            <div className="px-4 py-4 border-b border-white/10 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="font-semibold text-sm">Branch Rates</h2>
+                <p className="text-[10px] text-muted-foreground mt-0.5">State minimum wage reference (2026) — for Finance's own use, not tied to any payroll calculation.</p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {branchRatesLoading && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
+                <button
+                  type="button"
+                  onClick={() => void handlePrefillBranchRates()}
+                  disabled={branchRatePrefilling || branchRatePrefillCount === 0}
+                  title={
+                    branchRatePrefillCount === 0
+                      ? "No state has an unset rate left to prefill"
+                      : `Fills the ${branchRatePrefillCount} state${branchRatePrefillCount === 1 ? "" : "s"} with no rate saved yet from the state minimum wage table — states set by county (New York, Oregon) are left as-is`
+                  }
+                  className="text-xs px-3 py-1.5 rounded-md border border-white/10 text-slate-300 hover:text-white hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+                >
+                  {branchRatePrefilling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                  Prefill from State Minimum Wage{branchRatePrefillCount > 0 ? ` (${branchRatePrefillCount})` : ""}
+                </button>
+              </div>
+            </div>
+
+            <div className="px-4 py-3 border-b border-white/10 bg-white/5 flex items-center gap-3">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                <input
+                  type="text"
+                  value={branchRateSearch}
+                  onChange={(e) => setBranchRateSearch(e.target.value)}
+                  placeholder="State…"
+                  className="glass-input text-sm py-1.5 pl-8 pr-3 rounded-md w-56"
+                />
+              </div>
+              <span className="ml-auto text-[10px] text-muted-foreground">{branchRateFilteredLocations.length} state{branchRateFilteredLocations.length === 1 ? "" : "s"}</span>
+            </div>
+
+            {error && (
+              <p className="mx-4 mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{error}</p>
+            )}
+
+            <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0">
+                  <tr className="border-b border-white/10 bg-slate-900">
+                    <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">State</th>
+                    <th className="px-4 py-3 text-right text-xs text-muted-foreground uppercase">Rate</th>
+                    <th className="px-4 py-3 text-left text-xs text-muted-foreground uppercase">Last Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {branchRateFilteredLocations.length === 0 ? (
+                    <tr><td colSpan={3} className="px-4 py-8 text-center text-muted-foreground text-sm">No state matches "{branchRateSearch}".</td></tr>
+                  ) : (
+                    branchRateFilteredLocations.map((state) => {
+                      const existing = branchRatesByName.get(state);
+                      const saving = branchRateSaving === state;
+                      const suggested = suggestedBranchRateByName.get(state);
+                      // The two states set by county rather than a single
+                      // statewide number (rate: null in STATE_MIN_WAGE_2026)
+                      // have no numeric suggestion — Finance has to look up
+                      // and enter the right county's figure by hand.
+                      const isCountyBased = !suggested && !existing;
+                      return (
+                        <tr key={state} className="border-b border-white/5 hover:bg-white/5">
+                          <td className="px-4 py-3 font-medium whitespace-nowrap">{state}</td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />}
+                              <span className="text-muted-foreground">$</span>
+                              <input
+                                // Keyed on the saved rate (not just state) so
+                                // this uncontrolled input remounts and picks
+                                // up the new defaultValue after "Prefill from
+                                // State Minimum Wage" updates it out from
+                                // under an already-mounted row.
+                                key={`${state}:${existing?.rate ?? 0}`}
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                defaultValue={existing?.rate ?? 0}
+                                onBlur={(e) => void handleBranchRateBlur(state, e.target.value)}
+                                disabled={saving}
+                                className="glass-input text-sm py-1 px-2 rounded-md w-28 text-right disabled:opacity-50"
+                              />
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
+                            {existing?.updatedAt
+                              ? new Date(existing.updatedAt).toLocaleString()
+                              : suggested
+                              ? <span className="text-slate-500 italic">Suggested: ${suggested.toFixed(2)}</span>
+                              : isCountyBased
+                              ? <span className="text-slate-600 italic">Based on county — enter manually</span>
+                              : <span className="text-slate-600 italic">No rate on file</span>}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
 
         {/* ── Car IQ Tab ───────────────────────────────────────────────────── */}
         {activeTab === "carIq" && (

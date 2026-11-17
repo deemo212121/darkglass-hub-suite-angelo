@@ -18,6 +18,7 @@ import type { Ticket } from "@/lib/ticketData";
 import { isClaimablePart } from "@/lib/servicePowerClaimPayload";
 import { isShortPaid } from "@/lib/spClaimLookup";
 import { syncServicePowerClaimStatus } from "@/lib/servicePowerClaimStatus";
+import { canDataCloseShortPaid, shortPaidDataCloseBlocked } from "@/lib/shortPaidDataClose";
 import { claimToColor, OTHER_CLAIM_TO, type ClaimToColor } from "@/lib/claimToColors";
 import { PreClaimModal } from "@/components/PreClaimModal";
 
@@ -37,6 +38,8 @@ const CLAIMED_STATUSES = new Set(["cl-claimed", "cl-data-closed", "cl-data close
 const CLOSED_STATUSES = new Set(["cl-data-closed", "cl-data closed"]);
 /** Statuses the bulk "Change" can set (the claim-stage ones). */
 const CHANGE_TO_STATUSES = ["CL-Claimed", "CL-Data-Closed", "CL-Ready to Complete", "CL-Need Cancel"];
+/** What Accounting can move a short-paid ticket to, from its AHS Status cell. */
+const SHORT_PAID_MOVE_TO = ["CL-Data-Closed", "CL-Need Cancel"];
 const PAGE_SIZE_OPTIONS = [50, 100, 200] as const;
 const NOT_CHECKED = "Not checked yet";
 
@@ -159,6 +162,9 @@ const claimToFor = (t: Ticket) =>
 const hasFees = (d: TicketClaimDetails | undefined) =>
   !!d && d.laborFee + d.otherFee + d.shippingFee + d.extraMileFee > 0; // mileageFee is miles, not money
 
+/** ServicePower paid a different total than was requested (short- or over-paid); a claim missing either side can't be compared. */
+const paidDiffersFromRequested = (r: ClaimRow) => !!r.req && !!r.paid && Math.abs(r.paid.total - r.req.total) >= 0.005;
+
 function spStatusChip(code: string, shortPaid: boolean): string {
   if (shortPaid) return "bg-red-500/20 text-red-300 border border-red-500/30";
   if (code === "P") return "bg-green-500/20 text-green-300 border border-green-500/30";
@@ -244,6 +250,7 @@ export function ClaimList({ mod, sub }: Props) {
   const [dayRange, setDayRange] = useState("90 days");
   const [includeUnclaimed, setIncludeUnclaimed] = useState(false);
   const [includeClosed, setIncludeClosed] = useState(true);
+  const [mismatchOnly, setMismatchOnly] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [openedTicketNos, setOpenedTicketNos] = useState<Set<string>>(() => loadOpenedTickets());
@@ -335,6 +342,7 @@ export function ClaimList({ mod, sub }: Props) {
       if (tq && !r.ticket.ticketNo.toLowerCase().includes(tq)) return false;
       if (cq && !r.claimNo.toLowerCase().includes(cq)) return false;
       if (claimStatus && r.spStatus !== claimStatus) return false;
+      if (mismatchOnly && !paidDiffersFromRequested(r)) return false;
       // A ticket with no date of that kind isn't dropped by the date range
       // (a claim with no payment yet still shows under "Payment Date").
       const day = dateOf(r);
@@ -346,7 +354,7 @@ export function ClaimList({ mod, sub }: Props) {
       }
       return true;
     });
-  }, [rows, includeUnclaimed, includeClosed, location, accounts, ticketNo, claimNo, claimStatus, dateType, startDate, endDate, search]);
+  }, [rows, includeUnclaimed, includeClosed, mismatchOnly, location, accounts, ticketNo, claimNo, claimStatus, dateType, startDate, endDate, search]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const colFiltered = useMemo(() => baseFiltered.filter((r) => matchesCols(r)), [baseFiltered, colFilters]);
   const filtered = useMemo(
@@ -385,7 +393,7 @@ export function ClaimList({ mod, sub }: Props) {
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
   const pagedRows = useMemo(() => filtered.slice((safePage - 1) * pageSize, safePage * pageSize), [filtered, safePage, pageSize]);
-  useEffect(() => { setCurrentPage(1); }, [includeUnclaimed, includeClosed, location, accounts, ticketNo, claimNo, claimStatus, dateType, startDate, endDate, search, colFilters, claimToPicked]);
+  useEffect(() => { setCurrentPage(1); }, [includeUnclaimed, includeClosed, mismatchOnly, location, accounts, ticketNo, claimNo, claimStatus, dateType, startDate, endDate, search, colFilters, claimToPicked]);
 
   const toggleRow = (tid: string) => setSelectedRows((prev) => { const n = new Set(prev); n.has(tid) ? n.delete(tid) : n.add(tid); return n; });
   const allChecked = filtered.length > 0 && filtered.every((r) => selectedRows.has(r.tid));
@@ -400,6 +408,24 @@ export function ClaimList({ mod, sub }: Props) {
   const applySync = (r: ClaimRow, res: Awaited<ReturnType<typeof syncServicePowerClaimStatus>>) => {
     if (res.details) setDetails((prev) => new Map(prev).set(r.tid, res.details!));
     if (res.closed) setTickets((prev) => prev.map((t) => (t.ticketNo === r.ticket.ticketNo ? { ...t, status: "CL-Data-Closed" } : t)));
+  };
+
+  // A short-paid claim stays CL-Claimed until Accounting data-closes it or flags it CL-Need Cancel here (shortPaidDataClose.ts).
+  const canCloseShortPaid = canDataCloseShortPaid(auth.role, auth.extraRoles);
+  const [closingTid, setClosingTid] = useState<string | null>(null);
+  const setShortPaidStatus = async (r: ClaimRow, next: string) => {
+    if (!next || !window.confirm(`${r.ticket.ticketNo}: ServicePower paid ${money(r.paid?.total ?? 0)} of ${money(r.req?.total ?? 0)} requested.\n\nMove it to ${next}?`)) return;
+    setClosingTid(r.tid);
+    setMessage(null);
+    try {
+      await updateTicketStatus(r.ticket.ticketNo, next);
+      setTickets((prev) => prev.map((t) => (t.ticketNo === r.ticket.ticketNo ? { ...t, status: next } : t)));
+      setMessage({ type: "success", text: `${r.ticket.ticketNo} moved to ${next}.` });
+    } catch (err) {
+      setMessage({ type: "error", text: `${r.ticket.ticketNo}: couldn't move it to ${next} — ${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      setClosingTid(null);
+    }
   };
 
   const syncOne = async (r: ClaimRow) => {
@@ -448,11 +474,28 @@ export function ClaimList({ mod, sub }: Props) {
       setMessage({ type: "error", text: picked.length === 0 ? "Tick the tickets to change first." : "Pick the status to change them to." });
       return;
     }
-    if (!window.confirm(`Change ${picked.length} ticket${picked.length === 1 ? "" : "s"} to ${changeToStatus}?`)) return;
+    // A short-paid claim stays CL-Claimed unless Accounting closes it (shortPaidDataClose.ts).
+    let shortPaid: Set<string>;
+    try {
+      const notYetClosed = picked.filter((r) => !CLOSED_STATUSES.has(r.status.toLowerCase())).map((r) => r.ticket.ticketNo);
+      shortPaid = await shortPaidDataCloseBlocked(changeToStatus, notYetClosed, auth.role, auth.extraRoles);
+    } catch (err) {
+      setMessage({ type: "error", text: `Couldn't check for short-paid claims: ${err instanceof Error ? err.message : String(err)}` });
+      return;
+    }
+    const allowed = picked.filter((r) => !shortPaid.has(r.ticket.ticketNo));
+    const skippedNote = shortPaid.size
+      ? `${shortPaid.size} short-paid (${Array.from(shortPaid).join(", ")}) — only Accounting can move a short-paid claim to ${changeToStatus}.`
+      : "";
+    if (allowed.length === 0) {
+      setMessage({ type: "error", text: skippedNote });
+      return;
+    }
+    if (!window.confirm(`Change ${allowed.length} ticket${allowed.length === 1 ? "" : "s"} to ${changeToStatus}?${skippedNote ? `\n\nSkipping ${skippedNote}` : ""}`)) return;
     setChanging(true);
     let done = 0;
     const failedNos: string[] = [];
-    for (const r of picked) {
+    for (const r of allowed) {
       try {
         await updateTicketStatus(r.ticket.ticketNo, changeToStatus);
         done++;
@@ -460,11 +503,14 @@ export function ClaimList({ mod, sub }: Props) {
         failedNos.push(r.ticket.ticketNo);
       }
     }
-    const changed = new Set(picked.map((r) => r.ticket.ticketNo).filter((no) => !failedNos.includes(no)));
+    const changed = new Set(allowed.map((r) => r.ticket.ticketNo).filter((no) => !failedNos.includes(no)));
     setTickets((prev) => prev.map((t) => (changed.has(t.ticketNo) ? { ...t, status: changeToStatus } : t)));
     setSelectedRows(new Set());
     setChanging(false);
-    setMessage({ type: failedNos.length ? "error" : "success", text: `${done} changed to ${changeToStatus}${failedNos.length ? `; couldn't change ${failedNos.join(", ")}` : ""}.` });
+    setMessage({
+      type: failedNos.length || shortPaid.size ? "error" : "success",
+      text: `${done} changed to ${changeToStatus}${failedNos.length ? `; couldn't change ${failedNos.join(", ")}` : ""}.${skippedNote ? ` Skipped ${skippedNote}` : ""}`,
+    });
   };
 
   const saveClaimNote = async (r: ClaimRow, value: string) => {
@@ -579,6 +625,7 @@ export function ClaimList({ mod, sub }: Props) {
               <div className="flex items-center gap-4">
                 <label className="flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" checked={includeClosed} onChange={e=>setIncludeClosed(e.target.checked)} className="accent-blue-500"/>Include closed (CL-Data-Closed)</label>
                 <label className="flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" checked={includeUnclaimed} onChange={e=>setIncludeUnclaimed(e.target.checked)} className="accent-blue-500"/>Include un-claimed tickets</label>
+                <label className="flex items-center gap-1.5 text-sm cursor-pointer" title="Only claims ServicePower paid a different amount than was requested (short-paid or over-paid)"><input type="checkbox" checked={mismatchOnly} onChange={e=>setMismatchOnly(e.target.checked)} className="accent-blue-500"/>Paid ≠ Requested</label>
               </div>
             </div>
           </div>
@@ -751,7 +798,27 @@ export function ClaimList({ mod, sub }: Props) {
                   <td className="px-2 py-1.5">
                     <span className={`px-1.5 py-0.5 rounded text-xs font-medium whitespace-nowrap ${spStatusChip(r.spCode, r.shortPaid)}`}>{r.shortPaid ? `Short-paid · ${r.spStatus}` : r.spStatus}</span>
                   </td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-muted-foreground">{r.status}</td>
+                  <td className="px-2 py-1.5 whitespace-nowrap text-muted-foreground">
+                    {r.status}
+                    {r.shortPaid && !CLOSED_STATUSES.has(r.status.toLowerCase()) && (canCloseShortPaid ? (
+                      <span className="ml-2 inline-flex items-center gap-1">
+                        {closingTid === r.tid && <Loader2 className="h-3 w-3 animate-spin"/>}
+                        <select
+                          value=""
+                          onChange={(e) => void setShortPaidStatus(r, e.target.value)}
+                          disabled={!!closingTid}
+                          aria-label={`Short-paid ${r.ticket.ticketNo}: change AHS status`}
+                          title="Short-paid: Accounting decides — data-close it or flag it for cancel"
+                          className="rounded border border-red-500/40 bg-red-500/10 px-1 py-0.5 text-[11px] font-medium text-red-200 [color-scheme:dark] focus:outline-none disabled:opacity-40"
+                        >
+                          <option value="" className="bg-slate-900 text-slate-400">Move to…</option>
+                          {SHORT_PAID_MOVE_TO.filter((s) => s !== r.status).map((s) => <option key={s} value={s} className="bg-slate-900 text-slate-100">{s}</option>)}
+                        </select>
+                      </span>
+                    ) : (
+                      <span className="ml-2 text-[11px] text-slate-500" title="Short-paid: only Accounting can move it to CL-Data-Closed">Accounting closes</span>
+                    ))}
+                  </td>
                   <td className="px-2 py-1.5 text-muted-foreground whitespace-nowrap">{usDay(r.paymentDate) || "—"}</td>
                   <td className="px-2 py-1.5 max-w-[160px] truncate text-muted-foreground" title={r.internalNote || undefined}>{r.internalNote || "—"}</td>
                   <td className="px-2 py-1.5 max-w-[160px] truncate text-muted-foreground" title={r.triageNote || undefined}>{r.triageNote || "—"}</td>

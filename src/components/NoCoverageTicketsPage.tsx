@@ -38,6 +38,7 @@ import { formatISODate, todayISO } from "@/lib/localDate";
 import { ACTIVE_LOCATIONS, normalizeLocationName } from "@/lib/locations";
 import { CANCEL_REASONS } from "@/lib/operationsBranchMetrics";
 import { canSetCancelledStatus } from "@/lib/roleLabels";
+import { SHORT_PAID_DATA_CLOSE_MESSAGE, shortPaidDataCloseBlocked } from "@/lib/shortPaidDataClose";
 import { useOnClCancelList } from "@/lib/supabase/clCancelPeople";
 import { canAccessSubmodule } from "@/lib/submoduleAccess";
 
@@ -224,6 +225,11 @@ export function NoCoverageTicketsPage({ mod }: { mod: ModuleDef; sub: SubModuleD
     }
     setStatusBusy(t.ticketNo);
     try {
+      // A short-paid claim stays CL-Claimed unless Accounting closes it (shortPaidDataClose.ts).
+      if ((await shortPaidDataCloseBlocked(next, [t.ticketNo], role, extraRoles)).size) {
+        alert(SHORT_PAID_DATA_CLOSE_MESSAGE);
+        return;
+      }
       await updateTicketStatus(t.ticketNo, next);
       setStatus(t.ticketNo, next);
       window.dispatchEvent(new CustomEvent("ticket-data-updated", { detail: { ticketNo: t.ticketNo } }));

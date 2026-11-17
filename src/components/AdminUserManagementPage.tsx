@@ -11,7 +11,7 @@ import { useAuth } from "@/lib/auth";
 import { createCompanyUser, getCompanyUsers, getMyProfileId, updateCompanyUser, setMustChangePassword, getUserStatusChanges, recordAccountStatusChange, saveProfileEmployeeInfo, type AccountStatusChange, type ProfileRow } from "@/lib/supabase/users";
 import { isPhilippinesBranch, notifyHrOfNewPhTrainee } from "@/lib/supabase/hrCandidates";
 import { usePersistedTab } from "@/lib/usePersistedTab";
-import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
+import { ROLE_LABELS, normalizeRole, isSuperAdminRole, isSuperAdminHolder, SUPER_ADMIN_LEVEL_ROLES } from "@/lib/roleLabels";
 import { useAllRoleOptions } from "@/lib/customRoles";
 import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
@@ -769,7 +769,14 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   // immediately usable as a new user's primary role here too. Users can
   // tick multiple — the first ticked value becomes the primary `role`
   // (used by RLS / legacy access checks); the rest go into `extra_roles`.
-  const userTypes = useAllRoleOptions();
+  // IT and Super Admin are only offered to an IT / Super Admin — the database
+  // refuses anyone else giving them out (migration 0450).
+  const allUserTypes = useAllRoleOptions();
+  const canGrantSuperAdminLevel = isSuperAdminHolder(auth.role, auth.extraRoles);
+  const userTypes = useMemo(
+    () => (canGrantSuperAdminLevel ? allUserTypes : allUserTypes.filter((o) => !SUPER_ADMIN_LEVEL_ROLES.has(o.value))),
+    [allUserTypes, canGrantSuperAdminLevel],
+  );
   const [viewMode, setViewMode] = usePersistedTab<ViewMode>("ahs:admin-user-management-view-mode", ["list", "hierarchy"], "list");
   const [search, setSearch] = useState("");
   // Per-column funnel filters: { fieldName: Set<allowed values> }
@@ -807,7 +814,7 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
   // just disabled) for everyone else, and enforced server-side too by
   // set_company_weekly_password_reset so it can't be flipped by a raw
   // request from someone who isn't SUPERADMIN either.
-  const canManagePasswordResetSetting = normalizeRole(auth.role) === "SUPERADMIN";
+  const canManagePasswordResetSetting = isSuperAdminRole(auth.role);
   const [weeklyPasswordResetEnabled, setWeeklyPasswordResetEnabledState] = useState(true);
   const [savingPasswordResetSetting, setSavingPasswordResetSetting] = useState(false);
   useEffect(() => {

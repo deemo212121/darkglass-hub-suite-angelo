@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { onAuthStateChanged, signInWithCustomToken, type User as FirebaseUser } from "firebase/auth";
 import { auth, isFirebaseReady } from "./firebase/config";
 import { getUserAccount, updateLastLogin } from "./firebase/users";
@@ -8,6 +8,7 @@ import { getProfileForLogin, touchLastLogin, touchPresenceSeen, touchPresenceAct
 import { setUserScheduleTimezone } from "./localDate";
 import { getSupabaseCompanyLoginAlias } from "./supabase/companies";
 import { subscribeTableChanges } from "./supabase/realtime";
+import { extraRolesWithIncluded } from "./roleLabels";
 
 // One active session per account (migration 0124) — see checkAndHandleSession below.
 const CLAIMED_SESSION_KEY = "ahs:deviceSessionId";
@@ -15,7 +16,8 @@ const CLAIMED_SESSION_KEY = "ahs:deviceSessionId";
 // Tab-scoped (sessionStorage, not localStorage) so it never quietly survives
 // into a different login on the same device.
 const VIEW_AS_ROLE_KEY = "ahs:viewAsRole";
-const SUPER_ROLES = new Set(["SUPERADMIN", "SUPERSUPERADMIN"]);
+// IT has Super Admin's access (roleLabels.ts's ROLE_INCLUDES), "View as" included.
+const SUPER_ROLES = new Set(["SUPERADMIN", "SUPERSUPERADMIN", "IT"]);
 const NO_EXTRA_ROLES: string[] = [];
 
 // Startup/auth-flow tracing — genuinely useful when debugging a real login
@@ -107,7 +109,7 @@ type AuthState = {
    *  actually gain access, only to see what a role's UI looks like. */
   viewAsRole: string | null;
   /** Sets/clears the "view as" preview. No-op (and clears any stale stored
-   *  value) unless `realRole` is SUPERADMIN/SUPERSUPERADMIN. */
+   *  value) unless `realRole` is SUPERADMIN/SUPERSUPERADMIN/IT. */
   setViewAsRole: (roleCode: string | null) => void;
   /** Trainee vs Regular (Master List's Employment Status column, migration
    *  0152) — true means this account only sees Employee Self-Service
@@ -879,7 +881,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // is to see that one role's own access, not some blend.
   // A shared empty array, not a fresh [] per render — pages key effects on
   // extraRoles (e.g. User Management reloads on it).
-  const effectiveExtraRoles = effectiveViewAsRole ? NO_EXTRA_ROLES : extraRoles;
+  const viewExtraRoles = effectiveViewAsRole ? NO_EXTRA_ROLES : extraRoles;
+  // IT carries Super Admin: pages checking for "SUPERADMIN" by name see it too.
+  const effectiveExtraRoles = useMemo(() => extraRolesWithIncluded(effectiveRole, viewExtraRoles), [effectiveRole, viewExtraRoles]);
 
   return (
     <AuthContext.Provider value={{
