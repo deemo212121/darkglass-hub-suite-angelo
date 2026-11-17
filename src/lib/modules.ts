@@ -1905,6 +1905,15 @@ const adminMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      // Terms people accept before using the system — drafts, Publish, who it's for, who accepted (migration 0454).
+      slug: "terms-conditions",
+      title: "Terms & Conditions",
+      description: "Write terms as a draft, choose who they're for, publish, and see who accepted.",
+      custom: "terms-conditions" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
       slug: "technician-whereabouts",
       title: "Technician Whereabouts",
       description: "Each technician's current job site, per branch or company-wide.",

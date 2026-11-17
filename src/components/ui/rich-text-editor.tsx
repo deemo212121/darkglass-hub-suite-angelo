@@ -37,9 +37,11 @@ interface RichTextEditorProps {
   value: string;
   onChange: (html: string) => void;
   mergeFields: { name: string }[];
+  /** A long document (Terms & Conditions) — a taller writing area. */
+  tall?: boolean;
 }
 
-export function RichTextEditor({ value, onChange, mergeFields }: RichTextEditorProps) {
+export function RichTextEditor({ value, onChange, mergeFields, tall }: RichTextEditorProps) {
   const [fieldsOpen, setFieldsOpen] = useState(false);
   const editor = useEditor({
     extensions: [
@@ -55,7 +57,7 @@ export function RichTextEditor({ value, onChange, mergeFields }: RichTextEditorP
     content: value || "",
     onUpdate: ({ editor }) => onChange(editor.getHTML()),
     editorProps: {
-      attributes: { class: `${RICH_TEXT_CLASS} min-h-36 max-h-72 overflow-y-auto text-sm text-slate-800 focus:outline-none px-2.5 py-2` },
+      attributes: { class: `${RICH_TEXT_CLASS} ${tall ? "min-h-[22rem] max-h-[60vh]" : "min-h-36 max-h-72"} overflow-y-auto text-sm text-slate-800 focus:outline-none px-2.5 py-2` },
     },
     immediatelyRender: false,
   });

@@ -108,6 +108,7 @@ const TodoListPage = lazy(() => import("@/components/TodoListPage").then((m) => 
 const AdminUserManagementPage = lazy(() => import("@/components/AdminUserManagementPage").then((m) => ({ default: m.AdminUserManagementPage })));
 const AccountManagementPage = lazy(() => import("@/components/AccountManagementPage").then((m) => ({ default: m.AccountManagementPage })));
 const EmailVaultPage = lazy(() => import("@/components/EmailVaultPage").then((m) => ({ default: m.EmailVaultPage })));
+const TermsAdminPage = lazy(() => import("@/components/TermsAdminPage").then((m) => ({ default: m.TermsAdminPage })));
 const LocationManagementPage = lazy(() => import("@/components/LocationManagementPage").then((m) => ({ default: m.LocationManagementPage })));
 const TechnicianWhereaboutsPage = lazy(() => import("@/components/TechnicianWhereaboutsPage").then((m) => ({ default: m.TechnicianWhereaboutsPage })));
 const AddBranchPage = lazy(() => import("@/components/AddBranchPage").then((m) => ({ default: m.AddBranchPage })));
@@ -784,6 +785,8 @@ function SubModule() {
         ? <AccountManagementPage mod={mod} sub={sub} />
         : (sub as any).custom === "email-vault"
         ? <EmailVaultPage mod={mod} sub={sub} />
+        : (sub as any).custom === "terms-conditions"
+        ? <TermsAdminPage mod={mod} sub={sub} />
         : sub.custom === "location-management"
         ? <LocationManagementPage mod={mod} sub={sub} />
         : (sub as any).custom === "technician-whereabouts"
