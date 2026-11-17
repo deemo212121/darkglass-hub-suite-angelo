@@ -14,12 +14,12 @@
  * window itself is TermsGate.tsx.
  */
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import DOMPurify from "dompurify";
 import { toast } from "sonner";
 import {
-  AlertTriangle, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Clock, Download, Eye, FileInput, FileText, Loader2, Pause, Play, Plus, Rocket, Save, Search, Trash2, Users, X,
+  AlertTriangle, ArrowDownToLine, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Clock, Download, Eye, FileInput, FileText, Loader2, Pause, Play, Plus, Rocket, Save, Search, Trash2, Users, X,
 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
@@ -783,19 +783,43 @@ function AcceptedTab({ doc, versions, acceptances, people }: { doc: TermsDocumen
 
 function HistoryTab({ versions, acceptances }: { versions: TermsVersion[]; acceptances: TermsAcceptance[] }) {
   const [open, setOpen] = useState<string | null>(versions[0]?.id ?? null);
+  const [highlight, setHighlight] = useState(true);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const changeAt = useRef(-1);
+  // What each version changed from the one before it (versions are newest first) — undefined for v1.
+  const changesOf = useMemo(
+    () => new Map(versions.map((v, i) => [v.id, versions[i + 1] ? markTermsChanges(DOMPurify.sanitize(versions[i + 1].body), DOMPurify.sanitize(v.body)) : undefined])),
+    [versions],
+  );
+  const nextChange = () => {
+    const marks = Array.from(panelRef.current?.querySelectorAll<HTMLElement>("ins.terms-added, del.terms-removed") ?? []);
+    if (!marks.length) return;
+    marks.forEach((m) => m.classList.remove("terms-change-focus"));
+    changeAt.current = (changeAt.current + 1) % marks.length;
+    marks[changeAt.current].classList.add("terms-change-focus");
+    marks[changeAt.current].scrollIntoView({ behavior: "smooth", block: "center" });
+  };
   if (!versions.length) return <p className="px-6 py-14 text-center text-sm text-slate-400">Nothing published yet.</p>;
   return (
     <div className="divide-y divide-white/5">
-      {versions.map((v) => {
+      {versions.map((v, i) => {
         const isOpen = open === v.id;
         const count = acceptances.filter((a) => a.versionId === v.id).length;
+        const changes = changesOf.get(v.id);
+        const prev = versions[i + 1];
+        const showMarks = highlight && !!changes?.changes;
         return (
           <Fragment key={v.id}>
-            <button type="button" onClick={() => setOpen(isOpen ? null : v.id)} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-white/5">
+            <button type="button" onClick={() => { setOpen(isOpen ? null : v.id); changeAt.current = -1; }} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-white/5">
               {isOpen ? <ChevronDown className="h-4 w-4 text-slate-300" /> : <ChevronRight className="h-4 w-4 text-slate-500" />}
               <span className="rounded bg-slate-700/60 px-1.5 py-0.5 text-xs font-bold text-white">v{v.version}</span>
               <span className="min-w-0 flex-1 truncate text-sm font-semibold text-white">{v.title}</span>
               <span className="hidden text-xs text-slate-400 sm:inline">{audienceText(v.audience, roleName)}</span>
+              {prev && changes !== undefined && (
+                <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300" title={`What changed from v${prev.version}`}>
+                  {changes === null ? `Rewritten from v${prev.version}` : changes.changes ? `${plural(changes.changes, "change")} from v${prev.version}` : `Same text as v${prev.version}`}
+                </span>
+              )}
               {v.version > 1 && (
                 <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${v.requiresReaccept ? "bg-sky-500/15 text-sky-300" : "bg-slate-600/40 text-slate-300"}`}>
                   {v.requiresReaccept ? "Everyone re-accepted" : "Small fix"}
@@ -805,7 +829,29 @@ function HistoryTab({ versions, acceptances }: { versions: TermsVersion[]; accep
               <span className="text-xs text-slate-500">{fmtDate(v.publishedAt)}{v.publishedByName ? ` · ${v.publishedByName}` : ""}</span>
             </button>
             {isOpen && (
-              <div className={`${TERMS_DOC_CLASS} ${TERMS_DOC_PANEL} mx-4 mb-4 max-h-[50vh] overflow-y-auto rounded-md border border-white/10 px-8 py-6`} dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(v.body) }} />
+              <div className="mx-4 mb-4">
+                {prev && !!changes?.changes && (
+                  <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                    <span>
+                      <span className="font-semibold">New in v{v.version}:</span> {plural(changes.changes, "place")} changed from v{prev.version} —{" "}
+                      <ins className="rounded-sm bg-yellow-400/25 px-1 text-yellow-100 no-underline">added</ins> highlighted, <del className="text-red-300">removed</del> struck through.
+                    </span>
+                    <label className="ml-auto inline-flex cursor-pointer items-center gap-1.5">
+                      <input type="checkbox" checked={highlight} onChange={(e) => setHighlight(e.target.checked)} className="h-3.5 w-3.5 accent-amber-500" /> Highlight changes
+                    </label>
+                    {highlight && (
+                      <button type="button" onClick={nextChange} className="inline-flex items-center gap-1 rounded-md bg-amber-500/25 px-2.5 py-1 font-semibold text-amber-50 hover:bg-amber-500/40">
+                        <ArrowDownToLine className="h-3.5 w-3.5" /> Next change
+                      </button>
+                    )}
+                  </div>
+                )}
+                <div
+                  ref={panelRef}
+                  className={`${TERMS_DOC_CLASS} ${TERMS_DOC_PANEL} max-h-[50vh] overflow-y-auto rounded-md border border-white/10 px-8 py-6`}
+                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(showMarks ? changes!.html : v.body) }}
+                />
+              </div>
             )}
           </Fragment>
         );
