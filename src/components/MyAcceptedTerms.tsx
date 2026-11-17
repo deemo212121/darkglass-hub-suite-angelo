@@ -9,7 +9,7 @@ import DOMPurify from "dompurify";
 import { ChevronDown, ChevronRight, FileCheck2 } from "lucide-react";
 import { getMyAcceptedTerms } from "@/lib/supabase/terms";
 import type { TermsAcceptance, TermsVersion } from "@/lib/terms";
-import { RICH_TEXT_CLASS, RichTextStyleTag } from "@/components/ui/rich-text-editor";
+import { TERMS_DOC_CLASS, TERMS_DOC_PANEL, TermsDocStyleTag } from "@/components/TermsDocStyle";
 
 const fmt = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 
@@ -25,7 +25,7 @@ export function MyAcceptedTerms({ profileId }: { profileId: string | null }) {
   if (!rows.length) return null;
   return (
     <section className="panel mt-6">
-      <RichTextStyleTag />
+      <TermsDocStyleTag />
       <h2 className="mb-1 flex items-center gap-2 text-lg font-semibold"><FileCheck2 className="h-5 w-5 text-sky-300" /> Terms &amp; Conditions</h2>
       <p className="mb-3 text-sm text-muted-foreground">What you accepted, and when. Click one to read it.</p>
       <div className="divide-y divide-white/5 rounded-lg border border-white/10">
@@ -40,7 +40,7 @@ export function MyAcceptedTerms({ profileId }: { profileId: string | null }) {
                 <span className="ml-auto text-xs text-muted-foreground">Accepted {fmt(acceptance.acceptedAt)}</span>
               </button>
               {isOpen && (
-                <div className={`${RICH_TEXT_CLASS} mx-3 mb-3 max-h-[50vh] overflow-y-auto rounded-md bg-white px-5 py-4 text-sm text-slate-800`} dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(version.body) }} />
+                <div className={`${TERMS_DOC_CLASS} ${TERMS_DOC_PANEL} mx-3 mb-3 max-h-[50vh] overflow-y-auto rounded-md border border-white/10 px-8 py-6`} dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(version.body) }} />
               )}
             </div>
           );

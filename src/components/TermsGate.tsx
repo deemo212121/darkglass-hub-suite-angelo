@@ -16,8 +16,9 @@ import DOMPurify from "dompurify";
 import { FileCheck2, Loader2, LogOut } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { acceptTerms, getMyPendingTerms } from "@/lib/supabase/terms";
+import { getMyProfileId } from "@/lib/supabase/users";
 import type { PendingTerms } from "@/lib/terms";
-import { RICH_TEXT_CLASS, RichTextStyleTag } from "@/components/ui/rich-text-editor";
+import { TERMS_DOC_CLASS, TERMS_DOC_PANEL, TermsDocStyleTag } from "@/components/TermsDocStyle";
 
 const CHECK_EVERY_MS = 5 * 60 * 1000;
 /** Don't re-check on every focus — at most this often. */
@@ -26,8 +27,14 @@ const FOCUS_GAP_MS = 60 * 1000;
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 
 export function TermsGate({ device = "web" }: { device?: "web" | "mobile" }) {
-  const { uid, ready, logout, mustChangePassword } = useAuth();
+  const { uid, ready, logout, mustChangePassword, displayName, email } = useAuth();
   const [pending, setPending] = useState<PendingTerms[]>([]);
+  /** Shown in "Recorded by the System" (the account/user ID). */
+  const [profileId, setProfileId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!uid || !pending.length || profileId) return;
+    getMyProfileId(uid).then(setProfileId).catch(() => {});
+  }, [uid, pending.length, profileId]);
   const lastCheck = useRef(0);
 
   const check = useCallback(() => {
@@ -59,6 +66,7 @@ export function TermsGate({ device = "web" }: { device?: "web" | "mobile" }) {
       key={current.versionId}
       terms={current}
       step={{ at: 1, of: pending.length }}
+      who={{ name: displayName || "", email: email || "", id: profileId || uid || "" }}
       onAccept={async () => {
         await acceptTerms(current.versionId, device);
         setPending((p) => p.filter((t) => t.versionId !== current.versionId));
@@ -71,11 +79,13 @@ export function TermsGate({ device = "web" }: { device?: "web" | "mobile" }) {
 function TermsWindow({
   terms,
   step,
+  who,
   onAccept,
   onDecline,
 }: {
   terms: PendingTerms;
   step: { at: number; of: number };
+  who: { name: string; email: string; id: string };
   onAccept: () => Promise<void>;
   onDecline: () => void;
 }) {
@@ -109,7 +119,7 @@ function TermsWindow({
 
   return createPortal(
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/85 p-3 backdrop-blur-sm sm:p-6">
-      <RichTextStyleTag />
+      <TermsDocStyleTag />
       <div role="dialog" aria-modal="true" aria-labelledby="terms-title" className="flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-white/10 bg-slate-900 shadow-2xl">
         <div className="border-b border-white/10 px-5 py-4 sm:px-6">
           <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-sky-300">
@@ -121,8 +131,19 @@ function TermsWindow({
           <p className="mt-0.5 text-xs text-slate-400">Version {terms.version} · effective {fmtDate(terms.publishedAt)}</p>
         </div>
 
-        <div ref={scrollRef} onScroll={checkEnd} className="min-h-[12rem] flex-1 overflow-y-auto bg-white px-5 py-5 sm:px-8">
-          <div className={`${RICH_TEXT_CLASS} mx-auto max-w-[68ch] text-[15px] leading-relaxed text-slate-800`} dangerouslySetInnerHTML={{ __html: html }} />
+        <div ref={scrollRef} onScroll={checkEnd} className={`min-h-[12rem] flex-1 overflow-y-auto ${TERMS_DOC_PANEL} px-6 py-7 sm:px-12 sm:py-9`}>
+          <div className={`${TERMS_DOC_CLASS} mx-auto max-w-[72ch]`} dangerouslySetInnerHTML={{ __html: html }} />
+          {/* What the System records on accepting — the real values, not placeholders. */}
+          <div className="mx-auto mt-8 max-w-[72ch] terms-info rounded-lg px-5 py-4 text-[13px]">
+            <div className="mb-2 terms-info-title text-[11px] font-bold uppercase tracking-wider">User information (recorded by the System)</div>
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1">
+              <dt className="font-semibold text-slate-100">Full Name</dt><dd className="truncate">{who.name || "—"}</dd>
+              <dt className="font-semibold text-slate-100">Company Email</dt><dd className="truncate">{who.email || "—"}</dd>
+              <dt className="font-semibold text-slate-100">Account / User ID</dt><dd className="truncate font-mono text-[12px]">{who.id || "—"}</dd>
+              <dt className="font-semibold text-slate-100">Acceptance Date and Time</dt><dd>Recorded when you press I agree</dd>
+              <dt className="font-semibold text-slate-100">Agreement Version</dt><dd>Version {terms.version}</dd>
+            </dl>
+          </div>
         </div>
 
         <div className="space-y-3 border-t border-white/10 px-5 py-4 sm:px-6">
@@ -135,7 +156,7 @@ function TermsWindow({
               onChange={(e) => setAgreed(e.target.checked)}
               className="mt-0.5 h-4 w-4 accent-sky-500"
             />
-            I have read and agree to the {terms.title}.
+            I have read, understood, and agree to the {terms.title}.
           </label>
           {error && <p className="text-xs text-red-300">{error}</p>}
           {confirmDecline ? (

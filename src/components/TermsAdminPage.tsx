@@ -19,13 +19,15 @@ import { useNavigate } from "@tanstack/react-router";
 import DOMPurify from "dompurify";
 import { toast } from "sonner";
 import {
-  CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Clock, Download, Eye, FileText, Loader2, Pause, Play, Plus, Rocket, Save, Search, Trash2, Users, X,
+  CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Clock, Download, Eye, FileInput, FileText, Loader2, Pause, Play, Plus, Rocket, Save, Search, Trash2, Users, X,
 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { AppModal } from "@/components/ui-kit/AppModal";
-import { RichTextEditor, RichTextStyleTag, RICH_TEXT_CLASS } from "@/components/ui/rich-text-editor";
+import { RichTextEditor } from "@/components/ui/rich-text-editor";
+import { TERMS_DOC_CLASS, TERMS_DOC_PANEL, TermsDocStyleTag } from "@/components/TermsDocStyle";
+import { AHS_STANDARD_TERMS } from "@/lib/termsTemplates";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
@@ -127,7 +129,7 @@ export function TermsAdminPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     if (creating) return;
     setCreating(true);
     try {
-      const doc = await createTermsDocument("New Terms & Conditions");
+      const doc = await createTermsDocument("New Pop up Form");
       await load();
       setSelectedId(doc.id);
       setTab("draft");
@@ -140,7 +142,7 @@ export function TermsAdminPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
 
   const save = async (quiet = false): Promise<boolean> => {
     if (!selected || !draft) return false;
-    if (!draft.title.trim()) { toast.error("Give the terms a title."); return false; }
+    if (!draft.title.trim()) { toast.error("Give the form a title."); return false; }
     setSaving(true);
     try {
       await saveTermsDraft(selected.id, draft);
@@ -183,7 +185,7 @@ export function TermsAdminPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
     return (
       <main className="flex-1 w-full px-3 py-8 sm:px-5">
         <button type="button" onClick={goBack} className="btn mb-6"><ChevronLeft className="h-4 w-4" /> {mod.label}</button>
-        <p className="text-slate-400">Only Admin, Super Admin and HR can open Terms & Conditions.</p>
+        <p className="text-slate-400">Only Admin, Super Admin and HR can open Pop up Forms.</p>
       </main>
     );
   }
@@ -193,13 +195,13 @@ export function TermsAdminPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
 
   return (
     <main className="flex-1 w-full px-3 py-6 sm:px-5">
-      <RichTextStyleTag />
+      <TermsDocStyleTag />
       <div className="mb-5 flex flex-wrap items-start gap-3">
         <button type="button" onClick={goBack} className="btn hover:bg-white/15"><ChevronLeft className="h-4 w-4" /> {mod.label}</button>
         <div className="min-w-0 flex-1">
           <h1 className="text-3xl font-display font-bold tracking-tight">{sub.title}</h1>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Write terms as a draft — nobody sees it until you press <b>Publish</b>. Then everyone it's for gets a window to accept on their next sign-in,
+            Forms that pop up for people to read and accept, like the Terms &amp; Conditions. Write one as a draft — nobody sees it until you press <b>Publish</b>. Then everyone it's for gets it on their next sign-in,
             or within 5 minutes if they're already signed in. Each person accepts once per version.{!canEdit && " You can look; only Admin and Super Admin can edit and publish."}
           </p>
         </div>
@@ -212,13 +214,13 @@ export function TermsAdminPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         <aside className="space-y-2">
           {canEdit && (
             <button type="button" onClick={() => void createNew()} disabled={creating} className="btn btn-primary w-full justify-center">
-              {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} New terms
+              {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} New pop up form
             </button>
           )}
           {docs === null ? (
             <p className="px-2 py-6 text-center text-sm text-slate-400"><Loader2 className="mr-1 inline h-4 w-4 animate-spin" /> Loading…</p>
           ) : !docs.length ? (
-            <p className="rounded-lg border border-dashed border-white/15 px-4 py-6 text-center text-sm text-slate-400">No terms yet.{canEdit && " Press New terms to write the first draft."}</p>
+            <p className="rounded-lg border border-dashed border-white/15 px-4 py-6 text-center text-sm text-slate-400">No pop up forms yet.{canEdit && " Press New pop up form to write the first draft."}</p>
           ) : (
             docs.map((d) => {
               const v = latestOf(d.id);
@@ -259,7 +261,7 @@ export function TermsAdminPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
         {/* ---- the selected set ---- */}
         <section className="min-w-0 rounded-xl border border-white/10 bg-slate-900/40">
           {!selected || !draft ? (
-            <p className="px-6 py-16 text-center text-sm text-slate-400">Pick a set of terms on the left.</p>
+            <p className="px-6 py-16 text-center text-sm text-slate-400">Pick a form on the left.</p>
           ) : (
             <>
               <div className="flex flex-wrap items-center gap-1 border-b border-white/10 px-4 pt-3">
@@ -306,11 +308,27 @@ export function TermsAdminPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
                   />
 
                   <div>
-                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">Terms</label>
+                    <div className="mb-1 flex items-center gap-2">
+                      <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">Text</label>
+                      {canEdit && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!bodyIsEmpty(draft.body) && !window.confirm("Replace the text in this draft with the AHS standard terms?")) return;
+                            const keepTitle = draft.title.trim() && !["New Terms & Conditions", "New Pop up Form"].includes(draft.title.trim());
+                            setDraft({ ...draft, title: keepTitle ? draft.title : AHS_STANDARD_TERMS.title, body: AHS_STANDARD_TERMS.html });
+                            toast.success("AHS standard terms inserted — review, then Save draft. Nothing is live until you publish.");
+                          }}
+                          className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-sky-500/15 px-2.5 py-1 text-xs font-semibold text-sky-200 hover:bg-sky-500/25"
+                        >
+                          <FileInput className="h-3.5 w-3.5" /> Insert AHS standard terms
+                        </button>
+                      )}
+                    </div>
                     {canEdit ? (
-                      <RichTextEditor value={draft.body} onChange={(body) => setDraft((d) => (d ? { ...d, body } : d))} mergeFields={[]} tall />
+                      <RichTextEditor value={draft.body} onChange={(body) => setDraft((d) => (d ? { ...d, body } : d))} mergeFields={[]} tall darkClass={TERMS_DOC_CLASS} />
                     ) : (
-                      <div className={`${RICH_TEXT_CLASS} max-h-[60vh] overflow-y-auto rounded-md bg-white px-4 py-3 text-sm text-slate-800`} dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(draft.body) }} />
+                      <div className={`${TERMS_DOC_CLASS} ${TERMS_DOC_PANEL} max-h-[60vh] overflow-y-auto rounded-md border border-white/10 px-8 py-6`} dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(draft.body) }} />
                     )}
                   </div>
 
@@ -369,9 +387,9 @@ export function TermsAdminPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
               <div className="mt-1 text-lg font-bold text-white">{draft.title || "Untitled"}</div>
               <div className="text-xs text-slate-400">Version {(live?.version ?? 0) + 1} · for {audienceText(draft.audience, roleName)}</div>
             </div>
-            <div className={`${RICH_TEXT_CLASS} max-h-[55vh] overflow-y-auto bg-white px-6 py-5 text-[15px] leading-relaxed text-slate-800`} dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(draft.body) || "<p><i>No text yet.</i></p>" }} />
+            <div className={`${TERMS_DOC_CLASS} ${TERMS_DOC_PANEL} max-h-[55vh] overflow-y-auto px-8 py-7 sm:px-12`} dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(draft.body) || "<p><i>No text yet.</i></p>" }} />
             <div className="flex items-center gap-2 border-t border-white/10 px-5 py-3 text-sm text-slate-400">
-              <input type="checkbox" disabled className="h-4 w-4" /> I have read and agree to the {draft.title || "terms"}.
+              <input type="checkbox" disabled className="h-4 w-4" /> I have read, understood, and agree to the {draft.title || "terms"}.
               <span className="ml-auto rounded-lg bg-sky-600/50 px-4 py-1.5 font-semibold text-white">I agree</span>
             </div>
           </div>
@@ -520,7 +538,7 @@ function PublishDialog({
   // People a targeted set can't reach because their profile is missing what it targets.
   const blanks = a.everyone ? [] : people.filter((p) =>
     ((a.departments?.length ?? 0) > 0 && !p.department?.trim()) || ((a.branches?.length ?? 0) > 0 && !p.assigned_branch?.trim()));
-  const problem = !draft.title.trim() ? "Add a title first." : bodyIsEmpty(draft.body) ? "Write the terms first." : audienceIsEmpty(a) ? "Pick who it's for first." : null;
+  const problem = !draft.title.trim() ? "Add a title first." : bodyIsEmpty(draft.body) ? "Write the text first." : audienceIsEmpty(a) ? "Pick who it's for first." : null;
 
   const go = async () => {
     if (problem || busy) return;
@@ -736,7 +754,7 @@ function HistoryTab({ versions, acceptances }: { versions: TermsVersion[]; accep
               <span className="text-xs text-slate-500">{fmtDate(v.publishedAt)}{v.publishedByName ? ` · ${v.publishedByName}` : ""}</span>
             </button>
             {isOpen && (
-              <div className={`${RICH_TEXT_CLASS} mx-4 mb-4 max-h-[50vh] overflow-y-auto rounded-md bg-white px-5 py-4 text-sm text-slate-800`} dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(v.body) }} />
+              <div className={`${TERMS_DOC_CLASS} ${TERMS_DOC_PANEL} mx-4 mb-4 max-h-[50vh] overflow-y-auto rounded-md border border-white/10 px-8 py-6`} dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(v.body) }} />
             )}
           </Fragment>
         );

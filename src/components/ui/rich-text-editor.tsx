@@ -39,9 +39,11 @@ interface RichTextEditorProps {
   mergeFields: { name: string }[];
   /** A long document (Terms & Conditions) — a taller writing area. */
   tall?: boolean;
+  /** Write in the system colours (dark, or light in light mode), using this class for the text (Terms & Conditions: "terms-doc") instead of black-on-white paper. */
+  darkClass?: string;
 }
 
-export function RichTextEditor({ value, onChange, mergeFields, tall }: RichTextEditorProps) {
+export function RichTextEditor({ value, onChange, mergeFields, tall, darkClass }: RichTextEditorProps) {
   const [fieldsOpen, setFieldsOpen] = useState(false);
   const editor = useEditor({
     extensions: [
@@ -57,7 +59,11 @@ export function RichTextEditor({ value, onChange, mergeFields, tall }: RichTextE
     content: value || "",
     onUpdate: ({ editor }) => onChange(editor.getHTML()),
     editorProps: {
-      attributes: { class: `${RICH_TEXT_CLASS} ${tall ? "min-h-[22rem] max-h-[60vh]" : "min-h-36 max-h-72"} overflow-y-auto text-sm text-slate-800 focus:outline-none px-2.5 py-2` },
+      attributes: {
+        class: darkClass
+          ? `${darkClass} ${tall ? "min-h-[22rem] max-h-[60vh]" : "min-h-36 max-h-72"} overflow-y-auto focus:outline-none px-6 py-5`
+          : `${RICH_TEXT_CLASS} ${tall ? "min-h-[22rem] max-h-[60vh]" : "min-h-36 max-h-72"} overflow-y-auto text-sm text-slate-800 focus:outline-none px-2.5 py-2`,
+      },
     },
     immediatelyRender: false,
   });
@@ -118,7 +124,7 @@ export function RichTextEditor({ value, onChange, mergeFields, tall }: RichTextE
           </div>
         )}
       </div>
-      <div className="bg-white">
+      <div className={darkClass ? "terms-doc-panel" : "bg-white"}>
         <EditorContent editor={editor} />
       </div>
     </div>

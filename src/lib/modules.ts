@@ -1916,10 +1916,10 @@ const adminMod: ModuleDef = {
       seed: () => ({}),
     },
     {
-      // Terms people accept before using the system — drafts, Publish, who it's for, who accepted (migration 0454).
-      slug: "terms-conditions",
-      title: "Terms & Conditions",
-      description: "Write terms as a draft, choose who they're for, publish, and see who accepted.",
+      // Pop-up forms people must read and accept (Terms & Conditions first) — drafts, Publish, who it's for, who accepted (migration 0454).
+      slug: "pop-up-forms",
+      title: "Pop up Forms",
+      description: "Forms that pop up for people to read and accept — like the Terms & Conditions. Draft, choose who sees it, publish, and see who accepted.",
       custom: "terms-conditions" as any,
       fields: [],
       seed: () => ({}),
