@@ -41,6 +41,8 @@ export const ROLE_LABELS: Record<string, string> = {
   PARTS_MANAGER: "Parts Manager",
   PARTS_TEAM_LEADER: "Parts Team Leader",
   PARTS_ORDER: "Parts Order",
+  // Was the custom role "Ebay" — built in since migration 0459 (same code, so holders and their page access stay).
+  EBAY: "Parts Ebay",
   BIZOPS_ASSOCIATE: "BizOps Associate",
   BIZOPS_TEAM_LEADER: "BizOps Team Leader",
   BIZOPS_MANAGER: "BizOps Manager",
@@ -114,6 +116,7 @@ export const ROLE_DEPARTMENT_BREAKDOWN: Record<string, { department: string; rol
   PARTS_MANAGER: { department: "Parts", roleLabel: "Manager" },
   PARTS_TEAM_LEADER: { department: "Parts", roleLabel: "Team Leader" },
   PARTS_ORDER: { department: "Parts", roleLabel: "Order" },
+  EBAY: { department: "Parts", roleLabel: "Ebay" },
   BIZOPS_ASSOCIATE: { department: "BizOps", roleLabel: "Associate" },
   BIZOPS_TEAM_LEADER: { department: "BizOps", roleLabel: "Team Leader" },
   BIZOPS_MANAGER: { department: "BizOps", roleLabel: "Manager" },
