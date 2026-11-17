@@ -467,6 +467,9 @@ function Landing() {
       >
         {submitting ? "Signing in..." : "Sign in"}
       </button>
+      <p className="text-center text-[11px] leading-snug text-muted-foreground">
+        By signing in you agree to the company's Terms &amp; Conditions. You'll be asked to read and accept them after you sign in.
+      </p>
     </form>
   );
 

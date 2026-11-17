@@ -1916,6 +1916,15 @@ const adminMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      // Pop-up forms people must read and accept (Terms & Conditions first) — drafts, Publish, who it's for, who accepted (migration 0455).
+      slug: "pop-up-forms",
+      title: "Pop up Forms",
+      description: "Forms that pop up for people to read and accept — like the Terms & Conditions. Draft, choose who sees it, publish, and see who accepted.",
+      custom: "terms-conditions" as any,
+      fields: [],
+      seed: () => ({}),
+    },
+    {
       slug: "technician-whereabouts",
       title: "Technician Whereabouts",
       description: "Each technician's current job site, per branch or company-wide.",
