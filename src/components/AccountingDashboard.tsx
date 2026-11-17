@@ -1264,6 +1264,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [regHoursFilter, setRegHoursFilter] = useState<Set<string>>(new Set());
   const [rateFilter, setRateFilter] = useState<Set<string>>(new Set());
   const [employeeSearch, setEmployeeSearch] = useState("");
+  /** The "N not reviewed" chip: show only the people still waiting on a review. */
+  const [notReviewedOnly, setNotReviewedOnly] = useState(false);
   // The box shows each keystroke immediately; the table filters on this
   // deferred copy, so typing stays smooth while the list catches up.
   const deferredEmployeeSearch = useDeferredValue(employeeSearch);
@@ -4288,10 +4290,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // column's own option list reflects every OTHER active filter, so opening
   // Department still shows every department present among rows that already
   // pass the Role filter and search, and vice versa.
+  // Still waiting on a review this period — flagged amber in the table so
+  // nobody is overlooked, ticked or not (most rows are often unticked
+  // between generates, and they still need reviewing).
+  const needsReview = (row: EmployeePayrollRow) => !reviewMarks.has(row.employee.id);
   const matchesRowFilters = (
     row: EmployeePayrollRow,
-    opts: { excludeDept?: boolean; excludeRole?: boolean; excludeRegHours?: boolean; excludeRate?: boolean }
+    opts: { excludeDept?: boolean; excludeRole?: boolean; excludeRegHours?: boolean; excludeRate?: boolean; excludeReview?: boolean }
   ) => {
+    if (!opts.excludeReview && notReviewedOnly && !needsReview(row)) return false;
     if (!opts.excludeDept && departmentFilter.size > 0 && !departmentFilter.has(row.employee.department || "")) return false;
     if (!opts.excludeRole && roleFilter.size > 0 && !roleFilter.has(roleTypeLabel(row.employee))) return false;
     if (!opts.excludeRegHours && regHoursFilter.size > 0 && !regHoursFilter.has(row.hoursWorked.toFixed(1))) return false;
@@ -4314,6 +4321,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   );
 
   const visibleRowsUnsorted = displayRows.filter((row) => matchesRowFilters(row, {}));
+  // People (not rows — a tech portion is a second row) still to review, under the other filters.
+  const notReviewedCount = new Set(displayRows.filter((r) => needsReview(r) && matchesRowFilters(r, { excludeReview: true })).map((r) => r.employee.id)).size;
   const visibleRows = nameSort
     ? [...visibleRowsUnsorted].sort((a, b) =>
         nameSort === "asc"
@@ -5326,7 +5335,25 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                 <span className="text-sm font-semibold">
                   {techScoped ? "Tech Payroll — view only" : `${effectiveCurrency === "USD" ? "Office" : "PH"} Employee Payroll — Current Period`}
                 </span>
-                <span className="text-xs text-slate-400">{visibleRows.length} employees</span>
+                <span className="flex items-center gap-2">
+                  {(notReviewedCount > 0 || notReviewedOnly) && (
+                    <button
+                      type="button"
+                      onClick={() => setNotReviewedOnly((v) => !v)}
+                      aria-pressed={notReviewedOnly}
+                      title={notReviewedOnly ? "Show everyone again" : "Show only the people still waiting on a review"}
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-bold transition ${
+                        notReviewedOnly
+                          ? "border-amber-400 bg-amber-500 text-slate-950 hover:bg-amber-400"
+                          : "border-amber-400/60 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25"
+                      }`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full ${notReviewedOnly ? "bg-slate-950" : "bg-amber-400 animate-pulse"}`} />
+                      {notReviewedCount} not reviewed{notReviewedOnly ? " · showing only these ✕" : ""}
+                    </button>
+                  )}
+                  <span className="text-xs text-slate-400">{visibleRows.length} employees</span>
+                </span>
               </div>
               <div className="px-3 py-2 border-b border-white/10 flex items-end justify-between gap-3 flex-wrap">
                 <div>
@@ -5560,12 +5587,20 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                             </td>
                             <td colSpan={payrollColCount - 1} className="px-3 py-1.5 text-xs text-xs font-bold text-blue-300 uppercase tracking-wide">
                               {group.department} <span className="text-slate-500 font-normal normal-case">({group.rows.length})</span>
+                              {(() => {
+                                const pending = new Set(group.rows.filter(needsReview).map((r) => r.employee.id)).size;
+                                return pending > 0 ? (
+                                  <span className="ml-2 rounded-full border border-amber-400/50 bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold normal-case tracking-normal text-amber-300">
+                                    {pending} not reviewed
+                                  </span>
+                                ) : null;
+                              })()}
                             </td>
                           </tr>
                           {group.rows.map((row) => (
                             <tr
                               key={row.employee.id}
-                              className={`border-b border-white/5 hover:bg-white/5 ${row.employee.payrollExcluded ? "opacity-50" : ""}`}
+                              className={`border-b border-white/5 hover:bg-white/5 ${row.employee.payrollExcluded && !needsReview(row) ? "opacity-50" : ""} ${needsReview(row) ? "bg-amber-500/[0.08] shadow-[inset_4px_0_0_0_rgb(245,158,11)]" : ""}`}
                             >
                               <td className="px-3 py-2 text-center">
                                 {!techScoped && <input
@@ -5639,7 +5674,9 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                                     </div>
                                   ) : (
                                     <div className="mt-0.5 text-[10px] leading-tight">
-                                      <span className="block text-slate-500">Not reviewed</span>
+                                      <span className="mt-0.5 inline-flex items-center gap-1 rounded-full border border-amber-400/60 bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-300">
+                                        <span className="h-1.5 w-1.5 rounded-full bg-amber-400" /> Not reviewed
+                                      </span>
                                       {sentAt && (
                                         <span className="block text-blue-400" title={`Payslip sent ${new Date(sentAt).toLocaleString()}`}>
                                           ✓ Sent {new Date(sentAt).toLocaleDateString()}
