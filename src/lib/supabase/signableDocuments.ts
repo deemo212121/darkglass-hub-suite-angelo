@@ -308,14 +308,17 @@ export async function getSignableDocumentsByTypes(documentTypes: SignableDocumen
 }
 
 /**
- * The only form answers the Staff Form Checklist reads (see staffFormChecklist.ts):
- * whose it is, its wording version, brand / country (which tab it counts on) and the
- * old Master Agreements' ID photo paths (findLegacyIdSource).
+ * The only form answers the Staff Form Checklist and Hiring's forms read (see
+ * staffFormChecklist.ts): whose it is (employeeId; employeeName for a no-account send),
+ * which flow sent it (formSource — a W-8BEN / W-9 / Contractor Addendum only counts on the
+ * New Automation tabs when it's "new_automation", isNewAutomationDoc), its wording version,
+ * brand / country (which tab it counts on) and the old Master Agreements' ID photo paths
+ * (findLegacyIdSource).
  */
-const CHECKLIST_FORM_KEYS = ["employeeId", "templateVersion", "brand", "country", "ssnCardPhotoPath", "licensePhotoPath", "governmentIdPhotoPath"] as const;
+const CHECKLIST_FORM_KEYS = ["employeeId", "employeeName", "formSource", "templateVersion", "brand", "country", "ssnCardPhotoPath", "licensePhotoPath", "governmentIdPhotoPath"] as const;
 
 const CHECKLIST_SELECT =
-  "id, company_id, document_type, status, recipient_id, recipient_slot, pdf_url, created_by, created_at, signed_at, confirmed_at, cancelled_at, " +
+  "id, company_id, document_type, status, recipient_id, recipient_name, recipient_slot, pdf_url, created_by, created_at, signed_at, confirmed_at, cancelled_at, " +
   CHECKLIST_FORM_KEYS.map((k) => `fd_${k}:form_data->${k}`).join(", ");
 
 /**
@@ -339,7 +342,7 @@ export async function getChecklistDocumentsByTypes(documentTypes: SignableDocume
     for (const r of (data ?? []) as any[]) {
       const formData: Record<string, any> = {};
       for (const k of CHECKLIST_FORM_KEYS) if (r[`fd_${k}`] != null) formData[k] = r[`fd_${k}`];
-      all.push(mapRow({ ...r, form_data: formData, signatures: {}, recipient_name: null, agent_note_id: null, creator: null }));
+      all.push(mapRow({ ...r, form_data: formData, signatures: {}, agent_note_id: null, creator: null }));
     }
     if (!data || data.length < PAGE_SIZE) break;
   }

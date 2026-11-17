@@ -114,7 +114,8 @@ import { getTechnicianIdDocumentUrl } from "@/lib/supabase/technicianIdDocuments
 import {
   createSignableDocument,
   getSignableDocuments,
-  getSignableDocumentsByTypes,
+  getChecklistDocumentsByTypes,
+  getSignableDocument,
   confirmSignableDocument,
   cancelSignableDocument,
   undoCancelSignableDocument,
@@ -2176,13 +2177,27 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [requiredFormsByCandidateId, setRequiredFormsByCandidateId] = useState<Map<string, SignableDocumentType[]>>(new Map());
   const loadCandidateForms = async () => {
     try {
-      const [docs, required] = await Promise.all([getSignableDocumentsByTypes(HIRING_CANDIDATE_DOCUMENT_TYPES), getCandidateRequiredFormTypes()]);
+      // Each form's status only (getChecklistDocumentsByTypes) — the full rows carry the
+      // signature images and came to ~62 MB for ~4,800 forms. Review & Sign loads its one
+      // form in full (handleSignAsHr).
+      const [docs, required] = await Promise.all([getChecklistDocumentsByTypes(HIRING_CANDIDATE_DOCUMENT_TYPES), getCandidateRequiredFormTypes()]);
       setAllSignableDocs(docs);
       setRequiredFormsByCandidateId(required);
     } catch (err) {
       console.error("Failed to load candidate forms:", err);
     }
   };
+
+  // Only the tabs that show it load it — Hiring (each candidate's forms X/Y and the Forms
+  // popup) and the two Bulk Form Sends ("already on file" check) — once per visit.
+  const candidateFormsLoadedRef = useRef(false);
+  useEffect(() => {
+    if (!ready || candidateFormsLoadedRef.current) return;
+    if (activeTab !== "hiring" && activeTab !== "combineForms" && activeTab !== "newCombineForms") return;
+    candidateFormsLoadedRef.current = true;
+    void loadCandidateForms();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, activeTab]);
 
   // ── Warnings/mistakes (company-wide, generalized from the CSR workflow) ──
   const [allNotes, setAllNotes] = useState<CsrAgentNote[]>([]);
@@ -2239,7 +2254,6 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       setCandidatesLoading(false);
     }
     loadCandidates();
-    loadCandidateForms();
     if (uid) void getMyProfileId(uid).then(setMyProfileId);
     // Everything else (Warnings, PTO, Attendance, Manager Requests) still
     // loads automatically — just a beat later, so it isn't competing with
@@ -2261,18 +2275,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // refresh. Coarse-grained (reload the whole list on any change) rather
   // than patching individual rows, since these lists are cheap to refetch
   // and this stays correct even when a change touches a joined column. ──
+  // A form was sent / signed somewhere — bumped (once per burst of changes) so only the
+  // open tab's own Sent History reloads (each list's effect also watches this), not
+  // every form type in full: those 16 lists were ~29 MB, re-downloaded on every change.
+  const [signableDocsChangedAt, setSignableDocsChangedAt] = useState(0);
   useEffect(() => {
     if (!ready || !companyId) return;
+    let signableDocsTimer: number | undefined;
     const unsubs = [
       subscribeTableChanges("hr_candidates", loadCandidatesDebounced, `company_id=eq.${companyId}`),
       subscribeTableChanges("employee_conduct_notes", () => void loadNotes(), `company_id=eq.${companyId}`),
-      subscribeTableChanges("hr_signable_documents", () => { void loadSentWarningForms(); void loadSentW8benForms(); void loadSentW4Forms(); void loadSentW9Forms(); void loadSentW4RForms(); void loadSentI9Forms(); void loadSentWageAckForms(); void loadSentCarIqAgreementForms(); void loadSentVehicleAgreementForms(); void loadSentEmployeeConfidentialityForms(); void loadSentMealRestBreakForms(); void loadSentPtoAckForms(); void loadSentPartsResponsibilityForms(); void loadSentMileageFuelForms(); void loadSentLocationConsentForms(); void loadSentSubstanceScreeningForms(); }, `company_id=eq.${companyId}`),
+      subscribeTableChanges("hr_signable_documents", () => {
+        window.clearTimeout(signableDocsTimer);
+        signableDocsTimer = window.setTimeout(() => setSignableDocsChangedAt(Date.now()), 1500);
+      }, `company_id=eq.${companyId}`),
       subscribeTableChanges("pto_requests", () => void loadPtoRequests(), `company_id=eq.${companyId}`),
       subscribeTableChanges("timecard_entries", () => void loadTodayTimecardEntries(), `company_id=eq.${companyId}`),
       subscribeTableChanges("timecard_corrections", () => void loadRequestManagerData(), `company_id=eq.${companyId}`),
       subscribeTableChanges("employee_requests", () => void loadRequestManagerData(), `company_id=eq.${companyId}`),
     ];
-    return () => unsubs.forEach((unsub) => unsub());
+    return () => { window.clearTimeout(signableDocsTimer); unsubs.forEach((unsub) => unsub()); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, companyId]);
 
@@ -2397,7 +2419,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // instead, same split TechnicianFormChecklistPage.tsx's own "Sign" button
   // makes.
   const [managerReviewDoc, setManagerReviewDoc] = useState<SignableDocument | null>(null);
-  const handleSignAsHr = (type: SignableDocumentType, doc: SignableDocument) => {
+  const handleSignAsHr = async (type: SignableDocumentType, lite: SignableDocument) => {
+    // The Hiring list only has each form's status — load this one in full (answers + signatures) to review and sign.
+    const doc = await getSignableDocument(lite.id).catch(() => null);
+    if (!doc) { alert("Couldn't open this form — please try again."); return; }
     if (type === "w4") handleOpenW4EmployerDialog(doc);
     else if (type === "i9") handleOpenI9Section2(doc);
     else if (type === "confidentiality_noncompete_agreement") handleOpenConfidentialityNonCompeteAgreementEmployerDialog(doc);
@@ -3910,7 +3935,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     // which can be a different person) in the Approved Warnings & Mistakes
     // table there.
     if (activeTab === "warningForm" || activeTab === "warnings" || activeTab === "employerQueue") void loadSentWarningForms();
-  }, [activeTab]);
+  }, [activeTab, signableDocsChangedAt]);
 
   // A 2nd warning needs a 1st on file, a 3rd needs two. "On file" = the
   // employee's warning notes (approved, or still pending review — incl.
@@ -4174,7 +4199,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
   useEffect(() => {
     if (activeTab === "w8ben" || activeTab === "newW8ben" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentW8benForms();
-  }, [activeTab]);
+  }, [activeTab, signableDocsChangedAt]);
   // Which bucket of sentW8benForms the CURRENTLY OPEN tab should show — see
   // isNewAutomationDoc's doc comment.
   const visibleW8benForms = useMemo(
@@ -4435,7 +4460,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
   useEffect(() => {
     if (activeTab === "w8ben" || activeTab === "newW4" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentW4Forms();
-  }, [activeTab]);
+  }, [activeTab, signableDocsChangedAt]);
   // Which bucket of sentW4Forms the CURRENTLY OPEN tab should show — see
   // isNewAutomationDoc's doc comment.
   const visibleW4Forms = useMemo(
@@ -4707,7 +4732,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
   useEffect(() => {
     if (activeTab === "w8ben" || activeTab === "newW9" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentW9Forms();
-  }, [activeTab]);
+  }, [activeTab, signableDocsChangedAt]);
   // Which bucket of sentW9Forms the CURRENTLY OPEN tab should show — see
   // isNewAutomationDoc's doc comment.
   const visibleW9Forms = useMemo(
@@ -4985,7 +5010,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   );
   useEffect(() => {
     if (activeTab === "w8ben" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentW4RForms();
-  }, [activeTab]);
+  }, [activeTab, signableDocsChangedAt]);
 
   const [w4rRecipientId, setW4rRecipientId] = useState("");
   const [w4rRecipientSearch, setW4rRecipientSearch] = useState("");
@@ -5221,7 +5246,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
   useEffect(() => {
     if (activeTab === "i9" || activeTab === "newI9" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentI9Forms();
-  }, [activeTab]);
+  }, [activeTab, signableDocsChangedAt]);
   // Section 1 done, nobody has claimed Section 2 yet — feeds the "Form I-9" sidebar tab's count badge.
   // Split old (legacy Automated Forms) vs new (New Automation Forms) — see
   // isNewAutomationDoc's doc comment for why sentI9Forms itself is one
@@ -7379,7 +7404,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   );
   useEffect(() => {
     if (activeTab === "wageAck" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentWageAckForms();
-  }, [activeTab]);
+  }, [activeTab, signableDocsChangedAt]);
   // Employee done, nobody has claimed the employer signature yet — feeds the sidebar tab's count badge.
   const sentWageAckAwaitingEmployerCount = useMemo(
     () => sentWageAckForms.filter(isAwaitingEmployerStep).length,
@@ -7693,7 +7718,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   );
   useEffect(() => {
     if (activeTab === "mealRestBreak" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMealRestBreakForms();
-  }, [activeTab]);
+  }, [activeTab, signableDocsChangedAt]);
   // Employee done, nobody has claimed the employer signature yet — feeds the sidebar tab's count badge.
   const sentMealRestBreakAwaitingEmployerCount = useMemo(
     () => sentMealRestBreakForms.filter(isAwaitingEmployerStep).length,
@@ -8009,7 +8034,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   );
   useEffect(() => {
     if (activeTab === "carIqAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentCarIqAgreementForms();
-  }, [activeTab]);
+  }, [activeTab, signableDocsChangedAt]);
 
   const [carIqRecipientId, setCarIqRecipientId] = useState("");
   const [carIqRecipientSearch, setCarIqRecipientSearch] = useState("");
@@ -8238,7 +8263,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   );
   useEffect(() => {
     if (activeTab === "vehicleAgreement" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentVehicleAgreementForms();
-  }, [activeTab]);
+  }, [activeTab, signableDocsChangedAt]);
 
   const [vehicleRecipientId, setVehicleRecipientId] = useState("");
   const [vehicleRecipientSearch, setVehicleRecipientSearch] = useState("");
@@ -8466,7 +8491,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   );
   useEffect(() => {
     if (activeTab === "employeeConfidentiality" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentEmployeeConfidentialityForms();
-  }, [activeTab]);
+  }, [activeTab, signableDocsChangedAt]);
 
   const [confidentialityRecipientId, setConfidentialityRecipientId] = useState("");
   const [confidentialityRecipientSearch, setConfidentialityRecipientSearch] = useState("");
@@ -9822,7 +9847,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   );
   useEffect(() => {
     if (activeTab === "substanceScreening" || activeTab === "jotformDocuments") void loadSentSubstanceScreeningForms();
-  }, [activeTab]);
+  }, [activeTab, signableDocsChangedAt]);
 
   const [substanceScreeningRecipientId, setSubstanceScreeningRecipientId] = useState("");
   const [substanceScreeningRecipientSearch, setSubstanceScreeningRecipientSearch] = useState("");
@@ -10123,7 +10148,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   );
   useEffect(() => {
     if (activeTab === "ptoAck" || activeTab === "jotformDocuments" || activeTab === "combineForms") void loadSentPtoAckForms();
-  }, [activeTab]);
+  }, [activeTab, signableDocsChangedAt]);
 
   const [ptoAckRecipientId, setPtoAckRecipientId] = useState("");
   const [ptoAckRecipientSearch, setPtoAckRecipientSearch] = useState("");
@@ -10516,7 +10541,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   );
   useEffect(() => {
     if (activeTab === "partsResponsibility" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentPartsResponsibilityForms();
-  }, [activeTab]);
+  }, [activeTab, signableDocsChangedAt]);
   // Technician done, nobody has claimed the manager signature yet — feeds the sidebar tab's count badge.
   const sentPartsResponsibilityAwaitingManagerCount = useMemo(
     () => sentPartsResponsibilityForms.filter(isAwaitingEmployerStep).length,
@@ -10790,7 +10815,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
   useEffect(() => {
     if (activeTab === "mileageFuel" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentMileageFuelForms();
-  }, [activeTab]);
+  }, [activeTab, signableDocsChangedAt]);
   // Employee done, nobody has claimed the employer signature yet — feeds the sidebar tab's count badge.
   const sentMileageFuelAwaitingEmployerCount = useMemo(
     () => sentMileageFuelForms.filter(isAwaitingEmployerStep).length,
@@ -11794,7 +11819,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   };
   useEffect(() => {
     if (activeTab === "locationConsent" || activeTab === "jotformDocuments" || activeTab === "combineForms" || activeTab === "employerQueue") void loadSentLocationConsentForms();
-  }, [activeTab]);
+  }, [activeTab, signableDocsChangedAt]);
   // Employee done, nobody has claimed the employer signature yet — feeds the sidebar tab's count badge.
   const sentLocationConsentAwaitingEmployerCount = useMemo(
     () => sentLocationConsentForms.filter(isAwaitingEmployerStep).length,
