@@ -52,6 +52,7 @@ export function PayslipPreviewModal({
   sending,
   sendDisabledReason,
   fileName,
+  warning,
 }: {
   name: string;
   /** e.g. "Technician · Columbus · 2026-10-25 to 2026-11-07" */
@@ -68,6 +69,8 @@ export function PayslipPreviewModal({
   sending: boolean;
   /** Why Send can't be used (e.g. Gmail not connected); null = it can. */
   sendDisabledReason: string | null;
+  /** Shown above the pages in amber — something to fix before sending. */
+  warning?: string | null;
   /** The downloaded PDF's name, e.g. "Payslip_ADejaun_Tyson_2026-10-25_to_2026-11-07.pdf". */
   fileName: string;
 }) {
@@ -154,6 +157,7 @@ export function PayslipPreviewModal({
           </button>
           <button type="button" onClick={onClose} aria-label="Close preview" className="rounded-lg p-2 text-slate-300 hover:bg-white/10 hover:text-white"><X className="h-5 w-5" /></button>
         </div>
+        {warning && <p className="border-b border-amber-400/30 bg-amber-500/10 px-4 py-2 text-xs font-medium text-amber-200">{warning}</p>}
         {downloadError && <p className="border-b border-white/10 bg-red-500/10 px-4 py-2 text-xs text-red-300">{downloadError}</p>}
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto bg-slate-950/60 px-3 py-4 sm:px-6">

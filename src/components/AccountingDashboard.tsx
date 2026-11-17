@@ -122,6 +122,7 @@ import { auth as firebaseAuth } from "@/lib/firebase/config";
 import { listTicketPhotos, hasTicketPhotos, type TicketPhoto } from "@/lib/firebase/storage";
 import { captureHtmlToPdfBlob, captureHtmlPagesToPdfBlob, blobToBase64 } from "@/lib/pdfCapture";
 import { PayslipPreviewModal } from "@/components/PayslipPreviewModal";
+import { computeStateHourlyMatch } from "@/lib/stateHourlyMatch";
 import { renderPayslipBodyHtml, renderTechActivitySummaryPageHtml, PAYSLIP_STYLES, formatClockTime, offDaysInRange, ptoDaysInRange, type PayslipDailyRow, type EmployeePayslipData } from "@/lib/payslipTemplate";
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { NewPromotionsButton } from "@/components/NewPromotionsButton";
@@ -3057,6 +3058,32 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         : premiumHours * techPeriodRegularRate * 0.5;
       const techWeightedRegularRate = premiumHours > 0 && techWeeklyOt.length > 0 ? techHourlyPayOtPremium / (premiumHours * 0.5) : techPeriodRegularRate;
       const techHourlyPayCompanyOnly = techHourlyPayStraight + techHourlyPayOtPremium;
+      // State mode, worked out here for every hourly technician as payroll
+      // loads (lib/stateHourlyMatch.ts — the same code the Tech Activity
+      // Report runs). It used to apply only once someone opened that
+      // technician's report, which then saved it; until then the row, Send
+      // and the payslip stayed at the company rate (Brandon Wilson
+      // 11/08–11/21: Missouri $15 days paid at $7.25). When a state minimum
+      // is above the company rate, State is required, so it's applied here
+      // directly — no saved override needed.
+      const autoState = !isFixed && includeTech && isTechRole(emp) && techDailyHours.length > 0
+        ? computeStateHourlyMatch({
+            days: techDailyHours
+              .filter((d) => !d.paidLeave && !d.paidHoliday)
+              .map((d) => ({ date: d.date, regular: d.regular, overtime: d.overtime, state: stateByProfileDate.get(`${emp.id}|${d.date}`) })),
+            periodStart: genStart,
+            periodEnd: genEnd,
+            rateOnDate: (date) => hourlyRateOnDate(emp.id, date, hourlyRate),
+            hoursWorked: hours.regular,
+            overtimeHours: hours.overtime,
+            techWeightedRegularRate,
+            techIncludablePay,
+            techHourlyPayStraight,
+            techHourlyPayOtPremium,
+            techWeeklyOt,
+          })
+        : null;
+      const autoStateApplies = !!autoState?.stateMatchRequired;
       // A State-mode override (payroll_hourly_ot_overrides, migration 0289,
       // set from the payroll detail step's Compliant/"State" toggle) replaces
       // the flat company-rate figure everywhere pay actually flows — gross
@@ -3088,6 +3115,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             // the technician row only carries ticket / commission pay — paying
             // perCutoffSalary here too paid the salary twice.
             : 0)
+        : autoStateApplies
+        ? autoState!.stateHourlyOtTotal
         : hourlyOtOverrides.get(emp.id)?.amount ?? techHourlyPayCompanyOnly;
       // Extra 0.5x bonus for hours actually worked on a recognized company
       // holiday — see holidayPremiumFor above. Paid on top of techHourlyPay
@@ -3163,13 +3192,13 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // 0400) + trainee/holiday top-ups; OT $ = the rest of the hourly pay;
       // Commission is whatever's left after the other columns.
       const stateOverride = hourlyOtOverrides.get(emp.id);
-      const stateApplied = !isFixed && !!stateOverride && Math.abs(techHourlyPay - techHourlyPayCompanyOnly) > 0.005;
+      const stateApplied = !isFixed && (autoStateApplies || !!stateOverride) && Math.abs(techHourlyPay - techHourlyPayCompanyOnly) > 0.005;
       const techRegularHourly = !isTechRole(emp)
         ? techHourlyPay
         : isFixed
         ? techHourlyPay
         : stateApplied
-        ? stateOverride!.regularAmount ?? techDailyPay.regularPay
+        ? (autoStateApplies ? autoState!.stateRegularShare : stateOverride!.regularAmount ?? techDailyPay.regularPay)
         : techDailyPay.regularPay;
       const customColumns = groupCustomPayLines(includeTech ? techCustomItemsByProfile.get(emp.id) ?? [] : []);
       const regularColumn = techRegularHourly - techPaidLeavePay + techTraineeMatch + techHolidayPremium;
@@ -3871,11 +3900,19 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       );
       const stateByDate = new Map<string, string>();
       for (const e of timecardEntries) if (e.profile_id === emp.id && e.state) stateByDate.set(e.work_date, e.state);
+      // State mode applied (automatically, when a state minimum is above the
+      // company rate): the hours are paid at the state floor, so each day is
+      // priced at it too — otherwise page 1 showed $7.25 days adding up to the
+      // company figure while the gross was the state total (Bradley Hollowell
+      // 11/08–11/21: $302.12 shown vs $600.57 paid).
+      const stateApplied = row.isTechPortion && row.compensationType !== "fixed" && row.techHourlyPay - row.techHourlyPayCompanyOnly > 0.005;
       return attendanceRows
         .filter((r) => r.hoursWorked > 0)
         .map((r) => {
           const { regular, overtime } = split.get(r.date) ?? { regular: r.hoursWorked, overtime: 0 };
-          const rate = hourlyRateOnDate(emp.id, r.date, row.hourlyRateUSD);
+          const companyRate = hourlyRateOnDate(emp.id, r.date, row.hourlyRateUSD);
+          const floor = stateApplied ? stateMinWageOn(stateByDate.get(r.date), r.date) ?? 0 : 0;
+          const rate = Math.max(companyRate, floor);
           return {
             date: r.date,
             clockIn: r.clockIn,
@@ -3978,6 +4015,25 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
     return [renderPayslipBodyHtml(payslipData)];
   };
 
+  /**
+   * A technician who worked days in a state whose minimum is above their
+   * rate, but whose State amount isn't saved yet. State mode is worked out
+   * and locked by their Tech Activity Report (the full per-week state rule)
+   * when it's opened; until then the row — and so the payslip — is still at
+   * the company rate (Brandon Wilson 11/08–11/21: Missouri $15 days paid at
+   * $7.25 on the payslip, $143.44 vs $296.78). Returns the states involved.
+   */
+  const statePendingStates = (row: EmployeePayrollRow): string[] => {
+    if (!row.isTechPortion || row.compensationType === "fixed") return [];
+    if (row.techHourlyPay - row.techHourlyPayCompanyOnly > 0.005) return [];
+    const states = new Set<string>();
+    for (const d of row.techWeeklySource?.days ?? []) {
+      if ((d.regular ?? 0) + (d.overtime ?? 0) <= 0) continue;
+      if (d.stateFloor != null && d.stateFloor > d.rate + 0.005 && d.state) states.add(d.state);
+    }
+    return [...states];
+  };
+
   /** The PDF Send emails — built from the same pages Preview shows. */
   const buildPayslipPdfBase64 = async (row: EmployeePayrollRow): Promise<string> => {
     const pages = await buildPayslipPages(row);
@@ -3991,9 +4047,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const [previewRowKey, setPreviewRowKey] = useState<string | null>(null);
   const [previewPages, setPreviewPages] = useState<Record<string, string[] | Error>>({});
   const payslipRowKey = (row: EmployeePayrollRow) => `${row.employee.id}|${row.isTechPortion ? "tech" : "office"}|${genStart}|${genEnd}`;
+  /** The saved copy is for this pay: a changed amount (State mode applied, a line added) builds a fresh one. */
+  const payslipCacheKey = (row: EmployeePayrollRow) => `${payslipRowKey(row)}|${row.grossPayUSD.toFixed(2)}|${row.techHourlyPay.toFixed(2)}|${row.hoursWorked.toFixed(3)}`;
   const previewBuilding = useRef<Set<string>>(new Set());
   const loadPreviewPages = (row: EmployeePayrollRow) => {
-    const k = payslipRowKey(row);
+    const k = payslipCacheKey(row);
     if (Array.isArray(previewPages[k]) || previewBuilding.current.has(k)) return;
     previewBuilding.current.add(k);
     // A failed build is tried again when it's opened again.
@@ -4013,6 +4071,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // data, so it doesn't require Generate Payroll to have run first.
   const handleSendPayslip = async (row: EmployeePayrollRow) => {
     if (!genStart || !genEnd) return;
+    const pendingStates = statePendingStates(row);
+    if (pendingStates.length) {
+      alert(`${row.employee.full_name}'s State match (${pendingStates.join(", ")}) isn't saved yet, so the payslip would show the company rate. Open their Tech Activity Report once — it locks the State amount in — then send.`);
+      return;
+    }
     if (!confirm(`Email ${row.employee.full_name}'s payslip for ${genStart} to ${genEnd}?`)) return;
     setSendingPayslipId(row.employee.id);
     try {
@@ -4041,8 +4104,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // Step 1: work out who gets an email and open the "Are you sure?" window.
   const handleEmailAllPayslips = (rows: EmployeePayrollRow[]) => {
     if (!genStart || !genEnd) return;
-    const targets = rows.filter((r) => r.grossPayUSD > 0 && r.employee.email);
-    const skipped = rows.filter((r) => !(r.grossPayUSD > 0 && r.employee.email));
+    const targets = rows.filter((r) => r.grossPayUSD > 0 && r.employee.email && statePendingStates(r).length === 0);
+    const skipped = rows.filter((r) => !(r.grossPayUSD > 0 && r.employee.email) || statePendingStates(r).length > 0);
     if (targets.length === 0) {
       alert("No checked employee has a payslip to email (gross pay above $0 and an email on file).");
       return;
@@ -4361,6 +4424,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   const previewOrder = visibleRowsByDepartment.flatMap((g) => g.rows);
   const previewIndex = previewRowKey ? previewOrder.findIndex((r) => payslipRowKey(r) === previewRowKey) : -1;
   const previewRow = previewIndex >= 0 ? previewOrder[previewIndex] : null;
+  // The open payslip rebuilds when that person's pay changes while it's open.
+  const previewCacheKey = previewRow ? payslipCacheKey(previewRow) : "";
+  useEffect(() => {
+    if (previewRow) loadPreviewPages(previewRow);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewCacheKey]);
   const stepPreview = (delta: number) => {
     const next = previewOrder[previewIndex + delta];
     if (!next) return;
@@ -5322,7 +5391,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                         </ul>
                         {emailAllConfirm.skipped.length > 0 && (
                           <p className="mt-2 text-xs text-amber-300">
-                            Skipped ({emailAllConfirm.skipped.length}) — $0 gross pay or no email on file:{" "}
+                            Skipped ({emailAllConfirm.skipped.length}) — $0 gross pay, no email on file, or a State match not saved yet (open their Tech Activity Report first):{" "}
                             {emailAllConfirm.skipped.slice(0, 8).map((r) => r.employee.full_name).join(", ")}
                             {emailAllConfirm.skipped.length > 8 ? `, +${emailAllConfirm.skipped.length - 8} more` : ""}
                           </p>
@@ -5721,7 +5790,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                   <PayslipPreviewModal
                     name={previewRow.employee.full_name}
                     subtitle={[(previewRow.isTechPortion ? "Technician" : previewRow.employee.department || ""), previewRow.employee.assigned_branch, `${genStart} to ${genEnd}`].filter(Boolean).join(" · ")}
-                    pages={previewPages[payslipRowKey(previewRow)] ?? null}
+                    pages={previewPages[payslipCacheKey(previewRow)] ?? null}
                     index={previewIndex}
                     total={previewOrder.length}
                     onPrev={() => stepPreview(-1)}
@@ -5730,7 +5799,8 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                     onSend={() => void handleSendPayslip(previewRow)}
                     sending={sendingPayslipId === previewRow.employee.id}
                     fileName={`Payslip_${previewRow.employee.full_name.replace(/[^\w.-]+/g, "_")}_${genStart}_to_${genEnd}.pdf`}
-                    sendDisabledReason={!gmailStatus?.connected ? "Connect Gmail above to send." : previewRow.grossPayUSD <= 0 ? "Nothing to send — gross pay is $0.00." : null}
+                    warning={statePendingStates(previewRow).length ? `State match not saved yet (${statePendingStates(previewRow).join(", ")}): this payslip still shows the company rate. Open ${previewRow.employee.full_name}'s Tech Activity Report once — it locks the State amount in — and the payslip updates.` : null}
+                    sendDisabledReason={statePendingStates(previewRow).length ? "Save the State match first." : !gmailStatus?.connected ? "Connect Gmail above to send." : previewRow.grossPayUSD <= 0 ? "Nothing to send — gross pay is $0.00." : null}
                   />
                 )}
             </div>

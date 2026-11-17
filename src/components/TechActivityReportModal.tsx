@@ -6,7 +6,8 @@ import { X, Plus, Trash2, Loader2 } from "lucide-react";
 import type { EmployeePayrollRow } from "@/components/AccountingDashboard";
 import { getAttendanceForRange, computeMealTimeCredit, splitRegularOvertimeWeekly, startOfWeekSunday, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
 import { getSalaryHistory, rateEffectiveOn, type SalaryEntryRow } from "@/lib/supabase/salary";
-import { stateMinWageOn, COMMISSION_COUNTS_TOWARD_STATE_MIN, OT_MATCH_ADDS_TRUE_UP_AND_FLOOR } from "@/lib/stateMinWage";
+import { stateMinWageOn, COMMISSION_COUNTS_TOWARD_STATE_MIN } from "@/lib/stateMinWage";
+import { computeStateHourlyMatch } from "@/lib/stateHourlyMatch";
 import { isMealAlwaysPaidRole } from "@/lib/roleLabels";
 import {
   REPAIR_TYPES,
@@ -188,174 +189,42 @@ export function TechActivityReportModal({
     [periodDayInfo]
   );
 
-  // Min-floor check, same shape as the reference spreadsheet's "Match to
-  // pay" table: regular+meal hours at each day's own state floor vs.
-  // Company's flat straight-time total (regular hours only — see matchMin
-  // below). The OT side isn't an independent floor check against
-  // stateOtFloor; it's a cascade off this Min match (see matchOt below).
-  const stateMinFloor = useMemo(() => {
-    let min = 0;
-    for (const d of periodDayInfo) {
-      if (d.date < periodStart || d.date > periodEnd) continue;
-      // A day with no state assigned isn't "no floor applies" — it means
-      // there's no data suggesting anything OTHER than the company rate,
-      // so it defaults to hourlyRate rather than being skipped entirely.
-      // Skipping it would drop that day out of stateMinFloor while Company
-      // PD Min still counts it (unconditional on state), silently
-      // understating the state side and hiding a real shortfall on the
-      // days that DO have a higher state assigned.
-      const floor = stateMinWageOn(d.state, d.date) ?? rateOnDate(d.date);
-      const split = dailySplit.get(d.date) ?? { regular: 0, overtime: 0 };
-      min += split.regular * floor;
-    }
-    return min;
-  }, [periodDayInfo, dailySplit, periodStart, periodEnd, salaryHistory, hourlyRate]);
-
-  // Regular hours actually paid this period, blended per day at whichever
-  // rate was really effective that day (rateOnDate) — NOT hoursWorked ×
-  // hourlyRate, which would price every regular hour at whatever single
-  // rate happens to be latest as of period end, even days paid under an
-  // earlier rate before a mid-period change.
-  const companyRegularPayBlended = useMemo(() => {
-    let total = 0;
-    for (const d of periodDayInfo) {
-      if (d.date < periodStart || d.date > periodEnd) continue;
-      const split = dailySplit.get(d.date) ?? { regular: 0, overtime: 0 };
-      total += split.regular * rateOnDate(d.date);
-    }
-    return total;
-  }, [periodDayInfo, dailySplit, periodStart, periodEnd, salaryHistory, hourlyRate]);
-
-  const companyHourlyOtTotal = techHourlyPayStraight + techHourlyPayOtPremium;
-  // stateMinFloor is regular-hours-only (matches State Req Min Floor's own
-  // scope) — comparing it against techHourlyPayStraight (ALL hours,
-  // including OT, at the flat rate) would let the OT hours' flat pay
-  // artificially pad the comparison and hide a real regular-hours
-  // shortfall. Compare against regular hours only, blended per day
-  // (companyRegularPayBlended) instead, same fix as the OT bucket needed in
-  // the other direction.
-  // Per Sunday workweek: the regular-hours state gap (floor - company pay,
-  // can be negative when the company rate is above the floor) and the OT
-  // hours' straight-time gap (their state floor vs. the company rate).
-  // Only needed when commission counts toward the floor — that check is
-  // per week, like the payroll workbook's Weekly Calculations tab.
-  const weeklyIncludable = new Map(techWeeklyOt.map((w) => [w.weekStart, w.includablePay]));
-  const weekKey = (date: string) => (weeklyIncludable.size > 0 ? startOfWeekSunday(date) : "period");
-  if (weeklyIncludable.size === 0) weeklyIncludable.set("period", techIncludablePay);
-  const weeklyStateGaps = new Map<string, { regular: number; otStraight: number; otHalf: number }>();
-  for (const d of periodDayInfo) {
-    if (d.date < periodStart || d.date > periodEnd) continue;
-    const split = dailySplit.get(d.date) ?? { regular: 0, overtime: 0 };
-    const companyRate = rateOnDate(d.date);
-    const floor = stateMinWageOn(d.state, d.date) ?? companyRate;
-    const gap = weeklyStateGaps.get(weekKey(d.date)) ?? { regular: 0, otStraight: 0, otHalf: 0 };
-    gap.regular += split.regular * (floor - companyRate);
-    gap.otStraight += split.overtime * (Math.max(floor, companyRate) - companyRate);
-    gap.otHalf += split.overtime * Math.max(floor, companyRate) * 0.5;
-    weeklyStateGaps.set(weekKey(d.date), gap);
-  }
-  // COMMISSION_COUNTS_TOWARD_STATE_MIN (stateMinWage.ts): each week's
-  // commission first covers that week's regular-hours gap; what's left
-  // covers its OT hours' straight-time gap (see stateOtFloorPremium). Off:
-  // the original period-wide check, base pay alone vs. the floor.
-  let matchMin = Math.max(stateMinFloor - companyRegularPayBlended, 0);
-  let commissionAppliedToFloor = 0;
-  let otStraightStateMatch = [...weeklyStateGaps.values()].reduce((sum, g) => sum + g.otStraight, 0);
-  // Each week's own share of the two matches — the OT check below is per
-  // week, so it needs them split out.
-  const weekMinMatch = new Map<string, number>();
-  const weekOtStraightMatch = new Map<string, number>();
-  for (const [week, gap] of weeklyStateGaps) {
-    weekMinMatch.set(week, Math.max(gap.regular, 0));
-    weekOtStraightMatch.set(week, gap.otStraight);
-  }
-  if (COMMISSION_COUNTS_TOWARD_STATE_MIN) {
-    matchMin = 0;
-    otStraightStateMatch = 0;
-    for (const [week, gap] of weeklyStateGaps) {
-      const credit = Math.max(weeklyIncludable.get(week) ?? 0, 0);
-      const minW = Math.max(gap.regular - credit, 0);
-      matchMin += minW;
-      commissionAppliedToFloor += Math.min(credit, Math.max(gap.regular, 0));
-      const leftover = Math.max(credit - gap.regular, 0);
-      const otStraightW = Math.max(gap.otStraight - leftover, 0);
-      otStraightStateMatch += otStraightW;
-      commissionAppliedToFloor += Math.min(leftover, gap.otStraight);
-      weekMinMatch.set(week, minW);
-      weekOtStraightMatch.set(week, otStraightW);
-    }
-  }
-  // After a Min-floor top-up, the regular rate the OT premium is based on
-  // has to be recomputed with that extra pay folded in (same weighted-rate
-  // principle used everywhere else) — then any INCREMENTAL OT premium that
-  // higher rate requires, beyond what's already been paid, is owed too.
-  // This mirrors the reference payroll workbook's own cascading Min→OT
-  // match (Steps 9–11: recompute the regular rate, recompute the required
-  // premium at that rate, then take only the difference from what's
-  // already paid) rather than an independent state-OT-floor check.
-  const totalHoursForMatch = hoursWorked + overtimeHours;
-  const regularRateAfterMinMatch = totalHoursForMatch > 0 ? techWeightedRegularRate + matchMin / totalHoursForMatch : techWeightedRegularRate;
-  // Training days included — overtime during training is still overtime.
+  // The State match itself — lib/stateHourlyMatch.ts, the same code the
+  // payroll table runs for every technician as payroll loads, so State mode
+  // no longer waits for this report to be opened.
+  const {
+    stateMinFloor,
+    companyRegularPayBlended,
+    companyHourlyOtTotal,
+    matchMin,
+    commissionAppliedToFloor,
+    requiredPremiumAfterMinMatch,
+    stateOtFloorPremium,
+    matchOt,
+    stateHourlyOtTotal,
+  } = useMemo(
+    () =>
+      computeStateHourlyMatch({
+        days: periodDayInfo.map((d) => ({ date: d.date, ...(dailySplit.get(d.date) ?? { regular: 0, overtime: 0 }), state: d.state })),
+        periodStart,
+        periodEnd,
+        rateOnDate,
+        hoursWorked,
+        overtimeHours,
+        techWeightedRegularRate,
+        techIncludablePay,
+        techHourlyPayStraight,
+        techHourlyPayOtPremium,
+        techWeeklyOt,
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [periodDayInfo, dailySplit, periodStart, periodEnd, salaryHistory, hourlyRate, hoursWorked, overtimeHours, techWeightedRegularRate, techIncludablePay, techHourlyPayStraight, techHourlyPayOtPremium, techWeeklyOt],
+  );
+  // Overtime hours this period (training days included) — the trainee check below uses it.
   const premiumHours = periodDayInfo.reduce((sum, day) => {
     if (day.date < periodStart || day.date > periodEnd) return sum;
     return sum + (dailySplit.get(day.date)?.overtime ?? 0);
   }, 0);
-  let requiredPremiumAfterMinMatch = premiumHours * regularRateAfterMinMatch * 0.5;
-  // OT hours belong to the state they were worked in (policy, 2026-10-14):
-  // each day's overtime must be paid at least 1.5x THAT day's state
-  // minimum. The Min match above only covers regular hours, so a day that
-  // is all overtime in a higher-minimum state got no state top-up at all
-  // (Alexander Veil 9/25: 11.281 OT hrs in Arkansas paid $7.25 x 1.5). This
-  // is what those OT hours are owed beyond their straight time at the
-  // company rate (already in Hourly Pay) — the same per-day figure the
-  // Attendance table's Payment column shows for an OT day. Training days
-  // count too: the $100/day trainee guarantee is a top-up, not a
-  // replacement for overtime (Vincent Pullens 9/28–10/2, Florida).
-  // = the OT hours' straight-time gap (otStraightStateMatch, less any
-  // commission credit above) + 0.5x the state floor on every OT hour.
-  const stateOtHalfFloorPeriod = periodDayInfo.reduce((sum, day) => {
-    if (day.date < periodStart || day.date > periodEnd) return sum;
-    const overtime = dailySplit.get(day.date)?.overtime ?? 0;
-    if (overtime <= 0) return sum;
-    const companyRate = rateOnDate(day.date);
-    const floor = Math.max(stateMinWageOn(day.state, day.date) ?? companyRate, companyRate);
-    return sum + overtime * floor * 0.5;
-  }, 0);
-  let stateOtFloorPremium = otStraightStateMatch + stateOtHalfFloorPeriod;
-  // OT_MATCH_ADDS_TRUE_UP_AND_FLOOR (stateMinWage.ts): add both checks
-  // (Finance's sheet) or pay only the higher one.
-  const combineOtChecks = (trueUp: number, floorShortfall: number) =>
-    OT_MATCH_ADDS_TRUE_UP_AND_FLOOR
-      ? Math.max(trueUp, 0) + Math.max(floorShortfall, 0)
-      : Math.max(trueUp, floorShortfall, 0);
-  let matchOt = otStraightStateMatch + combineOtChecks(
-    requiredPremiumAfterMinMatch - techHourlyPayOtPremium,
-    stateOtHalfFloorPeriod - techHourlyPayOtPremium
-  );
-  // Checked PER WORKWEEK when the weekly breakdown is available (FLSA
-  // measures overtime per week): each week's OT is owed the higher of
-  // (a) its premium at that week's regular rate after its state matches and
-  // (b) 0.5x the state floor on its OT hours, plus its OT hours'
-  // straight-time state gap. A period-wide check let one week's surplus
-  // premium cover another week's shortfall — Vincent Pullens 9/27–10/10:
-  // wk 10/4's premium above its floor hid wk 9/27's Florida shortfall and
-  // dropped wk 10/4's own $7.68 true-up.
-  if (techWeeklyOt.length > 0) {
-    requiredPremiumAfterMinMatch = 0;
-    stateOtFloorPremium = 0;
-    matchOt = 0;
-    for (const w of techWeeklyOt) {
-      const gap = weeklyStateGaps.get(w.weekStart) ?? { regular: 0, otStraight: 0, otHalf: 0 };
-      const minW = weekMinMatch.get(w.weekStart) ?? 0;
-      const otStraightW = weekOtStraightMatch.get(w.weekStart) ?? 0;
-      const rateAfter = w.hours > 0 ? (w.straightPay + w.includablePay + minW + otStraightW) / w.hours : 0;
-      const cascade = w.premiumHours * rateAfter * 0.5;
-      requiredPremiumAfterMinMatch += cascade;
-      stateOtFloorPremium += otStraightW + gap.otHalf;
-      matchOt += otStraightW + combineOtChecks(cascade - w.premium, gap.otHalf - w.premium);
-    }
-  }
-  const stateHourlyOtTotal = companyHourlyOtTotal + matchMin + matchOt;
   // Whether the saved payroll_hourly_ot_overrides row (techHourlyPay, from
   // the parent) is currently a State-mode override rather than the flat
   // company calc — used both by the Company/State toggle UI below and by
