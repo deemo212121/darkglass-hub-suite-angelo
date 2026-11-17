@@ -124,7 +124,11 @@ export function ptoDaysInRange(
   let days = 0;
   for (const r of requests) {
     if (r.status !== "approved") continue;
-    if ((r.ptoType === "sick") !== isSick) continue;
+    // PTO Leave Used = Vacation only, the one paid PTO type (isPaidPtoType in
+    // pto.ts). Unpaid, Personal, Holiday and Bereavement days aren't PTO —
+    // an approved Unpaid Leave used to show here as a PTO day (A'Dejaun Tyson
+    // 11/16, a probation visit).
+    if (isSick ? r.ptoType !== "sick" : r.ptoType !== "vacation") continue;
     const overlapStart = r.startDate > start ? r.startDate : start;
     const overlapEnd = r.endDate < end ? r.endDate : end;
     if (overlapStart > overlapEnd) continue;
@@ -319,6 +323,12 @@ export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
   const currentDate = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
   const isFixedSalary = employee.compensationType === "fixed";
   const dailyRates = [...new Set(employee.dailyRows.map((row) => row.rate))].sort((a, b) => a - b);
+  // Technicians: page 1 is the time record only. No set working hours or
+  // break time (they work field hours, not a fixed shift, and their meal
+  // break is paid) and no per-day rate / pay, which
+  // page 2's Tech Activity Report breaks down properly (state match, OT,
+  // incentives).
+  const techPage = !!employee.hasTechActivityPage;
   const hourlyRateLabel = dailyRates.length > 1
     ? `Mixed: ${dailyRates.map((rate) => `$${rate.toFixed(2)}`).join(" / ")}`
     : `$${(dailyRates[0] ?? employee.hourlyRate).toFixed(2)}`;
@@ -366,15 +376,17 @@ export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
             <label>Period</label>
             <span>${employee.period}</span>
           </div>
+          ${techPage ? "" : `
           <div class="info-section">
             <label>Working Hours</label>
             <span>${employee.workingHoursLabel}</span>
-          </div>
+          </div>`}
         </div>
+        ${techPage ? "" : `
         <div class="info-section" style="margin-top: 15px;">
           <label>Break Time</label>
           <span>${employee.breakLabel}</span>
-        </div>
+        </div>`}
       </div>
     </div>
 
@@ -416,8 +428,8 @@ export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
             <th>Meal Out</th>
             <th>Time Out</th>
             <th style="text-align: right;">Working Hours</th>
-            <th style="text-align: right;">Rate</th>
-            <th style="text-align: right;">Total</th>
+            ${techPage ? "" : `<th style="text-align: right;">Rate</th>
+            <th style="text-align: right;">Total</th>`}
           </tr>
         </thead>
         <tbody>
@@ -430,26 +442,31 @@ export function renderPayslipBodyHtml(employee: EmployeePayslipData): string {
             <td>${formatClockTime(r.mealEnd)}</td>
             <td>${formatClockTime(r.clockOut)}</td>
             <td class="amount">${r.hours.toFixed(3)}</td>
-            <td class="amount">${isFixedSalary ? "Fixed salary" : `$${r.rate.toFixed(2)}`}</td>
-            <td class="amount">${isFixedSalary ? "&mdash;" : `$${r.amount.toFixed(2)}`}</td>
+            ${techPage ? "" : `<td class="amount">${isFixedSalary ? "Fixed salary" : `$${r.rate.toFixed(2)}`}</td>
+            <td class="amount">${isFixedSalary ? "&mdash;" : `$${r.amount.toFixed(2)}`}</td>`}
           </tr>
           `).join('') : `
           <tr>
-            <td colspan="${employee.showState ? 9 : 8}" style="text-align: center; color: #9ca3af;">No daily attendance recorded for this period.</td>
+            <td colspan="${(employee.showState ? 9 : 8) - (techPage ? 2 : 0)}" style="text-align: center; color: #9ca3af;">No daily attendance recorded for this period.</td>
           </tr>
           `}
         </tbody>
         <tfoot>
+          ${techPage ? `
           <tr style="font-weight: 700; background: #f3f4f6;">
-            <td colspan="${employee.showState ? 8 : 7}">${isFixedSalary ? "Fixed Salary Total" : employee.hasTechActivityPage ? "Hourly Pay Total" : "Total"}</td>
-            <td class="amount">$${(!isFixedSalary && employee.hasTechActivityPage ? employee.dailyRows.reduce((s, r) => s + r.amount, 0) : employee.grossPay).toFixed(2)}</td>
-          </tr>
+            <td colspan="${employee.showState ? 6 : 5}">Total Hours</td>
+            <td class="amount">${employee.dailyRows.reduce((s, r) => s + r.hours, 0).toFixed(3)}</td>
+          </tr>` : `
+          <tr style="font-weight: 700; background: #f3f4f6;">
+            <td colspan="${employee.showState ? 8 : 7}">${isFixedSalary ? "Fixed Salary Total" : "Total"}</td>
+            <td class="amount">$${employee.grossPay.toFixed(2)}</td>
+          </tr>`}
         </tfoot>
       </table>
 
       ${employee.hasTechActivityPage ? `
       <div style="margin: 8px 0; padding: 8px 10px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 4px; font-size: 12px; color: #92400e;">
-        This page covers hourly time tracking only. See the Tech Activity Report on the next page for the full pay breakdown and grand total.
+        This page is the time record only. The Tech Activity Report on the next page has the full pay breakdown and grand total.
       </div>
       ` : `
       <div class="summary-row gross" style="border: none; grid-template-columns: 2fr 1fr;">
