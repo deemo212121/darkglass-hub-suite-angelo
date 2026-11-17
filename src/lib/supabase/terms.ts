@@ -166,6 +166,40 @@ export async function acceptTerms(versionId: string, device: "web" | "mobile"): 
   if (error) throw new Error(friendly(error.message));
 }
 
+/**
+ * What the accept window marks a version's changes against: the version of
+ * the same terms this person accepted last (with when), or — if they never
+ * accepted one — the version published before it. null for a first version.
+ */
+export async function getTermsBaseline(
+  profileId: string | null,
+  documentId: string,
+  beforeVersion: number,
+): Promise<{ version: number; body: string; acceptedAt: string | null } | null> {
+  if (profileId) {
+    const { data, error } = await supabase
+      .from("terms_acceptances")
+      .select("accepted_at, terms_versions(version, body)")
+      .eq("profile_id", profileId)
+      .eq("document_id", documentId);
+    if (error) throw new Error(friendly(error.message));
+    const mine = ((data ?? []) as any[])
+      .filter((r) => r.terms_versions && r.terms_versions.version < beforeVersion)
+      .sort((a, b) => b.terms_versions.version - a.terms_versions.version)[0];
+    if (mine) return { version: mine.terms_versions.version, body: mine.terms_versions.body, acceptedAt: mine.accepted_at };
+  }
+  const { data, error } = await supabase
+    .from("terms_versions")
+    .select("version, body")
+    .eq("document_id", documentId)
+    .lt("version", beforeVersion)
+    .order("version", { ascending: false })
+    .limit(1);
+  if (error) throw new Error(friendly(error.message));
+  const prev = (data ?? [])[0] as { version: number; body: string } | undefined;
+  return prev ? { version: prev.version, body: prev.body, acceptedAt: null } : null;
+}
+
 /** Profile → "Terms & Conditions": what I accepted (newest first), with the text. */
 export async function getMyAcceptedTerms(profileId: string): Promise<{ acceptance: TermsAcceptance; version: TermsVersion }[]> {
   const { data, error } = await supabase

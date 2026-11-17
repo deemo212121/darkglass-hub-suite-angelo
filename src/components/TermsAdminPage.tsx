@@ -28,6 +28,7 @@ import { AppModal } from "@/components/ui-kit/AppModal";
 import { RichTextEditor } from "@/components/ui/rich-text-editor";
 import { TERMS_DOC_CLASS, TERMS_DOC_PANEL, TermsDocStyleTag } from "@/components/TermsDocStyle";
 import { AHS_STANDARD_TERMS } from "@/lib/termsTemplates";
+import { markTermsChanges } from "@/lib/termsDiff";
 import { ROLE_LABELS, normalizeRole } from "@/lib/roleLabels";
 import { LOCATIONS_DATA } from "@/lib/zipCoverage";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
@@ -192,6 +193,8 @@ export function TermsAdminPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
 
   const live = selected ? latestOf(selected.id) : undefined;
   const changed = selected && draft ? draftChanged(draft, live) : false;
+  // Preview marks what the draft changes from the live version — as people who accepted it will see it.
+  const previewChanges = previewing && draft && live ? markTermsChanges(DOMPurify.sanitize(live.body), DOMPurify.sanitize(draft.body)) : undefined;
 
   return (
     <main className="flex-1 w-full px-3 py-6 sm:px-5">
@@ -386,8 +389,20 @@ export function TermsAdminPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef
               <div className="text-[11px] font-semibold uppercase tracking-wider text-sky-300">Please read and accept to continue</div>
               <div className="mt-1 text-lg font-bold text-white">{draft.title || "Untitled"}</div>
               <div className="text-xs text-slate-400">Version {(live?.version ?? 0) + 1} · for {audienceText(draft.audience, roleName)}</div>
+              {previewChanges !== undefined && (
+                <div className="mt-2 rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-100">
+                  {previewChanges === null
+                    ? `Changed throughout since Version ${live!.version} — people are asked to read it all.`
+                    : previewChanges.changes
+                      ? `${previewChanges.changes} ${previewChanges.changes === 1 ? "place" : "places"} changed since Version ${live!.version} — people see added text highlighted and removed text struck through, as here.`
+                      : `Same text as Version ${live!.version}.`}
+                </div>
+              )}
             </div>
-            <div className={`${TERMS_DOC_CLASS} ${TERMS_DOC_PANEL} max-h-[55vh] overflow-y-auto px-8 py-7 sm:px-12`} dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(draft.body) || "<p><i>No text yet.</i></p>" }} />
+            <div
+              className={`${TERMS_DOC_CLASS} ${TERMS_DOC_PANEL} max-h-[55vh] overflow-y-auto px-8 py-7 sm:px-12`}
+              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(previewChanges?.changes ? previewChanges.html : draft.body) || "<p><i>No text yet.</i></p>" }}
+            />
             <div className="flex items-center gap-2 border-t border-white/10 px-5 py-3 text-sm text-slate-400">
               <input type="checkbox" disabled className="h-4 w-4" /> I have read, understood, and agree to the {draft.title || "terms"}.
               <span className="ml-auto rounded-lg bg-sky-600/50 px-4 py-1.5 font-semibold text-white">I agree</span>
