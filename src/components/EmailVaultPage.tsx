@@ -24,6 +24,7 @@ import { PasswordChecksPanel } from "@/components/PasswordChecksPanel";
 import { TableSkeleton } from "@/components/ui-kit/TableSkeleton";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { isEmailVaultSuperAdmin } from "@/lib/submoduleAccess";
+import { normalizeRole } from "@/lib/roleLabels";
 import { hydrateEmailVaultGrant } from "@/lib/moduleAccess";
 import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
 import {
@@ -215,6 +216,12 @@ export function EmailVaultPage({ mod, sub }: Props) {
   /** Account by login email — names an email nobody is linked to yet (most are deactivated people's old mailboxes). */
   const userByLoginEmail = useMemo(() => new Map(users.filter((u) => u.email).map((u) => [u.email.trim().toLowerCase(), u])), [users]);
   const superAdmins = useMemo(() => activeUsers.filter((u) => isEmailVaultSuperAdmin(u.role, u.extra_roles)), [activeUsers]);
+  // Manage Access lists only the people who hold Super Admin itself — IT keeps Super Admin's access
+  // here (superAdmins above, so they're never offered under Add people) but isn't listed.
+  const listedSuperAdmins = useMemo(
+    () => superAdmins.filter((u) => [u.role, ...(u.extra_roles ?? [])].some((r) => normalizeRole(r) === "SUPERADMIN")),
+    [superAdmins],
+  );
 
   const refreshEvents = useCallback(() => {
     void getEmailVaultEvents().then(setEvents, (e) => console.error("Email Vault history:", e));
@@ -787,7 +794,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Always — Super Admin</p>
               <div className="flex flex-wrap gap-1">
-                {superAdmins.map((u) => (
+                {listedSuperAdmins.map((u) => (
                   <span key={u.id} className="rounded-full border border-[var(--color-panel-border)] bg-white/5 px-2 py-0.5 text-xs">{nameOf(u)}</span>
                 ))}
               </div>
