@@ -1230,7 +1230,8 @@ export function AdminUserManagementPage({ mod, sub }: { mod: ModuleDef; sub: Sub
     const eligible = users.filter((u) => {
       if (u.isActive === false) return false;
       const heldRoles = [u.type, ...(u.extraRoles ?? [])].map((r) => (r || "").toUpperCase());
-      return heldRoles.some((r) => ["ADMIN", "SUPERADMIN"].includes(r) || r.includes("MANAGER"));
+      // Directors (Technical Director, Technical Assistant Director) manage technicians too.
+      return heldRoles.some((r) => ["ADMIN", "SUPERADMIN"].includes(r) || r.includes("MANAGER") || r.includes("DIRECTOR"));
     });
     return Array.from(new Set(eligible.map((u) => u.userName).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   }, [users]);

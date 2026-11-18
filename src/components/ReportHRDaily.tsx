@@ -315,6 +315,13 @@ const PH_BRANCH_NAMES = new Set(LOCATIONS_DATA.filter(l => l.isPhilippines).map(
 // they run the final interview, HR finalizes the hire.
 const HR_ADMIN_ROLES = new Set(["HR", "HR_MANAGER", "ADMIN", "SUPERADMIN", "MANAGER", "SENIOR_MANAGER"]);
 const BRANCH_MANAGER_ROLES = new Set(["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER"]);
+/**
+ * Who the Hiring "Manager" pickers and Forward Candidate list — any role whose name
+ * says MANAGER (Branch / Parts / CSR / Technician Manager …) or DIRECTOR (Technical
+ * Director, Technical Assistant Director, Senior Director): the directors run
+ * technicians too and were missing (Matt Simmons, Technical Assistant Director).
+ */
+const isManagerTierRole = (role: string | null | undefined) => /MANAGER|DIRECTOR/.test(normalizeRole(role));
 
 // Mirrors HrCalendarTab.tsx's HR_STATUS_TO_PTO_TYPE — Absent List's HR
 // Status shares these 6 leave-type values with PtoType; the other 3
@@ -2760,7 +2767,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const branchManagerOptions = useMemo(
     () =>
       employees
-        .filter((e) => e.status === "active" && [e.position, ...e.extraRoles].some((r) => normalizeRole(r).includes("MANAGER")))
+        .filter((e) => e.status === "active" && [e.position, ...e.extraRoles].some((r) => isManagerTierRole(r)))
         .sort((a, b) => a.name.localeCompare(b.name)),
     [employees]
   );
@@ -17306,7 +17313,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const managerRecipients = useMemo(
     () =>
       employees
-        .filter((e) => e.status === "active" && [e.position, ...e.extraRoles].some((r) => normalizeRole(r).includes("MANAGER")))
+        .filter((e) => e.status === "active" && [e.position, ...e.extraRoles].some((r) => isManagerTierRole(r)))
         .sort((a, b) => a.name.localeCompare(b.name)),
     [employees]
   );

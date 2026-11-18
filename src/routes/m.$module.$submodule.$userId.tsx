@@ -588,9 +588,10 @@ function UserDetailsPage() {
           // not just the primary role — a user whose primary role is e.g.
           // "Claims Team Leader" but who also holds "Claims Manager" as a
           // secondary role should still be selectable.
+          // Directors (Technical Director, Technical Assistant Director) manage technicians too.
           const isManagerish = (r: string | null | undefined) => {
             const v = (r || "").toUpperCase();
-            return v === "ADMIN" || v === "SUPERADMIN" || v.includes("MANAGER");
+            return v === "ADMIN" || v === "SUPERADMIN" || v.includes("MANAGER") || v.includes("DIRECTOR");
           };
           const eligible = all.filter((u) => u.is_active && [u.role, ...(u.extra_roles ?? [])].some(isManagerish));
           setManagerCandidates(
