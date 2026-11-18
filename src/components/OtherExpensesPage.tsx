@@ -20,6 +20,7 @@ import { ReceiptLightbox, isPdfReceipt } from "@/components/ReceiptLightbox";
 import { CarIqImportModal } from "@/components/CarIqImportModal";
 import { ExpenseRecordsSyncModal, newSyncedBills } from "@/components/ExpenseRecordsSyncModal";
 import { autoSyncExpenseRecords, type AutoSyncResult } from "@/lib/supabase/expenseRecordSync";
+import { autoSyncDailyMileage, type MileageSyncResult } from "@/lib/supabase/mileageExpenseSync";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { DateModeBar } from "@/components/DateModeBar";
 import { getCompanyExpenses } from "@/lib/supabase/expenses";
@@ -184,6 +185,8 @@ export function OtherExpensesPage({ onEditRecord }: {
   const [syncView, setSyncView] = useState<"synced" | "fix" | null>(null);
   const [autoSyncing, setAutoSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<AutoSyncResult | null>(null);
+  /** Daily Mileage (approved trips) → CarIQ / NON CarIQ Mileage Reimbursement bills. */
+  const [mileageResult, setMileageResult] = useState<MileageSyncResult | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   /** This viewer's last look at What's new (this browser) — default: the last 7 days count as new. */
   const [seenAt, setSeenAt] = useState<string>(() => {
@@ -329,9 +332,19 @@ export function OtherExpensesPage({ onEditRecord }: {
   const runSync = useCallback(() => {
     setAutoSyncing(true);
     setSyncError(null);
-    autoSyncExpenseRecords(KNOWN_BRANCHES)
-      .then((r) => { setSyncResult(r); if (r.saved) load(); })
-      .catch((e) => setSyncError(e instanceof Error ? e.message : String(e)))
+    // Expense Records and Daily Mileage fill different lines, so they run side by side; one failing doesn't stop the other.
+    Promise.allSettled([autoSyncExpenseRecords(KNOWN_BRANCHES), autoSyncDailyMileage(KNOWN_BRANCHES)])
+      .then(([records, mileage]) => {
+        if (records.status === "fulfilled") setSyncResult(records.value);
+        if (mileage.status === "fulfilled") setMileageResult(mileage.value);
+        const msg = (r: PromiseRejectedResult) => (r.reason instanceof Error ? r.reason.message : String(r.reason));
+        const errors = [
+          records.status === "rejected" ? `Expense Records: ${msg(records)}` : "",
+          mileage.status === "rejected" ? `Daily Mileage: ${msg(mileage)}` : "",
+        ].filter(Boolean);
+        setSyncError(errors.length ? errors.join(" · ") : null);
+        if ((records.status === "fulfilled" && records.value.saved) || (mileage.status === "fulfilled" && mileage.value.saved)) load();
+      })
       .finally(() => setAutoSyncing(false));
   }, [load]);
   const autoSynced = useRef(false);
@@ -341,7 +354,8 @@ export function OtherExpensesPage({ onEditRecord }: {
     runSync();
   }, [canEdit, runSync]);
   const whatsNewCount = useMemo(() => newSyncedBills(rows ?? [], seenAt).length, [rows, seenAt]);
-  const needsFixing = syncResult ? syncResult.stray.length + syncResult.manual.length : 0;
+  const needsFixing =
+    (syncResult ? syncResult.stray.length + syncResult.manual.length : 0) + (mileageResult ? mileageResult.stray.length + mileageResult.manual.length : 0);
   const closeWhatsNew = () => {
     const wasSynced = syncView === "synced";
     setSyncView(null);
@@ -677,7 +691,7 @@ export function OtherExpensesPage({ onEditRecord }: {
             type="button"
             onClick={() => setSyncView("synced")}
             disabled={!rows}
-            title="Expense Records (Hotel, Food, Car Rental, Gas, Supplies) sync into Branch Bills automatically — see what was added"
+            title="Expense Records (Hotel, Food, Car Rental, Gas, Supplies) and Daily Mileage (approved trips → CarIQ / NON CarIQ Mileage) sync into Branch Bills automatically — see what was added"
             className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
           >
             {autoSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
@@ -690,7 +704,7 @@ export function OtherExpensesPage({ onEditRecord }: {
               type="button"
               onClick={() => setSyncView("fix")}
               disabled={!rows}
-              title={syncError ? "Sync failed" : `${syncResult!.stray.length} can't be placed · ${syncResult!.manual.length} typed by hand`}
+              title={syncError ? `Sync failed — ${syncError}` : `${syncResult?.stray.length ?? 0} records can't be placed · ${mileageResult?.stray.length ?? 0} mileage trips can't be placed · ${(syncResult?.manual.length ?? 0) + (mileageResult?.manual.length ?? 0)} typed by hand`}
               className="inline-flex items-center gap-2 rounded-lg border border-red-500/50 bg-red-500/15 px-3 py-2 text-sm font-semibold text-red-200 hover:bg-red-500/25 disabled:opacity-50"
             >
               <AlertTriangle className="h-4 w-4 text-red-400" /> Needs fixing
@@ -849,6 +863,7 @@ export function OtherExpensesPage({ onEditRecord }: {
           rows={rows}
           since={seenAt}
           result={syncResult}
+          mileage={mileageResult}
           syncing={autoSyncing}
           syncError={syncError}
           onSyncNow={runSync}

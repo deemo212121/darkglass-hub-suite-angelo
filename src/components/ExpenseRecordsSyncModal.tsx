@@ -15,6 +15,8 @@ import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, L
 import { BRANCH_EXPENSE_LABEL, type BranchExpense } from "@/lib/branchExpenses";
 import { EXPENSE_RECORDS_VENDOR, strayReason } from "@/lib/branchAutoFill";
 import type { AutoSyncResult } from "@/lib/supabase/expenseRecordSync";
+import { DAILY_MILEAGE_VENDOR, tripAmount } from "@/lib/mileageExpenseSync";
+import type { MileageSyncResult } from "@/lib/supabase/mileageExpenseSync";
 
 const fmtMoney = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const monthLabel = (ym: string) => {
@@ -29,12 +31,12 @@ const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "sh
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const PENDING = /\(pending\)$/;
 
-/** Bills the sync owns (vendor "AHS Expense Records"). */
-export const syncedBills = (rows: BranchExpense[]) => rows.filter((b) => b.vendor === EXPENSE_RECORDS_VENDOR);
+/** Bills the syncs own (vendor "AHS Expense Records" / "AHS Daily Mileage"). */
+export const syncedBills = (rows: BranchExpense[]) => rows.filter((b) => b.vendor === EXPENSE_RECORDS_VENDOR || b.vendor === DAILY_MILEAGE_VENDOR);
 /** Synced bills changed after `since` (ISO). */
 export const newSyncedBills = (rows: BranchExpense[], since: string) => syncedBills(rows).filter((b) => b.updatedAt > since);
 
-type Tab = "synced" | "stray" | "manual";
+type Tab = "synced" | "stray" | "mileage" | "manual";
 
 const th = "px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-500";
 const td = "whitespace-nowrap px-3 py-2";
@@ -43,6 +45,7 @@ export function ExpenseRecordsSyncModal({
   rows,
   since,
   result,
+  mileage,
   syncing,
   syncError,
   onSyncNow,
@@ -54,6 +57,8 @@ export function ExpenseRecordsSyncModal({
   /** This viewer's last look (ISO) — newer bills are marked NEW. */
   since: string;
   result: AutoSyncResult | null;
+  /** The Daily Mileage sync (approved trips → CarIQ / NON CarIQ Mileage Reimbursement). */
+  mileage?: MileageSyncResult | null;
   syncing: boolean;
   syncError: string | null;
   onSyncNow: () => void;
@@ -63,7 +68,12 @@ export function ExpenseRecordsSyncModal({
   /** Jump to the record in Expense Records (its tab), highlighted, with its edit form open. */
   onEditRecord?: (id: string, tab: "flashTech" | "employeeRequests") => void;
 }) {
-  const [tab, setTab] = useState<Tab>(() => (view === "synced" ? "synced" : (result?.stray.length ?? 0) > 0 || !(result?.manual.length) ? "stray" : "manual"));
+  const [tab, setTab] = useState<Tab>(() =>
+    view === "synced" ? "synced"
+    : (result?.stray.length ?? 0) > 0 ? "stray"
+    : (mileage?.stray.length ?? 0) > 0 ? "mileage"
+    : (result?.manual.length ?? 0) + (mileage?.manual.length ?? 0) > 0 ? "manual"
+    : "stray");
   /** Synced bills opened to show their records. */
   const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
   /** Can't-place groups folded shut (all open by default). */
@@ -75,7 +85,12 @@ export function ExpenseRecordsSyncModal({
   const list = bills;
 
   const stray = result?.stray ?? [];
-  const manual = result?.manual ?? [];
+  const mileageStray = mileage?.stray ?? [];
+  /** Typed-by-hand lines from both syncs, in one list. */
+  const manual = [
+    ...(result?.manual ?? []).map((g) => ({ month: g.month, branch: g.branch, category: g.category, count: g.records.length, unit: "record", total: g.total, billAmounts: g.billAmounts })),
+    ...(mileage?.manual ?? []).map((g) => ({ month: g.month, branch: g.branch, category: g.category, count: g.trips.length, unit: "approved trip", total: g.total, billAmounts: g.billAmounts })),
+  ];
   /** Can't-place records grouped by the place that isn't a branch, biggest group first. */
   const strayGroups = useMemo(() => {
     const m = new Map<string, AutoSyncResult["stray"]>();
@@ -89,6 +104,7 @@ export function ExpenseRecordsSyncModal({
   // Synced has no tabs; Needs fixing has its two.
   const tabs: { key: Tab; label: string; count: number; warn?: boolean }[] = view === "synced" ? [] : [
     { key: "stray", label: "Can't place", count: stray.length, warn: true },
+    { key: "mileage", label: "Mileage", count: mileageStray.length, warn: true },
     { key: "manual", label: "Typed by hand", count: manual.length, warn: true },
   ];
 
@@ -276,13 +292,71 @@ export function ExpenseRecordsSyncModal({
     </>
   );
 
+  const mileageTab = !mileageStray.length ? (
+    <p className="p-8 text-center text-sm text-slate-400">Every approved mileage trip is in a bill. Nothing to fix.</p>
+  ) : (
+    <>
+      <p className="flex items-start gap-2 border-b border-white/10 bg-amber-500/5 px-3 py-2.5 text-xs text-amber-200">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-300" />
+        <span>
+          These {plural(mileageStray.length, "approved Daily Mileage trip")} aren't in a CarIQ / NON CarIQ Mileage bill yet. The red column is what's missing; fix it where the last column says and the next sync picks them up.
+        </span>
+      </p>
+      <table className="w-full text-xs">
+        <thead className="sticky top-0 z-10 bg-slate-900">
+          <tr>
+            <th className={th}>Date</th>
+            <th className={th}>Technician</th>
+            <th className={th}>Car IQ</th>
+            <th className={`${th} text-right`}>Miles</th>
+            <th className={th}>Trip branch</th>
+            <th className={th}>Tech's branch</th>
+            <th className={`${th} text-right`}>Amount</th>
+            <th className={th}>What's wrong · where to fix</th>
+          </tr>
+        </thead>
+        <tbody>
+          {mileageStray.map(({ trip: t, reason, fix }) => (
+            <tr key={t.id} className="border-t border-white/5">
+              <td className={`${td} text-slate-300`}>{shortDate(t.workDate)}</td>
+              <td className={`${td} font-medium text-white`}>{t.person}</td>
+              <td className={`${td} ${fix === "carIq" ? "font-semibold text-red-300" : "text-slate-400"}`}>{t.hasCarIq == null ? "— not set —" : t.hasCarIq ? "CarIQ" : "NON CarIQ"}</td>
+              <td className={`${td} text-right font-mono text-slate-300`}>{t.eligibleMiles}</td>
+              <td className={`${td} ${fix === "trip" && t.tripBranch ? "font-semibold text-red-300" : "text-slate-400"}`}>{t.tripBranch || "—"}</td>
+              <td className={`${td} ${fix === "branch" ? "font-semibold text-red-300" : "text-slate-400"}`}>{t.homeBranch || "— none —"}</td>
+              <td className={`${td} text-right font-mono text-emerald-300`}>{t.rate == null ? "—" : fmtMoney(tripAmount(t))}</td>
+              <td className="px-3 py-2">
+                <div className="font-semibold text-amber-200">{reason}</div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-slate-400">
+                  {fix === "carIq" ? (
+                    <span>Accounting → Car IQ → set {t.person}'s Car IQ</span>
+                  ) : fix === "branch" ? (
+                    <span>User Management → {t.person}'s branch, or type the branch on the trip</span>
+                  ) : null}
+                  <a
+                    href={`/m/accounting/daily-mileage`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 rounded-md bg-sky-500/15 px-2 py-0.5 font-semibold text-sky-300 hover:bg-sky-500/25"
+                  >
+                    Open Daily Mileage <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+
   const manualTab = !manual.length ? (
     <p className="p-8 text-center text-sm text-slate-400">Nothing left alone.</p>
   ) : (
     <>
       <p className="flex items-start gap-2 border-b border-white/10 bg-amber-500/5 px-3 py-2.5 text-xs text-amber-200">
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-300" />
-        <span>A bill was typed in by hand for these, so the records weren't added (no double count). If the records should be used instead, delete the typed bill — the next sync adds them.</span>
+        <span>A bill was typed in by hand for these, so the records / trips weren't added (no double count). If they should be used instead, delete the typed bill — the next sync adds them.</span>
       </p>
       <table className="w-full text-xs">
         <thead className="sticky top-0 z-10 bg-slate-900">
@@ -301,7 +375,7 @@ export function ExpenseRecordsSyncModal({
               <td className={`${td} text-slate-300`}>{monthLabel(g.month)}</td>
               <td className={`${td} font-medium text-white`}>{g.branch}</td>
               <td className={`${td} text-slate-300`}>{BRANCH_EXPENSE_LABEL[g.category]}</td>
-              <td className={`${td} text-slate-400`}>{plural(g.records.length, "record")}</td>
+              <td className={`${td} text-slate-400`}>{plural(g.count, g.unit)}</td>
               <td className={`${td} text-right font-mono text-emerald-300`}>{fmtMoney(g.total)}</td>
               <td className={`${td} text-right font-mono text-amber-300`}>{g.billAmounts.map(fmtMoney).join(" + ")}</td>
             </tr>
@@ -319,16 +393,16 @@ export function ExpenseRecordsSyncModal({
           <div>
             {view === "synced" ? (
               <>
-                <h3 id="whatsnew-title" className="flex items-center gap-2 text-lg font-bold text-white"><CheckCircle2 className="h-4 w-4 text-emerald-300" /> Synced from Expense Records</h3>
+                <h3 id="whatsnew-title" className="flex items-center gap-2 text-lg font-bold text-white"><CheckCircle2 className="h-4 w-4 text-emerald-300" /> Synced from Expense Records &amp; Daily Mileage</h3>
                 <p className="mt-0.5 text-xs text-slate-400">
-                  Syncs into Branch Bills automatically when this page opens — Hotel, Food, Car Rental, Gas and Office Supplies, one bill per branch, month and line.
-                  Flash Tech trips go to their destination branch. A record is never added twice. Click a bill to see its records.
+                  Syncs into Branch Bills automatically when this page opens — Hotel, Food, Car Rental, Gas and Office Supplies from Expense Records, and approved Daily Mileage trips
+                  as CarIQ / NON CarIQ Mileage Reimbursement (Car IQ and rate from that day, like payroll). One bill per branch, month and line; nothing is added twice. Click a bill to see what's in it.
                 </p>
               </>
             ) : (
               <>
                 <h3 id="whatsnew-title" className="flex items-center gap-2 text-lg font-bold text-white"><AlertTriangle className="h-4 w-4 text-red-400" /> Needs fixing</h3>
-                <p className="mt-0.5 text-xs text-slate-400">Expense Records the sync couldn't put in a bill, and why. Fix them at the source — the next sync picks them up.</p>
+                <p className="mt-0.5 text-xs text-slate-400">Expense Records and approved mileage trips the sync couldn't put in a bill, and why. Fix them at the source — the next sync picks them up.</p>
               </>
             )}
           </div>
@@ -341,8 +415,13 @@ export function ExpenseRecordsSyncModal({
             <span className="text-slate-300"><Loader2 className="mr-1 inline h-3.5 w-3.5 animate-spin" /> Syncing…</span>
           ) : syncError ? (
             <span className="text-red-300">Sync failed: {syncError}</span>
-          ) : result ? (
-            <span className="text-emerald-300">{result.saved ? `Just synced ${plural(result.records, "record")} into ${plural(result.saved, "bill")}.` : "Up to date — nothing new in Expense Records."}</span>
+          ) : result || mileage ? (
+            <span className="text-emerald-300">
+              {[
+                result?.saved ? `Expense Records: ${plural(result.records, "record")} into ${plural(result.saved, "bill")}` : "",
+                mileage?.saved ? `Daily Mileage: ${plural(mileage.saved, "mileage bill")} made or updated` : "",
+              ].filter(Boolean).join(" · ") || "Up to date — nothing new."}
+            </span>
           ) : null}
           <button type="button" onClick={onSyncNow} disabled={syncing} className="inline-flex items-center gap-1 rounded-md bg-slate-800 px-2 py-1 font-semibold text-slate-200 hover:bg-slate-700 disabled:opacity-50">
             <RefreshCw className="h-3 w-3" /> Sync now
@@ -377,7 +456,7 @@ export function ExpenseRecordsSyncModal({
         <div className={`min-h-0 flex-1 overflow-auto px-6 py-4 ${tabs.length ? "" : "mt-1"}`}>
           {/* No overflow-hidden here — it would stop the sticky table headers. */}
           <div className="rounded-lg border border-white/10">
-            {tab === "synced" ? syncedTab : tab === "stray" ? strayTab : manualTab}
+            {tab === "synced" ? syncedTab : tab === "stray" ? strayTab : tab === "mileage" ? mileageTab : manualTab}
           </div>
         </div>
       </div>
