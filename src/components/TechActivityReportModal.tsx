@@ -129,7 +129,13 @@ export function TechActivityReportModal({
   // AccountingDashboard.tsx's payrollRows only has period-aggregate hours
   // with no per-day state granularity to check a floor against.
   const [periodDayInfo, setPeriodDayInfo] = useState<{ date: string; rawHours: number; state?: string }[]>([]);
-  const [loadingStateComparison, setLoadingStateComparison] = useState(false);
+  // Starts true: until the per-day attendance below has loaded, the State
+  // match is computed off zero days (State = Company, Regular $ = 0), and the
+  // auto-save effect further down must not save those placeholder numbers.
+  // Starting false let it run on the very first render and lock in a bad
+  // override (e.g. Joshua Sanders 10/25-11/07: 899.49 / 0), which then kept
+  // Done disabled behind a permanent "Saving...".
+  const [loadingStateComparison, setLoadingStateComparison] = useState(true);
   useEffect(() => {
     let cancelled = false;
     setLoadingStateComparison(true);
@@ -236,10 +242,14 @@ export function TechActivityReportModal({
   // 0400) so the dashboard's gross pay rounds Regular $ and OT $ separately,
   // exactly like Total Payment here.
   const stateRegularShare = companyRegularPayBlended + matchMin;
+  const regularBackfillTried = useRef(false);
+  // The Regular $ part only blocks Done until its one fill-in attempt has
+  // been made — if that save doesn't stick, the TOTAL (what's actually paid)
+  // is still right, so Done must not stay disabled forever behind "Saving...".
   const stateSavePending = !!onSetHourlyOtMode && stateMatchRequired &&
     (Math.abs(techHourlyPay - stateHourlyOtTotal) > 0.005 ||
-      stateRegularAmount == null || Math.abs(stateRegularAmount - stateRegularShare) > 0.0005);
-  const regularBackfillTried = useRef(false);
+      (!regularBackfillTried.current &&
+        (stateRegularAmount == null || Math.abs(stateRegularAmount - stateRegularShare) > 0.0005)));
   const lastStateSaveAttempt = useRef("");
 
   // Automatically select State when a match is due, and keep saved State
