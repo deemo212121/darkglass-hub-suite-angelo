@@ -14111,7 +14111,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         // when it won't. Only an already-signed/confirmed (or otherwise not
         // reusable) existing doc is a genuine resend worth confirming.
         const alreadySent = (await getExistingActiveDocumentTypes(recipient.id, Array.from(selectedFormTypes))).filter(
-          (type) => latestDocByPersonType.get(`${recipient.id}|${type}`)?.status !== "pending_signature"
+          // A pending copy the employee already signed (with HR — recipientSlot hr_staff) is on file too.
+          (type) => { const d = latestDocByPersonType.get(`${recipient.id}|${type}`); return d?.status !== "pending_signature" || d.recipientSlot === "hr_staff"; }
         );
         if (alreadySent.length > 0) {
           const labelByType = new Map(
@@ -14152,7 +14153,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       const docs = await Promise.all(
         Array.from(selectedFormTypes).map((type) => {
           const existing = recipient ? latestDocByPersonType.get(`${recipient.id}|${type}`) : undefined;
-          if (existing && existing.status === "pending_signature") return existing;
+          // Only reuse a copy still waiting on the employee — not one they signed that is now with HR.
+          if (existing && existing.status === "pending_signature" && existing.recipientSlot !== "hr_staff") return existing;
           return createSignableDocument(
             recipient
               ? {

@@ -359,14 +359,22 @@ const STATUS_RANK: Record<SignableDocumentStatus, number> = {
  * technician who'd already completed a form showing "Not sent" again the
  * moment a second copy got sent). Best status wins outright; only when two
  * rows tie on status does the newer one win, purely for determinism.
+ *
+ * A pending copy the employee already signed — parked with HR for its
+ * employer part (recipientSlot "hr_staff", the same shape
+ * getDocumentReviewStatus calls "awaiting_hr") — outranks a pending copy
+ * still waiting on the employee: a newer unsigned duplicate no longer hides
+ * the signed one (Daven Hodge's I-9, signed 08/24, showed "Awaiting employee
+ * signature" because of an unsigned 08/26 resend).
  */
-export function pickAuthoritativeDocument<T extends { status: SignableDocumentStatus; createdAt: string; documentType?: string; formData?: Record<string, any> }>(
+export function pickAuthoritativeDocument<T extends { status: SignableDocumentStatus; createdAt: string; documentType?: string; formData?: Record<string, any>; recipientSlot?: string }>(
   docs: T[]
 ): T | undefined {
   if (docs.length === 0) return undefined;
   // An agreement signed in an old wording ranks just above cancelled, so the
   // new version — even one still waiting for a signature — is what counts.
-  const rank = (d: T) => (isOutdatedDocument(d) ? 0.5 : STATUS_RANK[d.status]);
+  const rank = (d: T) =>
+    isOutdatedDocument(d) ? 0.5 : d.status === "pending_signature" && d.recipientSlot === "hr_staff" ? 1.5 : STATUS_RANK[d.status];
   return docs.reduce((best, d) => {
     const rankDiff = rank(d) - rank(best);
     if (rankDiff > 0) return d;
