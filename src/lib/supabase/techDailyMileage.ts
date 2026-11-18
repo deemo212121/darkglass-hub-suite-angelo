@@ -107,6 +107,30 @@ export async function getTechDailyMileage(from: string, to: string): Promise<{ t
   return { trips: out, reviewFields: select === SELECT };
 }
 
+/**
+ * Every APPROVED trip (any date) — for Overall Expenses' mileage bills.
+ * null before migration 0453 (no approval status yet) or before 0451 — the sync then does nothing.
+ */
+export async function getApprovedTechMileage(): Promise<TechMileageTrip[] | null> {
+  const out: TechMileageTrip[] = [];
+  for (let start = 0; ; start += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("tech_daily_mileage")
+      .select(SELECT)
+      .eq("status", "approved")
+      .order("work_date")
+      .order("id")
+      .range(start, start + PAGE_SIZE - 1);
+    if (error) {
+      if (isTripColumnsMissing(error.message) || isTechDailyMileageMissing(error.message)) return null;
+      throw new Error(error.message);
+    }
+    out.push(...(data ?? []).map(fromRow));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return out;
+}
+
 /** Each profile's current Car IQ flag (employee_info.hasCarIq) — the fallback when their Car IQ history has no entry yet. */
 export async function getCarIqFlags(): Promise<Map<string, boolean>> {
   const out = new Map<string, boolean>();
