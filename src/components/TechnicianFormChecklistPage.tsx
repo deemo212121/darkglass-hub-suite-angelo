@@ -115,9 +115,9 @@ function leftBadgeFor(
   info: EmploymentStatusInfo | undefined,
   change: AccountStatusChange | undefined,
 ): { label: string; title: string } | null {
-  const left = info?.status === "terminated" || info?.status === "resigned" ? info.status : !user.is_active ? "deactivated" : null;
+  const left = info?.status === "terminated" || info?.status === "resigned" || info?.status === "cancelled" || info?.status === "withdrawn" ? info.status : !user.is_active ? "deactivated" : null;
   if (!left) return null;
-  const word = left === "terminated" ? "Terminated" : left === "resigned" ? "Resigned" : "Deactivated";
+  const word = left === "terminated" ? "Terminated" : left === "resigned" ? "Resigned" : left === "cancelled" ? "Cancelled" : left === "withdrawn" ? "Withdrawn" : "Deactivated";
   const loggedDeactivation = !user.is_active && change?.action === "user_deactivated" ? change.date || localISODate(new Date(change.at)) : null;
   const date = info?.statusDate || info?.terminateDate || loggedDeactivation;
   const shown = date ? formatISODate(date, { month: "short", day: "numeric", year: "numeric" }) : null;

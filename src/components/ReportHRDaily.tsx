@@ -406,7 +406,7 @@ const STATUS_REQUIRES_DATE: Partial<Record<CandidateStatus, string>> = {
   hired: "Start date",
 };
 
-type EmploymentStatus = "active" | "inactive" | "terminated" | "resigned";
+type EmploymentStatus = "active" | "inactive" | "terminated" | "resigned" | "cancelled" | "withdrawn";
 
 interface Employee {
   id: string;
@@ -17456,7 +17456,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     // Reactivating (back to Active from Inactive / Terminated / Resigned) asks
     // why, same as User Management's Reactivate — see the confirm dialog.
     const reactivating = newStatus === "active" && !!employee && employee.status !== "active";
-    if (newStatus === "terminated" || newStatus === "resigned" || newStatus === "inactive" || reactivating) {
+    if (newStatus !== "active" || reactivating) {
       // Defaults to today, but the confirm dialog's own date input lets this
       // be corrected before saving — e.g. HR processing a termination a few
       // days after the person's actual last day shouldn't stamp the
@@ -21792,6 +21792,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                             employee.status === "active" ? "bg-emerald-500/20 text-emerald-300" :
                             employee.status === "terminated" ? "bg-red-500/20 text-red-300" :
                             employee.status === "resigned" ? "bg-slate-500/20 text-slate-300" :
+                            employee.status === "cancelled" || employee.status === "withdrawn" ? "bg-orange-500/20 text-orange-300" :
                             "bg-yellow-500/20 text-yellow-300"
                           }`}
                         >
@@ -21799,6 +21800,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                           <option value="inactive" className="bg-slate-800 text-white">Inactive</option>
                           <option value="terminated" className="bg-slate-800 text-white">Terminated</option>
                           <option value="resigned" className="bg-slate-800 text-white">Resigned</option>
+                          <option value="cancelled" className="bg-slate-800 text-white">Cancelled</option>
+                          <option value="withdrawn" className="bg-slate-800 text-white">Withdrawn</option>
                         </select>
                         {(() => {
                           // Reactivated: when, by whom and why — from the account's
@@ -22092,7 +22095,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     {inactiveRows.length > 0 && (
                       <tr>
                         <td colSpan={colCount} className="px-3 py-1.5 bg-white/5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                          Not Active ({inactiveRows.length}) — inactive, terminated, or resigned
+                          Not Active ({inactiveRows.length}) — inactive, terminated, resigned, cancelled, or withdrawn
                         </td>
                       </tr>
                     )}
@@ -37768,7 +37771,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     : "bg-slate-600 hover:bg-slate-700"
                 }`}
               >
-                Confirm {confirmDialog.newStatus === "terminated" ? "Termination" : confirmDialog.newStatus === "resigned" ? "Resignation" : "Deactivation"}
+                Confirm {confirmDialog.newStatus === "terminated" ? "Termination" : confirmDialog.newStatus === "resigned" ? "Resignation" : confirmDialog.newStatus === "cancelled" ? "Cancellation" : confirmDialog.newStatus === "withdrawn" ? "Withdrawal" : "Deactivation"}
               </button>
             </div>
           </div>
@@ -38579,6 +38582,8 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     <option value="inactive">Inactive</option>
                     <option value="terminated">Terminated</option>
                     <option value="resigned">Resigned</option>
+                    <option value="cancelled">Cancelled</option>
+                    <option value="withdrawn">Withdrawn</option>
                   </select>
                 </div>
                 <div className="flex flex-col gap-1">
