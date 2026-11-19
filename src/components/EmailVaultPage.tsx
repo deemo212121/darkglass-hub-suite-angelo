@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { Check, ChevronLeft, Copy, Eye, EyeOff, History, KeyRound, Loader2, Mail, Pencil, Plus, Trash2, UserPlus, Users, X } from "lucide-react";
+import { Check, ChevronLeft, Columns3, Copy, Eye, EyeOff, History, KeyRound, Loader2, Mail, Pencil, Plus, Trash2, UserPlus, Users, X } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -41,6 +41,9 @@ import {
   getMyEmailVaultPasswordAccess,
   getEmailVaultNoPasswordIds,
   getEmailVaultEvents,
+  getEmailVaultPlatforms,
+  addEmailVaultPlatform,
+  removeEmailVaultPlatform,
   type EmailVaultEntry,
   type EmailVaultAccessRow,
   type EmailVaultEvent,
@@ -53,10 +56,11 @@ const REVEAL_MS = 30_000;
 
 /**
  * The ✓ columns, in the order of the sheet this page replaced (migration
- * 0449 stores the ticked names on each email). Add a platform here and it
- * becomes a column; a name taken out of here stays saved but isn't shown.
+ * 0449 stores the ticked names on each email). Since migration 0466 each
+ * company keeps its own list (Columns adds / deletes them) — this is only
+ * what shows before 0466 is run. A deleted column's ticks stay saved.
  */
-const VAULT_PLATFORMS = [
+const DEFAULT_VAULT_PLATFORMS = [
   "AHS", "ER", "Discord", "iWallet", "Car IQ", "Encompass", "Marcone", "NSA", "ServicePower", "ServiceBench",
   "Miele", "Onpoint", "GE", "Samsung", "Electrolux", "LG", "LinkedIn", "Wix", "Facebook",
 ] as const;
@@ -95,6 +99,8 @@ const EVENT_LABEL: Record<EmailVaultEvent["action"], string> = {
   access_granted: "Gave access",
   access_removed: "Removed access",
   access_changed: "Changed access",
+  column_added: "Added column",
+  column_removed: "Deleted column",
 };
 
 function nameOf(u: ProfileRow | undefined): string {
@@ -207,6 +213,12 @@ export function EmailVaultPage({ mod, sub }: Props) {
   const [tab, setTab] = useState<"emails" | "history">("emails");
   const [showPasswordChecks, setShowPasswordChecks] = useState(false);
   const [search, setSearch] = useState("");
+  /** The ✓ columns (migration 0466); null = not run yet, the built-in list shows and can't be changed. */
+  const [platformList, setPlatformList] = useState<string[] | null>(null);
+  const platforms: readonly string[] = platformList ?? DEFAULT_VAULT_PLATFORMS;
+  const [managingColumns, setManagingColumns] = useState(false);
+  const [newColumn, setNewColumn] = useState("");
+  const [confirmRemoveColumn, setConfirmRemoveColumn] = useState<string | null>(null);
   const [staffFilter, setStaffFilter] = useState<StaffGroup | "all">("all");
   const [deptFilter, setDeptFilter] = useState("");
   const [revealed, setRevealed] = useState<Record<string, string>>({});
@@ -258,14 +270,16 @@ export function EmailVaultPage({ mod, sub }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const [rows, acc, ev, userRows, pid, seePasswords] = await Promise.all([
+      const [rows, acc, ev, userRows, pid, seePasswords, columns] = await Promise.all([
         getEmailVaultEntries(),
         getEmailVaultAccess(),
         getEmailVaultEvents(),
         getCompanyUsers(),
         uid ? getMyProfileId(uid) : Promise.resolve(null),
         getMyEmailVaultPasswordAccess().catch(() => false),
+        getEmailVaultPlatforms().catch((e) => { console.error("Email Vault columns:", e); return null; }),
       ]);
+      setPlatformList(columns);
       setCanSeePasswords(seePasswords);
       if (seePasswords) refreshNoPassword();
       setEntries(rows);
@@ -474,6 +488,53 @@ export function EmailVaultPage({ mod, sub }: Props) {
     }
   };
 
+  /** How many emails have each platform ticked — shown in Columns, incl. ticks kept from a deleted column. */
+  const tickCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const e of entries) for (const p of e.platforms) counts.set(p, (counts.get(p) ?? 0) + 1);
+    return counts;
+  }, [entries]);
+  /** Ticks saved for a name that isn't a column (any more) — Columns offers to add them back. */
+  const hiddenTicked = useMemo(() => {
+    const shown = new Set(platforms.map((p) => p.toLowerCase()));
+    return [...tickCounts.keys()].filter((p) => !shown.has(p.toLowerCase())).sort((a, b) => a.localeCompare(b));
+  }, [tickCounts, platforms]);
+
+  const addColumn = async (name: string) => {
+    const clean = name.trim();
+    if (!clean) { toast.error("Enter the platform name."); return; }
+    setBusy(true);
+    try {
+      await addEmailVaultPlatform(clean);
+      setPlatformList(await getEmailVaultPlatforms());
+      setNewColumn("");
+      toast.success(`Added the ${clean} column.`);
+      refreshEvents();
+    } catch (e: any) {
+      toast.error(e?.message || "Couldn't add that column.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeColumn = async () => {
+    if (!confirmRemoveColumn) return;
+    const name = confirmRemoveColumn;
+    setBusy(true);
+    try {
+      await removeEmailVaultPlatform(name);
+      setPlatformList(await getEmailVaultPlatforms());
+      setColFilters((f) => { const next = { ...f }; delete next[name]; return next; });
+      setConfirmRemoveColumn(null);
+      toast.success(`Deleted the ${name} column.`);
+      refreshEvents();
+    } catch (e: any) {
+      toast.error(e?.message || "Couldn't delete that column.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const grantedIds = useMemo(() => new Set(access.map((a) => a.profileId)), [access]);
   const notGrantable = useMemo(() => new Set([...grantedIds, ...superAdmins.map((u) => u.id)]), [grantedIds, superAdmins]);
 
@@ -615,6 +676,9 @@ export function EmailVaultPage({ mod, sub }: Props) {
               Clear filters
             </button>
           )}
+          <button type="button" className="btn btn-sm hover:bg-white/15 ml-auto" onClick={() => setManagingColumns(true)} title="Add or delete the ✓ platform columns">
+            <Columns3 className="h-3.5 w-3.5" /> Columns
+          </button>
         </div>
       )}
 
@@ -671,7 +735,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
                   </span>
                 </th>
                 <th className="border-l border-white/20 px-3 py-2 whitespace-nowrap">Email Password</th>
-                {VAULT_PLATFORMS.map((platform) => (
+                {platforms.map((platform) => (
                   <th key={platform} className="w-[84px] min-w-[84px] border-l border-white/20 px-1 py-2 text-center whitespace-nowrap">
                     <span className="inline-flex items-center justify-center">
                       {platform}
@@ -679,6 +743,11 @@ export function EmailVaultPage({ mod, sub }: Props) {
                     </span>
                   </th>
                 ))}
+                <th className="w-[44px] min-w-[44px] border-l border-white/20 px-1 py-2 text-center">
+                  <button type="button" onClick={() => setManagingColumns(true)} title="Add or delete platform columns" aria-label="Add or delete platform columns" className="inline-flex h-6 w-6 items-center justify-center rounded hover:bg-white/20">
+                    <Plus className="h-4 w-4" />
+                  </button>
+                </th>
                 <th className="border-l border-white/20 px-2 py-2 text-right">Actions</th>
               </tr>
             </thead>
@@ -695,11 +764,12 @@ export function EmailVaultPage({ mod, sub }: Props) {
                       </td>
                       <td className={`${STICKY_EMAIL} ${cell} px-3 py-1.5 truncate italic text-muted-foreground`}>No email yet</td>
                       <td className={`${cell} border-l border-[var(--color-panel-border)] px-3 py-1.5 text-muted-foreground`}>—</td>
-                      {VAULT_PLATFORMS.map((platform) => (
+                      {platforms.map((platform) => (
                         <td key={platform} className={`${cell} border-l border-[var(--color-panel-border)] p-0`} title={`Add an email for ${nameOf(u)} first`}>
                           <div className="h-9" />
                         </td>
                       ))}
+                      <td className={`${cell} border-l border-[var(--color-panel-border)]`} />
                       <td className={`${cell} border-l border-[var(--color-panel-border)] px-2 py-1.5`}>
                         <div className="flex justify-end">
                           <button type="button" className="btn btn-sm hover:bg-white/15 whitespace-nowrap" title={`Add an email for ${nameOf(u)}`} onClick={() => openForm("new", [u.id])}>
@@ -761,7 +831,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
                         )}
                       </div>
                     </td>
-                    {VAULT_PLATFORMS.map((platform) => {
+                    {platforms.map((platform) => {
                       const on = entry.platforms.includes(platform);
                       return (
                         <td key={platform} className={`${cell} border-l border-[var(--color-panel-border)] p-0 text-center`}>
@@ -779,6 +849,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
                         </td>
                       );
                     })}
+                    <td className={`${cell} border-l border-[var(--color-panel-border)]`} />
                     <td className={`${cell} border-l border-[var(--color-panel-border)] px-2 py-1.5`}>
                       <div className="flex justify-end gap-1">
                         <button type="button" className="btn btn-sm hover:bg-white/15" title="Edit" onClick={() => openForm(entry)}>
@@ -853,7 +924,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
             <div>
               <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Platforms this email is used on</span>
               <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-1 sm:grid-cols-4">
-                {VAULT_PLATFORMS.map((platform) => (
+                {platforms.map((platform) => (
                   <label key={platform} className="inline-flex items-center gap-1.5 text-sm">
                     <input
                       type="checkbox"
@@ -900,6 +971,103 @@ export function EmailVaultPage({ mod, sub }: Props) {
             <>
               <button type="button" className="btn" onClick={() => setConfirmDelete(null)} disabled={busy}>Cancel</button>
               <button type="button" className="btn btn-danger" onClick={() => void runDelete()} disabled={busy}>{busy ? "Deleting…" : "Delete"}</button>
+            </>
+          }
+        />
+      )}
+
+      {/* Hidden while its Delete confirmation is up (both would close on one Esc), back once that closes. */}
+      {managingColumns && !confirmRemoveColumn && (
+        <AppModal
+          title="Platform columns"
+          description="The ✓ columns on the Emails tab. Anyone with access to this page can add or delete one, and it's recorded on History. Deleting a column doesn't untick anything — its ticks stay saved and show again if you add it back."
+          icon={<Columns3 className="h-4 w-4" />}
+          size="md"
+          busy={busy}
+          onClose={() => { setManagingColumns(false); setNewColumn(""); }}
+          footer={<button type="button" className="btn" onClick={() => { setManagingColumns(false); setNewColumn(""); }} disabled={busy}>Done</button>}
+        >
+          <div className="space-y-4">
+            {platformList === null && (
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                Adding and deleting columns needs database migration 0466_email_vault_platform_columns.sql. Until then these are the built-in columns.
+              </div>
+            )}
+            <form
+              className="flex gap-2"
+              onSubmit={(e) => { e.preventDefault(); void addColumn(newColumn); }}
+            >
+              <input
+                className="glass-input text-sm flex-1"
+                placeholder="New platform, e.g. Whirlpool"
+                maxLength={40}
+                value={newColumn}
+                onChange={(e) => setNewColumn(e.target.value)}
+                disabled={busy || platformList === null}
+              />
+              <button type="submit" className="btn btn-primary" disabled={busy || platformList === null || !newColumn.trim()}>
+                <Plus className="h-4 w-4" /> Add column
+              </button>
+            </form>
+            <div className="max-h-[45vh] overflow-y-auto rounded-md border border-[var(--color-panel-border)]">
+              {platforms.length === 0 ? (
+                <p className="px-3 py-4 text-sm text-muted-foreground">No columns yet — add the first one above.</p>
+              ) : (
+                <ul className="divide-y divide-[var(--color-panel-border)]">
+                  {platforms.map((p) => {
+                    const n = tickCounts.get(p) ?? 0;
+                    return (
+                      <li key={p} className="flex items-center gap-3 px-3 py-1.5 text-sm">
+                        <span className="flex-1 font-medium">{p}</span>
+                        <span className="text-xs text-muted-foreground">{n ? `ticked on ${n} email${n === 1 ? "" : "s"}` : "not ticked yet"}</span>
+                        <button
+                          type="button"
+                          className="btn btn-sm hover:bg-white/15 text-red-300"
+                          title={`Delete the ${p} column`}
+                          aria-label={`Delete the ${p} column`}
+                          disabled={busy || platformList === null}
+                          onClick={() => setConfirmRemoveColumn(p)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+            {platformList !== null && hiddenTicked.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Deleted columns with ticks still saved</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {hiddenTicked.map((p) => (
+                    <button key={p} type="button" className="btn btn-sm hover:bg-white/15" disabled={busy} title={`Add the ${p} column back — its ${tickCounts.get(p)} tick(s) show again`} onClick={() => void addColumn(p)}>
+                      <Plus className="h-3.5 w-3.5" /> {p} ({tickCounts.get(p)})
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </AppModal>
+      )}
+
+      {confirmRemoveColumn && (
+        <AppModal
+          title={`Delete the ${confirmRemoveColumn} column?`}
+          description={
+            (tickCounts.get(confirmRemoveColumn) ?? 0) > 0
+              ? `It's ticked on ${tickCounts.get(confirmRemoveColumn)} email${tickCounts.get(confirmRemoveColumn) === 1 ? "" : "s"}. The column goes away for everyone, but those ticks stay saved — add ${confirmRemoveColumn} back and they show again. History keeps a record.`
+              : "The column goes away for everyone. History keeps a record."
+          }
+          tone="warning"
+          size="sm"
+          busy={busy}
+          onClose={() => setConfirmRemoveColumn(null)}
+          footer={
+            <>
+              <button type="button" className="btn" onClick={() => setConfirmRemoveColumn(null)} disabled={busy}>Cancel</button>
+              <button type="button" className="btn btn-danger" onClick={() => void removeColumn()} disabled={busy}>{busy ? "Deleting…" : "Delete column"}</button>
             </>
           }
         />

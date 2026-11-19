@@ -14,6 +14,10 @@
  *
  * Platforms (migration 0449): the ✓ columns — which platforms each email is
  * used on. Before 0449 the list still loads, just with no ticks.
+ *
+ * Platform columns (migration 0466): the ✓ columns themselves, per company —
+ * anyone with access adds or deletes them. Before 0466 the page shows its
+ * built-in list and can't change it.
  */
 import { supabase } from "./client";
 
@@ -22,7 +26,7 @@ export interface EmailVaultEntry {
   email: string;
   /** profiles.id of the people who use this mailbox. */
   people: string[];
-  /** Platform names ticked for this email (EmailVaultPage's VAULT_PLATFORMS). Empty before migration 0449. */
+  /** Platform names ticked for this email (the ✓ columns, getEmailVaultPlatforms). Empty before migration 0449. */
   platforms: string[];
   createdBy: string | null;
   createdAt: string;
@@ -39,7 +43,8 @@ export interface EmailVaultAccessRow {
 }
 
 export type EmailVaultEventAction =
-  | "added" | "edited" | "password_changed" | "deleted" | "viewed" | "copied" | "access_granted" | "access_removed" | "access_changed";
+  | "added" | "edited" | "password_changed" | "deleted" | "viewed" | "copied" | "access_granted" | "access_removed" | "access_changed"
+  | "column_added" | "column_removed";
 
 export interface EmailVaultEvent {
   id: string;
@@ -108,6 +113,36 @@ export async function setEmailVaultPlatforms(id: string, platforms: string[]): P
   if (error) {
     if (error.code === "PGRST202" || error.code === "42883") throw new Error("Ticking platforms needs database migration 0449_email_vault_platforms.sql.");
     throw vaultError(error);
+  }
+}
+
+/** The company's ✓ columns, in order. null before migration 0466 — the page then uses its built-in list. */
+export async function getEmailVaultPlatforms(): Promise<string[] | null> {
+  const { data, error } = await supabase.from("email_vault_platforms").select("name, position").order("position").order("name");
+  if (error) {
+    if (error.code === "PGRST205" || error.code === "42P01") return null;
+    throw vaultError(error);
+  }
+  return (data ?? []).map((r: any) => r.name as string);
+}
+
+const PLATFORM_COLUMNS_MIGRATION = "Adding and deleting columns needs database migration 0466_email_vault_platform_columns.sql.";
+
+/** Adds a ✓ column at the end; recorded on History. */
+export async function addEmailVaultPlatform(name: string): Promise<void> {
+  const { error } = await supabase.rpc("email_vault_add_platform", { p_name: name });
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42883") throw new Error(PLATFORM_COLUMNS_MIGRATION);
+    throw new Error(error.message);
+  }
+}
+
+/** Deletes a ✓ column; the ticks stay saved on each email. Recorded on History. */
+export async function removeEmailVaultPlatform(name: string): Promise<void> {
+  const { error } = await supabase.rpc("email_vault_remove_platform", { p_name: name });
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42883") throw new Error(PLATFORM_COLUMNS_MIGRATION);
+    throw new Error(error.message);
   }
 }
 
