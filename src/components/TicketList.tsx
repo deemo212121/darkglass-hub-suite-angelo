@@ -1272,7 +1272,7 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
 
   return (
     <div className="min-h-screen flex flex-col">
-      <main className="flex-1 max-w-[1900px] mx-auto w-full px-6 py-8">
+      <main className="flex-1 w-full px-6 py-8">
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-6">
             <button type="button" onClick={goBack} className="btn hover:bg-white/15">

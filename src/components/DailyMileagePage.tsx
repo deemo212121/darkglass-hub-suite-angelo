@@ -510,7 +510,7 @@ export function DailyMileagePage({ mod, sub }: Props) {
 
   return (
     <main className="flex-1 bg-slate-950 py-6">
-      <div className="max-w-[1800px] mx-auto px-6 space-y-4">
+      <div className="w-full px-6 space-y-4">
         <div className="flex flex-wrap items-center gap-3 text-white">
           <button onClick={goBack} className="btn">
             <ChevronLeft className="h-4 w-4" />
