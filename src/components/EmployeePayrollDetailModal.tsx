@@ -6,6 +6,7 @@ import { PayrollAdjustmentsSection } from "@/components/PayrollAdjustmentsSectio
 import type { PayrollAdjustment } from "@/lib/supabase/payrollAdjustments";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2, StickyNote, Download } from "lucide-react";
+import { formatCentral, isLockedNow, type PayrollPeriodLock } from "@/lib/supabase/payrollPeriodLocks";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { TimeInput24 } from "@/components/TimeInput24";
 import { useAuth } from "@/lib/auth";
@@ -105,6 +106,9 @@ interface Props {
   reviewPeriodEnd?: string;
   /** Sets the page's own Period (genStart/genEnd) to match whatever this modal's own rangeStart/rangeEnd currently show — an explicit, one-click fix so a wrong page period can be corrected without leaving this modal, without silently auto-syncing on every keystroke (which would shift the payroll period for every OTHER employee on the page too, not just the one being viewed here). */
   onSyncReviewPeriod?: (start: string, end: string) => void;
+  /** Payroll cutoffs (Admin → Payroll Locks, migration 0469). When the shown
+   *  range is in a locked period, everything here is view-only. */
+  payrollLocks?: PayrollPeriodLock[];
   /** Prev / Next employee in the payroll table's order — "3 of 25" in the header. */
   employeeNav?: { position: number; total: number; onPrev?: () => void; onNext?: () => void };
   /** Reimbursements / deductions for the page's pay period (migration 0393) — PH payroll and US Office staff only; omitted for everyone else. */
@@ -247,6 +251,7 @@ export function EmployeePayrollDetailModal({
   reviewPeriodEnd,
   onSyncReviewPeriod,
   employeeNav,
+  payrollLocks,
   adjustments,
 }: Props) {
   // PH staff work out of one office, not deployed across US states/field
@@ -284,6 +289,7 @@ export function EmployeePayrollDetailModal({
   const fallbackMonth = currentMonthBounds();
   const [rangeStart, setRangeStart] = useState(initialStart || fallbackMonth.start);
   const [rangeEnd, setRangeEnd] = useState(initialEnd || fallbackMonth.end);
+  const lockHit = (payrollLocks ?? []).find((l) => rangeStart && rangeEnd && l.periodStart <= rangeEnd && l.periodEnd >= rangeStart && isLockedNow(l)) ?? null;
   const [downloadingAttendance, setDownloadingAttendance] = useState(false);
   const [loading, setLoading] = useState(true);
   const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
@@ -1404,6 +1410,12 @@ export function EmployeePayrollDetailModal({
         </div>
 
         <div className="overflow-y-auto flex-1 p-3 space-y-3">
+          {lockHit && (
+            <p className="rounded-md border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+              🔒 Payroll for {lockHit.periodStart} – {lockHit.periodEnd} locked {formatCentral(lockHit.lockAt)}. Hours, attendance, rates and pay mode can't be changed. An Admin can reopen it from Admin → Payroll Locks.
+            </p>
+          )}
+          <fieldset disabled={!!lockHit} className="m-0 min-w-0 border-0 p-0 space-y-3">
           {/* KPI row */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="bg-slate-800/50 border border-white/10 rounded-lg p-3">
@@ -1754,15 +1766,23 @@ export function EmployeePayrollDetailModal({
                     {savingRates ? "Saving…" : `Save Rate Changes (${pendingRateChanges.length})`}
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={downloadAttendanceExcel}
-                  disabled={downloadingAttendance || loading || attendance.length === 0 || attendanceEditing || savingRates || pendingRateChanges.length > 0}
-                  title={attendanceEditing || pendingRateChanges.length > 0 ? "Save or cancel your edits before downloading" : "Download attendance for the selected date range"}
-                  className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white flex items-center gap-1"
-                >
-                  {downloadingAttendance ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />} {downloadingAttendance ? "Exporting..." : "Download Excel"}
-                </button>
+                {(() => {
+                  const dlDisabled = downloadingAttendance || loading || attendance.length === 0 || attendanceEditing || savingRates || pendingRateChanges.length > 0;
+                  const run = () => { if (!dlDisabled) void downloadAttendanceExcel(); };
+                  return (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      aria-disabled={dlDisabled}
+                      onClick={run}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); run(); } }}
+                      title={attendanceEditing || pendingRateChanges.length > 0 ? "Save or cancel your edits before downloading" : "Download attendance for the selected date range"}
+                      className={`text-xs px-2 py-1 rounded bg-slate-700 text-white flex items-center gap-1 ${dlDisabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-slate-600"}`}
+                    >
+                      {downloadingAttendance ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />} {downloadingAttendance ? "Exporting..." : "Download Excel"}
+                    </span>
+                  );
+                })()}
                 {attendanceEditing ? (
                   <>
                     <button
@@ -2327,6 +2347,7 @@ export function EmployeePayrollDetailModal({
               </div>
             )}
           </div>
+          </fieldset>
         </div>
 
         {onNext && (
