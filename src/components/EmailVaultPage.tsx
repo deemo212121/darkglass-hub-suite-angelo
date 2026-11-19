@@ -24,7 +24,7 @@ import { PasswordChecksPanel } from "@/components/PasswordChecksPanel";
 import { TableSkeleton } from "@/components/ui-kit/TableSkeleton";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { isEmailVaultSuperAdmin } from "@/lib/submoduleAccess";
-import { normalizeRole, withIncludedRoles } from "@/lib/roleLabels";
+import { getRoleDepartmentBreakdown, normalizeRole, withIncludedRoles } from "@/lib/roleLabels";
 import { hydrateEmailVaultGrant } from "@/lib/moduleAccess";
 import { getCompanyUsers, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
 import {
@@ -63,6 +63,23 @@ const VAULT_PLATFORMS = [
 
 const TICKED = "✓";
 const BLANK = "(blank)";
+const NO_EMAIL = "(no email yet)";
+
+/** A row of the grid: a saved email, or an active person no email is linked to yet. */
+type VaultRow = { kind: "email"; entry: EmailVaultEntry } | { kind: "person"; user: ProfileRow };
+const rowEmail = (r: VaultRow) => (r.kind === "email" ? r.entry.email : "");
+
+type StaffGroup = "us" | "ph" | "mx";
+const STAFF_GROUP_LABEL: Record<StaffGroup, string> = { us: "US Staff", ph: "PH Staff", mx: "Mexico Staff" };
+
+/** There's no country column — PH / Mexico staff are the people on those branches (as on Staff Form Checklist); everyone else is US. */
+function staffGroupOf(u: ProfileRow): StaffGroup {
+  const branch = (u.assigned_branch || "").trim().toLowerCase();
+  return branch === "philippines" ? "ph" : branch === "mexico" ? "mx" : "us";
+}
+
+/** Department from the role (Branch Managers count as Technician, like payroll) — the profile's own Department field is mostly blank. */
+const departmentOf = (u: ProfileRow) => getRoleDepartmentBreakdown(u.role).department;
 
 /** Name and Email stay put while the ✓ columns scroll sideways. */
 const STICKY_NAME = "sticky left-0 z-10 w-[190px] min-w-[190px] max-w-[190px]";
@@ -190,6 +207,8 @@ export function EmailVaultPage({ mod, sub }: Props) {
   const [tab, setTab] = useState<"emails" | "history">("emails");
   const [showPasswordChecks, setShowPasswordChecks] = useState(false);
   const [search, setSearch] = useState("");
+  const [staffFilter, setStaffFilter] = useState<StaffGroup | "all">("all");
+  const [deptFilter, setDeptFilter] = useState("");
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [revealing, setRevealing] = useState<string | null>(null);
 
@@ -282,34 +301,74 @@ export function EmailVaultPage({ mod, sub }: Props) {
     const owners = ownersOf(e).users;
     return owners.length === 0 ? 2 : owners.some((u) => u.is_active) ? 0 : 1;
   }, [ownersOf]);
+  /** Active people no email is linked to (by person or by their login email) — listed too, so every active AHS name is on the page. */
+  const peopleWithoutEmail = useMemo(() => {
+    const linked = new Set(entries.flatMap((e) => ownersOf(e).users.map((u) => u.id)));
+    return activeUsers.filter((u) => !linked.has(u.id));
+  }, [entries, ownersOf, activeUsers]);
+  const rows = useMemo<VaultRow[]>(
+    () => [...entries.map((entry) => ({ kind: "email" as const, entry })), ...peopleWithoutEmail.map((user) => ({ kind: "person" as const, user }))],
+    [entries, peopleWithoutEmail],
+  );
+  const rowPeople = useCallback((r: VaultRow) => (r.kind === "email" ? ownersOf(r.entry).users : [r.user]), [ownersOf]);
+  const rowNames = useCallback((r: VaultRow) => (r.kind === "email" ? peopleNames(r.entry) : nameOf(r.user)), [peopleNames]);
   /** A row's value in a filterable column — what the funnel lists and matches. */
   const cellValue = useCallback(
-    (e: EmailVaultEntry, col: string) =>
-      col === "name" ? peopleNames(e) || BLANK : col === "email" ? e.email : e.platforms.includes(col) ? TICKED : BLANK,
-    [peopleNames],
+    (r: VaultRow, col: string) =>
+      col === "name"
+        ? rowNames(r) || BLANK
+        : col === "email"
+          ? rowEmail(r) || NO_EMAIL
+          : r.kind === "email" && r.entry.platforms.includes(col) ? TICKED : BLANK,
+    [rowNames],
   );
   const passesFilters = useCallback(
-    (e: EmailVaultEntry, skip?: string) => Object.entries(colFilters).every(([col, picked]) => col === skip || picked.size === 0 || picked.has(cellValue(e, col))),
+    (r: VaultRow, skip?: string) => Object.entries(colFilters).every(([col, picked]) => col === skip || picked.size === 0 || picked.has(cellValue(r, col))),
     [colFilters, cellValue],
   );
+  /** Search plus the Staff / Department pickers — one person on the row has to fit both. */
   const searched = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    if (!needle) return entries;
-    return entries.filter((e) => e.email.toLowerCase().includes(needle) || peopleNames(e).toLowerCase().includes(needle));
-  }, [entries, search, peopleNames]);
-  // One row per email like the sheet, by who uses it — active people, then
-  // deactivated people's old mailboxes, then emails nobody is linked to.
+    return rows.filter((r) => {
+      if (needle && !rowEmail(r).toLowerCase().includes(needle) && !rowNames(r).toLowerCase().includes(needle)) return false;
+      if (staffFilter === "all" && !deptFilter) return true;
+      return rowPeople(r).some((u) => (staffFilter === "all" || staffGroupOf(u) === staffFilter) && (!deptFilter || departmentOf(u) === deptFilter));
+    });
+  }, [rows, search, staffFilter, deptFilter, rowNames, rowPeople]);
+  // One row per email like the sheet, by who uses it — active people (with
+  // the ones who have no email yet in among them), then deactivated people's
+  // old mailboxes, then emails nobody is linked to.
   const filtered = useMemo(
     () =>
       searched
-        .filter((e) => passesFilters(e))
-        .sort((a, b) => ownerRank(a) - ownerRank(b) || peopleNames(a).localeCompare(peopleNames(b)) || a.email.localeCompare(b.email)),
-    [searched, passesFilters, peopleNames, ownerRank],
+        .filter((r) => passesFilters(r))
+        .sort((a, b) => (a.kind === "email" ? ownerRank(a.entry) : 0) - (b.kind === "email" ? ownerRank(b.entry) : 0) || rowNames(a).localeCompare(rowNames(b)) || rowEmail(a).localeCompare(rowEmail(b))),
+    [searched, passesFilters, rowNames, ownerRank],
   );
   /** Funnel options for a column: its values among rows passing every OTHER filter (Excel's autofilter). */
-  const filterOptions = (col: string) => Array.from(new Set(searched.filter((e) => passesFilters(e, col)).map((e) => cellValue(e, col)))).sort((a, b) => a.localeCompare(b));
+  const filterOptions = (col: string) => Array.from(new Set(searched.filter((r) => passesFilters(r, col)).map((r) => cellValue(r, col)))).sort((a, b) => a.localeCompare(b));
   const setFilter = (col: string, next: Set<string>) => setColFilters((f) => ({ ...f, [col]: next }));
-  const anyFilter = Object.values(colFilters).some((s) => s.size > 0);
+  const anyFilter = Object.values(colFilters).some((s) => s.size > 0) || staffFilter !== "all" || !!deptFilter;
+  const clearFilters = () => { setColFilters({}); setStaffFilter("all"); setDeptFilter(""); };
+  /** Active people per staff group, for the picker's counts. */
+  const staffCounts = useMemo(() => {
+    const counts: Record<StaffGroup, number> = { us: 0, ph: 0, mx: 0 };
+    for (const u of activeUsers) counts[staffGroupOf(u)]++;
+    return counts;
+  }, [activeUsers]);
+  const staffChoices: (StaffGroup | "all")[] = ["all", "us", "ph", ...(staffCounts.mx ? (["mx"] as const) : [])];
+  /** Departments among the active people in the picked staff group, with how many each. */
+  const departmentOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const u of activeUsers) {
+      if (staffFilter !== "all" && staffGroupOf(u) !== staffFilter) continue;
+      counts.set(departmentOf(u), (counts.get(departmentOf(u)) ?? 0) + 1);
+    }
+    if (deptFilter && !counts.has(deptFilter)) counts.set(deptFilter, 0);
+    return [...counts].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [activeUsers, staffFilter, deptFilter]);
+  const shownEmails = filtered.filter((r) => r.kind === "email").length;
+  const shownPeople = filtered.length - shownEmails;
 
   /** Tick / untick one platform for one email, right in the grid. */
   const toggleTick = async (entry: EmailVaultEntry, platform: string) => {
@@ -360,9 +419,10 @@ export function EmailVaultPage({ mod, sub }: Props) {
     }
   };
 
-  const openForm = (entry: EmailVaultEntry | "new") => {
+  /** `people` fills in who uses a new email (a "No email yet" row's Add email). */
+  const openForm = (entry: EmailVaultEntry | "new", people: string[] = []) => {
     setEditing(entry);
-    setForm(entry === "new" ? { email: "", password: "", people: [], platforms: [], passwordLater: false } : { email: entry.email, password: "", people: entry.people, platforms: entry.platforms, passwordLater: false });
+    setForm(entry === "new" ? { email: "", password: "", people, platforms: [], passwordLater: false } : { email: entry.email, password: "", people: entry.people, platforms: entry.platforms, passwordLater: false });
     setShowFormPassword(false);
   };
 
@@ -476,7 +536,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
           <div>
             <h1 className="text-4xl font-display font-bold tracking-tight mb-2">{sub.title}</h1>
             <p className="text-lg text-muted-foreground">
-              Company email logins, who uses each one, and which platforms each email is on. Passwords stay hidden — every Show and Copy is recorded on the History tab, and so is every tick.{isSuperAdmin ? " Password Checks sets which pages and buttons ask for a password, and which password." : ""}
+              Company email logins, who uses each one, and which platforms each email is on — every active AHS person is listed, with "No email yet" until one is added. Passwords stay hidden — every Show and Copy is recorded on the History tab, and so is every tick.{isSuperAdmin ? " Password Checks sets which pages and buttons ask for a password, and which password." : ""}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -527,13 +587,32 @@ export function EmailVaultPage({ mod, sub }: Props) {
 
       {tab === "emails" && (
         <div className="panel p-3 mb-3 flex flex-wrap items-center gap-3">
-          <input className="glass-input text-sm w-full sm:max-w-sm" placeholder="Search email or person…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <input className="glass-input text-sm w-full sm:max-w-sm" placeholder="Search name or email…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Staff">
+            {staffChoices.map((g) => (
+              <button
+                key={g}
+                type="button"
+                onClick={() => setStaffFilter(g)}
+                aria-pressed={staffFilter === g}
+                className={`text-xs px-2.5 py-1.5 rounded-md border transition ${staffFilter === g ? "bg-blue-600 text-white border-blue-600" : "border-[var(--color-panel-border)] text-muted-foreground hover:text-foreground"}`}
+              >
+                {g === "all" ? `All staff (${activeUsers.length})` : `${STAFF_GROUP_LABEL[g]} (${staffCounts[g]})`}
+              </button>
+            ))}
+          </div>
+          <select className="glass-input text-sm py-1.5 px-3 rounded-md" value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)} aria-label="Department">
+            <option value="">All departments</option>
+            {departmentOptions.map(([d, n]) => (
+              <option key={d} value={d}>{d} ({n})</option>
+            ))}
+          </select>
           <span className="text-xs text-muted-foreground">
-            {filtered.length === entries.length ? `${entries.length} emails` : `${filtered.length} of ${entries.length} emails`} · click a box to tick or untick a platform
+            {shownEmails === entries.length ? `${entries.length} emails` : `${shownEmails} of ${entries.length} emails`} · {shownPeople} {shownPeople === 1 ? "person" : "people"} with no email yet · click a box to tick or untick a platform
           </span>
           {anyFilter && (
-            <button type="button" className="text-xs font-semibold text-blue-300 hover:underline" onClick={() => setColFilters({})}>
-              Clear column filters
+            <button type="button" className="text-xs font-semibold text-blue-300 hover:underline" onClick={clearFilters}>
+              Clear filters
             </button>
           )}
         </div>
@@ -572,7 +651,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
         ) : filtered.length === 0 ? (
           <EmptyState
             icon={<Mail />}
-            title={entries.length === 0 ? "No emails yet" : "No emails match"}
+            title={rows.length === 0 ? "No emails yet" : "No one matches"}
             hint={entries.length === 0 ? "Add the first email login with Add Email." : undefined}
           />
         ) : (
@@ -604,12 +683,37 @@ export function EmailVaultPage({ mod, sub }: Props) {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((entry, i) => {
+              {filtered.map((row, i) => {
+                // The sheet's green / blue bands, tinted over a solid cell so the frozen columns cover what scrolls under them.
+                const cell = `bg-[var(--background)] ${i % 2 ? "shadow-[inset_0_0_0_9999px_rgba(59,130,246,0.08)]" : "shadow-[inset_0_0_0_9999px_rgba(16,185,129,0.08)]"}`;
+                if (row.kind === "person") {
+                  const u = row.user;
+                  return (
+                    <tr key={`person:${u.id}`} className="border-b border-[var(--color-panel-border)]/60">
+                      <td className={`${STICKY_NAME} ${cell} px-3 py-1.5`} title={`${nameOf(u)} — ${STAFF_GROUP_LABEL[staffGroupOf(u)]} · ${departmentOf(u)}${u.assigned_branch ? ` · ${u.assigned_branch}` : ""}`}>
+                        <span className="block truncate">{nameOf(u)}</span>
+                      </td>
+                      <td className={`${STICKY_EMAIL} ${cell} px-3 py-1.5 truncate italic text-muted-foreground`}>No email yet</td>
+                      <td className={`${cell} border-l border-[var(--color-panel-border)] px-3 py-1.5 text-muted-foreground`}>—</td>
+                      {VAULT_PLATFORMS.map((platform) => (
+                        <td key={platform} className={`${cell} border-l border-[var(--color-panel-border)] p-0`} title={`Add an email for ${nameOf(u)} first`}>
+                          <div className="h-9" />
+                        </td>
+                      ))}
+                      <td className={`${cell} border-l border-[var(--color-panel-border)] px-2 py-1.5`}>
+                        <div className="flex justify-end">
+                          <button type="button" className="btn btn-sm hover:bg-white/15 whitespace-nowrap" title={`Add an email for ${nameOf(u)}`} onClick={() => openForm("new", [u.id])}>
+                            <Plus className="h-3.5 w-3.5" /> Add email
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                }
+                const entry = row.entry;
                 const shown = revealed[entry.id];
                 const names = peopleNames(entry);
                 const owners = ownersOf(entry);
-                // The sheet's green / blue bands, tinted over a solid cell so the frozen columns cover what scrolls under them.
-                const cell = `bg-[var(--background)] ${i % 2 ? "shadow-[inset_0_0_0_9999px_rgba(59,130,246,0.08)]" : "shadow-[inset_0_0_0_9999px_rgba(16,185,129,0.08)]"}`;
                 const rowSaving = !!savingTick?.startsWith(`${entry.id}|`);
                 return (
                   <tr key={entry.id} className="border-b border-[var(--color-panel-border)]/60">
