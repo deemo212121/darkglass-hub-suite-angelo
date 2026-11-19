@@ -776,7 +776,7 @@ export interface EmployeeInfo {
   terminateDate?: string;
   employeeNote?: string;
   attachments?: string[];
-  employmentStatus?: "active" | "inactive" | "terminated" | "resigned";
+  employmentStatus?: "active" | "inactive" | "terminated" | "resigned" | "cancelled" | "withdrawn";
   employmentStatusDate?: string;
   /** Onboarding Documents checklist — keyed by document name (e.g. "W4"), true = collected. */
   onboardingDocs?: Record<string, boolean>;
@@ -1285,7 +1285,7 @@ export async function getFirstDeactivations(): Promise<Map<string, string>> {
 
 export interface Separation {
   /** Master List status when it says they left, else "Deactivated". */
-  label: "Terminated" | "Resigned" | "Inactive" | "Deactivated";
+  label: "Terminated" | "Resigned" | "Cancelled" | "Withdrawn" | "Inactive" | "Deactivated";
   /** "YYYY-MM-DD" — the Master List's status date (else Terminate Date), else the first account deactivation. */
   date: string | null;
   source: "Master List" | "User Management" | null;
@@ -1323,7 +1323,7 @@ export async function getSeparations(people: Pick<ProfileRow, "id" | "is_active"
   ]);
   for (const id of gone) {
     const info = statuses.get(id);
-    const label = info?.status === "terminated" ? "Terminated" : info?.status === "resigned" ? "Resigned" : info?.status === "inactive" ? "Inactive" : "Deactivated";
+    const label = info?.status === "terminated" ? "Terminated" : info?.status === "resigned" ? "Resigned" : info?.status === "cancelled" ? "Cancelled" : info?.status === "withdrawn" ? "Withdrawn" : info?.status === "inactive" ? "Inactive" : "Deactivated";
     const masterDate = info?.statusDate || info?.terminateDate || null;
     const date = masterDate || firstOff.get(id) || null;
     out.set(id, { label, date, source: masterDate ? "Master List" : date ? "User Management" : null });
