@@ -1,4 +1,5 @@
 import { weeklyOtPremium, type TechWeeklyOt } from "@/lib/techWeeklyOvertime";
+import { buildOvertimeDisplay } from "@/lib/techOvertimeDisplay";
 import type { ReviewedWeeklySource } from "@/lib/reviewedWeeklyBreakdown";
 import { capPtoHours } from "@/lib/ptoHours";
 export type { TechWeeklyOt } from "@/lib/techWeeklyOvertime";
@@ -7287,6 +7288,25 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               ? { periodStart: genStart, periodEnd: genEnd, data: buildAttendanceAdjustments(payrollRows.filter((r) => r.employee.id === detailEmployee.id)).get(detailEmployee.id) }
               : undefined
           }
+          hourlyOtSplit={(() => {
+            const techRow = genStart && genEnd ? payrollRows.find((r) => r.employee.id === detailEmployee.id && r.isTechPortion) : undefined;
+            if (!techRow) return undefined;
+            return {
+              periodStart: genStart,
+              periodEnd: genEnd,
+              display: buildOvertimeDisplay({
+                hourlyRate: techRow.hourlyRate,
+                hoursWorked: techRow.hoursWorked,
+                overtimeHours: techRow.overtimeHours,
+                straightPay: techRow.techHourlyPayStraight,
+                otPremium: techRow.techHourlyPayOtPremium,
+                weightedRegularRate: techRow.techWeightedRegularRate,
+                weeklyOt: techRow.techWeeklyOt,
+                paidLeaveHours: techRow.techPaidLeaveHours,
+                paidLeavePay: techRow.techPaidLeavePay,
+              }),
+            };
+          })()}
           nextBusy={nextBusy}
           onNext={
             isTechRole(detailEmployee)

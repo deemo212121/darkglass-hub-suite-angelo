@@ -1,8 +1,13 @@
 import { trainingWindow } from "@/lib/fieldStartDate";
 import { centsSummaryTotal, groupCustomPayLines } from "@/lib/payRounding";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { X, Plus, Trash2, Loader2 } from "lucide-react";
+import { X, Plus, Trash2, Loader2, Maximize2, FileText, StickyNote } from "lucide-react";
+import { useAuth } from "@/lib/auth";
+import { buildOvertimeDisplay, type OvertimeDisplayWeek } from "@/lib/techOvertimeDisplay";
+import { getMyProfileAndCompanyIds } from "@/lib/supabase/users";
+import { getEmployeeFileUrl, getPaystubForPeriod, type EmployeeFileRow } from "@/lib/supabase/employeeFiles";
+import { addPayrollPeriodNote, deletePayrollPeriodNote, getPayrollPeriodNotes, type PayrollPeriodNote } from "@/lib/supabase/payrollPeriodNotes";
 import type { EmployeePayrollRow } from "@/components/AccountingDashboard";
 import { getAttendanceForRange, computeMealTimeCredit, splitRegularOvertimeWeekly, startOfWeekSunday, addDaysISO, CSR_WEEKLY_OVERTIME_THRESHOLD } from "@/lib/supabase/timecards";
 import { getSalaryHistory, rateEffectiveOn, type SalaryEntryRow } from "@/lib/supabase/salary";
@@ -522,6 +527,115 @@ export function TechActivityReportModal({
     return weeks;
   }, [periodStart, periodEnd]);
   const weekLabel = (weekStart: string) => `Wk ${Number(weekStart.slice(5, 7))}/${Number(weekStart.slice(8, 10))}`;
+
+  // Paystub side-by-side (Accounting -> Paystubs upload for this period) and
+  // Accounting's internal notes on this period (migration 0465). Hidden in
+  // the view-only report.
+  const { uid } = useAuth();
+  const [myProfileId, setMyProfileId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!uid) return;
+    let cancelled = false;
+    void getMyProfileAndCompanyIds(uid).then((ids) => { if (!cancelled) setMyProfileId(ids?.profileId ?? null); });
+    return () => { cancelled = true; };
+  }, [uid]);
+
+  const [paystub, setPaystub] = useState<EmployeeFileRow | null>(null);
+  const [paystubUrl, setPaystubUrl] = useState<string | null>(null);
+  const [paystubLoading, setPaystubLoading] = useState(!readOnly);
+  const [paystubError, setPaystubError] = useState<string | null>(null);
+  const [comparePaystub, setComparePaystub] = useState(false);
+  useEffect(() => {
+    if (readOnly) return;
+    let cancelled = false;
+    setPaystubLoading(true);
+    setPaystubError(null);
+    setPaystub(null);
+    setPaystubUrl(null);
+    getPaystubForPeriod(employee.id, periodStart, periodEnd)
+      .then(async (file) => {
+        if (cancelled) return;
+        setPaystub(file);
+        if (file) {
+          const url = await getEmployeeFileUrl(file.storagePath);
+          if (!cancelled) setPaystubUrl(url);
+        }
+      })
+      .catch((err) => { if (!cancelled) setPaystubError(err instanceof Error ? err.message : "Couldn't load the paystub."); })
+      .finally(() => { if (!cancelled) setPaystubLoading(false); });
+    return () => { cancelled = true; };
+  }, [employee.id, periodStart, periodEnd, readOnly]);
+
+  const [notes, setNotes] = useState<PayrollPeriodNote[]>([]);
+  const [notesLoading, setNotesLoading] = useState(!readOnly);
+  const [notesError, setNotesError] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+  const loadNotes = async () => {
+    try {
+      setNotes(await getPayrollPeriodNotes(employee.id, periodStart, periodEnd));
+      setNotesError(null);
+    } catch (err) {
+      setNotesError(err instanceof Error ? err.message : "Couldn't load notes.");
+    } finally {
+      setNotesLoading(false);
+    }
+  };
+  useEffect(() => {
+    if (readOnly) return;
+    setNotesLoading(true);
+    void loadNotes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employee.id, periodStart, periodEnd, readOnly]);
+  const saveNote = async () => {
+    if (!noteDraft.trim() || savingNote) return;
+    setSavingNote(true);
+    try {
+      await addPayrollPeriodNote(employee.id, periodStart, periodEnd, noteDraft);
+      setNoteDraft("");
+      await loadNotes();
+    } catch (err) {
+      setNotesError(err instanceof Error ? err.message : "Couldn't save the note.");
+    } finally {
+      setSavingNote(false);
+    }
+  };
+  const removeNote = async (id: string) => {
+    if (!confirm("Delete this note?")) return;
+    try {
+      await deletePayrollPeriodNote(id);
+      await loadNotes();
+    } catch (err) {
+      setNotesError(err instanceof Error ? err.message : "Couldn't delete the note.");
+    }
+  };
+  const fmtStubDate = (d: string | null) => (d ? `${d.slice(5, 7)}/${d.slice(8, 10)}/${d.slice(0, 4)}` : "\u2014");
+
+  // Company-mode display split of the Hourly + OT figure (display only — the
+  // amounts paid, Total Payment and Reviewed Periods are unchanged):
+  //   Hourly Pay               = regular hours × flat rate
+  //   Overtime Pay (week)      = OT hours × base rate × 1.5
+  //   OT on Incentive Pay      = OT hours × (weekly regular rate − base rate) × 0.5
+  // which adds up to the same straight-time + weighted 0.5x premium as before
+  // (OT hrs × base + OT hrs × regular rate × 0.5). Rounding: each week's two
+  // lines add up to its rounded straight-time + rounded premium, and Hourly
+  // Pay takes the rounded straight-time total minus those, so the lines sum
+  // to exactly what the old Hourly Pay + OT Premium lines showed.
+  const overtimeDisplay = buildOvertimeDisplay({
+    hourlyRate,
+    hoursWorked,
+    overtimeHours,
+    straightPay: techHourlyPayStraight,
+    otPremium: techHourlyPayOtPremium,
+    weightedRegularRate: techWeightedRegularRate,
+    weeklyOt: techWeeklyOt,
+    paidLeaveHours: row.techPaidLeaveHours,
+    paidLeavePay: row.techPaidLeavePay,
+  });
+  const incentiveDetail = (w: OvertimeDisplayWeek) =>
+    w.straightPay != null && w.weekHours != null
+      ? `Week of ${w.label.slice(3)}: regular rate = (straight-time ${fmt(w.straightPay)} + includable ${fmt(w.includablePay ?? 0)}) ÷ ${w.weekHours.toFixed(3)} hrs = ${fmt(w.regularRate)}/hr. Incentive pay raises the overtime rate above 1.5 × the base rate; this line is that difference. Includable pay counts in the week its custom line is tagged with; untagged pay (and ticket pay) is spread over the weeks by hours.`
+      : "Overtime premium on incentive pay: the FLSA weighted regular rate (straight-time wages plus this period's includable incentive/bonus pay, divided by total hours) above the flat hourly rate, × 0.5."
   const handleCustomLineBlur = async (item: TechCustomPayItem, fields: { label?: string; value?: number; rate?: number; isWageIncludable?: boolean; workWeekStart?: string | null }) => {
     // Typing a reimbursement/deduction label switches the line to
     // Reimbursement (unless the type was picked in this same edit).
@@ -691,7 +805,7 @@ export function TechActivityReportModal({
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div
-        className="bg-slate-900 border border-white/15 rounded-xl w-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl"
+        className={`bg-slate-900 border border-white/15 rounded-xl w-full ${comparePaystub ? "max-w-[98vw] h-[94vh] max-h-[94vh]" : "max-w-6xl max-h-[90vh]"} flex flex-col shadow-2xl`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-slate-950 rounded-t-xl">
@@ -709,7 +823,7 @@ export function TechActivityReportModal({
 
         <div className="overflow-y-auto flex-1 p-5">
           <fieldset disabled={readOnly} className="m-0 min-w-0 border-0 p-0">
-          <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
+          <div className={`grid gap-5 ${comparePaystub ? "lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]" : "lg:grid-cols-[1fr_320px]"}`}>
             {/* Payroll Detail Report */}
             <div className="overflow-x-auto rounded-lg border border-white/10">
               <table className="w-full text-sm min-w-[520px]">
@@ -801,37 +915,30 @@ export function TechActivityReportModal({
                     </>
                   ) : (
                     <>
-                      <tr title="All hours worked this period (regular + overtime), once, at this technician's flat hourly rate. Set via their name link on the Tech Payroll table → Add Rate Change, same as an office employee's rate.">
+                      <tr title="Regular hours worked this period at this technician's flat hourly rate. Overtime hours are paid on their own Overtime Pay lines below. Set via their name link on the Tech Payroll table → Add Rate Change, same as an office employee's rate.">
                         <td className="px-3 py-2 text-slate-300">Hourly Pay</td>
-                        <td className="px-3 py-2 text-right text-slate-300">
-                          {Math.max(hoursWorked - (row.techPaidLeaveHours ?? 0), 0).toFixed(3)}{overtimeHours > 0 ? ` + ${overtimeHours.toFixed(3)} OT` : ""}
-                        </td>
+                        <td className="px-3 py-2 text-right text-slate-300">{overtimeDisplay.hourlyHours.toFixed(3)}</td>
                         <td className="px-3 py-2 text-right text-slate-300">{fmt(hourlyRate)}/hr</td>
-                        <td className="px-3 py-2 text-right text-slate-200">{fmt(techHourlyPayStraight - (row.techPaidLeavePay ?? 0))}</td>
+                        <td className="px-3 py-2 text-right text-slate-200">{fmt(overtimeDisplay.hourlyAmount)}</td>
                       </tr>
-                      {overtimeHours > 0 && techWeeklyOt.some((w) => w.premiumHours > 0) ? (
-                        // One row per workweek: FLSA sets the regular rate per week,
-                        // even on a biweekly payroll (see weeklyOtPremium,
-                        // AccountingDashboard.tsx).
-                        techWeeklyOt.filter((w) => w.premiumHours > 0).map((w) => (
-                          <tr
-                            key={w.weekStart}
-                            title={`Week of ${weekLabel(w.weekStart).slice(3)}: regular rate = (straight-time ${fmt(w.straightPay)} + includable ${fmt(w.includablePay)}) ÷ ${w.hours.toFixed(3)} hrs = ${fmt(w.regularRate)}/hr. Includable pay counts in the week its custom line is tagged with; untagged pay (and ticket pay) is spread over the weeks by hours.`}
-                          >
-                            <td className="px-3 py-2 text-slate-300">OT Premium ({weekLabel(w.weekStart)})</td>
-                            <td className="px-3 py-2 text-right text-slate-300">{w.premiumHours.toFixed(3)} OT</td>
-                            <td className="px-3 py-2 text-right text-slate-300">{fmt(w.regularRate)}/hr × 0.5</td>
-                            <td className="px-3 py-2 text-right text-slate-200">{fmt(w.premium)}</td>
+                      {overtimeDisplay.weeks.map((w) => (
+                        <Fragment key={w.key}>
+                          <tr title={`${w.label}: ${w.hours.toFixed(3)} overtime hours at ${fmt(w.baseRate)}/hr × 1.5.`}>
+                            <td className="px-3 py-2 text-slate-300">Overtime Pay ({w.label})</td>
+                            <td className="px-3 py-2 text-right text-slate-300">{w.hours.toFixed(3)} OT</td>
+                            <td className="px-3 py-2 text-right text-slate-300">{fmt(w.baseRate)}/hr × 1.5</td>
+                            <td className="px-3 py-2 text-right text-slate-200">{fmt(w.otAmount)}</td>
                           </tr>
-                        ))
-                      ) : overtimeHours > 0 && (
-                        <tr title="The extra 0.5x overtime premium, computed off the FLSA weighted regular rate — straight-time wages plus this period's includable incentive/bonus pay (piece-rate, carryover, LDT/Training, Two Tech, MCA, Completed Tickets, custom lines), divided by total hours — instead of the flat hourly rate. Required once a technician earns incentive pay alongside overtime in the same period.">
-                          <td className="px-3 py-2 text-slate-300">OT Premium (Weighted Rate)</td>
-                          <td className="px-3 py-2 text-right text-slate-300">{overtimeHours.toFixed(3)} OT</td>
-                          <td className="px-3 py-2 text-right text-slate-300">{fmt(techWeightedRegularRate)}/hr × 0.5</td>
-                          <td className="px-3 py-2 text-right text-slate-200">{fmt(techHourlyPayOtPremium)}</td>
-                        </tr>
-                      )}
+                          {w.incentiveAmount > 0.004 && (
+                            <tr title={incentiveDetail(w)}>
+                              <td className="px-3 py-2 pl-6 text-slate-400">OT on Incentive Pay ({w.label})</td>
+                              <td className="px-3 py-2 text-right text-slate-400">{w.hours.toFixed(3)} OT</td>
+                              <td className="px-3 py-2 text-right text-slate-400">({fmt(w.regularRate)} − {fmt(w.baseRate)}) × 0.5</td>
+                              <td className="px-3 py-2 text-right text-slate-200">{fmt(w.incentiveAmount)}</td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      ))}
                     </>
                   )}
                   {(row.techPaidLeavePay ?? 0) > 0 && (
@@ -1207,8 +1314,8 @@ export function TechActivityReportModal({
               </table>
             </div>
 
-            {/* Stats + Redo / 2nd Tech panel */}
-            <div className="space-y-3">
+            {/* Stats + Redo / 2nd Tech panel (the paystub takes its place while comparing) */}
+            <div className={`space-y-3 ${comparePaystub && paystub ? "hidden" : ""}`}>
               {[
                 ["Total Working Days", workingDays],
                 ["Total Assigned Tickets", ticketsAssigned],
@@ -1453,9 +1560,122 @@ export function TechActivityReportModal({
                   </div>
                 )}
               </div>
+
+              {!readOnly && (
+                <div className="bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2.5" title="This period's paystub from Accounting -> Paystubs. Click it to open it next to this report.">
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <p className="text-[10px] text-slate-400 uppercase tracking-wide">Paystub</p>
+                    {paystub && <span className="text-[10px] text-slate-500">Paid {fmtStubDate(paystub.payDate)}</span>}
+                  </div>
+                  {paystubLoading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />
+                  ) : paystubError ? (
+                    <p className="text-xs text-red-300">{paystubError}</p>
+                  ) : !paystub ? (
+                    <p className="text-xs text-slate-500">No paystub uploaded for this period yet.</p>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setComparePaystub(true)}
+                      className="group relative block w-full overflow-hidden rounded border border-white/10 bg-white"
+                    >
+                      {paystubUrl ? (
+                        <iframe src={`${paystubUrl}#toolbar=0&navpanes=0&view=FitH`} title="Paystub preview" className="pointer-events-none h-56 w-full" tabIndex={-1} />
+                      ) : (
+                        <div className="flex h-56 items-center justify-center"><Loader2 className="h-4 w-4 animate-spin text-slate-400" /></div>
+                      )}
+                      <span className="absolute inset-0 flex items-center justify-center bg-black/0 text-xs font-semibold text-white opacity-0 transition group-hover:bg-black/50 group-hover:opacity-100">
+                        <Maximize2 className="mr-1.5 h-4 w-4" /> Compare side by side
+                      </span>
+                    </button>
+                  )}
+                  {paystub && (
+                    <p className="mt-1.5 text-[10px] text-slate-500">
+                      Stub period {fmtStubDate(paystub.periodStart)} – {fmtStubDate(paystub.periodEnd)}{paystub.status !== "published" ? " · not published yet" : ""}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
+
+            {comparePaystub && paystub && (
+              <div className="sticky top-0 flex h-[calc(94vh-11rem)] flex-col rounded-lg border border-white/10 bg-slate-950 lg:col-start-2 lg:row-start-1">
+                <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
+                  <p className="flex items-center gap-1.5 text-xs font-semibold text-white">
+                    <FileText className="h-3.5 w-3.5 text-slate-400" />
+                    Paystub · paid {fmtStubDate(paystub.payDate)} · period {fmtStubDate(paystub.periodStart)} – {fmtStubDate(paystub.periodEnd)}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    {paystubUrl && (
+                      <a href={paystubUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-blue-300 hover:text-blue-200">Open in new tab</a>
+                    )}
+                    <button type="button" onClick={() => setComparePaystub(false)} className="rounded bg-slate-700 px-2 py-1 text-[11px] font-semibold text-white hover:bg-slate-600">
+                      Close paystub
+                    </button>
+                  </div>
+                </div>
+                {paystubUrl ? (
+                  <iframe src={`${paystubUrl}#navpanes=0&view=FitH`} title="Paystub" className="min-h-0 flex-1 rounded-b-lg bg-white" />
+                ) : (
+                  <div className="flex flex-1 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-slate-400" /></div>
+                )}
+              </div>
+            )}
           </div>
           </fieldset>
+
+          {!readOnly && (
+            <div className="mt-5 rounded-lg border border-white/10 bg-slate-800/30">
+              <div className="flex flex-wrap items-center gap-1.5 border-b border-white/10 px-4 py-2.5">
+                <StickyNote className="h-4 w-4 text-amber-300" />
+                <p className="text-sm font-semibold text-white">Internal Notes</p>
+                <span className="text-[11px] text-slate-500">Accounting only · not on the paystub or shown to the employee</span>
+              </div>
+              <div className="flex flex-col gap-2 px-4 py-3">
+                {notesLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+                ) : notes.length === 0 ? (
+                  <p className="text-xs text-slate-500">No notes for this period yet.</p>
+                ) : (
+                  notes.map((n) => (
+                    <div key={n.id} className="rounded-md border border-white/10 bg-slate-900/60 px-3 py-2">
+                      <p className="whitespace-pre-wrap text-sm text-slate-200">{n.body}</p>
+                      <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-500">
+                        <span>
+                          By: <span className="text-slate-300">{n.createdByName || "Unknown"}</span>
+                          {" · "}When: <span className="text-slate-300">{new Date(n.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                        </span>
+                        {myProfileId && n.createdBy === myProfileId && (
+                          <button type="button" onClick={() => void removeNote(n.id)} className="text-slate-500 hover:text-red-300" title="Delete your note">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+                {notesError && <p className="text-xs text-red-300">{notesError}</p>}
+                <div className="flex items-end gap-2">
+                  <textarea
+                    value={noteDraft}
+                    onChange={(e) => setNoteDraft(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void saveNote(); } }}
+                    rows={2}
+                    placeholder="Add a note for Accounting (e.g. paystub vs AHS difference, what was sent back to payroll)..."
+                    className="min-h-[2.75rem] flex-1 resize-y rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void saveNote()}
+                    disabled={!noteDraft.trim() || savingNote}
+                    className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
+                  >
+                    {savingNote ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add note"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {(onPrev || onDone) && (

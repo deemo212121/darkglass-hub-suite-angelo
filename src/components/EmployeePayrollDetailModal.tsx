@@ -9,6 +9,7 @@ import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRigh
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { TimeInput24 } from "@/components/TimeInput24";
 import { useAuth } from "@/lib/auth";
+import type { OvertimeDisplay } from "@/lib/techOvertimeDisplay";
 import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, hoursDiff, MEAL_ALWAYS_PAID_DEFAULT_HOURS, type AttendanceRow } from "@/lib/supabase/timecards";
 import { isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, hasAnyTechnicianPayRole } from "@/lib/roleLabels";
 import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
@@ -82,6 +83,8 @@ interface Props {
   onRateChanged?: () => void;
   /** Includable / reimbursement lines for the attendance workbook's tables (see AccountingDashboard's buildAttendanceAdjustments) — used only while the range shown is this period. */
   workbookAdjustments?: { periodStart: string; periodEnd: string; data: AttendanceAdjustments | undefined };
+  /** A technician's Company-mode Hourly + OT split (lib/techOvertimeDisplay.ts) for the payroll period — the Hourly + OT tile shows it, same lines as the Tech Activity Report, while the range shown is that period. */
+  hourlyOtSplit?: { periodStart: string; periodEnd: string; display: OvertimeDisplay };
   /** When set (Office Payroll's per-technician review wizard), a "Next →" button appears in the footer — advances to the Tech Activity Report. Omitted for office employees and other callers. Called with which toggle was active ("company"/"state") and this modal's own State-matched Hourly + OT total (payViewTotals.compliant.total) — the caller persists that choice as this technician's actual Hourly + OT pay for the period (see payroll_hourly_ot_overrides), since this modal is the only place that computes the state-floor comparison. May return a Promise; the Next button disables (see nextBusy) until it resolves. */
   onNext?: (mode: "company" | "state", stateHourlyOtTotal: number) => void | Promise<void>;
   /** True while the caller's onNext is still saving — disables the Next button so a second click can't race the first (e.g. double-submitting the pay-mode override). */
@@ -235,6 +238,7 @@ export function EmployeePayrollDetailModal({
   onClose,
   onRateChanged,
   workbookAdjustments,
+  hourlyOtSplit,
   onNext,
   nextBusy,
   onDone,
@@ -1043,6 +1047,18 @@ export function EmployeePayrollDetailModal({
   // duplicating the day-by-day rate loop above (a no-op division for PH,
   // whose otMultiplier is already 1).
   const displayedPayFlat = displayedPay.regularPay + displayedPay.overtimePay / otMultiplier;
+  // A technician's real Company-mode Hourly + OT lines (regular hours, then
+  // per-week Overtime Pay ×1.5 + OT on Incentive Pay), passed in from the
+  // payroll row — same lines as the Tech Activity Report. Only while this
+  // range is the payroll period the split was computed for. In State view,
+  // whatever the state floor adds over the flat company figure is shown as
+  // its own line on top.
+  const otSplit = hourlyOtSplit && hourlyOtSplit.periodStart === rangeStart && hourlyOtSplit.periodEnd === rangeEnd ? hourlyOtSplit.display : null;
+  const companyFlat = payViewTotals.calculated.regularPay + payViewTotals.calculated.overtimePay / otMultiplier;
+  const otSplitStateMatch = otSplit && payView === "compliant" ? Math.max(displayedPayFlat - companyFlat, 0) : 0;
+  // Hours-only tile: OT on Incentive Pay comes from the commission lines, so
+  // it's left to the Tech Activity Report (just noted here).
+  const otSplitIncentive = otSplit ? otSplit.weeks.reduce((sum, w) => sum + w.incentiveAmount, 0) : 0;
   // Regular/overtime split of totalHours above — same dailyHoursSplitByDate
   // computedPay itself sums (already meal-credit-inclusive, via the raw
   // hours merge above), so this tile's breakdown line always agrees with
@@ -1458,13 +1474,44 @@ export function EmployeePayrollDetailModal({
                   </div>
                 )}
               </div>
-              <p className="text-lg font-bold text-green-300 mt-1">${displayedPayFlat.toFixed(2)}</p>
+              {otSplit && !isCurrentlyFixed && !mixedFixed && !isPhPayroll ? (
+                <>
+                  <p className="text-lg font-bold text-green-300 mt-1">${(otSplit.total - otSplitIncentive + otSplitStateMatch).toFixed(2)}</p>
+                  <div className="mt-1 flex flex-col gap-0.5 text-xs text-slate-400" title="Hours only: regular hours at the flat rate, then each week's overtime at 1.5× the base rate. The extra overtime owed on commissions (OT on Incentive Pay) depends on the commission lines, so it's added on the Tech Activity Report.">
+                    <div className="flex justify-between gap-3">
+                      <span>{otSplit.hourlyHours.toFixed(3)} hrs × ${otSplit.hourlyRate.toFixed(2)}</span>
+                      <span className="text-slate-300">${otSplit.hourlyAmount.toFixed(2)}</span>
+                    </div>
+                    {otSplit.weeks.map((w) => (
+                      <Fragment key={w.key}>
+                        <div className="flex justify-between gap-3">
+                          <span>OT {w.label}: {w.hours.toFixed(3)} × ${w.baseRate.toFixed(2)} × 1.5</span>
+                          <span className="text-slate-300">${w.otAmount.toFixed(2)}</span>
+                        </div>
+                      </Fragment>
+                    ))}
+                    {otSplitStateMatch > 0.005 && (
+                      <div className="flex justify-between gap-3 text-emerald-300/80">
+                        <span>State minimum match</span>
+                        <span>${otSplitStateMatch.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {otSplitIncentive > 0.004 && (
+                      <p className="mt-0.5 text-[11px] text-slate-500">
+                        + OT on incentive pay (${otSplitIncentive.toFixed(2)}) is added in the Tech Activity Report
+                      </p>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <p className="text-lg font-bold text-green-300 mt-1">${displayedPayFlat.toFixed(2)}</p>
+              )}
               {mixedFixed && (
                 <p className="text-xs text-amber-300 mt-0.5">
                   Hourly days ${(displayedPayFlat - mixedFixed.fixedPay).toFixed(2)} + fixed salary ${mixedFixed.fixedPay.toFixed(2)}/cutoff (before manual deductions)
                 </p>
               )}
-              {!isCurrentlyFixed && !mixedFixed && (
+              {!isCurrentlyFixed && !mixedFixed && !(otSplit && !isPhPayroll) && (
                 <p className="text-xs text-slate-400 mt-0.5" title="Flat — every hour (regular and overtime alike) at the same rate, no 1.5× multiplier. The Tech Activity Report step computes the real Hourly + OT total, including the FLSA weighted-regular-rate overtime premium once this period's incentive/bonus pay is folded in — this tile is just the state-floor check, not that final figure.">
                   {(totalHoursSplit.regular + totalHoursSplit.overtime).toFixed(3)} hrs flat = ${displayedPayFlat.toFixed(2)}
                 </p>
