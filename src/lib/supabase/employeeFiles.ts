@@ -321,3 +321,44 @@ export async function getEmployeeFileUrl(storagePath: string, download?: string)
   const { url } = await filesApi(`action=url&path=${encodeURIComponent(storagePath)}${download ? `&download=${encodeURIComponent(download)}` : ""}`, { json: {} });
   return url as string;
 }
+
+/**
+ * The paystub uploaded for this employee's pay period (Accounting → Paystubs),
+ * for the Tech Activity Report's side-by-side check. Stub periods can be a
+ * day off AHS's (e.g. 09/14–09/26 vs 09/13–09/26), so: same period end
+ * first, then the stub whose period overlaps this one most, then a stub paid
+ * within three weeks after the period ends. Withdrawn / replaced files are
+ * skipped; published wins over unassigned.
+ */
+export async function getPaystubForPeriod(profileId: string, periodStart: string, periodEnd: string): Promise<EmployeeFileRow | null> {
+  if (!profileId || !periodStart || !periodEnd) return null;
+  const { data, error } = await supabase
+    .from("employee_files")
+    .select(COLUMNS)
+    .eq("profile_id", profileId)
+    .eq("kind", "paystub")
+    .in("status", ["published", "unassigned"])
+    .order("uploaded_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  const files = (data ?? []).map(mapRow);
+  const day = (d: string) => Date.parse(`${d}T00:00:00Z`) / 86_400_000;
+  const start = day(periodStart);
+  const end = day(periodEnd);
+  const rank = (f: EmployeeFileRow) => (f.status === "published" ? 0 : 1);
+  const scored = files
+    .map((f) => {
+      let score = -1;
+      if (f.periodStart && f.periodEnd) {
+        const overlap = Math.min(end, day(f.periodEnd)) - Math.max(start, day(f.periodStart)) + 1;
+        if (f.periodEnd === periodEnd) score = 1000 + overlap;
+        else if (overlap > 0) score = overlap;
+      } else if (f.payDate) {
+        const after = day(f.payDate) - end;
+        if (after >= 0 && after <= 21) score = 0.5;
+      }
+      return { f, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score || rank(a.f) - rank(b.f));
+  return scored[0]?.f ?? null;
+}

@@ -22,6 +22,8 @@
  */
 
 import { supabase } from "./client";
+import { buildOvertimeDisplay } from "@/lib/techOvertimeDisplay";
+import type { TechWeeklyOt } from "@/lib/techWeeklyOvertime";
 import { selectAllPages } from "./selectAllPages";
 import { mileageEffectiveTotal } from "./mileage";
 import { getErBackfillTicketIds, getErBackfillVisitIds } from "./erBackfill";
@@ -1368,6 +1370,9 @@ export function buildTechActivityBreakdown(
     /** The company-rate split of techHourlyPay (straight time incl. PTO, and the OT premium); the rest is the state match. */
     techHourlyPayStraight?: number;
     techHourlyPayOtPremium?: number;
+    /** Per-workweek OT data — lets the payslip split overtime by week like the report. */
+    techWeightedRegularRate?: number;
+    techWeeklyOt?: TechWeeklyOt[];
     techPaidLeavePay?: number;
     techPaidLeaveHours?: number;
     /** Paid on top of everything above, same as the report's Total Payment. */
@@ -1410,14 +1415,25 @@ export function buildTechActivityBreakdown(
   if (row.techHourlyPayStraight != null && row.techHourlyPayOtPremium != null) {
     const companyTotal = row.techHourlyPayStraight + row.techHourlyPayOtPremium;
     const stateMatch = row.techHourlyPay - companyTotal;
-    lineItems.push({
-      label: "Hourly Pay",
-      value: `${fmt3(Math.max(row.hoursWorked - paidLeaveHours, 0))}${row.overtimeHours > 0 ? ` + ${fmt3(row.overtimeHours)} OT` : ""}`,
-      rate: row.hourlyRate,
-      payment: row.techHourlyPayStraight - paidLeavePay,
+    // Same Hourly Pay / Overtime Pay ×1.5 / OT on Incentive Pay lines as the
+    // Tech Activity Report (lib/techOvertimeDisplay.ts) — same total.
+    const ot = buildOvertimeDisplay({
+      hourlyRate: row.hourlyRate,
+      hoursWorked: row.hoursWorked,
+      overtimeHours: row.overtimeHours,
+      straightPay: row.techHourlyPayStraight,
+      otPremium: row.techHourlyPayOtPremium,
+      weightedRegularRate: row.techWeightedRegularRate ?? 0,
+      weeklyOt: row.techWeeklyOt,
+      paidLeaveHours,
+      paidLeavePay,
     });
-    if (row.techHourlyPayOtPremium > 0.005) {
-      lineItems.push({ label: "OT Premium (Weighted Rate)", value: `${fmt3(row.overtimeHours)} OT`, rate: null, payment: row.techHourlyPayOtPremium });
+    lineItems.push({ label: "Hourly Pay", value: fmt3(ot.hourlyHours), rate: row.hourlyRate, payment: ot.hourlyAmount });
+    for (const w of ot.weeks) {
+      lineItems.push({ label: `Overtime Pay (${w.label})`, value: `${fmt3(w.hours)} OT × $${w.baseRate.toFixed(2)} × 1.5`, rate: null, payment: w.otAmount });
+      if (w.incentiveAmount > 0.004) {
+        lineItems.push({ label: `OT on Incentive Pay (${w.label})`, value: `${fmt3(w.hours)} OT × ($${w.regularRate.toFixed(2)} − $${w.baseRate.toFixed(2)}) × 0.5`, rate: null, payment: w.incentiveAmount });
+      }
     }
     if (Math.abs(stateMatch) > 0.005) {
       lineItems.push({ label: "State Minimum Wage Match", value: "Regular + OT to the state minimum", rate: null, payment: stateMatch });
