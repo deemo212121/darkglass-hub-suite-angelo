@@ -146,6 +146,34 @@ export async function removeEmailVaultPlatform(name: string): Promise<void> {
   }
 }
 
+/** Ticks on people with "No email yet", by profile id. null before migration 0468 (their boxes then stay off). */
+export async function getEmailVaultPersonPlatforms(): Promise<Map<string, string[]> | null> {
+  const { data, error } = await supabase.from("email_vault_person_platforms").select("profile_id, platforms");
+  if (error) {
+    if (error.code === "PGRST205" || error.code === "42P01") return null;
+    throw vaultError(error);
+  }
+  return new Map((data ?? []).map((r: any) => [r.profile_id as string, (r.platforms ?? []) as string[]]));
+}
+
+/** Tick / untick platforms for a person with no email yet (their whole list); recorded on History. Needs migration 0468. */
+export async function setEmailVaultPersonPlatforms(profileId: string, platforms: string[]): Promise<void> {
+  const { error } = await supabase.rpc("email_vault_set_person_platforms", { p_profile_id: profileId, p_platforms: platforms });
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42883") throw new Error("Ticking for people with no email needs database migration 0468_email_vault_person_platforms.sql.");
+    throw vaultError(error);
+  }
+}
+
+/** Saves the ✓ columns' order (dragged in the header) for everyone. Needs migration 0467. */
+export async function reorderEmailVaultPlatforms(names: string[]): Promise<void> {
+  const { error } = await supabase.rpc("email_vault_reorder_platforms", { p_names: names });
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42883") throw new Error("Saving the column order needs database migration 0467_email_vault_column_order.sql.");
+    throw new Error(error.message);
+  }
+}
+
 /** One password; the database records the view (or the copy). */
 export async function revealEmailVaultPassword(id: string, copy = false): Promise<string> {
   const { data, error } = await supabase.rpc("email_vault_reveal", { p_entry_id: id, p_copy: copy });

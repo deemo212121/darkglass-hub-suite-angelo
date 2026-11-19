@@ -42,6 +42,9 @@ import {
   getEmailVaultNoPasswordIds,
   getEmailVaultEvents,
   getEmailVaultPlatforms,
+  reorderEmailVaultPlatforms,
+  getEmailVaultPersonPlatforms,
+  setEmailVaultPersonPlatforms,
   addEmailVaultPlatform,
   removeEmailVaultPlatform,
   type EmailVaultEntry,
@@ -217,6 +220,11 @@ export function EmailVaultPage({ mod, sub }: Props) {
   const [platformList, setPlatformList] = useState<string[] | null>(null);
   const platforms: readonly string[] = platformList ?? DEFAULT_VAULT_PLATFORMS;
   const [managingColumns, setManagingColumns] = useState(false);
+  /** Ticks on people with "No email yet" (migration 0468); null = not set up, their boxes stay off. */
+  const [personTicks, setPersonTicks] = useState<Map<string, string[]> | null>(null);
+  /** Header drag-to-reorder: the column being dragged, and the one it's over. */
+  const [dragCol, setDragCol] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState<string | null>(null);
   const [newColumn, setNewColumn] = useState("");
   const [confirmRemoveColumn, setConfirmRemoveColumn] = useState<string | null>(null);
   const [staffFilter, setStaffFilter] = useState<StaffGroup | "all">("all");
@@ -270,7 +278,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const [rows, acc, ev, userRows, pid, seePasswords, columns] = await Promise.all([
+      const [rows, acc, ev, userRows, pid, seePasswords, columns, personRows] = await Promise.all([
         getEmailVaultEntries(),
         getEmailVaultAccess(),
         getEmailVaultEvents(),
@@ -278,8 +286,10 @@ export function EmailVaultPage({ mod, sub }: Props) {
         uid ? getMyProfileId(uid) : Promise.resolve(null),
         getMyEmailVaultPasswordAccess().catch(() => false),
         getEmailVaultPlatforms().catch((e) => { console.error("Email Vault columns:", e); return null; }),
+        getEmailVaultPersonPlatforms().catch((e) => { console.error("Email Vault person ticks:", e); return null; }),
       ]);
       setPlatformList(columns);
+      setPersonTicks(personRows);
       setCanSeePasswords(seePasswords);
       if (seePasswords) refreshNoPassword();
       setEntries(rows);
@@ -333,8 +343,8 @@ export function EmailVaultPage({ mod, sub }: Props) {
         ? rowNames(r) || BLANK
         : col === "email"
           ? rowEmail(r) || NO_EMAIL
-          : r.kind === "email" && r.entry.platforms.includes(col) ? TICKED : BLANK,
-    [rowNames],
+          : (r.kind === "email" ? r.entry.platforms : personTicks?.get(r.user.id) ?? []).includes(col) ? TICKED : BLANK,
+    [rowNames, personTicks],
   );
   const passesFilters = useCallback(
     (r: VaultRow, skip?: string) => Object.entries(colFilters).every(([col, picked]) => col === skip || picked.size === 0 || picked.has(cellValue(r, col))),
@@ -401,6 +411,25 @@ export function EmailVaultPage({ mod, sub }: Props) {
     }
   };
 
+  /** Tick / untick a platform for someone with no email yet — saved on the person (migration 0468). */
+  const togglePersonTick = async (u: ProfileRow, platform: string) => {
+    if (!personTicks) return;
+    const was = personTicks.get(u.id) ?? [];
+    const next = was.includes(platform) ? was.filter((p) => p !== platform) : [...was, platform];
+    const key = `person:${u.id}|${platform}`;
+    setSavingTick(key);
+    setPersonTicks((m) => new Map(m ?? []).set(u.id, next));
+    try {
+      await setEmailVaultPersonPlatforms(u.id, next);
+      refreshEvents();
+    } catch (e: any) {
+      setPersonTicks((m) => new Map(m ?? []).set(u.id, was));
+      toast.error(e?.message || "Couldn't save that tick.");
+    } finally {
+      setSavingTick(null);
+    }
+  };
+
   const hidePassword = (id: string) => setRevealed((r) => { const next = { ...r }; delete next[id]; return next; });
 
   const showPassword = async (entry: EmailVaultEntry) => {
@@ -436,7 +465,9 @@ export function EmailVaultPage({ mod, sub }: Props) {
   /** `people` fills in who uses a new email (a "No email yet" row's Add email). */
   const openForm = (entry: EmailVaultEntry | "new", people: string[] = []) => {
     setEditing(entry);
-    setForm(entry === "new" ? { email: "", password: "", people, platforms: [], passwordLater: false } : { email: entry.email, password: "", people: entry.people, platforms: entry.platforms, passwordLater: false });
+    // A "No email yet" row's Add email starts with the platforms already ticked for that person.
+    const ticked = Array.from(new Set(people.flatMap((id) => personTicks?.get(id) ?? [])));
+    setForm(entry === "new" ? { email: "", password: "", people, platforms: ticked, passwordLater: false } : { email: entry.email, password: "", people: entry.people, platforms: entry.platforms, passwordLater: false });
     setShowFormPassword(false);
   };
 
@@ -517,6 +548,23 @@ export function EmailVaultPage({ mod, sub }: Props) {
     }
   };
 
+  /** Drop `from` where `to` is (it takes that spot); saved for everyone right away, put back if saving fails. */
+  const moveColumn = async (from: string, to: string) => {
+    if (!platformList || from === to) return;
+    const before = platformList;
+    const next = before.filter((p) => p !== from);
+    const at = next.indexOf(to);
+    if (at < 0) return;
+    next.splice(before.indexOf(from) < before.indexOf(to) ? at + 1 : at, 0, from);
+    setPlatformList(next);
+    try {
+      await reorderEmailVaultPlatforms(next);
+    } catch (e: any) {
+      setPlatformList(before);
+      toast.error(e?.message || "Couldn't save the column order.");
+    }
+  };
+
   const removeColumn = async () => {
     if (!confirmRemoveColumn) return;
     const name = confirmRemoveColumn;
@@ -586,7 +634,7 @@ export function EmailVaultPage({ mod, sub }: Props) {
   };
 
   return (
-    <main className="flex-1 max-w-[1400px] mx-auto w-full px-6 py-8">
+    <main className="flex-1 w-full px-6 py-8">
       <div className="mb-8">
         <div className="flex items-center gap-3 mb-6">
           <button type="button" onClick={goBack} className="btn hover:bg-white/15">
@@ -736,7 +784,17 @@ export function EmailVaultPage({ mod, sub }: Props) {
                 </th>
                 <th className="border-l border-white/20 px-3 py-2 whitespace-nowrap">Email Password</th>
                 {platforms.map((platform) => (
-                  <th key={platform} className="w-[84px] min-w-[84px] border-l border-white/20 px-1 py-2 text-center whitespace-nowrap">
+                  <th
+                    key={platform}
+                    draggable={platformList !== null}
+                    onDragStart={(e) => { setDragCol(platform); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", platform); }}
+                    onDragOver={(e) => { if (!dragCol) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (dragOver !== platform) setDragOver(platform); }}
+                    onDragLeave={() => { if (dragOver === platform) setDragOver(null); }}
+                    onDrop={(e) => { e.preventDefault(); const from = dragCol; setDragCol(null); setDragOver(null); if (from) void moveColumn(from, platform); }}
+                    onDragEnd={() => { setDragCol(null); setDragOver(null); }}
+                    title={platformList !== null ? "Drag to move this column (saved for everyone)" : undefined}
+                    className={`w-[84px] min-w-[84px] border-l border-white/20 px-1 py-2 text-center whitespace-nowrap ${platformList !== null ? "cursor-grab active:cursor-grabbing" : ""} ${dragCol === platform ? "opacity-40" : ""} ${dragOver === platform && dragCol && dragCol !== platform ? "bg-blue-400 ring-2 ring-inset ring-white" : ""}`}
+                  >
                     <span className="inline-flex items-center justify-center">
                       {platform}
                       <TicketColumnFilter options={filterOptions(platform)} selected={colFilters[platform] ?? new Set()} onChange={(n) => setFilter(platform, n)} label={`Filter by ${platform}`} />
@@ -764,11 +822,29 @@ export function EmailVaultPage({ mod, sub }: Props) {
                       </td>
                       <td className={`${STICKY_EMAIL} ${cell} px-3 py-1.5 truncate italic text-muted-foreground`}>No email yet</td>
                       <td className={`${cell} border-l border-[var(--color-panel-border)] px-3 py-1.5 text-muted-foreground`}>—</td>
-                      {platforms.map((platform) => (
-                        <td key={platform} className={`${cell} border-l border-[var(--color-panel-border)] p-0`} title={`Add an email for ${nameOf(u)} first`}>
-                          <div className="h-9" />
-                        </td>
-                      ))}
+                      {platforms.map((platform) => {
+                        const on = (personTicks?.get(u.id) ?? []).includes(platform);
+                        const key = `person:${u.id}|${platform}`;
+                        return (
+                          <td key={platform} className={`${cell} border-l border-[var(--color-panel-border)] p-0 text-center`}>
+                            {personTicks ? (
+                              <button
+                                type="button"
+                                disabled={savingTick === key}
+                                onClick={() => void togglePersonTick(u, platform)}
+                                aria-pressed={on}
+                                aria-label={`${platform} for ${nameOf(u)}`}
+                                title={on ? `On ${platform} — click to untick` : `Click to tick ${platform} for ${nameOf(u)}`}
+                                className="flex h-9 w-full items-center justify-center text-base font-bold text-emerald-500 hover:bg-white/10 disabled:cursor-wait"
+                              >
+                                {savingTick === key ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : on ? TICKED : ""}
+                              </button>
+                            ) : (
+                              <div className="h-9" title="Ticking for people with no email needs database migration 0468" />
+                            )}
+                          </td>
+                        );
+                      })}
                       <td className={`${cell} border-l border-[var(--color-panel-border)]`} />
                       <td className={`${cell} border-l border-[var(--color-panel-border)] px-2 py-1.5`}>
                         <div className="flex justify-end">
