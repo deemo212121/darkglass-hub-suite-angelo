@@ -5,7 +5,7 @@ describe("categories", () => {
   it("are Accounting's branch sheet columns, in its order", () => {
     expect(BRANCH_EXPENSE_CATEGORIES.map((c) => BRANCH_EXPENSE_LABEL[c])).toEqual([
       "Lease", "Auto Insurance / Payment", "Internet", "Utility", "Flash Tech Travel / Lodging", "Flash Tech Food Reimbursement",
-      "Rental Car", "CarIQ Transactions", "CarIQ Mileage Reimbursement ($0.20)", "NON CarIQ Mileage Reimbursement ($0.50)",
+      "Rental Car", "CarIQ Transactions", "CarIQ Mileage Reimbursement", "NON CarIQ Mileage Reimbursement",
       "Gas", "Equipment / Office Supplies", "Field Equipment", "Operation", "Tech Payroll", "US Office Payroll", "PH Office Payroll",
     ]);
   });

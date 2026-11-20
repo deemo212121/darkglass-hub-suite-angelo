@@ -5,8 +5,9 @@
  *
  *   Lease · Auto Insurance / Payment · Internet · Utility
  *   Flash Tech Travel / Lodging · Flash Tech Food Reimbursement · Rental Car
- *   CarIQ Transactions · CarIQ Mileage Reimbursement ($0.20)
- *   NON CarIQ Mileage Reimbursement ($0.50) · Gas
+ *   CarIQ Transactions · CarIQ Mileage Reimbursement
+ *   NON CarIQ Mileage Reimbursement · Gas
+ *   (the mileage rates come from Daily Mileage's rate history, not the label)
  *   Equipment / Office Supplies · Field Equipment · Operation
  *   Tech Payroll · US Office Payroll · PH Office Payroll
  *   → Payroll Total · EXP TOTAL (everything that isn't payroll) · TOTAL
@@ -76,8 +77,8 @@ export const BRANCH_EXPENSE_LABEL: Record<BranchExpenseCategory, string> = {
   food: "Flash Tech Food Reimbursement",
   rental_car: "Rental Car",
   cariq_transactions: "CarIQ Transactions",
-  cariq_mileage: "CarIQ Mileage Reimbursement ($0.20)",
-  non_cariq_mileage: "NON CarIQ Mileage Reimbursement ($0.50)",
+  cariq_mileage: "CarIQ Mileage Reimbursement",
+  non_cariq_mileage: "NON CarIQ Mileage Reimbursement",
   gas: "Gas",
   equipment_supplies: "Equipment / Office Supplies",
   field_equipment: "Field Equipment",
