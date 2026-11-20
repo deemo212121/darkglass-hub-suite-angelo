@@ -35,7 +35,8 @@ async function loadSavedEntries(start: string, end: string, nameFallback: Map<st
     const otherReimb = mine.filter((i) => !i.isWageIncludable && i.value * i.rate > 0).reduce((s, i) => s + i.value * i.rate, 0);
     const details = reviewedPeriodDetails(r, { mileage: Math.max(cents(r.mileageOtherReimb - otherReimb), 0), items: mine });
     const gross = cents(reviewBreakdownTotal(r));
-    const tax = cents((taxes.get(r.profileId) ?? []).reduce((s, l) => s + taxLineAmount(l, gross), 0));
+    const taxLines = (taxes.get(r.profileId) ?? []).map((l) => ({ label: l.label || "Tax", amount: cents(taxLineAmount(l, gross)) }));
+    const tax = cents(taxLines.reduce((s, l) => s + l.amount, 0));
     return {
       profileId: r.profileId,
       name: r.technicianName || nameFallback.get(r.profileId) || "(unknown technician)",
@@ -46,6 +47,7 @@ async function loadSavedEntries(start: string, end: string, nameFallback: Map<st
       details,
       notInColumns: null,
       gross,
+      taxLines,
       taxes: tax,
       net: cents(gross - tax),
     };

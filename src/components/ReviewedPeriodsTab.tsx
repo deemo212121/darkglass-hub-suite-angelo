@@ -332,6 +332,7 @@ export function ReviewedPeriodsTab({
         details: reviewedPeriodDetails(r, actualDetails.get(r.profileId)),
         notInColumns: notInColumns(r),
         gross: Math.round(totalOf(r) * 100) / 100,
+        taxLines: taxLinesOf(r).map((l) => ({ label: l.label, amount: Math.round(l.amount * 100) / 100 })),
         taxes: taxesOf(r),
         net: netOf(r),
       })),
