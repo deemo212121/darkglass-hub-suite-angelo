@@ -129,7 +129,7 @@ import { renderPayslipBodyHtml, renderTechActivitySummaryPageHtml, PAYSLIP_STYLE
 import { ActivityLogPanel } from "@/components/ActivityLogPanel";
 import { NewPromotionsButton } from "@/components/NewPromotionsButton";
 import { NewHiresFormsButton } from "@/components/NewHiresFormsButton";
-import { logModuleActivity, getModuleActivityLog, getModuleActivityLogByAction, moduleActivityActionLabel, type ModuleActivityLogEntry } from "@/lib/supabase/moduleActivityLog";
+import { logModuleActivity, getModuleActivityLog, getModuleActivityLogByAction, moduleActivityActionLabel, MODULE_ACTIVITY_ACTION_LABELS, type ModuleActivityLogEntry } from "@/lib/supabase/moduleActivityLog";
 import { todayISO, formatISODate, localISODate } from "@/lib/localDate";
 import { currentPayPeriod, isPayPeriod, listPayPeriods } from "@/lib/payPeriods";
 import { toast } from "sonner";
@@ -818,6 +818,10 @@ function fmt(amount: number) {
 // gmail_connected/disconnected, mileage_ticket_payroll_hold/unhold,
 // mileage_photo_reminder_sent).
 function ACCOUNTING_ACTION_BADGE_COLOR(action: string): string {
+  // Database footprints (0472): added green, changed amber, removed red.
+  if (/_removed$/.test(action)) return "bg-red-500/20 text-red-300 border-red-500/30";
+  if (/_changed$/.test(action)) return "bg-amber-500/20 text-amber-300 border-amber-500/30";
+  if (/_added$/.test(action)) return "bg-emerald-500/20 text-emerald-300 border-emerald-500/30";
   if (action.includes("disconnected") || (action.includes("hold") && !action.includes("unhold"))) return "bg-red-500/20 text-red-300 border-red-500/30";
   if (action.includes("connected") || action.includes("sent") || action.includes("generated") || action.includes("unhold")) return "bg-green-500/20 text-green-300 border-green-500/30";
   if (action.includes("regenerated")) return "bg-yellow-500/20 text-yellow-300 border-yellow-500/30";
@@ -1029,7 +1033,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   useEffect(() => {
     if (activeTab !== "overview" || accountingActivityLoaded) return;
     setAccountingActivityLoading(true);
-    getModuleActivityLog("accounting", 500)
+    getModuleActivityLog("accounting", 2000)
       .then((rows) => { setAccountingActivityLog(rows); setAccountingActivityLoaded(true); })
       .catch((err) => console.error("Failed to load accounting activity log:", err))
       .finally(() => setAccountingActivityLoading(false));
@@ -3478,7 +3482,12 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // (getModuleActivityLog has no server-side date-range param to push
   // from/to down to, unlike hrActivityLog.ts's getActivityLog).
   const activityLogActionOptions = useMemo(
-    () => Array.from(new Set(accountingActivityLog.map((e) => e.action))).sort(),
+    // Logged actions plus every footprint type (0472), so they're filterable
+    // before the first one is recorded.
+    () => Array.from(new Set([
+      ...accountingActivityLog.map((e) => e.action),
+      ...Object.keys(MODULE_ACTIVITY_ACTION_LABELS).filter((a) => /_(added|changed|removed)$/.test(a)),
+    ])).sort((a, b) => moduleActivityActionLabel(a).localeCompare(moduleActivityActionLabel(b))),
     [accountingActivityLog]
   );
   const activityLogActorOptions = useMemo(
@@ -5121,8 +5130,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
                           <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${ACCOUNTING_ACTION_BADGE_COLOR(e.action)}`}>{moduleActivityActionLabel(e.action)}</span>
                         </td>
                         <td className="px-4 py-3 text-muted-foreground">{e.targetLabel ?? "—"}</td>
-                        <td className="px-4 py-3 text-muted-foreground max-w-sm truncate" title={Object.keys(e.details).length ? JSON.stringify(e.details) : ""}>
-                          {Object.entries(e.details).map(([k, v]) => `${k}: ${v}`).join(", ") || "—"}
+                        <td className="px-4 py-3 text-muted-foreground max-w-md text-xs" title={Object.keys(e.details).length ? JSON.stringify(e.details) : ""}>
+                          {Object.keys(e.details).length === 0 ? "—" : (
+                            <div className="space-y-0.5">
+                              {Object.entries(e.details).slice(0, 8).map(([k, v]) => (
+                                <div key={k} className="break-words">
+                                  <span className="text-slate-400">{k.replace(/_/g, " ")}:</span>{" "}
+                                  <span className={typeof v === "string" && v.includes(" → ") ? "text-amber-200" : "text-slate-300"}>{typeof v === "object" ? JSON.stringify(v) : String(v)}</span>
+                                </div>
+                              ))}
+                              {Object.keys(e.details).length > 8 && <div className="text-slate-500">+{Object.keys(e.details).length - 8} more (hover)</div>}
+                            </div>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{new Date(e.createdAt).toLocaleString()}</td>
                       </tr>
