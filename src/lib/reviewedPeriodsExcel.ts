@@ -20,9 +20,24 @@ export interface ReviewedExportEntry {
   /** Actual gross − saved columns; null when the actual gross isn't loaded (other periods). */
   notInColumns: number | null;
   gross: number;
+  /** Each tax line as worked out on the report (MCWH, SSWH, FITW, SITW, Post Tax, …). */
+  taxLines: { label: string; amount: number }[];
   taxes: number;
   net: number;
 }
+
+const taxKey = (label: string) => (label.trim().replace(/\s+/g, " ") || "Tax").toLowerCase();
+/** Tax line labels across these entries, in first-seen order (MCWH, SSWH, FITW, SITW first as entered). */
+function taxLabelsOf(entries: ReviewedExportEntry[]): { key: string; label: string }[] {
+  const out = new Map<string, string>();
+  for (const e of entries) for (const t of e.taxLines) {
+    const k = taxKey(t.label);
+    if (!out.has(k)) out.set(k, t.label.trim().replace(/\s+/g, " ") || "Tax");
+  }
+  return [...out].map(([key, label]) => ({ key, label }));
+}
+const taxAmount = (e: ReviewedExportEntry, key: string) =>
+  Math.round(e.taxLines.filter((t) => taxKey(t.label) === key).reduce((s, t) => s + t.amount, 0) * 100) / 100;
 
 export type ReviewedExportLayout = "list" | "tabs";
 
@@ -95,12 +110,16 @@ function writeTable(ws: Worksheet, opts: {
   lead: (e: ReviewedExportEntry) => string[];
   entries: ReviewedExportEntry[];
   columns: ExportColumn[];
+  /** Full breakdown: one column per tax line, before the Taxes total. */
+  taxLabels: { key: string; label: string }[];
   /** Bold separator above an entry (first row of a new person in the list layout). */
   groupStart?: (e: ReviewedExportEntry, i: number) => boolean;
 }) {
   const { columns, entries } = opts;
   const leadCount = opts.leadHeaders.length;
-  const lastCol = leadCount + columns.length + 4;
+  const taxLabels = opts.taxLabels;
+  const lastCol = leadCount + columns.length + taxLabels.length + 4;
+  const firstTaxCol = leadCount + columns.length + 3;
   ws.mergeCells(1, 1, 1, lastCol);
   const title = ws.getCell(1, 1);
   title.value = opts.title;
@@ -123,7 +142,8 @@ function writeTable(ws: Worksheet, opts: {
     ...columns.map((c) => ({ text: [c.label, ...(c.sub ?? [])].join("\n"), key: c.group as HeaderKey })),
     { text: "Not in Columns\nGross − columns", key: "notInColumns" },
     { text: "Gross Pay\nTimecard + Tech Activity Report", key: "gross" },
-    { text: "(−) Taxes\nMCWH · SSWH · FITW · SITW", key: "taxes" },
+    ...taxLabels.map((t) => ({ text: `(−) ${t.label}`, key: "taxes" as const })),
+    { text: taxLabels.length ? "(−) Taxes\nTotal of the tax lines" : "(−) Taxes\nMCWH · SSWH · FITW · SITW", key: "taxes" },
     { text: "Total\nNet pay (gross − taxes)", key: "total" },
   ];
   headers.forEach((h, i) => {
@@ -139,7 +159,7 @@ function writeTable(ws: Worksheet, opts: {
   const first = headerRow + 1;
   entries.forEach((e, i) => {
     const row = ws.getRow(first + i);
-    row.values = [...opts.lead(e), ...columns.map((c) => c.value(e)), e.notInColumns ?? 0, e.gross, e.taxes, e.net];
+    row.values = [...opts.lead(e), ...columns.map((c) => c.value(e)), e.notInColumns ?? 0, e.gross, ...taxLabels.map((t) => taxAmount(e, t.key)), e.taxes, e.net];
     row.height = 18;
     const startsGroup = i > 0 && !!opts.groupStart?.(e, i);
     for (let c = 1; c <= lastCol; c++) {
@@ -152,7 +172,7 @@ function writeTable(ws: Worksheet, opts: {
     columns.forEach((column, index) => {
       if (column.subtract) row.getCell(index + leadCount + 1).font = { name: "Calibri", size: 11, color: { argb: "FFB91C1C" } };
     });
-    row.getCell(lastCol - 1).font = { name: "Calibri", size: 11, color: { argb: "FFB91C1C" } };
+    for (let c = firstTaxCol; c <= lastCol - 1; c++) row.getCell(c).font = { name: "Calibri", size: 11, color: { argb: "FFB91C1C" } };
     row.getCell(lastCol).font = { name: "Calibri", size: 11, bold: true, color: { argb: "FF15803D" } };
     row.getCell(lastCol).fill = fill(i % 2 ? "FFE8F5EC" : "FFF0FAF3");
   });
@@ -189,6 +209,7 @@ export async function downloadReviewedPeriodsWorkbook(entries: ReviewedExportEnt
   const wb = new ExcelJS.Workbook();
   const sorted = [...entries].sort((a, b) => a.name.localeCompare(b.name) || a.periodStart.localeCompare(b.periodStart));
   const columns = reviewExportColumns(sorted, opts.fullBreakdown);
+  const taxLabels = opts.fullBreakdown ? taxLabelsOf(sorted) : [];
   const people = [...new Map(sorted.map((e) => [e.profileId, e])).values()];
   const periods = [...new Map(sorted.map((e) => [`${e.periodStart}|${e.periodEnd}`, e])).values()].sort((a, b) => a.periodStart.localeCompare(b.periodStart));
   const generated = `Generated ${new Date().toLocaleString()}`;
@@ -204,6 +225,7 @@ export async function downloadReviewedPeriodsWorkbook(entries: ReviewedExportEnt
       lead: (e) => (multi ? [e.name, e.branch, periodLabel(e)] : [e.name, e.branch]),
       entries: sorted,
       columns,
+      taxLabels,
       groupStart: (e, i) => sorted[i - 1].profileId !== e.profileId,
     });
   } else {
@@ -218,6 +240,7 @@ export async function downloadReviewedPeriodsWorkbook(entries: ReviewedExportEnt
         lead: (e) => [periodLabel(e), e.branch],
         entries: mine,
         columns,
+        taxLabels,
       });
     }
   }
