@@ -2061,6 +2061,15 @@ const adminMod: ModuleDef = {
       seed: () => ({}),
     },
     {
+      slug: "payroll-locks",
+      title: "Payroll Locks",
+      description: "Declare each pay period's payroll cutoff (Central Time). After it, nothing in that period can change (hours, includables, reimbursements, custom lines, Done marks) unless an Admin reopens it with a reason.",
+      custom: "payroll-locks" as any,
+      fields: [],
+      count: 0,
+      seed: () => ({}),
+    },
+    {
       slug: "errors-improvements",
       title: "Errors & Improvements",
       description: "What needs doing — errors to fix, improvements and to-dos, with who added each one and a Confirm button once it's done.",

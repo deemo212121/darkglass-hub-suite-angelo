@@ -42,6 +42,7 @@ const TriageDashboardPage = lazy(() => import("@/components/TriageDashboardPage"
 const UniversalActivityLogPage = lazy(() => import("@/components/UniversalActivityLogPage").then((m) => ({ default: m.UniversalActivityLogPage })));
 const IncentivesPage = lazy(() => import("@/components/IncentivesPage").then((m) => ({ default: m.IncentivesPage })));
 const ReportsLibraryPage = lazy(() => import("@/components/ReportsLibraryPage").then((m) => ({ default: m.ReportsLibraryPage })));
+const PayrollLocksPage = lazy(() => import("@/components/PayrollLocksPage").then((m) => ({ default: m.PayrollLocksPage })));
 const ErrorsImprovementsPage = lazy(() => import("@/components/ErrorsImprovementsPage").then((m) => ({ default: m.ErrorsImprovementsPage })));
 const GenericModulePage = lazy(() => import("@/components/GenericModulePage").then((m) => ({ default: m.GenericModulePage })));
 const PartReturnStatusPage = lazy(() => import("@/components/PartReturnStatus").then((m) => ({ default: m.PartReturnStatusPage })));
@@ -800,6 +801,8 @@ function SubModule() {
         ? <IncentivesPage mod={mod} sub={sub} />
         : (sub as any).custom === "reports-library"
         ? <ReportsLibraryPage mod={mod} sub={sub} />
+        : (sub as any).custom === "payroll-locks"
+        ? <PayrollLocksPage mod={mod} sub={sub} />
         : (sub as any).custom === "errors-improvements"
         ? <ErrorsImprovementsPage mod={mod} sub={sub} />
         : (sub as any).custom === "add-branch"

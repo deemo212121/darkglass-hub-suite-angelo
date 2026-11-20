@@ -14,7 +14,9 @@ import {
   type PayrollReviewAmounts,
   type PayrollReviewBreakdown,
 } from "@/lib/supabase/payrollReviewBreakdowns";
-import { reviewedPeriodDetails, excelColumnLetter, type ReviewedPeriodDetailSource } from "@/lib/reviewedPeriodDetails";
+import { reviewedPeriodDetails, type ReviewedPeriodDetailSource } from "@/lib/reviewedPeriodDetails";
+import { ReviewedPeriodsExportDialog } from "./ReviewedPeriodsExportDialog";
+import type { ReviewedExportEntry } from "@/lib/reviewedPeriodsExcel";
 import { formatISODate } from "@/lib/localDate";
 import { getTechTaxLinesForPeriod, taxLineAmount, type TechTaxLine } from "@/lib/supabase/techTaxLines";
 
@@ -312,121 +314,30 @@ export function ReviewedPeriodsTab({
     ...c, group: c.key, value: (r: PayrollReviewBreakdown) => r[c.key],
   }));
 
-  const downloadExcel = async () => {
-    if (!actualReady || loading) return;
-    const excelModule = await import("exceljs");
-    const ExcelJS = excelModule.default ?? excelModule;
-    const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet("Reviewed Period", { properties: { tabColor: { argb: "FF0F766E" } } });
-    const lastCol = exportColumns.length + 6;
-    const colLetter = excelColumnLetter;
-    const fill = (argb: string) => ({ type: "pattern" as const, pattern: "solid" as const, fgColor: { argb } });
-    const thin = { style: "thin" as const, color: { argb: "FFD9E1EC" } };
-    const moneyFmt = '"$"#,##0.00;[Red]-"$"#,##0.00;"–"';
-    // Header colour per column group: earnings / deductions / reimbursements / salary / total.
-    const groupColor = (key: keyof PayrollReviewAmounts | "notInColumns" | "gross" | "taxes" | "total" | "name") =>
-      key === "deduction" || key === "pretaxInsurance" || key === "taxes" ? "FFB91C1C"
-        : key === "mileageOtherReimb" ? "FF6D28D9"
-        : key === "salaryMatch" || key === "notInColumns" ? "FFB45309"
-        : key === "total" ? "FF15803D"
-        : key === "gross" ? "FF334155"
-        : key === "name" ? "FF1E3A5F"
-        : "FF0F766E";
-
-    // Title banner
-    ws.mergeCells(1, 1, 1, lastCol);
-    const title = ws.getCell(1, 1);
-    title.value = "REVIEWED PERIOD  •  TECHNICIAN PAYROLL SUMMARY";
-    title.font = { name: "Calibri", size: 16, bold: true, color: { argb: "FFFFFFFF" } };
-    title.fill = fill("FF1E3A5F");
-    title.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
-    ws.getRow(1).height = 30;
-    ws.mergeCells(2, 1, 2, lastCol);
-    const sub = ws.getCell(2, 1);
-    sub.value = `Pay period ${formatISODate(periodStart)} – ${formatISODate(periodEnd)}   •   ${visible.length} technician${visible.length === 1 ? "" : "s"}   •   Generated ${new Date().toLocaleString()}`;
-    sub.font = { name: "Calibri", size: 11, italic: true, color: { argb: "FF1E3A5F" } };
-    sub.fill = fill("FFE0F2F1");
-    sub.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
-    ws.getRow(2).height = 20;
-    ws.getRow(3).height = 6;
-
-    // Column headers (label + its "Including …" notes in one wrapped cell)
-    const headerRow = 4;
-    const headers: { text: string; key: keyof PayrollReviewAmounts | "notInColumns" | "gross" | "taxes" | "total" | "name" }[] = [
-      { text: "Technician", key: "name" },
-      { text: "Branch", key: "name" },
-      ...exportColumns.map((c) => ({ text: [c.label, ...(c.sub ?? [])].join("\n"), key: c.group })),
-      { text: "Not in Columns\nGross − columns", key: "notInColumns" },
-      { text: "Gross Pay\nTimecard + Tech Activity Report", key: "gross" },
-      { text: "(−) Taxes\nMCWH · SSWH · FITW · SITW", key: "taxes" },
-      { text: "Total\nNet pay (gross − taxes)", key: "total" },
-    ];
-    headers.forEach((h, i) => {
-      const cell = ws.getCell(headerRow, i + 1);
-      cell.value = h.text;
-      cell.fill = fill(groupColor(h.key));
-      cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
-      cell.alignment = { vertical: "middle", horizontal: i < 2 ? "left" : "center", wrapText: true };
-      cell.border = { bottom: { style: "medium", color: { argb: "FF0B1F33" } }, right: { style: "thin", color: { argb: "FFFFFFFF" } } };
-    });
-    ws.getRow(headerRow).height = 50;
-
-    // Rows
-    const first = headerRow + 1;
-    visible.forEach((r, i) => {
-      const n = first + i;
-      const row = ws.getRow(n);
-      // Gross = the technician's actual pay; Total = net after the report's tax lines, as on the tab.
-      row.values = [nameOf(r), r.branch ?? "", ...exportColumns.map((c) => c.value(r)), notInColumns(r) ?? 0, Math.round(totalOf(r) * 100) / 100, taxesOf(r), netOf(r)];
-      row.height = 18;
-      for (let c = 1; c <= lastCol; c++) {
-        const cell = row.getCell(c);
-        cell.fill = fill(i % 2 ? "FFF5F8FC" : "FFFFFFFF");
-        cell.border = { bottom: thin };
-        cell.font = { name: "Calibri", size: 11, color: { argb: "FF1F2937" }, bold: c === 1 || c === lastCol };
-        if (c >= 3) { cell.numFmt = moneyFmt; cell.alignment = { horizontal: "right" }; }
-      }
-      // Subtracted columns in red, Total in green.
-      exportColumns.forEach((column, index) => {
-        if (column.subtract) row.getCell(index + 3).font = { name: "Calibri", size: 11, color: { argb: "FFB91C1C" } };
-      });
-      row.getCell(lastCol - 1).font = { name: "Calibri", size: 11, color: { argb: "FFB91C1C" } };
-      row.getCell(lastCol).font = { name: "Calibri", size: 11, bold: true, color: { argb: "FF15803D" } };
-      row.getCell(lastCol).fill = fill(i % 2 ? "FFE8F5EC" : "FFF0FAF3");
-    });
-    const last = first + visible.length - 1;
-
-    // Totals
-    const totalRow = ws.getRow(last + 1);
-    totalRow.getCell(1).value = `TOTAL  (${visible.length})`;
-    for (let c = 3; c <= lastCol; c++) {
-      const col = colLetter(c);
-      totalRow.getCell(c).value = visible.length ? { formula: `SUM(${col}${first}:${col}${last})`, result: visible.reduce((sum, _, index) => sum + Number(ws.getRow(first + index).getCell(c).value || 0), 0) } : 0;
-      totalRow.getCell(c).numFmt = moneyFmt;
-      totalRow.getCell(c).alignment = { horizontal: "right" };
-    }
-    for (let c = 1; c <= lastCol; c++) {
-      const cell = totalRow.getCell(c);
-      cell.fill = fill(c === lastCol ? "FF15803D" : "FF1E3A5F");
-      cell.font = { name: "Calibri", size: 12, bold: true, color: { argb: "FFFFFFFF" } };
-      cell.border = { top: { style: "double", color: { argb: "FF0B1F33" } } };
-    }
-    totalRow.height = 24;
-
-    ws.columns.forEach((col, i) => { col.width = i === 0 ? 30 : i === 1 ? 18 : i === lastCol - 1 ? 16 : 17; });
-    ws.views = [{ state: "frozen", xSplit: 1, ySplit: headerRow, showGridLines: false, zoomScale: 90 }];
-    if (visible.length) ws.autoFilter = { from: { row: headerRow, column: 1 }, to: { row: last, column: lastCol } };
-    ws.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, printTitlesRow: `${headerRow}:${headerRow}` };
-    const buffer = await wb.xlsx.writeBuffer();
-    const url = URL.createObjectURL(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `reviewed_period_${periodStart}_to_${periodEnd}.xlsx`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  };
+  // Download Excel opens a picker (periods × technicians, list or one tab
+  // per person). The open period exports exactly what this tab shows.
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportPendingSync = rows.some((r) => r.source === "review" && !!reviewedPeriodSyncAmounts(r, actualBreakdowns.get(r.profileId), actualTotals.get(r.profileId)));
+  const currentExport = useMemo((): { key: string; entries: ReviewedExportEntry[] } | null => {
+    if (!exportOpen || !actualReady || loading || exportPendingSync || !selected) return null;
+    return {
+      key: selected,
+      entries: rows.map((r) => ({
+        profileId: r.profileId,
+        name: nameOf(r),
+        branch: r.branch ?? "",
+        periodStart,
+        periodEnd,
+        amounts: r,
+        details: reviewedPeriodDetails(r, actualDetails.get(r.profileId)),
+        notInColumns: notInColumns(r),
+        gross: Math.round(totalOf(r) * 100) / 100,
+        taxes: taxesOf(r),
+        net: netOf(r),
+      })),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exportOpen]);
 
   const cellClass = "w-[74px] bg-slate-800/50 border border-white/10 rounded px-1 py-0.5 text-[11px] text-right tabular-nums text-white focus:border-blue-500 focus:outline-none disabled:opacity-50";
 
@@ -519,16 +430,28 @@ export function ReviewedPeriodsTab({
           </button>
           <button
             type="button"
-            onClick={() => void downloadExcel()}
-            disabled={visible.length === 0 || !actualReady || loading || payrollSyncing || rows.some((r) => r.source === "review" && !!reviewedPeriodSyncAmounts(r, actualBreakdowns.get(r.profileId), actualTotals.get(r.profileId)))}
+            onClick={() => setExportOpen(true)}
+            disabled={payrollSyncing || periodOptions.length === 0}
+            title="Pick technicians and pay periods to download"
             className={`${weeklyView ? "hidden" : "flex"} px-3 py-1.5 rounded-md bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm font-semibold items-center gap-1.5`}
           >
-            <Download className="h-4 w-4" /> {payrollSyncing ? "Syncing payroll..." : loading || !actualReady ? "Loading export..." : "Download Excel"}
+            <Download className="h-4 w-4" /> {payrollSyncing ? "Syncing payroll..." : "Download Excel"}
           </button>
         </div>
       </div>
 
       {error && <div className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</div>}
+
+      {exportOpen && (
+        <ReviewedPeriodsExportDialog
+          periodOptions={periodOptions}
+          current={currentExport}
+          defaultIncluded={new Set(visible.map((r) => r.profileId))}
+          nameFallback={new Map(people.map((p) => [p.id, p.name]))}
+          fullBreakdown={fullBreakdown}
+          onClose={() => setExportOpen(false)}
+        />
+      )}
 
       {weeklyView && <ReviewedWeeklyBreakdown
         people={visible.map((r) => ({ id: r.profileId, name: nameOf(r), branch: r.branch ?? "" }))}

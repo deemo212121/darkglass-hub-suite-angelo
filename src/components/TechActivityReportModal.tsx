@@ -5,7 +5,6 @@ import { Link } from "@tanstack/react-router";
 import { X, Plus, Trash2, Loader2, Maximize2, FileText, StickyNote } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { buildOvertimeDisplay, type OvertimeDisplayWeek } from "@/lib/techOvertimeDisplay";
-import { getMyProfileAndCompanyIds } from "@/lib/supabase/users";
 import { getEmployeeFileUrl, getPaystubForPeriod, type EmployeeFileRow } from "@/lib/supabase/employeeFiles";
 import { addPayrollPeriodNote, deletePayrollPeriodNote, getPayrollPeriodNotes, type PayrollPeriodNote } from "@/lib/supabase/payrollPeriodNotes";
 import type { EmployeePayrollRow } from "@/components/AccountingDashboard";
@@ -82,7 +81,16 @@ interface Props {
   periodDataSettling?: boolean;
   /** View only (Technical Assistant Director's Tech Payroll view): every input, rate, line and switch disabled. Pass no onSetHourlyOtMode / onDone with it so nothing saves on open either. */
   readOnly?: boolean;
+  /** Set when this pay period's payroll cutoff has passed (Admin → Payroll
+   *  Locks, migration 0469): every input is disabled like readOnly, but the
+   *  paystub viewer and Internal Notes stay open. The text says when it locked. */
+  lockedNotice?: string | null;
 }
+
+// Tech Activity Reports changed this page session that still need an
+// Internal Note explaining why — keyed by technician + period, kept at
+// module level so going ← Prev and back doesn't forget the edits.
+const reportsNeedingNote = new Set<string>();
 
 function fmt(amount: number) {
   return `$${amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
@@ -124,7 +132,9 @@ export function TechActivityReportModal({
   hourlyOtModeBusy,
   periodDataSettling,
   readOnly = false,
+  lockedNotice = null,
 }: Props) {
+  const inputsLocked = readOnly || !!lockedNotice;
   const { employee, techManual, techCategoryCounts, techCarryover, ticketsAssigned, ticketsCompleted, workingDays, twoTechCount, hoursWorked, overtimeHours, hourlyRate, techHourlyPay, techHourlyPayStraight, techHourlyPayOtPremium, techWeightedRegularRate, techWeeklyOt, techGuaranteedSalaryTarget, techHolidayPremium, techIncludablePay, mileageRateOverride, carIqSwitch } = row;
   const branch = employee.assigned_branch || "";
 
@@ -414,7 +424,7 @@ export function TechActivityReportModal({
         setCustomItems(custom);
         // Existing lines whose label says reimbursement/deduction but are
         // still Includable get corrected (see looksLikeReimbursementLabel).
-        const misflagged = custom.filter((i) => i.isWageIncludable && looksLikeReimbursementLabel(i.label));
+        const misflagged = inputsLocked ? [] : custom.filter((i) => i.isWageIncludable && looksLikeReimbursementLabel(i.label));
         if (misflagged.length > 0) {
           void Promise.all(misflagged.map((i) => updateTechCustomPayItem(i.id, { isWageIncludable: false })))
             .then(() => {
@@ -476,6 +486,7 @@ export function TechActivityReportModal({
     setSavingRateKey(category);
     try {
       await upsertResolvedTechRepairRate(techRepairRates, category, branch, amount);
+      markChanged();
       onRatesChanged();
     } catch (err) {
       alert(`Failed to save rate: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -489,6 +500,7 @@ export function TechActivityReportModal({
     try {
       const created = await addTechCustomPayItem(employee.id, periodStart, periodEnd, customItems.length);
       setCustomItems((prev) => [...prev, created]);
+      markChanged();
       onCustomItemsChanged();
     } catch (err) {
       alert(`Failed to add line: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -512,6 +524,7 @@ export function TechActivityReportModal({
       const label = `Mileage (Car IQ $${carIqSwitch.rateAfter.toFixed(2)}/mi, from ${carIqSwitch.date})`;
       await updateTechCustomPayItem(created.id, { label, rate: carIqSwitch.rateAfter, isWageIncludable: false });
       setCustomItems((prev) => [...prev, { ...created, label, rate: carIqSwitch.rateAfter, isWageIncludable: false }]);
+      markChanged();
       onCustomItemsChanged();
     } catch (err) {
       alert(`Failed to add Car IQ mileage line: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -531,14 +544,10 @@ export function TechActivityReportModal({
   // Paystub side-by-side (Accounting -> Paystubs upload for this period) and
   // Accounting's internal notes on this period (migration 0465). Hidden in
   // the view-only report.
-  const { uid } = useAuth();
-  const [myProfileId, setMyProfileId] = useState<string | null>(null);
-  useEffect(() => {
-    if (!uid) return;
-    let cancelled = false;
-    void getMyProfileAndCompanyIds(uid).then((ids) => { if (!cancelled) setMyProfileId(ids?.profileId ?? null); });
-    return () => { cancelled = true; };
-  }, [uid]);
+  const { role: myRole, extraRoles: myExtraRoles } = useAuth();
+  // Internal Notes can't be edited; only Admin / SuperAdmin delete them
+  // (migration 0470). IT carries Super Admin.
+  const canDeleteNotes = [myRole, ...(myExtraRoles ?? [])].some((r) => r === "ADMIN" || r === "SUPERADMIN" || r === "SUPERSUPERADMIN" || r === "IT");
 
   const [paystub, setPaystub] = useState<EmployeeFileRow | null>(null);
   const [paystubUrl, setPaystubUrl] = useState<string | null>(null);
@@ -571,6 +580,17 @@ export function TechActivityReportModal({
   const [notesError, setNotesError] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
   const [savingNote, setSavingNote] = useState(false);
+  // Any change made on this report needs an Internal Note saying why before
+  // Done — cleared by the next note saved, set again by any later change.
+  const noteKey = `${employee.id}|${periodStart}|${periodEnd}`;
+  const [needsNote, setNeedsNote] = useState(() => reportsNeedingNote.has(noteKey));
+  useEffect(() => { setNeedsNote(reportsNeedingNote.has(noteKey)); }, [noteKey]);
+  const noteInputRef = useRef<HTMLTextAreaElement>(null);
+  const markChanged = () => {
+    if (inputsLocked) return;
+    reportsNeedingNote.add(noteKey);
+    setNeedsNote(true);
+  };
   const loadNotes = async () => {
     try {
       setNotes(await getPayrollPeriodNotes(employee.id, periodStart, periodEnd));
@@ -592,6 +612,8 @@ export function TechActivityReportModal({
     setSavingNote(true);
     try {
       await addPayrollPeriodNote(employee.id, periodStart, periodEnd, noteDraft);
+      reportsNeedingNote.delete(noteKey);
+      setNeedsNote(false);
       setNoteDraft("");
       await loadNotes();
     } catch (err) {
@@ -646,6 +668,7 @@ export function TechActivityReportModal({
     try {
       await updateTechCustomPayItem(item.id, fields);
       setCustomItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, ...fields } : i)));
+      if ((Object.keys(fields) as (keyof typeof fields)[]).some((k) => (item[k] ?? null) !== (fields[k] ?? null))) markChanged();
       onCustomItemsChanged();
     } catch (err) {
       alert(`Failed to save line: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -658,6 +681,7 @@ export function TechActivityReportModal({
     try {
       await deleteTechCustomPayItem(item.id);
       setCustomItems((prev) => prev.filter((i) => i.id !== item.id));
+      markChanged();
       onCustomItemsChanged();
     } catch (err) {
       alert(`Failed to remove line: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -683,6 +707,7 @@ export function TechActivityReportModal({
     try {
       const created = await addTechTaxLine(employee.id, periodStart, periodEnd, taxLines.length);
       setTaxLines((prev) => [...prev, created]);
+      markChanged();
     } catch (err) {
       alert(`Failed to add tax line: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
@@ -692,6 +717,7 @@ export function TechActivityReportModal({
     try {
       await updateTechTaxLine(line.id, fields);
       setTaxLines((prev) => prev.map((l) => (l.id === line.id ? { ...l, ...fields } : l)));
+      markChanged();
     } catch (err) {
       alert(`Failed to save tax line: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -703,6 +729,7 @@ export function TechActivityReportModal({
     try {
       await deleteTechTaxLine(line.id);
       setTaxLines((prev) => prev.filter((l) => l.id !== line.id));
+      markChanged();
     } catch (err) {
       alert(`Failed to remove tax line: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -814,6 +841,7 @@ export function TechActivityReportModal({
             <p className="text-xs text-slate-400">
               {periodStart} – {periodEnd}{branch ? ` · ${branch}` : ""}
               {readOnly && <span className="ml-2 rounded border border-white/15 bg-white/5 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-slate-300">View only</span>}
+              {!readOnly && lockedNotice && <span className="ml-2 rounded border border-red-400/30 bg-red-500/10 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-red-300">🔒 Locked</span>}
             </p>
           </div>
           <button onClick={onClose} className="text-white/40 hover:text-white/80 transition">
@@ -822,7 +850,12 @@ export function TechActivityReportModal({
         </div>
 
         <div className="overflow-y-auto flex-1 p-5">
-          <fieldset disabled={readOnly} className="m-0 min-w-0 border-0 p-0">
+          {!readOnly && lockedNotice && (
+            <p className="mb-4 rounded-md border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+              🔒 {lockedNotice} Nothing on this report can be changed. You can still view the paystub and add Internal Notes; an Admin can reopen the period from Admin → Payroll Locks.
+            </p>
+          )}
+          <fieldset disabled={inputsLocked} className="m-0 min-w-0 border-0 p-0">
           <div className={`grid gap-5 ${comparePaystub ? "lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]" : "lg:grid-cols-[1fr_320px]"}`}>
             {/* Payroll Detail Report */}
             <div className="overflow-x-auto rounded-lg border border-white/10">
@@ -1001,7 +1034,7 @@ export function TechActivityReportModal({
                               defaultValue={meta.value || ""}
                               disabled={savingValue}
                               placeholder="0"
-                              onBlur={(e) => onManualPayBlur(row, field, e.target.value)}
+                              onBlur={(e) => { const changed = (Number(e.target.value) || 0) !== (Number(meta.value) || 0); void onManualPayBlur(row, field, e.target.value).then(() => { if (changed) markChanged(); }); }}
                               className={rateCellClass}
                             />
                           </div>
@@ -1058,7 +1091,7 @@ export function TechActivityReportModal({
                               defaultValue={count || ""}
                               placeholder="0"
                               disabled={savingValue}
-                              onBlur={(e) => onCategoryOverrideBlur(employee.id, type, e.target.value)}
+                              onBlur={(e) => { const changed = (Number(e.target.value) || 0) !== (Number(count) || 0); void onCategoryOverrideBlur(employee.id, type, e.target.value).then(() => { if (changed) markChanged(); }); }}
                               className={rateCellClass}
                             />
                           </div>
@@ -1112,7 +1145,7 @@ export function TechActivityReportModal({
                           defaultValue={twoTechCount || ""}
                           placeholder="0"
                           disabled={savingCategoryOverrideKey === `${employee.id}:Two Tech`}
-                          onBlur={(e) => onCategoryOverrideBlur(employee.id, "Two Tech", e.target.value)}
+                          onBlur={(e) => { const changed = (Number(e.target.value) || 0) !== (Number(twoTechCount) || 0); void onCategoryOverrideBlur(employee.id, "Two Tech", e.target.value).then(() => { if (changed) markChanged(); }); }}
                           className={rateCellClass}
                         />
                       </div>
@@ -1227,7 +1260,7 @@ export function TechActivityReportModal({
                           defaultValue={techManual.owIncentivePct || ""}
                           placeholder="0"
                           disabled={savingManualKey === `${employee.id}:owIncentivePct`}
-                          onBlur={(e) => onManualPayBlur(row, "owIncentivePct", e.target.value)}
+                          onBlur={(e) => { const changed = (Number(e.target.value) || 0) !== (Number(techManual.owIncentivePct) || 0); void onManualPayBlur(row, "owIncentivePct", e.target.value).then(() => { if (changed) markChanged(); }); }}
                           className="w-16 bg-slate-800/50 border border-white/10 rounded px-1.5 py-1 text-right text-xs text-white focus:border-blue-500 focus:outline-none disabled:opacity-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         />
                         <span className="text-xs text-slate-400">%</span>
@@ -1492,7 +1525,7 @@ export function TechActivityReportModal({
                               type="button"
                               disabled={stateMatchRequired || hourlyOtModeBusy || loadingStateComparison || periodDataSettling}
                               title={loadingStateComparison ? "Still loading this technician's per-day state comparison — wait for it to finish before switching modes." : undefined}
-                              onClick={() => onSetHourlyOtMode("company", companyHourlyOtTotal)}
+                              onClick={() => { const changed = appliedIsState; void Promise.resolve(onSetHourlyOtMode("company", companyHourlyOtTotal)).then(() => { if (changed) markChanged(); }); }}
                               className={`px-2 py-0.5 rounded-full transition disabled:opacity-50 ${!(appliedIsState || stateMatchRequired) ? "bg-slate-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
                             >
                               Company
@@ -1501,7 +1534,7 @@ export function TechActivityReportModal({
                               type="button"
                               disabled={stateMatchRequired || hourlyOtModeBusy || loadingStateComparison || periodDataSettling}
                               title={loadingStateComparison ? "Still loading this technician's per-day state comparison — wait for it to finish before switching modes." : undefined}
-                              onClick={() => onSetHourlyOtMode("state", stateHourlyOtTotal, stateRegularShare)}
+                              onClick={() => { const changed = !appliedIsState; void Promise.resolve(onSetHourlyOtMode("state", stateHourlyOtTotal, stateRegularShare)).then(() => { if (changed) markChanged(); }); }}
                               className={`px-2 py-0.5 rounded-full transition disabled:opacity-50 ${(appliedIsState || stateMatchRequired) ? "bg-emerald-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
                             >
                               State
@@ -1574,10 +1607,12 @@ export function TechActivityReportModal({
                   ) : !paystub ? (
                     <p className="text-xs text-slate-500">No paystub uploaded for this period yet.</p>
                   ) : (
-                    <button
-                      type="button"
+                    <div
+                      role="button"
+                      tabIndex={0}
                       onClick={() => setComparePaystub(true)}
-                      className="group relative block w-full overflow-hidden rounded border border-white/10 bg-white"
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setComparePaystub(true); } }}
+                      className="group relative block w-full cursor-pointer overflow-hidden rounded border border-white/10 bg-white"
                     >
                       {paystubUrl ? (
                         <iframe src={`${paystubUrl}#toolbar=0&navpanes=0&view=FitH`} title="Paystub preview" className="pointer-events-none h-56 w-full" tabIndex={-1} />
@@ -1587,7 +1622,7 @@ export function TechActivityReportModal({
                       <span className="absolute inset-0 flex items-center justify-center bg-black/0 text-xs font-semibold text-white opacity-0 transition group-hover:bg-black/50 group-hover:opacity-100">
                         <Maximize2 className="mr-1.5 h-4 w-4" /> Compare side by side
                       </span>
-                    </button>
+                    </div>
                   )}
                   {paystub && (
                     <p className="mt-1.5 text-[10px] text-slate-500">
@@ -1609,9 +1644,9 @@ export function TechActivityReportModal({
                     {paystubUrl && (
                       <a href={paystubUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-blue-300 hover:text-blue-200">Open in new tab</a>
                     )}
-                    <button type="button" onClick={() => setComparePaystub(false)} className="rounded bg-slate-700 px-2 py-1 text-[11px] font-semibold text-white hover:bg-slate-600">
+                    <span role="button" tabIndex={0} onClick={() => setComparePaystub(false)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setComparePaystub(false); } }} className="cursor-pointer rounded bg-slate-700 px-2 py-1 text-[11px] font-semibold text-white hover:bg-slate-600">
                       Close paystub
-                    </button>
+                    </span>
                   </div>
                 </div>
                 {paystubUrl ? (
@@ -1645,8 +1680,8 @@ export function TechActivityReportModal({
                           By: <span className="text-slate-300">{n.createdByName || "Unknown"}</span>
                           {" · "}When: <span className="text-slate-300">{new Date(n.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}</span>
                         </span>
-                        {myProfileId && n.createdBy === myProfileId && (
-                          <button type="button" onClick={() => void removeNote(n.id)} className="text-slate-500 hover:text-red-300" title="Delete your note">
+                        {canDeleteNotes && (
+                          <button type="button" onClick={() => void removeNote(n.id)} className="text-slate-500 hover:text-red-300" title="Delete this note (Admin / SuperAdmin)">
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         )}
@@ -1655,14 +1690,18 @@ export function TechActivityReportModal({
                   ))
                 )}
                 {notesError && <p className="text-xs text-red-300">{notesError}</p>}
+                {needsNote && (
+                  <p className="text-xs text-amber-300">This report was changed. Add a note saying what changed and why; Done stays off until you do.</p>
+                )}
                 <div className="flex items-end gap-2">
                   <textarea
+                    ref={noteInputRef}
                     value={noteDraft}
                     onChange={(e) => setNoteDraft(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void saveNote(); } }}
                     rows={2}
-                    placeholder="Add a note for Accounting (e.g. paystub vs AHS difference, what was sent back to payroll)..."
-                    className="min-h-[2.75rem] flex-1 resize-y rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+                    placeholder={needsNote ? "Required: explain what was changed on this report and why..." : "Add a note for Accounting (e.g. paystub vs AHS difference, what was sent back to payroll)..."}
+                    className={`min-h-[2.75rem] flex-1 resize-y rounded-md border ${needsNote ? "border-amber-500/70" : "border-white/10"} bg-slate-900 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-blue-500 focus:outline-none`}
                   />
                   <button
                     type="button"
@@ -1689,11 +1728,21 @@ export function TechActivityReportModal({
                 ← Prev
               </button>
             ) : <span />}
+            {onDone && needsNote && (
+              <button
+                type="button"
+                onClick={() => { noteInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); noteInputRef.current?.focus(); }}
+                className="ml-auto text-xs text-amber-300 underline-offset-2 hover:underline"
+              >
+                Changes made: add an Internal Note to enable Done
+              </button>
+            )}
             {onDone && (
               <button
                 type="button"
                 onClick={() => onDone(reviewBreakdown)}
-                disabled={doneBusy || hourlyOtModeBusy || loadingStateComparison || periodDataSettling || stateSavePending}
+                disabled={doneBusy || hourlyOtModeBusy || loadingStateComparison || periodDataSettling || stateSavePending || needsNote}
+                title={needsNote ? "Changes were made on this report. Add an Internal Note explaining why first." : undefined}
                 className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold transition disabled:opacity-50 flex items-center gap-2"
               >
                 {doneBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}

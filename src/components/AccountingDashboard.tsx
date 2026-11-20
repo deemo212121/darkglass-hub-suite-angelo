@@ -104,6 +104,7 @@ import { ExpenseTrackingPage } from "@/components/ExpenseTrackingPage";
 import { TicketAttendanceTab } from "@/components/TicketAttendanceTab";
 import { TicketTimeDisputesTab } from "@/components/TicketTimeDisputesTab";
 import { BranchManagerCommissionTab } from "@/components/BranchManagerCommissionTab";
+import { getPayrollPeriodLocks, lockStateOf, formatCentral, timeLeft, type PayrollPeriodLock } from "@/lib/supabase/payrollPeriodLocks";
 import { ReviewedPeriodsTab } from "@/components/ReviewedPeriodsTab";
 import { PayrollHistoryTab } from "@/components/PayrollHistoryTab";
 import { upsertPayrollReviewBreakdown, type PayrollReviewAmounts } from "@/lib/supabase/payrollReviewBreakdowns";
@@ -1800,6 +1801,26 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // payPeriods.ts); Finance can pick another period or custom dates.
   const [genStart, setGenStart] = useState(() => currentPayPeriod().start);
   const [genEnd, setGenEnd] = useState(() => currentPayPeriod().end);
+  // Payroll cutoffs (Admin → Payroll Locks, migration 0469). A locked
+  // period's wizard opens view-only — the database refuses changes anyway.
+  const [payrollLocks, setPayrollLocks] = useState<PayrollPeriodLock[]>([]);
+  const [lockClock, setLockClock] = useState(() => new Date());
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => getPayrollPeriodLocks().then((l) => { if (!cancelled) setPayrollLocks(l); }).catch((err) => console.error("payroll locks:", err));
+    void load();
+    const reload = setInterval(load, 5 * 60_000);
+    const tick = setInterval(() => setLockClock(new Date()), 30_000);
+    return () => { cancelled = true; clearInterval(reload); clearInterval(tick); };
+  }, []);
+  const genLock = payrollLocks.find((l) => l.periodStart === genStart && l.periodEnd === genEnd)
+    ?? payrollLocks.find((l) => genStart && genEnd && l.periodStart <= genEnd && l.periodEnd >= genStart && lockStateOf(l, lockClock).kind === "locked")
+    ?? null;
+  const genLockState = lockStateOf(genLock, lockClock);
+  const genLocked = genLockState.kind === "locked";
+  const genLockedNotice = genLocked && genLock
+    ? `Payroll for ${formatISODate(genLock.periodStart)} – ${formatISODate(genLock.periodEnd)} locked ${formatCentral(genLock.lockAt)}.`
+    : null;
   const payPeriodOptions = useMemo(() => listPayPeriods(), []);
 
   // ── Data fetching ───────────────────────────────────────────────────────────
@@ -5123,6 +5144,21 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
         />}
         {activeTab === "payroll" && (
           <div className="space-y-3">
+            {genLock && genLockState.kind !== "none" && (
+              <div className={`rounded-lg border px-3 py-2 text-xs ${
+                genLockState.kind === "locked" ? "border-red-400/30 bg-red-500/10 text-red-200"
+                : genLockState.kind === "reopened" ? "border-amber-400/30 bg-amber-500/10 text-amber-200"
+                : "border-sky-400/30 bg-sky-500/10 text-sky-200"
+              }`}>
+                {genLockState.kind === "locked" ? (
+                  <>🔒 <b>Locked.</b> Payroll for {formatISODate(genLock.periodStart)} – {formatISODate(genLock.periodEnd)} closed {formatCentral(genLock.lockAt)}. Everything is view-only; Internal Notes stay open. An Admin can reopen it from Admin → Payroll Locks.</>
+                ) : genLockState.kind === "reopened" ? (
+                  <>🔓 <b>Reopened</b> until {formatCentral(genLockState.until)} ({timeLeft(genLockState.until, lockClock)} left){genLockState.reason ? `: ${genLockState.reason}` : ""}. It locks again by itself then.</>
+                ) : (
+                  <>⏳ <b>Payroll cutoff:</b> {formatCentral(genLockState.lockAt)} ({timeLeft(genLockState.lockAt, lockClock)} left). After that, nothing in {formatISODate(genLock.periodStart)} – {formatISODate(genLock.periodEnd)} can be changed.</>
+                )}
+              </div>
+            )}
             {/* Actions bar */}
             <div className="flex flex-wrap gap-3 items-center">
               <div className="flex items-center gap-2">
@@ -7308,8 +7344,11 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             };
           })()}
           nextBusy={nextBusy}
+          payrollLocks={payrollLocks}
           onNext={
-            isTechRole(detailEmployee)
+            isTechRole(detailEmployee) && genLocked
+              ? () => setWizardStep("activity")
+              : isTechRole(detailEmployee)
               ? async (mode, stateTotal) => {
                   setNextBusy(true);
                   try {
@@ -7342,7 +7381,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
               : undefined
           }
           onDone={
-            !isTechRole(detailEmployee)
+            !isTechRole(detailEmployee) && !genLocked
               ? async () => {
                   // Same guard generatePayroll() already has — without it, a
                   // momentarily-inverted date range (Start picked after End,
@@ -7400,9 +7439,10 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             onClose={() => { setDetailEmployee(null); setWizardStep("detail"); }}
             onPrev={techScoped ? undefined : () => setWizardStep("detail")}
             readOnly={techScoped}
+            lockedNotice={genLockedNotice}
             stateRegularAmount={hourlyOtOverrides.get(detailEmployee.id)?.regularAmount ?? null}
             onSetHourlyOtMode={
-              isTechRole(detailEmployee) && !techScoped
+              isTechRole(detailEmployee) && !techScoped && !genLocked
                 ? async (mode, total, regularAmount) => {
                     setNextBusy(true);
                     try {
@@ -7422,7 +7462,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             }
             hourlyOtModeBusy={nextBusy}
             doneBusy={reviewBusy}
-            onDone={techScoped ? undefined : async (breakdown) => {
+            onDone={techScoped || genLocked ? undefined : async (breakdown) => {
               // Same guard as the office path above and generatePayroll()
               // itself — see that comment for why this matters.
               if (!genStart || !genEnd || genStart > genEnd) {
