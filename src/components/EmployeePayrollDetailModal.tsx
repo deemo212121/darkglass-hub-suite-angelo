@@ -1253,7 +1253,6 @@ export function EmployeePayrollDetailModal({
   // Revert (reset) a day and Undo revert — the timecard footprint, migration 0471.
   // Revert deletes the day's punches like Employee Monitoring's Reset day; Undo puts them back exactly.
   const [resetsByDate, setResetsByDate] = useState<Map<string, TimecardReset>>(new Map());
-  const [revertConfirmDate, setRevertConfirmDate] = useState<string | null>(null);
   const [revertBusyDate, setRevertBusyDate] = useState<string | null>(null);
   const loadResets = () =>
     getTimecardResets(rangeStart, rangeEnd)
@@ -1263,20 +1262,6 @@ export function EmployeePayrollDetailModal({
     void loadResets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileId, rangeStart, rangeEnd]);
-  const revertDay = async (date: string) => {
-    setRevertConfirmDate(null);
-    setRevertBusyDate(date);
-    try {
-      await deleteEntry(profileId, date);
-      await load({ current: false });
-      await loadResets();
-      onRateChanged?.();
-    } catch (err) {
-      alert(`Couldn't revert ${date}: ${err instanceof Error ? err.message : "Unknown error"}`);
-    } finally {
-      setRevertBusyDate(null);
-    }
-  };
   const undoRevert = async (r: TimecardReset) => {
     setRevertBusyDate(r.workDate);
     try {
@@ -1332,6 +1317,11 @@ export function EmployeePayrollDetailModal({
       });
       for (const row of changed) {
         const e = attendanceEdits[row.date];
+        if (!e.checkIn && !e.mealStart && !e.mealEnd && !e.checkOut) {
+          // Trash can → the day is removed (kept in the footprint, migration 0471), so ↺ Restore can put it back.
+          await deleteEntry(profileId, row.date);
+          continue;
+        }
         await saveEntry(
           profileId,
           row.date,
@@ -2014,6 +2004,36 @@ export function EmployeePayrollDetailModal({
                                 >
                                   <Trash2 className="h-3.5 w-3.5" />
                                 </button>
+                                {(() => {
+                                  const e = attendanceEdits[row.date];
+                                  const hadPunches = !!(row.clockIn || row.clockOut || row.mealStart || row.mealEnd);
+                                  // Trashed but not saved yet → put the times back in the boxes.
+                                  const unsavedClear = !!e && hadPunches && !e.checkIn && !e.mealStart && !e.mealEnd && !e.checkOut;
+                                  // Trashed and saved (or reset elsewhere) → bring the deleted day back.
+                                  const r = resetsByDate.get(row.date);
+                                  const savedClear = !hadPunches && !!r;
+                                  if (!unsavedClear && !savedClear) return null;
+                                  const busy = revertBusyDate === row.date;
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (unsavedClear) {
+                                          setAttendanceEdits((prev) => { const next = { ...prev }; delete next[row.date]; return next; });
+                                        } else if (r) {
+                                          setAttendanceEdits((prev) => { const next = { ...prev }; delete next[row.date]; return next; });
+                                          void undoRevert(r);
+                                        }
+                                      }}
+                                      disabled={busy}
+                                      title={unsavedClear ? "Restore — put this day's times back" : `Restore — bring back the deleted times (Check In ${r?.checkIn || "—"} · Check Out ${r?.checkOut || "—"}), deleted by ${r?.resetByName || "someone"}`}
+                                      aria-label={`Restore ${row.date}`}
+                                      className="shrink-0 text-slate-500 hover:text-emerald-300 disabled:opacity-30"
+                                    >
+                                      {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                                    </button>
+                                  );
+                                })()}
                               </div>
                             </td>
                           </>
@@ -2113,8 +2133,6 @@ export function EmployeePayrollDetailModal({
                           )}
                           {(() => {
                             const r = resetsByDate.get(row.date);
-                            const hasPunches = !!(row.clockIn || row.clockOut || row.mealStart || row.mealEnd);
-                            const busy = revertBusyDate === row.date;
                             const when = r ? new Date(r.resetAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
                             return (
                               <>
@@ -2128,33 +2146,6 @@ export function EmployeePayrollDetailModal({
                                   </span>
                                 </div>
                               )}
-                              <div className="mt-0.5 flex items-center justify-end gap-1 font-normal" onClick={(e) => e.stopPropagation()}>
-                                {revertConfirmDate === row.date ? (
-                                  <span className="inline-flex items-center gap-1 rounded bg-rose-500/15 px-1 py-px text-[10px] font-semibold text-rose-200">
-                                    Revert punches?
-                                    <button type="button" onClick={() => void revertDay(row.date)} className="rounded bg-rose-600 px-1 text-white hover:bg-rose-700">Yes</button>
-                                    <button type="button" onClick={() => setRevertConfirmDate(null)} className="rounded px-1 hover:bg-white/10">No</button>
-                                  </span>
-                                ) : (
-                                  <>
-                                    {!attendanceEditing && (
-                                      <button type="button" onClick={startEditingAttendance} disabled={busy || loading} title="Edit times" aria-label={`Edit ${row.date}`} className="p-0.5 rounded text-slate-500 hover:text-white hover:bg-white/10 disabled:opacity-30">
-                                        <Pencil className="h-3 w-3" />
-                                      </button>
-                                    )}
-                                    {hasPunches && !attendanceEditing && (
-                                      <button type="button" onClick={() => setRevertConfirmDate(row.date)} disabled={busy} title="Revert — clear this day's Check In / Meal / Check Out (can be undone)" aria-label={`Revert ${row.date}`} className="p-0.5 rounded text-slate-500 hover:text-rose-300 hover:bg-rose-500/15 disabled:opacity-30">
-                                        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
-                                      </button>
-                                    )}
-                                    {r && !hasPunches && !attendanceEditing && (
-                                      <button type="button" onClick={() => void undoRevert(r)} disabled={busy} title={`Undo revert — puts back Check In ${r.checkIn || "—"} · Check Out ${r.checkOut || "—"}`} className="inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1 py-px text-[10px] font-semibold text-amber-200 hover:bg-amber-500/25 disabled:opacity-30">
-                                        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Undo2 className="h-3 w-3" />} Undo
-                                      </button>
-                                    )}
-                                  </>
-                                )}
-                              </div>
                               </>
                             );
                           })()}

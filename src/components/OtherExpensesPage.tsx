@@ -46,7 +46,6 @@ import {
 import {
   addBranchExpense,
   deleteBranchExpense,
-  deleteBranchExpenses,
   getBranchExpenses,
   setBranchExpenseReceipts,
   updateBranchExpense,
@@ -163,8 +162,6 @@ export function OtherExpensesPage({ onEditRecord }: {
 } = {}) {
   const { companyId, role, extraRoles } = useAuth();
   const canEdit = [role, ...(extraRoles ?? [])].some((r) => r && EDIT_ROLES.has(normalizeRole(r)));
-  // "Delete all" — Super Admin only.
-  const isSuperAdmin = [role, ...(extraRoles ?? [])].some((r) => r && ["SUPERADMIN", "SUPERSUPERADMIN"].includes(normalizeRole(r)));
 
   const [rows, setRows] = useState<BranchExpense[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -194,7 +191,6 @@ export function OtherExpensesPage({ onEditRecord }: {
     return new Date(Date.now() - 7 * 86400000).toISOString();
   });
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [deletingAll, setDeletingAll] = useState(false);
   /** Branch Bills funnel filters: column key → picked values. */
   const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
   const [preview, setPreview] = useState<{ url: string; urls: string[] } | null>(null);
@@ -491,30 +487,6 @@ export function OtherExpensesPage({ onEditRecord }: {
       ]),
     );
 
-  /** Super Admin: delete every bill in view (this month / filters), after typing DELETE. */
-  const handleDeleteAll = async () => {
-    if (!filtered.length) return;
-    const total = filtered.reduce((sum, e) => sum + e.amount, 0);
-    const typed = prompt(
-      `Delete all ${filtered.length} bill${filtered.length === 1 ? "" : "s"} shown (${rangeLabel}${branch ? ` · ${branch}` : ""}, ${fmtMoney(total)})?\n\nThis cannot be undone. Type DELETE to confirm.`,
-    );
-    if ((typed ?? "").trim().toUpperCase() !== "DELETE") return;
-    setDeletingAll(true);
-    try {
-      const ids = new Set(filtered.map((e) => e.id));
-      await deleteBranchExpenses([...ids]);
-      // Remove their files unless a bill that's staying still uses them.
-      const stillUsed = new Set((rows ?? []).filter((x) => !ids.has(x.id)).flatMap((x) => x.receipts.map((r) => r.path)));
-      const paths = new Set(filtered.flatMap((e) => e.receipts.map((r) => r.path)).filter((p) => p && !stillUsed.has(p)));
-      for (const p of paths) deleteExpenseReceiptFile(p).catch(() => undefined);
-      load();
-    } catch (err) {
-      alert(`Couldn't delete: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setDeletingAll(false);
-    }
-  };
-
   const handleDelete = async (e: BranchExpense) => {
     if (!confirm(`Delete this ${branchExpenseCategoryText(e)} bill for ${e.branch} (${fmtMoney(e.amount)})? This cannot be undone.`)) return;
     setDeletingId(e.id);
@@ -715,17 +687,6 @@ export function OtherExpensesPage({ onEditRecord }: {
           <button type="button" onClick={() => setImporting(true)} className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600">
             <FileSpreadsheet className="h-4 w-4" /> Import Car IQ
           </button>
-          {isSuperAdmin && (
-            <button
-              type="button"
-              onClick={handleDeleteAll}
-              disabled={deletingAll || filtered.length === 0}
-              title="Super Admin only — deletes every bill shown (this month and filters)"
-              className="inline-flex items-center gap-2 rounded-lg bg-red-700 px-3 py-2 text-sm font-semibold text-white hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {deletingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Delete all ({filtered.length})
-            </button>
-          )}
           <button type="button" onClick={() => setForm({ editing: null })} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
             + Add Expense
           </button>

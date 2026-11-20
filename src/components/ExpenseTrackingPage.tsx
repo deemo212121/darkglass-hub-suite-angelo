@@ -65,14 +65,16 @@ const FT_VIEW_TONES: Record<"violet" | "sky" | "amber" | "rose" | "emerald", { o
   emerald: { on: "border-emerald-400/70 bg-emerald-500/25 text-white shadow-[0_0_0_1px_rgba(52,211,153,0.25)]", off: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20", icon: "text-emerald-300", countOn: "bg-emerald-400/40 text-white", countOff: "bg-emerald-500/20 text-emerald-200" },
 };
 
-/** A Flash Tech / Allowance reimbursement — listed under Flash Tech, not Employee Requests. */
+/** A Flash Tech / Allowance reimbursement — approved under Employee Requests like any other request. */
 const isFlashTechAllowance = (e: ExpenseRow) => e.reimbursementType === "Flash Tech Allowance";
+/** Flash Tech lists an allowance request only once it's approved (Pending / Rejected ones stay on Employee Requests). */
+const isApprovedAllowance = (e: ExpenseRow) => isFlashTechAllowance(e) && (e.status === "Approved" || e.status === "Reimbursed");
 /**
  * Everything on Expenses → Flash Tech: trip lines, every Hotel and Car Rental
  * expense (from a trip or added by Accounting) and the Flash Tech /
  * Allowance requests.
  */
-const isFlashTechViewExpense = (e: ExpenseRow) => !!e.flashTechTripId || e.category === "Hotel" || e.category === "Car Rental" || isFlashTechAllowance(e);
+const isFlashTechViewExpense = (e: ExpenseRow) => !!e.flashTechTripId || e.category === "Hotel" || e.category === "Car Rental" || isApprovedAllowance(e);
 
 // Car Rental pick-up / return (migration 0420) — the number of days, shown under the Return Date.
 const rentalDays = (e: ExpenseRow): number | null =>
@@ -219,12 +221,12 @@ export function ExpenseTrackingPage({
         flashTechView === "trips" ? !!e.flashTechTripId
           : flashTechView === "hotel" ? e.category === "Hotel"
           : flashTechView === "carRental" ? e.category === "Car Rental"
-          : flashTechView === "allowance" ? isFlashTechAllowance(e)
+          : flashTechView === "allowance" ? isApprovedAllowance(e)
           : isFlashTechViewExpense(e)
       );
     }
     if (selfFiledOnly) {
-      return expenses.filter((e) => isSelfFiledExpense(e) && !isFlashTechAllowance(e)).filter((e) => {
+      return expenses.filter((e) => isSelfFiledExpense(e)).filter((e) => {
         if (country === "all") return true;
         const isPh = profileById.get(e.profileId)?.assigned_branch === "Philippines";
         return country === "PH" ? isPh : !isPh;
@@ -255,8 +257,8 @@ export function ExpenseTrackingPage({
   // Status, Approved / Rejected By and the Pending / Approved / Reimbursed
   // cards are for employees' own requests — Flash Tech, Hotel and Car Rental
   // are added straight by Accounting, so those tabs leave them out.
-  // Flash Tech keeps them when it lists Flash Tech / Allowance requests (those need approving).
-  const showStatus = !categoryOnly && (!flashTechOnly || scopedExpenses.some(isSelfFiledExpense));
+  // Flash Tech never shows them: everything there is approved (allowance requests are approved under Employee Requests).
+  const showStatus = !categoryOnly && !flashTechOnly;
   // Car Rentals (pick-up / return) and Hotels (check-in / check-out) share the two date columns.
   const hasRentalRows = scopedExpenses.some((e) => e.category === "Car Rental");
   const hasHotelRows = scopedExpenses.some((e) => e.category === "Hotel");
@@ -313,6 +315,20 @@ export function ExpenseTrackingPage({
     COLUMNS.every((c) => c.key === skipKey || !colFilters[c.key]?.size || colFilters[c.key].has(c.value(e)));
 
   const filtered = rangeExpenses.filter((e) => matchesSearch(e) && matchesColumns(e));
+  // Employee Requests: 10 at a time (totals above still count every record).
+  const pageSize = selfFiledOnly ? 10 : Infinity;
+  const pageCount = Number.isFinite(pageSize) ? Math.max(1, Math.ceil(filtered.length / pageSize)) : 1;
+  const [pageRaw, setPage] = useState(0);
+  const page = Math.min(pageRaw, pageCount - 1);
+  useEffect(() => { setPage(0); }, [search, dateFrom, dateTo, colFilters, country, branch, flashTechView]);
+  // A row jumped to from Overall Expenses: open the page it's on.
+  useEffect(() => {
+    if (!highlightId || !Number.isFinite(pageSize)) return;
+    const i = filtered.findIndex((e) => e.id === highlightId);
+    if (i >= 0) setPage(Math.floor(i / pageSize));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightId]);
+  const pageRows = Number.isFinite(pageSize) ? filtered.slice(page * pageSize, page * pageSize + pageSize) : filtered;
   /** A column's funnel options: its distinct values after every OTHER filter. */
   const columnOptions = (key: string) => {
     const col = COLUMNS.find((c) => c.key === key)!;
@@ -334,7 +350,7 @@ export function ExpenseTrackingPage({
         if (e.flashTechTripId) counts.trips++;
         if (e.category === "Hotel") counts.hotel++;
         if (e.category === "Car Rental") counts.carRental++;
-        if (isFlashTechAllowance(e)) counts.allowance++;
+        if (isApprovedAllowance(e)) counts.allowance++;
       }
     }
     return counts;
@@ -694,7 +710,7 @@ export function ExpenseTrackingPage({
                   <tr><td colSpan={COLUMNS.length + 1} className="px-3 py-8 text-center text-slate-400">Loading expenses…</td></tr>
                 ) : filtered.length === 0 ? (
                   <tr><td colSpan={COLUMNS.length + 1} className="px-3 py-8 text-center text-slate-400">{selfFiledOnly && scopedExpenses.length === 0 ? "No employee has sent an expense request yet." : "No expense records match this filter."}</td></tr>
-                ) : filtered.map((e) => (
+                ) : pageRows.map((e) => (
                   <tr key={e.id} id={`expense-row-${e.id}`} className={`border-b border-white/5 transition ${highlightId === e.id ? "bg-amber-500/20 outline outline-2 -outline-offset-2 outline-amber-400" : "hover:bg-white/5"}`}>
                     <td className="px-2 py-1.5 whitespace-nowrap tabular-nums">
                       {createdDay(e) ? (
@@ -828,10 +844,10 @@ export function ExpenseTrackingPage({
                     <td className="px-3 py-3">
                       <div className="flex flex-nowrap items-center gap-1 whitespace-nowrap">
                         {/* Approve / Reject only on employees' own requests — Flash Tech, Hotel and Car Rental are added straight by Accounting. */}
-                        {isSelfFiledExpense(e) && e.status === "Pending" && !canReviewExpenses && (
+                        {!flashTechOnly && isSelfFiledExpense(e) && e.status === "Pending" && !canReviewExpenses && (
                           <span className="text-[11px] text-slate-500" title="Only Accounting can approve or reject expenses">Awaiting Accounting</span>
                         )}
-                        {isSelfFiledExpense(e) && e.status === "Pending" && canReviewExpenses && (
+                        {!flashTechOnly && isSelfFiledExpense(e) && e.status === "Pending" && canReviewExpenses && (
                           <>
                             <button onClick={() => handleStatusChange(e.id, "Approved")} disabled={statusChangingId === e.id} className="px-2 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
                               {statusChangingId === e.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />} Approve
@@ -842,7 +858,7 @@ export function ExpenseTrackingPage({
                           </>
                         )}
                         {/* Flash Tech-linked expenses stop at Approved/Rejected — no Reimbursed stage. */}
-                        {e.status === "Approved" && !e.flashTechTripId && canReviewExpenses && (
+                        {!flashTechOnly && e.status === "Approved" && !e.flashTechTripId && canReviewExpenses && (
                           <button onClick={() => handleStatusChange(e.id, "Reimbursed")} disabled={statusChangingId === e.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
                             {statusChangingId === e.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wallet className="h-3 w-3" />} Mark Reimbursed
                           </button>
@@ -859,6 +875,20 @@ export function ExpenseTrackingPage({
                 ))}
               </tbody>
             </table>
+            {!loading && Number.isFinite(pageSize) && filtered.length > pageSize && (
+              <div className="mt-3 flex items-center justify-end gap-2 text-xs text-slate-400">
+                <span className="tabular-nums">
+                  {page * pageSize + 1}–{Math.min(filtered.length, (page + 1) * pageSize)} of {filtered.length}
+                </span>
+                <button type="button" onClick={() => setPage(Math.max(0, page - 1))} disabled={page === 0} className="rounded-lg bg-slate-800 px-3 py-1.5 font-semibold text-slate-200 hover:bg-slate-700 disabled:opacity-40">
+                  Previous
+                </button>
+                <span className="tabular-nums">Page {page + 1} of {pageCount}</span>
+                <button type="button" onClick={() => setPage(Math.min(pageCount - 1, page + 1))} disabled={page >= pageCount - 1} className="rounded-lg bg-slate-800 px-3 py-1.5 font-semibold text-slate-200 hover:bg-slate-700 disabled:opacity-40">
+                  Next
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </main>

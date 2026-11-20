@@ -2,8 +2,8 @@
  * Overall Expenses ← Accounting → Daily Mileage, automatically: every APPROVED
  * trip goes into its branch's monthly bill on the sheet line
  *
- *   CarIQ Mileage Reimbursement ($0.20)       — the tech had Car IQ that day
- *   NON CarIQ Mileage Reimbursement ($0.50)   — they didn't
+ *   CarIQ Mileage Reimbursement       — the tech had Car IQ that day
+ *   NON CarIQ Mileage Reimbursement   — they didn't
  *
  * Car IQ and rate are worked out per trip date exactly like Daily Mileage and
  * payroll: the tech's Car IQ history on that date, else their current Car IQ
