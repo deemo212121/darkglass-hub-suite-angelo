@@ -1160,3 +1160,98 @@ export async function getCompanyTimecardEntries(
   }
   return all;
 }
+
+
+// ── Timecard footprint: Undo reset (migration 0471) ─────────────────────
+
+/** A day HR reset (deleted) that can still be put back. */
+export interface TimecardReset {
+  /** timecard_entry_log id */
+  id: string;
+  profileId: string;
+  workDate: string;
+  checkIn: string | null;
+  mealStart: string | null;
+  mealEnd: string | null;
+  checkOut: string | null;
+  resetByName: string | null;
+  resetAt: string;
+}
+
+/** Resets in the range not undone yet (the latest per person and day). [] before migration 0471. */
+export async function getTimecardResets(from: string, to: string): Promise<TimecardReset[]> {
+  const { data, error } = await supabase
+    .from("timecard_entry_log")
+    .select("id, profile_id, work_date, old_row, actor_name, created_at")
+    .eq("action", "reset")
+    .is("restored_at", null)
+    .gte("work_date", from)
+    .lte("work_date", to)
+    .order("created_at", { ascending: false });
+  if (error) {
+    if (error.code === "PGRST205" || error.code === "42P01") return [];
+    throw new Error(error.message);
+  }
+  const seen = new Set<string>();
+  const out: TimecardReset[] = [];
+  for (const r of (data ?? []) as any[]) {
+    const key = `${r.profile_id}|${r.work_date}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const o = r.old_row ?? {};
+    out.push({
+      id: r.id, profileId: r.profile_id, workDate: r.work_date,
+      checkIn: o.check_in ?? null, mealStart: o.meal_start ?? null, mealEnd: o.meal_end ?? null, checkOut: o.check_out ?? null,
+      resetByName: r.actor_name ?? null, resetAt: r.created_at,
+    });
+  }
+  return out;
+}
+
+/** Puts a reset day back exactly as it was. HR / Admin / Super Admin (checked by the database). */
+export async function undoTimecardReset(logId: string): Promise<void> {
+  const { error } = await supabase.rpc("timecard_undo_reset", { p_log_id: logId });
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42883") throw new Error("Undo reset needs database migration 0471_timecard_footprint.sql.");
+    throw new Error(error.message);
+  }
+}
+
+/** One change to a timecard day, from the footprint (migration 0471). */
+export interface TimecardLogEntry {
+  id: string;
+  workDate: string;
+  action: "added" | "changed" | "reset" | "restored";
+  actorProfileId: string | null;
+  /** "System" for automatic clock-outs. */
+  actorName: string | null;
+  createdAt: string;
+  /** Punch fields that changed: [label, before, after] (raw "HH:MM:SS" or null). */
+  changes: [string, string | null, string | null][];
+}
+
+const PUNCH_FIELDS: [string, string][] = [["check_in", "Time In"], ["meal_start", "Meal start"], ["meal_end", "Meal end"], ["check_out", "Time Out"]];
+
+/** A person's timecard changes in the range, newest first. [] before migration 0471. */
+export async function getTimecardLog(profileId: string, from: string, to: string): Promise<TimecardLogEntry[]> {
+  const { data, error } = await supabase
+    .from("timecard_entry_log")
+    .select("id, work_date, action, old_row, new_row, actor_profile_id, actor_name, created_at")
+    .eq("profile_id", profileId)
+    .gte("work_date", from)
+    .lte("work_date", to)
+    .order("created_at", { ascending: false })
+    .limit(1000);
+  if (error) {
+    if (error.code === "PGRST205" || error.code === "42P01") return [];
+    throw new Error(error.message);
+  }
+  return ((data ?? []) as any[]).map((r) => {
+    const o = r.old_row ?? {};
+    const n = r.new_row ?? {};
+    const changes = PUNCH_FIELDS
+      .filter(([k]) => (o[k] ?? null) !== (n[k] ?? null))
+      .map(([k, label]) => [label, o[k] ?? null, n[k] ?? null] as [string, string | null, string | null]);
+    return { id: r.id, workDate: r.work_date, action: r.action, actorProfileId: r.actor_profile_id ?? null, actorName: r.actor_name ?? null, createdAt: r.created_at, changes };
+  });
+}

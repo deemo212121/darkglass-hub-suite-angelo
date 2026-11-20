@@ -15,11 +15,11 @@
 import { getRestDayHistory } from "@/lib/supabase/restDayHistory";
 import { offDaysOn, type RestDayHistory } from "@/lib/restDays";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, Loader2, Pencil, RefreshCw, RotateCcw, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Loader2, Pencil, RefreshCw, RotateCcw, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
-import { getProfileIdByFirebaseUid, getCompanyTimecardEntries, getEntryForDate, saveEntry, deleteEntry, appendEntryNote, addDaysISO, type CompanyTimecardEntry } from "@/lib/supabase/timecards";
+import { getProfileIdByFirebaseUid, getCompanyTimecardEntries, getEntryForDate, saveEntry, deleteEntry, appendEntryNote, addDaysISO, getTimecardResets, undoTimecardReset, getTimecardLog, type CompanyTimecardEntry, type TimecardReset, type TimecardLogEntry } from "@/lib/supabase/timecards";
 import { getCompanyTimecardCorrections, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { getCompanyPtoRequests, type PtoRequestRow, type PtoType } from "@/lib/supabase/pto";
 import { getAttendanceNotes, upsertAttendanceNote, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
@@ -177,6 +177,13 @@ export function EmployeeAttendanceStatusTab() {
   // "Reset day": which day is asking "Reset? Yes / No", and which one is being cleared.
   const [resetConfirmDay, setResetConfirmDay] = useState<string | null>(null);
   const [resettingDay, setResettingDay] = useState<string | null>(null);
+  /** Reset days that can be put back (timecard footprint, migration 0471), by "profileId|day". */
+  const [resets, setResets] = useState<Map<string, TimecardReset>>(new Map());
+  const [undoingDay, setUndoingDay] = useState<string | null>(null);
+  const loadResets = (from: string, to: string) =>
+    getTimecardResets(from, to)
+      .then((rows) => setResets(new Map(rows.map((r) => [`${r.profileId}|${r.workDate}`, r]))))
+      .catch((e) => console.error("Timecard resets:", e));
   const today = todayISO();
   // End of the range; the single-day view is startDate === date.
   const [date, setDate] = useState(today);
@@ -221,6 +228,7 @@ export function EmployeeAttendanceStatusTab() {
       ]);
       setNotes(noteRows);
       setProfiles(profileRows);
+      void loadResets(rangeStart, date);
       getAttendanceStartByProfile(profileRows).then(setAttendanceStartById).catch(() => {});
       getRestDayHistory().then(setRestHistory).catch(() => {});
       setCsrComposition(composition);
@@ -361,6 +369,7 @@ export function EmployeeAttendanceStatusTab() {
       await saveEntry(profileId, day, { ...draft, notes: existing?.notes ?? "" }, editStampsCorrection(realRole ?? role, extraRoles) ? { correctedBy: myProfileId } : undefined);
       setEditingDay(null);
       setEntries(await getCompanyTimecardEntries(rangeStart, date));
+      void reloadDayLog(profileId);
     } catch (err) {
       setEditError(err instanceof Error ? err.message : "Failed to save.");
     } finally {
@@ -374,6 +383,22 @@ export function EmployeeAttendanceStatusTab() {
    * clears "Clocked in by" / "Corrected by"). Notes in the Notes column live in
    * attendance_notes and are kept.
    */
+  /** Undo reset: the day's punches come back exactly as they were (migration 0471). */
+  const undoReset = async (r: TimecardReset) => {
+    setUndoingDay(r.workDate);
+    try {
+      await undoTimecardReset(r.id);
+      setEntries(await getCompanyTimecardEntries(rangeStart, date));
+      await loadResets(rangeStart, date);
+      void reloadDayLog(r.profileId);
+      toast.success(`${fmtDay(r.workDate)} put back.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't undo the reset.");
+    } finally {
+      setUndoingDay(null);
+    }
+  };
+
   const resetDay = async (profileId: string, day: string) => {
     setResetConfirmDay(null);
     setResettingDay(day);
@@ -385,8 +410,10 @@ export function EmployeeAttendanceStatusTab() {
       if (fresh.some((x) => x.profileId === profileId && x.workDate === day)) {
         toast.error("Couldn't reset this day — you may not have permission.");
       } else {
-        toast.success(`${fmtDay(day)} reset — no punches.`);
+        toast.success(`${fmtDay(day)} reset — no punches. Undo reset puts them back.`);
       }
+      void loadResets(rangeStart, date);
+      void reloadDayLog(profileId);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't reset this day.");
     } finally {
@@ -401,6 +428,20 @@ export function EmployeeAttendanceStatusTab() {
     getRoleDepartmentBreakdown(p.role).department === "Technician" || normalizeRole(p.role).startsWith("TECHNICIAN");
   const [ticketsFor, setTicketsFor] = useState<{ profileId: string; loading: boolean; rows: TicketAttendanceRow[] } | null>(null);
   const [openTicketDay, setOpenTicketDay] = useState<string | null>(null);
+  /** The open person's timecard footprint (who punched / edited / reset, migration 0471) and which day's History is open. */
+  const [dayLog, setDayLog] = useState<{ profileId: string; rows: TimecardLogEntry[] } | null>(null);
+  const [openLogDay, setOpenLogDay] = useState<string | null>(null);
+  const reloadDayLog = (profileId: string) =>
+    getTimecardLog(profileId, rangeStart, date)
+      .then((rows) => setDayLog({ profileId, rows }))
+      .catch((e) => console.error("Timecard history:", e));
+  useEffect(() => {
+    setOpenLogDay(null);
+    if (!openProfileId) { setDayLog(null); return; }
+    void reloadDayLog(openProfileId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openProfileId, rangeStart, date]);
+  const logFor = (profileId: string, day: string) => (dayLog?.profileId === profileId ? dayLog.rows.filter((r) => r.workDate === day) : []);
   // The open technician's Ticket Time Disputes — a ticket with no Work Start but a
   // dispute still awaiting approval counts as Pending, not Missing.
   const [ticketDisputes, setTicketDisputes] = useState<EmployeeRequestRow[]>([]);
@@ -784,6 +825,58 @@ export function EmployeeAttendanceStatusTab() {
                                     </div>
                                   );
                                 })()}
+                                {(() => {
+                                  // Flag: this day's punches were reset (and not undone) — migration 0471.
+                                  const r = resets.get(`${p.id}|${day}`);
+                                  if (!r) return null;
+                                  const when = new Date(r.resetAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+                                  return (
+                                    <div className="mt-1">
+                                      <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold border bg-rose-500/15 text-rose-300 border-rose-500/30" title={`Time In ${r.checkIn ? fmtTime(r.checkIn) : "—"} · Time Out ${r.checkOut ? fmtTime(r.checkOut) : "—"} were cleared`}>
+                                        Time Reverted
+                                      </span>
+                                      <div className="text-[10px] text-slate-500">by {r.resetByName || "someone"} · {when}</div>
+                                    </div>
+                                  );
+                                })()}
+                                {(() => {
+                                  // Who changed this day besides the employee (HR / Admin / manager / System), and the full History.
+                                  const log = logFor(p.id, day);
+                                  if (!log.length) return null;
+                                  const byOthers = log.filter((l) => l.actorProfileId !== p.id && l.action !== "reset");
+                                  const last = byOthers[0];
+                                  const stamp = (iso: string) => new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+                                  const open = openLogDay === day;
+                                  const what = (l: TimecardLogEntry) =>
+                                    l.action === "reset" ? "Reset the day (cleared all punches)"
+                                    : l.action === "restored" ? "Undid the reset (punches put back)"
+                                    : l.changes.length ? l.changes.map(([label, a, b]) => `${label} ${a ? fmtTime(a) : "—"} → ${b ? fmtTime(b) : "—"}`).join(" · ")
+                                    : "Other details changed";
+                                  return (
+                                    <div className="mt-1">
+                                      {last && (
+                                        <div className="text-[10px] text-amber-300">
+                                          {last.action === "restored" ? "Reset undone" : "Edited"} by <span className="font-semibold">{last.actorName || "someone"}</span> · {stamp(last.createdAt)}
+                                        </div>
+                                      )}
+                                      <button type="button" onClick={() => setOpenLogDay(open ? null : day)} className="text-[10px] font-semibold text-sky-300 hover:underline">
+                                        {open ? "Hide history" : `History (${log.length})`}
+                                      </button>
+                                      {open && (
+                                        <ul className="mt-1 max-w-[26rem] space-y-0.5 rounded border border-white/10 bg-slate-950/70 p-1.5 text-[10px]">
+                                          {log.map((l) => (
+                                            <li key={l.id} className="leading-snug">
+                                              <span className="text-slate-500">{stamp(l.createdAt)}</span>{" "}
+                                              <span className={`font-semibold ${l.actorProfileId === p.id ? "text-slate-300" : l.action === "reset" ? "text-rose-300" : "text-amber-300"}`}>{l.actorName || "someone"}</span>
+                                              {l.actorProfileId === p.id && <span className="text-slate-500"> (self)</span>}
+                                              <span className="text-slate-400"> — {what(l)}</span>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
                                 {reviewButton(p.id, dayStatus, day)}
                               </td><td className="px-3 py-2">{notesCell(p.id, day)}</td>
                               {canEditPunches && (
@@ -815,6 +908,26 @@ export function EmployeeAttendanceStatusTab() {
                                           {resettingDay === day ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
                                         </button>
                                       )}
+                                      {!e && (() => {
+                                        const r = resets.get(`${p.id}|${day}`);
+                                        if (!r) return null;
+                                        const was = [
+                                          r.checkIn && `Time In ${fmtTime(r.checkIn)}`,
+                                          r.mealStart && `Meal ${fmtTime(r.mealStart)}${r.mealEnd ? `–${fmtTime(r.mealEnd)}` : ""}`,
+                                          r.checkOut && `Time Out ${fmtTime(r.checkOut)}`,
+                                        ].filter(Boolean).join(" · ");
+                                        return (
+                                          <button
+                                            type="button"
+                                            onClick={() => void undoReset(r)}
+                                            disabled={editingDay !== null || undoingDay !== null}
+                                            title={`Reset by ${r.resetByName || "someone"} on ${new Date(r.resetAt).toLocaleString()} — puts back ${was || "the day"}`}
+                                            className="ml-0.5 inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-1 text-[11px] font-semibold text-amber-200 hover:bg-amber-500/25 disabled:opacity-30"
+                                          >
+                                            {undoingDay === day ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />} Undo reset
+                                          </button>
+                                        );
+                                      })()}
                                     </>
                                   ) : null}
                                 </td>

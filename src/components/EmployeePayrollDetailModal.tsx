@@ -5,12 +5,13 @@ import { getTrainingDates } from "@/lib/supabase/trainingDates";
 import { PayrollAdjustmentsSection } from "@/components/PayrollAdjustmentsSection";
 import type { PayrollAdjustment } from "@/lib/supabase/payrollAdjustments";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2, StickyNote, Download } from "lucide-react";
+import { X, Plus, Pencil, Check, Loader2, ExternalLink, ChevronDown, ChevronRight, Trash2, StickyNote, Download, RotateCcw, Undo2 } from "lucide-react";
 import { formatCentral, isLockedNow, type PayrollPeriodLock } from "@/lib/supabase/payrollPeriodLocks";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { TimeInput24 } from "@/components/TimeInput24";
 import { useAuth } from "@/lib/auth";
 import type { OvertimeDisplay } from "@/lib/techOvertimeDisplay";
+import { getTimecardResets, undoTimecardReset, deleteEntry, type TimecardReset } from "@/lib/supabase/timecards";
 import { getAttendanceForRange, saveEntry, getProfileIdByFirebaseUid, computeScheduledDutyHours, computeMealTimeCredit, startOfWeekSunday, splitRegularOvertimeWeekly, CSR_WEEKLY_OVERTIME_THRESHOLD, hoursDiff, MEAL_ALWAYS_PAID_DEFAULT_HOURS, type AttendanceRow } from "@/lib/supabase/timecards";
 import { isMealAlwaysPaidRole, usesFlatWeeklyOvertimeThreshold, hasAnyTechnicianPayRole } from "@/lib/roleLabels";
 import { getCompanyHolidaysInRange } from "@/lib/supabase/companyHolidays";
@@ -1249,6 +1250,47 @@ export function EmployeePayrollDetailModal({
     }
   };
 
+  // Revert (reset) a day and Undo revert — the timecard footprint, migration 0471.
+  // Revert deletes the day's punches like Employee Monitoring's Reset day; Undo puts them back exactly.
+  const [resetsByDate, setResetsByDate] = useState<Map<string, TimecardReset>>(new Map());
+  const [revertConfirmDate, setRevertConfirmDate] = useState<string | null>(null);
+  const [revertBusyDate, setRevertBusyDate] = useState<string | null>(null);
+  const loadResets = () =>
+    getTimecardResets(rangeStart, rangeEnd)
+      .then((rows) => setResetsByDate(new Map(rows.filter((r) => r.profileId === profileId).map((r) => [r.workDate, r]))))
+      .catch((e) => console.error("Timecard resets:", e));
+  useEffect(() => {
+    void loadResets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId, rangeStart, rangeEnd]);
+  const revertDay = async (date: string) => {
+    setRevertConfirmDate(null);
+    setRevertBusyDate(date);
+    try {
+      await deleteEntry(profileId, date);
+      await load({ current: false });
+      await loadResets();
+      onRateChanged?.();
+    } catch (err) {
+      alert(`Couldn't revert ${date}: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setRevertBusyDate(null);
+    }
+  };
+  const undoRevert = async (r: TimecardReset) => {
+    setRevertBusyDate(r.workDate);
+    try {
+      await undoTimecardReset(r.id);
+      await load({ current: false });
+      await loadResets();
+      onRateChanged?.();
+    } catch (err) {
+      alert(`Couldn't undo the revert: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setRevertBusyDate(null);
+    }
+  };
+
   const startEditingAttendance = () => {
     const seed: typeof attendanceEdits = {};
     for (const row of attendance) {
@@ -1301,6 +1343,7 @@ export function EmployeePayrollDetailModal({
       setAttendanceEditing(false);
       setAttendanceEdits({});
       await load({ current: false });
+      void loadResets();
       onRateChanged?.();
     } catch (err) {
       alert(`Failed to save attendance edits: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -2068,6 +2111,53 @@ export function EmployeePayrollDetailModal({
                           ) : (
                             statusLabelFor(row)
                           )}
+                          {(() => {
+                            const r = resetsByDate.get(row.date);
+                            const hasPunches = !!(row.clockIn || row.clockOut || row.mealStart || row.mealEnd);
+                            const busy = revertBusyDate === row.date;
+                            const when = r ? new Date(r.resetAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+                            return (
+                              <>
+                              {r && (
+                                <div className="mt-0.5 flex justify-end font-normal">
+                                  <span
+                                    title={`Reverted by ${r.resetByName || "someone"} · ${when} — was Check In ${r.checkIn || "—"} · Check Out ${r.checkOut || "—"}`}
+                                    className="inline-block px-1.5 py-px rounded text-[10px] font-bold border border-rose-500/40 bg-rose-500/15 text-rose-300"
+                                  >
+                                    Reverted
+                                  </span>
+                                </div>
+                              )}
+                              <div className="mt-0.5 flex items-center justify-end gap-1 font-normal" onClick={(e) => e.stopPropagation()}>
+                                {revertConfirmDate === row.date ? (
+                                  <span className="inline-flex items-center gap-1 rounded bg-rose-500/15 px-1 py-px text-[10px] font-semibold text-rose-200">
+                                    Revert punches?
+                                    <button type="button" onClick={() => void revertDay(row.date)} className="rounded bg-rose-600 px-1 text-white hover:bg-rose-700">Yes</button>
+                                    <button type="button" onClick={() => setRevertConfirmDate(null)} className="rounded px-1 hover:bg-white/10">No</button>
+                                  </span>
+                                ) : (
+                                  <>
+                                    {!attendanceEditing && (
+                                      <button type="button" onClick={startEditingAttendance} disabled={busy || loading} title="Edit times" aria-label={`Edit ${row.date}`} className="p-0.5 rounded text-slate-500 hover:text-white hover:bg-white/10 disabled:opacity-30">
+                                        <Pencil className="h-3 w-3" />
+                                      </button>
+                                    )}
+                                    {hasPunches && !attendanceEditing && (
+                                      <button type="button" onClick={() => setRevertConfirmDate(row.date)} disabled={busy} title="Revert — clear this day's Check In / Meal / Check Out (can be undone)" aria-label={`Revert ${row.date}`} className="p-0.5 rounded text-slate-500 hover:text-rose-300 hover:bg-rose-500/15 disabled:opacity-30">
+                                        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+                                      </button>
+                                    )}
+                                    {r && !hasPunches && !attendanceEditing && (
+                                      <button type="button" onClick={() => void undoRevert(r)} disabled={busy} title={`Undo revert — puts back Check In ${r.checkIn || "—"} · Check Out ${r.checkOut || "—"}`} className="inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1 py-px text-[10px] font-semibold text-amber-200 hover:bg-amber-500/25 disabled:opacity-30">
+                                        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Undo2 className="h-3 w-3" />} Undo
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                              </>
+                            );
+                          })()}
                         </td>
                         <td className="py-1.5 text-right" onClick={(e) => e.stopPropagation()}>
                           {dayIsFixed ? (
