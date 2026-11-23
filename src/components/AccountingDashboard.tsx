@@ -96,7 +96,7 @@ import {
   type TechCategoryOverride,
 } from "@/lib/supabase/techPayroll";
 import { markCarryoversConsumed } from "@/lib/supabase/lateTicketCompletions";
-import { TechActivityReportModal } from "@/components/TechActivityReportModal";
+import { TechActivityReportModal, hasPendingReportChanges } from "@/components/TechActivityReportModal";
 import { getMileageEntries, softDeleteMileageEntry, restoreMileageEntry, syncMileageFromTickets, setMileageEntryPayrollExcluded, reconcileMileageNoPhotoHolds, mileageEffectiveTotal, resetMileageRouteConfirmation, type MileageEntry } from "@/lib/supabase/mileage";
 import { MileageDayRouteModal } from "@/components/MileageDayRouteModal";
 import { FlashTechCalendarPage } from "@/components/FlashTechCalendarPage";
@@ -1805,6 +1805,15 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
   // payPeriods.ts); Finance can pick another period or custom dates.
   const [genStart, setGenStart] = useState(() => currentPayPeriod().start);
   const [genEnd, setGenEnd] = useState(() => currentPayPeriod().end);
+  // A Tech Activity Report change only sticks with a note + Done. Leaving
+  // that employee from the attendance step (after ← Prev) goes back to the
+  // report instead, where closing offers to undo the changes.
+  const blockedByUnfinishedReport = () => {
+    if (!detailEmployee || !hasPendingReportChanges(detailEmployee.id, genStart, genEnd)) return false;
+    toast.warning("This technician's Tech Activity Report has changes without a note + Done. Finish them, or close the report to undo them.");
+    setWizardStep("activity");
+    return true;
+  };
   // Payroll cutoffs (Admin → Payroll Locks, migration 0469). A locked
   // period's wizard opens view-only — the database refuses changes anyway.
   const [payrollLocks, setPayrollLocks] = useState<PayrollPeriodLock[]>([]);
@@ -7290,7 +7299,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
             }
             const i = order.findIndex((e) => e.id === detailEmployee.id);
             if (i < 0 || order.length < 2) return undefined;
-            const go = (e: SupabaseEmployee) => { setDetailEmployee(e); setWizardStep("detail"); };
+            const go = (e: SupabaseEmployee) => { if (blockedByUnfinishedReport()) return; setDetailEmployee(e); setWizardStep("detail"); };
             return {
               position: i + 1,
               total: order.length,
@@ -7336,7 +7345,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
           graceMinutes={payGraceMinutesFor(detailEmployee.country)}
           initialStart={genStart || undefined}
           initialEnd={genEnd || undefined}
-          onClose={() => { setDetailEmployee(null); setWizardStep("detail"); }}
+          onClose={() => { if (blockedByUnfinishedReport()) return; setDetailEmployee(null); setWizardStep("detail"); }}
           onRateChanged={() => { fetchData({ silent: true }); reloadTimecardEntries(); }}
           workbookAdjustments={
             genStart && genEnd
