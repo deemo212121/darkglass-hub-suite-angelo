@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Download, DollarSign, Clock, CheckCircle, Wallet, Pencil, Trash2, XCircle, Paperclip, Loader2, Receipt, TrendingUp, Building2, Plane, BedDouble, Car } from "lucide-react";
+import { ChevronLeft, Download, DollarSign, Clock, CheckCircle, Wallet, Pencil, Trash2, XCircle, Paperclip, Loader2, Receipt, TrendingUp, Building2, Plane, BedDouble, Car, Undo2 } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, getHireDatesByProfileIds, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
@@ -11,6 +11,7 @@ import { deleteExpenseReceiptFile } from "@/lib/firebase/storage";
 import { reimbursementTypeLabel,
   getCompanyExpenses,
   updateExpenseStatus,
+  undoExpenseStatus,
   deleteExpense,
   type ExpenseCategory,
   type ExpenseRow,
@@ -403,6 +404,21 @@ export function ExpenseTrackingPage({
     } catch (error) {
       alert(`Failed to update expense: ${error instanceof Error ? error.message : "Unknown error"}`);
       return false;
+    } finally {
+      setStatusChangingId(null);
+    }
+  };
+
+  // Undo the last review step (Reimbursed → Approved; Approved / Rejected → Pending).
+  const handleUndoStatus = async (e: ExpenseRow) => {
+    const back = e.status === "Reimbursed" ? "Approved" : "Pending";
+    if (!confirm(`Undo "${e.status}" on ${profileName(e.profileId)}'s ${fmtMoney(e.amount)} request? It goes back to ${back}.`)) return;
+    setStatusChangingId(e.id);
+    try {
+      await undoExpenseStatus(e.id, e.status);
+      setExpenses(await getCompanyExpenses());
+    } catch (error) {
+      alert(`Couldn't undo: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setStatusChangingId(null);
     }
@@ -861,6 +877,17 @@ export function ExpenseTrackingPage({
                         {!flashTechOnly && e.status === "Approved" && !e.flashTechTripId && canReviewExpenses && (
                           <button onClick={() => handleStatusChange(e.id, "Reimbursed")} disabled={statusChangingId === e.id} className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1">
                             {statusChangingId === e.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wallet className="h-3 w-3" />} Mark Reimbursed
+                          </button>
+                        )}
+                        {/* Undo: Reimbursed → Approved on any request; Approved / Rejected → Pending on employees' own requests (they can be approved again). */}
+                        {!flashTechOnly && canReviewExpenses && !e.flashTechTripId && (e.status === "Reimbursed" || ((e.status === "Approved" || e.status === "Rejected") && isSelfFiledExpense(e))) && (
+                          <button
+                            onClick={() => void handleUndoStatus(e)}
+                            disabled={statusChangingId === e.id}
+                            title={e.status === "Reimbursed" ? "Undo Reimbursed — back to Approved" : `Undo ${e.status} — back to Pending`}
+                            className="px-2 py-1 bg-amber-600/80 hover:bg-amber-600 disabled:opacity-50 text-white rounded text-xs transition flex items-center gap-1"
+                          >
+                            {statusChangingId === e.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Undo2 className="h-3 w-3" />} Undo
                           </button>
                         )}
                         <button onClick={() => setFormState({ editing: e })} className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs transition flex items-center gap-1">
