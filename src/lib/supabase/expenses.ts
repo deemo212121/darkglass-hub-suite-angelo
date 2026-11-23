@@ -361,6 +361,24 @@ export async function updateExpenseStatus(id: string, status: ExpenseStatus, rev
   }
 }
 
+/**
+ * Undo the last review step: Reimbursed → Approved; Approved / Rejected → Pending
+ * (who approved / rejected and the rejection reason are cleared). Accounting only (0396).
+ */
+export async function undoExpenseStatus(id: string, from: ExpenseStatus): Promise<void> {
+  const update =
+    from === "Reimbursed"
+      ? { status: "Approved" }
+      : from === "Rejected"
+        ? { status: "Pending", reviewed_by: null, reviewed_at: null, review_note: null }
+        : { status: "Pending", reviewed_by: null, reviewed_at: null };
+  const { error } = await supabase.from("expenses").update(update).eq("id", id);
+  if (error) {
+    console.error("undoExpenseStatus error:", error.message);
+    throw new Error(error.message);
+  }
+}
+
 export async function deleteExpense(id: string): Promise<void> {
   const { error } = await supabase.from("expenses").delete().eq("id", id);
   if (error) {
