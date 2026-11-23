@@ -2388,12 +2388,17 @@ export async function upsertTicketFromServicePower(
   return result;
 }
 
-async function upsertTicketFromServicePowerImpl(
-  input: Partial<Ticket>
-): Promise<"added" | "updated"> {
-
+/**
+ * The customer and ticket columns a ServicePower call maps to. Shared by
+ * upsertTicketFromServicePower and insertTicketFromServicePowerIfNew so both
+ * write exactly the same fields.
+ */
+export function buildServicePowerPayloads(input: Partial<Ticket>): {
+  customerPayload: Record<string, unknown>;
+  ticketPayload: Record<string, unknown>;
+} {
   // Customer payload (ServicePower-owned fields).
-  const customerPayload = {
+  const customerPayload: Record<string, unknown> = {
     first_name: input.firstName ?? "",
     last_name: input.lastName ?? "",
     full_name:
@@ -2501,6 +2506,13 @@ async function upsertTicketFromServicePowerImpl(
     nsa_schedule_ack_by_user_name: input.nsaScheduleAckByUserName || null,
     updated_at: new Date().toISOString(),
   };
+  return { customerPayload, ticketPayload };
+}
+
+async function upsertTicketFromServicePowerImpl(
+  input: Partial<Ticket>
+): Promise<"added" | "updated"> {
+  const { customerPayload, ticketPayload } = buildServicePowerPayloads(input);
 
   // Does the ticket already exist (company-scoped)? Use `limit(1)` rather
   // than `maybeSingle()` so historic duplicates (if any) don't make the
@@ -2677,6 +2689,82 @@ async function upsertTicketFromServicePowerImpl(
     throw new Error(tErr.message);
   }
   return "added";
+}
+
+/**
+ * Which of these ticket numbers are already tickets in AHS. Company-scoped
+ * by RLS in the browser; pass `companyId` from a service-key script.
+ */
+export async function findExistingTicketNos(
+  ticketNos: string[],
+  opts: { companyId?: string } = {},
+): Promise<Set<string>> {
+  const wanted = [...new Set(ticketNos.map((n) => String(n ?? "").trim()).filter(Boolean))];
+  const found = new Set<string>();
+  for (let i = 0; i < wanted.length; i += 150) {
+    let q = supabase.from("tickets").select("ticket_no").in("ticket_no", wanted.slice(i, i + 150));
+    if (opts.companyId) q = q.eq("company_id", opts.companyId);
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    for (const r of data ?? []) found.add(String((r as any).ticket_no ?? "").trim());
+  }
+  return found;
+}
+
+/**
+ * Add a ServicePower call as a NEW ticket and never touch one that already
+ * exists. The open-tickets pull (Data Migration → (Ticket) Service Power
+ * Migration) uses this: re-updating an existing ticket from ServicePower
+ * writes SP's technician (usually blank) over the AHS one and clears the
+ * check-in times, so the pull only adds what's missing.
+ *
+ * `companyId` is only for scripts running with the service key, where there
+ * is no signed-in person for set_company_id to read (migration 0203). In the
+ * browser leave it out: the company comes from the login.
+ */
+export async function insertTicketFromServicePowerIfNew(
+  input: Partial<Ticket>,
+  opts: { companyId?: string } = {},
+): Promise<"added" | "exists"> {
+  const ticketNo = String(input.ticketNo ?? "").trim();
+  if (!ticketNo) throw new Error("insertTicketFromServicePowerIfNew requires a ticketNo");
+  const result = await runUnderTicketLock(ticketNo, async (): Promise<"added" | "exists"> => {
+    let lookup = supabase.from("tickets").select("id").eq("ticket_no", ticketNo).limit(1);
+    if (opts.companyId) lookup = lookup.eq("company_id", opts.companyId);
+    const { data: rows, error: findErr } = await lookup;
+    if (findErr) throw new Error(findErr.message);
+    if (rows && rows.length) return "exists";
+
+    const { customerPayload, ticketPayload } = buildServicePowerPayloads({ ...input, ticketNo });
+    if (opts.companyId) {
+      customerPayload.company_id = opts.companyId;
+      ticketPayload.company_id = opts.companyId;
+    }
+    const { data: cust, error: cErr } = await supabase
+      .from("customers")
+      .insert(customerPayload)
+      .select("id")
+      .single();
+    if (cErr) throw new Error(cErr.message);
+
+    const { error: tErr } = await supabase.from("tickets").insert({
+      ticket_no: ticketNo,
+      customer_id: cust.id,
+      ...ticketPayload,
+    });
+    if (tErr) {
+      // Don't leave the customer row made for this ticket behind.
+      await supabase.from("customers").delete().eq("id", cust.id);
+      // Someone added the same ticket a moment ago (unique company_id +
+      // ticket_no): leave theirs alone.
+      const code = (tErr as any)?.code ?? "";
+      if (code === "23505" || /duplicate key|unique constraint/i.test(tErr.message)) return "exists";
+      throw new Error(tErr.message);
+    }
+    return "added";
+  });
+  invalidateCompanyTicketsCache();
+  return result;
 }
 
 // suppress unused warning for yn helper (kept for future field mapping)

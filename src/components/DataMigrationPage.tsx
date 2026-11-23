@@ -13,6 +13,8 @@ interface SyncResult {
   updated: number;
   skipped: number;
   total: number;
+  /** New-only pulls: open calls that were already tickets (left unchanged). */
+  alreadyInAhs?: number;
   errors: string[];
 }
 
@@ -69,7 +71,9 @@ function MigrationCard({
             {result.success && result.errors.length === 0 ? "✓ Synced successfully" : "⚠ Completed with errors"}
           </div>
           <div className="mt-1 text-xs text-slate-300">
-            Added: {result.added} · Updated: {result.updated} · Skipped: {result.skipped} · Total: {result.total}
+            {result.alreadyInAhs != null
+              ? <>Added: {result.added} · Already in AHS (left unchanged): {result.alreadyInAhs} · Skipped (not open): {result.skipped} · Total: {result.total}</>
+              : <>Added: {result.added} · Updated: {result.updated} · Skipped: {result.skipped} · Total: {result.total}</>}
           </div>
           {result.errors.length > 0 && (
             <ul className="mt-2 list-disc list-inside text-xs space-y-0.5">
@@ -96,11 +100,15 @@ function ServicePowerMigrationCard() {
   const [result, setResult] = useState<SyncResult | null>(null);
 
   const handleSubmit = async () => {
-    if (!window.confirm(`Sync ServicePower tickets from ${startDate} through today into Supabase?`)) return;
+    if (!window.confirm(`Add the open ServicePower tickets from ${startDate} through today that aren't in AHS yet?`)) return;
     setRunning(true);
     setResult(null);
     try {
-      const r = await syncServicePowerToSupabase(7, { startDate });
+      // Open calls only (Accepted / Open: never Claimed, Completed, Cancelled
+      // or Rejected), and only the ones not in AHS yet. Re-updating an
+      // existing ticket from SP would overwrite its technician and clear its
+      // check-ins, so existing tickets are left alone.
+      const r = await syncServicePowerToSupabase(7, { startDate, openOnly: true, newOnly: true });
       setResult(r);
     } catch (err) {
       setResult({
@@ -119,7 +127,7 @@ function ServicePowerMigrationCard() {
   return (
     <MigrationCard
       title="(Ticket) Service Power Migration"
-      caption="Pulls all ServicePower calls from this date through today. Pick an earlier date to catch up on a day you forgot to sync."
+      caption="Adds the open ServicePower calls (Accepted / Open) from this date through today that aren't in AHS yet. Claimed, Completed, Cancelled and Rejected calls are left out, and tickets already in AHS are never changed. Pick an earlier date to catch up on a day you forgot to sync."
       running={running}
       result={result}
       onSubmit={() => void handleSubmit()}

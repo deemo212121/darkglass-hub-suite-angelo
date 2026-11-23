@@ -578,6 +578,16 @@ function isSyncableCall(call: any): boolean {
   );
 }
 
+/**
+ * An open call: ServicePower's main CallStatus is ACCEPTED or OPEN (any
+ * sub-status: Appointment Scheduled, Rescheduled, Waiting on Customer …).
+ * CLAIMED, COMPLETED, CANCELLED and REJECTED calls are not open.
+ */
+export function isOpenCall(call: any): boolean {
+  const status = String(call?.callStatus ?? "").trim().toUpperCase();
+  return status === "ACCEPTED" || status === "OPEN" || status.startsWith("ACCEPTED ") || status.startsWith("OPEN ");
+}
+
 /** Format a Date as ServicePower expects: mm/dd/yyyy HH:mm:ss. */
 function formatSpDateTime(date: Date, endOfDay = false): string {
   const mm = String(date.getMonth() + 1).padStart(2, "0");
@@ -592,8 +602,9 @@ function formatSpDateTime(date: Date, endOfDay = false): string {
  *
  * ServicePower limits each query to a 2-day window (error SP007), so the
  * requested range is split into <=2-day chunks and fetched sequentially.
- * Only work orders with an "Accepted" status are synced. For each accepted
- * call we upsert the customer + ticket (source, customer details, address,
+ * Accepted, Completed and Cancelled work orders are synced (only Accepted /
+ * Open ones with `openOnly`). For each one
+ * we upsert the customer + ticket (source, customer details, address,
  * product details, work order details). Local-only data (visits, parts,
  * billing) is preserved on updates. De-duplicates by call number across chunks.
  *
@@ -619,6 +630,12 @@ function formatSpDateTime(date: Date, endOfDay = false): string {
  *   Calls matching these are dropped before upsert so we don't burn write
  *   quota touching tickets we already have. The hourly auto-sync uses this
  *   so a repeated run is effectively "new tickets only".
+ * @param options.openOnly Only open calls (isOpenCall: ACCEPTED / OPEN),
+ *   instead of Accepted + Completed + Cancelled. Claimed calls are never
+ *   pulled either way.
+ * @param options.newOnly Only add calls that aren't tickets in AHS yet;
+ *   tickets already in AHS are never changed (insertTicketFromServicePowerIfNew).
+ *   They're counted in `alreadyInAhs`.
  */
 export async function syncServicePowerToSupabase(
   days = 7,
@@ -630,6 +647,8 @@ export async function syncServicePowerToSupabase(
     coveredOnly?: boolean;
     startDate?: string | Date;
     skipTicketNos?: Set<string> | string[];
+    openOnly?: boolean;
+    newOnly?: boolean;
   } = {}
 ): Promise<{
   success: boolean;
@@ -637,10 +656,11 @@ export async function syncServicePowerToSupabase(
   updated: number;
   skipped: number;
   total: number;
+  alreadyInAhs?: number;
   errors: string[];
 }> {
-  const { upsertTicketFromServicePower } = await import("./supabase/tickets");
-  const { limit, locationFilter, locationFilters, zipFilter, coveredOnly, startDate, skipTicketNos } = options;
+  const { upsertTicketFromServicePower, insertTicketFromServicePowerIfNew, findExistingTicketNos } = await import("./supabase/tickets");
+  const { limit, locationFilter, locationFilters, zipFilter, coveredOnly, startDate, skipTicketNos, openOnly, newOnly } = options;
   // Combine the two location-filter shapes into a normalised set we can match
   // against. Empty set = no branch scoping.
   const branchSet = new Set<string>();
@@ -725,7 +745,7 @@ export async function syncServicePowerToSupabase(
         filteredOut++;
         continue;
       }
-      if (!isSyncableCall(call)) continue;
+      if (!(openOnly ? isOpenCall(call) : isSyncableCall(call))) continue;
 
       // Optional location / zip / coverage scoping. SP's getCallInfoSearch
       // SOAP op only supports date and call number filters, so we filter the
@@ -764,9 +784,32 @@ export async function syncServicePowerToSupabase(
 
   let added = 0;
   let updated = 0;
+  let alreadyInAhs = 0;
+
+  // New-only: one batched lookup drops the calls that are already tickets,
+  // so only the new ones get a (re-checked) insert.
+  let existingNos = new Set<string>();
+  if (newOnly && acceptedCalls.length) {
+    try {
+      existingNos = await findExistingTicketNos(acceptedCalls.map((c) => String(c?.callNumber ?? "")));
+    } catch (err) {
+      errors.push(`Couldn't check which tickets are already in AHS: ${err instanceof Error ? err.message : String(err)}`);
+      return { success: false, added: 0, updated: 0, skipped: totalCalls, total: totalCalls, alreadyInAhs: 0, errors };
+    }
+  }
 
   for (const call of acceptedCalls) {
     try {
+      if (newOnly) {
+        if (existingNos.has(String(call?.callNumber ?? "").trim())) {
+          alreadyInAhs++;
+          continue;
+        }
+        const outcome = await insertTicketFromServicePowerIfNew(convertCallToTicket(call));
+        if (outcome === "added") added++;
+        else alreadyInAhs++;
+        continue;
+      }
       const ticket = convertCallToTicket(call);
       const outcome = await upsertTicketFromServicePower(ticket);
       if (outcome === "added") added++;
@@ -786,6 +829,7 @@ export async function syncServicePowerToSupabase(
     updated,
     skipped,
     total: totalCalls,
+    ...(newOnly ? { alreadyInAhs } : {}),
     errors: branchSet.size || zipNeedle || coveredOnly
       ? [
           `Filtered out ${filteredOut} calls outside${branchSet.size ? ` branches [${[...branchSet].join(', ')}]` : ''}${zipNeedle ? ` zip "${zipFilter}"` : ''}${coveredOnly ? ' coverage area' : ''}.`,
