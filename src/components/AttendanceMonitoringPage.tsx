@@ -88,6 +88,7 @@ import { StageRemindButton } from "@/components/RemindButton";
 import { pendingStagesOf } from "@/lib/supabase/approvalReminders";
 import { StageNote } from "@/components/StageNote";
 import { useAttention, badgeText } from "@/lib/attention";
+import { sameBranch, uniqueBranches } from "@/lib/branchName";
 
 /** A pending trainee punch shown as a regular timecard entry (approved days are already copied to timecard_entries). */
 function traineeAsEntry(t: TraineeTimecardEntry): CompanyTimecardEntry {
@@ -497,8 +498,6 @@ function CheckboxFilter({
   );
 }
 
-/** "Jackson,TN" / " Jackson ,  TN" → "Jackson, TN" — so one branch typed two ways shows (and filters) once. */
-const normBranchLabel = (b: string | null | undefined): string => String(b ?? "").trim().replace(/\s*,\s*/g, ", ");
 /** Made-up request the approvals tour shows in the signature windows when nothing real is waiting (preview — never signed or saved). */
 const TOUR_SAMPLE_PTO: PtoRequestRow = {
   id: "tour-sample", profileId: "tour-sample", ptoType: "sick", startDate: "2026-10-06", endDate: "2026-10-06", hoursRequested: 8,
@@ -1444,14 +1443,13 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   // with spelling variants like "Jackson,TN" / "Jackson, TN" merged.
   const alertLocations = useMemo(
     () =>
-      Array.from(new Set([...visibleProfiles.map((p) => normBranchLabel(p.assigned_branch)), ...alertBaseRecords.map((r) => normBranchLabel(r.location))].filter(Boolean)))
-        .sort((a, b) => a.localeCompare(b)),
+      uniqueBranches([...visibleProfiles.map((p) => p.assigned_branch), ...alertBaseRecords.map((r) => r.location)]),
     [alertBaseRecords, visibleProfiles]
   );
   const alertFilteredRecords = useMemo(
     () =>
       alertBaseRecords.filter(
-        (r) => (alertDeptFilter === "all" || r.department === alertDeptFilter) && (alertLocationFilter === "all" || normBranchLabel(r.location) === alertLocationFilter)
+        (r) => (alertDeptFilter === "all" || r.department === alertDeptFilter) && (alertLocationFilter === "all" || sameBranch(r.location, alertLocationFilter))
       ),
     [alertBaseRecords, alertDeptFilter, alertLocationFilter]
   );
@@ -1473,7 +1471,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
       if (record.checkIn === "—") return false;
       if (searchEmployee && !record.name.toLowerCase().includes(searchEmployee.toLowerCase())) return false;
       if (filterDepartments.length > 0 && !filterDepartments.includes(record.department)) return false;
-      if (filterLocations.length > 0 && !filterLocations.includes(normBranchLabel(record.location))) return false;
+      if (filterLocations.length > 0 && !filterLocations.some((l) => sameBranch(l, record.location))) return false;
       // checkIn is already guaranteed above — this now only additionally
       // requires a completed checkOut.
       if (completeOnly && record.checkOut === "—") return false;
@@ -1504,7 +1502,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
   const departments = Array.from(
     new Set(visibleProfiles.map(profileDepartment).filter(Boolean))
   ) as string[];
-  const locations = Array.from(new Set(visibleProfiles.map((p) => normBranchLabel(p.assigned_branch)).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const locations = uniqueBranches(visibleProfiles.map((p) => p.assigned_branch));
 
   // Weekly/Monthly summary tables get their own department + branch filters
   // since they're a separate section below the Daily Attendance table/filters.
@@ -1695,7 +1693,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
           const name = (p.display_name || p.email || "").toLowerCase();
           if (searchEmployee && !name.includes(searchEmployee.toLowerCase())) return false;
           if (filterDepartments.length > 0 && !filterDepartments.includes(getRoleDepartmentBreakdown(p.role).department)) return false;
-          if (filterLocations.length > 0 && !filterLocations.includes(normBranchLabel(p.assigned_branch))) return false;
+          if (filterLocations.length > 0 && !filterLocations.some((l) => sameBranch(l, p.assigned_branch))) return false;
           return true;
         })
         .sort((a, b) => (a.display_name || a.email).localeCompare(b.display_name || b.email));
@@ -1858,7 +1856,7 @@ export function AttendanceMonitoringPage({ mod, sub }: { mod: ModuleDef; sub: Su
         if (record.checkIn !== "—" || record.isOffDay || record.hasPendingCorrection) return false;
         if (searchEmployee && !record.name.toLowerCase().includes(searchEmployee.toLowerCase())) return false;
         if (filterDepartments.length > 0 && !filterDepartments.includes(record.department)) return false;
-        if (filterLocations.length > 0 && !filterLocations.includes(normBranchLabel(record.location))) return false;
+        if (filterLocations.length > 0 && !filterLocations.some((l) => sameBranch(l, record.location))) return false;
         return true;
       })
       .sort((a, b) => (dateRangeActive && a.date !== b.date ? (a.date! < b.date! ? -1 : 1) : a.name.localeCompare(b.name)));

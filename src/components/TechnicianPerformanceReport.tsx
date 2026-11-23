@@ -104,6 +104,7 @@ import {
 import { getSeniorBranchManagerAssignments, type SbmBranchAssignment } from "@/lib/supabase/seniorBranchManagerAssignments";
 import { todayISO, localISODate } from "@/lib/localDate";
 import { aliasTechName, nameMatchKey, namesOverlap } from "@/lib/techNameMatch";
+import { branchMatchKey } from "@/lib/branchName";
 
 const TOOLTIP_STYLE = {
   background: "#ffffff",
@@ -125,8 +126,8 @@ const TOOLTIP_STYLE = {
  * to turn it off.
  */
 const BLANK_LIVE_TIME_FROM = "2026-08-27";
-/** "Jackson,TN" and "Jackson, TN" are the same branch — compare with the comma spacing tidied. */
-const normBranchName = (b: string | null | undefined) => String(b ?? "").trim().toLowerCase().replace(/\s*,\s*/g, ", ");
+/** "Jackson,TN" / "Jackson, TN" / "jackson tn" are the same branch (lib/branchName.ts). */
+const normBranchName = branchMatchKey;
 
 const CHART_BAR_FILL = "#3b82f6";
 const COMPARE_BAR_FILLS = ["#3b82f6", "#f59e0b", "#10b981", "#ec4899", "#8b5cf6", "#06b6d4"];

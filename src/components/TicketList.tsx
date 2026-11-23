@@ -28,6 +28,7 @@ import { canManageMisdiagnosed, canFilterDataClosedTickets } from "@/lib/roleLab
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 import { localISODate, todayISO } from "@/lib/localDate";
+import { useRememberedState } from "@/hooks/useRememberedState";
 
 // Use the centralized Ticket interface
 interface TicketItem extends Ticket {}
@@ -643,19 +644,20 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
   const { email, role, extraRoles, allowedLocations } = useAuth();
   const canViewMisdiagnosed = canManageMisdiagnosed(role, extraRoles);
   const canViewDataCloseFilter = canFilterDataClosedTickets(role, extraRoles);
-  const [searchQuery, setSearchQuery] = useState("");
+  // Search, dates, branch and status are remembered while this tab is open (useRememberedState).
+  const [searchQuery, setSearchQuery] = useRememberedState("ticket-list:search", "");
   // The input itself stays snappy on `searchQuery` directly — only the
   // expensive recomputes below (filteredItems, and especially
   // columnOptions' O(columns × tickets) scan) wait for typing to pause
   // instead of redoing that work on every single keystroke.
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(searchQuery);
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearchQuery(searchQuery), 250);
     return () => clearTimeout(t);
   }, [searchQuery]);
-  const [repairStatusFilter, setRepairStatusFilter] = useState("");
-  const [startDateFilter, setStartDateFilter] = useState("");
-  const [endDateFilter, setEndDateFilter] = useState("");
+  const [repairStatusFilter, setRepairStatusFilter] = useRememberedState("ticket-list:status", "");
+  const [startDateFilter, setStartDateFilter] = useRememberedState("ticket-list:from", "");
+  const [endDateFilter, setEndDateFilter] = useRememberedState("ticket-list:to", "");
   // Picking a Start Date earlier than the default load window would
   // otherwise silently show "0 tickets" for dates that were simply never
   // fetched, not because none exist — auto-upgrade to full history instead
@@ -665,9 +667,9 @@ export function TicketList({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef }) 
     if (startDateFilter < ticketLookbackSinceIso()) void loadFullTicketHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startDateFilter, fullHistoryLoaded]);
-  const [locationFilter, setLocationFilter] = useState("");
-  const [ticketSourceFilter, setTicketSourceFilter] = useState("");
-  const [statusGroupFilter, setStatusGroupFilter] = useState<"" | "open" | "completed" | "cancelled">("");
+  const [locationFilter, setLocationFilter] = useRememberedState("ticket-list:branch", "");
+  const [ticketSourceFilter, setTicketSourceFilter] = useRememberedState("ticket-list:source", "");
+  const [statusGroupFilter, setStatusGroupFilter] = useRememberedState<"" | "open" | "completed" | "cancelled">("ticket-list:status-group", "");
   const [misdiagnosedOnlyFilter, setMisdiagnosedOnlyFilter] = useState(false);
 
   // Notifications that link here (e.g. a Mileage payroll-hold alert) append

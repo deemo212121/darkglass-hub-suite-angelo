@@ -79,6 +79,7 @@ import { canManageMisdiagnosed, canSetCancelledStatus } from "@/lib/roleLabels";
 import { useOnClCancelList } from "@/lib/supabase/clCancelPeople";
 import { isDataClosedStatus, SHORT_PAID_DATA_CLOSE_MESSAGE, shortPaidDataCloseBlocked } from "@/lib/shortPaidDataClose";
 import { todayISO } from "@/lib/localDate";
+import { sameBranch } from "@/lib/branchName";
 
 // Product category options for the ticket Product Information dropdown.
 const PRODUCT_CATEGORY_OPTIONS = [
@@ -2629,9 +2630,8 @@ function TicketDetailsPage() {
   // the ticket's branch or the address book reloads.
   useEffect(() => {
     if (partAddressBook.length === 0) return;
-    const branchKey = (ticket?.location || "").trim().toLowerCase();
     const branchEntry = partAddressBook.find((a) =>
-      a.id.startsWith("branch:") && a.shipTo.name.trim().toLowerCase() === branchKey,
+      a.id.startsWith("branch:") && sameBranch(a.shipTo.name, ticket?.location),
     );
     const next = branchEntry?.shipTo ?? null;
     setDefaultShipTo({

@@ -1,3 +1,4 @@
+import { branchMatchKey } from "./branchName";
 export const WORK_MAP_LOCATIONS = [
   "Asheville",
   "Atlanta",
@@ -217,8 +218,9 @@ export function mergeLocationOptions(...groups: Array<Iterable<string>>) {
   groups.forEach((group) => {
     for (const location of group) {
       const normalized = normalizeLocationName(location);
-      if (!normalized || seen.has(normalized)) continue;
-      seen.add(normalized);
+      const key = branchMatchKey(normalized);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
       merged.push(normalized);
     }
   });

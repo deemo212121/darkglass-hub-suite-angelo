@@ -63,6 +63,7 @@ import { needsPassword } from "@/lib/passwordChecks";
 
 const TRUCK_STOCK_IMPORT_CHECK = "truck-stock-import";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useRememberedState } from "@/hooks/useRememberedState";
 
 const PAGE_SIZE_OPTIONS = [25, 50, 75, 100, 125] as const;
 
@@ -135,9 +136,10 @@ export function TruckStockPanel() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const [search, setSearch] = useState("");
-  const [branchFilter, setBranchFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"" | TruckStockStatus>("");
+  // Search, branch and status are remembered while this tab is open (useRememberedState).
+  const [search, setSearch] = useRememberedState("truck-stock:search", "");
+  const [branchFilter, setBranchFilter] = useRememberedState("truck-stock:branch", "");
+  const [statusFilter, setStatusFilter] = useRememberedState<"" | TruckStockStatus>("truck-stock:status", "");
   // Page size: a real number of rows per page, or "all" to show every row —
   // same convention as TicketList.tsx. Truck Stock can have thousands of
   // rows across every branch, and rendering them all at once is what was
@@ -214,17 +216,23 @@ export function TruckStockPanel() {
     return Array.from(byKey.values()).sort((a, b) => a.localeCompare(b));
   }, [locations, rows, usedRows]);
 
-  // Aggregate quantity per part across all branches — drives the
-  // "cross-branch availability" chip on each row.
+  // In-stock quantity per part across all branches — drives the "Other
+  // branches" chips and the "Total in stock" column. Only IN STOCK rows count
+  // (sold / used / returned / eBay / B2B / ticket parts aren't available), and
+  // a branch spelled two ways ("Jackson,MS" / "Jackson, MS") is one branch.
   const totalsByPart = useMemo(() => {
     const map = new Map<string, { total: number; branches: { branch: string; qty: number }[] }>();
     rows.forEach((r) => {
-      const key = r.partNo.toLowerCase();
+      if (r.status !== "in_stock") return;
+      const key = r.partNo.trim().toLowerCase();
       if (!map.has(key)) map.set(key, { total: 0, branches: [] });
       const entry = map.get(key)!;
       entry.total += r.quantity;
-      entry.branches.push({ branch: r.branch, qty: r.quantity });
+      const b = entry.branches.find((x) => normBranch(x.branch) === normBranch(r.branch));
+      if (b) b.qty += r.quantity;
+      else entry.branches.push({ branch: r.branch, qty: r.quantity });
     });
+    map.forEach((e) => e.branches.sort((a, b) => a.branch.localeCompare(b.branch)));
     return map;
   }, [rows]);
 
@@ -278,13 +286,16 @@ export function TruckStockPanel() {
   }, [filteredUsed, safePage, pageSize]);
 
   const groupedByBranch = useMemo(() => {
-    const map = new Map<string, TruckStockRow[]>();
+    const map = new Map<string, { label: string; rows: TruckStockRow[] }>();
     pagedRows.forEach((r) => {
-      const key = r.branch || "Unassigned";
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(r);
+      const label = r.branch || "Unassigned";
+      const key = normBranch(label);
+      if (!map.has(key)) map.set(key, { label, rows: [] });
+      map.get(key)!.rows.push(r);
     });
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    return Array.from(map.values())
+      .map((g) => [g.label, g.rows] as [string, TruckStockRow[]])
+      .sort((a, b) => a[0].localeCompare(b[0]));
   }, [pagedRows]);
 
   const handleSave = async () => {
@@ -293,9 +304,61 @@ export function TruckStockPanel() {
       alert("Branch and Part No are required.");
       return;
     }
+    // Status changed to Used → the part goes to the Used list with its ticket #
+    // and comes off stock (the way Import treats a Used row).
+    let toSave = draft;
+    let usedLine: Omit<TruckStockUsedRow, "id" | "createdAt"> | null = null;
+    const before = draft.id ? rows.find((r) => r.id === draft.id) : undefined;
+    if (draft.status === "used" && before?.status !== "used" && draft.quantity > 0) {
+      if (usedRows === null) {
+        alert(`Can't move this part to the Used list — ${usedError || "the Used list hasn't loaded yet"}. Pick another status, or try again.`);
+        return;
+      }
+      const ticketIn = prompt(`${draft.partNo} at ${draft.branch} — which ticket # was it used on?\n(It moves to the Used tab and comes off stock.)`, "");
+      if (ticketIn === null) return;
+      const ticketNo = ticketIn.trim();
+      if (!ticketNo) {
+        alert("Enter the ticket # this part was used on.");
+        return;
+      }
+      let qtyUsed = draft.quantity;
+      if (draft.quantity > 1) {
+        const qtyIn = prompt(`How many of the ${draft.quantity} were used on ticket ${ticketNo}?`, String(draft.quantity));
+        if (qtyIn === null) return;
+        qtyUsed = Math.trunc(Number(qtyIn));
+        if (!Number.isFinite(qtyUsed) || qtyUsed < 1 || qtyUsed > draft.quantity) {
+          alert(`Enter a number from 1 to ${draft.quantity}.`);
+          return;
+        }
+      }
+      const remaining = draft.quantity - qtyUsed;
+      // Some left on the shelf → the row stays In Stock with what's left.
+      toSave = { ...draft, quantity: remaining, status: remaining > 0 ? "in_stock" : "used" };
+      const same = usedRows.find(
+        (u) => normBranch(u.branch) === normBranch(draft.branch) && u.partNo.trim().toLowerCase() === draft.partNo.trim().toLowerCase() && u.ticketNo.trim().toLowerCase() === ticketNo.toLowerCase(),
+      );
+      usedLine = {
+        branch: same?.branch ?? draft.branch,
+        partNo: same?.partNo ?? draft.partNo,
+        ticketNo: same?.ticketNo ?? ticketNo,
+        quantity: (same?.quantity ?? 0) + qtyUsed,
+        usedDate: same?.usedDate || new Date().toISOString().slice(0, 10),
+        tech: same?.tech ?? "",
+        storageLocation: draft.storageLocation,
+        description: draft.description,
+        notes: [same?.notes, `Marked Used by ${displayName || "someone"}`].filter(Boolean).join(" · "),
+      };
+    }
     setBusy(true);
     try {
-      const saved = await upsertTruckStockRow(draft);
+      if (usedLine) {
+        // Used list first, so a failure never leaves the part off stock without a Used record.
+        const { errors } = await bulkUpsertTruckStockUsed([usedLine]);
+        if (errors.length > 0) throw new Error(`couldn't add it to the Used list (${errors[0]})`);
+        setUsedRows(await getTruckStockUsed());
+        setTicketsInApp(null);
+      }
+      const saved = await upsertTruckStockRow(toSave);
       setRows((prev) => {
         const idx = prev.findIndex((r) => r.id === saved.id);
         if (idx >= 0) {
@@ -815,6 +878,7 @@ function BranchSection({
               <th className="px-3 py-2 text-right">Qty</th>
               <th className="px-3 py-2 text-left">Status</th>
               <th className="px-3 py-2 text-left">Other branches</th>
+              <th className="px-3 py-2 text-right" title="IN STOCK quantity across all branches">Total in stock</th>
               <th className="px-3 py-2 text-left">Notes</th>
               <th className="px-3 py-2 text-left">Date Added</th>
               <th className="px-3 py-2 text-left">Aging</th>
@@ -823,9 +887,15 @@ function BranchSection({
           </thead>
           <tbody>
             {rows.map((row) => {
-              const key = row.partNo.toLowerCase();
+              const key = row.partNo.trim().toLowerCase();
               const totals = totalsByPart.get(key);
-              const elsewhere = (totals?.branches || []).filter((b) => b.branch !== row.branch && b.qty > 0);
+              const elsewhere = (totals?.branches || []).filter((b) => normBranch(b.branch) !== normBranch(row.branch) && b.qty > 0);
+              const totalInStock = totals?.total ?? 0;
+              const totalCell = (
+                <td className="px-3 py-2 text-right font-semibold text-emerald-200" title={`${totalInStock} in stock across all branches`}>
+                  {totalInStock}
+                </td>
+              );
               const isEditing = editingRow?.id === row.id;
 
               if (isEditing) {
@@ -858,13 +928,14 @@ function BranchSection({
                       ) : (
                         <div className="flex flex-wrap gap-1">
                           {elsewhere.map((e) => (
-                            <span key={e.branch} className="inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-200" title={`${e.qty} available at ${e.branch}`}>
+                            <span key={e.branch} className="inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-200" title={`${e.qty} in stock at ${e.branch}`}>
                               {e.branch} · {e.qty}
                             </span>
                           ))}
                         </div>
                       )}
                     </td>
+                    {totalCell}
                     <td className="px-2 py-1.5">
                       <input value={d.notes} onChange={(e) => setField("notes", e.target.value)} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" placeholder="Notes" />
                     </td>
@@ -932,7 +1003,7 @@ function BranchSection({
                           <span
                             key={e.branch}
                             className="inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-200"
-                            title={`${e.qty} available at ${e.branch}`}
+                            title={`${e.qty} in stock at ${e.branch}`}
                           >
                             {e.branch} · {e.qty}
                           </span>
@@ -940,6 +1011,7 @@ function BranchSection({
                       </div>
                     )}
                   </td>
+                  {totalCell}
                   <td className="px-3 py-2 text-slate-300">{row.notes || ""}</td>
                   <td className="px-3 py-2 text-slate-300 whitespace-nowrap">{formatDateAdded(row.createdAt)}</td>
                   <td className="px-3 py-2 whitespace-nowrap">

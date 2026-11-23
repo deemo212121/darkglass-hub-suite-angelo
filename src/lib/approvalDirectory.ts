@@ -15,6 +15,7 @@
 import type { ProfileRow } from "@/lib/supabase/users";
 import { getSeniorBranchManagerAssignments, type SbmBranchAssignment } from "@/lib/supabase/seniorBranchManagerAssignments";
 import { getTopApproverIds, getPhDepartmentManagers, getPartsHeadIds, type PhDepartmentManagerRow } from "@/lib/supabase/approvalAreas";
+import { branchMatchKey } from "@/lib/branchName";
 
 export type ChainLevel = "tech" | "branch" | "sbm" | "atd" | "td";
 
@@ -39,8 +40,9 @@ export const CHAIN_LEVEL_LABEL: Record<ChainLevel, string> = {
 };
 
 /** Same normalization as the SQL chain_norm_branch — "Jackson,MS" = "Jackson, MS". */
+/** Same-branch key — the app-wide rule (lib/branchName.ts), same as SQL chain_norm_branch (0474). */
 export function normBranch(b: string | null | undefined): string {
-  return (b ?? "").trim().replace(/\s*,\s*/g, ", ").toLowerCase();
+  return branchMatchKey(b);
 }
 
 const heldRoles = (p: Pick<ProfileRow, "role" | "extra_roles">) =>

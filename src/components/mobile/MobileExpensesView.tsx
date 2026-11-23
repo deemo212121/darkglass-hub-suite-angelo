@@ -174,11 +174,11 @@ export function MobileExpensesView({ profileId, companyId }: { profileId: string
   };
 
   const remove = async (e: ExpenseRow) => {
-    if (!confirm("Delete this expense request? This cannot be undone.")) return;
+    if (!confirm("Delete this expense request?")) return;
     setDeletingId(e.id);
     try {
+      // Receipt files are kept, so Accounting can restore the request with them (migration 0473).
       await deleteExpense(e.id);
-      for (const r of e.receipts) if (r.path) deleteExpenseReceiptFile(r.path).catch((err) => console.error("receipt cleanup failed", err));
       if (editing?.id === e.id) resetForm();
       await refresh();
     } catch (err) {

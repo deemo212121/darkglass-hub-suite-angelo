@@ -3,16 +3,18 @@ import { createPortal } from "react-dom";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
 import { useNavigate } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
-import { ChevronLeft, Download, DollarSign, Clock, CheckCircle, Wallet, Pencil, Trash2, XCircle, Paperclip, Loader2, Receipt, TrendingUp, Building2, Plane, BedDouble, Car, Undo2 } from "lucide-react";
+import { ChevronLeft, Download, DollarSign, Clock, CheckCircle, Wallet, Pencil, Trash2, XCircle, Paperclip, Loader2, Receipt, TrendingUp, Building2, Plane, BedDouble, Car, Undo2, RotateCcw } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, getHireDatesByProfileIds, getMyProfileId, type ProfileRow } from "@/lib/supabase/users";
-import { deleteExpenseReceiptFile } from "@/lib/firebase/storage";
 import { reimbursementTypeLabel,
   getCompanyExpenses,
   updateExpenseStatus,
   undoExpenseStatus,
   deleteExpense,
+  getDeletedExpenses,
+  restoreDeletedExpense,
+  type DeletedExpense,
   type ExpenseCategory,
   type ExpenseRow,
   type ExpenseStatus,
@@ -23,6 +25,7 @@ import { DateModeBar } from "@/components/DateModeBar";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { ReceiptLightbox, isPdfReceipt } from "@/components/ReceiptLightbox";
 import { getFlashTechTripReceipts } from "@/lib/supabase/flashTechTrips";
+import { useRememberedState } from "@/hooks/useRememberedState";
 
 function expenseStatusColor(status: ExpenseStatus): string {
   switch (status) {
@@ -130,22 +133,24 @@ export function ExpenseTrackingPage({
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
 
-  const [search, setSearch] = useState("");
+  // Search, dates, country, branch and the Flash Tech view are remembered per tab while this browser tab is open.
+  const rememberKey = `expenses:${sub.slug}:${flashTechOnly ? "flash" : selfFiledOnly ? "requests" : categoryOnly ?? "all"}`;
+  const [search, setSearch] = useRememberedState(`${rememberKey}:search`, "");
   /** Date range (YYYY-MM-DD, inclusive) — limits the summary cards, the totals and the list. Blank = all dates. */
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [dateFrom, setDateFrom] = useRememberedState(`${rememberKey}:from`, "");
+  const [dateTo, setDateTo] = useRememberedState(`${rememberKey}:to`, "");
   /** One funnel filter per column (TicketColumnFilter): column key → selected values; empty = no filter. */
   const [colFilters, setColFilters] = useState<Record<string, Set<string>>>({});
   /** Employee Requests only: PH (assigned branch Philippines) or US staff. */
-  const [country, setCountry] = useState<"all" | "PH" | "US">("all");
+  const [country, setCountry] = useRememberedState<"all" | "PH" | "US">(`${rememberKey}:country`, "all");
   /** The employee's assigned branch — "" = every branch. Totals follow it, to see what each branch costs. */
-  const [branch, setBranch] = useState("");
+  const [branch, setBranch] = useRememberedState(`${rememberKey}:branch`, "");
   // The table's sideways scroll — mirrored by a scrollbar pinned to the bottom of the screen.
   const tableScrollRef = useRef<HTMLDivElement>(null);
   /** Spend by branch order: biggest spend first, or A → Z. */
   const [branchSort, setBranchSort] = useState<"amount" | "name">("amount");
   /** Flash Tech only: trip lines, the Flash Tech / Allowance requests employees send, or both. */
-  const [flashTechView, setFlashTechView] = useState<"all" | "trips" | "hotel" | "carRental" | "allowance">("all");
+  const [flashTechView, setFlashTechView] = useRememberedState<"all" | "trips" | "hotel" | "carRental" | "allowance">(`${rememberKey}:flash-view`, "all");
   /** Rows whose Description is opened in full (clicked). */
   const [openDescriptions, setOpenDescriptions] = useState<Set<string>>(new Set());
   const toggleDescription = (id: string) =>
@@ -437,18 +442,51 @@ export function ExpenseTrackingPage({
   };
 
   const handleDelete = async (row: ExpenseRow) => {
-    if (!confirm("Delete this expense record? This cannot be undone.")) return;
+    if (!confirm("Delete this expense record? Accounting can bring it back from Deleted.")) return;
     setDeletingId(row.id);
     try {
+      // Receipt files are kept, so Restore brings the expense back with its receipts (migration 0473).
       await deleteExpense(row.id);
-      for (const r of row.receipts) {
-        if (r.path) deleteExpenseReceiptFile(r.path).catch((err) => console.error("Failed to delete receipt file:", err));
-      }
       setExpenses(await getCompanyExpenses());
+      if (deletedList) void loadDeleted();
     } catch (error) {
       alert(`Failed to delete expense: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  // Deleted expenses (migration 0473) — Accounting / Admin can restore them.
+  const [deletedList, setDeletedList] = useState<DeletedExpense[] | null>(null);
+  const [deletedOpen, setDeletedOpen] = useState(false);
+  const [deletedError, setDeletedError] = useState<string | null>(null);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+  const loadDeleted = async () => {
+    setDeletedError(null);
+    try {
+      setDeletedList(await getDeletedExpenses());
+    } catch (error) {
+      setDeletedError(error instanceof Error ? error.message : "Couldn't load deleted expenses.");
+      setDeletedList([]);
+    }
+  };
+  const openDeleted = () => {
+    setDeletedOpen(true);
+    setDeletedList(null);
+    void loadDeleted();
+  };
+  const handleRestore = async (d: DeletedExpense) => {
+    const ex = d.expense;
+    if (!confirm(`Restore ${profileName(ex.profileId)}'s ${fmtMoney(ex.amount)} ${ex.category} expense (${ex.expenseDate || "no date"})? It comes back as ${ex.status}.`)) return;
+    setRestoringId(d.logId);
+    try {
+      await restoreDeletedExpense(d.logId);
+      setDeletedList((prev) => (prev ?? []).filter((x) => x.logId !== d.logId));
+      setExpenses(await getCompanyExpenses());
+    } catch (error) {
+      alert(`Couldn't restore: ${error instanceof Error ? error.message : "Unknown error"}`);
+    } finally {
+      setRestoringId(null);
     }
   };
 
@@ -688,6 +726,11 @@ export function ExpenseTrackingPage({
               )}
             </div>
             <div className="flex justify-end gap-2 mt-3">
+              {canReviewExpenses && (
+                <button onClick={openDeleted} title="Deleted expenses — restore one" className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm font-semibold transition inline-flex items-center gap-2">
+                  <Trash2 className="h-4 w-4" /> Deleted
+                </button>
+              )}
               <button onClick={handleDownload} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm font-semibold transition inline-flex items-center gap-2">
                 <Download className="h-4 w-4" /> Export CSV
               </button>
@@ -923,6 +966,64 @@ export function ExpenseTrackingPage({
       <FloatingHorizontalScrollbar targetRef={tableScrollRef} />
 
       {previewReceiptUrl && <ReceiptLightbox url={previewReceiptUrl} urls={previewReceiptList} onClose={() => setPreviewReceiptUrl(null)} />}
+
+      {deletedOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => !restoringId && setDeletedOpen(false)}>
+          <div className="bg-slate-900 border border-white/10 rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[85vh] flex flex-col" onClick={(ev) => ev.stopPropagation()}>
+            <div className="flex items-start justify-between mb-1">
+              <h3 className="text-lg font-bold text-white">Deleted expenses</h3>
+              <button onClick={() => setDeletedOpen(false)} className="text-slate-400 hover:text-white transition p-1">✕</button>
+            </div>
+            <p className="text-xs text-slate-400 mb-3">Restore puts an expense back exactly as it was — same status and receipts. Only deletes made after migration 0473 is run are listed.</p>
+            {deletedError ? (
+              <p className="text-sm text-amber-300">{deletedError}</p>
+            ) : deletedList === null ? (
+              <div className="flex items-center gap-2 text-sm text-slate-400"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+            ) : deletedList.length === 0 ? (
+              <p className="text-sm text-slate-400">Nothing deleted to restore.</p>
+            ) : (
+              <div className="overflow-auto">
+                <table className="w-full text-xs text-white">
+                  <thead className="bg-slate-800/60 text-slate-300 sticky top-0">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Deleted</th>
+                      <th className="px-3 py-2 text-left">Deleted by</th>
+                      <th className="px-3 py-2 text-left">Employee</th>
+                      <th className="px-3 py-2 text-left">Category</th>
+                      <th className="px-3 py-2 text-left">Date</th>
+                      <th className="px-3 py-2 text-right">Amount</th>
+                      <th className="px-3 py-2 text-left">Status</th>
+                      <th className="px-3 py-2"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {deletedList.map((d) => (
+                      <tr key={d.logId} className="border-t border-white/5">
+                        <td className="px-3 py-2 whitespace-nowrap text-slate-300">{d.deletedAt ? new Date(d.deletedAt).toLocaleString() : "—"}</td>
+                        <td className="px-3 py-2">{d.deletedByName || "—"}</td>
+                        <td className="px-3 py-2">{profileName(d.expense.profileId)}</td>
+                        <td className="px-3 py-2">{d.expense.category}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">{d.expense.expenseDate || "—"}</td>
+                        <td className="px-3 py-2 text-right font-semibold tabular-nums">{fmtMoney(d.expense.amount)}</td>
+                        <td className="px-3 py-2">{d.expense.status}</td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            onClick={() => void handleRestore(d)}
+                            disabled={!!restoringId}
+                            className="px-2 py-1 bg-emerald-600/80 hover:bg-emerald-600 disabled:opacity-50 text-white rounded text-xs transition inline-flex items-center gap-1"
+                          >
+                            {restoringId === d.logId ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />} Restore
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {rejecting && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => statusChangingId !== rejecting.id && setRejecting(null)}>

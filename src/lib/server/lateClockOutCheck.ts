@@ -31,6 +31,7 @@
  */
 import { timezoneForBranch, nowInTimezone, DEFAULT_ATTENDANCE_TIMEZONE } from "../attendanceGrace";
 import { TECHNICIAN_PAY_ROLES, normalizeRole } from "../roleLabels";
+import { branchMatchKey } from "../branchName";
 
 const EXTENSION_MINUTES = 10;
 // HR is only alerted past this many minutes over the expected Time Out
@@ -69,7 +70,7 @@ interface Summary {
 }
 
 const norm = (s: string | null | undefined) => String(s ?? "").trim().toLowerCase();
-const normBranch = (s: string | null | undefined) => norm(s).replace(/\s*,\s*/g, ",");
+const normBranch = branchMatchKey;
 
 function addDays(iso: string, n: number): string {
   const d = new Date(`${iso}T00:00:00Z`);

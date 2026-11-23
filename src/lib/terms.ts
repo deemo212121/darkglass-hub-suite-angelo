@@ -1,3 +1,4 @@
+import { branchMatchKey } from "./branchName";
 /**
  * Terms & Conditions (migration 0455) — the rules shared by the Admin page
  * and the accept window:
@@ -83,7 +84,7 @@ export const EVERYONE: TermsAudience = { everyone: true };
 
 const up = (s: string | null | undefined) => (s ?? "").trim().toUpperCase();
 const low = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
-const branchKey = (s: string | null | undefined) => (s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const branchKey = branchMatchKey;
 
 /** A clean audience from whatever is stored (old / partial json). */
 export function toAudience(raw: unknown): TermsAudience {

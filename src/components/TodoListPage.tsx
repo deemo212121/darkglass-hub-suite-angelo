@@ -8,6 +8,7 @@ import { getCompanyTickets } from "@/lib/supabase/tickets";
 import { useAuth } from "@/lib/auth";
 import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 import { FloatingHorizontalScrollbar } from "@/components/FloatingHorizontalScrollbar";
+import { sameBranch } from "@/lib/branchName";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -167,7 +168,7 @@ export function TodoListPage({ mod, sub }: Props) {
   // every OTHER active filter while excluding its own selection - same
   // "Excel autofilter" pattern TicketList.tsx uses.
   const matchesCommon = (row: TodoRow, opts: { skip?: ColumnFilterKey } = {}) => {
-    if (branch && normalizeBranch(row.location) !== branch) return false;
+    if (branch && !sameBranch(normalizeBranch(row.location), branch)) return false;
     return COLUMN_FILTER_KEYS.every((key) => {
       if (key === opts.skip) return true;
       const sel = columnFilters[key];
