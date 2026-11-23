@@ -2,7 +2,7 @@ import { trainingWindow } from "@/lib/fieldStartDate";
 import { centsSummaryTotal, groupCustomPayLines } from "@/lib/payRounding";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { X, Plus, Trash2, Loader2, Maximize2, FileText, StickyNote } from "lucide-react";
+import { X, Plus, Trash2, Loader2, Maximize2, FileText, StickyNote, AlertTriangle, Undo2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { buildOvertimeDisplay, type OvertimeDisplayWeek } from "@/lib/techOvertimeDisplay";
 import { getEmployeeFileUrl, getPaystubForPeriod, type EmployeeFileRow } from "@/lib/supabase/employeeFiles";
@@ -91,6 +91,28 @@ interface Props {
 // Internal Note explaining why — keyed by technician + period, kept at
 // module level so going ← Prev and back doesn't forget the edits.
 const reportsNeedingNote = new Set<string>();
+
+// Every change made on a report since its last Done (Accounting's rule:
+// a change only sticks with an Internal Note + Done). Leaving the report
+// without Done undoes them all, newest first. Kept at module level, keyed
+// like reportsNeedingNote, so ← Prev to the attendance step keeps them.
+type PendingChange =
+  | { kind: "rate"; category: string; old: number }
+  | { kind: "customAdded"; id: string }
+  | { kind: "customUpdated"; id: string; old: { label?: string; value?: number; rate?: number; isWageIncludable?: boolean; workWeekStart?: string | null } }
+  | { kind: "customDeleted"; item: TechCustomPayItem }
+  | { kind: "taxAdded"; id: string }
+  | { kind: "taxUpdated"; id: string; old: { label?: string; mode?: TechTaxMode; amount?: number } }
+  | { kind: "taxDeleted"; line: TechTaxLine }
+  | { kind: "manual"; field: "ldtCount" | "mileage" | "trainingValue" | "owIncentivePct"; old: number }
+  | { kind: "category"; category: string; old: number }
+  | { kind: "otMode"; old: "company" | "state" };
+const pendingReportChanges = new Map<string, PendingChange[]>();
+
+/** True when this technician/period's Tech Activity Report has changes not yet finished with a note + Done. */
+export function hasPendingReportChanges(profileId: string, periodStart: string, periodEnd: string): boolean {
+  return (pendingReportChanges.get(`${profileId}|${periodStart}|${periodEnd}`)?.length ?? 0) > 0;
+}
 
 function fmt(amount: number) {
   return `$${amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
@@ -485,8 +507,9 @@ export function TechActivityReportModal({
     if (amount === techRateFor(category)) return;
     setSavingRateKey(category);
     try {
+      const old = techRateFor(category);
       await upsertResolvedTechRepairRate(techRepairRates, category, branch, amount);
-      markChanged();
+      markChanged({ kind: "rate", category, old });
       onRatesChanged();
     } catch (err) {
       alert(`Failed to save rate: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -500,7 +523,7 @@ export function TechActivityReportModal({
     try {
       const created = await addTechCustomPayItem(employee.id, periodStart, periodEnd, customItems.length);
       setCustomItems((prev) => [...prev, created]);
-      markChanged();
+      markChanged({ kind: "customAdded", id: created.id });
       onCustomItemsChanged();
     } catch (err) {
       alert(`Failed to add line: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -524,7 +547,7 @@ export function TechActivityReportModal({
       const label = `Mileage (Car IQ $${carIqSwitch.rateAfter.toFixed(2)}/mi, from ${carIqSwitch.date})`;
       await updateTechCustomPayItem(created.id, { label, rate: carIqSwitch.rateAfter, isWageIncludable: false });
       setCustomItems((prev) => [...prev, { ...created, label, rate: carIqSwitch.rateAfter, isWageIncludable: false }]);
-      markChanged();
+      markChanged({ kind: "customAdded", id: created.id });
       onCustomItemsChanged();
     } catch (err) {
       alert(`Failed to add Car IQ mileage line: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -586,10 +609,22 @@ export function TechActivityReportModal({
   const [needsNote, setNeedsNote] = useState(() => reportsNeedingNote.has(noteKey));
   useEffect(() => { setNeedsNote(reportsNeedingNote.has(noteKey)); }, [noteKey]);
   const noteInputRef = useRef<HTMLTextAreaElement>(null);
-  const markChanged = () => {
+  const [pendingCount, setPendingCount] = useState(() => pendingReportChanges.get(noteKey)?.length ?? 0);
+  useEffect(() => { setPendingCount(pendingReportChanges.get(noteKey)?.length ?? 0); }, [noteKey]);
+  const markChanged = (change: PendingChange) => {
     if (inputsLocked) return;
     reportsNeedingNote.add(noteKey);
     setNeedsNote(true);
+    const list = pendingReportChanges.get(noteKey) ?? [];
+    list.push(change);
+    pendingReportChanges.set(noteKey, list);
+    setPendingCount(list.length);
+  };
+  const clearPending = () => {
+    pendingReportChanges.delete(noteKey);
+    reportsNeedingNote.delete(noteKey);
+    setPendingCount(0);
+    setNeedsNote(false);
   };
   const loadNotes = async () => {
     try {
@@ -668,7 +703,8 @@ export function TechActivityReportModal({
     try {
       await updateTechCustomPayItem(item.id, fields);
       setCustomItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, ...fields } : i)));
-      if ((Object.keys(fields) as (keyof typeof fields)[]).some((k) => (item[k] ?? null) !== (fields[k] ?? null))) markChanged();
+      const keys = (Object.keys(fields) as (keyof typeof fields)[]).filter((k) => (item[k] ?? null) !== (fields[k] ?? null));
+      if (keys.length > 0) markChanged({ kind: "customUpdated", id: item.id, old: Object.fromEntries(keys.map((k) => [k, item[k] ?? null])) });
       onCustomItemsChanged();
     } catch (err) {
       alert(`Failed to save line: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -681,7 +717,7 @@ export function TechActivityReportModal({
     try {
       await deleteTechCustomPayItem(item.id);
       setCustomItems((prev) => prev.filter((i) => i.id !== item.id));
-      markChanged();
+      markChanged({ kind: "customDeleted", item });
       onCustomItemsChanged();
     } catch (err) {
       alert(`Failed to remove line: ${err instanceof Error ? err.message : "Unknown error"}`);
@@ -707,7 +743,7 @@ export function TechActivityReportModal({
     try {
       const created = await addTechTaxLine(employee.id, periodStart, periodEnd, taxLines.length);
       setTaxLines((prev) => [...prev, created]);
-      markChanged();
+      markChanged({ kind: "taxAdded", id: created.id });
     } catch (err) {
       alert(`Failed to add tax line: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
@@ -717,7 +753,8 @@ export function TechActivityReportModal({
     try {
       await updateTechTaxLine(line.id, fields);
       setTaxLines((prev) => prev.map((l) => (l.id === line.id ? { ...l, ...fields } : l)));
-      markChanged();
+      const keys = (Object.keys(fields) as (keyof typeof fields)[]).filter((k) => line[k] !== fields[k]);
+      if (keys.length > 0) markChanged({ kind: "taxUpdated", id: line.id, old: Object.fromEntries(keys.map((k) => [k, line[k]])) });
     } catch (err) {
       alert(`Failed to save tax line: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -729,7 +766,7 @@ export function TechActivityReportModal({
     try {
       await deleteTechTaxLine(line.id);
       setTaxLines((prev) => prev.filter((l) => l.id !== line.id));
-      markChanged();
+      markChanged({ kind: "taxDeleted", line });
     } catch (err) {
       alert(`Failed to remove tax line: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
@@ -827,10 +864,141 @@ export function TechActivityReportModal({
   // [appearance:textfield] + the two ::-webkit-*-spin-button rules hide the
   // native up/down increment/decrement arrows every type="number" input here
   // otherwise shows — purely cosmetic, doesn't affect typing/blur-to-save.
+  // Puts every change since the last Done back, newest first. Lines removed
+  // are re-created (new ids, same values); counts, rates, manual values and
+  // the pay mode go back to what they were before the first change.
+  const [discarding, setDiscarding] = useState(false);
+  const discardPendingChanges = async () => {
+    const list = [...(pendingReportChanges.get(noteKey) ?? [])].reverse();
+    const ids = new Map<string, string>();
+    const idOf = (id: string) => ids.get(id) ?? id;
+    const manualOld = new Map<"ldtCount" | "mileage" | "trainingValue" | "owIncentivePct", number>();
+    const categoryOld = new Map<string, number>();
+    const rateOld = new Map<string, number>();
+    let otOld: "company" | "state" | null = null;
+    let customTouched = false;
+    let taxTouched = false;
+    for (const c of list) {
+      switch (c.kind) {
+        case "customAdded": await deleteTechCustomPayItem(idOf(c.id)); customTouched = true; break;
+        case "customUpdated": await updateTechCustomPayItem(idOf(c.id), c.old); customTouched = true; break;
+        case "customDeleted": {
+          const re = await addTechCustomPayItem(employee.id, periodStart, periodEnd, customItems.length);
+          await updateTechCustomPayItem(re.id, { label: c.item.label, value: c.item.value, rate: c.item.rate, isWageIncludable: c.item.isWageIncludable, workWeekStart: c.item.workWeekStart ?? null });
+          ids.set(c.item.id, re.id);
+          customTouched = true;
+          break;
+        }
+        case "taxAdded": await deleteTechTaxLine(idOf(c.id)); taxTouched = true; break;
+        case "taxUpdated": await updateTechTaxLine(idOf(c.id), c.old); taxTouched = true; break;
+        case "taxDeleted": {
+          const re = await addTechTaxLine(employee.id, periodStart, periodEnd, c.line.sortOrder);
+          await updateTechTaxLine(re.id, { label: c.line.label, mode: c.line.mode, amount: c.line.amount });
+          ids.set(c.line.id, re.id);
+          taxTouched = true;
+          break;
+        }
+        // Reversed list: the last one written is the value before the first change.
+        case "manual": manualOld.set(c.field, c.old); break;
+        case "category": categoryOld.set(c.category, c.old); break;
+        case "rate": rateOld.set(c.category, c.old); break;
+        case "otMode": otOld = c.old; break;
+      }
+    }
+    // One manual row holds all four values — restore them one at a time on
+    // top of each other so a later restore doesn't write an earlier one back.
+    let manual = { ...techManual };
+    for (const [field, old] of manualOld) {
+      await onManualPayBlur({ ...row, techManual: { ...manual } }, field, String(old));
+      manual = { ...manual, [field]: old };
+    }
+    for (const [category, old] of categoryOld) await onCategoryOverrideBlur(employee.id, category, String(old));
+    if (rateOld.size > 0) {
+      for (const [category, old] of rateOld) await upsertResolvedTechRepairRate(techRepairRates, category, branch, old);
+      onRatesChanged();
+    }
+    if (otOld && onSetHourlyOtMode && (otOld === "state") !== appliedIsState) {
+      await onSetHourlyOtMode(otOld, otOld === "state" ? stateHourlyOtTotal : companyHourlyOtTotal, otOld === "state" ? stateRegularShare : undefined);
+    }
+    if (customTouched) {
+      setCustomItems(await getTechCustomPayItems(employee.id, periodStart, periodEnd));
+      onCustomItemsChanged();
+    }
+    if (taxTouched) setTaxLines(await getTechTaxLines(employee.id, periodStart, periodEnd));
+    clearPending();
+  };
+  // Leaving (X, clicking outside): a change only sticks with a note + Done.
+  // Leaving (X, clicking outside) with unfinished changes opens the notice
+  // below: add a note + Done, keep editing, or undo everything and close.
+  const [leaveAsk, setLeaveAsk] = useState(false);
+  const requestClose = () => {
+    if (discarding) return;
+    if (pendingCount === 0) { onClose(); return; }
+    setLeaveAsk(true);
+  };
+  const undoAndClose = async () => {
+    setDiscarding(true);
+    try {
+      await discardPendingChanges();
+      toast.success("Changes undone. The report is back to how it was.");
+      setLeaveAsk(false);
+      onClose();
+    } catch (err) {
+      toast.error(`Couldn't undo every change: ${err instanceof Error ? err.message : "Unknown error"}. Check the report before leaving.`);
+    } finally {
+      setDiscarding(false);
+    }
+  };
+  const goToNote = () => {
+    setLeaveAsk(false);
+    setTimeout(() => { noteInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); noteInputRef.current?.focus(); }, 0);
+  };
+  // The notice lists one line per THING changed, not per save: a custom line
+  // added and then filled in (label, value, rate — each saved on its own) is
+  // one "added" line; a line added and removed again isn't a change at all.
+  const summarizePending = (list: PendingChange[]): string[] => {
+    const money = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+    const customLabel = (id: string) => { const i = customItems.find((x) => x.id === id); return i?.label ? `: ${i.label}` : ""; };
+    const taxLabel = (id: string) => { const l = taxLines.find((x) => x.id === id); return l?.label ? `: ${l.label}` : ""; };
+    const manualName = { ldtCount: "LDT", mileage: "Mileage", trainingValue: "Training Paid", owIncentivePct: "OW Incentive %" };
+    const out = new Map<string, string>();
+    const added = new Set<string>();
+    for (const c of list) {
+      switch (c.kind) {
+        case "customAdded": added.add(c.id); out.set(`c:${c.id}`, `Custom line added${customLabel(c.id)}`); break;
+        case "customUpdated": if (!added.has(c.id)) out.set(`c:${c.id}`, `Custom line edited${customLabel(c.id)}`); break;
+        case "customDeleted":
+          if (added.has(c.item.id)) out.delete(`c:${c.item.id}`);
+          else out.set(`c:${c.item.id}`, `Custom line removed${c.item.label ? `: ${c.item.label}` : ""}`);
+          break;
+        case "taxAdded": added.add(c.id); out.set(`t:${c.id}`, `Tax line added${taxLabel(c.id)}`); break;
+        case "taxUpdated": if (!added.has(c.id)) out.set(`t:${c.id}`, `Tax line edited${taxLabel(c.id)}`); break;
+        case "taxDeleted":
+          if (added.has(c.line.id)) out.delete(`t:${c.line.id}`);
+          else out.set(`t:${c.line.id}`, `Tax line removed${c.line.label ? `: ${c.line.label}` : ""}`);
+          break;
+        case "manual": if (!out.has(`m:${c.field}`)) out.set(`m:${c.field}`, `${manualName[c.field]} changed (was ${c.old})`); break;
+        case "category": if (!out.has(`k:${c.category}`)) out.set(`k:${c.category}`, `${c.category} count changed (was ${c.old})`); break;
+        case "rate": if (!out.has(`r:${c.category}`)) out.set(`r:${c.category}`, `${c.category} rate changed (was ${money(c.old)})`); break;
+        case "otMode": if (!out.has("ot")) out.set("ot", `Hourly + OT pay switched from ${c.old === "state" ? "State" : "Company"}`); break;
+      }
+    }
+    return [...out.values()];
+  };
+  const pendingList = leaveAsk ? summarizePending(pendingReportChanges.get(noteKey) ?? []) : [];
+  const changedCount = pendingList.length;
+  // Reloading or closing the browser tab can't undo anything — at least warn.
+  useEffect(() => {
+    if (pendingCount === 0) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [pendingCount]);
+
   const rateCellClass = "w-20 bg-slate-800/50 border border-white/10 rounded px-1.5 py-1 text-right text-xs text-white focus:border-blue-500 focus:outline-none disabled:opacity-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={requestClose}>
       <div
         className={`bg-slate-900 border border-white/15 rounded-xl w-full ${comparePaystub ? "max-w-[98vw] h-[94vh] max-h-[94vh]" : "max-w-6xl max-h-[90vh]"} flex flex-col shadow-2xl`}
         onClick={(e) => e.stopPropagation()}
@@ -844,8 +1012,8 @@ export function TechActivityReportModal({
               {!readOnly && lockedNotice && <span className="ml-2 rounded border border-red-400/30 bg-red-500/10 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-red-300">🔒 Locked</span>}
             </p>
           </div>
-          <button onClick={onClose} className="text-white/40 hover:text-white/80 transition">
-            <X className="h-5 w-5" />
+          <button onClick={requestClose} disabled={discarding} className="text-white/40 hover:text-white/80 transition">
+            {discarding ? <Loader2 className="h-5 w-5 animate-spin" /> : <X className="h-5 w-5" />}
           </button>
         </div>
 
@@ -1034,7 +1202,7 @@ export function TechActivityReportModal({
                               defaultValue={meta.value || ""}
                               disabled={savingValue}
                               placeholder="0"
-                              onBlur={(e) => { const changed = (Number(e.target.value) || 0) !== (Number(meta.value) || 0); void onManualPayBlur(row, field, e.target.value).then(() => { if (changed) markChanged(); }); }}
+                              onBlur={(e) => { const changed = (Number(e.target.value) || 0) !== (Number(meta.value) || 0); const old = Number(meta.value) || 0; void onManualPayBlur(row, field, e.target.value).then(() => { if (changed) markChanged({ kind: "manual", field, old }); }); }}
                               className={rateCellClass}
                             />
                           </div>
@@ -1091,7 +1259,7 @@ export function TechActivityReportModal({
                               defaultValue={count || ""}
                               placeholder="0"
                               disabled={savingValue}
-                              onBlur={(e) => { const changed = (Number(e.target.value) || 0) !== (Number(count) || 0); void onCategoryOverrideBlur(employee.id, type, e.target.value).then(() => { if (changed) markChanged(); }); }}
+                              onBlur={(e) => { const changed = (Number(e.target.value) || 0) !== (Number(count) || 0); const old = Number(count) || 0; void onCategoryOverrideBlur(employee.id, type, e.target.value).then(() => { if (changed) markChanged({ kind: "category", category: type, old }); }); }}
                               className={rateCellClass}
                             />
                           </div>
@@ -1145,7 +1313,7 @@ export function TechActivityReportModal({
                           defaultValue={twoTechCount || ""}
                           placeholder="0"
                           disabled={savingCategoryOverrideKey === `${employee.id}:Two Tech`}
-                          onBlur={(e) => { const changed = (Number(e.target.value) || 0) !== (Number(twoTechCount) || 0); void onCategoryOverrideBlur(employee.id, "Two Tech", e.target.value).then(() => { if (changed) markChanged(); }); }}
+                          onBlur={(e) => { const changed = (Number(e.target.value) || 0) !== (Number(twoTechCount) || 0); const old = Number(twoTechCount) || 0; void onCategoryOverrideBlur(employee.id, "Two Tech", e.target.value).then(() => { if (changed) markChanged({ kind: "category", category: "Two Tech", old }); }); }}
                           className={rateCellClass}
                         />
                       </div>
@@ -1260,7 +1428,7 @@ export function TechActivityReportModal({
                           defaultValue={techManual.owIncentivePct || ""}
                           placeholder="0"
                           disabled={savingManualKey === `${employee.id}:owIncentivePct`}
-                          onBlur={(e) => { const changed = (Number(e.target.value) || 0) !== (Number(techManual.owIncentivePct) || 0); void onManualPayBlur(row, "owIncentivePct", e.target.value).then(() => { if (changed) markChanged(); }); }}
+                          onBlur={(e) => { const changed = (Number(e.target.value) || 0) !== (Number(techManual.owIncentivePct) || 0); const old = Number(techManual.owIncentivePct) || 0; void onManualPayBlur(row, "owIncentivePct", e.target.value).then(() => { if (changed) markChanged({ kind: "manual", field: "owIncentivePct", old }); }); }}
                           className="w-16 bg-slate-800/50 border border-white/10 rounded px-1.5 py-1 text-right text-xs text-white focus:border-blue-500 focus:outline-none disabled:opacity-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         />
                         <span className="text-xs text-slate-400">%</span>
@@ -1525,7 +1693,7 @@ export function TechActivityReportModal({
                               type="button"
                               disabled={stateMatchRequired || hourlyOtModeBusy || loadingStateComparison || periodDataSettling}
                               title={loadingStateComparison ? "Still loading this technician's per-day state comparison — wait for it to finish before switching modes." : undefined}
-                              onClick={() => { const changed = appliedIsState; void Promise.resolve(onSetHourlyOtMode("company", companyHourlyOtTotal)).then(() => { if (changed) markChanged(); }); }}
+                              onClick={() => { const changed = appliedIsState; void Promise.resolve(onSetHourlyOtMode("company", companyHourlyOtTotal)).then(() => { if (changed) markChanged({ kind: "otMode", old: "state" }); }); }}
                               className={`px-2 py-0.5 rounded-full transition disabled:opacity-50 ${!(appliedIsState || stateMatchRequired) ? "bg-slate-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
                             >
                               Company
@@ -1534,7 +1702,7 @@ export function TechActivityReportModal({
                               type="button"
                               disabled={stateMatchRequired || hourlyOtModeBusy || loadingStateComparison || periodDataSettling}
                               title={loadingStateComparison ? "Still loading this technician's per-day state comparison — wait for it to finish before switching modes." : undefined}
-                              onClick={() => { const changed = !appliedIsState; void Promise.resolve(onSetHourlyOtMode("state", stateHourlyOtTotal, stateRegularShare)).then(() => { if (changed) markChanged(); }); }}
+                              onClick={() => { const changed = !appliedIsState; void Promise.resolve(onSetHourlyOtMode("state", stateHourlyOtTotal, stateRegularShare)).then(() => { if (changed) markChanged({ kind: "otMode", old: "company" }); }); }}
                               className={`px-2 py-0.5 rounded-full transition disabled:opacity-50 ${(appliedIsState || stateMatchRequired) ? "bg-emerald-700 text-white" : "text-slate-500 hover:text-slate-300"}`}
                             >
                               State
@@ -1691,7 +1859,7 @@ export function TechActivityReportModal({
                 )}
                 {notesError && <p className="text-xs text-red-300">{notesError}</p>}
                 {needsNote && (
-                  <p className="text-xs text-amber-300">This report was changed. Add a note saying what changed and why; Done stays off until you do.</p>
+                  <p className="text-xs text-amber-300">This report was changed. Add a note saying what changed and why; Done stays off until you do. Leaving without a note + Done undoes the changes.</p>
                 )}
                 <div className="flex items-end gap-2">
                   <textarea
@@ -1717,6 +1885,65 @@ export function TechActivityReportModal({
           )}
         </div>
 
+        {leaveAsk && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onClick={(e) => { e.stopPropagation(); if (!discarding) setLeaveAsk(false); }}>
+            <div className="w-full max-w-md overflow-hidden rounded-2xl border border-amber-400/30 bg-slate-900 shadow-2xl shadow-amber-900/20" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="tar-leave-title">
+              <div className="flex items-start gap-3 border-b border-white/10 bg-gradient-to-r from-amber-500/15 to-transparent px-5 py-4">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/20 ring-1 ring-amber-400/40">
+                  <AlertTriangle className="h-5 w-5 text-amber-300" />
+                </div>
+                <div>
+                  <p id="tar-leave-title" className="font-semibold text-white">Unfinished changes</p>
+                  <p className="mt-0.5 text-sm text-slate-300">
+                    {changedCount === 0 ? "Changes" : `${changedCount} change${changedCount === 1 ? "" : "s"}`} on {employee.full_name}'s report {changedCount === 1 ? "isn't" : "aren't"} finished. A change only sticks with an <span className="font-semibold text-amber-200">Internal Note + Done</span>.
+                  </p>
+                </div>
+              </div>
+              <ul className="max-h-48 space-y-1.5 overflow-y-auto px-5 py-3">
+                {pendingList.map((text, i) => (
+                  <li key={i} className="flex items-start gap-2 text-sm text-slate-300">
+                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+                    <span>{text}</span>
+                  </li>
+                ))}
+                {pendingList.length === 0 && (
+                  <li className="text-sm text-slate-400">Lines were added and removed again. Undo cleans up what's left.</li>
+                )}
+              </ul>
+              <div className="flex flex-col gap-2 border-t border-white/10 bg-slate-950/60 px-5 py-4 sm:flex-row sm:items-center">
+                <button
+                  type="button"
+                  onClick={() => void undoAndClose()}
+                  disabled={discarding}
+                  className="flex items-center justify-center gap-2 rounded-lg border border-red-400/40 bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-200 transition hover:bg-red-500/20 disabled:opacity-50"
+                >
+                  {discarding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Undo2 className="h-4 w-4" />}
+                  {discarding ? "Undoing…" : "Undo & close"}
+                </button>
+                <div className="flex gap-2 sm:ml-auto">
+                  <button
+                    type="button"
+                    onClick={() => setLeaveAsk(false)}
+                    disabled={discarding}
+                    className="flex-1 rounded-lg bg-slate-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-600 disabled:opacity-50 sm:flex-none"
+                  >
+                    Keep editing
+                  </button>
+                  <button
+                    type="button"
+                    onClick={goToNote}
+                    disabled={discarding}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-amber-500 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-amber-400 disabled:opacity-50 sm:flex-none"
+                  >
+                    <StickyNote className="h-4 w-4" />
+                    Add note
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {(onPrev || onDone) && (
           <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-white/10 bg-slate-950 rounded-b-xl">
             {onPrev ? (
@@ -1740,8 +1967,8 @@ export function TechActivityReportModal({
             {onDone && (
               <button
                 type="button"
-                onClick={() => onDone(reviewBreakdown)}
-                disabled={doneBusy || hourlyOtModeBusy || loadingStateComparison || periodDataSettling || stateSavePending || needsNote}
+                onClick={() => { clearPending(); onDone(reviewBreakdown); }}
+                disabled={doneBusy || discarding || hourlyOtModeBusy || loadingStateComparison || periodDataSettling || stateSavePending || needsNote}
                 title={needsNote ? "Changes were made on this report. Add an Internal Note explaining why first." : undefined}
                 className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold transition disabled:opacity-50 flex items-center gap-2"
               >

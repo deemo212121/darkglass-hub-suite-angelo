@@ -105,10 +105,15 @@ export function computeStateHourlyMatch(input: StateMatchInput): StateMatchResul
     matchMin = 0;
     otStraightStateMatch = 0;
     for (const [week, gap] of weeklyStateGaps) {
-      const credit = Math.max(weeklyIncludable.get(week) ?? 0, 0);
+      // A week whose Redos outweigh its earnings has NEGATIVE commission, and
+      // that pulls its pay below the floor too — the deficit is matched back
+      // (Finance's Step 3/9: corrected straight-time vs. the state floor).
+      // It used to be clamped to $0, so a Redo could cut pay below minimum
+      // wage unmatched.
+      const credit = weeklyIncludable.get(week) ?? 0;
       const minW = Math.max(gap.regular - credit, 0);
       matchMin += minW;
-      commissionAppliedToFloor += Math.min(credit, Math.max(gap.regular, 0));
+      commissionAppliedToFloor += Math.min(Math.max(credit, 0), Math.max(gap.regular, 0));
       const leftover = Math.max(credit - gap.regular, 0);
       const otStraightW = Math.max(gap.otStraight - leftover, 0);
       otStraightStateMatch += otStraightW;
