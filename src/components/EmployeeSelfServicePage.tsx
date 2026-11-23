@@ -40,7 +40,7 @@ import {
   type PtoRequestRow,
   type PtoType,
 } from "@/lib/supabase/pto";
-import { uploadPtoRequestAttachment, deleteExpenseReceiptFile } from "@/lib/firebase/storage";
+import { uploadPtoRequestAttachment } from "@/lib/firebase/storage";
 import {
   getCompanyTimecardCorrections,
   createTimecardCorrection,
@@ -502,11 +502,11 @@ export function EmployeeSelfServicePage({ mod, sub }: { mod: ModuleDef; sub: Sub
     [myExpenses, expenseFilter]
   );
   const handleDeleteExpense = async (row: ExpenseRow) => {
-    if (!myProfileId || !confirm("Delete this expense request? This cannot be undone.")) return;
+    if (!myProfileId || !confirm("Delete this expense request?")) return;
     setDeletingExpenseId(row.id);
     try {
+      // Receipt files are kept, so Accounting can restore the request with them (migration 0470).
       await deleteExpense(row.id);
-      for (const r of row.receipts) if (r.path) deleteExpenseReceiptFile(r.path).catch((err) => console.error("Failed to delete receipt file:", err));
       await refreshExpenses(myProfileId);
     } catch (err) {
       alert(`Failed to delete expense: ${err instanceof Error ? err.message : "Unknown error"}`);

@@ -386,3 +386,39 @@ export async function deleteExpense(id: string): Promise<void> {
     throw new Error(error.message);
   }
 }
+
+/** A deleted expense that can still be restored (migration 0470). */
+export type DeletedExpense = {
+  logId: string;
+  deletedAt: string;
+  deletedByName: string;
+  expense: ExpenseRow;
+};
+
+const needs0470 = (msg: string) =>
+  /expense_deleted_log|expense_restore/.test(msg) && /does not exist|schema cache|not find/i.test(msg)
+    ? "Restoring deleted expenses needs migration 0470 — run it in the Supabase SQL Editor first."
+    : msg;
+
+/** Deleted expenses not restored yet, newest delete first (Accounting / Admin). */
+export async function getDeletedExpenses(): Promise<DeletedExpense[]> {
+  const { data, error } = await supabase
+    .from("expense_deleted_log")
+    .select("id, deleted_at, deleted_by_name, old_row")
+    .is("restored_at", null)
+    .order("deleted_at", { ascending: false })
+    .limit(300);
+  if (error) throw new Error(needs0470(error.message));
+  return ((data ?? []) as any[]).map((r) => ({
+    logId: r.id,
+    deletedAt: r.deleted_at ?? "",
+    deletedByName: r.deleted_by_name ?? "",
+    expense: mapRow(r.old_row ?? {}),
+  }));
+}
+
+/** Put a deleted expense back exactly as it was (same status, receipts …). */
+export async function restoreDeletedExpense(logId: string): Promise<void> {
+  const { error } = await supabase.rpc("expense_restore", { p_log_id: logId });
+  if (error) throw new Error(needs0470(error.message));
+}

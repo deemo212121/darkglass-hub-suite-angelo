@@ -22,6 +22,7 @@
 
 import type { BranchExpenseCategory, BranchExpenseLine } from "./branchExpenses";
 import { BRANCH_ABBREV } from "./branchDisplay";
+import { branchMatchKey } from "./branchName";
 
 export type AutoFillCategory = Extract<BranchExpenseCategory, "travel_lodging" | "food" | "rental_car" | "gas" | "equipment_supplies">;
 export const AUTO_FILL_CATEGORIES: AutoFillCategory[] = ["travel_lodging", "food", "rental_car", "gas", "equipment_supplies"];
@@ -123,7 +124,7 @@ export function tripFor(
 const isDateText = (s: string | null | undefined) => !!s && /^\d{1,2}[/-]\d{1,2}([/-]\d{2,4})?$/.test(s.trim());
 
 /** "Jackson, MS" / "Jackson,MS" / "jackson ms" → "jacksonms" — spacing, commas and case never matter. */
-export const branchKey = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
+export const branchKey = (name: string) => branchMatchKey(name);
 
 function editDistance(a: string, b: string): number {
   const row = Array.from({ length: b.length + 1 }, (_, j) => j);

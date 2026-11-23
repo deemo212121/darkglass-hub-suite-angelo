@@ -55,6 +55,7 @@ import {
   sortTechDamages,
   type TechDamageSort,
 } from "@/lib/supabase/techDamages";
+import { branchMatchKey, sameBranch } from "@/lib/branchName";
 
 interface Props { mod: ModuleDef; sub: SubModuleDef; }
 
@@ -161,12 +162,11 @@ export function TechDamagesPage({ mod, sub }: Props) {
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const branchKey = branchFilter.trim().toLowerCase();
     const shown = rows.filter((d) => {
       if (tab === "deleted" ? !d.deletedAt : d.deletedAt) return false;
       if (tab === "active" && !inYearAndCutoff(d, year, cutoff)) return false;
       if (statusFilter && d.status !== statusFilter) return false;
-      if (branchFilter && d.area.trim().toLowerCase() !== branchKey) return false;
+      if (branchFilter && !sameBranch(d.area, branchFilter)) return false;
       if (q && ![d.technicianName, d.area, d.bmSbm, d.ticketNumber, d.damageType, d.notes].some((s) => s.toLowerCase().includes(q))) return false;
       return true;
     });
@@ -175,7 +175,7 @@ export function TechDamagesPage({ mod, sub }: Props) {
   // Every branch on a damage, A → Z, for the Branch filter.
   const branchOptions = useMemo(() => {
     const m = new Map<string, string>();
-    for (const d of rows) if (d.area.trim() && !m.has(d.area.trim().toLowerCase())) m.set(d.area.trim().toLowerCase(), d.area.trim());
+    for (const d of rows) if (branchMatchKey(d.area) && !m.has(branchMatchKey(d.area))) m.set(branchMatchKey(d.area), d.area.trim());
     return [...m.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   }, [rows]);
   const totals = useMemo(() => techDamageTotals(visible), [visible]);

@@ -25,6 +25,7 @@ import { useAuth } from "@/lib/auth";
 import { getCompanyMapProvider, getCompanyDefaultTechnician, type MapProvider } from "@/lib/supabase/companySettings";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { loadGoogleMapsScript, getLeaflet, makeGeocoder, warmGeocodeCache, addRouteDirectionArrow, attachLeafletResizeFix, createBadgeDivIcon, OSM_TILE_URL, OSM_ATTRIBUTION } from "@/lib/mapEngine";
+import { branchMatchKey } from "@/lib/branchName";
 
 type TicketRecord = Record<string, any> & {
   ticketNo: string;
@@ -389,7 +390,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
   }, []);
   const defaultTechnicianFor = useCallback((loc: string) => {
     if (!loc) return "";
-    const override = locationOverrides.get(normalizeBranch(loc));
+    const override = locationOverrides.get(branchMatchKey(loc));
     if (override?.forceUnassigned) return "";
     return override?.repTech || companyDefaultTechnician;
   }, [locationOverrides, companyDefaultTechnician]);
@@ -584,7 +585,7 @@ export function WorkPlannerPage({ mod, sub }: Props) {
         const overrides = new Map<string, { repTech: string; forceUnassigned: boolean }>();
         for (const row of locs) {
           if (!row.repTech && !row.forceUnassigned) continue;
-          overrides.set(normalizeBranch(row.location), {
+          overrides.set(branchMatchKey(row.location), {
             repTech: row.repTech || "",
             forceUnassigned: row.forceUnassigned === true,
           });
