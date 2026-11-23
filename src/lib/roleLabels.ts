@@ -516,14 +516,20 @@ export function isTechScopeSubject(role: string | null | undefined): boolean {
 function moduleAllowedByRole(role: string | null | undefined, moduleSlug: string, extraRoles?: string[] | null): boolean {
   // Admin-and-up modules (AHS Server Status) — never opened up by an override.
   if (ADMIN_AND_UP_MODULES.has(moduleSlug)) return isAdminOrAboveHolder(role, extraRoles);
+  // True when Accessibility Management's Whole Module box names one of their roles.
+  let namedOnModule = false;
   if (!isSuperAdminRole(role)) {
     const moduleLevelOverride = getModuleRoleGate(moduleSlug, MODULE_LEVEL_GATE_SLUG);
     if (moduleLevelOverride) {
       const normalizedOverride = moduleLevelOverride.map((r) => normalizeRole(r));
       if (!allHeldRoles(role, extraRoles).some((r) => normalizedOverride.includes(r))) return false;
+      namedOnModule = true;
     }
   }
   if (!isCsrRestrictedRole(role, extraRoles)) return true;
+  // A CSR role an admin added to this module's Whole Module box opens it —
+  // the CSR allow-list below only applies to modules nobody granted them.
+  if (namedOnModule) return true;
   // Someone a Super Admin added to Admin → Email Vault (by person, migration
   // 0436) — the Admin module opens for them, with just that tile.
   if (moduleSlug === "admin" && getEmailVaultGrant() === true) return true;
