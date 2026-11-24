@@ -178,7 +178,8 @@ async function canConnectGmailSlot(
   profile: { companyId: string; role: string | null; extraRoles: string[] },
   region: string
 ): Promise<boolean> {
-  const roles = [profile.role, ...profile.extraRoles].filter(Boolean).map((r) => String(r).toUpperCase());
+  // withIncludedRoles: IT counts as Super Admin (ROLE_INCLUDES), same as everywhere else.
+  const roles = withIncludedRoles([profile.role, ...profile.extraRoles]).map((r) => String(r).toUpperCase());
   if (roles.some((r) => CONNECT_ROLES.has(r) || r === "SUPERSUPERADMIN")) return true;
   const url =
     `${env.supabaseUrl}/rest/v1/gmail_connect_role_gates?select=role` +
@@ -224,6 +225,8 @@ interface GmailConnectClaims {
   region: string;
   /** A Hiring panel account (hiring_gmail_accounts) rather than a fixed slot. */
   hiringAccount?: boolean;
+  /** "email-vault": started from Password and Email Management → Email Connections (Reconnect) — go back there. */
+  returnTo?: string;
 }
 
 async function upsertHiringGmailAccount(
@@ -557,7 +560,13 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
   // since ATTENDANCE/HR_HIRING's return pages already carry their own
   // ?tab=... query string — naively appending "?gmailConnected=..." after
   // it would produce an invalid double-"?" URL.
-  const returnUrlFor = (origin: string, region: Region, extraParams: Record<string, string>) => {
+  const returnUrlFor = (origin: string, region: Region, extraParams: Record<string, string>, returnTo?: string) => {
+    if (returnTo === "email-vault") {
+      const v = new URL("/m/admin/email-vault", origin);
+      v.searchParams.set("view", "connections");
+      for (const [k, val] of Object.entries(extraParams)) v.searchParams.set(k, val);
+      return v.toString();
+    }
     const path =
       region === "ATTENDANCE" ? "/m/dashboard/attendance-monitoring"
       : region === "HR_HIRING" ? "/m/hr/hr-dashboard"
@@ -575,9 +584,11 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
   if (code && state) {
     const appOrigin = url.origin;
     let region: Region = "US";
+    let returnTo: string | undefined;
     try {
       // Only for choosing which of our pages to go back to if this fails.
       region = parseRegion(peekOAuthState(state)?.region as string) ?? "US";
+      returnTo = (peekOAuthState(state) as { returnTo?: string } | null)?.returnTo;
       const claims = await readOAuthState<GmailConnectClaims>(envBag.supabaseServiceKey, GMAIL_STATE_PURPOSE, state);
       if (!claims) throw new Error("Invalid or expired Gmail connect state");
       const claimedRegion = parseRegion(claims.region);
@@ -594,10 +605,10 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       } else {
         await upsertGmailConnection(envBag, claims.companyId, region, person.id, person.name, connectedAccountName, connectedEmail, refreshToken);
       }
-      return Response.redirect(returnUrlFor(appOrigin, region, { gmailConnected: "1", gmailRegion: region }), 302);
+      return Response.redirect(returnUrlFor(appOrigin, region, { gmailConnected: "1", gmailRegion: region }, claims.returnTo), 302);
     } catch (err) {
       console.error("[gmail] callback error:", err);
-      return Response.redirect(returnUrlFor(appOrigin, region, { gmailConnected: "0", gmailRegion: region }), 302);
+      return Response.redirect(returnUrlFor(appOrigin, region, { gmailConnected: "0", gmailRegion: region }, returnTo), 302);
     }
   }
   if (url.searchParams.get("error")) {
@@ -605,8 +616,9 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
     // echoed back by Google even on a denied/cancelled consent, so this
     // can still route back to the right page instead of always assuming
     // Accounting Dashboard.
-    const region = parseRegion(peekOAuthState(state)?.region as string) ?? "US";
-    return Response.redirect(returnUrlFor(url.origin, region, { gmailConnected: "0" }), 302);
+    const peeked = peekOAuthState(state) as { region?: string; returnTo?: string } | null;
+    const region = parseRegion(peeked?.region as string) ?? "US";
+    return Response.redirect(returnUrlFor(url.origin, region, { gmailConnected: "0" }, peeked?.returnTo), 302);
   }
 
   if (url.searchParams.get("action") === "connect") {
@@ -621,9 +633,13 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       if (!(await canConnectGmailSlot(envBag, profile, region))) {
         return json({ error: "You do not have permission to connect this Gmail. Ask an Admin to grant your role access." }, 403);
       }
-      const state = await signOAuthState(envBag.supabaseServiceKey, GMAIL_STATE_PURPOSE, { companyId: profile.companyId, profileId: profile.id, region });
+      const returnTo = url.searchParams.get("returnTo") === "email-vault" ? "email-vault" : undefined;
+      const state = await signOAuthState(envBag.supabaseServiceKey, GMAIL_STATE_PURPOSE, { companyId: profile.companyId, profileId: profile.id, region, ...(returnTo ? { returnTo } : {}) });
       const redirectUri = `${url.origin}${url.pathname}`;
       const authUrl = new URL(AUTH_ENDPOINT);
+      // Reconnect: Google pre-picks the account that was connected, so the slot doesn't switch to another one by mistake.
+      const loginHint = url.searchParams.get("loginHint");
+      if (loginHint && /^[^\s@]+@[^\s@]+$/.test(loginHint)) authUrl.searchParams.set("login_hint", loginHint);
       authUrl.searchParams.set("client_id", envBag.googleClientId);
       authUrl.searchParams.set("redirect_uri", redirectUri);
       authUrl.searchParams.set("response_type", "code");
@@ -838,6 +854,63 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
     }
   }
 
+  // Password and Email Management → Email Connections: every Google
+  // connection of the caller's company and whether it still works
+  // (emailConnectionHealth.ts). Sends nothing. IT / Admin / Super Admin.
+  if (url.searchParams.get("action") === "check-all-connections") {
+    if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+    try {
+      const payload = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const idToken = typeof payload.idToken === "string" ? payload.idToken : "";
+      if (!idToken) return json({ error: "Missing idToken" }, 400);
+      const claims = await verifyFirebaseToken(idToken, envBag.firebaseProjectId);
+      const caller = await fetchProfileByFirebaseUid(envBag, claims.sub);
+      if (!caller) return json({ error: "Profile not found" }, 403);
+      const held = withIncludedRoles([caller.role, ...caller.extraRoles]);
+      if (!held.some((r) => r === "IT" || r === "ADMIN" || r === "SUPERADMIN")) return json({ error: "Only IT, Admin or Super Admin can check email connections." }, 403);
+      const { checkCompanyConnections } = await import("./emailConnectionHealth");
+      return json({ ok: true, rows: await checkCompanyConnections(envBag, caller.companyId), checkedAt: new Date().toISOString() });
+    } catch (err) {
+      console.error("[gmail] check-all-connections error:", err);
+      return json({ error: err instanceof Error ? err.message : "Check failed" }, 500);
+    }
+  }
+
+  // IT Tickets' connection check — does this IT slot's Google sign-in still
+  // work? Asks Google for a fresh access token with the saved refresh token
+  // (the same first step every send does). Sends no email, changes nothing.
+  // "expired" = Google refused it (invalid_grant): the account must be reconnected.
+  if (url.searchParams.get("action") === "check-it-connection") {
+    if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+    try {
+      const payload = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const idToken = typeof payload.idToken === "string" ? payload.idToken : "";
+      const region = parseRegion(typeof payload.region === "string" ? payload.region : "");
+      if (!idToken) return json({ error: "Missing idToken" }, 400);
+      if (!region || !region.startsWith("IT_")) return json({ error: "Missing or invalid slot" }, 400);
+      const claims = await verifyFirebaseToken(idToken, envBag.firebaseProjectId);
+      const caller = await fetchProfileByFirebaseUid(envBag, claims.sub);
+      if (!caller) return json({ error: "Profile not found" }, 403);
+      // IT is Super Admin / Admin with an IT label — primary or extra role (withIncludedRoles).
+      if (!withIncludedRoles([caller.role, ...caller.extraRoles]).some((r) => IT_TICKET_SENDER_ROLES.has(r))) {
+        return json({ error: "Not authorized" }, 403);
+      }
+      const connection = await fetchGmailConnection(envBag, caller.companyId, region);
+      if (!connection) return json({ status: "not_connected" });
+      try {
+        await refreshAccessToken(envBag, connection.refreshToken);
+        return json({ status: "ok" });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("invalid_grant")) return json({ status: "expired", message: "Google says this sign-in has expired or was revoked — reconnect it." });
+        return json({ status: "error", message: msg.slice(0, 300) });
+      }
+    } catch (err) {
+      console.error("[gmail] check-it-connection error:", err);
+      return json({ error: err instanceof Error ? err.message : "Check failed" }, 500);
+    }
+  }
+
   // IT Tickets' "Send" — unlike every other send action, the FROM account
   // is caller-SELECTED (one of up to 3 connected IT_1/IT_2/IT_3 slots),
   // not server-resolved to one fixed slot, so region has no fallback
@@ -871,7 +944,8 @@ export async function handleGmailRequest(request: Request, env?: Record<string, 
       const claims = await verifyFirebaseToken(idToken, envBag.firebaseProjectId);
       const caller = await fetchProfileByFirebaseUid(envBag, claims.sub);
       if (!caller) return json({ error: "Profile not found" }, 403);
-      if (!caller.role || !IT_TICKET_SENDER_ROLES.has(caller.role.toUpperCase())) {
+      // IT is Super Admin / Admin with an IT label — primary or extra role (withIncludedRoles).
+      if (!withIncludedRoles([caller.role, ...caller.extraRoles]).some((r) => IT_TICKET_SENDER_ROLES.has(r))) {
         return json({ error: "Not authorized to send IT ticket emails" }, 403);
       }
 
