@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Loader2, MessageSquareWarning } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, Loader2, MessageSquareWarning } from "lucide-react";
 import { toast } from "sonner";
 import { getPayrollReviewBreakdowns, getPayrollReviewPeriods, reviewBreakdownTotal, type PayrollReviewAmounts, type PayrollReviewBreakdown } from "@/lib/supabase/payrollReviewBreakdowns";
 import { getPayrollReviewDatesByPeriod, getPayrollReviewMarks, type PayrollReviewMark } from "@/lib/supabase/payrollReviewMarks";
@@ -69,6 +69,8 @@ interface HistoryRow {
   role: string;
   branch: string;
   isPH: boolean;
+  /** Technician department, or has a Tech Activity Report breakdown. */
+  isTech: boolean;
   rate: number;
   regularPay: number;
   overtimePay: number;
@@ -88,6 +90,17 @@ function isPayPeriod(key: string): boolean {
 }
 
 const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+
+type HistoryGroup = "all" | "tech" | "us" | "ph";
+const HISTORY_GROUPS: { id: HistoryGroup; label: string }[] = [
+  { id: "all", label: "All Employees" },
+  { id: "tech", label: "Technicians" },
+  { id: "us", label: "US Office" },
+  { id: "ph", label: "PH Office" },
+];
+/** Technicians are their own group; everyone else splits by country into US / PH office. */
+const inGroup = (r: { isTech: boolean; isPH: boolean }, g: HistoryGroup) =>
+  g === "all" || (g === "tech" ? r.isTech : !r.isTech && (g === "ph" ? r.isPH : !r.isPH));
 const hrs = (n: number) => n.toFixed(2);
 const fmtDay = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const fmtStamp = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -232,6 +245,7 @@ export function PayrollHistoryTab({
           role: emp?.roleLabel || "",
           branch: emp?.assigned_branch || review?.branch || "",
           isPH: emp?.country === "PH",
+          isTech: (emp?.department ?? "").trim().toLowerCase() === "technician" || !!review,
         };
         if (!li) {
           // Not in the saved run — the reviewed breakdown is the only pay record.
@@ -244,10 +258,14 @@ export function PayrollHistoryTab({
           const tax = taxes.reduce((sum, t) => sum + t.amount, 0);
           return { ...base, rate: 0, regularPay: 0, overtimePay: 0, annualSalary: null, grossPay: total, extraPay: 0, adjustments: taxes, totalPay: total != null ? total - tax : null };
         }
-        const grossPay = li.gross_pay;
+        // A technician's reviewed breakdown (Tech Activity Report → Done) is the
+        // final pay; the run line can be a snapshot saved before the period's
+        // hours / report were finished (35 of 105 hrs, no tickets or mileage).
+        const savedGross = li.gross_pay;
+        const grossPay = review ? reviewBreakdownTotal(review) : savedGross;
         const extraPay = (li.extra_pay || 0);
         // Net pay already includes the adjustments; older lines have net = gross.
-        const netPay = li.net_pay != null ? Number(li.net_pay) : grossPay;
+        const netPay = (li.net_pay != null ? Number(li.net_pay) : savedGross) - savedGross + grossPay;
         // Saved adjustments, then the technician's tax lines (Net Pay After Tax on the report).
         const techTaxes = (taxLines.get(id) ?? [])
           .map((t) => ({ kind: "tax", description: t.label.trim() || "Tax", amount: taxLineAmount(t, grossPay), percent: t.mode === "percent" ? t.amount : null }))
@@ -269,17 +287,104 @@ export function PayrollHistoryTab({
       .sort((a, b) => a.department.localeCompare(b.department) || a.name.localeCompare(b.name));
   }, [run, lineItems, marks, breakdowns, taxLines, employeeById]);
 
+  const [group, setGroup] = useState<HistoryGroup>("all");
   const [department, setDepartment] = useState("");
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   useEffect(() => { setExpanded(new Set()); }, [selectedKey]);
-  const departments = useMemo(() => [...new Set(rows.map((r) => r.department))].sort(), [rows]);
+  const groupCounts = useMemo(() => {
+    const out: Record<HistoryGroup, number> = { all: 0, tech: 0, us: 0, ph: 0 };
+    for (const r of rows) for (const g of HISTORY_GROUPS) if (inGroup(r, g.id)) out[g.id]++;
+    return out;
+  }, [rows]);
+  const groupRows = useMemo(() => rows.filter((r) => inGroup(r, group)), [rows, group]);
+  // Department list follows the group: only departments that have people in it.
+  const departments = useMemo(() => [...new Set(groupRows.map((r) => r.department))].sort(), [groupRows]);
   useEffect(() => { if (department && !departments.includes(department)) setDepartment(""); }, [departments, department]);
 
   const q = search.trim().toLowerCase();
-  const visible = rows.filter((r) => (!department || r.department === department) && (!q || r.name.toLowerCase().includes(q)));
+  const visible = groupRows.filter((r) => (!department || r.department === department) && (!q || r.name.toLowerCase().includes(q)));
   const visibleTotal = visible.reduce((s, r) => s + (r.totalPay ?? 0), 0);
   const notInRun = visible.filter((r) => !r.li).length;
+  // Taxes / deductions / reimbursements per person: the run line's
+  // adjustments, plus a technician's custom-line deductions, pre-tax
+  // insurance and mileage from the reviewed breakdown.
+  const splitOf = (r: HistoryRow) => {
+    const out = { taxes: 0, deductions: 0, reimbursements: 0 };
+    for (const a of r.adjustments) {
+      const amount = Math.abs(Number(a.amount) || 0);
+      if (a.kind === "tax") out.taxes += amount;
+      else if (a.kind === "deduction") out.deductions += amount;
+      else if (a.kind === "reimbursement") out.reimbursements += amount;
+    }
+    const review = breakdowns.get(r.id);
+    if (review) {
+      out.deductions += (review.deduction || 0) + (review.pretaxInsurance || 0);
+      out.reimbursements += review.mileageOtherReimb || 0;
+    }
+    return out;
+  };
+  const totals = useMemo(() => {
+    const t = { gross: 0, net: 0, taxes: 0, deductions: 0, reimbursements: 0 };
+    for (const r of visible) {
+      const s = splitOf(r);
+      t.gross += r.grossPay ?? 0;
+      t.net += r.totalPay ?? 0;
+      t.taxes += s.taxes;
+      t.deductions += s.deductions;
+      t.reimbursements += s.reimbursements;
+    }
+    return t;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, breakdowns]);
+
+  const [exporting, setExporting] = useState(false);
+  const exportVisible = async () => {
+    if (visible.length === 0) return;
+    setExporting(true);
+    try {
+      const excelModule = await import("exceljs");
+      const ExcelJS = excelModule.default ?? excelModule;
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet("Payroll History");
+      const groupLabel = HISTORY_GROUPS.find((g) => g.id === group)?.label ?? "All Employees";
+      ws.addRow([`Payroll History · ${fmtDay(periodStart)} – ${fmtDay(periodEnd)} · ${groupLabel}${department ? ` · ${department}` : ""}${q ? ` · "${search.trim()}"` : ""}`]).font = { bold: true, size: 13 };
+      ws.addRow([]);
+      const header = ws.addRow(["Name", "Role", "Department", "Branch", "Office", "Reviewed", "Gross Pay", "Taxes", "Deductions", "Reimbursements", "Total Pay", "In saved run"]);
+      header.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      header.eachCell((c) => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1E3A5F" } }; });
+      const first = ws.rowCount + 1;
+      for (const r of visible) {
+        const s = splitOf(r);
+        const mark = marks.get(r.id);
+        ws.addRow([
+          r.name, r.role, r.department, r.branch, r.isTech ? "Technician" : r.isPH ? "PH Office" : "US Office",
+          mark ? fmtStamp(mark.reviewedAt) : "Not reviewed",
+          r.grossPay ?? 0, s.taxes, s.deductions, s.reimbursements, r.totalPay ?? 0, r.li ? "Yes" : "No",
+        ]);
+      }
+      const last = ws.rowCount;
+      const total = ws.addRow(["TOTAL", "", "", "", "", `${visible.length} people`]);
+      for (const col of ["G", "H", "I", "J", "K"]) total.getCell(col).value = { formula: `SUM(${col}${first}:${col}${last})` };
+      total.font = { bold: true };
+      for (const col of [7, 8, 9, 10, 11]) ws.getColumn(col).numFmt = '"$"#,##0.00;[Red]-"$"#,##0.00';
+      [28, 20, 16, 16, 12, 14, 14, 12, 14, 16, 14, 12].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+      ws.views = [{ state: "frozen", ySplit: 3 }];
+      const buffer = await wb.xlsx.writeBuffer();
+      const url = URL.createObjectURL(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `payroll_history_${periodStart}_to_${periodEnd}_${group}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      toast.error(`Export failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const toggle = (id: string) =>
     setExpanded((prev) => {
@@ -309,10 +414,39 @@ export function PayrollHistoryTab({
           <p className="text-xs text-slate-400">Past pay periods. Click a name to see what made up their pay.</p>
         </div>
         {detailLoading && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
+        <div className="flex flex-wrap gap-1 rounded-lg border border-white/10 bg-slate-950/50 p-1" role="tablist" aria-label="Employee group">
+          {HISTORY_GROUPS.map((g) => (
+            <button
+              key={g.id}
+              type="button"
+              role="tab"
+              aria-selected={group === g.id}
+              onClick={() => setGroup(g.id)}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${group === g.id ? "bg-blue-500/20 text-blue-200 ring-1 ring-blue-400/40" : "text-slate-400 hover:bg-white/5 hover:text-slate-200"}`}
+            >
+              {g.label} <span className="ml-1 tabular-nums text-[10px] opacity-70">{groupCounts[g.id]}</span>
+            </button>
+          ))}
+        </div>
         <span className="ml-auto text-xs text-slate-400">
           {visible.length} {visible.length === 1 ? "person" : "people"} · <span className="text-green-300 font-semibold">{money(visibleTotal)}</span>
           {notInRun > 0 && <span className="block text-[10px] text-amber-300/80">{notInRun} not in the saved payroll run</span>}
         </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-px border-b border-white/10 bg-white/10 sm:grid-cols-3 lg:grid-cols-5">
+        {[
+          { label: "Total Gross Pay", value: totals.gross, tone: "text-white", hint: "Gross pay of everyone shown. For technicians this already includes their reimbursements and deductions." },
+          { label: "Total Taxes", value: totals.taxes, tone: "text-red-300", hint: "Tax lines (MCWH, SSWH, FITW, SITW, …) taken off gross." },
+          { label: "Total Deductions", value: totals.deductions, tone: "text-red-300", hint: "Payroll deductions, plus technicians' custom-line deductions and pre-tax insurance." },
+          { label: "Total Reimbursements", value: totals.reimbursements, tone: "text-violet-300", hint: "Payroll reimbursements, plus technicians' mileage and other reimbursements." },
+          { label: "Total Net Pay", value: totals.net, tone: "text-green-300", hint: "Total Pay of everyone shown (gross − taxes, with adjustments)." },
+        ].map((s) => (
+          <div key={s.label} className="bg-slate-900/80 px-4 py-2.5" title={s.hint}>
+            <div className="text-[10px] uppercase tracking-wide text-slate-400">{s.label}</div>
+            <div className={`mt-0.5 text-base font-semibold tabular-nums ${s.tone}`}>{money(s.value)}</div>
+          </div>
+        ))}
       </div>
 
       <div className="px-4 py-3 border-b border-white/10 flex flex-wrap items-end gap-3">
@@ -357,6 +491,16 @@ export function PayrollHistoryTab({
             className="bg-slate-800 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white normal-case tracking-normal w-56"
           />
         </label>
+        <button
+          type="button"
+          onClick={() => void exportVisible()}
+          disabled={exporting || visible.length === 0}
+          title="Download the rows shown (this group, department and search) as Excel"
+          className="ml-auto flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-50"
+        >
+          {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+          Export Data
+        </button>
       </div>
 
       <div className="overflow-x-auto">
@@ -369,6 +513,9 @@ export function PayrollHistoryTab({
               <th className="px-3 py-2 text-left text-xs text-slate-400 uppercase">Branch</th>
               <th className="px-3 py-2 text-left text-xs text-slate-400 uppercase">Reviewed</th>
               <th className="px-3 py-2 text-right text-xs text-slate-400 uppercase">Gross Pay</th>
+              <th className="px-3 py-2 text-right text-xs text-slate-400 uppercase">Taxes</th>
+              <th className="px-3 py-2 text-right text-xs text-slate-400 uppercase">Deductions</th>
+              <th className="px-3 py-2 text-right text-xs text-slate-400 uppercase">Reimb.</th>
               <th className="px-3 py-2 text-right text-xs text-slate-400 uppercase">Total Pay</th>
               <th className="px-3 py-2 text-left text-xs text-slate-400 uppercase">Note</th>
             </tr>
@@ -376,7 +523,7 @@ export function PayrollHistoryTab({
           <tbody>
             {visible.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-slate-500 text-sm">
+                <td colSpan={11} className="px-4 py-8 text-center text-slate-500 text-sm">
                   {periodKeys.length === 0 ? "No pay periods yet. Generate or review payroll from the Payroll tab." : detailLoading ? "Loading…" : "No one matches these filters for this period."}
                 </td>
               </tr>
@@ -387,6 +534,8 @@ export function PayrollHistoryTab({
               const mark = marks.get(id);
               const review = breakdowns.get(id);
               const note = notes.get(id) ?? null;
+              const split = splitOf(r);
+              const cell = (n: number, tone: string) => (n >= 0.005 ? <span className={tone}>{money(n)}</span> : <span className="text-slate-600">—</span>);
               return (
                 <Fragment key={id}>
                   <tr className="border-b border-white/5 hover:bg-white/5 cursor-pointer" onClick={() => toggle(id)}>
@@ -402,6 +551,9 @@ export function PayrollHistoryTab({
                       {mark ? <span className="text-green-300">{fmtStamp(mark.reviewedAt)}</span> : <span className="text-slate-500">Not reviewed</span>}
                     </td>
                     <td className="px-3 py-2.5 text-right text-slate-300">{r.grossPay != null ? money(r.grossPay) : "—"}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">{cell(split.taxes, "text-red-300")}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">{cell(split.deductions, "text-red-300")}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">{cell(split.reimbursements, "text-violet-300")}</td>
                     <td className="px-3 py-2.5 text-right font-semibold text-green-300">{r.totalPay != null ? money(r.totalPay) : <span className="text-slate-500 font-normal">—</span>}</td>
                     <td className="px-3 py-2.5 text-xs whitespace-nowrap">
                       {note ? (
@@ -416,7 +568,7 @@ export function PayrollHistoryTab({
                   </tr>
                   {open && (
                     <tr className="border-b border-white/5">
-                      <td colSpan={8} className="bg-slate-800/60 px-6 py-4">
+                      <td colSpan={11} className="bg-slate-800/60 px-6 py-4">
                         <PayBreakdown row={r} mark={mark} review={review} />
                         <NoteToEmployee
                           key={`${id}|${selectedKey}`}
@@ -490,7 +642,9 @@ function PayBreakdown({
         <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">Payroll run</div>
         {li ? (
           <>
-            {fixed ? (
+            {/* Reviewed: the breakdown on the right is the pay; the run line's
+                hours / regular / OT can be an early snapshot, so they aren't shown. */}
+            {review ? null : fixed ? (
               <Line label="Salary for this period" detail={r.annualSalary != null ? `${money(r.annualSalary)}/yr` : undefined} amount={r.regularPay} />
             ) : (
               <>
@@ -498,7 +652,7 @@ function PayBreakdown({
                 <Line label="Overtime" detail={`${hrs(li.overtime_hours)} hrs × ${money(r.rate)}${otMultiplier !== 1 ? " × 1.5" : ""}`} amount={r.overtimePay} />
               </>
             )}
-            {Math.abs(other) >= 0.01 && (
+            {!review && Math.abs(other) >= 0.01 && (
               <Line label="Other earnings" detail="tickets, bonuses, mileage, matches" amount={Math.abs(other)} negative={other < 0} />
             )}
             <Line label="Gross pay" amount={gross} strong />
@@ -551,9 +705,6 @@ function PayBreakdown({
               <Line key={l.key} label={l.label} amount={review[l.key]} negative={l.subtract} />
             ))}
             <Line label="Breakdown total" amount={reviewTotal} strong />
-            {li && Math.abs(reviewTotal - gross) >= 0.01 && (
-              <div className="text-xs text-amber-300/80 mt-1">Differs from the run's gross pay by {money(Math.abs(reviewTotal - gross))}.</div>
-            )}
             <div className="mt-2 text-xs text-slate-500">
               {review.source === "manual" ? "Added by hand" : "Saved at review"}
               {review.updatedByName ? ` · last edited by ${review.updatedByName}` : ""}
