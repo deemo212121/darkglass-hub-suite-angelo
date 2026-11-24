@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reviewedPeriodDetails, excelColumnLetter } from "./reviewedPeriodDetails";
+import { reviewedPeriodDetails, excelColumnLetter, commissionRemainder } from "./reviewedPeriodDetails";
 import { centsSummaryTotal, groupCustomPayLines } from "./payRounding";
 
 const saved = { regularPay: 660, otPay: 844.89, bonus: 0, commission: 1035, ptoPay: 0,
@@ -31,7 +31,7 @@ describe("Reviewed Period itemized export", () => {
       item("Phone Allowance", 30), item("Lost Part", -50), item("Uniform Deduction", -25), item("Pre-Tax Insurance", -20), item("Piece rate", 100, true),
     ] });
     expect(lines.map((l) => [l.label, l.amount])).toEqual([
-      ["Mileage", 554.24], ["Phone Allowance", 30], ["Lost Part", 50], ["Uniform Deduction", 25], ["Pre-Tax Insurance", 20],
+      ["Mileage", 554.24], ["Phone Allowance", 30], ["Lost Part", 50], ["Uniform Deduction", 25], ["Pre-Tax Insurance", 20], ["Piece rate", 100],
     ]);
     for (const group of ["mileageOtherReimb", "deduction", "pretaxInsurance"] as const) {
       expect(lines.filter((l) => l.group === group).reduce((sum, l) => sum + l.amount, 0)).toBeCloseTo(saved[group], 2);
@@ -78,6 +78,14 @@ describe("Reviewed Period itemized export", () => {
     expect(lines.find((l) => l.label === "Unitemized bonus adjustment")?.amount).toBe(-25);
     expect(lines.reduce((sum, l) => sum + l.amount, 0)).toBe(100);
     expect(reviewedPeriodDetails({ ...saved, bonus: 100 }).find((l) => l.group === "bonus")?.amount).toBe(100);
+  });
+  it("gives every includable custom line its own column, ticket pay stays in Commission", () => {
+    const lines = reviewedPeriodDetails(saved, { mileage: 584.24, items: [
+      item("Google Review CSAT", 5, true), item("PTO Pay", 24, true), item("LTP", 0, true),
+    ] });
+    expect(lines.filter((l) => l.group === "commission").map((l) => [l.label, l.amount])).toEqual([["Google Review CSAT", 5], ["PTO Pay", 24]]);
+    expect(commissionRemainder(saved, lines)).toBe(1006);
+    expect(lines.some((l) => l.key === "commission:unitemized")).toBe(false);
   });
   it("supports Excel totals beyond column Z", () => {
     expect([1, 26, 27, 52, 53, 703].map(excelColumnLetter)).toEqual(["A", "Z", "AA", "AZ", "BA", "AAA"]);
