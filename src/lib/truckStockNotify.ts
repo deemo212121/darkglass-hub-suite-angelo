@@ -96,6 +96,43 @@ async function findApproverProfileIdsForBranch(branch: string): Promise<string[]
   return optedInIds(rows.filter(isApprover));
 }
 
+/**
+ * A part marked MISSING on Truck Stock (migration 0478): ping that branch's
+ * Parts Manager(s) — same people as a pull request from that branch
+ * (findApproverProfileIdsForBranch, company-wide if nobody's on file there).
+ * Fire-and-forget.
+ */
+export async function notifyPartsManagerOfMissing(payload: {
+  actorName: string;
+  partNo: string;
+  qty: number;
+  branch: string;
+  storageLocation?: string;
+  note?: string;
+}): Promise<void> {
+  try {
+    const recipientIds = await findApproverProfileIdsForBranch(payload.branch);
+    if (recipientIds.length === 0) return;
+    const body =
+      `${payload.actorName} marked ${payload.qty} × ${payload.partNo} MISSING at ${payload.branch}` +
+      `${payload.storageLocation ? ` (bin ${payload.storageLocation})` : ""}${payload.note ? ` — "${payload.note}"` : ""}. ` +
+      `It's on Truck Stock's Missing list until someone marks it Found.`;
+    await Promise.all(
+      recipientIds.map((id) =>
+        createNotification({
+          recipientId: id,
+          senderId: null,
+          senderName: payload.actorName,
+          body,
+          linkTo: "/m/parts/part-inventory?tab=truck-stock&view=missing",
+        }).catch((e) => console.warn("[truckStockNotify] notify missing failed:", e)),
+      ),
+    );
+  } catch (err) {
+    console.warn("[truckStockNotify] notifyPartsManagerOfMissing skipped:", err);
+  }
+}
+
 /** Ping the source branch's Parts Manager(s) that a pull request needs review. Fire-and-forget. */
 export async function notifyPartsManagerOfPullRequest(payload: {
   actorName: string;

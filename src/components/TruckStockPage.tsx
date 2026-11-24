@@ -17,7 +17,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import { Plus, Pencil, Trash2, Save, X, Upload, Download, ChevronDown, ArrowRightLeft, Lock, History } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { isAdminOrAboveHolder, normalizeRole, ROLE_LABELS } from "@/lib/roleLabels";
@@ -37,13 +37,21 @@ import {
   deleteTruckStockUsedRow,
   ticketNosInApp,
   toTruckStockStatus,
+  getTruckStockMissing,
+  addTruckStockMissing,
+  markTruckStockMissingFound,
+  deleteTruckStockMissing,
+  syncImportedMissing,
+  isMissingListMigrationMissing,
+  type TruckStockMissingRow,
   type TruckStockRow,
   type TruckStockStatus,
   type TruckStockUsedRow,
 } from "@/lib/supabase/truckStock";
 import { TRUCK_STOCK_BRANDS, TRUCK_STOCK_DESCRIPTIONS, TRUCK_STOCK_STATUSES, truckStockBrandValue, truckStockDescriptionOption, truckStockStatusOption, type TruckStockOption } from "@/lib/truckStockOptions";
+import { allocateOnEbay, getOnEbayCounts } from "@/lib/supabase/truckStockEbay";
 import { createTruckStockTransferRequest } from "@/lib/supabase/truckStockTransfers";
-import { notifyPartsManagerOfTransferRequest } from "@/lib/truckStockNotify";
+import { notifyPartsManagerOfMissing, notifyPartsManagerOfTransferRequest } from "@/lib/truckStockNotify";
 import { getLocations, type LocationRow } from "@/lib/supabase/locationManagement";
 import { normBranch } from "@/lib/approvalDirectory";
 import { getPartTransactionsByPartNo, type PartUsageRow } from "@/lib/supabase/tickets";
@@ -64,6 +72,7 @@ import { needsPassword } from "@/lib/passwordChecks";
 const TRUCK_STOCK_IMPORT_CHECK = "truck-stock-import";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useRememberedState } from "@/hooks/useRememberedState";
+import { useColumnFunnels } from "@/hooks/useColumnFunnels";
 
 const PAGE_SIZE_OPTIONS = [25, 50, 75, 100, 125] as const;
 
@@ -128,7 +137,20 @@ export function TruckStockPanel() {
   // Parts used on a ticket (migration 0422). null until loaded, or when the table isn't there yet (usedError).
   const [usedRows, setUsedRows] = useState<TruckStockUsedRow[] | null>(null);
   const [usedError, setUsedError] = useState<string | null>(null);
-  const [view, setView] = useState<"stock" | "used">("stock");
+  const [view, setView] = useState<"stock" | "used" | "missing">("stock");
+  // Used list: only the ones used without a ticket.
+  const [noTicketOnly, setNoTicketOnly] = useState(false);
+  // Parts nobody can find (migration 0478). null until loaded, or when the table isn't there yet (missingError).
+  const [missingRows, setMissingRows] = useState<TruckStockMissingRow[] | null>(null);
+  const [missingError, setMissingError] = useState<string | null>(null);
+  const [missingShow, setMissingShow] = useState<"open" | "found" | "all">("open");
+  // Status set to Used / Missing on save: how many, ticket # / reason, note.
+  const [moveAsk, setMoveAsk] = useState<"used" | "missing" | null>(null);
+  // A "marked MISSING" bell links here with ?tab=truck-stock&view=missing.
+  const linkedView = ((useSearch({ strict: false }) as { view?: string }) ?? {}).view;
+  useEffect(() => {
+    if (linkedView === "missing" || linkedView === "used") setView(linkedView);
+  }, [linkedView]);
   /** Ticket numbers on the Used list that are tickets in the app (linked); null until looked up. */
   const [ticketsInApp, setTicketsInApp] = useState<Set<string> | null>(null);
   const [locations, setLocations] = useState<LocationRow[]>([]);
@@ -189,6 +211,29 @@ export function TruckStockPanel() {
   }, []);
 
   useEffect(() => {
+    getTruckStockMissing()
+      .then(setMissingRows)
+      .catch((err) => setMissingError(err instanceof Error ? err.message : String(err)));
+  }, []);
+
+  // Units Listed on Parts Daily Report eBAY (migration 0477): still on the
+  // shelf, but not available to pull or transfer. Marking a listing Sold
+  // there takes it off Quantity.
+  const [onEbayCounts, setOnEbayCounts] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    getOnEbayCounts()
+      .then(setOnEbayCounts)
+      .catch((err) => console.warn("Couldn't load eBay listings for Truck Stock:", err));
+  }, []);
+  const onEbayByRow = useMemo(() => allocateOnEbay(rows, onEbayCounts), [rows, onEbayCounts]);
+  const availableOf = (r: TruckStockRow) => r.quantity - (onEbayByRow.get(r.id) ?? 0);
+  // What the transfer form may send: on-eBay units held back.
+  const transferRows = useMemo(
+    () => rows.map((r) => (onEbayByRow.has(r.id) ? { ...r, quantity: r.quantity - (onEbayByRow.get(r.id) ?? 0) } : r)),
+    [rows, onEbayByRow],
+  );
+
+  useEffect(() => {
     if (view !== "used" || !usedRows || ticketsInApp) return;
     let alive = true;
     ticketNosInApp(usedRows.map((r) => r.ticketNo))
@@ -216,25 +261,27 @@ export function TruckStockPanel() {
     return Array.from(byKey.values()).sort((a, b) => a.localeCompare(b));
   }, [locations, rows, usedRows]);
 
-  // In-stock quantity per part across all branches — drives the "Other
+  // Available quantity per part across all branches — drives the "Other
   // branches" chips and the "Total in stock" column. Only IN STOCK rows count
-  // (sold / used / returned / eBay / B2B / ticket parts aren't available), and
-  // a branch spelled two ways ("Jackson,MS" / "Jackson, MS") is one branch.
+  // (sold / used / returned / eBay / B2B / ticket parts aren't available),
+  // units Listed on eBay are left out, and a branch spelled two ways
+  // ("Jackson,MS" / "Jackson, MS") is one branch.
   const totalsByPart = useMemo(() => {
     const map = new Map<string, { total: number; branches: { branch: string; qty: number }[] }>();
     rows.forEach((r) => {
       if (r.status !== "in_stock") return;
+      const qty = r.quantity - (onEbayByRow.get(r.id) ?? 0);
       const key = r.partNo.trim().toLowerCase();
       if (!map.has(key)) map.set(key, { total: 0, branches: [] });
       const entry = map.get(key)!;
-      entry.total += r.quantity;
+      entry.total += qty;
       const b = entry.branches.find((x) => normBranch(x.branch) === normBranch(r.branch));
-      if (b) b.qty += r.quantity;
-      else entry.branches.push({ branch: r.branch, qty: r.quantity });
+      if (b) b.qty += qty;
+      else entry.branches.push({ branch: r.branch, qty });
     });
     map.forEach((e) => e.branches.sort((a, b) => a.branch.localeCompare(b.branch)));
     return map;
-  }, [rows]);
+  }, [rows, onEbayByRow]);
 
   const filteredRows = useMemo(() => {
     const s = search.trim().toLowerCase();
@@ -251,28 +298,76 @@ export function TruckStockPanel() {
     });
   }, [rows, search, branchFilter, statusFilter]);
 
+  // Excel-style funnels on the stock table's headers — one set across every
+  // branch section and page, applied after the search / branch / status boxes.
+  const totalOf = (r: TruckStockRow) => totalsByPart.get(r.partNo.trim().toLowerCase())?.total ?? 0;
+  const stockFunnels = useColumnFunnels(
+    filteredRows,
+    {
+      "Part No": (r) => r.partNo.trim(),
+      "Stored At": (r) => r.storageLocation.trim(),
+      Description: (r) => r.description.trim(),
+      Brand: (r) => r.manufacturer.trim(),
+      Qty: (r) => String(r.quantity),
+      "On eBay": (r) => String(onEbayByRow.get(r.id) ?? 0),
+      Available: (r) => String(availableOf(r)),
+      Status: (r) => truckStockStatusOption(r.status).label,
+      "Other branches": (r) =>
+        (totalsByPart.get(r.partNo.trim().toLowerCase())?.branches ?? []).some((b) => normBranch(b.branch) !== normBranch(r.branch) && b.qty > 0)
+          ? "At other branches"
+          : "Only here",
+      "Total in stock": (r) => String(totalOf(r)),
+      Notes: (r) => r.notes.trim(),
+      "Date Added": (r) => (r.createdAt ? formatDateAdded(r.createdAt) : ""),
+      Aging: (r) => {
+        const d = agingDays(r.createdAt);
+        return d === null ? "" : d >= 90 ? "90+ days" : d >= 30 ? "30–89 days" : "Under 30 days";
+      },
+    },
+    (r) => r.id,
+  );
+  const shownRows = stockFunnels.visible;
+
   const filteredUsed = useMemo(() => {
     const s = search.trim().toLowerCase();
     return (usedRows ?? []).filter((r) => {
       if (branchFilter && normBranch(r.branch) !== normBranch(branchFilter)) return false;
+      if (noTicketOnly && r.ticketNo.trim()) return false;
       if (!s) return true;
       return [r.partNo, r.ticketNo, r.description, r.tech, r.storageLocation, r.notes].some((v) => v.toLowerCase().includes(s));
     });
-  }, [usedRows, search, branchFilter]);
+  }, [usedRows, search, branchFilter, noTicketOnly]);
+
+  const filteredMissing = useMemo(() => {
+    const s = search.trim().toLowerCase();
+    return (missingRows ?? []).filter((r) => {
+      if (branchFilter && normBranch(r.branch) !== normBranch(branchFilter)) return false;
+      if (missingShow === "open" && r.foundAt) return false;
+      if (missingShow === "found" && !r.foundAt) return false;
+      if (!s) return true;
+      return [r.partNo, r.description, r.storageLocation, r.notes, r.reportedByName, r.foundByName].some((v) => v.toLowerCase().includes(s));
+    });
+  }, [missingRows, search, branchFilter, missingShow]);
+  const openMissingCount = useMemo(() => (missingRows ?? []).filter((r) => !r.foundAt).length, [missingRows]);
 
   // Any filter changing invalidates whatever page we were on.
   useEffect(() => {
     setCurrentPage(1);
   }, [search, branchFilter, statusFilter, view]);
 
-  const listLength = view === "used" ? filteredUsed.length : filteredRows.length;
+  const listLength = view === "used" ? filteredUsed.length : view === "missing" ? filteredMissing.length : shownRows.length;
   const totalPages = pageSize === "all" ? 1 : Math.max(1, Math.ceil(listLength / pageSize));
   const safePage = Math.min(currentPage, totalPages);
   const pagedRows = useMemo(() => {
-    if (pageSize === "all") return filteredRows;
+    if (pageSize === "all") return shownRows;
     const start = (safePage - 1) * pageSize;
-    return filteredRows.slice(start, start + pageSize);
-  }, [filteredRows, safePage, pageSize]);
+    return shownRows.slice(start, start + pageSize);
+  }, [shownRows, safePage, pageSize]);
+
+  const pagedMissing = useMemo(
+    () => (pageSize === "all" ? filteredMissing : filteredMissing.slice((safePage - 1) * pageSize, safePage * pageSize)),
+    [filteredMissing, safePage, pageSize],
+  );
 
   const groupedUsed = useMemo(() => {
     const paged = pageSize === "all" ? filteredUsed : filteredUsed.slice((safePage - 1) * pageSize, safePage * pageSize);
@@ -298,56 +393,70 @@ export function TruckStockPanel() {
       .sort((a, b) => a[0].localeCompare(b[0]));
   }, [pagedRows]);
 
-  const handleSave = async () => {
+  const handleSave = () => void saveDraft();
+
+  // Status changed to Used or Missing → StockMoveDialog asks how many (and the
+  // ticket # / reason, or a note); those units go to the Used / Missing list
+  // and come off the row (the way Import treats a Used row). The row keeps the
+  // rest under its old status, or takes the new one when none are left.
+  const saveDraft = async (move?: StockMove) => {
     if (!draft) return;
     if (!draft.branch.trim() || !draft.partNo.trim()) {
       alert("Branch and Part No are required.");
       return;
     }
-    // Status changed to Used → the part goes to the Used list with its ticket #
-    // and comes off stock (the way Import treats a Used row).
     let toSave = draft;
     let usedLine: Omit<TruckStockUsedRow, "id" | "createdAt"> | null = null;
+    let missingLine: Parameters<typeof addTruckStockMissing>[0] | null = null;
     const before = draft.id ? rows.find((r) => r.id === draft.id) : undefined;
-    if (draft.status === "used" && before?.status !== "used" && draft.quantity > 0) {
-      if (usedRows === null) {
+    const moving = (draft.status === "used" || draft.status === "missing") && before?.status !== draft.status && draft.quantity > 0;
+    if (moving && !move) {
+      if (draft.status === "used" && usedRows === null) {
         alert(`Can't move this part to the Used list — ${usedError || "the Used list hasn't loaded yet"}. Pick another status, or try again.`);
         return;
       }
-      const ticketIn = prompt(`${draft.partNo} at ${draft.branch} — which ticket # was it used on?\n(It moves to the Used tab and comes off stock.)`, "");
-      if (ticketIn === null) return;
-      const ticketNo = ticketIn.trim();
-      if (!ticketNo) {
-        alert("Enter the ticket # this part was used on.");
+      if (draft.status === "missing" && missingRows === null) {
+        alert(
+          missingError && isMissingListMigrationMissing(missingError)
+            ? "The Missing list isn't set up yet: migration 0478 (supabase/migrations/0478_truck_stock_missing.sql) needs running in Supabase."
+            : `Can't move this part to the Missing list — ${missingError || "it hasn't loaded yet"}. Pick another status, or try again.`,
+        );
         return;
       }
-      let qtyUsed = draft.quantity;
-      if (draft.quantity > 1) {
-        const qtyIn = prompt(`How many of the ${draft.quantity} were used on ticket ${ticketNo}?`, String(draft.quantity));
-        if (qtyIn === null) return;
-        qtyUsed = Math.trunc(Number(qtyIn));
-        if (!Number.isFinite(qtyUsed) || qtyUsed < 1 || qtyUsed > draft.quantity) {
-          alert(`Enter a number from 1 to ${draft.quantity}.`);
-          return;
-        }
+      setMoveAsk(draft.status === "used" ? "used" : "missing");
+      return;
+    }
+    if (moving && move) {
+      const remaining = draft.quantity - move.qty;
+      const keep: TruckStockStatus = before && before.status !== "used" && before.status !== "missing" ? before.status : "in_stock";
+      toSave = { ...draft, quantity: remaining, status: remaining > 0 ? keep : draft.status };
+      if (draft.status === "used") {
+        const ticketNo = move.ticketNo.trim();
+        const same = (usedRows ?? []).find(
+          (u) => normBranch(u.branch) === normBranch(draft.branch) && u.partNo.trim().toLowerCase() === draft.partNo.trim().toLowerCase() && u.ticketNo.trim().toLowerCase() === ticketNo.toLowerCase(),
+        );
+        usedLine = {
+          branch: same?.branch ?? draft.branch,
+          partNo: same?.partNo ?? draft.partNo,
+          ticketNo: same?.ticketNo ?? ticketNo,
+          quantity: (same?.quantity ?? 0) + move.qty,
+          usedDate: same?.usedDate || new Date().toISOString().slice(0, 10),
+          tech: same?.tech ?? "",
+          storageLocation: draft.storageLocation,
+          description: draft.description,
+          notes: [same?.notes, ticketNo ? "" : `No ticket — ${move.reason.trim()}`, `Marked Used by ${displayName || "someone"}`].filter(Boolean).join(" · ").slice(0, 500),
+        };
+      } else {
+        missingLine = {
+          truckStockId: draft.id || null,
+          branch: draft.branch,
+          partNo: draft.partNo,
+          quantity: move.qty,
+          description: draft.description,
+          storageLocation: draft.storageLocation,
+          notes: move.reason.trim(),
+        };
       }
-      const remaining = draft.quantity - qtyUsed;
-      // Some left on the shelf → the row stays In Stock with what's left.
-      toSave = { ...draft, quantity: remaining, status: remaining > 0 ? "in_stock" : "used" };
-      const same = usedRows.find(
-        (u) => normBranch(u.branch) === normBranch(draft.branch) && u.partNo.trim().toLowerCase() === draft.partNo.trim().toLowerCase() && u.ticketNo.trim().toLowerCase() === ticketNo.toLowerCase(),
-      );
-      usedLine = {
-        branch: same?.branch ?? draft.branch,
-        partNo: same?.partNo ?? draft.partNo,
-        ticketNo: same?.ticketNo ?? ticketNo,
-        quantity: (same?.quantity ?? 0) + qtyUsed,
-        usedDate: same?.usedDate || new Date().toISOString().slice(0, 10),
-        tech: same?.tech ?? "",
-        storageLocation: draft.storageLocation,
-        description: draft.description,
-        notes: [same?.notes, `Marked Used by ${displayName || "someone"}`].filter(Boolean).join(" · "),
-      };
     }
     setBusy(true);
     try {
@@ -358,7 +467,26 @@ export function TruckStockPanel() {
         setUsedRows(await getTruckStockUsed());
         setTicketsInApp(null);
       }
+      if (missingLine) {
+        // Missing list first, for the same reason.
+        try {
+          const added = await addTruckStockMissing(missingLine);
+          setMissingRows((prev) => [added, ...(prev ?? [])]);
+        } catch (err) {
+          throw new Error(`couldn't add it to the Missing list (${err instanceof Error ? err.message : String(err)})`);
+        }
+      }
       const saved = await upsertTruckStockRow(toSave);
+      if (missingLine) {
+        void notifyPartsManagerOfMissing({
+          actorName: displayName || "Someone",
+          partNo: missingLine.partNo,
+          qty: missingLine.quantity,
+          branch: missingLine.branch,
+          storageLocation: missingLine.storageLocation,
+          note: missingLine.notes,
+        });
+      }
       setRows((prev) => {
         const idx = prev.findIndex((r) => r.id === saved.id);
         if (idx >= 0) {
@@ -382,6 +510,35 @@ export function TruckStockPanel() {
     try {
       await deleteTruckStockRow(row.id);
       setRows((prev) => prev.filter((r) => r.id !== row.id));
+    } catch (err) {
+      alert(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Missing list: Found puts the units back on their stock row (0478's truck_stock_missing_found).
+  const handleFound = async (m: TruckStockMissingRow) => {
+    if (!confirm(`Found ${m.quantity} × ${m.partNo} at ${m.branch}? They go back on Truck Stock as IN STOCK.`)) return;
+    setBusy(true);
+    try {
+      await markTruckStockMissingFound(m.id);
+      const [stock, missing] = await Promise.all([getTruckStock(), getTruckStockMissing()]);
+      setRows(stock);
+      setMissingRows(missing);
+    } catch (err) {
+      alert(`Couldn't mark it Found: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDeleteMissing = async (m: TruckStockMissingRow) => {
+    if (!confirm(`Remove this Missing entry (${m.quantity} × ${m.partNo} at ${m.branch})?${m.foundAt ? "" : "\n\nThis does NOT put them back on stock — use Found for that."}`)) return;
+    setBusy(true);
+    try {
+      await deleteTruckStockMissing(m.id);
+      setMissingRows((prev) => (prev ?? []).filter((r) => r.id !== m.id));
     } catch (err) {
       alert(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -468,6 +625,20 @@ export function TruckStockPanel() {
       setUsedRows(await getTruckStockUsed());
       setTicketsInApp(null);
     }
+    // MISSING / LOST parts → the Missing list (migration 0478).
+    let missingText = "";
+    if (save.missingLines.length > 0) {
+      try {
+        const { added, updated } = await syncImportedMissing(save.missingLines);
+        setMissingRows(await getTruckStockMissing());
+        missingText = `; missing parts: ${added} added${updated ? `, ${updated} updated` : ""}`;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        missingText = isMissingListMigrationMissing(message)
+          ? "; missing parts not saved — run migration 0478 in Supabase first"
+          : `; missing parts didn't save (${message})`;
+      }
+    }
     setRows(await getTruckStock());
     setImportFile(null);
     const branches = [...new Set([...save.upserts.map((r) => r.branch), ...save.usedUpserts.map((r) => r.branch), ...(save.backup?.branches ?? [])])].sort();
@@ -486,16 +657,30 @@ export function TruckStockPanel() {
         ? { ok: false, text: `${fileName}: ${errors.length} batch(es) didn't save (${errors[0]})${save.removeIds.length ? "; nothing was removed" : ""}. Import it again to retry.` }
         : usedErrors.length > 0
           ? { ok: false, text: `${fileName}: stock saved, but ${usedErrors.length} batch(es) of used parts didn't (${usedErrors[0]}). Import it again to retry.` }
-          : { ok: true, text: `Imported ${fileName}: ${save.added} added, ${save.updated} updated${save.removeIds.length ? `, ${save.removeIds.length} removed` : ""}${usedText}.` },
+          : { ok: true, text: `Imported ${fileName}: ${save.added} added, ${save.updated} updated${save.removeIds.length ? `, ${save.removeIds.length} removed` : ""}${usedText}${missingText}.` },
     );
   };
 
   // Export: the rows the search and filters show, every page — same columns Import reads back.
   const handleExport = (kind: "xlsx" | "csv") => {
+    if (view === "missing") {
+      const name = `truck_stock_missing${branchFilter ? `_${branchFilter.replace(/[^A-Za-z0-9]+/g, "_")}` : ""}`;
+      const headers = ["Branch", "Part No", "Qty", "Description", "Stored At", "Note", "Reported", "Reported By", "Found", "Found By"];
+      const data = filteredMissing.map((m) => [
+        m.branch, m.partNo, m.quantity, m.description, m.storageLocation, m.notes,
+        formatDateAdded(m.reportedAt), m.reportedByName, m.foundAt ? formatDateAdded(m.foundAt) : "", m.foundByName,
+      ]);
+      if (kind === "csv") exportToCSV(name, headers, data);
+      else
+        void downloadTruckStockXlsx(name, data, headers, "Missing").catch((err) =>
+          setImportNote({ ok: false, text: `Export failed: ${err instanceof Error ? err.message : String(err)}` }),
+        );
+      return;
+    }
     const used = view === "used";
     const name = `truck_stock${used ? "_used" : ""}${branchFilter ? `_${branchFilter.replace(/[^A-Za-z0-9]+/g, "_")}` : ""}`;
     const headers = used ? TRUCK_STOCK_USED_EXPORT_HEADERS : TRUCK_STOCK_EXPORT_HEADERS;
-    const data = used ? exportUsedData(filteredUsed) : exportData(filteredRows);
+    const data = used ? exportUsedData(filteredUsed) : exportData(shownRows);
     if (kind === "csv") exportToCSV(name, headers, data);
     else
       void downloadTruckStockXlsx(name, data, headers, used ? "Used" : "Truck Stock").catch((err) =>
@@ -625,24 +810,40 @@ export function TruckStockPanel() {
 
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
           <div className="inline-flex rounded-md border border-white/15 bg-slate-950 p-0.5 text-sm" role="tablist" aria-label="Truck Stock view">
-            {(["stock", "used"] as const).map((v) => (
+            {(["stock", "used", "missing"] as const).map((v) => (
               <button
                 key={v}
                 type="button"
                 role="tab"
                 aria-selected={view === v}
                 onClick={() => setView(v)}
-                title={v === "used" ? "Parts used on a ticket, with the ticket number (from Import) — not counted as stock" : "Parts in stock at each branch"}
+                title={
+                  v === "used"
+                    ? "Parts used — on a ticket (with its number) or without one (with the reason) — not counted as stock"
+                    : v === "missing"
+                      ? "Parts nobody can find — off stock until someone marks them Found"
+                      : "Parts in stock at each branch"
+                }
                 className={`rounded px-3 py-1 font-medium ${view === v ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-white/10"}`}
               >
-                {v === "stock" ? "Stock" : `Used${usedRows ? ` (${usedRows.length.toLocaleString()})` : ""}`}
+                {v === "stock"
+                  ? "Stock"
+                  : v === "used"
+                    ? `Used${usedRows ? ` (${usedRows.length.toLocaleString()})` : ""}`
+                    : <>Missing{openMissingCount > 0 ? <span className="ml-1 rounded-full bg-orange-600 px-1.5 text-[10px] font-bold text-white">{openMissingCount}</span> : null}</>}
               </button>
             ))}
           </div>
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder={view === "used" ? "Search part #, ticket #, description, tech, or bin" : "Search part #, description, brand, or bin"}
+            placeholder={
+              view === "used"
+                ? "Search part #, ticket #, reason, description, tech, or bin"
+                : view === "missing"
+                  ? "Search part #, description, bin, note, or who"
+                  : "Search part #, description, brand, or bin"
+            }
             className="min-w-[240px] flex-1 rounded border border-white/15 bg-slate-950 px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
           />
           <select
@@ -657,9 +858,30 @@ export function TruckStockPanel() {
               </option>
             ))}
           </select>
+          {view === "used" ? (
+            <label className="inline-flex items-center gap-1.5 text-xs text-slate-300" title="Only parts used without a ticket (each has its reason)">
+              <input type="checkbox" checked={noTicketOnly} onChange={(e) => setNoTicketOnly(e.target.checked)} />
+              No ticket only
+            </label>
+          ) : null}
+          {view === "missing" ? (
+            <div className="inline-flex rounded-md border border-white/15 bg-slate-950 p-0.5 text-xs" role="group" aria-label="Which missing parts">
+              {(["open", "found", "all"] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  aria-pressed={missingShow === s}
+                  onClick={() => setMissingShow(s)}
+                  className={`rounded px-2.5 py-1 font-medium ${missingShow === s ? "bg-orange-600 text-white" : "text-slate-300 hover:bg-white/10"}`}
+                >
+                  {s === "open" ? "Still missing" : s === "found" ? "Found" : "All"}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <select
             title="Filter by status"
-            hidden={view === "used"}
+            hidden={view !== "stock"}
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value ? toTruckStockStatus(e.target.value) : "")}
             className="rounded border border-white/15 bg-slate-950 px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
@@ -672,9 +894,21 @@ export function TruckStockPanel() {
           <div className="text-xs text-slate-400">
             {view === "used"
               ? `${filteredUsed.length} of ${(usedRows ?? []).length} used parts`
-              : `${filteredRows.length} of ${rows.length} rows`}{" "}
+              : view === "missing"
+                ? `${filteredMissing.length} of ${(missingRows ?? []).length} missing entries`
+                : `${shownRows.length} of ${rows.length} rows`}{" "}
             · {branchOptions.length} branches
           </div>
+          {view === "stock" && stockFunnels.activeCount > 0 && (
+            <button
+              type="button"
+              onClick={stockFunnels.clear}
+              className="rounded border border-blue-500/40 bg-blue-500/10 px-2 py-1 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"
+              title="Clear every column funnel filter"
+            >
+              Clear {stockFunnels.activeCount} column filter{stockFunnels.activeCount === 1 ? "" : "s"}
+            </button>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400">
@@ -738,6 +972,24 @@ export function TruckStockPanel() {
               <UsedBranchSection key={branch} branch={branch} rows={branchRows} ticketsInApp={ticketsInApp} onDelete={handleDeleteUsed} busy={busy} />
             ))
           )
+        ) : view === "missing" ? (
+          missingRows === null ? (
+            <div className="rounded border border-white/10 bg-white/5 p-6 text-center text-sm text-slate-400">
+              {missingError
+                ? isMissingListMigrationMissing(missingError)
+                  ? "The Missing list isn't set up yet: migration 0478 (supabase/migrations/0478_truck_stock_missing.sql) needs running in Supabase."
+                  : `Couldn't load the Missing list: ${missingError}`
+                : "Loading…"}
+            </div>
+          ) : pagedMissing.length === 0 ? (
+            <div className="rounded border border-white/10 bg-white/5 p-6 text-center text-sm text-slate-400">
+              {missingRows.length === 0
+                ? "Nothing missing. Set a stock row's Status to MISSING (it asks how many), or Import a workbook with MISSING / LOST rows."
+                : "No missing parts match the search / filters."}
+            </div>
+          ) : (
+            <MissingList rows={pagedMissing} onFound={handleFound} onDelete={handleDeleteMissing} busy={busy} />
+          )
         ) : loading ? (
           <div className="rounded border border-white/10 bg-white/5 p-6 text-center text-sm text-slate-400">
             Loading…
@@ -753,6 +1005,10 @@ export function TruckStockPanel() {
               branch={branch}
               rows={branchRows}
               totalsByPart={totalsByPart}
+              onEbayByRow={onEbayByRow}
+              availableOf={availableOf}
+              funnel={stockFunnels.funnel}
+              rowPin={stockFunnels.rowPin}
               editingRow={draft && draft.id ? draft : null}
               setEditingRow={setDraft}
               onEdit={(r) => setDraft({ ...r })}
@@ -789,12 +1045,24 @@ export function TruckStockPanel() {
           </div>
         )}
 
+        {moveAsk && draft ? (
+          <StockMoveDialog
+            kind={moveAsk}
+            row={draft}
+            onCancel={() => setMoveAsk(null)}
+            onConfirm={(move) => {
+              setMoveAsk(null);
+              void saveDraft(move);
+            }}
+          />
+        ) : null}
+
         {usagePartNo ? <PartUsageModal partNo={usagePartNo} onClose={() => setUsagePartNo(null)} /> : null}
         {historyRow ? <StockHistoryModal row={historyRow} onClose={() => setHistoryRow(null)} /> : null}
 
         {showTransferForm ? (
           <TransferRequestModal
-            rows={rows}
+            rows={transferRows}
             branchOptions={branchOptions}
             busy={busy}
             onSubmit={handleRequestTransfer}
@@ -835,6 +1103,10 @@ function BranchSection({
   branch,
   rows,
   totalsByPart,
+  onEbayByRow,
+  availableOf,
+  funnel,
+  rowPin,
   editingRow,
   setEditingRow,
   onEdit,
@@ -849,6 +1121,12 @@ function BranchSection({
   branch: string;
   rows: TruckStockRow[];
   totalsByPart: Map<string, { total: number; branches: { branch: string; qty: number }[] }>;
+  /** Units of each row Listed on eBay (migration 0477). */
+  onEbayByRow: Map<string, number>;
+  availableOf: (r: TruckStockRow) => number;
+  /** Header funnel for a column (useColumnFunnels — shared by every branch section). */
+  funnel: (col: string) => React.ReactNode;
+  rowPin: (key: string) => { onFocus: () => void; onBlur: (e: React.FocusEvent<HTMLElement>) => void };
   editingRow: TruckStockRow | null;
   setEditingRow: (r: TruckStockRow | null) => void;
   onEdit: (r: TruckStockRow) => void;
@@ -871,17 +1149,28 @@ function BranchSection({
         <table className="w-full text-xs text-white">
           <thead className="bg-slate-900/60 text-slate-300">
             <tr>
-              <th className="px-3 py-2 text-left">Part No</th>
-              <th className="px-3 py-2 text-left">Stored At</th>
-              <th className="px-3 py-2 text-left">Description</th>
-              <th className="px-3 py-2 text-left">Brand</th>
-              <th className="px-3 py-2 text-right">Qty</th>
-              <th className="px-3 py-2 text-left">Status</th>
-              <th className="px-3 py-2 text-left">Other branches</th>
-              <th className="px-3 py-2 text-right" title="IN STOCK quantity across all branches">Total in stock</th>
-              <th className="px-3 py-2 text-left">Notes</th>
-              <th className="px-3 py-2 text-left">Date Added</th>
-              <th className="px-3 py-2 text-left">Aging</th>
+              {[
+                { h: "Part No" },
+                { h: "Stored At" },
+                { h: "Description" },
+                { h: "Brand" },
+                { h: "Qty", right: true },
+                { h: "On eBay", right: true, title: "Units listed on eBay (Parts Daily Report eBAY → Listings, status Listed) — still on the shelf, can't be pulled or transferred" },
+                { h: "Available", right: true, title: "Qty minus what's listed on eBay — what can be pulled for a ticket or transferred" },
+                { h: "Status" },
+                { h: "Other branches", title: "Available IN STOCK units at other branches" },
+                { h: "Total in stock", right: true, title: "Available IN STOCK units across all branches (eBay listings left out)" },
+                { h: "Notes" },
+                { h: "Date Added" },
+                { h: "Aging" },
+              ].map(({ h, right, title }) => (
+                <th key={h} className={`px-3 py-2 ${right ? "text-right" : "text-left"} whitespace-nowrap`} title={title}>
+                  <span className={`inline-flex items-center gap-0.5 ${right ? "justify-end" : ""}`}>
+                    {h}
+                    {funnel(h)}
+                  </span>
+                </th>
+              ))}
               <th className="px-3 py-2 w-24"></th>
             </tr>
           </thead>
@@ -892,9 +1181,30 @@ function BranchSection({
               const elsewhere = (totals?.branches || []).filter((b) => normBranch(b.branch) !== normBranch(row.branch) && b.qty > 0);
               const totalInStock = totals?.total ?? 0;
               const totalCell = (
-                <td className="px-3 py-2 text-right font-semibold text-emerald-200" title={`${totalInStock} in stock across all branches`}>
+                <td className="px-3 py-2 text-right font-semibold text-emerald-200" title={`${totalInStock} available across all branches`}>
                   {totalInStock}
                 </td>
+              );
+              const listed = onEbayByRow.get(row.id) ?? 0;
+              const ebayCells = (
+                <>
+                  <td className="px-3 py-2 text-right">
+                    {listed > 0 ? (
+                      <Link
+                        to="/m/$module/$submodule"
+                        params={{ module: "parts", submodule: "part-daily-report-ebay" }}
+                        search={{ listing: row.partNo.trim() } as never}
+                        className="inline-flex items-center rounded-full border border-violet-400/40 bg-violet-500/15 px-2 py-0.5 text-[10px] font-semibold text-violet-200 hover:bg-violet-500/30"
+                        title={`${listed} listed on eBay — open its listings on Parts Daily Report eBAY. Marking a listing Sold there takes it off Qty.`}
+                      >
+                        {listed}
+                      </Link>
+                    ) : (
+                      <span className="text-slate-600">—</span>
+                    )}
+                  </td>
+                  <td className={`px-3 py-2 text-right font-semibold ${listed > 0 ? "text-amber-200" : "text-slate-300"}`}>{availableOf(row)}</td>
+                </>
               );
               const isEditing = editingRow?.id === row.id;
 
@@ -903,7 +1213,7 @@ function BranchSection({
                 const setField = <K extends keyof TruckStockRow>(k: K, v: TruckStockRow[K]) =>
                   setEditingRow({ ...d, [k]: v });
                 return (
-                  <tr key={row.id} className="border-t border-blue-400/30 bg-blue-500/10">
+                  <tr key={row.id} className="border-t border-blue-400/30 bg-blue-500/10" {...rowPin(row.id)}>
                     <td className="px-2 py-1.5">
                       <input value={d.partNo} onChange={(e) => setField("partNo", e.target.value)} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 font-mono text-white focus:outline-none focus:border-blue-500" placeholder="Part No" />
                     </td>
@@ -919,6 +1229,7 @@ function BranchSection({
                     <td className="px-2 py-1.5">
                       <input type="number" min={0} title="Quantity" value={d.quantity} onChange={(e) => setField("quantity", Number(e.target.value) || 0)} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-right text-white focus:outline-none focus:border-blue-500" />
                     </td>
+                    {ebayCells}
                     <td className="px-2 py-1.5">
                       <StatusSelect value={d.status} onChange={(v) => setField("status", v)} className="w-full rounded border border-white/15 bg-slate-950 px-2 py-1 text-white focus:outline-none focus:border-blue-500" />
                     </td>
@@ -991,6 +1302,7 @@ function BranchSection({
                   </td>
                   <td className="px-3 py-2">{row.manufacturer || "—"}</td>
                   <td className="px-3 py-2 text-right font-semibold">{row.quantity}</td>
+                  {ebayCells}
                   <td className="px-3 py-2">
                     <OptionChip option={truckStockStatusOption(row.status)} />
                   </td>
@@ -1105,7 +1417,9 @@ function UsedBranchSection({
                 <td className="px-3 py-2 font-mono">{row.partNo}</td>
                 <td className="px-3 py-2 font-mono whitespace-nowrap">
                   {!row.ticketNo ? (
-                    <span className="font-sans text-slate-500">—</span>
+                    <span className="inline-flex items-center rounded-full border border-amber-400/40 bg-amber-500/10 px-2 py-0.5 font-sans text-[10px] font-semibold text-amber-200" title="Used without a ticket — the reason is in Notes">
+                      No ticket
+                    </span>
                   ) : ticketsInApp?.has(row.ticketNo) ? (
                     <Link to="/ticket/$ticketNo" params={{ ticketNo: row.ticketNo }} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline">
                       {row.ticketNo}
@@ -1136,6 +1450,173 @@ function UsedBranchSection({
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/** What StockMoveDialog hands back: how many, and the ticket # / reason (Used) or note (Missing). */
+type StockMove = { qty: number; ticketNo: string; reason: string };
+
+/**
+ * Status set to USED or MISSING on a stock row: how many of the row's units,
+ * then for Used a ticket # — or, with no ticket, a reason (required) — and for
+ * Missing an optional note (where it was last seen …).
+ */
+function StockMoveDialog({ kind, row, onCancel, onConfirm }: { kind: "used" | "missing"; row: TruckStockRow; onCancel: () => void; onConfirm: (move: StockMove) => void }) {
+  const [qty, setQty] = useState(row.quantity);
+  const [ticketNo, setTicketNo] = useState("");
+  const [reason, setReason] = useState("");
+  const used = kind === "used";
+  const qtyOk = Number.isInteger(qty) && qty >= 1 && qty <= row.quantity;
+  const reasonNeeded = used && !ticketNo.trim();
+  const canSave = qtyOk && (!reasonNeeded || reason.trim().length > 0);
+  const left = row.quantity - (qtyOk ? qty : 0);
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4" onClick={onCancel}>
+      <div className="w-full max-w-md rounded-xl border border-white/10 bg-slate-950 text-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <header className="rounded-t-xl border-b border-white/10 bg-white/5 px-5 py-3">
+          <h2 className="text-base font-semibold">{used ? "Mark as Used" : "Mark as Missing"}</h2>
+          <p className="text-xs text-slate-400">
+            <span className="font-mono">{row.partNo}</span> at {row.branch} — {row.quantity} on this row.{" "}
+            {used ? "They move to the Used tab and come off stock." : "They move to the Missing tab and come off stock until someone marks them Found. The branch's Parts Manager gets a bell."}
+          </p>
+        </header>
+        <form
+          className="space-y-3 p-5 text-xs"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (canSave) onConfirm({ qty, ticketNo: used ? ticketNo.trim() : "", reason: reason.trim() });
+          }}
+        >
+          <label className="flex flex-col gap-1">
+            <span className="text-slate-300">How many {used ? "were used" : "are missing"}? *</span>
+            <input
+              type="number"
+              min={1}
+              max={row.quantity}
+              value={Number.isFinite(qty) ? qty : ""}
+              onChange={(e) => setQty(Math.trunc(Number(e.target.value)))}
+              className="w-28 rounded border border-white/15 bg-slate-900 px-2 py-1.5 text-white focus:outline-none focus:border-blue-500"
+              autoFocus
+            />
+            {!qtyOk ? <span className="text-rose-300">Enter 1 to {row.quantity}.</span> : <span className="text-slate-500">{left} stay{left === 1 ? "s" : ""} on the row.</span>}
+          </label>
+          {used ? (
+            <label className="flex flex-col gap-1">
+              <span className="text-slate-300">Ticket # (leave blank if it wasn't for a ticket)</span>
+              <input
+                value={ticketNo}
+                onChange={(e) => setTicketNo(e.target.value)}
+                placeholder="e.g. 26000774644DF"
+                className="rounded border border-white/15 bg-slate-900 px-2 py-1.5 font-mono text-white focus:outline-none focus:border-blue-500"
+              />
+            </label>
+          ) : null}
+          {!used || reasonNeeded ? (
+            <label className="flex flex-col gap-1">
+              <span className="text-slate-300">{used ? "Reason (no ticket) *" : "Note — where it was last seen, who checked …"}</span>
+              <input
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder={used ? "e.g. branch use, shop unit, warranty swap" : "Optional"}
+                maxLength={300}
+                className="rounded border border-white/15 bg-slate-900 px-2 py-1.5 text-white focus:outline-none focus:border-blue-500"
+              />
+              {used && !reason.trim() ? <span className="text-amber-300">Without a ticket #, say what it was used for.</span> : null}
+            </label>
+          ) : null}
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onCancel} className="rounded border border-white/15 px-3 py-1.5 text-sm text-slate-300 hover:bg-white/10">
+              Cancel
+            </button>
+            <button type="submit" disabled={!canSave} className={`rounded px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-40 ${used ? "bg-red-700 hover:bg-red-600" : "bg-orange-600 hover:bg-orange-500"}`}>
+              {used ? `Mark ${qtyOk ? qty : ""} Used` : `Mark ${qtyOk ? qty : ""} Missing`}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/** Truck Stock's Missing list (migration 0478): what's still missing, and what was found (kept as a record). */
+function MissingList({ rows, onFound, onDelete, busy }: { rows: TruckStockMissingRow[]; onFound: (m: TruckStockMissingRow) => void; onDelete: (m: TruckStockMissingRow) => void; busy: boolean }) {
+  const stamp = (iso: string | null) => (iso ? new Date(iso).toLocaleString([], { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) : "");
+  return (
+    <div className="rounded-xl border border-orange-400/25 bg-white/5">
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs text-white">
+          <thead className="bg-slate-900/60 text-slate-300">
+            <tr>
+              <th className="px-3 py-2 text-left">Branch</th>
+              <th className="px-3 py-2 text-left">Part No</th>
+              <th className="px-3 py-2 text-right">Qty</th>
+              <th className="px-3 py-2 text-left">Description</th>
+              <th className="px-3 py-2 text-left">Stored At</th>
+              <th className="px-3 py-2 text-left">Note</th>
+              <th className="px-3 py-2 text-left">Reported</th>
+              <th className="px-3 py-2 text-left">Status</th>
+              <th className="px-3 py-2 w-28"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((m) => (
+              <tr key={m.id} className={`border-t border-white/5 hover:bg-white/5 ${m.foundAt ? "opacity-70" : ""}`}>
+                <td className="px-3 py-2 whitespace-nowrap">{m.branch}</td>
+                <td className="px-3 py-2 font-mono">{m.partNo}</td>
+                <td className="px-3 py-2 text-right font-semibold">{m.quantity}</td>
+                <td className="px-3 py-2">{m.description || "—"}</td>
+                <td className="px-3 py-2">
+                  {m.storageLocation ? (
+                    <span className="inline-flex items-center rounded border border-sky-400/30 bg-sky-500/10 px-2 py-0.5 text-[11px] font-medium text-sky-200">{m.storageLocation}</span>
+                  ) : (
+                    <span className="text-slate-500">—</span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-slate-300">{m.notes || ""}</td>
+                <td className="px-3 py-2 whitespace-nowrap text-slate-300">
+                  {stamp(m.reportedAt)}
+                  <div className="text-[10px] text-slate-500">{m.source === "import" ? "from Import" : m.reportedByName || "—"}</div>
+                </td>
+                <td className="px-3 py-2 whitespace-nowrap">
+                  {m.foundAt ? (
+                    <span className="text-emerald-300" title={`Back on stock ${stamp(m.foundAt)}`}>
+                      Found{m.foundByName ? ` by ${m.foundByName}` : ""}
+                      <div className="text-[10px] text-slate-500">{stamp(m.foundAt)}</div>
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center rounded-full border border-orange-400/50 bg-orange-600 px-2 py-0.5 text-[10px] font-semibold text-white">MISSING</span>
+                  )}
+                </td>
+                <td className="px-3 py-2">
+                  <div className="flex items-center justify-end gap-1">
+                    {!m.foundAt ? (
+                      <button
+                        type="button"
+                        onClick={() => onFound(m)}
+                        disabled={busy}
+                        className="rounded border border-emerald-400/40 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-40"
+                        title="Found it — puts the units back on Truck Stock as IN STOCK"
+                      >
+                        Found
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => onDelete(m)}
+                      disabled={busy}
+                      className="rounded p-1 text-rose-300 hover:bg-rose-500/15 hover:text-rose-200 disabled:opacity-40"
+                      title="Remove this entry (doesn't change stock)"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

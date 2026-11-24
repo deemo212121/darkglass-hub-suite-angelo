@@ -14,7 +14,7 @@
  */
 import { useMemo, useState } from "react";
 import { ArrowLeft, ArrowRight, Copy, Upload, X } from "lucide-react";
-import type { TruckStockRow, TruckStockUsedRow } from "@/lib/supabase/truckStock";
+import type { NewTruckStockMissing, TruckStockRow, TruckStockUsedRow } from "@/lib/supabase/truckStock";
 import {
   planTruckStockImport,
   planUsedImport,
@@ -44,6 +44,8 @@ export type ImportSave = {
   usedUpserts: UsedFields[];
   usedAdded: number;
   usedUpdated: number;
+  /** MISSING / LOST parts, for the Missing list (migration 0478). */
+  missingLines: NewTruckStockMissing[];
 };
 
 export function TruckStockImportModal({
@@ -64,7 +66,7 @@ export function TruckStockImportModal({
   onApply: (save: ImportSave, onProgress: (done: number, total: number) => void) => Promise<void>;
   onClose: () => void;
 }) {
-  const needsBranch = parsed.parts.some((p) => !p.branch) || parsed.used.some((u) => !u.branch);
+  const needsBranch = parsed.parts.some((p) => !p.branch) || parsed.used.some((u) => !u.branch) || parsed.missing.some((m) => !m.branch);
   const usedOnly = parsed.parts.length === 0;
   const [fallbackBranch, setFallbackBranch] = useState("");
   const [mode, setMode] = useState<ImportMode>("update");
@@ -73,6 +75,15 @@ export function TruckStockImportModal({
   const [step, setStep] = useState<"duplicates" | "changes">("duplicates");
   const [excluded, setExcluded] = useState<Set<string>>(() => new Set());
   const [includeUsed, setIncludeUsed] = useState(true);
+  const [includeMissing, setIncludeMissing] = useState(true);
+  // MISSING / LOST rows with no branch of their own take the one picked for the file.
+  const missingLines = useMemo(
+    () =>
+      parsed.missing
+        .map((m) => ({ ...m, branch: m.branch || fallbackBranch, truckStockId: null }))
+        .filter((m) => m.branch),
+    [parsed, fallbackBranch],
+  );
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -90,7 +101,7 @@ export function TruckStockImportModal({
   const dups = plan.duplicates;
   const showDuplicates = step === "duplicates" && dups.length > 0;
   const selected = plan.changes.filter((c) => !excluded.has(changeKey(c)));
-  const totalChanges = selected.length + usedToSave.length;
+  const totalChanges = selected.length + usedToSave.length + (includeMissing ? missingLines.length : 0);
   const count = (kind: StockChange["kind"], list: StockChange[]) => list.filter((c) => c.kind === kind).length;
   const multiBranch = plan.branches.length > 1;
   const branchLabel = multiBranch ? `these ${plan.branches.length} branches` : plan.branches[0] ?? "this branch";
@@ -140,6 +151,7 @@ export function TruckStockImportModal({
           usedUpserts: usedToSave.map((c) => c.after),
           usedAdded: usedToSave.filter((c) => c.kind === "add").length,
           usedUpdated: usedToSave.filter((c) => c.kind === "update").length,
+          missingLines: includeMissing ? missingLines : [],
         },
         (done, total) => setProgress({ done, total }),
       );
@@ -436,6 +448,21 @@ export function TruckStockImportModal({
                   ) : null}
                 </div>
               )}
+
+              {parsed.missing.length > 0 && !waitingForBranch ? (
+                <label className="flex items-start gap-2 rounded border border-orange-400/30 bg-orange-500/5 p-3 text-orange-100">
+                  <input type="checkbox" checked={includeMissing} onChange={(e) => setIncludeMissing(e.target.checked)} disabled={busy} className="mt-0.5" />
+                  <span>
+                    <span className="font-semibold">
+                      {plural(missingLines.length, "part")} marked MISSING / LOST ({missingLines.reduce((s, l) => s + l.quantity, 0).toLocaleString()} units)
+                    </span>
+                    <span className="text-orange-100/80">
+                      {" "}
+                      go to Truck Stock's Missing list — not counted as stock until someone marks them Found. A part already on the list from an earlier import takes this file's count; one reported by hand is left as it is.
+                    </span>
+                  </span>
+                </label>
+              ) : null}
 
               {parsed.used.length > 0 && !waitingForBranch ? (
                 <div className="space-y-2 rounded border border-violet-400/25 bg-violet-500/5 p-3">

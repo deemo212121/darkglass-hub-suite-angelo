@@ -10215,7 +10215,9 @@ function TicketDetailsPage() {
             console.warn("truck stock batch fetch error:", error.message);
             return [];
           }
-          return (data ?? []).map((r: any) => ({
+          // Units Listed on eBay (migration 0477) can't be pulled — offer what's available.
+          const { availableAfterEbay } = await import("@/lib/supabase/truckStockEbay");
+          return availableAfterEbay((data ?? []).map((r: any) => ({
             id: r.id,
             branch: r.branch ?? "",
             partNo: r.part_no ?? "",
@@ -10224,9 +10226,9 @@ function TicketDetailsPage() {
             quantity: Number(r.quantity ?? 0),
             storageLocation: r.storage_location ?? "",
             notes: r.notes ?? "",
-            status: r.status === "in_use" ? "in_use" : "in_stock",
+            status: (r.status === "in_use" ? "in_use" : "in_stock") as "in_use" | "in_stock",
             updatedAt: r.updated_at ?? undefined,
-          }));
+          })));
         }}
         onConfirm={handleTruckStockBatchConfirm}
       />

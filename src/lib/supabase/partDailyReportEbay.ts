@@ -3,7 +3,8 @@ import { supabase } from "./client";
 export const EBAY_ORDER_STATUSES = ["Shipped", "Cancelled", "Returned", "Refunded", "Pending"] as const;
 export type EbayOrderStatus = (typeof EBAY_ORDER_STATUSES)[number];
 
-export const EBAY_LISTING_STATUSES = ["Listed", "Sold"] as const;
+/** Listed = on eBay now (counts as "On eBay" on Truck Stock); Sold comes off Truck Stock; Ended = taken down unsold (migration 0477). */
+export const EBAY_LISTING_STATUSES = ["Listed", "Sold", "Ended"] as const;
 export type EbayListingStatus = (typeof EBAY_LISTING_STATUSES)[number];
 
 // Fallback only — used before the real, company-managed list (ebay_accounts,
@@ -81,6 +82,14 @@ export interface EbayListingRow {
   listedDate: string;
   status: string;
   createdAt: string;
+  /** Migration 0477 — set by the database, never sent from here. */
+  /** The Shipped order that sold it (auto-matched), if any. */
+  soldOrderId: string | null;
+  /** Units this Sold listing took off Truck Stock (put back if it leaves Sold). */
+  stockTaken: number;
+  stockRowId: string | null;
+  /** Marked "Sold only" — Truck Stock left as it was. */
+  stockSkip: boolean;
 }
 
 function mapOrder(r: any): EbayOrderRow {
@@ -110,6 +119,10 @@ function mapListing(r: any): EbayListingRow {
     listedDate: r.listed_date || "",
     status: r.status || "",
     createdAt: r.created_at || "",
+    soldOrderId: r.sold_order_id ?? null,
+    stockTaken: Number(r.stock_taken) || 0,
+    stockRowId: r.stock_row_id ?? null,
+    stockSkip: r.stock_skip === true,
   };
 }
 
@@ -253,7 +266,7 @@ export async function getEbayListings(startDate: string, endDate: string): Promi
   return (data || []).map(mapListing);
 }
 
-// A listing stays active until it's marked Sold (or removed), regardless
+// A listing stays active until it's marked Sold / Ended (or removed), regardless
 // of when it was originally listed — so "Total Listed per branch" reads
 // ALL currently-Listed rows, not just the ones inside the date-range
 // picker used for the Listings table itself.
@@ -308,6 +321,25 @@ export async function updateEbayListing(
 export async function deleteEbayListing(id: string): Promise<void> {
   const { error } = await supabase.from("ebay_listings").delete().eq("id", id);
   if (error) throw error;
+}
+
+/**
+ * Listed → Sold / Ended, or back to Listed (migration 0477). The database
+ * takes a sale off Truck Stock (unless skipStock — "Sold only") and puts it
+ * back when the listing leaves Sold. Returns the saved row, so the caller
+ * sees what was taken.
+ */
+export async function setEbayListingStatus(id: string, status: EbayListingStatus, opts: { skipStock?: boolean } = {}): Promise<EbayListingRow> {
+  const payload: Record<string, unknown> = { status };
+  if (status === "Sold") payload.stock_skip = opts.skipStock === true;
+  const { data, error } = await supabase.from("ebay_listings").update(payload).eq("id", id).select("*").single();
+  if (error) throw error;
+  return mapListing(data);
+}
+
+/** True when migration 0477 (Ended status, Truck Stock link) hasn't been run yet. */
+export function isListingStockMigrationMissing(message: string): boolean {
+  return /stock_skip|stock_taken|ebay_listings_status_check|schema cache/i.test(message);
 }
 
 // ---------- Per-branch settings (Assigned staff, Listings status) + daily Comments ----------
@@ -411,7 +443,7 @@ export async function getExistingEbayOrderExtIds(ids: string[]): Promise<Set<str
 }
 
 type NewEbayOrder = Omit<EbayOrderRow, "id" | "createdAt">;
-type NewEbayListing = Omit<EbayListingRow, "id" | "createdAt">;
+type NewEbayListing = Omit<EbayListingRow, "id" | "createdAt" | "soldOrderId" | "stockTaken" | "stockRowId" | "stockSkip">;
 
 /** Insert many orders (chunks of 500). Returns the new row ids, so the import can be undone. */
 export async function bulkCreateEbayOrders(rows: NewEbayOrder[]): Promise<string[]> {

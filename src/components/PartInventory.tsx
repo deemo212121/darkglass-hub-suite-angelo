@@ -62,6 +62,9 @@ export function PartInventory({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   useEffect(() => {
     if (routeSearch.tab === "truck-stock-requests") {
       setActiveTab("truck-stock-requests");
+    } else if (routeSearch.tab === "truck-stock") {
+      // e.g. a "marked MISSING" bell → Truck Stock's Missing list (?view=missing, read by TruckStockPanel)
+      setActiveTab("truck-stock");
     }
   }, [routeSearch.tab]);
   const [location, setLocation] = useState(""); const [locOpen, setLocOpen] = useState(false);

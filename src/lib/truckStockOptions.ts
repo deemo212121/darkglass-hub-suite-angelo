@@ -4,9 +4,10 @@
  *
  * Status is what the part is doing now. Only IN STOCK is available (Marcone
  * Lookup's in-house counts and transfer requests read status in_stock only);
- * SOLD / B2B / RETURN / USED are the ones the workbook import already treats
- * as gone from the shelf (truckStockFile.ts GONE). Rows saved before these
- * existed may still say In Use — shown, not offered.
+ * SOLD / B2B / RETURN / USED / MISSING are the ones the workbook import
+ * treats as gone from the shelf (truckStockFile.ts GONE). Choosing USED or
+ * MISSING on a row asks how many and moves them to the Used / Missing list.
+ * Rows saved before these existed may still say In Use — shown, not offered.
  *
  * Description is the stock's label (which eBay account, OOW, branch use…).
  * Older rows can hold other text (part names, "Below $20" …): it's kept and
@@ -36,6 +37,8 @@ export const TRUCK_STOCK_STATUSES: TruckStockOption<TruckStockStatus>[] = [
   { value: "return", label: "RETURN", chip: "border-white/30 bg-neutral-800 text-white", option: { backgroundColor: "#262626", color: "#ffffff" } },
   { value: "ticket", label: "TICKET", ...DARK_GREEN },
   { value: "used", label: "USED", ...RED },
+  // Migration 0478: off the row onto Truck Stock's Missing list until Found.
+  { value: "missing", label: "MISSING", chip: "border-orange-400/50 bg-orange-600 text-white", option: { backgroundColor: "#ea580c", color: "#ffffff" } },
 ];
 
 /** Older rows only — not offered any more. */

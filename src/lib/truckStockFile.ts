@@ -49,9 +49,13 @@ export type UsedFields = Omit<TruckStockUsedRow, "id" | "createdAt">;
 /** A part the file marks Used, its rows for the same branch + ticket added together. */
 export type UsedLine = UsedFields & { from: "truck stock" | "live" | "list" };
 
+/** A part the file marks MISSING / LOST, its rows for the same branch added together — for the Missing list. */
+export type MissingLine = { branch: string; partNo: string; quantity: number; storageLocation: string; description: string; notes: string };
+
 export type ParsedImport = {
   parts: ImportPart[];
   used: UsedLine[];
+  missing: MissingLine[];
   /** Rows not counted, by why ("Used" → 12, "Not a part number" → 2). */
   skipped: Record<string, number>;
   /** Tabs parts came from, and tabs passed over (no Truck Stock section or Part # column, or not a branch code). */
@@ -167,10 +171,12 @@ const HEADER_KINDS: Record<string, Kind> = {
 };
 const headerKind = (v: unknown): Kind | undefined => HEADER_KINDS[upper(v).replace(/[._]/g, "")];
 
-/** Status words meaning the part has left the shelf (used on a job, sold, sent back, shipped …). */
-const GONE = /^(used|sold|return|rma|core return|not needed|ship|sent|lost|defective|picked|in house ticket|branch to branch|b2b|transfer)/i;
+/** Status words meaning the part has left the shelf (used on a job, sold, sent back, shipped, can't be found …). */
+const GONE = /^(used|sold|return|rma|core return|not needed|ship|sent|lost|missing|defective|picked|in house ticket|branch to branch|b2b|transfer)/i;
 /** The ones meaning it went on a ticket: these are kept as used parts with the ticket number. */
 const USED = /^(used|in house ticket)/i;
+/** The ones meaning nobody can find it: these go on the Missing list (migration 0478). */
+const MISSING = /^(missing|lost)/i;
 const statusLabel = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 
 /**
@@ -323,6 +329,27 @@ class PartCollector {
   }
 }
 
+/** Adds MISSING / LOST rows for the same branch + part together. */
+class MissingCollector {
+  private lines = new Map<string, { line: MissingLine; notes: Set<string> }>();
+
+  add(line: MissingLine) {
+    const key = looseKey(line.branch, line.partNo);
+    const entry = this.lines.get(key) ?? { line: { ...line, quantity: 0, notes: "" }, notes: new Set<string>() };
+    this.lines.set(key, entry);
+    entry.line.quantity += line.quantity;
+    entry.line.storageLocation ||= line.storageLocation;
+    entry.line.description ||= line.description;
+    if (line.notes) entry.notes.add(line.notes);
+  }
+
+  result(): MissingLine[] {
+    return [...this.lines.values()]
+      .map(({ line, notes }) => ({ ...line, notes: [...notes].join(" · ").slice(0, 500) }))
+      .filter((l) => l.quantity > 0);
+  }
+}
+
 /**
  * Adds used rows for the same branch + part + ticket together — within a
  * section. The Truck Stock and LIVE sections often both record the same use
@@ -443,7 +470,7 @@ function usedLineFrom(
   return { ...base, ticketNo, usedDate, tech: cell(side.tech), notes: notes.join(" · ").slice(0, 500), from };
 }
 
-function readTruckStockSection(t: ImportTable, p: number, branch: string, out: PartCollector, used: UsedCollector, skipped: Record<string, number>) {
+function readTruckStockSection(t: ImportTable, p: number, branch: string, out: PartCollector, used: UsedCollector, missing: MissingCollector, skipped: Record<string, number>) {
   const h1 = t.rows[0] ?? [];
   const h2 = t.rows[1] ?? [];
   const width = t.rows.reduce((w, r) => Math.max(w, r.length), 0);
@@ -525,6 +552,8 @@ function readTruckStockSection(t: ImportTable, p: number, branch: string, out: P
       if (USED.test(status)) {
         const base = { branch, partNo, quantity: qty ?? 1, storageLocation: location, description: cell(descCol) };
         used.add(usedLineFrom(cell, base, side, extra.filter((c) => c !== descCol), status, "truck stock"));
+      } else if (MISSING.test(status)) {
+        missing.add({ branch, partNo, quantity: qty ?? 1, storageLocation: location, description: cell(descCol), notes: [status, ...notes.filter((n) => n.toLowerCase() !== status.toLowerCase())].join(" · ") });
       }
       continue;
     }
@@ -576,7 +605,7 @@ function listHeaderRow(rows: string[][]): number {
   return -1;
 }
 
-function readList(t: ImportTable, hr: number, branch: string, out: PartCollector, used: UsedCollector, skipped: Record<string, number>) {
+function readList(t: ImportTable, hr: number, branch: string, out: PartCollector, used: UsedCollector, missing: MissingCollector, skipped: Record<string, number>) {
   const col: Partial<Record<Kind | "part", number>> = {};
   t.rows[hr].forEach((h, c) => {
     const k = isPartHeader(h) ? "part" : headerKind(h);
@@ -615,6 +644,9 @@ function readList(t: ImportTable, hr: number, branch: string, out: PartCollector
       const label = statusLabel(status);
       skipped[label] = (skipped[label] ?? 0) + 1;
       out.add({ ...base, quantity: 0, notes: [], status: null, counted: false });
+      if (MISSING.test(status)) {
+        missing.add({ branch: rowBranch, partNo, quantity: qty, storageLocation: base.storageLocation, description: base.description, notes: [status, cell(col.notes)].filter(Boolean).join(" · ") });
+      }
       continue;
     }
     out.add({
@@ -633,6 +665,7 @@ export function parseTruckStockTables(tables: ImportTable[]): ParsedImport {
   const sheet = new PartCollector("workbook");
   const list = new PartCollector("list");
   const used = new UsedCollector();
+  const missing = new MissingCollector();
   const skipped: Record<string, number> = {};
   const read: string[] = [];
   const ignored: string[] = [];
@@ -647,7 +680,7 @@ export function parseTruckStockTables(tables: ImportTable[]): ParsedImport {
         ignored.push(t.name);
         continue;
       }
-      sections.forEach((p) => readTruckStockSection(t, p, branch, sheet, used, skipped));
+      sections.forEach((p) => readTruckStockSection(t, p, branch, sheet, used, missing, skipped));
       live.forEach((p) => readLiveSection(t, p, branch, used));
       read.push(t.name);
       continue;
@@ -655,11 +688,11 @@ export function parseTruckStockTables(tables: ImportTable[]): ParsedImport {
     const hr = listHeaderRow(t.rows);
     // Same for a list tab in a workbook: it needs a branch-code name or a Branch column (NEED RETURN, Sheet17 … have neither).
     if (hr >= 0 && (branch || tables.length === 1 || t.rows[hr].some((h) => headerKind(h) === "branch"))) {
-      readList(t, hr, branch, list, used, skipped);
+      readList(t, hr, branch, list, used, missing, skipped);
       read.push(t.name);
     } else ignored.push(t.name);
   }
-  return { parts: [...sheet.result(), ...list.result()], used: used.result(), skipped, read, ignored };
+  return { parts: [...sheet.result(), ...list.result()], used: used.result(), missing: missing.result(), skipped, read, ignored };
 }
 
 const FIELDS: [keyof StockFields, string][] = [

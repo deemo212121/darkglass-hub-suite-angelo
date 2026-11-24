@@ -267,7 +267,7 @@ export function parseEbayWorkbook(data: ArrayBuffer, accounts: string[]): { orde
         const quantity = qRaw === "" ? 1 : Number(qRaw);
         if (!Number.isFinite(quantity) || quantity < 0) errors.push(`Qty "${qRaw}" isn't a number`);
         const statusRaw = at(lCols, "status");
-        const status = statusRaw === "" ? "Listed" : matchFromList(statusRaw, ["Listed", "Sold"]);
+        const status = statusRaw === "" ? "Listed" : matchFromList(statusRaw, ["Listed", "Sold", "Ended"]);
         if (!status) errors.push(`Unknown status "${statusRaw}"`);
         listings.push(
           finish(

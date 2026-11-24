@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useSmartBack } from "@/hooks/useSmartBack";
 import { ChevronLeft, ChevronDown, Plus, Trash2, Loader2, Printer, History, Download, FileSpreadsheet, Package, DollarSign, Tag, CheckCircle2, Users, CreditCard, ListChecks, ClipboardList, Pencil, Search, X } from "lucide-react";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
@@ -36,6 +36,9 @@ import {
   getEbayBranchCents,
   upsertEbayBranchCent,
   deleteEbayBranchCent,
+  setEbayListingStatus,
+  isListingStockMigrationMissing,
+  type EbayListingStatus,
   type EbayOrderRow,
   type EbayListingRow,
   type EbayBranchSetting,
@@ -45,6 +48,9 @@ import {
   type EbayBranchCent,
 } from "@/lib/supabase/partDailyReportEbay";
 import { LOCATIONS } from "@/lib/locations";
+import { getTruckStock } from "@/lib/supabase/truckStock";
+import { ebayPartKey, ebayStockKey } from "@/lib/supabase/truckStockEbay";
+import { branchMatchKey } from "@/lib/branchName";
 import { EbayImportModal } from "@/components/EbayImportModal";
 import { localISODate, todayISO } from "@/lib/localDate";
 import { useColumnFunnels } from "@/hooks/useColumnFunnels";
@@ -66,6 +72,18 @@ const ORDER_FIELD_LABELS: Record<string, string> = {
   orderExtId: "Order ID", partNo: "Part #", quantity: "Qty", status: "Status",
   orderEarnings: "Earnings", salesAccount: "Account", branch: "Branch", orderDate: "Order Date", notes: "Notes",
 };
+const LISTING_STATUS_TONE: Record<string, string> = {
+  Listed: "border-teal-500/40 bg-teal-500/10 text-teal-300",
+  Sold: "border-green-500/40 bg-green-500/10 text-green-300",
+  Ended: "border-slate-500/40 bg-slate-500/10 text-slate-300",
+};
+
+/** The Truck Stock row a listing is for — same pick as the database (0477): IN STOCK first, then the most units. */
+type StockMatch = { id: string; branch: string; partNo: string; quantity: number };
+type StockLite = StockMatch & { status: string; description: string; manufacturer: string; storageLocation: string };
+/** One branch's Part Inventory (Truck Stock) for a part # — what the Add forms offer. */
+type StockChoice = { branchKey: string; branch: string; partNo: string; quantity: number; onEbay: number; available: number; description: string; manufacturer: string; storageLocation: string };
+
 const LISTING_FIELD_LABELS: Record<string, string> = {
   partNo: "Part #", ebayAccount: "Account", branch: "Branch", price: "Price", quantity: "Qty", listedDate: "Listed Date", status: "Status",
 };
@@ -753,6 +771,148 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     return () => { cancelled = true; window.clearTimeout(t); };
   }, [listingQuery, searchNonce]);
 
+  // Part Inventory → Truck Stock's "On eBay" number links here with
+  // ?listing=<part #>: open the Listings tab searching that part.
+  const linkedListing = ((useSearch({ strict: false }) as { listing?: string }) ?? {}).listing;
+  useEffect(() => {
+    if (!linkedListing) return;
+    setTab("listings");
+    setListingQuery(String(linkedListing));
+  }, [linkedListing]);
+
+  // ---------- Part Inventory (Truck Stock) link (migration 0477) ----------
+  // Every Truck Stock row, loaded the first time the Listings or Orders tab
+  // opens. null = not loaded yet.
+  const [stockRows, setStockRows] = useState<StockLite[] | null>(null);
+  const [stockLoadError, setStockLoadError] = useState(false);
+  useEffect(() => {
+    if ((tab !== "listings" && tab !== "orders") || stockRows !== null) return;
+    let alive = true;
+    getTruckStock()
+      .then((rows) => {
+        if (!alive) return;
+        setStockRows(rows.map((r) => ({ id: r.id, branch: r.branch, partNo: r.partNo, quantity: r.quantity, status: r.status, description: r.description, manufacturer: r.manufacturer, storageLocation: r.storageLocation })));
+        setStockLoadError(false);
+      })
+      .catch((err) => {
+        console.error("Couldn't load Truck Stock for the eBay page:", err);
+        if (alive) { setStockRows([]); setStockLoadError(true); }
+      });
+    return () => { alive = false; };
+  }, [tab, stockRows]);
+  // Each branch + part #'s row (branch however it's spelled, part # ignoring case / spaces).
+  const stockByKey = useMemo(() => {
+    if (!stockRows) return null;
+    const map = new Map<string, StockLite>();
+    for (const r of stockRows) {
+      const key = ebayStockKey(r.branch, r.partNo);
+      if (!key) continue;
+      const have = map.get(key);
+      const inStock = r.status === "in_stock";
+      const haveInStock = have?.status === "in_stock";
+      if (!have || (inStock && !haveInStock) || (inStock === haveInStock && r.quantity > have.quantity)) map.set(key, r);
+    }
+    return map;
+  }, [stockRows]);
+  // IN STOCK rows by part # — the branches the Add Listing form offers.
+  const stockByPart = useMemo(() => {
+    const map = new Map<string, StockLite[]>();
+    for (const r of stockRows ?? []) {
+      if (r.status !== "in_stock") continue;
+      const pk = ebayPartKey(r.partNo);
+      if (!pk) continue;
+      if (!map.has(pk)) map.set(pk, []);
+      map.get(pk)!.push(r);
+    }
+    return map;
+  }, [stockRows]);
+  // Units Listed on eBay per branch + part # (every Listed listing, any date).
+  const onEbayByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const l of allActiveListings) {
+      const key = ebayStockKey(l.branch, l.partNo);
+      if (key) map.set(key, (map.get(key) ?? 0) + Math.max(0, l.quantity || 0));
+    }
+    return map;
+  }, [allActiveListings]);
+  const stockMatchFor = (l: { branch: string; partNo: string }): StockMatch | null => {
+    const key = ebayStockKey(l.branch, l.partNo);
+    return (key && stockByKey?.get(key)) || null;
+  };
+  /** Each branch's in-stock units of this part #, with what's already listed taken out — most available first. */
+  const stockChoicesFor = (partNo: string): StockChoice[] => {
+    const pk = ebayPartKey(partNo);
+    if (!pk) return [];
+    const byBranch = new Map<string, StockChoice>();
+    for (const r of stockByPart.get(pk) ?? []) {
+      const bk = branchMatchKey(r.branch);
+      const have = byBranch.get(bk);
+      if (have) {
+        have.quantity += r.quantity;
+        if (!have.storageLocation && r.storageLocation) have.storageLocation = r.storageLocation;
+      } else {
+        byBranch.set(bk, { branchKey: bk, branch: r.branch, partNo: r.partNo, quantity: r.quantity, onEbay: 0, available: 0, description: r.description, manufacturer: r.manufacturer, storageLocation: r.storageLocation });
+      }
+    }
+    return [...byBranch.values()]
+      .map((c) => {
+        const onEbay = onEbayByKey.get(`${c.branchKey}|${pk}`) ?? 0;
+        return { ...c, onEbay, available: Math.max(0, c.quantity - onEbay) };
+      })
+      .sort((a, b) => b.available - a.available || a.branch.localeCompare(b.branch));
+  };
+  /** The eBay branch list's spelling of a Truck Stock branch, or undefined when it isn't an eBay branch. */
+  const ebayBranchFor = (branch: string) => EBAY_BRANCHES.find((b) => branchMatchKey(b) === branchMatchKey(branch));
+  /** Branches where this part # is Listed on eBay now, with how many — what the Add Order form offers. */
+  const listedChoicesFor = (partNo: string): { branch: string; quantity: number }[] => {
+    const pk = ebayPartKey(partNo);
+    if (!pk) return [];
+    const byBranch = new Map<string, { branch: string; quantity: number }>();
+    for (const l of allActiveListings) {
+      if (ebayPartKey(l.partNo) !== pk) continue;
+      const bk = branchMatchKey(l.branch);
+      const have = byBranch.get(bk);
+      if (have) have.quantity += Math.max(0, l.quantity || 0);
+      else byBranch.set(bk, { branch: l.branch, quantity: Math.max(0, l.quantity || 0) });
+    }
+    return [...byBranch.values()].sort((a, b) => b.quantity - a.quantity || a.branch.localeCompare(b.branch));
+  };
+  // Typing a part # fills in the branch when only one branch fits: Add
+  // Listing — the one eBay branch with free stock; Add Order — the one
+  // branch where it's Listed. With several, the chips under the form pick.
+  useEffect(() => {
+    if (!listingDraft.partNo.trim() || stockRows === null) return;
+    const free = stockChoicesFor(listingDraft.partNo).filter((c) => c.available > 0 && ebayBranchFor(c.branch));
+    if (free.length !== 1 || free[0].branchKey === branchMatchKey(listingDraft.branch)) return;
+    const b = ebayBranchFor(free[0].branch)!;
+    setListingDraft((d) => ({ ...d, branch: b, price: applyBranchCents(d.price, b) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listingDraft.partNo, stockRows, allActiveListings]);
+  useEffect(() => {
+    if (!orderDraft.partNo.trim()) return;
+    const listed = listedChoicesFor(orderDraft.partNo);
+    if (listed.length !== 1 || branchMatchKey(listed[0].branch) === branchMatchKey(orderDraft.branch)) return;
+    const b = ebayBranchFor(listed[0].branch);
+    if (b) setOrderDraft((d) => ({ ...d, branch: b }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderDraft.partNo, allActiveListings]);
+
+  // Keep the Truck Stock column in step with what the database just did to a row.
+  const adjustStock = (rowId: string | null, delta: number) => {
+    if (!rowId || !delta) return;
+    setStockRows((prev) => (prev ? prev.map((r) => (r.id === rowId ? { ...r, quantity: Math.max(0, r.quantity + delta) } : r)) : prev));
+  };
+  // An order saved / deleted can sell a listing (or put one back) in the
+  // database — re-read the listings and Truck Stock so the Listings tab shows it.
+  const refreshListingsAfterOrder = () => {
+    getEbayListings(startDate, endDate)
+      .then((l) => { for (const r of l) originalListingsRef.current.set(r.id, r); setListings(l); })
+      .catch((err) => console.error("Couldn't refresh listings:", err));
+    loadActiveListings();
+    if (listingQuery.trim()) setSearchNonce((n) => n + 1);
+    setStockRows(null);
+  };
+
   const orderSearchOn = orderQuery.trim() !== "";
   const listingSearchOn = listingQuery.trim() !== "";
   const byBranch = <T extends { branch: string }>(rows: T[]) => (branchFilter.length === 0 ? rows : rows.filter((r) => branchFilter.includes(r.branch)));
@@ -1010,6 +1170,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
       const created = await createEbayOrder(orderDraft);
       setOrders((prev) => [created, ...prev]);
       loadAddedOrders();
+      if (created.status === "Shipped") refreshListingsAfterOrder();
       setOrderDraft({ ...emptyOrderDraft(), branch: orderDraft.branch });
       originalOrdersRef.current.set(created.id, created);
       await logActivity({
@@ -1069,6 +1230,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     setSavingRowId(row.id);
     try {
       await updateEbayOrder(row.id, patch);
+      if (patch.status !== undefined || patch.partNo !== undefined || patch.branch !== undefined || patch.orderDate !== undefined) refreshListingsAfterOrder();
       const before = originalOrdersRef.current.get(row.id) || row;
       const changes: { field: string; from: any; to: any }[] = [];
       for (const f of Object.keys(patch) as (keyof EbayOrderRow)[]) {
@@ -1134,6 +1296,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     setOrderResults((prev) => (prev ? drop(prev) : prev));
     try {
       await deleteEbayOrder(id);
+      if (row?.status === "Shipped") refreshListingsAfterOrder();
       if (row) {
         logActivity({
           action: "ebay_order_deleted",
@@ -1173,6 +1336,60 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     }
   };
 
+  // ---------- Sold / Ended / back to Listed (migration 0477) ----------
+  // The database takes a sale off Truck Stock (unless "Sold only") and puts
+  // it back when the listing leaves Sold — this saves the status and shows
+  // what it did.
+  const [soldAsk, setSoldAsk] = useState<{ row: EbayListingRow; match: StockMatch } | null>(null);
+  const changeListingStatus = async (row: EbayListingRow, status: EbayListingStatus, opts: { skipStock?: boolean } = {}) => {
+    setSavingRowId(row.id);
+    setError(null);
+    try {
+      const saved = await setEbayListingStatus(row.id, status, opts);
+      patchListing(row.id, saved);
+      originalListingsRef.current.set(row.id, saved);
+      loadActiveListings();
+      if (row.status === "Sold") adjustStock(row.stockRowId, row.stockTaken);
+      if (saved.status === "Sold") adjustStock(saved.stockRowId, -saved.stockTaken);
+      const stockNote =
+        row.status === "Sold" && row.stockTaken > 0
+          ? `${row.stockTaken} put back on Truck Stock`
+          : saved.status === "Sold"
+            ? saved.stockTaken > 0
+              ? `${saved.stockTaken} taken off Truck Stock`
+              : saved.stockSkip
+                ? "Sold only — Truck Stock not changed"
+                : "nothing taken off Truck Stock (no stock at this branch)"
+            : null;
+      await logActivity({
+        action: "ebay_listing_status_changed",
+        targetType: EBAY_ACTIVITY_TARGET_TYPE,
+        targetId: row.id,
+        targetLabel: `${row.branch} — ${row.partNo || row.id}`,
+        details: { from: row.status, to: saved.status, ...(stockNote ? { truckStock: stockNote } : {}) },
+      });
+      loadRowActivity();
+    } catch (err) {
+      const message = errMsg(err, "Failed to change the listing's status");
+      setError(
+        isListingStockMigrationMissing(message)
+          ? "Run migration 0477_ebay_listings_truck_stock.sql in Supabase to mark listings Sold / Ended and take sales off Truck Stock."
+          : message,
+      );
+    } finally {
+      setSavingRowId(null);
+    }
+  };
+  const markListingSold = (row: EbayListingRow) => {
+    const match = stockMatchFor(row);
+    if (match && match.quantity > 0) setSoldAsk({ row, match });
+    else void changeListingStatus(row, "Sold");
+  };
+  const undoListingStatus = (row: EbayListingRow) => {
+    if (row.status === "Sold" && row.stockTaken > 0 && !confirm(`Put this listing back to Listed? The ${row.stockTaken} taken off Truck Stock (${row.branch} ${row.partNo}) goes back.`)) return;
+    void changeListingStatus(row, "Listed");
+  };
+
   // ---------- Edit modals — full-row edit with a per-field audit trail.
   // Each changed field gets its own activity log entry (from -> to), so
   // "who changed it" is answered by the existing View Activity log
@@ -1199,6 +1416,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
     try {
       await updateEbayOrder(editingOrder.id, patch);
       patchOrder(editingOrder.id, patch);
+      if (patch.status !== undefined || patch.partNo !== undefined || patch.branch !== undefined || patch.orderDate !== undefined) refreshListingsAfterOrder();
       originalOrdersRef.current.set(editingOrder.id, { ...editingOrder, ...patch });
       await Promise.all(changes.map((c) =>
         logActivity({
@@ -1592,7 +1810,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
           accounts={ebayAccountNames}
           activityTargetType={EBAY_ACTIVITY_TARGET_TYPE}
           onClose={() => setImportOpen(false)}
-          onImported={() => { load(); loadActiveListings(); loadAddedOrders(); }}
+          onImported={() => { load(); loadActiveListings(); loadAddedOrders(); setStockRows(null); }}
         />
       )}
         <div className="flex items-center justify-between gap-3 mb-6">
@@ -1965,6 +2183,52 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                   {addingOrder ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} Add
                 </button>
               </div>
+              {(() => {
+                // Where this part # is Listed now — a Shipped order dated 11/25 on
+                // marks the oldest listing at its branch Sold and takes it off
+                // Part Inventory (Truck Stock) there.
+                if (!orderDraft.partNo.trim()) return null;
+                const listed = listedChoicesFor(orderDraft.partNo);
+                const stock = stockRows === null ? null : stockChoicesFor(orderDraft.partNo);
+                const pickedListed = listed.find((c) => branchMatchKey(c.branch) === branchMatchKey(orderDraft.branch));
+                return (
+                  <div className="mt-3 rounded-md border border-white/10 bg-white/5 px-3 py-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-semibold text-muted-foreground uppercase tracking-wide text-[10px] mr-1">Listed on eBay</span>
+                      {listed.length === 0 ? (
+                        <span className="text-amber-300">No Listed listing for {orderDraft.partNo.trim()} — a Shipped order won't change Part Inventory.</span>
+                      ) : (
+                        listed.map((c) => {
+                          const ebayBranch = ebayBranchFor(c.branch) ?? c.branch;
+                          const active = branchMatchKey(c.branch) === branchMatchKey(orderDraft.branch);
+                          return (
+                            <button
+                              key={c.branch}
+                              type="button"
+                              onClick={() => setOrderDraft((d) => ({ ...d, branch: ebayBranch }))}
+                              title={`${c.quantity} listed at ${c.branch} — click to record the sale there`}
+                              className={`rounded-full border px-2 py-0.5 tabular-nums transition-colors ${active ? "border-blue-400 bg-blue-500/25 text-blue-100" : "border-teal-500/40 bg-teal-500/10 text-teal-200 hover:bg-teal-500/20"}`}
+                            >
+                              {c.branch} · {c.quantity} listed
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                    <div className="mt-1.5 text-muted-foreground">
+                      {stock && stock.length > 0
+                        ? `Part Inventory: ${stock.map((c) => `${c.branch} ${c.quantity}`).join(", ")}`
+                        : stock
+                          ? "Not in Part Inventory at any branch."
+                          : "Looking up Part Inventory…"}
+                      {listed.length > 0 && !pickedListed && <span className="ml-2 text-amber-300">Not listed at {orderDraft.branch || "this branch"} — pick the branch above.</span>}
+                      {pickedListed && orderDraft.status === "Shipped" && orderDraft.orderDate >= "2026-11-25" && (
+                        <span className="ml-2 text-emerald-300">Saving marks the {pickedListed.branch} listing Sold and takes it off Part Inventory.</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="panel p-0 border-l-4 border-l-slate-500">
@@ -2137,20 +2401,63 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                 <Field label="Listed Date">
                   <input type="date" value={listingDraft.listedDate} onChange={(e) => setListingDraft((d) => ({ ...d, listedDate: e.target.value }))} className="glass-input text-sm py-1.5 px-2 rounded-md" />
                 </Field>
-                <Field label="Status">
-                  <select value={listingDraft.status} onChange={(e) => setListingDraft((d) => ({ ...d, status: e.target.value }))} className="glass-input text-sm py-1.5 px-2 rounded-md">
-                    {EBAY_LISTING_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </Field>
                 <button onClick={handleAddListing} disabled={addingListing} className="btn flex items-center gap-2 px-4 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
                   {addingListing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} Add
                 </button>
               </div>
+              {(() => {
+                // Part Inventory (Truck Stock) for the part # typed: which branches
+                // have it and how many are free to list. New listings start Listed
+                // and count as "On eBay" there until Sold (taken off) or Ended.
+                if (!listingDraft.partNo.trim()) return null;
+                if (stockRows === null) return <p className="mt-2 text-xs text-muted-foreground">Looking up Part Inventory…</p>;
+                const choices = stockChoicesFor(listingDraft.partNo);
+                const picked = choices.find((c) => c.branchKey === branchMatchKey(listingDraft.branch));
+                return (
+                  <div className="mt-3 rounded-md border border-white/10 bg-white/5 px-3 py-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-semibold text-muted-foreground uppercase tracking-wide text-[10px] mr-1">Part Inventory</span>
+                      {choices.length === 0 ? (
+                        <span className="text-amber-300">{stockLoadError ? "Couldn't load Truck Stock." : `${listingDraft.partNo.trim()} isn't in stock at any branch — the listing won't change Truck Stock.`}</span>
+                      ) : (
+                        choices.map((c) => {
+                          const ebayBranch = ebayBranchFor(c.branch);
+                          const active = c.branchKey === branchMatchKey(listingDraft.branch);
+                          return (
+                            <button
+                              key={c.branchKey}
+                              type="button"
+                              disabled={!ebayBranch}
+                              onClick={() => ebayBranch && setListingDraft((d) => ({ ...d, branch: ebayBranch, partNo: c.partNo, price: applyBranchCents(d.price, ebayBranch) }))}
+                              title={ebayBranch
+                                ? `${c.partNo} at ${c.branch}: ${c.quantity} in stock${c.onEbay ? `, ${c.onEbay} already listed` : ""}${c.storageLocation ? ` · bin ${c.storageLocation}` : ""} — click to list from here`
+                                : `${c.branch} isn't one of the eBay branches (add it on the Assignments tab to list from it)`}
+                              className={`rounded-full border px-2 py-0.5 tabular-nums transition-colors disabled:opacity-40 ${active ? "border-blue-400 bg-blue-500/25 text-blue-100" : c.available > 0 ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20" : "border-white/15 text-muted-foreground hover:bg-white/10"}`}
+                            >
+                              {c.branch} · {c.available} free{c.onEbay ? ` (${c.onEbay} listed)` : ""}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                    {choices.length > 0 && (
+                      <div className="mt-1.5 text-muted-foreground">
+                        {[choices[0].description, choices[0].manufacturer].filter(Boolean).join(" · ") || "No description on the stock row"}
+                        {picked
+                          ? listingDraft.quantity > picked.available
+                            ? <span className="ml-2 text-amber-300">Only {picked.available} free at {picked.branch} — listing {listingDraft.quantity}.</span>
+                            : <span className="ml-2 text-emerald-300">{picked.branch}: {picked.available} free{picked.storageLocation ? ` · bin ${picked.storageLocation}` : ""}.</span>
+                          : <span className="ml-2 text-amber-300">Not in stock at {listingDraft.branch || "this branch"} — pick a branch above.</span>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="panel p-0 border-l-4 border-l-teal-500">
               <h2 className="text-sm font-semibold px-4 pt-3 text-teal-300 flex items-center gap-2"><ListChecks className="h-4 w-4" /> Total Listed by Branch</h2>
-              <p className="text-xs text-muted-foreground px-4 pb-2">All currently-Listed items, regardless of the date range above — a listing stays counted until it's marked Sold or removed.</p>
+              <p className="text-xs text-muted-foreground px-4 pb-2">All currently-Listed items, regardless of the date range above — a listing stays counted (and shows as On eBay on Truck Stock) until it's marked Sold or Ended, or removed.</p>
               <div className="max-h-48 overflow-y-auto px-4 pb-3">
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-1.5">
                   {totalListedByBranch.map(({ branch, count }) => (
@@ -2205,6 +2512,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                         { h: "Price", align: "text-right" },
                         { h: "Qty", align: "text-center" },
                         { h: "Status", align: "text-left" },
+                        { h: "Truck Stock", align: "text-left" },
                         { h: "Changed By", align: "text-left" },
                         { h: "", align: "text-center" },
                       ].map(({ h, align }) => (
@@ -2216,7 +2524,7 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                   </thead>
                   <tbody>
                     {listingTableRows.length === 0 ? (
-                      <tr><td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
+                      <tr><td colSpan={11} className="px-3 py-6 text-center text-muted-foreground">
                         {listingSearchOn
                           ? listingResults === null
                             ? "Searching every date…"
@@ -2242,9 +2550,41 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
                             <input type="number" value={l.quantity} onChange={(e) => patchListing(l.id, { quantity: Number(e.target.value) })} onBlur={() => saveListingField(l, { quantity: l.quantity })} className="glass-input text-xs py-0.5 px-1.5 rounded w-14 text-center text-cyan-400 font-medium" />
                           </td>
                           <td className="px-2 py-2">
-                            <select value={l.status} onChange={(e) => { patchListing(l.id, { status: e.target.value }); saveListingField(l, { status: e.target.value }); }} className="glass-input text-xs py-0.5 px-1.5 rounded">
-                              {EBAY_LISTING_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-                            </select>
+                            <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${LISTING_STATUS_TONE[l.status] ?? LISTING_STATUS_TONE.Ended}`}>{l.status}</span>
+                              {l.status === "Listed" ? (
+                                <>
+                                  <button type="button" onClick={() => markListingSold(l)} disabled={savingRowId === l.id} className="rounded border border-green-500/40 bg-green-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-green-300 hover:bg-green-500/20 disabled:opacity-50" title="It sold — takes it off Truck Stock">Sold</button>
+                                  <button type="button" onClick={() => void changeListingStatus(l, "Ended")} disabled={savingRowId === l.id} className="rounded border border-slate-500/40 bg-slate-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-slate-300 hover:bg-slate-500/20 disabled:opacity-50" title="Taken down without selling — Truck Stock doesn't change, it just stops counting as On eBay">Ended</button>
+                                </>
+                              ) : (
+                                <button type="button" onClick={() => undoListingStatus(l)} disabled={savingRowId === l.id} className="rounded border border-white/15 px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-white/10 hover:text-white disabled:opacity-50" title={l.status === "Sold" && l.stockTaken > 0 ? `Back to Listed — the ${l.stockTaken} taken off Truck Stock goes back` : "Back to Listed"}>Undo</button>
+                              )}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2 whitespace-nowrap">
+                            {l.status === "Sold" ? (
+                              l.stockTaken > 0 ? (
+                                <span className="text-violet-300" title={`Taken off Truck Stock when marked Sold${l.soldOrderId ? " (matched to a Shipped order)" : ""}. Undo puts it back.`}>
+                                  −{l.stockTaken} taken off{l.soldOrderId ? " · by order" : ""}
+                                </span>
+                              ) : l.stockSkip ? (
+                                <span className="text-muted-foreground" title="Marked Sold only — Truck Stock was left as it was">Sold only</span>
+                              ) : (
+                                <span className="text-amber-300" title="No Truck Stock at this branch for this part # when it sold, so nothing was taken off">Nothing taken</span>
+                              )
+                            ) : l.status === "Ended" ? (
+                              <span className="text-muted-foreground">—</span>
+                            ) : stockByKey === null ? (
+                              <span className="text-muted-foreground">…</span>
+                            ) : (() => {
+                              const m = stockMatchFor(l);
+                              return m ? (
+                                <span className="text-emerald-300" title={`${m.branch} ${m.partNo} — ${m.quantity} on the Truck Stock row; this listing shows there as On eBay`}>{m.quantity} in stock</span>
+                              ) : (
+                                <span className="text-amber-300" title={stockLoadError ? "Truck Stock couldn't be loaded" : `No Truck Stock row for ${l.partNo || "this part"} at ${l.branch} — selling it won't change Truck Stock`}>Not in Truck Stock</span>
+                              );
+                            })()}
                           </td>
                           <td className="px-2 py-2 whitespace-nowrap">
                             {(() => {
@@ -2626,6 +2966,35 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
         );
       })()}
 
+      {soldAsk && (() => {
+        const { row, match } = soldAsk;
+        const take = Math.min(Math.max(1, row.quantity || 1), match.quantity);
+        const close = () => setSoldAsk(null);
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={close}>
+            <div className="w-full max-w-md rounded-lg border border-white/10 bg-slate-900 p-6" onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-lg font-bold text-white flex items-center gap-2"><Package className="h-4 w-4 text-green-400" /> Mark as Sold</h3>
+              <p className="mt-2 text-sm text-slate-300">
+                <span className="font-mono">{row.partNo}</span> · {row.branch} · Qty {row.quantity}
+              </p>
+              <p className="mt-3 text-sm text-slate-300">
+                Truck Stock has <span className="font-semibold text-white">{match.quantity}</span> at {match.branch}. Selling takes{" "}
+                <span className="font-semibold text-white">{take}</span> off ({match.quantity} → {match.quantity - take}).
+              </p>
+              <div className="mt-5 flex flex-col gap-2">
+                <button type="button" onClick={() => { close(); void changeListingStatus(row, "Sold"); }} className="btn bg-green-600 hover:bg-green-700 text-white text-sm">
+                  Sold — take {take} off Truck Stock
+                </button>
+                <button type="button" onClick={() => { close(); void changeListingStatus(row, "Sold", { skipStock: true }); }} className="btn text-sm" title="Use when the sale was already taken off Truck Stock by hand">
+                  Sold only — already taken off Truck Stock
+                </button>
+                <button type="button" onClick={close} className="btn text-sm text-muted-foreground">Cancel</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {editingListing && listingEditDraft && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setEditingListing(null)}>
           <div className="w-full max-w-2xl rounded-lg border border-white/10 bg-slate-900 p-6" onClick={(e) => e.stopPropagation()}>
@@ -2656,12 +3025,8 @@ export function PartsDailyReportEbay({ mod, sub }: { mod: ModuleDef; sub: SubMod
               <Field label="Listed Date">
                 <input type="date" value={listingEditDraft.listedDate} onChange={(e) => setListingEditDraft((d) => d && ({ ...d, listedDate: e.target.value }))} className="glass-input text-sm py-1.5 px-2 rounded-md" />
               </Field>
-              <Field label="Status">
-                <select value={listingEditDraft.status} onChange={(e) => setListingEditDraft((d) => d && ({ ...d, status: e.target.value }))} className="glass-input text-sm py-1.5 px-2 rounded-md">
-                  {EBAY_LISTING_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </Field>
             </div>
+            <p className="mt-3 text-xs text-muted-foreground">Status ({listingEditDraft.status}) is changed with the Sold / Ended / Undo buttons in the table — Sold takes it off Truck Stock.</p>
             <div className="flex justify-end gap-2 mt-5">
               <button onClick={() => setEditingListing(null)} className="btn px-4 text-sm">Cancel</button>
               <button onClick={handleSaveListingEdit} disabled={savingListingEdit} className="btn flex items-center gap-2 px-4 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 text-sm">
