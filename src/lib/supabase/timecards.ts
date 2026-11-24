@@ -723,6 +723,8 @@ export function hoursDiff(t1: string, t2: string): number {
 export interface AttendanceRow {
   /** Scheduled non-worked holiday credit, separate from actual worked hours. */
   paidHolidayHours?: number;
+  /** A paid holiday on a fixed-salary day: one paid day, no hours. */
+  paidHolidayFixed?: boolean;
   holidayPaid?: boolean | null;
   date: string;          // "YYYY-MM-DD"
   clockIn: string;       // "HH:MM" or ""

@@ -1,4 +1,4 @@
-import { paidHolidayDates } from "@/lib/holidayPay";
+import { paidHolidayDates, todayCentralISO } from "@/lib/holidayPay";
 import { resolveScheduledNetHours } from "@/lib/supabase/timecards";
 import { fixedSalaryForPaidDates } from "@/lib/fixedSalaryPaidDays";
 import { getTrainingDates } from "@/lib/supabase/trainingDates";
@@ -215,6 +215,7 @@ const PTO_TYPE_LABEL: Record<string, string> = {
 };
 /** "Vacation Leave" etc. when the specific PTO type is known, else the generic STATUS_LABEL fallback ("Paid Leave"/"Unpaid Leave"). */
 function statusLabelFor(row: AttendanceRow): string {
+  if (row.paidHolidayFixed || row.paidHolidayHours) return "Paid Holiday";
   if (row.status === "holiday" && row.holidayPaid !== undefined) return row.holidayPaid == null ? "Holiday - Not configured" : row.holidayPaid ? "Holiday - Paid" : "Holiday - Unpaid";
   if ((row.status === "paid-leave" || row.status === "unpaid-leave") && row.leaveType) {
     return PTO_TYPE_LABEL[row.leaveType] ?? STATUS_LABEL[row.status];
@@ -531,13 +532,14 @@ export function EmployeePayrollDetailModal({
       if (cancelledRef.current) return;
       const holidayCreditDates = new Set(isTechnicianTier ? [] : paidHolidayDates(holidays, rangeStart, rangeEnd, offDays ?? [],
         attRows.filter((r) => r.hoursWorked > 0 || !!r.clockIn || r.status === "paid-leave").map((r) => r.date),
-        (date) => entryEffectiveOn(payRateHistory(hist, isTechnicianTier), date)?.compensationType === "fixed" ? "fixed" : "hourly"));
+        (date) => entryEffectiveOn(payRateHistory(hist, isTechnicianTier), date)?.compensationType === "fixed" ? "fixed" : "hourly", todayCentralISO()));
       const scheduledHolidayHours = resolveScheduledNetHours(requiredCheckIn || "", requiredCheckOut || "", workingHours, mealMinutes);
       setAttendance(attRows.map((row) => {
         const policy = holidays.find((h) => h.date === row.date);
         const fixed = entryEffectiveOn(payRateHistory(hist, isTechnicianTier), row.date)?.compensationType === "fixed";
         return { ...row, holidayPaid: isTechnicianTier ? undefined : policy ? (fixed ? policy.fixedSalaryPaid : policy.hourlyPaid) ?? null : null,
-          paidHolidayHours: holidayCreditDates.has(row.date) ? Math.max(scheduledHolidayHours, 0) : 0 };
+          paidHolidayHours: holidayCreditDates.has(row.date) && !fixed ? Math.max(scheduledHolidayHours, 0) : 0,
+          paidHolidayFixed: holidayCreditDates.has(row.date) && fixed };
       }));
       setSeedAttendance(seedRows);
       setNotesByDate(noteMap);
@@ -1004,8 +1006,10 @@ export function EmployeePayrollDetailModal({
       // pay is shown (Current Rate tile, Tech Activity Report's Hourly Pay
       // line). Using monthlySalary here inflated it to annual/12 (e.g. a
       // $72,000/yr salary showed $6,000.00 instead of the correct $2,769.23).
-      const fixed = fixedSalaryForPaidDates(perCutoffSalary(currentEntry.annualSalary, isPhPayroll),
-        [...dailyHoursSplitByDate].filter(([date, hours]) => date >= rangeStart && date <= rangeEnd && hours.regular + hours.overtime > 0.0005).map(([date]) => date));
+      const fixed = fixedSalaryForPaidDates(perCutoffSalary(currentEntry.annualSalary, isPhPayroll), [
+        ...[...dailyHoursSplitByDate].filter(([date, hours]) => date >= rangeStart && date <= rangeEnd && hours.regular + hours.overtime > 0.0005).map(([date]) => date),
+        ...attendance.filter((r) => r.paidHolidayFixed && r.date >= rangeStart && r.date <= rangeEnd).map((r) => r.date),
+      ]);
       return {
         calculated: { regularPay: fixed, overtimePay: 0, total: fixed },
         compliant: { regularPay: fixed, overtimePay: 0, total: fixed },
@@ -1897,7 +1901,7 @@ export function EmployeePayrollDetailModal({
                       const dayIsFixed = entryEffectiveOn(rateHistory, row.date)?.compensationType === "fixed";
                       const dayNote = notesByDate.get(row.date);
                       const edit = attendanceEdits[row.date];
-                      const isRestDay = row.status === "day-off" || (row.status === "holiday" && !row.paidHolidayHours);
+                      const isRestDay = row.status === "day-off" || (row.status === "holiday" && !row.paidHolidayHours && !row.paidHolidayFixed);
                       // dailyHoursSplitByDate's regular/overtime is correct (meal credit
                       // merged into the raw hours BEFORE the weekly cap runs, so the cap
                       // trips on the right day even when credit is what pushes a day over)
@@ -2219,9 +2223,13 @@ export function EmployeePayrollDetailModal({
                           </td>
                         )}
                         <td className="py-1.5 text-right font-semibold text-green-300">
-                          {dayIsFixed ? (
+                          {dayIsFixed && row.paidHolidayFixed ? (() => {
+                            const annual = entryEffectiveOn(rateHistory, row.date)?.annualSalary ?? 0;
+                            const day = Math.round(perCutoffSalary(annual, isPhPayroll) / 10 * 100) / 100;
+                            return <span title="Paid Holiday: one paid day (this cutoff's salary ÷ 10)">${day.toFixed(2)}</span>;
+                          })() : dayIsFixed ? (
                             <span className="text-slate-500 font-normal" title="Fixed-salary pay doesn't vary by day">—</span>
-                          ) : row.hoursWorked ? (
+                          ) : row.hoursWorked || row.paidHolidayHours ? (
                             `$${dayPayment.toFixed(2)}`
                           ) : (
                             <span className="text-slate-500 font-normal">—</span>

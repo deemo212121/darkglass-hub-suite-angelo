@@ -3,7 +3,7 @@ import { buildOvertimeDisplay } from "@/lib/techOvertimeDisplay";
 import type { ReviewedWeeklySource } from "@/lib/reviewedWeeklyBreakdown";
 import { capPtoHours } from "@/lib/ptoHours";
 export type { TechWeeklyOt } from "@/lib/techWeeklyOvertime";
-import { paidHolidayDates } from "@/lib/holidayPay";
+import { paidHolidayDates, todayCentralISO } from "@/lib/holidayPay";
 import { fixedSalaryForPaidDates } from "@/lib/fixedSalaryPaidDays";
 import { TraineeMonitoringTab } from "@/components/TraineeMonitoringTab";
 import { resolveTrainingRecord, trainingWindow } from "@/lib/fieldStartDate";
@@ -2591,12 +2591,18 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       const credited = [...daily.filter((d) => d.regular + d.overtime > 0.0005).map((d) => d.date),
         ...timecardEntries.filter((e) => e.profile_id === emp.id && !!e.check_in).map((e) => e.work_date)];
       const dates = paidHolidayDates(companyHolidays, genStart, genEnd, emp.offDays ?? [], credited,
-        (date) => salaryEntryOnDate(emp.id, date)?.compensation_type === "fixed" ? "fixed" : "hourly");
+        (date) => salaryEntryOnDate(emp.id, date)?.compensation_type === "fixed" ? "fixed" : "hourly", todayCentralISO());
       const netHours = resolveScheduledNetHours(emp.requiredCheckIn || "", emp.requiredCheckOut || "", emp.workingHours, emp.mealMinutes);
       const hireDate = employeeInfoByProfileId.get(emp.id)?.hireDate;
       for (const date of dates) {
         if (hireDate && date < hireDate) continue;
         if (!emp.isActive && !timecardEntries.some((e) => e.profile_id === emp.id)) continue;
+        // Fixed salary: the holiday is one paid day (cutoff salary ÷ 10), not
+        // hours — it adds a paid day and no hours to Total Hours.
+        if (salaryEntryOnDate(emp.id, date)?.compensation_type === "fixed") {
+          daily.push({ date, regular: 0, overtime: 0, paidHoliday: true });
+          continue;
+        }
         if (netHours <= 0) continue;
         daily.push({ date, regular: netHours, overtime: 0, paidHoliday: true });
         const totals = hoursMap.get(emp.id) ?? { regular: 0, overtime: 0 };
@@ -3345,7 +3351,7 @@ export function AccountingDashboard({ mod, sub }: { mod: ModuleDef; sub: SubModu
       // same cent figure the table shows (Angelo Mendoza 9/27–10/10: net was
       // worked out from $474.4069, giving $534.42 against $474.41 + $60.00).
       // Daily records include eligible paid PTO; count each paid date once, up to ten.
-      const workedDays = (dailyHoursByEmployeeId.get(emp.id) ?? []).filter((d) => (!genStart || d.date >= genStart) && (!genEnd || d.date <= genEnd) && d.regular + d.overtime > 0.0005);
+      const workedDays = (dailyHoursByEmployeeId.get(emp.id) ?? []).filter((d) => (!genStart || d.date >= genStart) && (!genEnd || d.date <= genEnd) && (d.regular + d.overtime > 0.0005 || !!d.paidHoliday));
       // Preserve hourly earnings when compensation changes within the cutoff.
       const mixedFixed = mixedPeriodFixedPay(
         genStart,

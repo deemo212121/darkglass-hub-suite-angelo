@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { paidHolidayDates } from "./holidayPay";
+import { paidHolidayDates, todayCentralISO } from "./holidayPay";
 import { fixedSalaryForPaidDates } from "./fixedSalaryPaidDays";
 
 const holiday = { date: "2026-11-26", hourlyPaid: false, fixedSalaryPaid: true };
@@ -23,5 +23,14 @@ describe("holiday pay policies", () => {
     expect(paidHolidayDates([{ date: holiday.date }], ...period, [], [], () => "fixed")).toEqual([]);
     expect(paidHolidayDates([{ ...holiday, fixedSalaryPaid: false }], ...period, [], [], () => "fixed")).toEqual([]);
     expect(paidHolidayDates([holiday], "2026-12-01", "2026-12-05", [], [], () => "fixed")).toEqual([]);
+  });
+  it("doesn't credit a holiday before its date arrives", () => {
+    expect(paidHolidayDates([holiday], ...period, [], [], () => "fixed", "2026-11-23")).toEqual([]);
+    expect(paidHolidayDates([holiday], ...period, [], [], () => "fixed", "2026-11-26")).toEqual([holiday.date]);
+    expect(paidHolidayDates([holiday], ...period, [], [], () => "fixed", "2026-12-01")).toEqual([holiday.date]);
+  });
+  it("reads today in Central time", () => {
+    expect(todayCentralISO(new Date("2026-11-26T04:30:00Z"))).toBe("2026-11-25");
+    expect(todayCentralISO(new Date("2026-11-26T06:30:00Z"))).toBe("2026-11-26");
   });
 });
