@@ -9,8 +9,15 @@ export interface ReviewedPeriodDetailSource {
 export interface ReviewedPeriodDetail {
   key: string;
   label: string;
-  group: "bonus" | "mileageOtherReimb" | "deduction" | "pretaxInsurance";
+  /** "commission": an includable custom line that isn't a bonus (Google Review CSAT, PTO Pay, …).
+   * Ticket pay stays in the Commission column itself — see commissionRemainder. */
+  group: "bonus" | "commission" | "mileageOtherReimb" | "deduction" | "pretaxInsurance";
   amount: number;
+}
+
+/** The saved Commission column minus the custom lines given their own columns: ticket / rate pay. */
+export function commissionRemainder(saved: PayrollReviewAmounts, details: ReviewedPeriodDetail[]): number {
+  return cents(cents(saved.commission) - details.filter((l) => l.group === "commission").reduce((sum, l) => sum + l.amount, 0));
 }
 
 /** Keep saved summary totals authoritative, exposing any unmatched amount explicitly.
@@ -35,6 +42,9 @@ export function reviewedPeriodDetails(saved: PayrollReviewAmounts, source?: Revi
         if (isBonusPayLine(item.label)) {
           const label = /performance/i.test(item.label) ? "Performance Bonus" : /ltp/i.test(item.label) ? "LTP Bonus" : item.label;
           add("bonus", label, amount);
+        } else {
+          // Every custom line gets its own column (Finance, 2026-11-24).
+          add("commission", item.label || "Custom line", amount);
         }
         continue;
       }

@@ -6,7 +6,7 @@
  * export it replaced.
  */
 import type { PayrollReviewAmounts } from "@/lib/supabase/payrollReviewBreakdowns";
-import { excelColumnLetter, type ReviewedPeriodDetail } from "@/lib/reviewedPeriodDetails";
+import { excelColumnLetter, commissionRemainder, type ReviewedPeriodDetail } from "@/lib/reviewedPeriodDetails";
 import { formatISODate } from "@/lib/localDate";
 
 export interface ReviewedExportEntry {
@@ -66,6 +66,17 @@ export function reviewExportColumns(entries: ReviewedExportEntry[], fullBreakdow
   const detailColumns = new Map<string, ReviewedPeriodDetail>();
   for (const e of entries) for (const d of e.details) detailColumns.set(d.key, d);
   return REVIEW_EXPORT_COLUMNS.flatMap((c) => {
+    // Commission: ticket / rate pay in its own column, then one column per
+    // includable custom line (Google Review CSAT, PTO Pay, …).
+    if (c.key === "commission") {
+      return [
+        { key: "commission", label: "Commission", sub: ["Tickets & rates"], group: "commission" as const, subtract: false,
+          value: (e: ReviewedExportEntry) => commissionRemainder(e.amounts, e.details) },
+        ...[...detailColumns.values()].filter((d) => d.group === "commission").sort((a, b) => a.label.localeCompare(b.label))
+          .map((d) => ({ key: d.key, label: `(+) ${d.label}`, group: "commission" as const, subtract: false,
+            value: (e: ReviewedExportEntry) => e.details.find((l) => l.key === d.key)?.amount ?? 0 })),
+      ];
+    }
     if (c.key !== "bonus" && c.key !== "mileageOtherReimb" && c.key !== "deduction" && c.key !== "pretaxInsurance") return [plain(c)];
     return [...detailColumns.values()]
       .filter((d) => d.group === c.key)

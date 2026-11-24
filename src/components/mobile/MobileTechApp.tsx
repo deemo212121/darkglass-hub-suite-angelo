@@ -2666,7 +2666,7 @@ function MobileOnHoldTicketsView({
               ? "No tickets on hold right now."
               : subTab === "updated"
               ? "No tickets released from hold in the last 14 days."
-              : "No missed payroll to dispute — nothing was released after its pay period already ran."}
+              : "No released tickets to check — nothing was released after its pay period already ran."}
           </div>
         )}
         {!loading &&
@@ -2697,9 +2697,15 @@ function MobileOnHoldTicketsView({
                 </div>
                 <div className="mtech-ticket-status-line">{t.status}</div>
                 {subTab === "dispute" && disputePeriodByTicketNo.has(t.ticketNo) && (
-                  <div className="mtech-ticket-sched" style={{ color: "#fca5a5" }}>
-                    Missed payroll: {disputePeriodByTicketNo.get(t.ticketNo)?.label}
-                  </div>
+                  <>
+                    {/* Not "missed": AHS can't see pay that came from ER, so the tech checks the paystub first. */}
+                    <div className="mtech-ticket-sched" style={{ color: "#fcd34d" }}>
+                      Released after payroll ran: {disputePeriodByTicketNo.get(t.ticketNo)?.label}
+                    </div>
+                    <div className="mtech-ticket-sched" style={{ color: "#94a3b8", fontSize: "0.75rem" }}>
+                      Check your paystub first. If this ticket isn't on it, file a dispute.
+                    </div>
+                  </>
                 )}
                 {t.schedule && (
                   <div className="mtech-ticket-sched">

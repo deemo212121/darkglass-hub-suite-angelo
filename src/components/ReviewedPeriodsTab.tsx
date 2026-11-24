@@ -14,7 +14,7 @@ import {
   type PayrollReviewAmounts,
   type PayrollReviewBreakdown,
 } from "@/lib/supabase/payrollReviewBreakdowns";
-import { reviewedPeriodDetails, type ReviewedPeriodDetailSource } from "@/lib/reviewedPeriodDetails";
+import { reviewedPeriodDetails, commissionRemainder, type ReviewedPeriodDetail, type ReviewedPeriodDetailSource } from "@/lib/reviewedPeriodDetails";
 import { ReviewedPeriodsExportDialog } from "./ReviewedPeriodsExportDialog";
 import type { ReviewedExportEntry } from "@/lib/reviewedPeriodsExcel";
 import { formatISODate } from "@/lib/localDate";
@@ -294,13 +294,23 @@ export function ReviewedPeriodsTab({
   const [fullBreakdown, setFullBreakdown] = useState(true);
   const [weeklyView, setWeeklyView] = useState(false);
     const detailRows = new Map(visible.map((r) => [r.id, reviewedPeriodDetails(r, actualReady ? actualDetails.get(r.profileId) : undefined)]));
-    const detailColumns = new Map<string, { key: string; label: string; group: "bonus" | "mileageOtherReimb" | "deduction" | "pretaxInsurance" }>();
+    const detailColumns = new Map<string, { key: string; label: string; group: ReviewedPeriodDetail["group"] }>();
     for (const lines of detailRows.values()) for (const line of lines) detailColumns.set(line.key, line);
     // Itemize bonuses, reimbursements and deductions without changing saved totals.
     const exportColumns = COLUMNS.flatMap<{
       key: string; label: string; sub: string[] | undefined; group: keyof PayrollReviewAmounts;
       subtract: boolean; value: (r: PayrollReviewBreakdown) => number;
     }>((c) => {
+      // Commission: ticket / rate pay, then one column per includable custom line.
+      if (c.key === "commission") {
+        return [
+          { key: "commission", label: "Commission", sub: ["Tickets & rates"], group: "commission" as const, subtract: false,
+            value: (r: PayrollReviewBreakdown) => commissionRemainder(r, detailRows.get(r.id) ?? []) },
+          ...[...detailColumns.values()].filter((d) => d.group === "commission").sort((a, b) => a.label.localeCompare(b.label))
+            .map((d) => ({ key: d.key, label: `(+) ${d.label}`, sub: undefined, group: "commission" as const, subtract: false,
+              value: (r: PayrollReviewBreakdown) => detailRows.get(r.id)?.find((l) => l.key === d.key)?.amount ?? 0 })),
+        ];
+      }
       if (c.key !== "bonus" && c.key !== "mileageOtherReimb" && c.key !== "deduction" && c.key !== "pretaxInsurance") {
         return [{ key: c.key as string, label: c.label, sub: c.sub, group: c.key, subtract: !!c.subtract,
           value: (r: PayrollReviewBreakdown) => r[c.key] }];
