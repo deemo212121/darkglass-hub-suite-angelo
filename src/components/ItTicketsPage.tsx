@@ -107,6 +107,26 @@ export function ItTicketsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [connectingRegion, setConnectingRegion] = useState<GmailRegion | null>(null);
   const [disconnectingRegion, setDisconnectingRegion] = useState<GmailRegion | null>(null);
 
+  // Whether each connected slot's Google sign-in still works (check-it-connection): ok / expired / error.
+  const [gmailHealth, setGmailHealth] = useState<Record<string, { status: "checking" | "ok" | "expired" | "error"; message?: string }>>({});
+  const checkGmailHealth = async (region: GmailRegion) => {
+    setGmailHealth((h) => ({ ...h, [region]: { status: "checking" } }));
+    try {
+      const idToken = await firebaseAuth?.currentUser?.getIdToken();
+      if (!idToken) throw new Error("Could not verify your session.");
+      const res = await fetch("/api/gmail?action=check-it-connection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken, region }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { status?: string; message?: string; error?: string };
+      const status = data.status === "ok" || data.status === "expired" ? data.status : "error";
+      setGmailHealth((h) => ({ ...h, [region]: { status, message: data.message || data.error } }));
+    } catch (err) {
+      setGmailHealth((h) => ({ ...h, [region]: { status: "error", message: err instanceof Error ? err.message : String(err) } }));
+    }
+  };
+
   const loadGmailStatuses = () => {
     setGmailStatusLoading(true);
     Promise.all(IT_TICKET_GMAIL_REGIONS.map((region) => getGmailConnectionStatus(region)))
@@ -114,6 +134,7 @@ export function ItTicketsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         const next: Record<string, GmailConnectionStatus | null> = {};
         IT_TICKET_GMAIL_REGIONS.forEach((region, i) => { next[region] = results[i]; });
         setGmailStatuses(next);
+        IT_TICKET_GMAIL_REGIONS.forEach((region, i) => { if (results[i]?.connected) void checkGmailHealth(region); });
       })
       .catch((err) => console.error("Failed to load IT Gmail connection status:", err))
       .finally(() => setGmailStatusLoading(false));
@@ -391,13 +412,24 @@ export function ItTicketsPage({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                     return <span key={region} className="text-[10px] text-slate-500">{IT_GMAIL_LABELS[region]}…</span>;
                   }
                   if (status?.connected) {
+                    const health = gmailHealth[region];
+                    const bad = health?.status === "expired" || health?.status === "error";
                     return (
                       <span
                         key={region}
-                        className="flex items-center gap-1 rounded border border-emerald-400/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-300"
-                        title={`${IT_GMAIL_LABELS[region]}: ${status.connectedEmail}`}
+                        className={`flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-semibold ${bad ? "border-rose-400/40 bg-rose-500/10 text-rose-300" : "border-emerald-400/30 bg-emerald-500/10 text-emerald-300"}`}
+                        title={`${IT_GMAIL_LABELS[region]}: ${status.connectedEmail}${health?.message ? ` — ${health.message}` : ""}`}
                       >
-                        ✓ {IT_GMAIL_LABELS[region]}: {status.connectedEmail}
+                        {bad ? "⚠" : "✓"} {IT_GMAIL_LABELS[region]}: {status.connectedEmail}
+                        {health?.status === "checking" && <span className="ml-1 font-normal text-slate-400">checking…</span>}
+                        {health?.status === "ok" && <span className="ml-1 rounded bg-emerald-500/20 px-1 font-normal">Working</span>}
+                        {health?.status === "expired" && <span className="ml-1 rounded bg-rose-500/20 px-1">Expired — disconnect (×) and connect again</span>}
+                        {health?.status === "error" && <span className="ml-1 rounded bg-rose-500/20 px-1">Can't reach Google — hover for details</span>}
+                        {health && health.status !== "checking" && (
+                          <button type="button" onClick={() => void checkGmailHealth(region)} className="ml-1 font-normal text-slate-400 underline hover:text-white" title="Check this connection again">
+                            Recheck
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => void handleDisconnectGmail(region)}

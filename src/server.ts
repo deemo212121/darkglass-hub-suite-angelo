@@ -345,6 +345,17 @@ export default {
       ),
     );
 
+    // Expired Google email connections -> a bell to every IT person, once a
+    // day (runs at 14:00 UTC only; emailConnectionHealth.ts).
+    ctx.waitUntil(
+      import("./lib/server/emailConnectionHealth").then(
+        ({ runEmailConnectionAlert }) => runEmailConnectionAlert(merged as Record<string, string | undefined>),
+      ).then(
+        (result) => { if (!result.skipped) console.log("emailConnectionAlert:", JSON.stringify(result)); },
+        (error) => console.error("emailConnectionAlert failed:", error),
+      ),
+    );
+
     // Yesterday's missed technician clock-ins -> "meeting required" + notify
     // their managers (migration 0348). Idempotent, so every hourly tick can
     // run it; only the first one after midnight Central actually adds rows.

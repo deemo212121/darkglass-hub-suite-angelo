@@ -14,7 +14,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { Check, ChevronLeft, Columns3, Copy, Eye, EyeOff, History, KeyRound, Loader2, Mail, Pencil, Plus, Trash2, UserPlus, Users, X } from "lucide-react";
+import { Check, ChevronLeft, Columns3, Copy, Eye, EyeOff, History, KeyRound, Loader2, Mail, Pencil, Plug, Plus, RefreshCw, Trash2, UserPlus, Users, X } from "lucide-react";
+import { auth as firebaseAuth } from "@/lib/firebase/config";
+import { disconnectGmail, disconnectHiringGmail, type GmailRegion } from "@/lib/supabase/gmailConnection";
+import { createNotification } from "@/lib/supabase/notifications";
 import type { ModuleDef, SubModuleDef } from "@/lib/modules";
 import { useAuth } from "@/lib/auth";
 import { useSmartBack } from "@/hooks/useSmartBack";
@@ -215,6 +218,117 @@ export function EmailVaultPage({ mod, sub }: Props) {
 
   const [tab, setTab] = useState<"emails" | "history">("emails");
   const [showPasswordChecks, setShowPasswordChecks] = useState(false);
+  // Email Connections (IT / Admin / Super Admin): every Google account the app sends from, and whether it still works.
+  const canSeeConnections = withIncludedRoles([role, ...(extraRoles ?? [])]).some((r) => r === "IT" || r === "ADMIN" || r === "SUPERADMIN");
+  const [showConnections, setShowConnections] = useState(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "connections");
+  const [connRows, setConnRows] = useState<Array<{ kind: "slot" | "hiring" | "drive"; region?: string; id?: string; ownerId?: string | null; label: string; usedFor: string; email: string | null; connectedBy?: string | null; connectedAt?: string | null; status: "ok" | "expired" | "error" | "not_connected"; message?: string }> | null>(null);
+  const [reconnecting, setReconnecting] = useState<string | null>(null);
+  const [disconnecting, setDisconnecting] = useState<string | null>(null);
+  // Disconnect a slot (Admin / Super Admin / IT — checked by the database). Its emails stop until it's connected again.
+  const disconnectSlot = async (r: { region?: string; label: string; email: string | null; usedFor: string }) => {
+    if (!r.region) return;
+    if (!confirm(`Disconnect ${r.email || "this account"} from ${r.label}?\n\n${r.usedFor} stop until a Google account is connected here again.`)) return;
+    setDisconnecting(r.region);
+    try {
+      await disconnectGmail(r.region as GmailRegion);
+      toast.success(`${r.label} disconnected.`);
+      await checkConnections();
+    } catch (err) {
+      toast.error(`Couldn't disconnect: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDisconnecting(null);
+    }
+  };
+  // Hiring panel accounts belong to whoever connected them — IT can remove one, or send its owner a bell to reconnect it.
+  const [hiringBusy, setHiringBusy] = useState<string | null>(null);
+  const removeHiringAccount = async (r: { id?: string; email: string | null; connectedBy?: string | null }) => {
+    if (!r.id) return;
+    if (!confirm(`Remove ${r.email || "this Gmail"} from the Hiring panel?${r.connectedBy ? `\n\nIt was connected by ${r.connectedBy}; they can connect it again from HR Dashboard → Hiring.` : ""}`)) return;
+    setHiringBusy(r.id);
+    try {
+      await disconnectHiringGmail(r.id);
+      toast.success(`${r.email || "Gmail"} removed from the Hiring panel.`);
+      await checkConnections();
+    } catch (err) {
+      toast.error(`Couldn't remove it: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setHiringBusy(null);
+    }
+  };
+  const notifyHiringOwner = async (r: { id?: string; ownerId?: string | null; email: string | null; connectedBy?: string | null }) => {
+    if (!r.id || !r.ownerId) return;
+    setHiringBusy(r.id);
+    try {
+      await createNotification({
+        recipientId: r.ownerId,
+        senderId: myId,
+        senderName: "Email Connections",
+        body: `📧 Your Hiring Gmail connection expired (${r.email || "your account"}). Go to HR Dashboard → Hiring, disconnect your email and connect it again. Hiring emails from it won't send until then.`,
+        linkTo: "/m/hr/hr-dashboard?tab=hiring",
+      });
+      toast.success(`${r.connectedBy || "The owner"} was notified to reconnect.`);
+    } catch (err) {
+      toast.error(`Couldn't notify them: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setHiringBusy(null);
+    }
+  };
+
+  // Connect a slot: Google sign-in, then back to this view (gmailBridge connect, returnTo=email-vault).
+  // When it already has an account, Google pre-picks that one.
+  const reconnectSlot = async (region: string, email: string | null) => {
+    setReconnecting(region);
+    try {
+      const idToken = await firebaseAuth?.currentUser?.getIdToken();
+      if (!idToken) throw new Error("Could not verify your session — sign in again.");
+      const q = new URLSearchParams({ action: "connect", region, idToken, returnTo: "email-vault" });
+      if (email) q.set("loginHint", email);
+      window.location.href = `/api/gmail?${q.toString()}`;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+      setReconnecting(null);
+    }
+  };
+  // Coming back from Google after Reconnect: say how it went.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const p = new URLSearchParams(window.location.search);
+    const done = p.get("gmailConnected");
+    if (done === null || p.get("view") !== "connections") return;
+    if (done === "1") toast.success("Reconnected. Checking every connection again…");
+    else toast.error("Reconnect didn't finish — try again, and sign in with the same Google account.");
+    p.delete("gmailConnected");
+    p.delete("gmailRegion");
+    window.history.replaceState(null, "", `${window.location.pathname}?${p.toString()}`);
+  }, []);
+  const [connError, setConnError] = useState<string | null>(null);
+  const [connChecking, setConnChecking] = useState(false);
+  const [connCheckedAt, setConnCheckedAt] = useState<string | null>(null);
+  const checkConnections = useCallback(async () => {
+    setConnChecking(true);
+    setConnError(null);
+    try {
+      const idToken = await firebaseAuth?.currentUser?.getIdToken();
+      if (!idToken) throw new Error("Could not verify your session — sign in again.");
+      const res = await fetch("/api/gmail?action=check-all-connections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; rows?: typeof connRows; checkedAt?: string; error?: string };
+      if (!res.ok || !data.ok) throw new Error(data.error || `Check failed (HTTP ${res.status})`);
+      setConnRows(data.rows ?? []);
+      setConnCheckedAt(data.checkedAt ?? new Date().toISOString());
+    } catch (err) {
+      setConnError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setConnChecking(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (showConnections && canSeeConnections && connRows === null && !connChecking) void checkConnections();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showConnections, canSeeConnections]);
   const [search, setSearch] = useState("");
   /** The ✓ columns (migration 0466); null = not run yet, the built-in list shows and can't be changed. */
   const [platformList, setPlatformList] = useState<string[] | null>(null);
@@ -654,8 +768,16 @@ export function EmailVaultPage({ mod, sub }: Props) {
                 <Users className="h-4 w-4" /> Manage Access
               </button>
             )}
+            {canSeeConnections && (
+              <button type="button" onClick={() => { setShowPasswordChecks(false); setShowConnections((v) => !v); }} aria-pressed={showConnections} className={`btn hover:bg-white/15 ${showConnections ? "!border-sky-400/60 !bg-sky-500/15 text-sky-200" : ""}`}>
+                <Plug className="h-4 w-4" /> Email Connections
+                {connRows && connRows.some((r) => r.status === "expired" || r.status === "error") && (
+                  <span className="ml-1 rounded-full bg-rose-600 px-1.5 text-[10px] font-bold text-white">{connRows.filter((r) => r.status === "expired" || r.status === "error").length}</span>
+                )}
+              </button>
+            )}
             {canViewSettings && (
-              <button type="button" onClick={() => setShowPasswordChecks((v) => !v)} aria-pressed={showPasswordChecks} className={`btn hover:bg-white/15 ${showPasswordChecks ? "!border-amber-400/60 !bg-amber-500/15 text-amber-200" : ""}`}>
+              <button type="button" onClick={() => { setShowConnections(false); setShowPasswordChecks((v) => !v); }} aria-pressed={showPasswordChecks} className={`btn hover:bg-white/15 ${showPasswordChecks ? "!border-amber-400/60 !bg-amber-500/15 text-amber-200" : ""}`}>
                 <KeyRound className="h-4 w-4" /> Password Checks
               </button>
             )}
@@ -668,8 +790,120 @@ export function EmailVaultPage({ mod, sub }: Props) {
 
       {error && <div className="panel mb-4 border-red-500/30 bg-red-500/5 text-sm text-red-300 px-4 py-3">{error}</div>}
 
-      {/* Super Admin: Password Checks — which pages and buttons ask for a password (migration 0441). Its own view of this page. */}
-      {showPasswordChecks && canViewSettings ? (
+      {/* IT / Admin / Super Admin: Email Connections — is every Google account the app sends from still connected? Its own view of this page. */}
+      {showConnections && canSeeConnections ? (
+        <section>
+          <div className="flex flex-wrap items-center gap-3 mb-3">
+            <button type="button" className="btn text-sm" onClick={() => setShowConnections(false)}>
+              <ChevronLeft className="h-4 w-4" /> Emails
+            </button>
+            <h2 className="text-xl font-semibold flex items-center gap-2"><Plug className="h-5 w-5 text-sky-300" /> Email Connections</h2>
+            <button type="button" className="btn text-sm ml-auto" onClick={() => void checkConnections()} disabled={connChecking}>
+              {connChecking ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Check again
+            </button>
+          </div>
+          <p className="text-sm text-muted-foreground mb-3">
+            Every Google account the app sends email from (or saves files to). <b>Expired</b> means Google no longer accepts its sign-in — its emails stop until someone connects it again on the page that uses it (IT Tickets, Payroll, Hiring …). Checking sends nothing. IT is also sent a bell once a day for each expired one.
+            {connCheckedAt && <span className="ml-1 text-xs">Last checked {new Date(connCheckedAt).toLocaleString()}.</span>}
+          </p>
+          {connError ? (
+            <div className="panel border-red-500/30 bg-red-500/5 text-sm text-red-300 px-4 py-3">{connError}</div>
+          ) : connRows === null ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Checking every connection…</div>
+          ) : connRows.length === 0 ? (
+            <div className="panel px-4 py-3 text-sm text-muted-foreground">No Google accounts are connected anywhere yet.</div>
+          ) : (
+            <div className="panel overflow-x-auto p-0">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-white/10 text-left text-xs uppercase text-slate-400">
+                    <th className="px-3 py-2">Connection</th>
+                    <th className="px-3 py-2">Google account</th>
+                    <th className="px-3 py-2">Connected by</th>
+                    <th className="px-3 py-2">Used for</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...connRows].sort((a, b) => { const rank = (x: typeof a) => (x.status === "expired" || x.status === "error" ? 0 : x.status === "ok" ? 1 : 2); return rank(a) - rank(b); }).map((r, i) => (
+                    <tr key={`${r.label}-${r.email}-${i}`} className="border-b border-white/5 align-top">
+                      <td className="px-3 py-2 font-medium">{r.label}</td>
+                      <td className="px-3 py-2 text-slate-300">{r.email || "—"}</td>
+                      <td className="px-3 py-2 text-slate-300">
+                        {r.connectedBy || "—"}
+                        {r.connectedAt && <div className="text-[11px] text-slate-500">{new Date(r.connectedAt).toLocaleString()}</div>}
+                      </td>
+                      <td className="px-3 py-2 text-slate-400">{r.usedFor}</td>
+                      <td className="px-3 py-2">
+                        {r.status === "not_connected" ? (
+                          <span className="inline-block rounded border border-white/15 bg-white/5 px-2 py-0.5 text-xs font-semibold text-slate-400">Not connected</span>
+                        ) : r.status === "ok" ? (
+                          <span className="inline-block rounded border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-xs font-semibold text-emerald-300">Working</span>
+                        ) : r.status === "expired" ? (
+                          <span className="inline-block rounded border border-rose-500/30 bg-rose-500/15 px-2 py-0.5 text-xs font-semibold text-rose-300" title={r.message}>Expired — connect again</span>
+                        ) : (
+                          <span className="inline-block rounded border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-300" title={r.message}>Couldn't check — hover for details</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right whitespace-nowrap">
+                        {r.kind === "slot" && r.region ? (
+                          <div className="inline-flex gap-1.5">
+                            {r.status !== "not_connected" && (
+                              <button
+                                type="button"
+                                onClick={() => void disconnectSlot(r)}
+                                disabled={disconnecting !== null || reconnecting !== null}
+                                title={`Remove ${r.email || "this account"} from ${r.label}`}
+                                className="btn text-xs py-1 hover:!border-rose-400/60 hover:!bg-rose-500/15"
+                              >
+                                {disconnecting === r.region ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />} Disconnect
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => void reconnectSlot(r.region!, r.email)}
+                              disabled={reconnecting !== null || disconnecting !== null}
+                              title={r.email ? `Sign in to Google as ${r.email} again — Google pre-picks it` : `Connect a Google account for ${r.label}`}
+                              className={`btn text-xs py-1 ${r.status === "expired" || r.status === "error" ? "!border-rose-400/60 !bg-rose-500/20 text-rose-100" : ""}`}
+                            >
+                              {reconnecting === r.region ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plug className="h-3.5 w-3.5" />} Connect
+                            </button>
+                          </div>
+                        ) : r.kind === "hiring" && r.id ? (
+                          <div className="inline-flex gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => void removeHiringAccount(r)}
+                              disabled={hiringBusy !== null}
+                              title={`Remove ${r.email || "this Gmail"} from the Hiring panel`}
+                              className="btn text-xs py-1 hover:!border-rose-400/60 hover:!bg-rose-500/15"
+                            >
+                              {hiringBusy === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />} Remove
+                            </button>
+                            {r.status !== "ok" && r.ownerId && (
+                              <button
+                                type="button"
+                                onClick={() => void notifyHiringOwner(r)}
+                                disabled={hiringBusy !== null}
+                                title={`Send ${r.connectedBy || "the owner"} a bell asking them to reconnect it (it's their account)`}
+                                className="btn text-xs py-1 !border-amber-400/60 !bg-amber-500/15 text-amber-100"
+                              >
+                                Notify {r.connectedBy ? r.connectedBy.split(" ")[0] : "owner"} to reconnect
+                              </button>
+                            )}
+                          </div>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      ) : /* Super Admin: Password Checks — which pages and buttons ask for a password (migration 0441). Its own view of this page. */
+      showPasswordChecks && canViewSettings ? (
         <section>
           <div className="flex flex-wrap items-center gap-3 mb-3">
             <button type="button" className="btn text-sm" onClick={() => setShowPasswordChecks(false)}>
