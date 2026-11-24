@@ -34837,6 +34837,11 @@ export function registerZipCoverage(
   }
 }
 
+/** Forget every registered company ZIP (the server's auto-pull loads one company's at a time). */
+export function clearZipCoverageOverrides(): void {
+  for (const k of Object.keys(ZIP_COVERAGE_OVERRIDES)) delete ZIP_COVERAGE_OVERRIDES[k];
+}
+
 export function lookupZip(zip: string): ZipCoverageEntry | null {
   const clean = cleanZip(zip);
   // Runtime (Supabase) overrides take precedence, then the static map.
