@@ -1,8 +1,8 @@
 /**
  * Branch Commission — Accounting Dashboard tab. Commission is earned by
- * the PERSON holding a Branch Manager-tier role (roleLabels.ts's
- * BM_AND_UP_ROLES — Branch Manager, Senior Branch Manager, Technical
- * Director, Technical Assistant Director), per branch they manage, tiered
+ * the PERSON holding a Branch Manager or Senior Branch Manager role
+ * (COMMISSION_MANAGER_ROLES — Technical Directors / Assistant Directors
+ * don't earn it), per branch they manage, tiered
  * off that branch's Completion % and LTP (Long Term Pending) % for a pay
  * period, multiplied by its completed-ticket count.
  *
@@ -37,6 +37,13 @@ import {
 } from "@/lib/supabase/branchCommissionTech";
 import { getSeniorBranchManagerAssignments, type SbmBranchAssignment } from "@/lib/supabase/seniorBranchManagerAssignments";
 import { normBranch } from "@/lib/approvalDirectory";
+import {
+  getBranchManagerPicks,
+  getTechBranchPicks,
+  setBranchManagerPick,
+  setTechBranchPick,
+  isAssignmentsMissingError,
+} from "@/lib/supabase/branchCommissionAssignments";
 import { getCommissionPeriods, upsertCommissionPeriodLabel, type CommissionPeriod } from "@/lib/supabase/branchManagerCommissionPeriods";
 import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEntry } from "@/lib/supabase/hrActivityLog";
 
@@ -45,6 +52,8 @@ import { logActivity, getActivityLog, activityActionLabel, type HrActivityLogEnt
 // Director (same "Technician" department per ROLE_DEPARTMENT_BREAKDOWN),
 // but those are the managers — excluded here so no one is double-listed.
 const TECHNICIAN_ONLY_ROLES = new Set([...TECHNICIAN_PAY_ROLES].filter((r) => !BM_AND_UP_ROLES.has(r)));
+// Who earns branch commission and shows as a branch's "BM": Branch Managers and Senior Branch Managers only.
+const COMMISSION_MANAGER_ROLES = new Set(["BRANCH_MANAGER", "SENIOR_BRANCH_MANAGER"]);
 
 // Static literal-string lookup — Tailwind's JIT scanner can't see classes
 // built from a template literal at runtime, so every tier's full class
@@ -100,6 +109,11 @@ export function BranchManagerCommissionTab() {
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [migrationMissing, setMigrationMissing] = useState(false);
+  // Branch Commission-only picks (0472): branch key → manager id, and technician id → branch.
+  const [managerPicks, setManagerPicks] = useState<Map<string, { profileId: string; branch: string }>>(new Map());
+  const [techPicks, setTechPicks] = useState<Map<string, { branchKey: string; branch: string }>>(new Map());
+  const [assignmentsMissing, setAssignmentsMissing] = useState(false);
+  const [savingAssign, setSavingAssign] = useState<string | null>(null);
 
   // Last-known-saved snapshot per technician for the CURRENT period — diffed
   // against before every save so activity-log entries carry a real from/to.
@@ -130,13 +144,25 @@ export function BranchManagerCommissionTab() {
       .then((all) => {
         if (cancelled) return;
         const active = all.filter((p) => p.is_active);
-        setManagers(active.filter((p) => BM_AND_UP_ROLES.has(normalizeRole(p.role))).sort(byName));
+        setManagers(active.filter((p) => COMMISSION_MANAGER_ROLES.has(normalizeRole(p.role))).sort(byName));
         setTechnicians(active.filter((p) => TECHNICIAN_ONLY_ROLES.has(normalizeRole(p.role))).sort(byName));
       })
       .catch((err) => console.error("Failed to load commission rosters:", err));
     getSeniorBranchManagerAssignments()
       .then((rows) => { if (!cancelled) setSbmRows(rows); })
       .catch((err) => console.error("Failed to load branch assignments:", err));
+    Promise.all([getBranchManagerPicks(), getTechBranchPicks()])
+      .then(([mgr, tech]) => {
+        if (cancelled) return;
+        setManagerPicks(new Map(mgr.map((p) => [p.branchKey, { profileId: p.profileId, branch: p.branch }])));
+        setTechPicks(new Map(tech.map((p) => [p.profileId, { branchKey: p.branchKey, branch: p.branch }])));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : String(err);
+        if (isAssignmentsMissingError(message)) setAssignmentsMissing(true);
+        else console.error("Failed to load commission branch picks:", err);
+      });
     return () => { cancelled = true; };
   }, []);
 
@@ -204,8 +230,10 @@ export function BranchManagerCommissionTab() {
     for (const p of [...managers, ...technicians]) {
       if (p.assigned_branch && !seen.has(normBranch(p.assigned_branch))) seen.set(normBranch(p.assigned_branch), p.assigned_branch);
     }
+    for (const [key, p] of managerPicks) if (!seen.has(key)) seen.set(key, p.branch);
+    for (const p of techPicks.values()) if (!seen.has(p.branchKey)) seen.set(p.branchKey, p.branch);
     return seen;
-  }, [sbmRows, managers, technicians]);
+  }, [sbmRows, managers, technicians, managerPicks, techPicks]);
   const labelOf = (key: string) => branchLabel.get(key) || "No branch";
   const byBranchLabel = (a: string, b: string) => labelOf(a).localeCompare(labelOf(b));
 
@@ -213,7 +241,8 @@ export function BranchManagerCommissionTab() {
   // Approval Chain gives a Senior Branch Manager that no other manager has
   // as their own — a region's branch with its own Branch Manager is that
   // manager's, not the Senior Branch Manager's.
-  const branchesOfManager = useMemo(() => {
+  // Worked out from Assigned Branch + Approval Chain (before any Branch Commission pick).
+  const autoBranchesOfManager = useMemo(() => {
     const ownKey = (m: ProfileRow) => (m.assigned_branch && normBranch(m.assigned_branch) !== "philippines" ? normBranch(m.assigned_branch) : "");
     const directOwners = new Map<string, Set<string>>();
     for (const m of managers) {
@@ -237,16 +266,31 @@ export function BranchManagerCommissionTab() {
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [managers, sbmRows, branchLabel]);
+  const autoManagerNamesOf = (key: string) => managers.filter((m) => (autoBranchesOfManager.get(m.id) ?? []).includes(key)).map(nameOf);
+
+  // A branch picked on this tab counts only toward the picked manager (ignored if they're no longer an active BM / SBM).
+  const branchesOfManager = useMemo(() => {
+    const activeIds = new Set(managers.map((m) => m.id));
+    const picked = new Map([...managerPicks].filter(([, p]) => activeIds.has(p.profileId)));
+    const map = new Map<string, string[]>();
+    for (const m of managers) {
+      const keys = new Set((autoBranchesOfManager.get(m.id) ?? []).filter((k) => !picked.has(k)));
+      for (const [k, p] of picked) if (p.profileId === m.id) keys.add(k);
+      map.set(m.id, [...keys].sort(byBranchLabel));
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [managers, autoBranchesOfManager, managerPicks, branchLabel]);
 
   const techsByBranch = useMemo(() => {
     const map = new Map<string, ProfileRow[]>();
     for (const t of technicians) {
-      const key = normBranch(t.assigned_branch);
+      const key = techPicks.get(t.id)?.branchKey ?? normBranch(t.assigned_branch);
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(t);
     }
     return map;
-  }, [technicians]);
+  }, [technicians, techPicks]);
 
   const techValues = (t: ProfileRow) => {
     const row = rowsByProfileId.get(t.id);
@@ -407,6 +451,75 @@ export function BranchManagerCommissionTab() {
     }
   };
 
+  const assignmentsError = (err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    if (isAssignmentsMissingError(message)) setAssignmentsMissing(true);
+    else setError(message);
+  };
+  const managerName = (id: string | null) => (id ? (managers.find((m) => m.id === id) ? nameOf(managers.find((m) => m.id === id)!) : id) : "Auto");
+  const saveManagerPick = async (key: string, profileId: string) => {
+    const branch = labelOf(key);
+    const before = managerPicks.get(key)?.profileId ?? null;
+    const to = profileId || null;
+    if (before === to) return;
+    setSavingAssign(`branch:${key}`);
+    setError(null);
+    try {
+      await setBranchManagerPick(branch, to);
+      setManagerPicks((prev) => {
+        const next = new Map(prev);
+        if (to) next.set(key, { profileId: to, branch });
+        else next.delete(key);
+        return next;
+      });
+      void logActivity({
+        action: "branch_commission_manager_picked",
+        targetType: "branch_commission_branch_managers",
+        targetId: key,
+        targetLabel: branch,
+        details: { from: managerName(before), to: managerName(to) },
+      });
+    } catch (err) {
+      assignmentsError(err);
+    } finally {
+      setSavingAssign(null);
+    }
+  };
+  const saveTechBranch = async (tech: ProfileRow, key: string) => {
+    if ((techPicks.get(tech.id)?.branchKey ?? "") === key) return;
+    const assigned = `Assigned Branch (${tech.assigned_branch || "none"})`;
+    const before = techPicks.get(tech.id)?.branch ?? null;
+    const branch = key ? labelOf(key) : null;
+    setSavingAssign(`tech:${tech.id}`);
+    setError(null);
+    try {
+      await setTechBranchPick(tech.id, branch);
+      setTechPicks((prev) => {
+        const next = new Map(prev);
+        if (key && branch) next.set(tech.id, { branchKey: key, branch });
+        else next.delete(tech.id);
+        return next;
+      });
+      void logActivity({
+        action: "branch_commission_tech_moved",
+        targetType: "branch_commission_tech_branches",
+        targetId: tech.id,
+        targetLabel: nameOf(tech),
+        details: { from: before ?? assigned, to: branch ?? assigned },
+      });
+    } catch (err) {
+      assignmentsError(err);
+    } finally {
+      setSavingAssign(null);
+    }
+  };
+  // Every branch a technician can be moved to.
+  const allBranchKeys = useMemo(
+    () => [...branchLabel.keys()].filter(Boolean).sort(byBranchLabel),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [branchLabel]
+  );
+
   const handleNumberBlur = (tech: ProfileRow, field: NumberField, rawValue: string) => {
     const value = Math.max(0, field === "completedTickets" ? Math.round(Number(rawValue) || 0) : Number(rawValue) || 0);
     const saved = originalRowsRef.current.get(tech.id);
@@ -564,7 +677,7 @@ export function BranchManagerCommissionTab() {
         </div>
       </div>
 
-      {(overlappingPeriod || migrationMissing || error) && (
+      {(overlappingPeriod || migrationMissing || assignmentsMissing || error) && (
         <div className="px-5 pt-3 space-y-2">
           {overlappingPeriod && (
             <p className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2">
@@ -575,6 +688,11 @@ export function BranchManagerCommissionTab() {
           {migrationMissing && (
             <p className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2">
               Run migration <code>0417_branch_commission_tech_tally.sql</code> in Supabase to start entering technicians' numbers.
+            </p>
+          )}
+          {assignmentsMissing && (
+            <p className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2">
+              Run migration <code>0472_branch_commission_assignments.sql</code> in Supabase to pick a branch's manager or move a technician to another branch here.
             </p>
           )}
           {error && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2">{error}</p>}
@@ -727,11 +845,24 @@ export function BranchManagerCommissionTab() {
                       <td colSpan={6} className="px-4 py-2">
                         <div className="flex items-center gap-x-3 gap-y-1 flex-wrap">
                           <span className="font-semibold">{labelOf(g.key)}</span>
-                          {unmanaged ? (
-                            <span className="text-[11px] text-amber-300">No manager — not counted in any commission</span>
-                          ) : (
-                            <span className="text-[11px] text-muted-foreground">BM: <span className="text-slate-200">{g.managerNames.join(", ")}</span></span>
-                          )}
+                          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                            BM:
+                            <select
+                              value={managers.some((m) => m.id === managerPicks.get(g.key)?.profileId) ? managerPicks.get(g.key)!.profileId : ""}
+                              onChange={(e) => void saveManagerPick(g.key, e.target.value)}
+                              disabled={!g.key || assignmentsMissing || savingAssign !== null}
+                              title={g.key ? "Whose commission this branch counts toward (Branch Commission only — profiles and Approval Chain don't change)" : "Technicians with no branch can't be given a manager"}
+                              className={`glass-input !w-auto text-[11px] py-0.5 px-1.5 rounded-md disabled:opacity-50 ${unmanaged ? "text-amber-300 border-amber-500/40" : "text-slate-200"}`}
+                            >
+                              <option value="">
+                                {autoManagerNamesOf(g.key).length > 0 ? `${autoManagerNamesOf(g.key).join(", ")} (from profiles / Approval Chain)` : "No manager — not counted in any commission"}
+                              </option>
+                              {managers.map((m) => (
+                                <option key={m.id} value={m.id}>{nameOf(m)} — {roleOf(m)}</option>
+                              ))}
+                            </select>
+                            {savingAssign === `branch:${g.key}` && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
+                          </span>
                           <span className="text-[11px] text-muted-foreground">
                             {r?.counted ?? 0} counted{r && r.trainees > 0 ? <span className="text-amber-300"> · {r.trainees} trainee{r.trainees === 1 ? "" : "s"}</span> : null}
                           </span>
@@ -754,6 +885,21 @@ export function BranchManagerCommissionTab() {
                           <td className="px-4 py-2 pl-7 whitespace-nowrap">
                             <div className={v.isTrainee ? "text-muted-foreground" : "font-medium"}>{nameOf(t)}</div>
                             <div className="text-[10px] text-muted-foreground">{roleOf(t)}</div>
+                            <div className="mt-1 flex items-center gap-1.5">
+                              <select
+                                value={techPicks.get(t.id)?.branchKey ?? ""}
+                                onChange={(e) => void saveTechBranch(t, e.target.value)}
+                                disabled={assignmentsMissing || savingAssign !== null}
+                                title="Branch this technician's numbers count under (Branch Commission only — their profile doesn't change)"
+                                className={`glass-input !w-auto text-[10px] py-0.5 px-1.5 rounded-md disabled:opacity-50 ${techPicks.has(t.id) ? "text-sky-300 border-sky-500/40" : "text-muted-foreground"}`}
+                              >
+                                <option value="">Assigned Branch ({t.assigned_branch || "none"})</option>
+                                {allBranchKeys.filter((k) => k !== normBranch(t.assigned_branch)).map((k) => (
+                                  <option key={k} value={k}>{labelOf(k)}</option>
+                                ))}
+                              </select>
+                              {savingAssign === `tech:${t.id}` && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
+                            </div>
                           </td>
                           <td className="px-4 py-2">
                             <div className="flex items-center gap-1.5">
