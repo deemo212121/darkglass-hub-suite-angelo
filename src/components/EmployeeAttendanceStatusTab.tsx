@@ -15,11 +15,11 @@
 import { getRestDayHistory } from "@/lib/supabase/restDayHistory";
 import { offDaysOn, type RestDayHistory } from "@/lib/restDays";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, Loader2, Pencil, RefreshCw, RotateCcw, Undo2, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Download, Loader2, Pencil, RefreshCw, RotateCcw, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
-import { getProfileIdByFirebaseUid, getCompanyTimecardEntries, getEntryForDate, saveEntry, deleteEntry, appendEntryNote, addDaysISO, getTimecardResets, undoTimecardReset, getTimecardLog, type CompanyTimecardEntry, type TimecardReset, type TimecardLogEntry } from "@/lib/supabase/timecards";
+import { getProfileIdByFirebaseUid, getCompanyTimecardEntries, getEntryForDate, saveEntry, deleteEntry, appendEntryNote, addDaysISO, getTimecardResets, undoTimecardReset, getTimecardLog, hoursDiff, type CompanyTimecardEntry, type TimecardReset, type TimecardLogEntry } from "@/lib/supabase/timecards";
 import { getCompanyTimecardCorrections, type TimecardCorrectionRow } from "@/lib/supabase/timecardCorrections";
 import { getCompanyPtoRequests, type PtoRequestRow, type PtoType } from "@/lib/supabase/pto";
 import { getAttendanceNotes, upsertAttendanceNote, type AttendanceNoteRow } from "@/lib/supabase/attendanceNotes";
@@ -31,6 +31,7 @@ import { getTicketAttendanceForTechnician, type TicketAttendanceRow } from "@/li
 import { getCompanyEmployeeRequests, type EmployeeRequestRow } from "@/lib/supabase/employeeRequests";
 import { getAttendanceStartByProfile } from "@/lib/supabase/attendanceStart";
 import { isBeforeAttendanceStart } from "@/lib/attendanceStart";
+import { downloadStyledReport } from "@/lib/styledReportExport";
 
 type StatusKind = "completed" | "corrected" | "review" | "missing" | "pending" | "leave" | "rest" | "working" | "upcoming" | "notstarted";
 
@@ -43,6 +44,32 @@ interface DayStatus {
 }
 
 const HISTORY_DAYS = 14;
+
+/**
+ * Total working hours for one day (Time In → Time Out):
+ *   worked more than 6 hours (not counting the meal) → the meal is paid, so
+ *     the whole Time In → Time Out counts (8 AM–4 PM with a 30-min meal = 8h);
+ *   6 hours or less → the meal isn't paid and is taken off
+ *     (6h span with a 30-min meal = 5h 30m).
+ * No meal punched → the whole span counts. null when the day has no Time In or no Time Out.
+ */
+function dayWorkingTime(e: Pick<CompanyTimecardEntry, "checkIn" | "checkOut" | "mealStart" | "mealEnd"> | undefined): { worked: number; total: number; meal: number; mealPaid: boolean } | null {
+  if (!e?.checkIn || !e.checkOut) return null;
+  const span = hoursDiff(e.checkIn, e.checkOut);
+  if (!(span > 0)) return null;
+  let meal = e.mealStart && e.mealEnd ? hoursDiff(e.mealStart, e.mealEnd) : 0;
+  if (!(meal > 0 && meal < span)) meal = 0; // bad meal punches aren't a real break
+  const worked = span - meal;
+  const mealPaid = worked > 6;
+  return { worked, total: mealPaid ? span : worked, meal, mealPaid };
+}
+const dayWorkingHours = (e: Parameters<typeof dayWorkingTime>[0]): number | null => dayWorkingTime(e)?.total ?? null;
+
+/** 8.5 → "8h 30m". */
+function fmtWorkHours(h: number): string {
+  const mins = Math.round(h * 60);
+  return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
+}
 
 const PTO_LABEL: Record<PtoType, string> = {
   vacation: "PTO",
@@ -338,6 +365,101 @@ export function EmployeeAttendanceStatusTab() {
   // Newest first, from the end date back to the range start (or 14 days for a single day).
   const historyDays: string[] = [];
   for (let d = date; d >= rangeStart; d = addDaysISO(d, -1)) historyDays.push(d);
+
+  // ── Excel: Summary (one row per employee shown) + Daily (every day of the range) ──
+  const [exporting, setExporting] = useState(false);
+  const exportHours = async () => {
+    if (shownRows.length === 0) return;
+    setExporting(true);
+    try {
+      const daysAsc = [...historyDays].reverse();
+      const h2 = (n: number) => Math.round(n * 100) / 100;
+      const summary: (string | number | null)[][] = [];
+      const daily: (string | number | null)[][] = [];
+      for (const { profile: p } of shownRows) {
+        const name = p.display_name || p.email || "";
+        const role = ROLE_LABELS[normalizeRole(p.role)] ?? p.role ?? "";
+        let worked = 0, meal = 0, unpaid = 0, total = 0, days = 0;
+        for (const d of daysAsc) {
+          const e = entryByKey.get(`${p.id}|${d}`);
+          const t = dayWorkingTime(e);
+          if (t) { days++; worked += t.worked; meal += t.meal; if (!t.mealPaid) unpaid += t.meal; total += t.total; }
+          const st = STATUS_LABEL[statusFor(p, d).kind];
+          daily.push([
+            name, p.assigned_branch || "", d,
+            new Date(`${d}T00:00:00`).toLocaleDateString("en-US", { weekday: "short" }),
+            e?.checkIn ? fmtTime(e.checkIn) : "", e?.mealStart ? fmtTime(e.mealStart) : "", e?.mealEnd ? fmtTime(e.mealEnd) : "", e?.checkOut ? fmtTime(e.checkOut) : "",
+            t ? h2(t.worked) : null, t && t.meal > 0 ? h2(t.meal) : null, t && t.meal > 0 ? (t.mealPaid ? "Paid" : "Unpaid") : "", t ? h2(t.total) : null,
+            st === "—" ? "" : st,
+          ]);
+        }
+        summary.push([name, departmentOf(p), role, p.assigned_branch || "", days, h2(worked), h2(meal), h2(unpaid), h2(total)]);
+      }
+      const range = `${fmtDay(rangeStart)} to ${fmtDay(date)}`;
+      const rule = "Total Hours = Working Hours + paid meal time. The meal is paid when they worked more than 6 hours (not counting the meal); on days of 6 hours or less it is taken off. Days with no Time Out are not counted.";
+      const HRS = '0.00;-0.00;"–"';
+      const STATUS_STYLES: Record<string, { fill: string; font: string }> = {
+        Completed: { fill: "FFDCFCE7", font: "FF166534" },
+        Corrected: { fill: "FFEDE9FE", font: "FF5B21B6" },
+        "Pending for Review": { fill: "FFFEF3C7", font: "FF92400E" },
+        Missing: { fill: "FFFEE2E2", font: "FF991B1B" },
+        Pending: { fill: "FFFEF3C7", font: "FF92400E" },
+        "On Leave": { fill: "FFDBEAFE", font: "FF1E40AF" },
+        "Rest Day": { fill: "FFF1F5F9", font: "FF475569" },
+        "Clocked In": { fill: "FFCFFAFE", font: "FF155E75" },
+      };
+      await downloadStyledReport(`working-hours_${rangeStart}_to_${date}.xlsx`, [
+        {
+          name: "Summary",
+          title: "Working Hours — Summary",
+          subtitle: `${range} · ${summary.length} employee${summary.length === 1 ? "" : "s"}`,
+          note: rule,
+          columns: [
+            { header: "Employee", width: 28, align: "left" },
+            { header: "Department", width: 16, align: "left" },
+            { header: "Role", width: 22, align: "left" },
+            { header: "Branch", width: 18, align: "left" },
+            { header: "Days Worked", width: 11, numFmt: '0;-0;"–"', total: true },
+            { header: "Working Hours (hrs)", width: 14, numFmt: HRS, total: true },
+            { header: "Meal Time (hrs)", width: 13, numFmt: HRS, total: true },
+            { header: "Unpaid Meal (hrs)", width: 13, numFmt: HRS, total: true, headerFill: "FFB45309" },
+            { header: "Total Hours (hrs)", width: 14, numFmt: HRS, total: true, headerFill: "FF15803D" },
+          ],
+          rows: summary,
+          totalsRow: true,
+        },
+        {
+          name: "Daily",
+          title: "Working Hours — Daily",
+          subtitle: range,
+          note: rule,
+          columns: [
+            { header: "Employee", width: 26, align: "left" },
+            { header: "Branch", width: 16, align: "left" },
+            { header: "Date", width: 12 },
+            { header: "Day", width: 7 },
+            { header: "Time In", width: 11 },
+            { header: "Meal Start", width: 11 },
+            { header: "Meal End", width: 11 },
+            { header: "Time Out", width: 11 },
+            { header: "Working Hours (hrs)", width: 14, numFmt: HRS, total: true },
+            { header: "Meal Time (hrs)", width: 13, numFmt: HRS, total: true },
+            { header: "Meal", width: 9 },
+            { header: "Total Hours (hrs)", width: 14, numFmt: HRS, total: true, headerFill: "FF15803D" },
+            { header: "Status", width: 18 },
+          ],
+          rows: daily,
+          statusColumn: 12,
+          statusStyles: STATUS_STYLES,
+          totalsRow: true,
+        },
+      ]);
+    } catch (err) {
+      toast.error(`Couldn't export: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const hhmm = (t: string | undefined) => (t ? t.slice(0, 5) : "");
   const startEdit = (day: string, e: CompanyTimecardEntry | undefined) => {
@@ -654,6 +776,15 @@ export function EmployeeAttendanceStatusTab() {
         <button type="button" onClick={() => void load()} disabled={loading} className="btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 disabled:opacity-50">
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
         </button>
+        <button
+          type="button"
+          onClick={() => void exportHours()}
+          disabled={loading || exporting || shownRows.length === 0}
+          title="Download the employees shown (same filters and dates) — a Summary sheet and a Daily sheet with Working Hours, Meal Time and Total Hours"
+          className="btn text-sm px-3 py-1.5 inline-flex items-center gap-1.5 disabled:opacity-50"
+        >
+          {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Export Excel
+        </button>
       </div>
 
       <div className="flex flex-wrap gap-1.5">
@@ -678,13 +809,22 @@ export function EmployeeAttendanceStatusTab() {
               <th className="px-3 py-2">Role</th>
               <th className="px-3 py-2">Branch</th>
               <th className="px-3 py-2">{isRange ? `Days — ${fmtDay(startDate)} to ${fmtDay(date)}` : `Status — ${fmtDay(date)}`}</th>
+              <th className="px-3 py-2 text-right whitespace-nowrap" title={`${fmtDay(rangeStart)} to ${fmtDay(date)} — Time In → Time Out, not counting meals`}>
+                Working Hours{isRange ? "" : ` (${HISTORY_DAYS}d)`}
+              </th>
+              <th className="px-3 py-2 text-right whitespace-nowrap" title={`${fmtDay(rangeStart)} to ${fmtDay(date)} — all meal time; paid on days worked over 6 hours`}>
+                Meal Time
+              </th>
+              <th className="px-3 py-2 text-right whitespace-nowrap" title={`${fmtDay(rangeStart)} to ${fmtDay(date)} — Working Hours + paid meal time`}>
+                Total Hours
+              </th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-400"><Loader2 className="h-4 w-4 animate-spin inline" /></td></tr>
+              <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400"><Loader2 className="h-4 w-4 animate-spin inline" /></td></tr>
             ) : shownRows.length === 0 ? (
-              <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-400">No employees match these filters.</td></tr>
+              <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">No employees match these filters.</td></tr>
             ) : shownRows.map(({ profile: p, status, dayCounts }) => {
               const expanded = openProfileId === p.id;
               return (
@@ -722,10 +862,38 @@ export function EmployeeAttendanceStatusTab() {
                     </>
                   )}
                 </td>
+                {(() => {
+                  let worked = 0, meal = 0, unpaidMeal = 0, total = 0, counted = 0;
+                  for (const d of historyDays) {
+                    const t = dayWorkingTime(entryByKey.get(`${p.id}|${d}`));
+                    if (!t) continue;
+                    counted++;
+                    worked += t.worked;
+                    meal += t.meal;
+                    if (!t.mealPaid) unpaidMeal += t.meal;
+                    total += t.total;
+                  }
+                  const days = `${counted} day${counted === 1 ? "" : "s"} with Time In and Time Out`;
+                  const dash = <span className="text-slate-500 font-normal">—</span>;
+                  return (
+                    <>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-slate-200 whitespace-nowrap" title={`${days} · ${worked.toFixed(2)} h`}>{counted ? fmtWorkHours(worked) : dash}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-slate-300 whitespace-nowrap" title={`${meal.toFixed(2)} h of meals${unpaidMeal > 0 ? ` · ${fmtWorkHours(unpaidMeal)} unpaid (days of 6 hours or less)` : ""}`}>
+                        {counted ? (
+                          <>
+                            {fmtWorkHours(meal)}
+                            {unpaidMeal > 0 && <span className="ml-1 text-[10px] text-amber-300">({fmtWorkHours(unpaidMeal)} unpaid)</span>}
+                          </>
+                        ) : dash}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-emerald-300 whitespace-nowrap" title={`${days} · ${total.toFixed(2)} h`}>{counted ? fmtWorkHours(total) : dash}</td>
+                    </>
+                  );
+                })()}
               </tr>
               {expanded && (
                 <tr className="border-b border-white/10 bg-slate-950/40">
-                  <td colSpan={5} className="px-3 pb-3 pt-1">
+                  <td colSpan={8} className="px-3 pb-3 pt-1">
                     <div className="text-[11px] text-slate-400 mb-1 pl-5">
                       {isRange ? `${fmtDay(startDate)} to ${fmtDay(date)}` : `Last ${HISTORY_DAYS} days to ${fmtDay(date)}`}
                     </div>
@@ -738,7 +906,11 @@ export function EmployeeAttendanceStatusTab() {
                           <th className="px-3 py-2">Meal Start</th>
                           <th className="px-3 py-2">Meal End</th>
                           <th className="px-3 py-2">Time Out</th>
-                          <th className="px-3 py-2">Status</th><th className="px-3 py-2">Notes</th>
+                          <th className="px-3 py-2">Status</th>
+                          <th className="px-3 py-2 text-right" title="Time In → Time Out, not counting the meal">Working Hours</th>
+                          <th className="px-3 py-2" title="Meal End − Meal Start. Paid = counted in Total Hours (worked over 6 hours); Unpaid = taken off (6 hours or less)">Meal Time</th>
+                          <th className="px-3 py-2 text-right" title="Time In → Time Out; the meal is paid (not taken off) when they worked over 6 hours">Total Hours</th>
+                          <th className="px-3 py-2">Notes</th>
                           {canEditPunches && <th className="px-3 py-2"></th>}
                         </tr>
                       </thead>
@@ -761,7 +933,11 @@ export function EmployeeAttendanceStatusTab() {
                                 <td className="px-2 py-1.5">{timeInput("mealStart")}</td>
                                 <td className="px-2 py-1.5">{timeInput("mealEnd")}</td>
                                 <td className="px-2 py-1.5">{timeInput("checkOut")}</td>
-                                <td className="px-3 py-2 text-[11px] text-rose-300">{editError}</td><td className="px-3 py-2">{notesCell(p.id, day)}</td>
+                                <td className="px-3 py-2 text-[11px] text-rose-300">{editError}</td>
+                                <td className="px-3 py-2"></td>
+                                <td className="px-3 py-2"></td>
+                                <td className="px-3 py-2"></td>
+                                <td className="px-3 py-2">{notesCell(p.id, day)}</td>
                                 <td className="px-2 py-1.5 whitespace-nowrap">
                                   <button type="button" onClick={() => saveEdit(p.id, day)} disabled={savingEdit} title="Save" className="p-1.5 rounded bg-green-600 hover:bg-green-700 text-white disabled:opacity-50 mr-1">
                                     {savingEdit ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
@@ -878,7 +1054,36 @@ export function EmployeeAttendanceStatusTab() {
                                   );
                                 })()}
                                 {reviewButton(p.id, dayStatus, day)}
-                              </td><td className="px-3 py-2">{notesCell(p.id, day)}</td>
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums text-slate-300 whitespace-nowrap">
+                                {(() => {
+                                  const t = dayWorkingTime(e);
+                                  return t ? <span title={`${t.worked.toFixed(2)} h`}>{fmtWorkHours(t.worked)}</span> : <span className="text-slate-500">—</span>;
+                                })()}
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap text-[12px]">
+                                {(() => {
+                                  const t = dayWorkingTime(e);
+                                  if (!t || t.meal <= 0) return <span className="text-slate-500">—</span>;
+                                  return (
+                                    <span className="tabular-nums">
+                                      {fmtWorkHours(t.meal)}{" "}
+                                      {t.mealPaid ? (
+                                        <span className="ml-1 rounded border border-emerald-500/30 bg-emerald-500/15 px-1.5 py-px text-[10px] font-semibold text-emerald-300" title="Worked over 6 hours — the meal counts in Total Hours">Paid</span>
+                                      ) : (
+                                        <span className="ml-1 rounded border border-amber-500/30 bg-amber-500/15 px-1.5 py-px text-[10px] font-semibold text-amber-300" title="Worked 6 hours or less — the meal is taken off Total Hours">Unpaid</span>
+                                      )}
+                                    </span>
+                                  );
+                                })()}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums text-slate-200 whitespace-nowrap">
+                                {(() => {
+                                  const h = dayWorkingHours(e);
+                                  return h == null ? <span className="text-slate-500">—</span> : <span title={`${h.toFixed(2)} h`}>{fmtWorkHours(h)}</span>;
+                                })()}
+                              </td>
+                              <td className="px-3 py-2">{notesCell(p.id, day)}</td>
                               {canEditPunches && (
                                 <td className="px-2 py-2 whitespace-nowrap">
                                   {day <= today && resetConfirmDay === day ? (
@@ -935,7 +1140,7 @@ export function EmployeeAttendanceStatusTab() {
                             </tr>
                             {ticketOpen && (
                               <tr className="border-b border-white/5 bg-slate-950/60">
-                                <td colSpan={canEditPunches ? 8 : 7} className="px-3 py-2 pl-8">
+                                <td colSpan={canEditPunches ? 11 : 10} className="px-3 py-2 pl-8">
                                   {ticketsFor?.loading ? (
                                     <span className="text-xs text-slate-400"><Loader2 className="h-3.5 w-3.5 animate-spin inline mr-1" />Loading tickets…</span>
                                   ) : !dayTickets || dayTickets.length === 0 ? (
