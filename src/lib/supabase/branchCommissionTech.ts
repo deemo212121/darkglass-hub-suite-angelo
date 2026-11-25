@@ -108,9 +108,13 @@ export function rollUpBranch(techs: { completionPct: number; ltpPct: number; com
   const trainees = techs.length - counted.length;
   const completedTickets = counted.reduce((sum, t) => sum + t.completedTickets, 0);
   if (counted.length === 0) return { completionPct: 0, ltpPct: 0, completedTickets: 0, counted: 0, trainees };
+  // Plain average (nobody has tickets — e.g. the branch's tickets are kept per
+  // branch): only techs with a % typed in, so a listed-but-blank tech doesn't drag it down.
+  const entered = counted.filter((t) => t.completionPct > 0 || t.ltpPct > 0);
+  const pool = completedTickets > 0 || entered.length === 0 ? counted : entered;
   const weight = (t: (typeof counted)[number]) => (completedTickets > 0 ? t.completedTickets : 1);
-  const totalWeight = counted.reduce((sum, t) => sum + weight(t), 0);
+  const totalWeight = pool.reduce((sum, t) => sum + weight(t), 0);
   const avg = (pick: (t: (typeof counted)[number]) => number) =>
-    Math.round((counted.reduce((sum, t) => sum + pick(t) * weight(t), 0) / totalWeight) * 10) / 10;
+    totalWeight === 0 ? 0 : Math.round((pool.reduce((sum, t) => sum + pick(t) * weight(t), 0) / totalWeight) * 10) / 10;
   return { completionPct: avg((t) => t.completionPct), ltpPct: avg((t) => t.ltpPct), completedTickets, counted: counted.length, trainees };
 }

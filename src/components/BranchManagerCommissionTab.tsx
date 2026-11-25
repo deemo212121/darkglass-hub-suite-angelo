@@ -22,7 +22,18 @@
  * TicketAttendanceTab.tsx, so it can be mounted on its own.
  */
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, History as HistoryIcon, X, ChevronDown } from "lucide-react";
+import { Loader2, History as HistoryIcon, X, ChevronDown, Upload, CheckCircle2, Undo2 } from "lucide-react";
+import { useAuth } from "@/lib/auth";
+import { getMyProfileId } from "@/lib/supabase/users";
+import { isAdminOrAboveHolder } from "@/lib/roleLabels";
+import { BranchCommissionImportModal } from "@/components/BranchCommissionImportModal";
+import {
+  getBranchPeriods,
+  upsertBranchPeriod,
+  isBranchPeriodMissingError,
+  type BranchPeriodRow,
+  type BranchPeriodFields,
+} from "@/lib/supabase/branchCommissionBranchPeriod";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { getCompanyUsers, type ProfileRow } from "@/lib/supabase/users";
 import { normalizeRole, ROLE_LABELS, BM_AND_UP_ROLES, TECHNICIAN_PAY_ROLES } from "@/lib/roleLabels";
@@ -77,6 +88,23 @@ const TIER_RULES: { tier: CommissionTier; rule: string; rate: string }[] = [
   { tier: 4, rule: "Completion < 35% or LTP > 70%", rate: "No commission" },
 ];
 
+// Finance pays by week, Sunday–Saturday (their sheet's W1 = 9/27–10/3).
+const isoOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+function weekBounds(iso?: string): { start: string; end: string } {
+  const d = iso ? new Date(`${iso}T12:00:00`) : new Date();
+  if (isNaN(d.getTime())) return weekBounds();
+  const start = new Date(d.getFullYear(), d.getMonth(), d.getDate() - d.getDay(), 12);
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6, 12);
+  return { start: isoOf(start), end: isoOf(end) };
+}
+function shiftWeek(startIso: string, weeks: number) {
+  const d = new Date(`${startIso}T12:00:00`);
+  d.setDate(d.getDate() + weeks * 7);
+  return weekBounds(isoOf(d));
+}
+const isWeek = (start: string, end: string) => { const w = weekBounds(start); return w.start === start && w.end === end; };
+const usDate = (iso: string) => { const [y, m, d] = iso.split("-"); return y ? `${Number(m)}/${Number(d)}/${y}` : iso; };
+
 function currentMonthBounds(): { start: string; end: string } {
   const now = new Date();
   const y = now.getFullYear();
@@ -95,10 +123,11 @@ const roleOf = (p: ProfileRow) => ROLE_LABELS[normalizeRole(p.role)] || p.role;
 const hrTrainee = (p: ProfileRow) => p.employment_type === "trainee" && !p.trainee_access_granted;
 
 type NumberField = "completionPct" | "ltpPct" | "completedTickets";
-type BranchResult = ReturnType<typeof rollUpBranch> & ReturnType<typeof resolveCommissionTier> & { earned: number };
+type BranchResult = ReturnType<typeof rollUpBranch> & ReturnType<typeof resolveCommissionTier> & { earned: number; ticketsFromBranch: boolean };
 
 export function BranchManagerCommissionTab() {
-  const defaultPeriod = currentMonthBounds();
+  const defaultPeriod = weekBounds();
+  const [periodMode, setPeriodMode] = useState<"week" | "custom">("week");
   const [periodStart, setPeriodStart] = useState(defaultPeriod.start);
   const [periodEnd, setPeriodEnd] = useState(defaultPeriod.end);
   const [managers, setManagers] = useState<ProfileRow[]>([]);
@@ -114,6 +143,17 @@ export function BranchManagerCommissionTab() {
   const [techPicks, setTechPicks] = useState<Map<string, { branchKey: string; branch: string }>>(new Map());
   const [assignmentsMissing, setAssignmentsMissing] = useState(false);
   const [savingAssign, setSavingAssign] = useState<string | null>(null);
+  // Per branch for the current period (0473): Flash tech, Damages, Total damage, branch tickets, note, Paid.
+  const { uid, displayName, role, extraRoles } = useAuth();
+  const [branchPeriods, setBranchPeriods] = useState<Map<string, BranchPeriodRow>>(new Map());
+  const [branchPeriodMissing, setBranchPeriodMissing] = useState(false);
+  const [savingBranch, setSavingBranch] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
+  // Undo Paid: Accounting / Accounting Manager / Admin and up.
+  const canUndoPaid =
+    isAdminOrAboveHolder(role, extraRoles) ||
+    [role, ...(extraRoles ?? [])].some((r) => ["FINANCE", "ACCOUNTING_MANAGER"].includes(normalizeRole(r ?? "")));
 
   // Last-known-saved snapshot per technician for the CURRENT period — diffed
   // against before every save so activity-log entries carry a real from/to.
@@ -202,7 +242,26 @@ export function BranchManagerCommissionTab() {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [periodStart, periodEnd]);
+  }, [periodStart, periodEnd, reloadTick]);
+
+  useEffect(() => {
+    if (!periodStart || !periodEnd || periodStart > periodEnd) return;
+    let cancelled = false;
+    getBranchPeriods(periodStart, periodEnd)
+      .then((rows) => {
+        if (cancelled) return;
+        setBranchPeriods(new Map(rows.map((r) => [r.branchKey, r])));
+        setBranchPeriodMissing(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : String(err);
+        setBranchPeriods(new Map());
+        if (isBranchPeriodMissingError(message)) setBranchPeriodMissing(true);
+        else console.error("Failed to load branch details for the period:", err);
+      });
+    return () => { cancelled = true; };
+  }, [periodStart, periodEnd, reloadTick]);
 
   const currentPeriodSaved = useMemo(
     () => periods.some((p) => p.periodStart === periodStart && p.periodEnd === periodEnd),
@@ -306,20 +365,28 @@ export function BranchManagerCommissionTab() {
     const map = new Map<string, BranchResult>();
     const keys = new Set<string>([...techsByBranch.keys(), ...[...branchesOfManager.values()].flat()]);
     for (const key of keys) {
-      const roll = rollUpBranch((techsByBranch.get(key) ?? []).map(techValues));
+      const rolled = rollUpBranch((techsByBranch.get(key) ?? []).map(techValues));
+      const override = branchPeriods.get(key)?.ticketsOverride ?? null;
+      const roll = override === null ? rolled : { ...rolled, completedTickets: override };
       const tier = resolveCommissionTier(roll.completionPct, roll.ltpPct);
-      map.set(key, { ...roll, ...tier, earned: roll.counted === 0 ? 0 : tier.ratePerTicket * roll.completedTickets });
+      map.set(key, { ...roll, ...tier, ticketsFromBranch: override !== null, earned: roll.counted === 0 ? 0 : tier.ratePerTicket * roll.completedTickets });
     }
     return map;
     // techValues reads rowsByProfileId
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [techsByBranch, branchesOfManager, rowsByProfileId]);
+  }, [techsByBranch, branchesOfManager, rowsByProfileId, branchPeriods]);
+  const isPaid = (key: string | null | undefined) => !!key && !!branchPeriods.get(key)?.paidAt;
+  const techBranchKey = (t: ProfileRow) => techPicks.get(t.id)?.branchKey ?? normBranch(t.assigned_branch);
 
   // A branch has numbers once any counted tech has something typed in.
-  const hasNumbers = (r: BranchResult | undefined) => !!r && r.counted > 0 && (r.completedTickets > 0 || r.completionPct > 0 || r.ltpPct > 0);
+  const hasNumbers = (r: BranchResult | undefined) => !!r && r.counted > 0 && (r.completedTickets > 0 || r.completionPct > 0 || r.ltpPct > 0 || r.ticketsFromBranch);
 
   const managerTotal = (m: ProfileRow) => (branchesOfManager.get(m.id) ?? []).reduce((sum, k) => sum + (branchResult.get(k)?.earned ?? 0), 0);
   const grandTotal = managers.reduce((sum, m) => sum + managerTotal(m), 0);
+  const paidTotal = managers.reduce(
+    (sum, m) => sum + (branchesOfManager.get(m.id) ?? []).reduce((s2, k) => s2 + (isPaid(k) ? branchResult.get(k)?.earned ?? 0 : 0), 0),
+    0
+  );
   const managedKeys = useMemo(() => new Set([...branchesOfManager.values()].flat()), [branchesOfManager]);
   const stats = useMemo(() => {
     let branchesWithNumbers = 0;
@@ -520,6 +587,80 @@ export function BranchManagerCommissionTab() {
     [branchLabel]
   );
 
+  const saveBranchField = async (key: string, fields: BranchPeriodFields, what: string) => {
+    const before = branchPeriods.get(key);
+    setSavingBranch(`${key}:${what}`);
+    setError(null);
+    try {
+      const saved = await upsertBranchPeriod(labelOf(key), periodStart, periodEnd, fields);
+      setBranchPeriods((prev) => new Map(prev).set(key, saved));
+      const pick = (r: BranchPeriodRow | undefined) =>
+        what === "paid" ? (r?.paidAt ? `Paid (${r.paidByName || "?"})` : "Not paid")
+        : what === "flashTech" ? r?.flashTech ?? null
+        : what === "damages" ? r?.damages ?? null
+        : what === "damageCount" ? r?.damageCount ?? null
+        : what === "ticketsOverride" ? r?.ticketsOverride ?? null
+        : r?.note ?? "";
+      void logActivity({
+        action: what === "paid" ? (saved.paidAt ? "branch_commission_marked_paid" : "branch_commission_paid_undone") : "branch_commission_branch_value_changed",
+        targetType: "branch_commission_branch_period",
+        targetId: saved.id,
+        targetLabel: `${labelOf(key)} — ${periodStart} to ${periodEnd}`,
+        details: { field: what, from: pick(before), to: pick(saved), ...(what === "paid" ? { amount: branchResult.get(key)?.earned ?? 0 } : {}) },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (isBranchPeriodMissingError(message)) setBranchPeriodMissing(true);
+      else setError(message);
+    } finally {
+      setSavingBranch(null);
+    }
+  };
+  const markPaid = async (key: string) => {
+    const amount = branchResult.get(key)?.earned ?? 0;
+    if (!confirm(`Mark ${labelOf(key)} as Paid for ${periodStart} to ${periodEnd} (${money(amount)})?\n\nIts numbers lock for this period. This is for tracking only — nothing is sent to payroll.`)) return;
+    const myId = uid ? await getMyProfileId(uid).catch(() => null) : null;
+    await saveBranchField(key, { paidAt: new Date().toISOString(), paidBy: myId, paidByName: displayName || "" }, "paid");
+  };
+  const undoPaid = async (key: string) => {
+    if (!confirm(`Undo Paid for ${labelOf(key)} (${periodStart} to ${periodEnd})? Its numbers unlock.`)) return;
+    await saveBranchField(key, { paidAt: null, paidBy: null, paidByName: null }, "paid");
+  };
+  const yesNoValue = (v: boolean | null | undefined) => (v === true ? "yes" : v === false ? "no" : "");
+  const yesNoSelect = (key: string, field: "flashTech" | "damages", value: boolean | null | undefined) => (
+    <select
+      value={yesNoValue(value)}
+      onChange={(e) => void saveBranchField(key, { [field]: e.target.value === "" ? null : e.target.value === "yes" }, field)}
+      disabled={branchPeriodMissing || isPaid(key) || savingBranch !== null}
+      className={`glass-input !w-auto text-[11px] py-0.5 px-2 rounded-full font-semibold disabled:opacity-60 ${
+        value === true ? "!bg-rose-500/20 !border-rose-400/50 text-rose-200" : value === false ? "!bg-emerald-500/15 !border-emerald-400/40 text-emerald-200" : "text-muted-foreground"
+      }`}
+    >
+      <option value="">—</option>
+      <option value="no">No</option>
+      <option value="yes">Yes</option>
+    </select>
+  );
+  const branchNumberInput = (key: string, field: "damageCount" | "ticketsOverride", value: number | null | undefined, placeholder: string) => (
+    <input
+      key={`${key}:${field}:${value ?? ""}:${periodStart}:${periodEnd}`}
+      type="number"
+      min="0"
+      step="1"
+      defaultValue={value ?? ""}
+      placeholder={placeholder}
+      onBlur={(e) => {
+        const rawValue = e.target.value.trim();
+        const next = rawValue === "" ? null : Math.max(0, Math.round(Number(rawValue) || 0));
+        if (next === (value ?? null)) return;
+        void saveBranchField(key, { [field]: next }, field);
+      }}
+      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+      disabled={branchPeriodMissing || isPaid(key) || savingBranch !== null}
+      className="glass-input text-sm py-1 px-2 rounded-md text-right tabular-nums w-[4.5rem] disabled:opacity-50"
+    />
+  );
+
   const handleNumberBlur = (tech: ProfileRow, field: NumberField, rawValue: string) => {
     const value = Math.max(0, field === "completedTickets" ? Math.round(Number(rawValue) || 0) : Number(rawValue) || 0);
     const saved = originalRowsRef.current.get(tech.id);
@@ -568,6 +709,7 @@ export function BranchManagerCommissionTab() {
   const selectHistoryPeriod = (period: CommissionPeriod) => {
     setPeriodStart(period.periodStart);
     setPeriodEnd(period.periodEnd);
+    setPeriodMode(isWeek(period.periodStart, period.periodEnd) ? "week" : "custom");
     setHistoryMenuOpen(false);
   };
 
@@ -575,6 +717,7 @@ export function BranchManagerCommissionTab() {
 
   const numberInput = (tech: ProfileRow, field: NumberField, value: number, hidden: boolean) => {
     const saving = savingKey === `${tech.id}:${field}`;
+    const locked = isPaid(techBranchKey(tech));
     if (hidden) return <span className="text-xs text-muted-foreground/60">—</span>;
     return (
       <div className="inline-flex items-center justify-end gap-1">
@@ -589,7 +732,8 @@ export function BranchManagerCommissionTab() {
           placeholder="0"
           onBlur={(e) => handleNumberBlur(tech, field, e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-          disabled={saving || migrationMissing}
+          disabled={saving || migrationMissing || locked}
+          title={locked ? "This branch is marked Paid for this period — undo Paid to change it" : undefined}
           className="glass-input text-sm py-1 px-2 rounded-md text-right tabular-nums w-[4.5rem] disabled:opacity-50"
         />
         <span className={`text-xs text-muted-foreground w-3 ${field === "completedTickets" ? "invisible" : ""}`}>%</span>
@@ -606,6 +750,28 @@ export function BranchManagerCommissionTab() {
 
   return (
     <>
+    {importOpen && (
+      <BranchCommissionImportModal
+        onClose={() => setImportOpen(false)}
+        periods={periods}
+        importerName={displayName || ""}
+        saveBlocked={branchPeriodMissing ? "Run migration 0473_branch_commission_branch_period.sql in Supabase first — until then this is a preview only." : null}
+        context={() => ({
+          branches: new Map([...branchLabel].filter(([k]) => !!k)),
+          technicians: technicians.map((t) => ({ id: t.id, name: nameOf(t), branchKey: techBranchKey(t) })),
+          managersOf: (key) => managers.filter((m) => (branchesOfManager.get(m.id) ?? []).includes(key)).map(nameOf),
+        })}
+        onImported={(first) => {
+          refreshPeriods();
+          if (first) {
+            setPeriodStart(first.start);
+            setPeriodEnd(first.end);
+            setPeriodMode(isWeek(first.start, first.end) ? "week" : "custom");
+          }
+          setReloadTick((n) => n + 1);
+        }}
+      />
+    )}
     <div className="panel p-0 overflow-hidden">
       {/* Header + period controls */}
       <div className="px-5 py-4 border-b border-white/10 flex items-start justify-between gap-4 flex-wrap">
@@ -618,11 +784,55 @@ export function BranchManagerCommissionTab() {
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end shrink-0">
           {(loading || savingLabel) && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
-          <div className="flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.03] pl-1 pr-1 py-1">
-            <input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} className="glass-input text-sm py-1 px-2 rounded-md !w-[9.5rem]" />
-            <span className="text-muted-foreground text-xs">to</span>
-            <input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} className="glass-input text-sm py-1 px-2 rounded-md !w-[9.5rem]" />
+          <button
+            type="button"
+            onClick={() => setImportOpen(true)}
+            disabled={migrationMissing}
+            title="Import Finance's weekly Branch Commission sheet — shows a preview first"
+            className="btn text-xs px-3 py-1.5 inline-flex items-center gap-1.5 disabled:opacity-40"
+          >
+            <Upload className="h-3.5 w-3.5" /> Import
+          </button>
+          <div className="inline-flex rounded-md border border-white/10 overflow-hidden text-xs">
+            {(["week", "custom"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => {
+                  setPeriodMode(m);
+                  if (m === "week" && !isWeek(periodStart, periodEnd)) {
+                    const w = weekBounds(periodStart);
+                    setPeriodStart(w.start);
+                    setPeriodEnd(w.end);
+                  }
+                }}
+                className={`px-2.5 py-1.5 ${periodMode === m ? "bg-white/10 text-white font-semibold" : "text-slate-400 hover:text-white"}`}
+              >
+                {m === "week" ? "Weekly" : "Custom"}
+              </button>
+            ))}
           </div>
+          {periodMode === "week" ? (
+            <div className="flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.03] px-1 py-1">
+              <button type="button" onClick={() => { const w = shiftWeek(periodStart, -1); setPeriodStart(w.start); setPeriodEnd(w.end); }} title="Previous week" className="px-2 py-1 rounded text-slate-300 hover:text-white hover:bg-white/10">‹</button>
+              <input
+                type="date"
+                value={periodStart}
+                onChange={(e) => { if (!e.target.value) return; const w = weekBounds(e.target.value); setPeriodStart(w.start); setPeriodEnd(w.end); }}
+                title="Pick any day — the week (Sunday–Saturday) it's in is used"
+                className="glass-input text-sm py-1 px-2 rounded-md !w-[9.5rem]"
+              />
+              <span className="text-xs text-slate-300 whitespace-nowrap tabular-nums px-1">{usDate(periodStart)} – {usDate(periodEnd)}</span>
+              <button type="button" onClick={() => { const w = shiftWeek(periodStart, 1); setPeriodStart(w.start); setPeriodEnd(w.end); }} title="Next week" className="px-2 py-1 rounded text-slate-300 hover:text-white hover:bg-white/10">›</button>
+              <button type="button" onClick={() => { const w = weekBounds(); setPeriodStart(w.start); setPeriodEnd(w.end); }} className="px-2 py-1 rounded text-[11px] text-slate-400 hover:text-white hover:bg-white/10">This week</button>
+            </div>
+          ) : (
+            <div className={`flex items-center gap-1.5 rounded-md border bg-white/[0.03] pl-1 pr-1 py-1 ${periodStart > periodEnd ? "border-rose-400/60" : "border-white/10"}`}>
+              <input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} className="glass-input text-sm py-1 px-2 rounded-md !w-[9.5rem]" />
+              <span className="text-muted-foreground text-xs">to</span>
+              <input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} className="glass-input text-sm py-1 px-2 rounded-md !w-[9.5rem]" />
+            </div>
+          )}
           <input
             type="text"
             value={periodLabelDraft}
@@ -677,8 +887,13 @@ export function BranchManagerCommissionTab() {
         </div>
       </div>
 
-      {(overlappingPeriod || migrationMissing || assignmentsMissing || error) && (
+      {(overlappingPeriod || migrationMissing || assignmentsMissing || branchPeriodMissing || error || periodStart > periodEnd) && (
         <div className="px-5 pt-3 space-y-2">
+          {periodStart > periodEnd && (
+            <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2">
+              The start date ({usDate(periodStart)}) is after the end date ({usDate(periodEnd)}) — nothing can load. Fix the dates, or switch to Weekly.
+            </p>
+          )}
           {overlappingPeriod && (
             <p className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2">
               This range overlaps an already-saved period — <span className="font-semibold">{overlappingPeriod.label || `${overlappingPeriod.periodStart} – ${overlappingPeriod.periodEnd}`}</span>{" "}
@@ -695,6 +910,11 @@ export function BranchManagerCommissionTab() {
               Run migration <code>0472_branch_commission_assignments.sql</code> in Supabase to pick a branch's manager or move a technician to another branch here.
             </p>
           )}
+          {branchPeriodMissing && (
+            <p className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2">
+              Run migration <code>0473_branch_commission_branch_period.sql</code> in Supabase for Flash tech, Damages, Total damage, Mark as Paid and Import.
+            </p>
+          )}
           {error && <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2">{error}</p>}
         </div>
       )}
@@ -704,6 +924,9 @@ export function BranchManagerCommissionTab() {
         <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/[0.07] px-4 py-3">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-300/80">Total commission</div>
           <div className="mt-1 text-2xl font-bold font-mono tabular-nums text-emerald-300">{money(grandTotal)}</div>
+          <div className="mt-1 text-[11px] text-muted-foreground tabular-nums">
+            Paid <span className="text-emerald-300 font-semibold">{money(paidTotal)}</span> · Unpaid <span className="text-amber-300 font-semibold">{money(grandTotal - paidTotal)}</span>
+          </div>
         </div>
         <div className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Branches entered</div>
@@ -749,11 +972,15 @@ export function BranchManagerCommissionTab() {
               <th className={`${th} text-right`}>Tickets</th>
               <th className={`${th} text-left`}>Condition</th>
               <th className={`${th} text-right`}>Total Earned</th>
+              <th className={`${th} text-left`}>Flash tech</th>
+              <th className={`${th} text-left`}>Damages</th>
+              <th className={`${th} text-right`}>Total damage</th>
+              <th className={`${th} text-left`}>Status</th>
             </tr>
           </thead>
           <tbody>
             {managers.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-10 text-center text-muted-foreground text-sm">No one currently holds a Branch Manager-tier role.</td></tr>
+              <tr><td colSpan={11} className="px-4 py-10 text-center text-muted-foreground text-sm">No one currently holds a Branch Manager-tier role.</td></tr>
             ) : (
               managers.map((m, mi) => {
                 const keys = branchesOfManager.get(m.id) ?? [];
@@ -763,6 +990,7 @@ export function BranchManagerCommissionTab() {
                   <Fragment key={m.id}>
                     {lines.map((key, i) => {
                       const r = key ? branchResult.get(key) : undefined;
+                      const bp = key ? branchPeriods.get(key) : undefined;
                       const last = i === lines.length - 1 && lines.length === 1;
                       return (
                         <tr key={key ?? "none"} className={`${band} border-b ${last ? "border-white/10" : "border-white/5"}`}>
@@ -774,23 +1002,66 @@ export function BranchManagerCommissionTab() {
                           )}
                           <td className="px-4 py-2.5 text-xs whitespace-nowrap">
                             {key ? labelOf(key) : <span className="text-muted-foreground italic">No branch assigned</span>}
+                            {key && bp?.note && <div className="text-[10px] text-amber-200/80 mt-0.5 max-w-[14rem] whitespace-normal">{bp.note}</div>}
                           </td>
                           {key && hasNumbers(r) && r ? (
                             <>
                               <td className="px-4 py-2.5 text-right tabular-nums">{r.completionPct}%</td>
                               <td className="px-4 py-2.5 text-right tabular-nums">{r.ltpPct}%</td>
-                              <td className="px-4 py-2.5 text-right tabular-nums">{r.completedTickets}</td>
+                              <td className="px-4 py-2.5 text-right">
+                                <div className="inline-flex flex-col items-end gap-0.5">
+                                  {branchNumberInput(key, "ticketsOverride", bp?.ticketsOverride, String(r.ticketsFromBranch ? "" : r.completedTickets))}
+                                  <span className="text-[9px] text-muted-foreground">{r.ticketsFromBranch ? "branch total" : "techs added up"}</span>
+                                </div>
+                              </td>
                               <td className="px-4 py-2.5">{tierBadge(r.tier, r.label)}</td>
                               <td className="px-4 py-2.5 text-right font-mono font-semibold tabular-nums whitespace-nowrap">{money(r.earned)}</td>
                             </>
                           ) : (
                             <>
-                              <td colSpan={4} className="px-4 py-2.5 text-xs text-muted-foreground/70">
+                              <td colSpan={2} className="px-4 py-2.5 text-xs text-muted-foreground/70">
                                 {!key ? "" : (r?.counted ?? 0) === 0 ? "No counted technicians at this branch" : "Waiting for numbers"}
                               </td>
+                              <td className="px-4 py-2.5 text-right">{key ? branchNumberInput(key, "ticketsOverride", bp?.ticketsOverride, "0") : null}</td>
+                              <td className="px-4 py-2.5" />
                               <td className="px-4 py-2.5 text-right font-mono text-muted-foreground/60">—</td>
                             </>
                           )}
+                          <td className="px-4 py-2.5">{key ? yesNoSelect(key, "flashTech", bp?.flashTech) : null}</td>
+                          <td className="px-4 py-2.5">{key ? yesNoSelect(key, "damages", bp?.damages) : null}</td>
+                          <td className="px-4 py-2.5 text-right">{key ? branchNumberInput(key, "damageCount", bp?.damageCount, "—") : null}</td>
+                          <td className="px-4 py-2.5 whitespace-nowrap">
+                            {!key ? null : bp?.paidAt ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                <span
+                                  className="inline-flex items-center gap-1 rounded-full border border-emerald-400/50 bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-200"
+                                  title={`Paid by ${bp.paidByName || "—"} on ${new Date(bp.paidAt).toLocaleString()}`}
+                                >
+                                  <CheckCircle2 className="h-3 w-3" /> Paid
+                                </span>
+                                {canUndoPaid && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void undoPaid(key)}
+                                    disabled={savingBranch !== null}
+                                    title="Undo Paid (unlocks this branch's numbers)"
+                                    className="rounded-md p-1 text-slate-500 hover:text-white hover:bg-white/10 disabled:opacity-30"
+                                  >
+                                    <Undo2 className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => void markPaid(key)}
+                                disabled={branchPeriodMissing || savingBranch !== null}
+                                className="btn text-[11px] py-0.5 px-2.5 disabled:opacity-40"
+                              >
+                                {savingBranch === `${key}:paid` ? <Loader2 className="h-3 w-3 animate-spin" /> : null} Mark as Paid
+                              </button>
+                            )}
+                          </td>
                         </tr>
                       );
                     })}
@@ -798,6 +1069,7 @@ export function BranchManagerCommissionTab() {
                       <tr className={`${band} border-b border-white/10`}>
                         <td colSpan={6} className="px-4 py-1.5 text-right text-[11px] text-muted-foreground">{nameOf(m)} · {lines.length} branches</td>
                         <td className="px-4 py-1.5 text-right font-mono font-bold tabular-nums whitespace-nowrap">{money(managerTotal(m))}</td>
+                        <td colSpan={4} />
                       </tr>
                     )}
                   </Fragment>
@@ -810,6 +1082,9 @@ export function BranchManagerCommissionTab() {
               <tr className="border-t border-white/10 bg-slate-900">
                 <td className="px-4 py-3 font-semibold" colSpan={6}>Total commission for period</td>
                 <td className="px-4 py-3 text-right font-mono font-bold tabular-nums text-emerald-300 whitespace-nowrap">{money(grandTotal)}</td>
+                <td colSpan={4} className="px-4 py-3 text-[11px] text-muted-foreground tabular-nums">
+                  Paid {money(paidTotal)} · Unpaid {money(grandTotal - paidTotal)}
+                </td>
               </tr>
             </tfoot>
           )}
@@ -850,7 +1125,7 @@ export function BranchManagerCommissionTab() {
                             <select
                               value={managers.some((m) => m.id === managerPicks.get(g.key)?.profileId) ? managerPicks.get(g.key)!.profileId : ""}
                               onChange={(e) => void saveManagerPick(g.key, e.target.value)}
-                              disabled={!g.key || assignmentsMissing || savingAssign !== null}
+                              disabled={!g.key || assignmentsMissing || savingAssign !== null || isPaid(g.key)}
                               title={g.key ? "Whose commission this branch counts toward (Branch Commission only — profiles and Approval Chain don't change)" : "Technicians with no branch can't be given a manager"}
                               className={`glass-input !w-auto text-[11px] py-0.5 px-1.5 rounded-md disabled:opacity-50 ${unmanaged ? "text-amber-300 border-amber-500/40" : "text-slate-200"}`}
                             >
@@ -889,7 +1164,7 @@ export function BranchManagerCommissionTab() {
                               <select
                                 value={techPicks.get(t.id)?.branchKey ?? ""}
                                 onChange={(e) => void saveTechBranch(t, e.target.value)}
-                                disabled={assignmentsMissing || savingAssign !== null}
+                                disabled={assignmentsMissing || savingAssign !== null || isPaid(techBranchKey(t))}
                                 title="Branch this technician's numbers count under (Branch Commission only — their profile doesn't change)"
                                 className={`glass-input !w-auto text-[10px] py-0.5 px-1.5 rounded-md disabled:opacity-50 ${techPicks.has(t.id) ? "text-sky-300 border-sky-500/40" : "text-muted-foreground"}`}
                               >
@@ -906,7 +1181,7 @@ export function BranchManagerCommissionTab() {
                               <select
                                 value={v.isTrainee ? "trainee" : "regular"}
                                 onChange={(e) => void saveTechField(t, "isTrainee", e.target.value === "trainee")}
-                                disabled={savingTrainee || migrationMissing}
+                                disabled={savingTrainee || migrationMissing || isPaid(techBranchKey(t))}
                                 className={`glass-input text-xs py-1 px-2 rounded-md disabled:opacity-50 ${v.isTrainee ? "text-amber-300 border-amber-500/40" : ""}`}
                               >
                                 <option value="regular">Regular</option>
