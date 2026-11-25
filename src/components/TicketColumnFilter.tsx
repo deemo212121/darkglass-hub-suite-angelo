@@ -19,6 +19,8 @@ interface Props {
   label?: string;
   /** Optional className for the wrapping span. */
   className?: string;
+  /** Optional order for the list (default: A → Z, blanks last). */
+  sortOptions?: (a: string, b: string) => number;
 }
 
 const EMPTY_LABEL = "(blank)";
@@ -29,7 +31,7 @@ const EMPTY_LABEL = "(blank)";
 // shows zero rows for this state without needing any special-case code.
 const NONE_SELECTED_SENTINEL = "__ticket_column_filter_none_selected__";
 
-export function TicketColumnFilter({ options, selected, onChange, label, className }: Props) {
+export function TicketColumnFilter({ options, selected, onChange, label, className, sortOptions }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const wrapperRef = useRef<HTMLSpanElement>(null);
@@ -79,13 +81,14 @@ export function TicketColumnFilter({ options, selected, onChange, label, classNa
 
   const sortedOptions = useMemo(() => {
     const all = Array.from(new Set(options));
+    if (sortOptions) return all.sort(sortOptions);
     return all.sort((a, b) => {
       // Empty strings sort to bottom.
       if (!a && b) return 1;
       if (a && !b) return -1;
       return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
     });
-  }, [options]);
+  }, [options, sortOptions]);
 
   const filteredOptions = useMemo(() => {
     const q = query.trim().toLowerCase();

@@ -32,6 +32,8 @@ import { getCompanyEmployeeRequests, type EmployeeRequestRow } from "@/lib/supab
 import { getAttendanceStartByProfile } from "@/lib/supabase/attendanceStart";
 import { isBeforeAttendanceStart } from "@/lib/attendanceStart";
 import { downloadStyledReport } from "@/lib/styledReportExport";
+import { sameBranch, uniqueBranches } from "@/lib/branchName";
+import { TicketColumnFilter } from "@/components/TicketColumnFilter";
 
 type StatusKind = "completed" | "corrected" | "review" | "missing" | "pending" | "leave" | "rest" | "working" | "upcoming" | "notstarted";
 
@@ -193,6 +195,19 @@ function computeStatus(args: {
   return { kind: "missing", detail: date === today ? "Not checked in yet" : "No check-in / check-out" };
 }
 
+/** profiles.tier_level (Master List / Staff List), "Unassigned" when blank. */
+const tierOf = (p: ProfileRow) => p.tier_level?.trim() || "Unassigned";
+const TIER_ORDER = ["Tier 3", "Tier 2", "Tier 1", "BM", "SBM", "ADR", "DR", "TM"];
+/** Tier 3, Tier 2, Tier 1, BM, SBM, ADR, DR, TM, then anything else A → Z, Unassigned last. */
+const compareTier = (a: string, b: string) => {
+  const rank = (t: string) => {
+    if (t === "Unassigned") return 1000;
+    const i = TIER_ORDER.findIndex((o) => o.toLowerCase() === t.toLowerCase());
+    return i === -1 ? 500 : i;
+  };
+  return rank(a) - rank(b) || a.localeCompare(b, undefined, { numeric: true });
+};
+
 export function EmployeeAttendanceStatusTab() {
   const { uid, role, extraRoles, realRole } = useAuth();
   // HR (and Admin/SuperAdmin) can fix punches straight from the name popup.
@@ -230,6 +245,8 @@ export function EmployeeAttendanceStatusTab() {
   const [loading, setLoading] = useState(true);
   const [department, setDepartment] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
+  const [branchFilter, setBranchFilter] = useState("");
+  const [tierFilter, setTierFilter] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<StatusKind | "">("");
   const [search, setSearch] = useState("");
   const [openProfileId, setOpenProfileId] = useState<string | null>(null);
@@ -331,12 +348,26 @@ export function EmployeeAttendanceStatusTab() {
     [visibleProfiles, department]
   );
 
+  const branches = useMemo(
+    () => uniqueBranches(visibleProfiles.filter((p) => !department || departmentOf(p) === department).map((p) => p.assigned_branch)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [visibleProfiles, department]
+  );
+  useEffect(() => { if (branchFilter && !branches.some((b) => sameBranch(b, branchFilter))) setBranchFilter(""); }, [branches, branchFilter]);
+
   const rangeDays: string[] = [];
   if (isRange) for (let d = startDate; d <= date; d = addDaysISO(d, 1)) rangeDays.push(d);
 
+  const tierOptions = visibleProfiles
+    .filter((p) => !department || departmentOf(p) === department)
+    .filter((p) => !roleFilter || normalizeRole(p.role) === roleFilter)
+    .filter((p) => !branchFilter || sameBranch(p.assigned_branch, branchFilter))
+    .map(tierOf);
   const rows = visibleProfiles
     .filter((p) => !department || departmentOf(p) === department)
     .filter((p) => !roleFilter || normalizeRole(p.role) === roleFilter)
+    .filter((p) => !branchFilter || sameBranch(p.assigned_branch, branchFilter))
+    .filter((p) => tierFilter.size === 0 || tierFilter.has(tierOf(p)))
     .filter((p) => {
       const q = search.trim().toLowerCase();
       return !q || (p.display_name || "").toLowerCase().includes(q) || (p.email || "").toLowerCase().includes(q);
@@ -393,7 +424,7 @@ export function EmployeeAttendanceStatusTab() {
             st === "—" ? "" : st,
           ]);
         }
-        summary.push([name, departmentOf(p), role, p.assigned_branch || "", days, h2(worked), h2(meal), h2(unpaid), h2(total)]);
+        summary.push([name, departmentOf(p), role, p.assigned_branch || "", tierOf(p), days, h2(worked), h2(meal), h2(unpaid), h2(total)]);
       }
       const range = `${fmtDay(rangeStart)} to ${fmtDay(date)}`;
       const rule = "Total Hours = Working Hours + paid meal time. The meal is paid when they worked more than 6 hours (not counting the meal); on days of 6 hours or less it is taken off. Days with no Time Out are not counted.";
@@ -419,6 +450,7 @@ export function EmployeeAttendanceStatusTab() {
             { header: "Department", width: 16, align: "left" },
             { header: "Role", width: 22, align: "left" },
             { header: "Branch", width: 18, align: "left" },
+            { header: "Tier", width: 12, align: "left" },
             { header: "Days Worked", width: 11, numFmt: '0;-0;"–"', total: true },
             { header: "Working Hours (hrs)", width: 14, numFmt: HRS, total: true },
             { header: "Meal Time (hrs)", width: 13, numFmt: HRS, total: true },
@@ -770,6 +802,13 @@ export function EmployeeAttendanceStatusTab() {
           </select>
         </div>
         <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Branch</label>
+          <select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)} className="glass-input text-sm py-1.5 px-2.5 rounded-md min-w-[150px]">
+            <option value="">All branches</option>
+            {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
           <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Search</label>
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Employee name…" className="glass-input text-sm py-1.5 px-2.5 rounded-md w-52" />
         </div>
@@ -808,6 +847,12 @@ export function EmployeeAttendanceStatusTab() {
               <th className="px-3 py-2">Department</th>
               <th className="px-3 py-2">Role</th>
               <th className="px-3 py-2">Branch</th>
+              <th className="px-3 py-2 whitespace-nowrap">
+                <span className="inline-flex items-center gap-1">
+                  Tier
+                  <TicketColumnFilter options={tierOptions} selected={tierFilter} onChange={setTierFilter} label="Filter by Tier" sortOptions={compareTier} />
+                </span>
+              </th>
               <th className="px-3 py-2">{isRange ? `Days — ${fmtDay(startDate)} to ${fmtDay(date)}` : `Status — ${fmtDay(date)}`}</th>
               <th className="px-3 py-2 text-right whitespace-nowrap" title={`${fmtDay(rangeStart)} to ${fmtDay(date)} — Time In → Time Out, not counting meals`}>
                 Working Hours{isRange ? "" : ` (${HISTORY_DAYS}d)`}
@@ -822,9 +867,9 @@ export function EmployeeAttendanceStatusTab() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400"><Loader2 className="h-4 w-4 animate-spin inline" /></td></tr>
+              <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-400"><Loader2 className="h-4 w-4 animate-spin inline" /></td></tr>
             ) : shownRows.length === 0 ? (
-              <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">No employees match these filters.</td></tr>
+              <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-400">No employees match these filters.</td></tr>
             ) : shownRows.map(({ profile: p, status, dayCounts }) => {
               const expanded = openProfileId === p.id;
               return (
@@ -846,6 +891,7 @@ export function EmployeeAttendanceStatusTab() {
                 <td className="px-3 py-2.5 text-slate-300">{departmentOf(p)}</td>
                 <td className="px-3 py-2.5 text-slate-300">{ROLE_LABELS[normalizeRole(p.role)] ?? p.role}</td>
                 <td className="px-3 py-2.5 text-slate-300">{p.assigned_branch || "—"}</td>
+                <td className={`px-3 py-2.5 whitespace-nowrap ${p.tier_level?.trim() ? "text-slate-300" : "text-slate-500"}`}>{tierOf(p)}</td>
                 <td className="px-3 py-2.5">
                   {isRange ? (
                     <div className="flex flex-wrap gap-1">
@@ -893,7 +939,7 @@ export function EmployeeAttendanceStatusTab() {
               </tr>
               {expanded && (
                 <tr className="border-b border-white/10 bg-slate-950/40">
-                  <td colSpan={8} className="px-3 pb-3 pt-1">
+                  <td colSpan={9} className="px-3 pb-3 pt-1">
                     <div className="text-[11px] text-slate-400 mb-1 pl-5">
                       {isRange ? `${fmtDay(startDate)} to ${fmtDay(date)}` : `Last ${HISTORY_DAYS} days to ${fmtDay(date)}`}
                     </div>
