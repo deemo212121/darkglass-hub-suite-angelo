@@ -104,6 +104,13 @@ function shiftWeek(startIso: string, weeks: number) {
 }
 const isWeek = (start: string, end: string) => { const w = weekBounds(start); return w.start === start && w.end === end; };
 const usDate = (iso: string) => { const [y, m, d] = iso.split("-"); return y ? `${Number(m)}/${Number(d)}/${y}` : iso; };
+/** Weeks for the period dropdown: 4 ahead of this week back to 52 before, newest first. */
+function weekOptions(): Array<{ start: string; end: string }> {
+  const now = weekBounds();
+  const out: Array<{ start: string; end: string }> = [];
+  for (let i = 4; i >= -52; i--) out.push(shiftWeek(now.start, i));
+  return out;
+}
 
 function currentMonthBounds(): { start: string; end: string } {
   const now = new Date();
@@ -115,6 +122,10 @@ function currentMonthBounds(): { start: string; end: string } {
   return { start, end };
 }
 
+// A branch has numbers once any counted tech has something typed in.
+function hasNumbers(r: BranchResult | undefined): r is BranchResult {
+  return !!r && r.counted > 0 && (r.completedTickets > 0 || r.completionPct > 0 || r.ltpPct > 0 || r.ticketsFromBranch);
+}
 const money = (n: number) => `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const nameOf = (p: ProfileRow) => p.display_name || p.email || "";
 const byName = (a: ProfileRow, b: ProfileRow) => nameOf(a).localeCompare(nameOf(b));
@@ -123,13 +134,43 @@ const roleOf = (p: ProfileRow) => ROLE_LABELS[normalizeRole(p.role)] || p.role;
 const hrTrainee = (p: ProfileRow) => p.employment_type === "trainee" && !p.trainee_access_granted;
 
 type NumberField = "completionPct" | "ltpPct" | "completedTickets";
-type BranchResult = ReturnType<typeof rollUpBranch> & ReturnType<typeof resolveCommissionTier> & { earned: number; ticketsFromBranch: boolean };
+type BranchResult = ReturnType<typeof rollUpBranch> &
+  ReturnType<typeof resolveCommissionTier> & {
+    earned: number;
+    ticketsFromBranch: boolean;
+    // Combined view (2+ weeks ticked) only:
+    weekTiers?: CommissionTier[];
+    paidWeeks?: number;
+    weeks?: number;
+    paidEarned?: number;
+  };
+type WeekData = { start: string; end: string; rows: Map<string, TechCommissionRow>; bp: Map<string, BranchPeriodRow> };
 
 export function BranchManagerCommissionTab() {
   const defaultPeriod = weekBounds();
-  const [periodMode, setPeriodMode] = useState<"week" | "custom">("week");
   const [periodStart, setPeriodStart] = useState(defaultPeriod.start);
   const [periodEnd, setPeriodEnd] = useState(defaultPeriod.end);
+  // Weeks ticked in the week list (Sunday dates). 2+ = combined, view-only.
+  const [tickedWeeks, setTickedWeeks] = useState<string[]>([]);
+  const combined = tickedWeeks.length > 1;
+  const [weekData, setWeekData] = useState<WeekData[]>([]);
+  const [weekMenuOpen, setWeekMenuOpen] = useState(false);
+  const showWeek = (start: string, end?: string) => {
+    setTickedWeeks([]);
+    setPeriodStart(start);
+    setPeriodEnd(end ?? weekBounds(start).end);
+  };
+  const applyTicked = (starts: string[]) => {
+    const sorted = [...new Set(starts)].sort();
+    if (sorted.length <= 1) {
+      const w = weekBounds(sorted[0] ?? periodStart);
+      showWeek(w.start, w.end);
+      return;
+    }
+    setTickedWeeks(sorted);
+    setPeriodStart(sorted[0]);
+    setPeriodEnd(weekBounds(sorted[sorted.length - 1]).end);
+  };
   const [managers, setManagers] = useState<ProfileRow[]>([]);
   const [technicians, setTechnicians] = useState<ProfileRow[]>([]);
   const [sbmRows, setSbmRows] = useState<SbmBranchAssignment[]>([]);
@@ -220,7 +261,26 @@ export function BranchManagerCommissionTab() {
   }, [periods, periodStart, periodEnd]);
 
   useEffect(() => {
-    if (!periodStart || !periodEnd || periodStart > periodEnd) return;
+    if (!combined) { setWeekData([]); return; }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    Promise.all(
+      tickedWeeks.map(async (start) => {
+        const w = weekBounds(start);
+        const [rows, bp] = await Promise.all([getTechCommissionTally(w.start, w.end), getBranchPeriods(w.start, w.end).catch(() => [] as BranchPeriodRow[])]);
+        return { start: w.start, end: w.end, rows: new Map(rows.map((r) => [r.profileId, r])), bp: new Map(bp.map((r) => [r.branchKey, r])) };
+      })
+    )
+      .then((data) => { if (!cancelled) setWeekData(data); })
+      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : String(err)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tickedWeeks.join(","), reloadTick]);
+
+  useEffect(() => {
+    if (combined || !periodStart || !periodEnd || periodStart > periodEnd) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -242,10 +302,11 @@ export function BranchManagerCommissionTab() {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [periodStart, periodEnd, reloadTick]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodStart, periodEnd, reloadTick, combined]);
 
   useEffect(() => {
-    if (!periodStart || !periodEnd || periodStart > periodEnd) return;
+    if (combined || !periodStart || !periodEnd || periodStart > periodEnd) return;
     let cancelled = false;
     getBranchPeriods(periodStart, periodEnd)
       .then((rows) => {
@@ -261,7 +322,8 @@ export function BranchManagerCommissionTab() {
         else console.error("Failed to load branch details for the period:", err);
       });
     return () => { cancelled = true; };
-  }, [periodStart, periodEnd, reloadTick]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodStart, periodEnd, reloadTick, combined]);
 
   const currentPeriodSaved = useMemo(
     () => periods.some((p) => p.periodStart === periodStart && p.periodEnd === periodEnd),
@@ -270,7 +332,7 @@ export function BranchManagerCommissionTab() {
 
   // Any OTHER saved period sharing a day with the current range — flagged, since shared days get double-counted.
   const overlappingPeriod = useMemo(() => {
-    if (!periodStart || !periodEnd) return null;
+    if (combined || !periodStart || !periodEnd) return null;
     return (
       periods.find(
         (p) =>
@@ -279,7 +341,7 @@ export function BranchManagerCommissionTab() {
           p.periodStart <= periodEnd
       ) ?? null
     );
-  }, [periods, periodStart, periodEnd]);
+  }, [periods, periodStart, periodEnd, combined]);
 
   // ---- Branch structure ----
   // Display spelling per normalized branch: Approval Chain's spelling first, then profiles'.
@@ -351,8 +413,8 @@ export function BranchManagerCommissionTab() {
     return map;
   }, [technicians, techPicks]);
 
-  const techValues = (t: ProfileRow) => {
-    const row = rowsByProfileId.get(t.id);
+  const valuesIn = (rows: Map<string, TechCommissionRow>, t: ProfileRow) => {
+    const row = rows.get(t.id);
     return {
       completionPct: row?.completionPct ?? 0,
       ltpPct: row?.ltpPct ?? 0,
@@ -360,31 +422,91 @@ export function BranchManagerCommissionTab() {
       isTrainee: row?.isTrainee ?? hrTrainee(t),
     };
   };
+  // Weighted by tickets; a plain average when no week has tickets.
+  const blendPct = (items: Array<{ pct: number; w: number }>) => {
+    if (items.length === 0) return 0;
+    const total = items.reduce((s2, x) => s2 + x.w, 0);
+    const v = total > 0 ? items.reduce((s2, x) => s2 + x.pct * x.w, 0) / total : items.reduce((s2, x) => s2 + x.pct, 0) / items.length;
+    return Math.round(v * 10) / 10;
+  };
+  // Combined view: a technician's weeks added up (tickets) and blended (%).
+  const techValues = (t: ProfileRow) => {
+    if (!combined) return valuesIn(rowsByProfileId, t);
+    const weeks = weekData.filter((w) => w.rows.has(t.id)).map((w) => valuesIn(w.rows, t));
+    const last = weekData.length > 0 ? valuesIn(weekData[weekData.length - 1].rows, t) : valuesIn(new Map(), t);
+    return {
+      completionPct: blendPct(weeks.map((v) => ({ pct: v.completionPct, w: v.completedTickets }))),
+      ltpPct: blendPct(weeks.map((v) => ({ pct: v.ltpPct, w: v.completedTickets }))),
+      completedTickets: weeks.reduce((s2, v) => s2 + v.completedTickets, 0),
+      isTrainee: last.isTrainee,
+    };
+  };
 
-  const branchResult = useMemo(() => {
+  const resultsFor = (rows: Map<string, TechCommissionRow>, bps: Map<string, BranchPeriodRow>) => {
     const map = new Map<string, BranchResult>();
     const keys = new Set<string>([...techsByBranch.keys(), ...[...branchesOfManager.values()].flat()]);
     for (const key of keys) {
-      const rolled = rollUpBranch((techsByBranch.get(key) ?? []).map(techValues));
-      const override = branchPeriods.get(key)?.ticketsOverride ?? null;
+      const rolled = rollUpBranch((techsByBranch.get(key) ?? []).map((t) => valuesIn(rows, t)));
+      const override = bps.get(key)?.ticketsOverride ?? null;
       const roll = override === null ? rolled : { ...rolled, completedTickets: override };
       const tier = resolveCommissionTier(roll.completionPct, roll.ltpPct);
       map.set(key, { ...roll, ...tier, ticketsFromBranch: override !== null, earned: roll.counted === 0 ? 0 : tier.ratePerTicket * roll.completedTickets });
     }
     return map;
-    // techValues reads rowsByProfileId
+  };
+
+  const branchResult = useMemo(() => {
+    if (!combined) return resultsFor(rowsByProfileId, branchPeriods);
+    // Each week gets its own Condition and $, then the weeks are added up — Finance pays week by week.
+    const perWeek = weekData.map((w) => ({ w, res: resultsFor(w.rows, w.bp) }));
+    const map = new Map<string, BranchResult>();
+    const keys = new Set(perWeek.flatMap((x) => [...x.res.keys()]));
+    for (const key of keys) {
+      const weeks = perWeek.map((x) => ({ r: x.res.get(key)!, paid: !!x.w.bp.get(key)?.paidAt })).filter((x) => x.r);
+      const withNumbers = weeks.filter((x) => hasNumbers(x.r));
+      const completionPct = blendPct(withNumbers.map((x) => ({ pct: x.r.completionPct, w: x.r.completedTickets })));
+      const ltpPct = blendPct(withNumbers.map((x) => ({ pct: x.r.ltpPct, w: x.r.completedTickets })));
+      const tier = resolveCommissionTier(completionPct, ltpPct);
+      map.set(key, {
+        completionPct,
+        ltpPct,
+        completedTickets: weeks.reduce((s2, x) => s2 + x.r.completedTickets, 0),
+        counted: Math.max(0, ...weeks.map((x) => x.r.counted)),
+        trainees: Math.max(0, ...weeks.map((x) => x.r.trainees)),
+        ...tier,
+        ticketsFromBranch: weeks.some((x) => x.r.ticketsFromBranch),
+        earned: weeks.reduce((s2, x) => s2 + x.r.earned, 0),
+        weekTiers: withNumbers.map((x) => x.r.tier),
+        weeks: weeks.length,
+        paidWeeks: weeks.filter((x) => x.paid).length,
+        paidEarned: weeks.reduce((s2, x) => s2 + (x.paid ? x.r.earned : 0), 0),
+      });
+    }
+    return map;
+    // valuesIn / resultsFor read the maps passed in
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [techsByBranch, branchesOfManager, rowsByProfileId, branchPeriods]);
-  const isPaid = (key: string | null | undefined) => !!key && !!branchPeriods.get(key)?.paidAt;
+  }, [techsByBranch, branchesOfManager, rowsByProfileId, branchPeriods, combined, weekData]);
+  const isPaid = (key: string | null | undefined) => !combined && !!key && !!branchPeriods.get(key)?.paidAt;
+  // Combined view: Flash tech / Damages / Total damage across the ticked weeks.
+  const combinedBranch = (key: string) => {
+    const rows = weekData.map((w) => w.bp.get(key)).filter((r): r is BranchPeriodRow => !!r);
+    const yn = (f: "flashTech" | "damages") => (rows.some((r) => r[f] === true) ? true : rows.length > 0 && rows.every((r) => r[f] === false) ? false : null);
+    const counts = rows.map((r) => r.damageCount).filter((n): n is number => n !== null);
+    return { flashTech: yn("flashTech"), damages: yn("damages"), damageCount: counts.length ? counts.reduce((a, b) => a + b, 0) : null };
+  };
   const techBranchKey = (t: ProfileRow) => techPicks.get(t.id)?.branchKey ?? normBranch(t.assigned_branch);
 
-  // A branch has numbers once any counted tech has something typed in.
-  const hasNumbers = (r: BranchResult | undefined) => !!r && r.counted > 0 && (r.completedTickets > 0 || r.completionPct > 0 || r.ltpPct > 0 || r.ticketsFromBranch);
+
 
   const managerTotal = (m: ProfileRow) => (branchesOfManager.get(m.id) ?? []).reduce((sum, k) => sum + (branchResult.get(k)?.earned ?? 0), 0);
   const grandTotal = managers.reduce((sum, m) => sum + managerTotal(m), 0);
   const paidTotal = managers.reduce(
-    (sum, m) => sum + (branchesOfManager.get(m.id) ?? []).reduce((s2, k) => s2 + (isPaid(k) ? branchResult.get(k)?.earned ?? 0 : 0), 0),
+    (sum, m) =>
+      sum +
+      (branchesOfManager.get(m.id) ?? []).reduce(
+        (s2, k) => s2 + (combined ? branchResult.get(k)?.paidEarned ?? 0 : isPaid(k) ? branchResult.get(k)?.earned ?? 0 : 0),
+        0
+      ),
     0
   );
   const managedKeys = useMemo(() => new Set([...branchesOfManager.values()].flat()), [branchesOfManager]);
@@ -626,6 +748,12 @@ export function BranchManagerCommissionTab() {
     if (!confirm(`Undo Paid for ${labelOf(key)} (${periodStart} to ${periodEnd})? Its numbers unlock.`)) return;
     await saveBranchField(key, { paidAt: null, paidBy: null, paidByName: null }, "paid");
   };
+  const yesNoText = (v: boolean | null) =>
+    v === null ? <span className="text-muted-foreground">—</span> : (
+      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${v ? "border-rose-400/50 bg-rose-500/20 text-rose-200" : "border-emerald-400/40 bg-emerald-500/15 text-emerald-200"}`}>
+        {v ? "Yes" : "No"}
+      </span>
+    );
   const yesNoValue = (v: boolean | null | undefined) => (v === true ? "yes" : v === false ? "no" : "");
   const yesNoSelect = (key: string, field: "flashTech" | "damages", value: boolean | null | undefined) => (
     <select
@@ -707,9 +835,7 @@ export function BranchManagerCommissionTab() {
   };
 
   const selectHistoryPeriod = (period: CommissionPeriod) => {
-    setPeriodStart(period.periodStart);
-    setPeriodEnd(period.periodEnd);
-    setPeriodMode(isWeek(period.periodStart, period.periodEnd) ? "week" : "custom");
+    showWeek(period.periodStart, period.periodEnd);
     setHistoryMenuOpen(false);
   };
 
@@ -732,8 +858,8 @@ export function BranchManagerCommissionTab() {
           placeholder="0"
           onBlur={(e) => handleNumberBlur(tech, field, e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-          disabled={saving || migrationMissing || locked}
-          title={locked ? "This branch is marked Paid for this period — undo Paid to change it" : undefined}
+          disabled={saving || migrationMissing || locked || combined}
+          title={combined ? "Combined weeks are view-only — pick one week to edit" : locked ? "This branch is marked Paid for this period — undo Paid to change it" : undefined}
           className="glass-input text-sm py-1 px-2 rounded-md text-right tabular-nums w-[4.5rem] disabled:opacity-50"
         />
         <span className={`text-xs text-muted-foreground w-3 ${field === "completedTickets" ? "invisible" : ""}`}>%</span>
@@ -763,11 +889,7 @@ export function BranchManagerCommissionTab() {
         })}
         onImported={(first) => {
           refreshPeriods();
-          if (first) {
-            setPeriodStart(first.start);
-            setPeriodEnd(first.end);
-            setPeriodMode(isWeek(first.start, first.end) ? "week" : "custom");
-          }
+          if (first) showWeek(first.start, first.end);
           setReloadTick((n) => n + 1);
         }}
       />
@@ -793,62 +915,83 @@ export function BranchManagerCommissionTab() {
           >
             <Upload className="h-3.5 w-3.5" /> Import
           </button>
-          <div className="inline-flex rounded-md border border-white/10 overflow-hidden text-xs">
-            {(["week", "custom"] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => {
-                  setPeriodMode(m);
-                  if (m === "week" && !isWeek(periodStart, periodEnd)) {
-                    const w = weekBounds(periodStart);
-                    setPeriodStart(w.start);
-                    setPeriodEnd(w.end);
-                  }
-                }}
-                className={`px-2.5 py-1.5 ${periodMode === m ? "bg-white/10 text-white font-semibold" : "text-slate-400 hover:text-white"}`}
-              >
-                {m === "week" ? "Weekly" : "Custom"}
-              </button>
-            ))}
+          <div className="relative flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.03] px-1 py-1">
+            <button type="button" onClick={() => { const w = shiftWeek(weekBounds(periodStart).start, -1); showWeek(w.start, w.end); }} title="Previous week" className="px-2 py-1 rounded text-slate-300 hover:text-white hover:bg-white/10">‹</button>
+            <button
+              type="button"
+              onClick={() => setWeekMenuOpen((v) => !v)}
+              title="Pay week, Sunday–Saturday — tick more than one to see them combined"
+              className="glass-input !w-auto text-sm py-1 px-2 rounded-md tabular-nums inline-flex items-center gap-2"
+            >
+              {combined
+                ? `${tickedWeeks.length} weeks: ${usDate(periodStart)} – ${usDate(periodEnd)}`
+                : `${usDate(periodStart)} – ${usDate(periodEnd)}${isWeek(periodStart, periodEnd) ? (periodStart === weekBounds().start ? " (this week)" : "") : " (saved range)"}`}
+              <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+            </button>
+            {weekMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-20" onClick={() => setWeekMenuOpen(false)} />
+                <div className="absolute left-0 top-full mt-1 w-72 rounded-lg border border-white/10 bg-slate-900 shadow-2xl z-30">
+                  <div className="px-3 py-2 border-b border-white/10 flex items-center justify-between gap-2">
+                    <span className="text-[10px] text-muted-foreground">Click a week to open it · tick boxes to combine</span>
+                    {combined && (
+                      <button type="button" onClick={() => showWeek(periodStart)} className="text-[10px] text-sky-300 hover:text-white">Clear</button>
+                    )}
+                  </div>
+                  <div className="max-h-80 overflow-y-auto py-1">
+                    {weekOptions().map((w) => {
+                      const ticked = combined ? tickedWeeks.includes(w.start) : w.start === periodStart && w.end === periodEnd;
+                      const current = !combined && ticked;
+                      return (
+                        <div key={w.start} className={`flex items-center gap-2 px-3 py-1.5 text-sm tabular-nums hover:bg-white/5 ${current ? "bg-sky-500/10" : ""}`}>
+                          <input
+                            type="checkbox"
+                            checked={ticked}
+                            onChange={() => {
+                              const base = combined ? tickedWeeks : isWeek(periodStart, periodEnd) ? [periodStart] : [];
+                              applyTicked(ticked ? base.filter((x) => x !== w.start) : [...base, w.start]);
+                            }}
+                            className="h-3.5 w-3.5 accent-sky-500 cursor-pointer"
+                            aria-label={`Combine ${usDate(w.start)} – ${usDate(w.end)}`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => { showWeek(w.start, w.end); setWeekMenuOpen(false); }}
+                            className={`flex-1 text-left ${ticked ? "text-white" : "text-slate-300"}`}
+                          >
+                            {usDate(w.start)} – {usDate(w.end)}
+                            {w.start === weekBounds().start && <span className="text-[10px] text-sky-300"> (this week)</span>}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
+            )}
+            <button type="button" onClick={() => { const w = shiftWeek(weekBounds(periodStart).start, 1); showWeek(w.start, w.end); }} title="Next week" className="px-2 py-1 rounded text-slate-300 hover:text-white hover:bg-white/10">›</button>
+            <button type="button" onClick={() => { const w = weekBounds(); showWeek(w.start, w.end); }} className="px-2 py-1 rounded text-[11px] text-slate-400 hover:text-white hover:bg-white/10">This week</button>
           </div>
-          {periodMode === "week" ? (
-            <div className="flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.03] px-1 py-1">
-              <button type="button" onClick={() => { const w = shiftWeek(periodStart, -1); setPeriodStart(w.start); setPeriodEnd(w.end); }} title="Previous week" className="px-2 py-1 rounded text-slate-300 hover:text-white hover:bg-white/10">‹</button>
-              <input
-                type="date"
-                value={periodStart}
-                onChange={(e) => { if (!e.target.value) return; const w = weekBounds(e.target.value); setPeriodStart(w.start); setPeriodEnd(w.end); }}
-                title="Pick any day — the week (Sunday–Saturday) it's in is used"
-                className="glass-input text-sm py-1 px-2 rounded-md !w-[9.5rem]"
-              />
-              <span className="text-xs text-slate-300 whitespace-nowrap tabular-nums px-1">{usDate(periodStart)} – {usDate(periodEnd)}</span>
-              <button type="button" onClick={() => { const w = shiftWeek(periodStart, 1); setPeriodStart(w.start); setPeriodEnd(w.end); }} title="Next week" className="px-2 py-1 rounded text-slate-300 hover:text-white hover:bg-white/10">›</button>
-              <button type="button" onClick={() => { const w = weekBounds(); setPeriodStart(w.start); setPeriodEnd(w.end); }} className="px-2 py-1 rounded text-[11px] text-slate-400 hover:text-white hover:bg-white/10">This week</button>
-            </div>
-          ) : (
-            <div className={`flex items-center gap-1.5 rounded-md border bg-white/[0.03] pl-1 pr-1 py-1 ${periodStart > periodEnd ? "border-rose-400/60" : "border-white/10"}`}>
-              <input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} className="glass-input text-sm py-1 px-2 rounded-md !w-[9.5rem]" />
-              <span className="text-muted-foreground text-xs">to</span>
-              <input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} className="glass-input text-sm py-1 px-2 rounded-md !w-[9.5rem]" />
-            </div>
+          {!combined && (
+            <>
+            <input
+              type="text"
+              value={periodLabelDraft}
+              onChange={(e) => setPeriodLabelDraft(e.target.value)}
+              placeholder="Name this period…"
+              className="glass-input text-sm py-1.5 px-2 rounded-md !w-44"
+            />
+            <button
+              type="button"
+              onClick={() => void handlePeriodLabelBlur(periodLabelDraft)}
+              disabled={savingLabel || (currentPeriodSaved && periodLabelDraft.trim() === originalPeriodLabelRef.current)}
+              title={currentPeriodSaved ? "Save the renamed period" : "Save this new period"}
+              className="btn text-xs px-3 py-1.5 disabled:opacity-40"
+            >
+              Save
+            </button>
+            </>
           )}
-          <input
-            type="text"
-            value={periodLabelDraft}
-            onChange={(e) => setPeriodLabelDraft(e.target.value)}
-            placeholder="Name this period…"
-            className="glass-input text-sm py-1.5 px-2 rounded-md !w-44"
-          />
-          <button
-            type="button"
-            onClick={() => void handlePeriodLabelBlur(periodLabelDraft)}
-            disabled={savingLabel || (currentPeriodSaved && periodLabelDraft.trim() === originalPeriodLabelRef.current)}
-            title={currentPeriodSaved ? "Save the renamed period" : "Save this new period"}
-            className="btn text-xs px-3 py-1.5 disabled:opacity-40"
-          >
-            Save
-          </button>
           <div className="relative">
             <button
               type="button"
@@ -887,11 +1030,17 @@ export function BranchManagerCommissionTab() {
         </div>
       </div>
 
-      {(overlappingPeriod || migrationMissing || assignmentsMissing || branchPeriodMissing || error || periodStart > periodEnd) && (
+      {(combined || overlappingPeriod || migrationMissing || assignmentsMissing || branchPeriodMissing || error || periodStart > periodEnd) && (
         <div className="px-5 pt-3 space-y-2">
+          {combined && (
+            <p className="text-xs text-sky-200 bg-sky-500/10 border border-sky-500/30 rounded-md px-3 py-2">
+              Showing {tickedWeeks.length} weeks combined ({tickedWeeks.map((w) => usDate(w)).join(", ")}): tickets added up, % weighted by tickets,
+              and each week's Condition and $ worked out on its own, then added. View only — pick one week to edit or mark as paid.
+            </p>
+          )}
           {periodStart > periodEnd && (
             <p className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-3 py-2">
-              The start date ({usDate(periodStart)}) is after the end date ({usDate(periodEnd)}) — nothing can load. Fix the dates, or switch to Weekly.
+              The start date ({usDate(periodStart)}) is after the end date ({usDate(periodEnd)}) — nothing can load. Pick a week from the list.
             </p>
           )}
           {overlappingPeriod && (
@@ -990,7 +1139,8 @@ export function BranchManagerCommissionTab() {
                   <Fragment key={m.id}>
                     {lines.map((key, i) => {
                       const r = key ? branchResult.get(key) : undefined;
-                      const bp = key ? branchPeriods.get(key) : undefined;
+                      const bp = key && !combined ? branchPeriods.get(key) : undefined;
+                      const cb = key && combined ? combinedBranch(key) : null;
                       const last = i === lines.length - 1 && lines.length === 1;
                       return (
                         <tr key={key ?? "none"} className={`${band} border-b ${last ? "border-white/10" : "border-white/5"}`}>
@@ -1010,11 +1160,25 @@ export function BranchManagerCommissionTab() {
                               <td className="px-4 py-2.5 text-right tabular-nums">{r.ltpPct}%</td>
                               <td className="px-4 py-2.5 text-right">
                                 <div className="inline-flex flex-col items-end gap-0.5">
-                                  {branchNumberInput(key, "ticketsOverride", bp?.ticketsOverride, String(r.ticketsFromBranch ? "" : r.completedTickets))}
-                                  <span className="text-[9px] text-muted-foreground">{r.ticketsFromBranch ? "branch total" : "techs added up"}</span>
+                                  {combined ? (
+                                    <span className="tabular-nums">{r.completedTickets}</span>
+                                  ) : (
+                                    branchNumberInput(key, "ticketsOverride", bp?.ticketsOverride, String(r.ticketsFromBranch ? "" : r.completedTickets))
+                                  )}
+                                  <span className="text-[9px] text-muted-foreground">{combined ? `${r.weeks ?? 0} weeks added up` : r.ticketsFromBranch ? "branch total" : "techs added up"}</span>
                                 </div>
                               </td>
-                              <td className="px-4 py-2.5">{tierBadge(r.tier, r.label)}</td>
+                              <td className="px-4 py-2.5">
+                                {combined ? (
+                                  <span className="inline-flex items-center gap-1 flex-wrap" title="Each week's own Condition">
+                                    {(r.weekTiers ?? []).map((t, wi) => (
+                                      <span key={wi} className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${TIER_BADGE_CLASSES[t]}`}>C{t}</span>
+                                    ))}
+                                  </span>
+                                ) : (
+                                  tierBadge(r.tier, r.label)
+                                )}
+                              </td>
                               <td className="px-4 py-2.5 text-right font-mono font-semibold tabular-nums whitespace-nowrap">{money(r.earned)}</td>
                             </>
                           ) : (
@@ -1022,16 +1186,24 @@ export function BranchManagerCommissionTab() {
                               <td colSpan={2} className="px-4 py-2.5 text-xs text-muted-foreground/70">
                                 {!key ? "" : (r?.counted ?? 0) === 0 ? "No counted technicians at this branch" : "Waiting for numbers"}
                               </td>
-                              <td className="px-4 py-2.5 text-right">{key ? branchNumberInput(key, "ticketsOverride", bp?.ticketsOverride, "0") : null}</td>
+                              <td className="px-4 py-2.5 text-right">{key && !combined ? branchNumberInput(key, "ticketsOverride", bp?.ticketsOverride, "0") : null}</td>
                               <td className="px-4 py-2.5" />
                               <td className="px-4 py-2.5 text-right font-mono text-muted-foreground/60">—</td>
                             </>
                           )}
-                          <td className="px-4 py-2.5">{key ? yesNoSelect(key, "flashTech", bp?.flashTech) : null}</td>
-                          <td className="px-4 py-2.5">{key ? yesNoSelect(key, "damages", bp?.damages) : null}</td>
-                          <td className="px-4 py-2.5 text-right">{key ? branchNumberInput(key, "damageCount", bp?.damageCount, "—") : null}</td>
+                          <td className="px-4 py-2.5">{cb ? yesNoText(cb.flashTech) : key ? yesNoSelect(key, "flashTech", bp?.flashTech) : null}</td>
+                          <td className="px-4 py-2.5">{cb ? yesNoText(cb.damages) : key ? yesNoSelect(key, "damages", bp?.damages) : null}</td>
+                          <td className="px-4 py-2.5 text-right tabular-nums">{cb ? cb.damageCount ?? "—" : key ? branchNumberInput(key, "damageCount", bp?.damageCount, "—") : null}</td>
                           <td className="px-4 py-2.5 whitespace-nowrap">
-                            {!key ? null : bp?.paidAt ? (
+                            {!key ? null : combined ? (
+                              <span
+                                className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${
+                                  r?.weeks && r.paidWeeks === r.weeks ? "border-emerald-400/50 bg-emerald-500/15 text-emerald-200" : r?.paidWeeks ? "border-amber-400/50 bg-amber-500/15 text-amber-200" : "border-white/15 text-muted-foreground"
+                                }`}
+                              >
+                                {r?.paidWeeks ?? 0} of {tickedWeeks.length} weeks paid
+                              </span>
+                            ) : bp?.paidAt ? (
                               <span className="inline-flex items-center gap-1.5">
                                 <span
                                   className="inline-flex items-center gap-1 rounded-full border border-emerald-400/50 bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-200"
@@ -1080,7 +1252,7 @@ export function BranchManagerCommissionTab() {
           {managers.length > 0 && (
             <tfoot className="sticky bottom-0">
               <tr className="border-t border-white/10 bg-slate-900">
-                <td className="px-4 py-3 font-semibold" colSpan={6}>Total commission for period</td>
+                <td className="px-4 py-3 font-semibold" colSpan={6}>{combined ? `Total commission for ${tickedWeeks.length} weeks` : "Total commission for period"}</td>
                 <td className="px-4 py-3 text-right font-mono font-bold tabular-nums text-emerald-300 whitespace-nowrap">{money(grandTotal)}</td>
                 <td colSpan={4} className="px-4 py-3 text-[11px] text-muted-foreground tabular-nums">
                   Paid {money(paidTotal)} · Unpaid {money(grandTotal - paidTotal)}
@@ -1181,7 +1353,7 @@ export function BranchManagerCommissionTab() {
                               <select
                                 value={v.isTrainee ? "trainee" : "regular"}
                                 onChange={(e) => void saveTechField(t, "isTrainee", e.target.value === "trainee")}
-                                disabled={savingTrainee || migrationMissing || isPaid(techBranchKey(t))}
+                                disabled={savingTrainee || migrationMissing || isPaid(techBranchKey(t)) || combined}
                                 className={`glass-input text-xs py-1 px-2 rounded-md disabled:opacity-50 ${v.isTrainee ? "text-amber-300 border-amber-500/40" : ""}`}
                               >
                                 <option value="regular">Regular</option>
@@ -1197,7 +1369,7 @@ export function BranchManagerCommissionTab() {
                             <button
                               type="button"
                               onClick={() => void openRowHistory(t)}
-                              disabled={!row}
+                              disabled={!row || combined}
                               title={row ? "View change history" : "Nothing saved yet for this period"}
                               className="inline-flex items-center justify-center rounded-md p-1.5 text-slate-500 hover:text-white hover:bg-white/10 disabled:opacity-20 disabled:cursor-not-allowed"
                             >
