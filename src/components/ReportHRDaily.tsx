@@ -2544,10 +2544,16 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   // button, just not sharing its actionKey/actionError state (this dialog
   // only ever reminds about one form at a time).
   const [remindingFormType, setRemindingFormType] = useState<SignableDocumentType | null>(null);
+  const [combineFormsReminded, setCombineFormsReminded] = useState<Map<SignableDocumentType, string>>(new Map());
   const handleRemindFormDialog = async (doc: SignableDocument, personId: string, type: SignableDocumentType) => {
     setRemindingFormType(type);
+    setCombineFormsError(null);
+    setCombineFormsSentNotice(null);
     try {
-      if (myProfileId) {
+      const senderId = myProfileId ?? (uid ? await getMyProfileId(uid) : null);
+      if (!senderId) throw new Error("Could not find your profile — refresh the page and try again.");
+      {
+        const myProfileId = senderId;
         const thread = await getOrCreateDmThread(myProfileId, personId);
         const fillLink = `${getAppUrl()}${SIGNABLE_DOCUMENT_REGISTRY[type].internalPath}/${doc.id}`;
         await sendMessage({
@@ -2556,9 +2562,13 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
           senderName: displayName || "HR",
           body: `⏰ Reminder — please complete the ${SIGNABLE_DOCUMENT_REGISTRY[type].label}: ${fillLink}`,
         });
+        setCombineFormsSentNotice(`Reminder sent for ${SIGNABLE_DOCUMENT_REGISTRY[type].label}.`);
+        const at = new Date().toLocaleString([], { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" });
+        setCombineFormsReminded((prev) => new Map(prev).set(type, at));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to send reminder.");
+      setCombineFormsError(err instanceof Error ? err.message : "Failed to send reminder.");
     } finally {
       setRemindingFormType(null);
     }
@@ -14023,6 +14033,10 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
   const [combineFormsError, setCombineFormsError] = useState<string | null>(null);
   const [combineFormsSentNotice, setCombineFormsSentNotice] = useState<string | null>(null);
   const [combineFormsCopyLink, setCombineFormsCopyLink] = useState<string | null>(null);
+  // Forms the person already has on file — asked inline ("Resend again") instead of a browser pop-up, which Chrome can silently block.
+  const [combineFormsResendAsk, setCombineFormsResendAsk] = useState<{ deliver: "message" | "copyLink"; names: string; onlyTypes?: SignableDocumentType[] } | null>(null);
+  // Form types resent in this popup — their status shows "Resent" right away.
+  const [combineFormsResent, setCombineFormsResent] = useState<Map<SignableDocumentType, string>>(new Map());
 
   // Populates selectedFormTypes/combineFormsRecipientId/etc. (the same
   // state Bulk Form Send's own tab reads) for the given candidate's forms
@@ -14055,6 +14069,9 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     setCombineFormsError(null);
     setCombineFormsSentNotice(null);
     setCombineFormsCopyLink(null);
+    setCombineFormsResendAsk(null);
+    setCombineFormsResent(new Map());
+    setCombineFormsReminded(new Map());
     return true;
   };
 
@@ -14084,14 +14101,19 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
     }
   };
 
-  const handleGenerateCombinedForms = async (deliver: "message" | "copyLink") => {
+  // onlyTypes: one form's own Send / Resend in the list (leaves the rest of the selection alone).
+  const handleGenerateCombinedForms = async (deliver: "message" | "copyLink", resendConfirmed = false, onlyTypes?: SignableDocumentType[]) => {
+    setCombineFormsResendAsk(null);
+    const sendTypes = onlyTypes ?? Array.from(selectedFormTypes);
     // "message" always needs a real AHS teammate (there's no one to DM otherwise).
     // "copyLink" also accepts a typed name, or no name at all — same "name isn't
     // required upfront" fallback every other form's External Link mode already uses.
     const recipient = employees.find((e) => e.id === combineFormsRecipientId);
     const externalName = combineFormsExternalName.trim() || "External Recipient";
-    if (selectedFormTypes.size === 0 || !uid) return;
-    if (deliver === "message" && !recipient) return;
+    // Never stop without saying why — "nothing happens" was the complaint.
+    if (sendTypes.length === 0) { setCombineFormsError('No sendable forms are selected — click "Re-select Forms" and tick at least one.'); return; }
+    if (!uid) { setCombineFormsError("Your sign-in hasn't finished loading — wait a moment, or refresh the page, then try again."); return; }
+    if (deliver === "message" && !recipient) { setCombineFormsError("Pick the technician from the list (click their name in the dropdown) — or use Copy Link Instead."); return; }
     setCombineFormsBusy(true);
     setCombineFormsError(null);
     setCombineFormsSentNotice(null);
@@ -14103,25 +14125,26 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       // rows got created in production. Only checked for a real AHS
       // recipient — an external/no-login recipient has no stable identifier
       // to match duplicates against.
-      if (recipient) {
+      if (recipient && !resendConfirmed) {
         // A type whose existing doc is still pending_signature gets reused
         // below (see docs/existing further down) rather than duplicated —
         // drop those from the warning so re-copying a link for something
         // still awaiting signature doesn't read as "this will duplicate it"
         // when it won't. Only an already-signed/confirmed (or otherwise not
         // reusable) existing doc is a genuine resend worth confirming.
-        const alreadySent = (await getExistingActiveDocumentTypes(recipient.id, Array.from(selectedFormTypes))).filter(
+        const alreadySent = (await getExistingActiveDocumentTypes(recipient.id, sendTypes)).filter(
           // A pending copy the employee already signed (with HR — recipientSlot hr_staff) is on file too.
-          (type) => { const d = latestDocByPersonType.get(`${recipient.id}|${type}`); return d?.status !== "pending_signature" || d.recipientSlot === "hr_staff"; }
+          // Same documents the list's status reads (latestDocByPersonType): a copy from the old forms tab
+          // shows as "Not sent" there, so it doesn't count as "on file" here either.
+          (type) => { const d = latestDocByPersonType.get(`${recipient.id}|${type}`); return !!d && (d.status !== "pending_signature" || d.recipientSlot === "hr_staff"); }
         );
         if (alreadySent.length > 0) {
           const labelByType = new Map(
             [...GENERAL_FORM_TYPES, ...TECHNICIAN_FORM_TYPES, ...MANAGEMENT_FORM_TYPES, ...NEW_TECHNICIAN_BULK_FORM_TYPES, ...NEW_OFFICE_BULK_FORM_TYPES, ...NEW_PH_BULK_FORM_TYPES, ...NEW_MANAGEMENT_BULK_FORM_TYPES].map((f) => [f.type, f.label])
           );
           const names = alreadySent.map((t) => labelByType.get(t) ?? t).join(", ");
-          if (!window.confirm(`${recipient.name} already has these forms on file: ${names}.\n\nSend them again anyway?`)) {
-            return;
-          }
+          setCombineFormsResendAsk({ deliver, names, onlyTypes });
+          return;
         }
       }
       // "newCombineForms" is New Automation Forms' own Bulk Form Send — see
@@ -14151,7 +14174,7 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
       // an already-signed/confirmed one is a genuine resend, not a "give me
       // the same link back" case.
       const docs = await Promise.all(
-        Array.from(selectedFormTypes).map((type) => {
+        sendTypes.map((type) => {
           const existing = recipient ? latestDocByPersonType.get(`${recipient.id}|${type}`) : undefined;
           // Only reuse a copy still waiting on the employee — not one they signed that is now with HR.
           if (existing && existing.status === "pending_signature" && existing.recipientSlot !== "hr_staff") return existing;
@@ -14201,12 +14224,19 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
         setCombineFormsCopyLink(bundleLink);
       }
 
-      void logActivity({ action: "combined_forms_sent", targetType: "employee", targetId: recipient?.id, targetLabel: recipient?.name ?? externalName, details: { types: Array.from(selectedFormTypes), deliver } });
+      if (resendConfirmed) {
+        const at = new Date().toLocaleString([], { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" });
+        setCombineFormsResent((prev) => { const next = new Map(prev); for (const t of sendTypes) next.set(t, at); return next; });
+      }
+      void logActivity({ action: "combined_forms_sent", targetType: "employee", targetId: recipient?.id, targetLabel: recipient?.name ?? externalName, details: { types: sendTypes, deliver } });
 
-      setSelectedFormTypes(new Set());
-      setCombineFormsRecipientId("");
-      setCombineFormsRecipientSearch("");
-      setCombineFormsExternalName("");
+      // In the Required Forms popup the selection stays, so "Resend Selected Forms" still works after a send.
+      if (!onlyTypes && !formsDialogSending) {
+        setSelectedFormTypes(new Set());
+        setCombineFormsRecipientId("");
+        setCombineFormsRecipientSearch("");
+        setCombineFormsExternalName("");
+      }
       // Refresh each type's own "Sent X Forms" tracking table too, so these newly-generated documents show up there right away.
       // Also refresh allSignableDocs (loadCandidateForms) so latestDocByPersonType
       // picks up whatever just got created/reused — without this, clicking
@@ -37942,11 +37972,55 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                 )}
                 <div className="max-h-40 overflow-y-auto border border-white/10 rounded-md divide-y divide-white/5 mb-3">
                   {Array.from(formsDialog.selected).map((type) => {
-                    const { statusText, statusColor } = getCandidateFormStatus(formsDialog.candidateId, type);
+                    const { doc, profileId: rowProfileId, reviewStatus, statusText, statusColor } = getCandidateFormStatus(formsDialog.candidateId, type);
+                    const resentAt = combineFormsResent.get(type);
+                    const remindedAt = combineFormsReminded.get(type);
+                    const rowBusy = combineFormsBusy || remindingFormType === type;
                     return (
                       <div key={type} className="flex items-center gap-2 px-3 py-1.5">
                         <span className="flex-1 min-w-0 text-sm text-slate-200 truncate">{SIGNABLE_DOCUMENT_REGISTRY[type].label}</span>
-                        <span className={`shrink-0 text-[10px] font-semibold uppercase tracking-wide ${statusColor}`}>{statusText}</span>
+                        {resentAt ? (
+                          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-amber-400" title={`Resent ${resentAt} — waiting on the new signature`}>
+                            Resent {resentAt}
+                          </span>
+                        ) : (
+                          <span className={`shrink-0 text-[10px] font-semibold uppercase tracking-wide ${statusColor}`} title={remindedAt ? `Reminded ${remindedAt}` : undefined}>
+                            {statusText}{remindedAt ? ` · reminded ${remindedAt}` : ""}
+                          </span>
+                        )}
+                        {reviewStatus === "awaiting_employee" && doc && rowProfileId && (
+                          <button
+                            type="button"
+                            disabled={rowBusy}
+                            onClick={() => void handleRemindFormDialog(doc, rowProfileId, type)}
+                            title="Message them the same link again as a reminder"
+                            className="inline-flex shrink-0 items-center gap-1 text-xs text-amber-300 hover:text-amber-200 disabled:opacity-40"
+                          >
+                            {remindingFormType === type ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bell className="h-3 w-3" />} Remind
+                          </button>
+                        )}
+                        {(reviewStatus === "done" || reviewStatus === "awaiting_hr" || reviewStatus === "outdated") && (
+                          <button
+                            type="button"
+                            disabled={rowBusy || !combineFormsRecipientId}
+                            onClick={() => void handleGenerateCombinedForms("message", false, [type])}
+                            title={combineFormsRecipientId ? "Send a fresh copy of this form to sign again" : "Pick the technician below first"}
+                            className="inline-flex shrink-0 items-center gap-1 text-xs text-sky-300 hover:text-sky-200 disabled:opacity-40"
+                          >
+                            <RefreshCw className="h-3 w-3" /> Resend
+                          </button>
+                        )}
+                        {reviewStatus === "not_sent" && !resentAt && (
+                          <button
+                            type="button"
+                            disabled={rowBusy || !combineFormsRecipientId}
+                            onClick={() => void handleGenerateCombinedForms("message", false, [type])}
+                            title={combineFormsRecipientId ? "Send just this form" : "Pick the technician below first"}
+                            className="inline-flex shrink-0 items-center gap-1 text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40"
+                          >
+                            <Send className="h-3 w-3" /> Send
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -38022,7 +38096,36 @@ export function ReportHRDaily({ mod, sub }: { mod: ModuleDef; sub: SubModuleDef 
                   >
                     <Copy className="h-3.5 w-3.5" /> Copy Link Instead
                   </button>
+                  <button
+                    type="button"
+                    disabled={!combineFormsRecipientId || selectedFormTypes.size === 0 || combineFormsBusy}
+                    onClick={() => void handleGenerateCombinedForms("message", true)}
+                    title="Message every selected form again in one go — forms still waiting on them get the same link, finished ones get a fresh copy"
+                    className="btn text-sm px-4 py-2 disabled:opacity-40 flex items-center gap-1.5 text-amber-200 border-amber-500/40"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" /> Resend Selected Forms
+                  </button>
                 </div>
+                {combineFormsResendAsk && (
+                  <div className="mb-3 text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-md px-2.5 py-2 space-y-2">
+                    <p>
+                      {formsDialog.candidateName} already has these on file: <span className="font-semibold">{combineFormsResendAsk.names}</span>. Send them again anyway?
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={combineFormsBusy}
+                        onClick={() => void handleGenerateCombinedForms(combineFormsResendAsk.deliver, true, combineFormsResendAsk.onlyTypes)}
+                        className="btn text-xs px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-40"
+                      >
+                        Resend again
+                      </button>
+                      <button type="button" onClick={() => setCombineFormsResendAsk(null)} className="btn text-xs px-3 py-1.5">
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {combineFormsError && (
                   <p className="mb-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-md px-2.5 py-2">{combineFormsError}</p>
                 )}
